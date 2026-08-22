@@ -24,6 +24,7 @@
 | `ONEC_MAX_CONCURRENT_SESSIONS` | Максимум одновременно запущенных процессов 1С на одну точную информационную базу; учитываются также внешние процессы, а TestManager заранее резервирует заявленные TestClient | целое `0..1024`, default `3`; `0` отключает ограничение | user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
 | `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
+| `DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS` | Максимальная длительность одной внутренней пробы завершения Designer; рекурсивное сканирование dump выполняется в отдельном процессе и при превышении останавливается | default `30`; `5..300` | user |
 | `DESIGNER_STALL_WARNING_SECONDS` | Порог предупреждения без роста CPU/log и изменений owned-процессов; не останавливает Designer и не заменяет hard timeout | default `300`; `30..86400` | user |
 | `DESIGNER_STALL_TIMEOUT_SECONDS` | Fail-closed порог без роста CPU/log и изменений owned-процессов; helper останавливает только exact owned Designer | default `600`; `60..86400`, больше warning | user |
 | `DESIGNER_DUMP_STABILITY_SECONDS` | Интервал стабильности файлов результата или `/Out` перед приемкой операции Designer | default `5`; `0..300` | user |

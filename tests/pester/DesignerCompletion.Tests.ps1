@@ -223,9 +223,9 @@ Describe "1C Designer completion evidence" {
                 [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8102; ParentProcessId = 100; CommandLine = "DESIGNER /Out `"$logPath`"" },
                 [pscustomobject]@{ Name = "1cv8.exe"; ProcessId = 8199; ParentProcessId = 100; CommandLine = "DESIGNER /Out unrelated.log" }
             )
-            function Get-CimInstance {
-                param([string]$ClassName, [string]$Filter, [object]$ErrorAction)
-                return @($script:DesignerInventory)
+            function Receive-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                return [pscustomobject]@{ status = "completed"; processes = @($script:DesignerInventory) }
             }
 
             $state = New-DesignerInvocationProbeState -LauncherProcessId 8100
@@ -248,6 +248,152 @@ Describe "1C Designer completion evidence" {
         @($result.active.processIds) | Should -Not -Contain 8199
         $result.released.active | Should -BeFalse
         @($result.tracked) | Should -Contain 8102
+    }
+
+    It "scans a Designer dump in a bounded worker and returns complete evidence" {
+        $dumpPath = Join-Path $TestDrive "bounded-dump"
+        New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
+        [System.IO.File]::WriteAllText((Join-Path $dumpPath "Configuration.xml"), "configuration", [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText((Join-Path $dumpPath "ConfigDumpInfo.xml"), "dump-info", [System.Text.UTF8Encoding]::new($false))
+
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Invoke-BoundedDesignerDumpArtifactState -Path $dumpPath -TimeoutSeconds 5
+        }
+
+        $result.ready | Should -BeTrue
+        $result.fileCount | Should -Be 2
+        $result.totalBytes | Should -BeGreaterThan 0
+        $result.signature | Should -Not -BeNullOrEmpty
+    }
+
+    It "enumerates Designer processes through the bounded worker" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $state = New-DesignerInvocationProbeState `
+                -LauncherProcessId 0 `
+                -StallWarningSeconds 30 `
+                -StallTimeoutSeconds 60 `
+                -SubProbeTimeoutSeconds 5
+            while ($true) {
+                $enumeration = Receive-DesignerProcessEnumeration -ProbeState $state
+                if ($enumeration.status -eq "completed") { return $enumeration }
+                Start-Sleep -Milliseconds 100
+            }
+        }
+
+        $result.status | Should -Be "completed"
+        @($result.processes).Count | Should -BeGreaterOrEqual 0
+    }
+
+    It "publishes probe heartbeat while a bounded dump scan is pending" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $RunStatusPath = Join-Path $TestDrive "probe-status.json"
+            $script:StatusWrites = 0
+            function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+            function Start-DesignerDumpArtifactScan {
+                param([object]$ProbeState, [string]$Path)
+                $fakeProcess = [pscustomobject]@{ HasExited = $false }
+                $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+                $ProbeState.scanProcess = $fakeProcess
+                $ProbeState.scanOutputPath = Join-Path $TestDrive "pending.json"
+                $ProbeState.scanStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            }
+
+            $state = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds 5
+            $pending = Receive-DesignerDumpArtifactScan -ProbeState $state -Path $TestDrive -PublishStatus
+            [pscustomobject]@{
+                status = $pending.status
+                phase = $script:RunProbePhase
+                age = $script:RunProbeAgeSeconds
+                liveness = $script:RunLiveness
+                statusWrites = $script:StatusWrites
+            }
+        }
+
+        $result.status | Should -Be "pending"
+        $result.phase | Should -Be "dump-artifact-scan"
+        $result.age | Should -BeGreaterOrEqual 1
+        $result.liveness | Should -Be "probe-running"
+        $result.statusWrites | Should -Be 1
+    }
+
+    It "terminates and reports a bounded dump scan that exceeds its sub-probe timeout" {
+        $message = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Start-DesignerDumpArtifactScan {
+                param([object]$ProbeState, [string]$Path)
+                $fakeProcess = [pscustomobject]@{ HasExited = $false }
+                $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+                $ProbeState.scanProcess = $fakeProcess
+                $ProbeState.scanOutputPath = Join-Path $TestDrive "timed-out.json"
+                $ProbeState.scanStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-6)
+            }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+
+            $state = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds 5
+            try {
+                Receive-DesignerDumpArtifactScan -ProbeState $state -Path $TestDrive | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+        }
+
+        $message | Should -Match '^DESIGNER_COMPLETION_PROBE_TIMEOUT phase=dump-artifact-scan\b'
+        $message | Should -Match 'terminationConfirmed=True'
+    }
+
+    It "keeps a heartbeat and fails before the outer watchdog when process enumeration blocks" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $RunStatusPath = Join-Path $TestDrive "process-probe-status.json"
+            $script:StatusWrites = 0
+            function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+            function Start-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                $fakeProcess = [pscustomobject]@{ HasExited = $false }
+                $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+                $ProbeState.processScanProcess = $fakeProcess
+                $ProbeState.processScanOutputPath = Join-Path $TestDrive "blocked-process-probe.json"
+                $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-6)
+                $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
+            }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+
+            $state = New-DesignerInvocationProbeState `
+                -LauncherProcessId 9100 `
+                -StallWarningSeconds 30 `
+                -StallTimeoutSeconds 60 `
+                -SubProbeTimeoutSeconds 5
+            $message = try {
+                Get-DesignerInvocationProcessState -ProbeState $state -LogPath (Join-Path $TestDrive "designer.log") | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+            [pscustomobject]@{
+                message = $message
+                phase = $script:RunProbePhase
+                age = $script:RunProbeAgeSeconds
+                liveness = $script:RunLiveness
+                statusWrites = $script:StatusWrites
+            }
+        }
+
+        $result.message | Should -Match '^DESIGNER_COMPLETION_PROBE_TIMEOUT phase=owned-process-enumeration\b'
+        $result.message | Should -Match 'terminationConfirmed=True'
+        $result.phase | Should -Be "owned-process-enumeration"
+        $result.age | Should -BeGreaterOrEqual 5
+        $result.liveness | Should -Be "probe-running"
+        $result.statusWrites | Should -Be 1
     }
 
     It "publishes active and stalled liveness evidence without changing the memory guard peak" {
@@ -622,6 +768,40 @@ Describe "1C Designer completion evidence" {
         $result.invalidOrder | Should -Match "must be greater"
     }
 
+    It "validates the bounded completion sub-probe timeout" {
+        $result = & {
+            $savedDirect = $env:DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS
+            $savedPrefixed = $env:AGENT_1C_DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS
+            try {
+                $env:DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = $null
+                $env:AGENT_1C_DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = $null
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:Config = [pscustomobject]@{}
+                $defaultValue = Get-DesignerCompletionProbeTimeoutSeconds
+                $script:Config = [pscustomobject]@{ designerCompletionProbeTimeoutSeconds = 45 }
+                $projectValue = Get-DesignerCompletionProbeTimeoutSeconds
+                $env:DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = "15"
+                $worktreeValue = Get-DesignerCompletionProbeTimeoutSeconds
+                $env:DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = "4"
+                $invalid = try { Get-DesignerCompletionProbeTimeoutSeconds | Out-Null; "" } catch { $_.Exception.Message }
+                [pscustomobject]@{
+                    defaultValue = $defaultValue
+                    projectValue = $projectValue
+                    worktreeValue = $worktreeValue
+                    invalid = $invalid
+                }
+            } finally {
+                $env:DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = $savedDirect
+                $env:AGENT_1C_DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS = $savedPrefixed
+            }
+        }
+
+        $result.defaultValue | Should -Be 30
+        $result.projectValue | Should -Be 45
+        $result.worktreeValue | Should -Be 15
+        $result.invalid | Should -Match "between 5 and 300"
+    }
+
     It "waits for a combined repository and database update to release the infobase without depending on localized success text" {
         $fixtureRoot = Join-Path $TestDrive "repository-evidence"
         $basePath = Join-Path $fixtureRoot "base"
@@ -645,6 +825,10 @@ Describe "1C Designer completion evidence" {
             $script:ProbeAfterRelease = $null
             $script:CapturedTimeout = 0
             $script:CapturedPostExitProbeSeconds = 0
+            function Receive-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                return [pscustomobject]@{ status = "completed"; processes = @() }
+            }
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath,
@@ -752,6 +936,10 @@ Describe "1C Designer completion evidence" {
             $script:ProbeWhileLocked = $false
             $script:CapturedPostExitProbeSeconds = 0
             $script:DatabaseHolder = $null
+            function Receive-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                return [pscustomobject]@{ status = "completed"; processes = @() }
+            }
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
@@ -824,6 +1012,10 @@ Describe "1C Designer completion evidence" {
                 completionPostExitTimeoutSeconds = 9
             }
             $script:ProbePassed = $false
+            function Receive-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                return [pscustomobject]@{ status = "completed"; processes = @() }
+            }
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
@@ -958,7 +1150,7 @@ Describe "1C Designer completion evidence" {
                 }
                 if ($targetPath) {
                     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
-                    Set-Content -LiteralPath $targetPath -Encoding Byte -Value ([byte[]](1, 2, 3))
+                    [System.IO.File]::WriteAllBytes($targetPath, [byte[]](1, 2, 3))
                 } else {
                     $logText = $(if ([Array]::IndexOf($Arguments, "/UpdateDBCfg") -ge 0) { Get-DesignerConfigurationUpdateSuccessText } else { "completed" })
                     [System.IO.File]::WriteAllText($logPath, $logText, (Get-Utf8Encoding))
@@ -1046,6 +1238,21 @@ Describe "1C Designer completion evidence" {
                     totalBytes = [int64]664534671
                     latestWriteTimeUtcTicks = [int64]$script:DumpArtifactWrittenAtTicks
                 }
+            }
+            function Invoke-BoundedDesignerDumpArtifactState {
+                param([string]$Path, [int]$TimeoutSeconds)
+                return Get-DesignerDumpArtifactState -Path $Path
+            }
+            function Receive-DesignerDumpArtifactScan {
+                param([object]$ProbeState, [string]$Path, [switch]$PublishStatus)
+                return [pscustomobject]@{
+                    status = "completed"
+                    value = (Get-DesignerDumpArtifactState -Path $Path)
+                }
+            }
+            function Receive-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
+                return [pscustomobject]@{ status = "completed"; processes = @() }
             }
             function Invoke-NativeProcessAndWaitResult {
                 param(

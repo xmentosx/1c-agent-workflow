@@ -356,9 +356,11 @@ while ($true) {
         $lifecycleText = Get-Content -Raw -Encoding UTF8 $LifecyclePath
 
         $projectTemplate.designerMaxWorkingSetMb | Should -Be 10240
+        $projectTemplate.designerCompletionProbeTimeoutSeconds | Should -Be 30
         $projectTemplate.designerStallWarningSeconds | Should -Be 300
         $projectTemplate.designerStallTimeoutSeconds | Should -Be 600
         $envTemplate | Should -Match "DESIGNER_MAX_WORKING_SET_MB"
+        $envTemplate | Should -Match "DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS"
         $envTemplate | Should -Match "DESIGNER_STALL_WARNING_SECONDS"
         $envTemplate | Should -Match "DESIGNER_STALL_TIMEOUT_SECONDS"
         @($catalog.smokeTests) | Should -Contain "tests/pester/DesignerMemoryGuard.Tests.ps1"
