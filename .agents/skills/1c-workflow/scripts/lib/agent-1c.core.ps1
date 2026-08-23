@@ -5147,36 +5147,6 @@ function Get-DesignerDumpArtifactState {
     }
 }
 
-function Start-DesignerProbePowerShellProcess {
-    param([Parameter(Mandatory = $true)][string]$EncodedCommand)
-
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = "powershell.exe"
-    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @(
-        "-NoProfile",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-EncodedCommand",
-        $EncodedCommand
-    )
-    $startInfo.WorkingDirectory = $script:ProjectRoot
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.ErrorDialog = $false
-
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    try {
-        if (-not $process.Start()) {
-            throw "The operating system did not start the Designer probe worker."
-        }
-        return $process
-    } catch {
-        $process.Dispose()
-        throw
-    }
-}
-
 function Start-DesignerDumpArtifactScan {
     param(
         [Parameter(Mandatory = $true)][object]$ProbeState,
@@ -5187,71 +5157,62 @@ function Start-DesignerDumpArtifactScan {
         throw "Designer dump artifact scan is already running."
     }
 
-    $workerId = "{0}-{1}" -f $PID, ([guid]::NewGuid().ToString("N"))
-    $requestPath = Join-Path (Get-Agent1cTempRoot) "designer-dump-probe-$workerId.request.json"
-    $outputPath = Join-Path (Get-Agent1cTempRoot) "designer-dump-probe-$workerId.response.json"
-    $stopPath = Join-Path (Get-Agent1cTempRoot) "designer-dump-probe-$workerId.stop"
-    $controlBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
-        requestPath = $requestPath
+    $outputPath = Join-Path (Get-Agent1cTempRoot) ("designer-dump-probe-{0}-{1}.json" -f $PID, ([guid]::NewGuid().ToString("N")))
+    $inputPayload = [ordered]@{
+        path = [System.IO.Path]::GetFullPath($Path)
         outputPath = $outputPath
-        stopPath = $stopPath
-    } | ConvertTo-Json -Compress)))
+    } | ConvertTo-Json -Compress
+    $inputBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($inputPayload))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
-`$control = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$controlBase64')) | ConvertFrom-Json
-while (-not (Test-Path -LiteralPath ([string]`$control.stopPath) -PathType Leaf -ErrorAction SilentlyContinue)) {
-    if (-not (Test-Path -LiteralPath ([string]`$control.requestPath) -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Start-Sleep -Milliseconds 50
-        continue
-    }
-    `$payload = `$null
-    try {
-        `$request = [System.IO.File]::ReadAllText([string]`$control.requestPath, (New-Object System.Text.UTF8Encoding `$false)) | ConvertFrom-Json
-        Remove-Item -LiteralPath ([string]`$control.requestPath) -Force -ErrorAction SilentlyContinue
-        `$root = [System.IO.Path]::GetFullPath([string]`$request.path).TrimEnd('\')
-        `$configurationPath = Join-Path `$root 'Configuration.xml'
-        `$dumpInfoPath = Join-Path `$root 'ConfigDumpInfo.xml'
-        if (-not (Test-Path -LiteralPath `$configurationPath -PathType Leaf -ErrorAction Stop) -or
-            -not (Test-Path -LiteralPath `$dumpInfoPath -PathType Leaf -ErrorAction Stop)) {
-            `$payload = [ordered]@{ status='completed'; ready=`$false; signature=''; fileCount=0; totalBytes=[int64]0; latestWriteTimeUtcTicks=[int64]0; error='' }
-        } else {
-            `$fileCount = 0
-            [int64]`$totalBytes = 0
-            [int64]`$latestWriteTimeUtcTicks = 0
-            foreach (`$file in Get-ChildItem -LiteralPath `$root -Recurse -File -Force -ErrorAction Stop) {
-                `$fileCount++
-                `$totalBytes += [int64]`$file.Length
-                if (`$file.LastWriteTimeUtc.Ticks -gt `$latestWriteTimeUtcTicks) { `$latestWriteTimeUtcTicks = [int64]`$file.LastWriteTimeUtc.Ticks }
-            }
-            `$configuration = Get-Item -LiteralPath `$configurationPath -Force -ErrorAction Stop
-            `$dumpInfo = Get-Item -LiteralPath `$dumpInfoPath -Force -ErrorAction Stop
-            `$ready = `$fileCount -ge 2
-            `$signature = if (`$ready) {
-                '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f `$fileCount, `$totalBytes, `$latestWriteTimeUtcTicks, `$configuration.Length, `$configuration.LastWriteTimeUtc.Ticks, `$dumpInfo.Length, `$dumpInfo.LastWriteTimeUtc.Ticks
-            } else { '' }
-            `$payload = [ordered]@{ status='completed'; ready=`$ready; signature=`$signature; fileCount=`$fileCount; totalBytes=`$totalBytes; latestWriteTimeUtcTicks=`$latestWriteTimeUtcTicks; error='' }
+`$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
+`$scanPath = [string]`$inputPayload.path
+`$outputPath = [string]`$inputPayload.outputPath
+`$payload = `$null
+try {
+    `$root = [System.IO.Path]::GetFullPath(`$scanPath).TrimEnd('\')
+    `$configurationPath = Join-Path `$root 'Configuration.xml'
+    `$dumpInfoPath = Join-Path `$root 'ConfigDumpInfo.xml'
+    if (-not (Test-Path -LiteralPath `$configurationPath -PathType Leaf -ErrorAction Stop) -or
+        -not (Test-Path -LiteralPath `$dumpInfoPath -PathType Leaf -ErrorAction Stop)) {
+        `$payload = [ordered]@{ status='completed'; ready=`$false; signature=''; fileCount=0; totalBytes=[int64]0; latestWriteTimeUtcTicks=[int64]0; error='' }
+    } else {
+        `$fileCount = 0
+        [int64]`$totalBytes = 0
+        [int64]`$latestWriteTimeUtcTicks = 0
+        foreach (`$file in Get-ChildItem -LiteralPath `$root -Recurse -File -Force -ErrorAction Stop) {
+            `$fileCount++
+            `$totalBytes += [int64]`$file.Length
+            if (`$file.LastWriteTimeUtc.Ticks -gt `$latestWriteTimeUtcTicks) { `$latestWriteTimeUtcTicks = [int64]`$file.LastWriteTimeUtc.Ticks }
         }
-    } catch {
-        `$payload = [ordered]@{ status='failed'; ready=`$false; signature=''; fileCount=0; totalBytes=[int64]0; latestWriteTimeUtcTicks=[int64]0; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
+        `$configuration = Get-Item -LiteralPath `$configurationPath -Force -ErrorAction Stop
+        `$dumpInfo = Get-Item -LiteralPath `$dumpInfoPath -Force -ErrorAction Stop
+        `$ready = `$fileCount -ge 2
+        `$signature = if (`$ready) {
+            '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f `$fileCount, `$totalBytes, `$latestWriteTimeUtcTicks, `$configuration.Length, `$configuration.LastWriteTimeUtc.Ticks, `$dumpInfo.Length, `$dumpInfo.LastWriteTimeUtc.Ticks
+        } else { '' }
+        `$payload = [ordered]@{ status='completed'; ready=`$ready; signature=`$signature; fileCount=`$fileCount; totalBytes=`$totalBytes; latestWriteTimeUtcTicks=`$latestWriteTimeUtcTicks; error='' }
     }
-    `$temporaryPath = ([string]`$control.outputPath) + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-    [System.IO.File]::WriteAllText(`$temporaryPath, ((`$payload | ConvertTo-Json -Compress) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
-    if (Test-Path -LiteralPath ([string]`$control.outputPath) -PathType Leaf -ErrorAction SilentlyContinue) { Remove-Item -LiteralPath ([string]`$control.outputPath) -Force }
-    [System.IO.File]::Move(`$temporaryPath, [string]`$control.outputPath)
+} catch {
+    `$payload = [ordered]@{ status='failed'; ready=`$false; signature=''; fileCount=0; totalBytes=[int64]0; latestWriteTimeUtcTicks=[int64]0; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
 }
+[System.IO.File]::WriteAllText(`$outputPath, ((`$payload | ConvertTo-Json -Compress) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
+if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-DesignerProbePowerShellProcess -EncodedCommand $encodedCommand
+    $process = Start-Process `
+        -FilePath "powershell" `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+        -WorkingDirectory $script:ProjectRoot `
+        -WindowStyle Hidden `
+        -PassThru
     if ($null -eq $process) {
         throw "Could not start the bounded Designer dump artifact scan."
     }
     $ProbeState.scanProcess = $process
-    $ProbeState.scanRequestPath = $requestPath
     $ProbeState.scanOutputPath = $outputPath
-    $ProbeState.scanStopPath = $stopPath
-    $ProbeState.scanRequestPending = $false
-    $ProbeState.scanStartedAtUtc = $null
+    $ProbeState.scanStartedAtUtc = [DateTime]::UtcNow
 }
 
 function Stop-DesignerDumpArtifactScan {
@@ -5260,10 +5221,6 @@ function Stop-DesignerDumpArtifactScan {
     $termination = [pscustomobject]@{ confirmed = $true; error = "" }
     if ($null -ne $ProbeState.scanProcess) {
         try {
-            if ($ProbeState.scanStopPath) {
-                Write-Utf8TextAtomic -Path $ProbeState.scanStopPath -Value "stop"
-                $ProbeState.scanProcess.WaitForExit(1000) | Out-Null
-            }
             $ProbeState.scanProcess.Refresh()
             if (-not $ProbeState.scanProcess.HasExited) {
                 $termination = Stop-NativeProcessForSafety -Process $ProbeState.scanProcess
@@ -5272,16 +5229,11 @@ function Stop-DesignerDumpArtifactScan {
             $termination = [pscustomobject]@{ confirmed = $false; error = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim()) }
         }
     }
-    foreach ($path in @($ProbeState.scanRequestPath, $ProbeState.scanOutputPath, $ProbeState.scanStopPath)) {
-        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
-            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-        }
+    if ($ProbeState.scanOutputPath -and (Test-Path -LiteralPath $ProbeState.scanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $ProbeState.scanOutputPath -Force -ErrorAction SilentlyContinue
     }
     $ProbeState.scanProcess = $null
-    $ProbeState.scanRequestPath = ""
     $ProbeState.scanOutputPath = ""
-    $ProbeState.scanStopPath = ""
-    $ProbeState.scanRequestPending = $false
     $ProbeState.scanStartedAtUtc = $null
     return $termination
 }
@@ -5323,16 +5275,6 @@ function Receive-DesignerDumpArtifactScan {
     if ($null -eq $ProbeState.scanProcess) {
         Start-DesignerDumpArtifactScan -ProbeState $ProbeState -Path $Path
     }
-    if (-not $ProbeState.scanRequestPending -and $ProbeState.scanRequestPath) {
-        if (Test-Path -LiteralPath $ProbeState.scanOutputPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $ProbeState.scanOutputPath -Force -ErrorAction SilentlyContinue
-        }
-        Write-Utf8TextAtomic `
-            -Path $ProbeState.scanRequestPath `
-            -Value ((@{ path = [System.IO.Path]::GetFullPath($Path) } | ConvertTo-Json -Compress) + [Environment]::NewLine)
-        $ProbeState.scanRequestPending = $true
-        $ProbeState.scanStartedAtUtc = [DateTime]::UtcNow
-    }
     $now = [DateTime]::UtcNow
     if ($PublishStatus) {
         Publish-DesignerCompletionProbeStatus `
@@ -5342,10 +5284,7 @@ function Receive-DesignerDumpArtifactScan {
             -LastCompletedAtUtc $ProbeState.scanLastCompletedAtUtc
     }
     $ProbeState.scanProcess.Refresh()
-    if (-not (Test-Path -LiteralPath $ProbeState.scanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        if ($ProbeState.scanProcess.HasExited) {
-            throw "Designer dump artifact worker exited before creating its result."
-        }
+    if (-not $ProbeState.scanProcess.HasExited) {
         $ageSeconds = [int][Math]::Floor(($now - [DateTime]$ProbeState.scanStartedAtUtc).TotalSeconds)
         if ($ageSeconds -ge [int]$ProbeState.subProbeTimeoutSeconds) {
             $termination = Stop-DesignerDumpArtifactScan -ProbeState $ProbeState
@@ -5354,6 +5293,8 @@ function Receive-DesignerDumpArtifactScan {
         return [pscustomobject]@{ status = "pending"; value = $null }
     }
 
+    $ProbeState.scanProcess.WaitForExit()
+    $exitCode = [int]$ProbeState.scanProcess.ExitCode
     $outputPath = [string]$ProbeState.scanOutputPath
     $payload = $null
     try {
@@ -5365,10 +5306,11 @@ function Receive-DesignerDumpArtifactScan {
         if (Test-Path -LiteralPath $outputPath -PathType Leaf -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
         }
-        $ProbeState.scanRequestPending = $false
+        $ProbeState.scanProcess = $null
+        $ProbeState.scanOutputPath = ""
         $ProbeState.scanStartedAtUtc = $null
     }
-    if ($null -eq $payload -or [string]$payload.status -ne "completed") {
+    if ($exitCode -ne 0 -or $null -eq $payload -or [string]$payload.status -ne "completed") {
         $errorText = if ($null -ne $payload) { [string]$payload.error } else { "unknown worker failure" }
         throw "Designer dump artifact scan failed: $errorText"
     }
@@ -5388,23 +5330,14 @@ function Receive-DesignerDumpArtifactScan {
 function Invoke-BoundedDesignerDumpArtifactState {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [ValidateRange(5, 300)][int]$TimeoutSeconds = 30,
-        [AllowNull()][object]$ProbeState = $null
+        [ValidateRange(5, 300)][int]$TimeoutSeconds = 30
     )
 
-    $ownsProbeState = $null -eq $ProbeState
-    $state = if ($ownsProbeState) { New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $TimeoutSeconds } else { $ProbeState }
-    try {
-        while ($true) {
-            $result = Receive-DesignerDumpArtifactScan -ProbeState $state -Path $Path
-            if ($result.status -eq "completed") { return $result.value }
-            [System.Threading.Thread]::Sleep(100)
-        }
-    } catch {
-        if ($null -ne $state.scanProcess) { Stop-DesignerDumpArtifactScan -ProbeState $state | Out-Null }
-        throw
-    } finally {
-        if ($ownsProbeState -and $null -ne $state.scanProcess) { Stop-DesignerDumpArtifactScan -ProbeState $state | Out-Null }
+    $state = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $TimeoutSeconds
+    while ($true) {
+        $result = Receive-DesignerDumpArtifactScan -ProbeState $state -Path $Path
+        if ($result.status -eq "completed") { return $result.value }
+        [System.Threading.Thread]::Sleep(100)
     }
 }
 
@@ -5448,10 +5381,7 @@ function New-DesignerArtifactProbeState {
         confirmedState = $null
         subProbeTimeoutSeconds = $SubProbeTimeoutSeconds
         scanProcess = $null
-        scanRequestPath = ""
         scanOutputPath = ""
-        scanStopPath = ""
-        scanRequestPending = $false
         scanStartedAtUtc = $null
         scanLastCompletedAtUtc = $null
         probeLastStatusPublishedAtUtc = [DateTime]::MinValue
@@ -5580,10 +5510,7 @@ function New-DesignerInvocationProbeState {
         processProbeFailureStartedAtUtc = $null
         processProbeLastCompletedAtUtc = $null
         processScanProcess = $null
-        processScanRequestPath = ""
         processScanOutputPath = ""
-        processScanStopPath = ""
-        processScanRequestPending = $false
         processScanStartedAtUtc = $null
         infoBaseReleaseDatabasePath = ""
         probeLastStatusPublishedAtUtc = [DateTime]::MinValue
@@ -5600,97 +5527,89 @@ function Start-DesignerProcessEnumeration {
         throw "Designer process enumeration is already running."
     }
 
-    $workerId = "{0}-{1}" -f $PID, ([guid]::NewGuid().ToString("N"))
-    $requestPath = Join-Path (Get-Agent1cTempRoot) "designer-process-probe-$workerId.request.json"
-    $outputPath = Join-Path (Get-Agent1cTempRoot) "designer-process-probe-$workerId.response.json"
-    $stopPath = Join-Path (Get-Agent1cTempRoot) "designer-process-probe-$workerId.stop"
-    $controlBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
-        requestPath = $requestPath
+    $outputPath = Join-Path (Get-Agent1cTempRoot) ("designer-process-probe-{0}-{1}.json" -f $PID, ([guid]::NewGuid().ToString("N")))
+    $inputBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
         outputPath = $outputPath
-        stopPath = $stopPath
+        operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
+        trackedProcessIds = @($ProbeState.trackedProcessIds)
+        logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
+        databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
     } | ConvertTo-Json -Compress)))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
-`$control = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$controlBase64')) | ConvertFrom-Json
-while (-not (Test-Path -LiteralPath ([string]`$control.stopPath) -PathType Leaf -ErrorAction SilentlyContinue)) {
-    if (-not (Test-Path -LiteralPath ([string]`$control.requestPath) -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Start-Sleep -Milliseconds 50
-        continue
+`$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
+`$payload = `$null
+try {
+    `$inventory = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -OperationTimeoutSec ([uint32]`$inputPayload.operationTimeoutSeconds) -ErrorAction Stop)
+    `$tracked = [System.Collections.Generic.HashSet[int]]::new()
+    foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null }
+    `$changed = `$true
+    while (`$changed) {
+        `$changed = `$false
+        foreach (`$candidate in `$inventory) {
+            `$matchesLog = `$inputPayload.logPath -and ([string]`$candidate.CommandLine).IndexOf([string]`$inputPayload.logPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
+            `$matchesParent = `$tracked.Contains([int]`$candidate.ParentProcessId)
+            if ((`$matchesLog -or `$matchesParent) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
+        }
     }
-    `$payload = `$null
-    try {
-        `$inputPayload = [System.IO.File]::ReadAllText([string]`$control.requestPath, (New-Object System.Text.UTF8Encoding `$false)) | ConvertFrom-Json
-        Remove-Item -LiteralPath ([string]`$control.requestPath) -Force -ErrorAction SilentlyContinue
-        `$inventory = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -OperationTimeoutSec ([uint32]`$inputPayload.operationTimeoutSeconds) -ErrorAction Stop)
-        `$tracked = [System.Collections.Generic.HashSet[int]]::new()
-        foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null }
-        `$changed = `$true
-        while (`$changed) {
-            `$changed = `$false
-            foreach (`$candidate in `$inventory) {
-                `$matchesLog = `$inputPayload.logPath -and ([string]`$candidate.CommandLine).IndexOf([string]`$inputPayload.logPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
-                `$matchesParent = `$tracked.Contains([int]`$candidate.ParentProcessId)
-                if ((`$matchesLog -or `$matchesParent) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
+    `$processes = @(`$inventory | Where-Object { `$tracked.Contains([int]`$_.ProcessId) } | ForEach-Object {
+        [ordered]@{
+            OwnedByInvocation = `$true
+            Name = [string]`$_.Name
+            ProcessId = [int]`$_.ProcessId
+            ParentProcessId = [int]`$_.ParentProcessId
+            KernelModeTime = [int64]`$_.KernelModeTime
+            UserModeTime = [int64]`$_.UserModeTime
+            WorkingSetSize = [int64]`$_.WorkingSetSize
+        }
+    })
+    `$infoBaseReleaseChecked = `$false
+    `$infoBaseReleased = `$false
+    if (`$inputPayload.databasePath -and `$processes.Count -eq 0) {
+        `$infoBaseReleaseChecked = `$true
+        if (Test-Path -LiteralPath ([string]`$inputPayload.databasePath) -PathType Leaf -ErrorAction Stop) {
+            try {
+                `$stream = [System.IO.File]::Open(
+                    [string]`$inputPayload.databasePath,
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read,
+                    [System.IO.FileShare]::None
+                )
+                `$stream.Dispose()
+                `$infoBaseReleased = `$true
+            } catch {
+                `$infoBaseReleased = `$false
             }
         }
-        `$processes = @(`$inventory | Where-Object { `$tracked.Contains([int]`$_.ProcessId) } | ForEach-Object {
-            [ordered]@{
-                OwnedByInvocation = `$true
-                Name = [string]`$_.Name
-                ProcessId = [int]`$_.ProcessId
-                ParentProcessId = [int]`$_.ParentProcessId
-                KernelModeTime = [int64]`$_.KernelModeTime
-                UserModeTime = [int64]`$_.UserModeTime
-                WorkingSetSize = [int64]`$_.WorkingSetSize
-            }
-        })
-        `$infoBaseReleaseChecked = `$false
-        `$infoBaseReleased = `$false
-        if (`$inputPayload.databasePath -and `$processes.Count -eq 0) {
-            `$infoBaseReleaseChecked = `$true
-            if (Test-Path -LiteralPath ([string]`$inputPayload.databasePath) -PathType Leaf -ErrorAction Stop) {
-                try {
-                    `$stream = [System.IO.File]::Open(
-                        [string]`$inputPayload.databasePath,
-                        [System.IO.FileMode]::Open,
-                        [System.IO.FileAccess]::Read,
-                        [System.IO.FileShare]::None
-                    )
-                    `$stream.Dispose()
-                    `$infoBaseReleased = `$true
-                } catch {
-                    `$infoBaseReleased = `$false
-                }
-            }
-        }
-        `$payload = [ordered]@{
-            status='completed'
-            processes=`$processes
-            infoBaseReleaseChecked=`$infoBaseReleaseChecked
-            infoBaseReleased=`$infoBaseReleased
-            error=''
-        }
-    } catch {
-        `$payload = [ordered]@{ status='failed'; processes=@(); infoBaseReleaseChecked=`$false; infoBaseReleased=`$false; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
     }
-    `$temporaryPath = ([string]`$control.outputPath) + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
-    [System.IO.File]::WriteAllText(`$temporaryPath, ((`$payload | ConvertTo-Json -Compress -Depth 4) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
-    if (Test-Path -LiteralPath ([string]`$control.outputPath) -PathType Leaf -ErrorAction SilentlyContinue) { Remove-Item -LiteralPath ([string]`$control.outputPath) -Force }
-    [System.IO.File]::Move(`$temporaryPath, [string]`$control.outputPath)
+    `$payload = [ordered]@{
+        status='completed'
+        processes=`$processes
+        infoBaseReleaseChecked=`$infoBaseReleaseChecked
+        infoBaseReleased=`$infoBaseReleased
+        error=''
+    }
+} catch {
+    `$payload = [ordered]@{ status='failed'; processes=@(); infoBaseReleaseChecked=`$false; infoBaseReleased=`$false; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
 }
+[System.IO.File]::WriteAllText([string]`$inputPayload.outputPath, ((`$payload | ConvertTo-Json -Compress -Depth 4) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
+if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-DesignerProbePowerShellProcess -EncodedCommand $encodedCommand
+    $process = Start-Process `
+        -FilePath "powershell" `
+        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+        -WorkingDirectory $script:ProjectRoot `
+        -WindowStyle Hidden `
+        -PassThru
     if ($null -eq $process) {
         throw "Could not start the bounded Designer process enumeration."
     }
     $ProbeState.processScanProcess = $process
-    $ProbeState.processScanRequestPath = $requestPath
     $ProbeState.processScanOutputPath = $outputPath
-    $ProbeState.processScanStopPath = $stopPath
-    $ProbeState.processScanRequestPending = $false
-    $ProbeState.processScanStartedAtUtc = $null
+    $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow
+    $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
 }
 
 function Stop-DesignerProcessEnumeration {
@@ -5699,10 +5618,6 @@ function Stop-DesignerProcessEnumeration {
     $termination = [pscustomobject]@{ confirmed = $true; error = "" }
     if ($null -ne $ProbeState.processScanProcess) {
         try {
-            if ($ProbeState.processScanStopPath) {
-                Write-Utf8TextAtomic -Path $ProbeState.processScanStopPath -Value "stop"
-                $ProbeState.processScanProcess.WaitForExit(1000) | Out-Null
-            }
             $ProbeState.processScanProcess.Refresh()
             if (-not $ProbeState.processScanProcess.HasExited) {
                 $termination = Stop-NativeProcessForSafety -Process $ProbeState.processScanProcess
@@ -5711,16 +5626,11 @@ function Stop-DesignerProcessEnumeration {
             $termination = [pscustomobject]@{ confirmed = $false; error = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim()) }
         }
     }
-    foreach ($path in @($ProbeState.processScanRequestPath, $ProbeState.processScanOutputPath, $ProbeState.processScanStopPath)) {
-        if ($path -and (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
-            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-        }
+    if ($ProbeState.processScanOutputPath -and (Test-Path -LiteralPath $ProbeState.processScanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Remove-Item -LiteralPath $ProbeState.processScanOutputPath -Force -ErrorAction SilentlyContinue
     }
     $ProbeState.processScanProcess = $null
-    $ProbeState.processScanRequestPath = ""
     $ProbeState.processScanOutputPath = ""
-    $ProbeState.processScanStopPath = ""
-    $ProbeState.processScanRequestPending = $false
     $ProbeState.processScanStartedAtUtc = $null
     return $termination
 }
@@ -5734,24 +5644,6 @@ function Receive-DesignerProcessEnumeration {
     if ($null -eq $ProbeState.processScanProcess) {
         Start-DesignerProcessEnumeration -ProbeState $ProbeState -LogPath $LogPath
     }
-    if (-not $ProbeState.processScanRequestPending -and $ProbeState.processScanRequestPath) {
-        if (Test-Path -LiteralPath $ProbeState.processScanOutputPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $ProbeState.processScanOutputPath -Force -ErrorAction SilentlyContinue
-        }
-        Write-Utf8TextAtomic `
-            -Path $ProbeState.processScanRequestPath `
-            -Value ((@{
-                operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
-                trackedProcessIds = @($ProbeState.trackedProcessIds)
-                logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
-                databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
-            } | ConvertTo-Json -Compress) + [Environment]::NewLine)
-        $ProbeState.processScanRequestPending = $true
-        $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow
-        if ($null -eq $ProbeState.processProbeStartedAtUtc) {
-            $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
-        }
-    }
     $now = [DateTime]::UtcNow
     $probePhase = if ($ProbeState.infoBaseReleaseDatabasePath) { "infobase-release-check" } else { "owned-process-enumeration" }
     Publish-DesignerCompletionProbeStatus `
@@ -5760,10 +5652,7 @@ function Receive-DesignerProcessEnumeration {
         -StartedAtUtc ([DateTime]$ProbeState.processScanStartedAtUtc) `
         -LastCompletedAtUtc $ProbeState.processProbeLastCompletedAtUtc
     $ProbeState.processScanProcess.Refresh()
-    if (-not (Test-Path -LiteralPath $ProbeState.processScanOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        if ($ProbeState.processScanProcess.HasExited) {
-            throw "Designer process enumeration worker exited before creating its result."
-        }
+    if (-not $ProbeState.processScanProcess.HasExited) {
         $ageSeconds = [int][Math]::Floor(($now - [DateTime]$ProbeState.processScanStartedAtUtc).TotalSeconds)
         if ($ageSeconds -ge [int]$ProbeState.subProbeTimeoutSeconds) {
             $termination = Stop-DesignerProcessEnumeration -ProbeState $ProbeState
@@ -5772,6 +5661,8 @@ function Receive-DesignerProcessEnumeration {
         return [pscustomobject]@{ status = "pending"; processes = @() }
     }
 
+    $ProbeState.processScanProcess.WaitForExit()
+    $exitCode = [int]$ProbeState.processScanProcess.ExitCode
     $outputPath = [string]$ProbeState.processScanOutputPath
     $payload = $null
     try {
@@ -5783,10 +5674,11 @@ function Receive-DesignerProcessEnumeration {
         if (Test-Path -LiteralPath $outputPath -PathType Leaf -ErrorAction SilentlyContinue) {
             Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
         }
-        $ProbeState.processScanRequestPending = $false
+        $ProbeState.processScanProcess = $null
+        $ProbeState.processScanOutputPath = ""
         $ProbeState.processScanStartedAtUtc = $null
     }
-    if ($null -eq $payload -or [string]$payload.status -ne "completed") {
+    if ($exitCode -ne 0 -or $null -eq $payload -or [string]$payload.status -ne "completed") {
         $errorText = if ($null -ne $payload) { [string]$payload.error } else { "unknown worker failure" }
         throw "Designer process enumeration failed: $errorText"
     }
@@ -6648,12 +6540,9 @@ function Invoke-Designer {
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
         $subProbeTimeoutSeconds = Get-DesignerCompletionProbeTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
-        $artifactProbeState = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
-        $initialDumpState = Invoke-BoundedDesignerDumpArtifactState `
-            -Path $operationTarget `
-            -TimeoutSeconds $subProbeTimeoutSeconds `
-            -ProbeState $artifactProbeState
+        $initialDumpState = Invoke-BoundedDesignerDumpArtifactState -Path $operationTarget -TimeoutSeconds $subProbeTimeoutSeconds
         $initialSignature = [string]$initialDumpState.signature
+        $artifactProbeState = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $completionProbe = {
             param($probeContext)
