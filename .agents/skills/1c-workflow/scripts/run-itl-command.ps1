@@ -488,6 +488,15 @@ try {
         $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
         $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath
         $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
+        $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
+        # The helper owns the operation-specific stall budget. A generic runner
+        # watchdog must not preempt a live Designer probe before that budget can
+        # expire and publish its own terminal diagnosis.
+        $effectiveStaleTimeoutSeconds = if ($publishedStallRemainingSeconds -gt 0) {
+            [Math]::Max($staleTimeoutSeconds, $publishedStallRemainingSeconds + $staleWarningSeconds)
+        } else {
+            $staleTimeoutSeconds
+        }
         $staleStatus = $publishedLiveness -and $statusAgeSeconds -ge $staleWarningSeconds
         $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
         $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
@@ -500,7 +509,6 @@ try {
             $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
             $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
             $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
-            $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
             $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
             $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
             $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
@@ -508,10 +516,10 @@ try {
             $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
             [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
         }
-        if ($publishedLiveness -and $statusAgeSeconds -ge $staleTimeoutSeconds) {
+        if ($publishedLiveness -and $statusAgeSeconds -ge $effectiveStaleTimeoutSeconds) {
             $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
             $updatedAt = [string]$freshness.updatedAt
-            $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+            $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
             $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
             if (-not $termination.confirmed) {
                 throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"

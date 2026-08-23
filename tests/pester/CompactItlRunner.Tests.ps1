@@ -277,7 +277,7 @@ exit 0
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
-$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='completion probe entered'; liveness='running-waiting-release'; noProgressSeconds=4; stallTimeoutRemainingSeconds=596; timeoutRemainingSeconds=3596; exitCode=$null; errorMessage='' }
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='completion probe entered'; liveness='running-waiting-release'; noProgressSeconds=4; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=3596; exitCode=$null; errorMessage='' }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 Start-Sleep -Seconds 30
 exit 0
@@ -311,6 +311,40 @@ exit 0
             [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
             [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
             if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "lets the helper own its published Designer stall budget before the runner watchdog fails" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stall-owner-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='designer-wait'; stageDetail='bounded completion probe'; liveness='probe-running'; noProgressSeconds=0; stallTimeoutRemainingSeconds=4; timeoutRemainingSeconds=60; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeGreaterOrEqual 4
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.error | Should -Match 'effective watchdog 5s'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
