@@ -6,6 +6,44 @@
         $RunnerSource = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
     }
 
+    It "removes only the PowerShell Core module root while launching the Windows PowerShell helper" {
+        $runnerText = Get-Content -LiteralPath $RunnerSource -Raw -Encoding UTF8
+        $runnerText | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
+        $runnerText | Should -Match '\$coreModuleRoot = \[IO\.Path\]::GetFullPath\(\(Join-Path \$PSHOME "Modules"\)\)'
+        $runnerText | Should -Match 'Start-Process[\s\S]*?-FilePath "powershell"'
+        $runnerText | Should -Match 'finally \{[\s\S]*?\$env:PSModulePath = \$originalPowerShellModulePath'
+    }
+
+    It "keeps Windows PowerShell built-in modules available when invoked from PowerShell Core" -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl pwsh boundary путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            $runnerPath = Join-Path $scriptRoot "run-itl-command.ps1"
+            Copy-Item -LiteralPath $RunnerSource -Destination $runnerPath
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport=$hash }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            Push-Location $tempRoot
+            try {
+                $output = @(& pwsh.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $runnerPath -- -Action check-dev-branch 2>&1)
+                $exitCode = $LASTEXITCODE
+            } finally {
+                Pop-Location
+            }
+            $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            $summary = (($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join [Environment]::NewLine) | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $summary.userReport | Should -Match '^[0-9a-f]{64}$'
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "stores full output and returns a bounded successful summary" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-success-" + [guid]::NewGuid().ToString("N"))
         try {

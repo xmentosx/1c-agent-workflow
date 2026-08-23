@@ -7,7 +7,7 @@
     "AiRulesOverlay.Tests.ps1": 6.3,
     "BootstrapUpdate.Tests.ps1": 46.7,
     "ClientAdaptersAndModes.Tests.ps1": 117.4,
-    "CompactItlRunner.Tests.ps1": 132.0,
+    "CompactItlRunner.Tests.ps1": 155.0,
     "DependencyLocks.Tests.ps1": 8.0,
     "DesignerMemoryGuard.Tests.ps1": 5.1,
     "DevBranchLifecycle.Tests.ps1": 82.4,

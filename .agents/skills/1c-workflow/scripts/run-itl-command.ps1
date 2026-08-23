@@ -449,12 +449,33 @@ try {
     if ($staleTimeoutSeconds -le $staleWarningSeconds) {
         throw "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS must be greater than ITL_RUNNER_STATUS_STALE_WARNING_SECONDS."
     }
-    $helperProcess = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $projectRoot `
-        -WindowStyle Hidden `
-        -PassThru
+    $originalPowerShellModulePath = $env:PSModulePath
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    try {
+        # Start-Process preserves PowerShell Core's module path verbatim. Remove
+        # only the Core runtime module root before launching Windows PowerShell
+        # so its built-in modules (including Get-FileHash) can autoload.
+        if ($resetModulePathForWindowsPowerShell) {
+            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
+            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
+                catch { return $true }
+            })
+            $env:PSModulePath = $compatibleModuleRoots -join ';'
+        }
+        $helperProcess = Start-Process `
+            -FilePath "powershell" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
+            -WorkingDirectory $projectRoot `
+            -WindowStyle Hidden `
+            -PassThru
+    } finally {
+        if ($resetModulePathForWindowsPowerShell) {
+            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
+            else { $env:PSModulePath = $originalPowerShellModulePath }
+        }
+    }
     if ($null -eq $helperProcess) {
         throw "Failed to start compact ITL helper: $helperPath"
     }
