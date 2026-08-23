@@ -260,13 +260,33 @@ Describe "1C Designer completion evidence" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Start-Process { throw "Designer probes must not use the Start-Process cmdlet." }
-            Invoke-BoundedDesignerDumpArtifactState -Path $dumpPath -TimeoutSeconds 5
+            $state = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds 5
+            try {
+                do {
+                    $first = Receive-DesignerDumpArtifactScan -ProbeState $state -Path $dumpPath
+                    if ($first.status -ne "completed") { Start-Sleep -Milliseconds 100 }
+                } while ($first.status -ne "completed")
+                $firstWorkerId = $state.scanProcess.Id
+                do {
+                    $second = Receive-DesignerDumpArtifactScan -ProbeState $state -Path $dumpPath
+                    if ($second.status -ne "completed") { Start-Sleep -Milliseconds 100 }
+                } while ($second.status -ne "completed")
+                [pscustomobject]@{
+                    value = $second.value
+                    firstWorkerId = $firstWorkerId
+                    secondWorkerId = $state.scanProcess.Id
+                }
+            } finally {
+                Stop-DesignerDumpArtifactScan -ProbeState $state | Out-Null
+            }
         }
 
-        $result.ready | Should -BeTrue
-        $result.fileCount | Should -Be 2
-        $result.totalBytes | Should -BeGreaterThan 0
-        $result.signature | Should -Not -BeNullOrEmpty
+        $result.value.ready | Should -BeTrue
+        $result.value.fileCount | Should -Be 2
+        $result.value.totalBytes | Should -BeGreaterThan 0
+        $result.value.signature | Should -Not -BeNullOrEmpty
+        $result.secondWorkerId | Should -Be $result.firstWorkerId
+        @(Get-Process -Id $result.firstWorkerId -ErrorAction SilentlyContinue).Count | Should -Be 0
     }
 
     It "enumerates Designer processes through the bounded worker" {
@@ -278,15 +298,31 @@ Describe "1C Designer completion evidence" {
                 -StallWarningSeconds 30 `
                 -StallTimeoutSeconds 60 `
                 -SubProbeTimeoutSeconds 5
-            while ($true) {
-                $enumeration = Receive-DesignerProcessEnumeration -ProbeState $state
-                if ($enumeration.status -eq "completed") { return $enumeration }
-                Start-Sleep -Milliseconds 100
+            try {
+                do {
+                    $first = Receive-DesignerProcessEnumeration -ProbeState $state
+                    if ($first.status -ne "completed") { Start-Sleep -Milliseconds 100 }
+                } while ($first.status -ne "completed")
+                $firstWorkerId = $state.processScanProcess.Id
+                do {
+                    $second = Receive-DesignerProcessEnumeration -ProbeState $state
+                    if ($second.status -ne "completed") { Start-Sleep -Milliseconds 100 }
+                } while ($second.status -ne "completed")
+                [pscustomobject]@{
+                    status = $second.status
+                    processes = @($second.processes)
+                    firstWorkerId = $firstWorkerId
+                    secondWorkerId = $state.processScanProcess.Id
+                }
+            } finally {
+                Stop-DesignerProcessEnumeration -ProbeState $state | Out-Null
             }
         }
 
         $result.status | Should -Be "completed"
         @($result.processes).Count | Should -BeGreaterOrEqual 0
+        $result.secondWorkerId | Should -Be $result.firstWorkerId
+        @(Get-Process -Id $result.firstWorkerId -ErrorAction SilentlyContinue).Count | Should -Be 0
     }
 
     It "publishes probe heartbeat while a bounded dump scan is pending" {
