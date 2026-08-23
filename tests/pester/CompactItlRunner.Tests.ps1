@@ -349,6 +349,34 @@ exit 0
         }
     }
 
+    It "ignores a transient epoch timestamp while an atomic status replacement is unreadable" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-status-epoch-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; stage='designer-wait'; stageDetail='atomic replacement window'; liveness='probe-running'; noProgressSeconds=0; stallTimeoutRemainingSeconds=10; timeoutRemainingSeconds=60; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($running | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+[IO.File]::SetLastWriteTimeUtc($RunStatusPath,[DateTime]::FromFileTimeUtc(0))
+Start-Sleep -Seconds 2
+$now = Get-Date
+$done = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); finishedAt=$now.ToString('o'); stage='complete'; stageDetail='done'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=0; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($done | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+
+            $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            ($processResult.stderr -join "`n") | Should -Not -Match 'MethodArgumentConversionInvalidCastArgument'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "finalizes a running status when the helper process exits with an error" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-running-exit-" + [guid]::NewGuid().ToString("N"))
         try {

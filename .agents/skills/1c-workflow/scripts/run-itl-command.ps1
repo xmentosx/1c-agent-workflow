@@ -297,7 +297,11 @@ function Get-PositiveRunnerSetting {
 }
 
 function Get-RunStatusFreshness {
-    param([object]$Status, [string]$Path)
+    param(
+        [object]$Status,
+        [string]$Path,
+        [DateTime]$NotBeforeUtc = [DateTime]::MinValue
+    )
 
     $nowUtc = [DateTimeOffset]::UtcNow
     $updatedAtText = [string](Get-ObjectValue -Object $Status -Name "updatedAt" -Default "")
@@ -305,14 +309,21 @@ function Get-RunStatusFreshness {
     if ($updatedAtText -and [DateTimeOffset]::TryParse($updatedAtText, [ref]$updatedAt)) {
         $age = ($nowUtc - $updatedAt.ToUniversalTime()).TotalSeconds
         if ($age -ge -5) {
-            return [pscustomobject]@{ ageSeconds = [Math]::Max(0, $age); source = "updatedAt"; updatedAt = $updatedAtText }
+            $boundedAge = [Math]::Min([double][int]::MaxValue, [Math]::Max([double]0, [double]$age))
+            return [pscustomobject]@{ ageSeconds = $boundedAge; source = "updatedAt"; updatedAt = $updatedAtText }
         }
     }
 
     $file = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
     if ($null -ne $file) {
+        # Atomic replacement can expose a transient Windows epoch timestamp.
+        # A run-specific status file cannot legitimately predate this runner.
+        if ($NotBeforeUtc -ne [DateTime]::MinValue -and $file.LastWriteTimeUtc -lt $NotBeforeUtc) {
+            return [pscustomobject]@{ ageSeconds = 0; source = "file-last-write-invalid"; updatedAt = $updatedAtText }
+        }
         $age = ([DateTime]::UtcNow - $file.LastWriteTimeUtc).TotalSeconds
-        return [pscustomobject]@{ ageSeconds = [Math]::Max(0, $age); source = "file-last-write"; updatedAt = $updatedAtText }
+        $boundedAge = [Math]::Min([double][int]::MaxValue, [Math]::Max([double]0, [double]$age))
+        return [pscustomobject]@{ ageSeconds = $boundedAge; source = "file-last-write"; updatedAt = $updatedAtText }
     }
     return [pscustomobject]@{ ageSeconds = 0; source = "unavailable"; updatedAt = $updatedAtText }
 }
@@ -486,7 +497,7 @@ try {
         $currentStatus = Read-JsonFile -Path $statusPath
         $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
         $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
-        $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath
+        $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
         $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
         $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
         # The helper owns the operation-specific stall budget. A generic runner
