@@ -5147,6 +5147,36 @@ function Get-DesignerDumpArtifactState {
     }
 }
 
+function Start-DesignerProbePowerShellProcess {
+    param([Parameter(Mandatory = $true)][string]$EncodedCommand)
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "powershell.exe"
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @(
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        $EncodedCommand
+    )
+    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.ErrorDialog = $false
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw "The operating system did not start the Designer probe worker."
+        }
+        return $process
+    } catch {
+        $process.Dispose()
+        throw
+    }
+}
+
 function Start-DesignerDumpArtifactScan {
     param(
         [Parameter(Mandatory = $true)][object]$ProbeState,
@@ -5201,12 +5231,7 @@ if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
+    $process = Start-DesignerProbePowerShellProcess -EncodedCommand $encodedCommand
     if ($null -eq $process) {
         throw "Could not start the bounded Designer dump artifact scan."
     }
@@ -5597,12 +5622,7 @@ if (`$payload.status -eq 'failed') { exit 1 }
 exit 0
 "@
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
+    $process = Start-DesignerProbePowerShellProcess -EncodedCommand $encodedCommand
     if ($null -eq $process) {
         throw "Could not start the bounded Designer process enumeration."
     }

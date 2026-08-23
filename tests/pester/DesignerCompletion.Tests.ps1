@@ -251,13 +251,14 @@ Describe "1C Designer completion evidence" {
     }
 
     It "scans a Designer dump in a bounded worker and returns complete evidence" {
-        $dumpPath = Join-Path $TestDrive "bounded-dump"
+        $dumpPath = Join-Path $TestDrive "bounded dump Путь"
         New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $dumpPath "Configuration.xml"), "configuration", [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::WriteAllText((Join-Path $dumpPath "ConfigDumpInfo.xml"), "dump-info", [System.Text.UTF8Encoding]::new($false))
 
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Start-Process { throw "Designer probes must not use the Start-Process cmdlet." }
             Invoke-BoundedDesignerDumpArtifactState -Path $dumpPath -TimeoutSeconds 5
         }
 
@@ -270,6 +271,7 @@ Describe "1C Designer completion evidence" {
     It "enumerates Designer processes through the bounded worker" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Start-Process { throw "Designer probes must not use the Start-Process cmdlet." }
             $state = New-DesignerInvocationProbeState `
                 -LauncherProcessId 0 `
                 -StallWarningSeconds 30 `
