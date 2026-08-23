@@ -5909,10 +5909,16 @@ function Test-DesignerInvocationReleased {
             $ProbeState.processesReleaseConfirmed = $true
         }
     }
-    $infoBaseReleased = if ($RequireInfoBaseRelease) {
-        Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
-    } else {
+    $infoBaseReleased = if (-not $RequireInfoBaseRelease) {
         $true
+    } elseif (-not $processState.querySucceeded -or $processState.active -or -not $ProbeState.processesReleaseConfirmed) {
+        # An infobase cannot be fully released while its owned process is still
+        # present. Avoid a redundant exclusive file-open that can block inside
+        # Windows filesystem filters; perform it only after process release is
+        # independently confirmed.
+        $false
+    } else {
+        Test-DesignerInfoBaseReleased -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath
     }
     $releaseProbeCompletedAtUtc = [DateTime]::UtcNow
     Publish-DesignerCompletionProbeStatus `

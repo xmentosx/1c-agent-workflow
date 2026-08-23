@@ -563,9 +563,10 @@ Describe "1C Designer completion evidence" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:InfoBaseReleaseChecks = 0
+            $script:InvocationProcessActive = $false
             function Get-DesignerInvocationProcessState {
                 return [pscustomobject]@{
-                    querySucceeded = $true; active = $false; processIds = @()
+                    querySucceeded = $true; active = $script:InvocationProcessActive; processIds = $(if ($script:InvocationProcessActive) { @(8269) } else { @() })
                     cpuSampleAvailable = $true; cpuTime100ns = [int64]0
                     workingSetSampleAvailable = $true; workingSetMb = 0; detail = ""
                 }
@@ -579,6 +580,18 @@ Describe "1C Designer completion evidence" {
                 launcherExited = $true; observedAtUtc = [DateTime]::UtcNow
                 timeoutRemainingSeconds = 3600; postExitElapsedSeconds = 1; processId = 8270
             }
+            $activeState = New-DesignerInvocationProbeState -LauncherProcessId 8269
+            $activeState.processesReleaseConfirmed = $true
+            $script:InvocationProcessActive = $true
+            $activeResult = Test-DesignerInvocationReleased `
+                -ProbeState $activeState `
+                -ProbeContext $context `
+                -LogPath (Join-Path $TestDrive "active-release.log") `
+                -InfoBaseKind file `
+                -InfoBasePath (Join-Path $TestDrive "base") `
+                -OperationKind "designer-command" 6>$null
+
+            $script:InvocationProcessActive = $false
             $defaultState = New-DesignerInvocationProbeState -LauncherProcessId 8270
             $defaultState.processesReleaseConfirmed = $true
             $defaultResult = Test-DesignerInvocationReleased `
@@ -601,12 +614,14 @@ Describe "1C Designer completion evidence" {
                 -RequireInfoBaseRelease:$false 6>$null
 
             [pscustomobject]@{
+                activeResult = $activeResult
                 defaultResult = $defaultResult
                 compatibleResult = $compatibleResult
                 infoBaseReleaseChecks = $script:InfoBaseReleaseChecks
             }
         }
 
+        $result.activeResult | Should -BeFalse
         $result.defaultResult | Should -BeFalse
         $result.compatibleResult | Should -BeTrue
         $result.infoBaseReleaseChecks | Should -Be 1
