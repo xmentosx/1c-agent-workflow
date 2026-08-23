@@ -3181,15 +3181,20 @@ function Assert-WorkflowSourceOutsideProject {
 }
 
 function Assert-WorkflowTrackedGitClean {
-    $status = & git -C $script:ProjectRoot status --porcelain
-    if ($LASTEXITCODE -ne 0) {
-        throw "Cannot read Git status"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot diff --quiet --ignore-submodules=none -- *> $null
+        $worktreeExitCode = $LASTEXITCODE
+        & git -C $script:ProjectRoot diff --cached --quiet --ignore-submodules=none -- *> $null
+        $indexExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    $trackedStatus = @($status | Where-Object {
-        $line = [string]$_
-        $line -and -not $line.StartsWith("?? ")
-    })
-    if ($trackedStatus.Count -gt 0) {
+    if ($worktreeExitCode -notin @(0, 1) -or $indexExitCode -notin @(0, 1)) {
+        throw "Cannot compare tracked Git content before update-workflow."
+    }
+    if ($worktreeExitCode -eq 1 -or $indexExitCode -eq 1) {
         throw "Git tracked worktree is not clean. Commit, stash, or discard tracked changes before update-workflow."
     }
 }

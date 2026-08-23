@@ -605,6 +605,34 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         (Test-Path -LiteralPath (Join-Path $RepoRoot "VANESSA-TESTS-GUIDE.ru.md")) | Should -BeFalse
     }
 
+    It "allows content-equivalent CRLF drift before update-workflow but blocks real tracked changes" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl workflow guard путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Path $tempRoot | Out-Null
+            & git -C $tempRoot init --initial-branch=master *> $null
+            & git -C $tempRoot config user.name "ITL Test"
+            & git -C $tempRoot config user.email "itl-test@example.invalid"
+            & git -C $tempRoot config core.autocrlf true
+            $trackedPath = Join-Path $tempRoot "workflow file.txt"
+            [IO.File]::WriteAllText($trackedPath, "first`nsecond`n", [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add -- "workflow file.txt"
+            & git -C $tempRoot commit --quiet -m fixture
+            [IO.File]::WriteAllText($trackedPath, "first`r`nsecond`r`n", [Text.UTF8Encoding]::new($false))
+            (& git -C $tempRoot status --porcelain -- "workflow file.txt") | Should -Not -BeNullOrEmpty
+            & git -C $tempRoot diff --quiet -- "workflow file.txt"
+            $LASTEXITCODE | Should -Be 0
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                { Assert-WorkflowTrackedGitClean } | Should -Not -Throw
+                [IO.File]::WriteAllText($trackedPath, "first`r`nchanged`r`n", [Text.UTF8Encoding]::new($false))
+                { Assert-WorkflowTrackedGitClean } | Should -Throw "*Git tracked worktree is not clean*"
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "documents immutable configured ai_rules updates instead of moving upstream main" {
         $installText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
         $initSetupText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\init-setup.md") -Raw -Encoding UTF8
