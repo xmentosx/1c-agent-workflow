@@ -6064,7 +6064,9 @@ function Initialize-Project {
         Update-BaseFromRepository
         Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
         $dumpResult = Dump-ConfigToFiles
+        Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
         $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
         Ensure-BranchSeed `
             -Policy "Rebuild" `
             -ConfigurationFingerprint $configSource.fingerprint `
@@ -6084,7 +6086,9 @@ function Initialize-Project {
         }
         $existingSeed = Read-BranchSeedManifest -AllowMissing
         if ($null -eq $existingSeed -or -not (Test-BranchSeedArtifactReady -Manifest $existingSeed)) {
+            Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
             $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
             Ensure-BranchSeed `
                 -Policy "Rebuild" `
                 -ConfigurationFingerprint $configSource.fingerprint `
@@ -6158,8 +6162,10 @@ function Sync-Master {
     Checkout-Master
     Clear-DevBranchContext
     $sourceUsesRepository = Get-SourceUsesRepository
+    Set-RunStage -Stage "sync-master.repository-update" -Detail "Updating the source infobase from the 1C repository"
     Update-BaseFromRepository
     if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
+        Set-RunStage -Stage "sync-master.seed" -Detail "Rebuilding the branch seed from the source infobase"
         $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
         $dumpResult = [pscustomobject]@{
             exportPath = Get-ExportPath
@@ -6168,14 +6174,18 @@ function Sync-Master {
             logPath = $script:LastLogPath
         }
     } else {
+        Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
+        Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
         $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
             -ConfigurationFingerprint $configSource.fingerprint `
             -ConfigurationFileCount $configSource.fileCount
     }
     $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
+    Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
     Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Sync-KiloItlCommandSurface
     Write-Host "Branch seed: $($seed.artifactPath)"

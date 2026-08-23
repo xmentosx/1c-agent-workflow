@@ -2170,6 +2170,21 @@
         $body | Should -Not -Match 'Commit-IfChanged[^\r\n]+\$dumpResult\.exportPath'
     }
 
+    It "leaves Designer liveness before fingerprint, seed, and commit work" {
+        $sync = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $seed = [regex]::Match($HelperText, "(?s)function\s+New-BranchSeed\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $sync.Success | Should -BeTrue
+        $seed.Success | Should -BeTrue
+
+        $syncBody = $sync.Groups["body"].Value
+        $seedBody = $seed.Groups["body"].Value
+        $syncBody | Should -Match '(?s)sync-master\.dump-config.*?Dump-ConfigToFiles.*?sync-master\.fingerprint.*?Get-ConfigSourceFingerprint.*?sync-master\.seed.*?Ensure-BranchSeed'
+        $syncBody | Should -Match '(?s)sync-master\.commit.*?Commit-AuthoritativeExportPathIfChanged'
+        $seedBody | Should -Match '(?s)seed\.dump-config.*?Dump-ConfigToFilesFromInfoBase.*?seed\.fingerprint.*?Get-ConfigSourceFingerprint'
+        $seedBody | Should -Match '(?s)seed\.hash-artifact.*?Get-FileHash.*?seed\.finalize.*?Write-BranchSeedManifest'
+        $seedBody | Should -Match '(?s)seed\.complete.*?Read-BranchSeedManifest'
+    }
+
     It "activates 1C byte preservation only with an authoritative dump commit" {
         $init = [regex]::Match($HelperText, "(?s)function\s+Initialize-Project\s*\{(?<body>.*?)(?=`r?`nfunction\s+Sync-Master\s*\{)")
         $update = [regex]::Match($HelperText, "(?s)function\s+Update-WorkflowPackage\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")

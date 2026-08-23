@@ -339,6 +339,7 @@ function New-BranchSeed {
     $kind = Get-InfoBaseKind
     $provider = $null
     try {
+        Set-RunStage -Stage "seed.prepare" -Detail "Preparing the branch seed rebuild"
         New-Item -ItemType Directory -Force -Path $paths.root | Out-Null
         Write-Utf8Text -Path $paths.rebuildMarkerPath -Value (([ordered]@{
             schemaVersion = 1
@@ -378,6 +379,7 @@ function New-BranchSeed {
         $baseline = Get-SourceEventLogSeedBaseline
         Write-Utf8Text -Path $paths.baselinePath -Value (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 
+        Set-RunStage -Stage "seed.copy-artifact" -Detail "Copying the source infobase into the branch seed"
         if ($kind -eq "file") {
             $sourceInfoBasePath = Resolve-InfoBasePath (Get-SourceInfoBasePath)
             $sourceArtifact = Join-Path $sourceInfoBasePath "1Cv8.1CD"
@@ -400,12 +402,15 @@ function New-BranchSeed {
         }
 
         if ($kind -eq "file") {
+            Set-RunStage -Stage "seed.disconnect-repository" -Detail "Disconnecting the branch seed copy from the 1C repository"
             Disconnect-BranchSeedFileFromRepository -ArtifactPath $paths.artifactPath
         }
 
         if ($DumpConfigurationFromSeed -and $kind -eq "file") {
+            Set-RunStage -Stage "seed.dump-config" -Detail "Dumping the configuration from the rebuilt branch seed"
             $seedInfoBasePath = Split-Path -Parent $paths.artifactPath
             $dumpResult = Dump-ConfigToFilesFromInfoBase -InfoBasePath $seedInfoBasePath -InfoBaseKind "file"
+            Set-RunStage -Stage "seed.fingerprint" -Detail "Calculating the rebuilt branch seed fingerprint"
             $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
             $ConfigurationFingerprint = $configSource.fingerprint
             $ConfigurationFileCount = $configSource.fileCount
@@ -413,6 +418,10 @@ function New-BranchSeed {
         }
 
         $baselineHash = Get-StringSha256 -Value ((@($baseline.signatures) -join "`n"))
+        Set-RunStage -Stage "seed.hash-artifact" -Detail "Hashing the rebuilt branch seed artifact"
+        $artifactSha256 = (Get-FileHash -LiteralPath $paths.artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $artifactBytes = (Get-Item -LiteralPath $paths.artifactPath).Length
+        Set-RunStage -Stage "seed.finalize" -Detail "Publishing the rebuilt branch seed manifest"
         $completedAt = (Get-Date).ToString("o")
         Write-BranchSeedManifest -Manifest ([ordered]@{
             schemaVersion = 1
@@ -421,8 +430,8 @@ function New-BranchSeed {
             syncId = $syncId
             artifactKind = $paths.artifactKind
             artifactPath = $paths.artifactPath
-            artifactSha256 = (Get-FileHash -LiteralPath $paths.artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            artifactBytes = (Get-Item -LiteralPath $paths.artifactPath).Length
+            artifactSha256 = $artifactSha256
+            artifactBytes = $artifactBytes
             configurationFingerprint = $ConfigurationFingerprint
             configurationFileCount = $ConfigurationFileCount
             baselinePath = $paths.baselinePath
@@ -439,6 +448,7 @@ function New-BranchSeed {
             failureEvidence = ""
         })
         Remove-Item -LiteralPath $paths.rebuildMarkerPath -Force -ErrorAction SilentlyContinue
+        Set-RunStage -Stage "seed.complete" -Detail "Branch seed rebuild completed"
         return (Read-BranchSeedManifest)
     } catch {
         $failure = $_.Exception.Message
