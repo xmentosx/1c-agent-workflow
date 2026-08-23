@@ -251,7 +251,8 @@ Describe "1C Designer completion evidence" {
     }
 
     It "scans a Designer dump in a bounded worker and returns complete evidence" {
-        $dumpPath = Join-Path $TestDrive "bounded dump Путь"
+        $cyrillicPathPart = -join ([char[]](0x041F, 0x0443, 0x0442, 0x044C))
+        $dumpPath = Join-Path $TestDrive "bounded dump $cyrillicPathPart"
         New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
         [System.IO.File]::WriteAllText((Join-Path $dumpPath "Configuration.xml"), "configuration", [System.Text.UTF8Encoding]::new($false))
         [System.IO.File]::WriteAllText((Join-Path $dumpPath "ConfigDumpInfo.xml"), "dump-info", [System.Text.UTF8Encoding]::new($false))
