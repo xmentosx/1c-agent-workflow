@@ -1590,17 +1590,39 @@ function Invoke-OneCBracketRecordStream {
     param(
         [string]$Path,
         [scriptblock]$OnRecord,
-        [int64]$StartOffset = 0
+        [int64]$StartOffset = 0,
+        [int64]$EndOffset = -1
     )
 
     $reader = $null
+    $sourceStream = $null
+    $snapshotStream = $null
     $builder = New-Object System.Text.StringBuilder
     $depth = 0
     $inString = $false
     try {
-        $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-        if ($StartOffset -gt 0) { [void]$stream.Seek($StartOffset, [System.IO.SeekOrigin]::Begin) }
-        $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8, $true)
+        $sourceStream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        if ($EndOffset -lt 0) { $EndOffset = [int64]$sourceStream.Length }
+        if ($StartOffset -lt 0 -or $EndOffset -lt $StartOffset -or $EndOffset -gt [int64]$sourceStream.Length) {
+            throw "EVENT_LOG_SEGMENT_RANGE_INVALID: path=$Path; start=$StartOffset; end=$EndOffset; length=$($sourceStream.Length)"
+        }
+
+        [void]$sourceStream.Seek($StartOffset, [System.IO.SeekOrigin]::Begin)
+        $snapshotLength = [int64]$EndOffset - $StartOffset
+        $snapshotStream = New-Object System.IO.MemoryStream
+        $buffer = New-Object byte[] 65536
+        $remaining = $snapshotLength
+        while ($remaining -gt 0) {
+            $requested = [int][Math]::Min([int64]$buffer.Length, $remaining)
+            $read = $sourceStream.Read($buffer, 0, $requested)
+            if ($read -le 0) {
+                throw "EVENT_LOG_SEGMENT_RANGE_CHANGED: path=$Path; start=$StartOffset; end=$EndOffset; remaining=$remaining"
+            }
+            $snapshotStream.Write($buffer, 0, $read)
+            $remaining -= $read
+        }
+        $snapshotStream.Position = 0
+        $reader = New-Object System.IO.StreamReader($snapshotStream, [System.Text.Encoding]::UTF8, $true)
         while ($null -ne ($line = $reader.ReadLine())) {
             for ($i = 0; $i -lt $line.Length; $i++) {
                 $ch = $line[$i]
@@ -1639,6 +1661,8 @@ function Invoke-OneCBracketRecordStream {
         }
     } finally {
         if ($null -ne $reader) { $reader.Dispose() }
+        elseif ($null -ne $snapshotStream) { $snapshotStream.Dispose() }
+        if ($null -ne $sourceStream) { $sourceStream.Dispose() }
     }
 
     if ($depth -ne 0) {
@@ -1646,55 +1670,109 @@ function Invoke-OneCBracketRecordStream {
     }
 }
 
-function Get-OneCBracketTokens {
+function Get-OneCBracketTopLevelFields {
     param([string]$Text)
 
-    $tokens = New-Object System.Collections.ArrayList
+    $source = ([string]$Text).Trim()
+    if ($source.Length -lt 2 -or $source[0] -ne '{' -or $source[$source.Length - 1] -ne '}') {
+        throw "Invalid bracket record in 1C event log."
+    }
+
+    $rawFields = New-Object System.Collections.ArrayList
     $builder = New-Object System.Text.StringBuilder
+    $nestedDepth = 0
     $inString = $false
-
-    function Add-Token([bool]$Quoted) {
-        $value = $builder.ToString()
-        [void]$builder.Clear()
-        if ($Quoted -or -not [string]::IsNullOrWhiteSpace($value)) {
-            [void]$tokens.Add([pscustomobject]@{
-                value = $(if ($Quoted) { $value } else { $value.Trim() })
-                quoted = $Quoted
-            })
-        }
-    }
-
-    for ($i = 0; $i -lt $Text.Length; $i++) {
-        $ch = $Text[$i]
+    for ($index = 1; $index -lt ($source.Length - 1); $index++) {
+        $character = $source[$index]
         if ($inString) {
-            if ($ch -eq '"') {
-                if (($i + 1) -lt $Text.Length -and $Text[$i + 1] -eq '"') {
-                    [void]$builder.Append('"')
-                    $i++
-                    continue
+            [void]$builder.Append($character)
+            if ($character -eq '"') {
+                if (($index + 1) -lt ($source.Length - 1) -and $source[$index + 1] -eq '"') {
+                    [void]$builder.Append($source[$index + 1])
+                    $index++
+                } else {
+                    $inString = $false
                 }
-                Add-Token $true
-                $inString = $false
-                continue
             }
-            [void]$builder.Append($ch)
             continue
         }
 
-        if ($ch -eq '"') {
-            Add-Token $false
+        if ($character -eq '"') {
             $inString = $true
+            [void]$builder.Append($character)
             continue
         }
-        if ($ch -eq '{' -or $ch -eq '}' -or $ch -eq ',' -or [char]::IsWhiteSpace($ch)) {
-            Add-Token $false
+        if ($character -eq '{') {
+            $nestedDepth++
+            [void]$builder.Append($character)
             continue
         }
-        [void]$builder.Append($ch)
+        if ($character -eq '}') {
+            if ($nestedDepth -le 0) {
+                throw "Invalid nested bracket depth in 1C event log record."
+            }
+            $nestedDepth--
+            [void]$builder.Append($character)
+            continue
+        }
+        if ($character -eq ',' -and $nestedDepth -eq 0) {
+            [void]$rawFields.Add($builder.ToString().Trim())
+            [void]$builder.Clear()
+            continue
+        }
+        [void]$builder.Append($character)
     }
+    if ($inString -or $nestedDepth -ne 0) {
+        throw "Incomplete top-level field in 1C event log record."
+    }
+    [void]$rawFields.Add($builder.ToString().Trim())
 
-    Add-Token $false
-    return @($tokens)
+    return @($rawFields | ForEach-Object {
+        $raw = [string]$_
+        $quoted = $raw.Length -ge 2 -and $raw[0] -eq '"' -and $raw[$raw.Length - 1] -eq '"'
+        [pscustomobject]@{
+            raw = $raw
+            quoted = $quoted
+            value = $(if ($quoted) { $raw.Substring(1, $raw.Length - 2).Replace('""', '"') } else { $raw })
+        }
+    })
+}
+
+function Read-OneCEventLogDictionary {
+    param([string]$Path)
+
+    $eventNames = @{}
+    $metadataNames = @{}
+    $processRecord = {
+        param($record)
+        $fields = @(Get-OneCBracketTopLevelFields -Text $record)
+        if ($fields.Count -eq 3 -and [string]$fields[0].value -eq "4") {
+            $eventNames[[string]$fields[2].value] = [string]$fields[1].value
+        } elseif ($fields.Count -eq 4 -and [string]$fields[0].value -eq "5") {
+            $metadataNames[[string]$fields[3].value] = [string]$fields[2].value
+        }
+    }
+    Invoke-OneCBracketRecordStream -Path $Path -OnRecord $processRecord
+    return [pscustomobject]@{
+        eventNames = $eventNames
+        metadataNames = $metadataNames
+    }
+}
+
+function Resolve-OneCEventLogDictionaryValue {
+    param(
+        [hashtable]$Values,
+        [AllowNull()][string]$Key,
+        [string]$FallbackPrefix
+    )
+
+    $normalizedKey = ([string]$Key).Trim()
+    if (-not $normalizedKey -or $normalizedKey -eq "0") { return "" }
+    if ($null -ne $Values -and $Values.ContainsKey($normalizedKey)) {
+        return [string]$Values[$normalizedKey]
+    }
+    if ($normalizedKey -notmatch '^\d+$') { return $normalizedKey }
+    return "$FallbackPrefix$normalizedKey"
 }
 
 function Normalize-EventLogSignaturePart {
@@ -1734,44 +1812,30 @@ function New-EventLogErrorSignature {
 function ConvertFrom-OneCEventLogRecord {
     param(
         [string]$RecordText,
+        [object]$Dictionary = $null,
         [hashtable]$WantedLevels = $null,
         [Nullable[datetime]]$StartTime = $null,
         [Nullable[datetime]]$EndTime = $null
     )
 
-    $tokens = @(Get-OneCBracketTokens -Text $RecordText)
-    if ($tokens.Count -eq 0) {
+    $fields = @(Get-OneCBracketTopLevelFields -Text $RecordText)
+    if ($fields.Count -eq 0) {
         return $null
     }
 
-    $date = $null
-    $dateToken = ""
-    foreach ($token in $tokens) {
-        $date = ConvertFrom-OneCEventLogDate -Value $token.value
-        if ($null -ne $date) {
-            $dateToken = [string]$token.value
-            break
-        }
-    }
+    $date = ConvertFrom-OneCEventLogDate -Value ([string]$fields[0].value)
     if ($null -eq $date) {
         return $null
     }
 
-    $level = ""
-    foreach ($token in $tokens) {
-        if ([string]$token.value -eq $dateToken) {
-            continue
-        }
-        $level = Normalize-OneCEventLogLevel -Value $token.value
-        if ($level) {
-            break
-        }
-    }
-    if (-not $level -and (($tokens | ForEach-Object { [string]$_.value }) -contains "Ошибка")) {
-        $level = "Error"
-    }
+    $sequential = $fields.Count -ge 13 -and (Normalize-OneCEventLogLevel -Value ([string]$fields[8].value))
+    $level = if ($sequential) {
+        Normalize-OneCEventLogLevel -Value ([string]$fields[8].value)
+    } elseif ($fields.Count -ge 2) {
+        Normalize-OneCEventLogLevel -Value ([string]$fields[1].value)
+    } else { "" }
     if (-not $level) {
-        $level = "Info"
+        throw "EVENT_LOG_RECORD_LEVEL_UNRESOLVED: $($RecordText.Substring(0, [Math]::Min(240, $RecordText.Length)))"
     }
     if ($null -ne $WantedLevels -and $WantedLevels.Count -gt 0 -and -not $WantedLevels.ContainsKey($level)) {
         return $null
@@ -1783,37 +1847,24 @@ function ConvertFrom-OneCEventLogRecord {
         return $null
     }
 
-    $quoted = @($tokens | Where-Object { $_.quoted -and -not [string]::IsNullOrWhiteSpace([string]$_.value) } | ForEach-Object { [string]$_.value })
-    $event = ""
-    foreach ($token in $tokens) {
-        $value = [string]$token.value
-        if ($value -match '^\s*\d{14}\s*$') {
-            continue
-        }
-        if (Normalize-OneCEventLogLevel -Value $value) {
-            continue
-        }
-        if ($value -match '(_\$.*\$_|^[^\s,;"]+\.[^\s,;"]+)') {
-            $event = $value
-            break
-        }
-    }
-
-    $comment = ""
-    if ($quoted.Count -gt 0) {
-        $comment = [string]$quoted[-1]
-    }
-    $metadata = ""
-    foreach ($value in $quoted) {
-        if ($value -match '\.') {
-            $metadata = $value
-            break
-        }
-    }
-    $dataPresentation = ""
-    if ($quoted.Count -gt 1) {
-        $dataPresentation = [string]$quoted[0]
-    }
+    $event = if ($sequential) {
+        Resolve-OneCEventLogDictionaryValue `
+            -Values $(if ($null -ne $Dictionary) { $Dictionary.eventNames } else { $null }) `
+            -Key ([string]$fields[7].value) `
+            -FallbackPrefix "event-id:"
+    } elseif ($fields.Count -ge 3) { [string]$fields[2].value } else { "" }
+    $comment = if ($sequential -and $fields.Count -ge 10) {
+        [string]$fields[9].value
+    } elseif ($fields.Count -ge 6) { [string]$fields[5].value } else { "" }
+    $metadata = if ($sequential -and $fields.Count -ge 11) {
+        Resolve-OneCEventLogDictionaryValue `
+            -Values $(if ($null -ne $Dictionary) { $Dictionary.metadataNames } else { $null }) `
+            -Key ([string]$fields[10].value) `
+            -FallbackPrefix "metadata-id:"
+    } elseif ($fields.Count -ge 4) { [string]$fields[3].value } else { "" }
+    $dataPresentation = if ($sequential -and $fields.Count -ge 13) {
+        [string]$fields[12].value
+    } elseif ($fields.Count -ge 5) { [string]$fields[4].value } else { "" }
 
     $eventObject = [pscustomobject]@{
         date = $date
@@ -1864,6 +1915,8 @@ function Read-OneCEventLogDirect {
         return @()
     }
 
+    $dictionary = Read-OneCEventLogDictionary -Path $lgfPath
+
     $wantedLevels = @{}
     foreach ($level in $Levels) {
         if ($level) {
@@ -1874,19 +1927,23 @@ function Read-OneCEventLogDirect {
     $events = New-Object System.Collections.ArrayList
     foreach ($file in $lgpFiles) {
         $startOffset = 0
+        $endOffset = [int64]$file.Length
         if (@($SegmentSelections).Count -gt 0) {
             $selection = @($SegmentSelections | Where-Object { [string]$_.path -eq $file.FullName } | Select-Object -First 1)
-            if ($selection.Count -gt 0) { $startOffset = [int64]$selection[0].startOffset }
+            if ($selection.Count -gt 0) {
+                $startOffset = [int64]$selection[0].startOffset
+                $endOffset = [int64](Get-StateValue -State $selection[0] -Name "endOffset" -Default $endOffset)
+            }
         }
         $processRecord = {
             param($record)
-            $event = ConvertFrom-OneCEventLogRecord -RecordText $record -WantedLevels $wantedLevels -StartTime $StartTime -EndTime $EndTime
+            $event = ConvertFrom-OneCEventLogRecord -RecordText $record -Dictionary $dictionary -WantedLevels $wantedLevels -StartTime $StartTime -EndTime $EndTime
             if ($null -eq $event) {
                 return
             }
             [void]$events.Add($event)
         }
-        Invoke-OneCBracketRecordStream -Path $file.FullName -OnRecord $processRecord -StartOffset $startOffset
+        Invoke-OneCBracketRecordStream -Path $file.FullName -OnRecord $processRecord -StartOffset $startOffset -EndOffset $endOffset
     }
     return @($events)
 }
@@ -2232,6 +2289,99 @@ function Get-DevBranchEventLogDeltaSelection {
     }
 }
 
+function Get-OneCEventLogFileRangeSha256 {
+    param(
+        [string]$Path,
+        [int64]$Offset,
+        [int]$Length
+    )
+
+    if ($Length -le 0) { return (Get-StringSha256 -Value "") }
+    $buffer = New-Object byte[] $Length
+    $stream = New-Object System.IO.FileStream($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        [void]$stream.Seek($Offset, [System.IO.SeekOrigin]::Begin)
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+        if ($read -ne $Length) {
+            throw "EVENT_LOG_SEGMENT_RANGE_CHANGED: path=$Path; offset=$Offset; expected=$Length; actual=$read"
+        }
+    } finally { $stream.Dispose() }
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([System.BitConverter]::ToString($sha.ComputeHash($buffer))).Replace("-", "").ToLowerInvariant()
+    } finally { $sha.Dispose() }
+}
+
+function Test-OneCEventLogCompleteBoundary {
+    param(
+        [string]$Path,
+        [int64]$EndOffset = -1
+    )
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    if ($EndOffset -lt 0) { $EndOffset = [int64]$file.Length }
+    if ($EndOffset -lt 0 -or $EndOffset -gt [int64]$file.Length) { return $false }
+    if ($EndOffset -eq 0) { return $true }
+    $length = [int][Math]::Min([int64]4096, $EndOffset)
+    $offset = $EndOffset - $length
+    $buffer = New-Object byte[] $length
+    $stream = New-Object System.IO.FileStream($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        [void]$stream.Seek($offset, [System.IO.SeekOrigin]::Begin)
+        $read = $stream.Read($buffer, 0, $buffer.Length)
+    } finally { $stream.Dispose() }
+    for ($index = $read - 1; $index -ge 0; $index--) {
+        if ($buffer[$index] -in @(0x09, 0x0A, 0x0D, 0x20)) { continue }
+        return $buffer[$index] -eq 0x7D
+    }
+    return $true
+}
+
+function Get-OneCEventLogSegmentProof {
+    param(
+        [System.IO.FileInfo]$File,
+        [int64]$EndOffset = -1
+    )
+
+    if ($EndOffset -lt 0) { $EndOffset = [int64]$File.Length }
+    if ($EndOffset -lt 0 -or $EndOffset -gt [int64]$File.Length) {
+        throw "EVENT_LOG_SEGMENT_RANGE_INVALID: path=$($File.FullName); end=$EndOffset; length=$($File.Length)"
+    }
+    $probeLength = [int][Math]::Min([int64]4096, $EndOffset)
+    $boundaryStart = $EndOffset - $probeLength
+    return [ordered]@{
+        creationTimeUtcTicks = [int64]$File.CreationTimeUtc.Ticks
+        prefixLength = $probeLength
+        prefixSha256 = Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset 0 -Length $probeLength
+        boundaryStart = $boundaryStart
+        boundaryLength = $probeLength
+        boundarySha256 = Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset $boundaryStart -Length $probeLength
+        completeBoundary = Test-OneCEventLogCompleteBoundary -Path $File.FullName -EndOffset $EndOffset
+    }
+}
+
+function Test-OneCEventLogAppendOnlyChange {
+    param(
+        [System.IO.FileInfo]$File,
+        [object]$Cached
+    )
+
+    $cachedLength = [int64](Get-StateValue -State $Cached -Name "length" -Default -1)
+    if ($cachedLength -lt 0 -or [int64]$File.Length -le $cachedLength) { return $false }
+    if (-not [bool](Get-StateValue -State $Cached -Name "completeBoundary" -Default $false)) { return $false }
+    if (-not (Test-OneCEventLogCompleteBoundary -Path $File.FullName)) { return $false }
+    if ([int64](Get-StateValue -State $Cached -Name "creationTimeUtcTicks" -Default -1) -ne [int64]$File.CreationTimeUtc.Ticks) { return $false }
+
+    $prefixLength = [int](Get-StateValue -State $Cached -Name "prefixLength" -Default -1)
+    $boundaryStart = [int64](Get-StateValue -State $Cached -Name "boundaryStart" -Default -1)
+    $boundaryLength = [int](Get-StateValue -State $Cached -Name "boundaryLength" -Default -1)
+    if ($prefixLength -lt 0 -or $boundaryStart -lt 0 -or $boundaryLength -lt 0 -or ($boundaryStart + $boundaryLength) -gt $cachedLength) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset 0 -Length $prefixLength) -ne [string](Get-StateValue -State $Cached -Name "prefixSha256" -Default "")) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset $boundaryStart -Length $boundaryLength) -ne [string](Get-StateValue -State $Cached -Name "boundarySha256" -Default "")) { return $false }
+    return $true
+}
+
 function Read-DevBranchEventLogBaselineWithCache {
     param([object]$State)
 
@@ -2247,7 +2397,7 @@ function Read-DevBranchEventLogBaselineWithCache {
     if (Test-Path -LiteralPath $cachePath -PathType Leaf -ErrorAction SilentlyContinue) {
         try {
             $candidate = Read-Utf8Text -Path $cachePath | ConvertFrom-Json
-            if ([int](Get-StateValue -State $candidate -Name "schemaVersion" -Default 0) -ne 1 -or
+            if ([int](Get-StateValue -State $candidate -Name "schemaVersion" -Default 0) -ne 2 -or
                 [string](Get-StateValue -State $candidate -Name "sourceKey" -Default "") -ne $sourceKey) {
                 throw "incompatible cache schema or source key"
             }
@@ -2272,32 +2422,77 @@ function Read-DevBranchEventLogBaselineWithCache {
     }
 
     $segments = @()
+    $scannedBytes = [int64]0
+    $appendSegmentCount = 0
+    $fullSegmentCount = 0
     foreach ($file in $files) {
-        $lastWrite = $file.LastWriteTimeUtc.ToString("o")
+        $snapshot = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
+        $snapshotLength = [int64]$snapshot.Length
+        $lastWrite = $snapshot.LastWriteTimeUtc.ToString("o")
         $cached = if ($cachedByName.ContainsKey($file.Name)) { $cachedByName[$file.Name] } else { $null }
-        $unchanged = $null -ne $cached -and [int64]$cached.length -eq [int64]$file.Length -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
+        $unchanged = $null -ne $cached -and [int64]$cached.length -eq $snapshotLength -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
         if ($unchanged) {
             $segments += $cached
             continue
         }
 
         if ($cacheStatus -eq "hit") { $cacheStatus = "updated" }
-        $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentPaths @($file.FullName))
-        $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+        $appendOnly = $null -ne $cached -and (Test-OneCEventLogAppendOnlyChange -File $snapshot -Cached $cached)
+        if ($appendOnly) {
+            $startOffset = [int64]$cached.length
+            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                path = $snapshot.FullName
+                startOffset = $startOffset
+                endOffset = $snapshotLength
+            }))
+            $signatures = @(
+                @($cached.signatures) + @($events | ForEach-Object { $_.signature }) |
+                    Where-Object { $_ } |
+                    Sort-Object -Unique
+            )
+            $errorCount = [int]$cached.errorCount + $events.Count
+            $scanMode = "append"
+            $scannedBytes += $snapshotLength - $startOffset
+            $appendSegmentCount++
+        } else {
+            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                path = $snapshot.FullName
+                startOffset = [int64]0
+                endOffset = $snapshotLength
+            }))
+            $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = $events.Count
+            $scanMode = "full"
+            $scannedBytes += $snapshotLength
+            $fullSegmentCount++
+        }
+        $proofFile = Get-Item -LiteralPath $snapshot.FullName -ErrorAction Stop
+        $proof = Get-OneCEventLogSegmentProof -File $proofFile -EndOffset $snapshotLength
+        if (-not [bool]$proof.completeBoundary) {
+            throw "EVENT_LOG_SEGMENT_UNSAFE_BOUNDARY: full rescan did not reach a complete record boundary: $($file.FullName)"
+        }
         $segments += [ordered]@{
-            name = $file.Name
-            length = [int64]$file.Length
+            name = $snapshot.Name
+            length = $snapshotLength
             lastWriteTimeUtc = $lastWrite
-            errorCount = $events.Count
+            errorCount = $errorCount
             signatureCount = $signatures.Count
             signatures = @($signatures)
+            scanMode = $scanMode
+            creationTimeUtcTicks = $proof.creationTimeUtcTicks
+            prefixLength = $proof.prefixLength
+            prefixSha256 = $proof.prefixSha256
+            boundaryStart = $proof.boundaryStart
+            boundaryLength = $proof.boundaryLength
+            boundarySha256 = $proof.boundarySha256
+            completeBoundary = $proof.completeBoundary
         }
     }
 
     if ($cacheStatus -ne "hit") {
         New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
         $cachePayload = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             sourceKey = $sourceKey
             reader = "direct-stream"
             updatedAt = (Get-Date).ToString("o")
@@ -2321,6 +2516,9 @@ function Read-DevBranchEventLogBaselineWithCache {
         signatures = @($allSignatures)
         logDirectory = $logDirectory
         durationMs = [int64]$stopwatch.ElapsedMilliseconds
+        scannedBytes = $scannedBytes
+        appendSegmentCount = $appendSegmentCount
+        fullSegmentCount = $fullSegmentCount
     }
 }
 

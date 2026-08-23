@@ -2770,6 +2770,50 @@
         }
     }
 
+    It "decodes fixed sequential fields and LGF dictionaries without treating numeric identifiers as levels" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-sequential-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value @(
+                '1CV8LOG(ver 2.0)',
+                'e4812c1b-b1d6-442c-bb53-080a84446ada',
+                '{4,"_$Transaction$_.Begin",14}',
+                '{4,"_$Transaction$_.Commit",15}',
+                '{4,"_$PerformError$_",48}',
+                '{5,5f3b5089-9a85-4a36-be4a-52aa6b96d0ae,"Справочник.упо_НастройкиМонитораПроекта",117}'
+            )
+            Set-Content -LiteralPath (Join-Path $logDir "20260817.lgp") -Encoding UTF8 -Value @(
+                '{20260823120000,C,{2455583283b90,b79c},4,1,4,2,14,I,"",0,{"U"},"",0,0,0,8,0,{0}}',
+                '{20260823120001,C,{2455583283b90,b79c},4,1,4,2,15,I,"",0,{"U"},"",0,0,0,8,0,{0}}',
+                '{20260823120002,N,{0,0},4,1,4,2,48,E,"Ошибка фонового задания 12345678",117,{"U"},"Проект 42",0,0,0,8,0,{0}}'
+            )
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                }
+
+                $errors = @(Read-OneCEventLogDirect -State $state -Levels @("Error"))
+                $errors.Count | Should -Be 1
+                $errors[0].event | Should -BeExactly '_$PerformError$_'
+                $errors[0].metadata | Should -BeExactly "Справочник.упо_НастройкиМонитораПроекта"
+                $errors[0].dataPresentation | Should -BeExactly "Проект 42"
+                $errors[0].comment | Should -BeExactly "Ошибка фонового задания 12345678"
+
+                $information = @(Read-OneCEventLogDirect -State $state -Levels @("Info"))
+                $information.Count | Should -Be 2
+                @($information.event) | Should -Be @('_$Transaction$_.Begin', '_$Transaction$_.Commit')
+                @($information.signature) | Should -Not -Contain "649f11d64972b14969c1908f6f6e732782124851b6d3ecbc0b66cc5dcf993b68"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "reads only the active tail and new event-log segments from a run cursor" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cursor-test-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -3006,24 +3050,42 @@
                 $first.cacheStatus | Should -Be "rebuilt"
                 $first.errorCount | Should -Be 1
                 $first.signatureCount | Should -Be 1
+                $first.fullSegmentCount | Should -Be 1
+                $first.appendSegmentCount | Should -Be 0
+                $first.scannedBytes | Should -Be (Get-Item -LiteralPath $segment1).Length
                 Test-Path -LiteralPath $first.cachePath -PathType Leaf | Should -BeTrue
+                (Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json).schemaVersion | Should -Be 2
 
                 $hit = Read-DevBranchEventLogBaselineWithCache -State $state
                 $hit.cacheStatus | Should -Be "hit"
                 $hit.signatureCount | Should -Be 1
+                $hit.scannedBytes | Should -Be 0
 
+                $beforeAppendLength = (Get-Item -LiteralPath $segment1).Length
                 Add-Content -LiteralPath $segment1 -Encoding UTF8 -Value '{20260703101000,E,"_$PerformError$_","Catalog.Items","Item 2","Changed error"}'
                 (Get-Item -LiteralPath $segment1).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(2)
                 $changed = Read-DevBranchEventLogBaselineWithCache -State $state
                 $changed.cacheStatus | Should -Be "updated"
                 $changed.errorCount | Should -Be 2
                 $changed.signatureCount | Should -Be 2
+                $changed.appendSegmentCount | Should -Be 1
+                $changed.fullSegmentCount | Should -Be 0
+                $changed.scannedBytes | Should -Be ((Get-Item -LiteralPath $segment1).Length - $beforeAppendLength)
+                $changed.scannedBytes | Should -BeLessThan (Get-Item -LiteralPath $segment1).Length
+
+                Set-Content -LiteralPath $segment1 -Encoding UTF8 -Value '{20260703101500,E,"_$PerformError$_","Catalog.Items","Item 2","After truncation"}'
+                $truncated = Read-DevBranchEventLogBaselineWithCache -State $state
+                $truncated.cacheStatus | Should -Be "updated"
+                $truncated.errorCount | Should -Be 1
+                $truncated.fullSegmentCount | Should -Be 1
+                $truncated.appendSegmentCount | Should -Be 0
+                $truncated.scannedBytes | Should -Be (Get-Item -LiteralPath $segment1).Length
 
                 $segment2 = Join-Path $logDir "20260704.lgp"
                 Set-Content -LiteralPath $segment2 -Encoding UTF8 -Value '{20260704100000,E,"_$PerformError$_","Catalog.Items","Item 3","Rotated error"}'
                 $added = Read-DevBranchEventLogBaselineWithCache -State $state
                 $added.cacheStatus | Should -Be "updated"
-                $added.errorCount | Should -Be 3
+                $added.errorCount | Should -Be 2
 
                 Remove-Item -LiteralPath $segment1 -Force
                 $rotated = Read-DevBranchEventLogBaselineWithCache -State $state
@@ -3035,11 +3097,86 @@
                 $rebuilt = Read-DevBranchEventLogBaselineWithCache -State $state 6>$null
                 $rebuilt.cacheStatus | Should -Be "rebuilt"
                 $rebuilt.errorCount | Should -Be 1
+
+                $legacyCache = Read-Utf8Text -Path $rebuilt.cachePath | ConvertFrom-Json
+                $legacyCache.schemaVersion = 1
+                Write-Utf8Text -Path $rebuilt.cachePath -Value (($legacyCache | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
+                $schemaRebuilt = Read-DevBranchEventLogBaselineWithCache -State $state 6>$null
+                $schemaRebuilt.cacheStatus | Should -Be "rebuilt"
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "falls back to a full segment scan when an apparent append changed the cached prefix" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cache-prefix-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $segment = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $segment -Encoding UTF8 -Value '{20260703100000,E,"_$PerformError$_","Catalog.Items","Old","Original"}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                Read-DevBranchEventLogBaselineWithCache -State $state | Out-Null
+                Set-Content -LiteralPath $segment -Encoding UTF8 -Value @(
+                    '{20260703100000,E,"_$PerformError$_","Catalog.Items","Old","Replaced prefix"}',
+                    '{20260703100500,E,"_$PerformError$_","Catalog.Items","New","Appended"}'
+                )
+                $result = Read-DevBranchEventLogBaselineWithCache -State $state
+                $result.cacheStatus | Should -Be "updated"
+                $result.fullSegmentCount | Should -Be 1
+                $result.appendSegmentCount | Should -Be 0
+                $result.scannedBytes | Should -Be (Get-Item -LiteralPath $segment).Length
+                $result.errorCount | Should -Be 2
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps the last safe cached boundary when an appended record is incomplete" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cache-boundary-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $segment = Join-Path $logDir "20260703.lgp"
+            Set-Content -LiteralPath $segment -Encoding UTF8 -Value '{20260703100000,E,"_$PerformError$_","Catalog.Items","Old","Complete"}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $first = Read-DevBranchEventLogBaselineWithCache -State $state
+                $safeLength = [int64](Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json).segments[0].length
+
+                [System.IO.File]::AppendAllText($segment, "`n{20260703100500,E,`"_`$PerformError`$_`",`"Catalog.Items`",`"New`",`"Incomplete`"", [System.Text.Encoding]::UTF8)
+                { Read-DevBranchEventLogBaselineWithCache -State $state } | Should -Throw "*Incomplete bracket record*"
+                [int64](Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json).segments[0].length | Should -Be $safeLength
+
+                [System.IO.File]::AppendAllText($segment, "}", [System.Text.Encoding]::UTF8)
+                $completed = Read-DevBranchEventLogBaselineWithCache -State $state
+                $completed.errorCount | Should -Be 2
+                $completed.appendSegmentCount | Should -Be 1
+                $completed.fullSegmentCount | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
