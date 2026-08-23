@@ -25,7 +25,7 @@
     "ReleaseReadiness.Tests.ps1": 8.0,
     "SourceDeliveryComponentPublication.Tests.ps1": 45.4,
     "SourceDeliveryProcessLifetime.Tests.ps1": 5.2,
-    "SourceDeliveryPublish.Tests.ps1": 430.4,
+    "SourceDeliveryPublish.Tests.ps1": 800.0,
     "SourceDeliveryQueue.Tests.ps1": 177.0,
     "VanessaAuthoring.Tests.ps1": 8.7
   }

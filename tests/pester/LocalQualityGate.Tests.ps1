@@ -98,6 +98,10 @@ Describe "Local quality gate contract" {
         $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
         $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $check | Should -Match 'SelectionPath", \$selectionPath\) -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
+        [int]$catalog.budgets.targetedHardSeconds | Should -BeGreaterOrEqual 1200
+        [int]($catalog.contracts | Where-Object id -eq "source-delivery").budgetSeconds | Should -BeGreaterOrEqual 1200
     }
     It "owns shard archive and cache hashing without Get-FileHash" {
         $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"

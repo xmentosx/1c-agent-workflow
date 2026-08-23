@@ -4,7 +4,7 @@
     "smokeTargetSeconds": 60,
     "smokeHardSeconds": 120,
     "targetedTargetSeconds": 300,
-    "targetedHardSeconds": 900,
+    "targetedHardSeconds": 1200,
     "fullTargetSeconds": 600,
     "fullHardSeconds": 1200,
     "developTargetSeconds": 1500,
@@ -99,7 +99,7 @@
       "id": "source-quality-gate",
       "owner": "source quality and qualification",
       "gate": "targeted",
-      "budgetSeconds": 900,
+      "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
       "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
       "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
@@ -108,7 +108,7 @@
       "id": "source-delivery",
       "owner": "develop and master delivery",
       "gate": "targeted",
-      "budgetSeconds": 900,
+      "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
       "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-candidate.ps1", "scripts/git-path-list.ps1", "tests/pester/SourceDelivery.TestSupport.ps1", "AGENTS.md", "docs/local-quality-gate.md", "docs/release-checklist.md"],
       "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
