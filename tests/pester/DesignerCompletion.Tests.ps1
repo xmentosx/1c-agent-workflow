@@ -396,6 +396,56 @@ Describe "1C Designer completion evidence" {
         $result.statusWrites | Should -Be 1
     }
 
+    It "keeps a heartbeat and fails before the outer watchdog when the infobase release check blocks" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $RunStatusPath = Join-Path $TestDrive "infobase-probe-status.json"
+            $script:StatusWrites = 0
+            function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+            function Start-DesignerInfoBaseReleaseCheck {
+                param([object]$ProbeState, [string]$InfoBasePath)
+                $fakeProcess = [pscustomobject]@{ HasExited = $false }
+                $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
+                $ProbeState.infoBaseReleaseProcess = $fakeProcess
+                $ProbeState.infoBaseReleaseOutputPath = Join-Path $TestDrive "blocked-infobase-probe.json"
+                $ProbeState.infoBaseReleaseStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-6)
+            }
+            function Stop-NativeProcessForSafety {
+                param([object]$Process)
+                return [pscustomobject]@{ confirmed = $true; error = "" }
+            }
+
+            $state = New-DesignerInvocationProbeState `
+                -LauncherProcessId 0 `
+                -StallWarningSeconds 30 `
+                -StallTimeoutSeconds 60 `
+                -SubProbeTimeoutSeconds 5
+            $message = try {
+                Receive-DesignerInfoBaseReleaseCheck `
+                    -ProbeState $state `
+                    -InfoBaseKind file `
+                    -InfoBasePath (Join-Path $TestDrive "base") | Out-Null
+                ""
+            } catch {
+                $_.Exception.Message
+            }
+            [pscustomobject]@{
+                message = $message
+                phase = $script:RunProbePhase
+                age = $script:RunProbeAgeSeconds
+                liveness = $script:RunLiveness
+                statusWrites = $script:StatusWrites
+            }
+        }
+
+        $result.message | Should -Match '^DESIGNER_COMPLETION_PROBE_TIMEOUT phase=infobase-release-check\b'
+        $result.message | Should -Match 'terminationConfirmed=True'
+        $result.phase | Should -Be "infobase-release-check"
+        $result.age | Should -BeGreaterOrEqual 5
+        $result.liveness | Should -Be "probe-running"
+        $result.statusWrites | Should -Be 1
+    }
+
     It "publishes active and stalled liveness evidence without changing the memory guard peak" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -571,9 +621,10 @@ Describe "1C Designer completion evidence" {
                     workingSetSampleAvailable = $true; workingSetMb = 0; detail = ""
                 }
             }
-            function Test-DesignerInfoBaseReleased {
+            function Receive-DesignerInfoBaseReleaseCheck {
+                param([object]$ProbeState, [string]$InfoBaseKind, [string]$InfoBasePath)
                 $script:InfoBaseReleaseChecks++
-                return $false
+                return [pscustomobject]@{ status = "completed"; released = $false }
             }
 
             $context = [pscustomobject]@{
@@ -881,12 +932,19 @@ Describe "1C Designer completion evidence" {
                     [System.IO.FileShare]::Read
                 )
                 try {
-                    $script:ProbeWhileLocked = [bool](& $CompletionProbe $exitedContext)
+                    foreach ($attempt in 1..20) {
+                        $script:ProbeWhileLocked = [bool](& $CompletionProbe $exitedContext)
+                        if ($script:ProbeWhileLocked) { break }
+                        Start-Sleep -Milliseconds 100
+                    }
                 } finally {
                     $holder.Dispose()
                 }
-                Start-Sleep -Milliseconds 1100
-                $script:ProbeAfterRelease = [bool](& $CompletionProbe $exitedContext)
+                foreach ($attempt in 1..50) {
+                    $script:ProbeAfterRelease = [bool](& $CompletionProbe $exitedContext)
+                    if ($script:ProbeAfterRelease) { break }
+                    Start-Sleep -Milliseconds 100
+                }
                 return [pscustomobject]@{
                     processId = 7001; exitCode = 0; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -972,11 +1030,18 @@ Describe "1C Designer completion evidence" {
                     processId = 7005
                     postExitElapsedSeconds = 0
                 }
-                $script:ProbeWhileLocked = [bool](& $CompletionProbe $context)
+                foreach ($attempt in 1..20) {
+                    $script:ProbeWhileLocked = [bool](& $CompletionProbe $context)
+                    if ($script:ProbeWhileLocked) { break }
+                    Start-Sleep -Milliseconds 100
+                }
                 $script:DatabaseHolder.Dispose()
                 $script:DatabaseHolder = $null
-                Start-Sleep -Milliseconds 1100
-                $script:ProbePassed = [bool](& $CompletionProbe $context)
+                foreach ($attempt in 1..50) {
+                    $script:ProbePassed = [bool](& $CompletionProbe $context)
+                    if ($script:ProbePassed) { break }
+                    Start-Sleep -Milliseconds 100
+                }
                 return [pscustomobject]@{
                     processId = 7005; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -1047,9 +1112,11 @@ Describe "1C Designer completion evidence" {
                     processId = 7007
                     postExitElapsedSeconds = 0
                 }
-                $script:ProbePassed = [bool](& $CompletionProbe $context)
-                Start-Sleep -Milliseconds 1100
-                $script:ProbePassed = [bool](& $CompletionProbe $context)
+                foreach ($attempt in 1..50) {
+                    $script:ProbePassed = [bool](& $CompletionProbe $context)
+                    if ($script:ProbePassed) { break }
+                    Start-Sleep -Milliseconds 100
+                }
                 return [pscustomobject]@{
                     processId = 7007; exitCode = 0; timedOut = $false; postExitProbeTimedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
