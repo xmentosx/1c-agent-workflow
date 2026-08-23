@@ -402,13 +402,14 @@ Describe "1C Designer completion evidence" {
             $RunStatusPath = Join-Path $TestDrive "infobase-probe-status.json"
             $script:StatusWrites = 0
             function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
-            function Start-DesignerInfoBaseReleaseCheck {
-                param([object]$ProbeState, [string]$InfoBasePath)
+            function Start-DesignerProcessEnumeration {
+                param([object]$ProbeState, [string]$LogPath)
                 $fakeProcess = [pscustomobject]@{ HasExited = $false }
                 $fakeProcess | Add-Member -MemberType ScriptMethod -Name Refresh -Value { }
-                $ProbeState.infoBaseReleaseProcess = $fakeProcess
-                $ProbeState.infoBaseReleaseOutputPath = Join-Path $TestDrive "blocked-infobase-probe.json"
-                $ProbeState.infoBaseReleaseStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-6)
+                $ProbeState.processScanProcess = $fakeProcess
+                $ProbeState.processScanOutputPath = Join-Path $TestDrive "blocked-infobase-probe.json"
+                $ProbeState.processScanStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-6)
+                $ProbeState.processProbeStartedAtUtc = $ProbeState.processScanStartedAtUtc
             }
             function Stop-NativeProcessForSafety {
                 param([object]$Process)
@@ -420,11 +421,11 @@ Describe "1C Designer completion evidence" {
                 -StallWarningSeconds 30 `
                 -StallTimeoutSeconds 60 `
                 -SubProbeTimeoutSeconds 5
+            $state.infoBaseReleaseDatabasePath = Join-Path $TestDrive "base\1Cv8.1CD"
             $message = try {
-                Receive-DesignerInfoBaseReleaseCheck `
+                Get-DesignerInvocationProcessState `
                     -ProbeState $state `
-                    -InfoBaseKind file `
-                    -InfoBasePath (Join-Path $TestDrive "base") | Out-Null
+                    -LogPath (Join-Path $TestDrive "designer.log") | Out-Null
                 ""
             } catch {
                 $_.Exception.Message
@@ -615,16 +616,17 @@ Describe "1C Designer completion evidence" {
             $script:InfoBaseReleaseChecks = 0
             $script:InvocationProcessActive = $false
             function Get-DesignerInvocationProcessState {
+                param([object]$ProbeState, [string]$LogPath)
+                if (-not $script:InvocationProcessActive -and $ProbeState.infoBaseReleaseDatabasePath) {
+                    $script:InfoBaseReleaseChecks++
+                }
                 return [pscustomobject]@{
                     querySucceeded = $true; active = $script:InvocationProcessActive; processIds = $(if ($script:InvocationProcessActive) { @(8269) } else { @() })
                     cpuSampleAvailable = $true; cpuTime100ns = [int64]0
-                    workingSetSampleAvailable = $true; workingSetMb = 0; detail = ""
+                    workingSetSampleAvailable = $true; workingSetMb = 0
+                    infoBaseReleaseChecked = (-not $script:InvocationProcessActive -and [bool]$ProbeState.infoBaseReleaseDatabasePath)
+                    infoBaseReleased = $false; detail = ""
                 }
-            }
-            function Receive-DesignerInfoBaseReleaseCheck {
-                param([object]$ProbeState, [string]$InfoBaseKind, [string]$InfoBasePath)
-                $script:InfoBaseReleaseChecks++
-                return [pscustomobject]@{ status = "completed"; released = $false }
             }
 
             $context = [pscustomobject]@{
@@ -893,7 +895,12 @@ Describe "1C Designer completion evidence" {
             $script:CapturedPostExitProbeSeconds = 0
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
-                return [pscustomobject]@{ status = "completed"; processes = @() }
+                $releaseChecked = [bool]$ProbeState.infoBaseReleaseDatabasePath
+                return [pscustomobject]@{
+                    status = "completed"; processes = @()
+                    infoBaseReleaseChecked = $releaseChecked
+                    infoBaseReleased = ($releaseChecked -and (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $basePath))
+                }
             }
             function Invoke-NativeProcessAndWaitResult {
                 param(
@@ -1011,7 +1018,12 @@ Describe "1C Designer completion evidence" {
             $script:DatabaseHolder = $null
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
-                return [pscustomobject]@{ status = "completed"; processes = @() }
+                $releaseChecked = [bool]$ProbeState.infoBaseReleaseDatabasePath
+                return [pscustomobject]@{
+                    status = "completed"; processes = @()
+                    infoBaseReleaseChecked = $releaseChecked
+                    infoBaseReleased = ($releaseChecked -and (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $basePath))
+                }
             }
             function Invoke-NativeProcessAndWaitResult {
                 param(
@@ -1094,7 +1106,12 @@ Describe "1C Designer completion evidence" {
             $script:ProbePassed = $false
             function Receive-DesignerProcessEnumeration {
                 param([object]$ProbeState, [string]$LogPath)
-                return [pscustomobject]@{ status = "completed"; processes = @() }
+                $releaseChecked = [bool]$ProbeState.infoBaseReleaseDatabasePath
+                return [pscustomobject]@{
+                    status = "completed"; processes = @()
+                    infoBaseReleaseChecked = $releaseChecked
+                    infoBaseReleased = ($releaseChecked -and (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $basePath))
+                }
             }
             function Invoke-NativeProcessAndWaitResult {
                 param(

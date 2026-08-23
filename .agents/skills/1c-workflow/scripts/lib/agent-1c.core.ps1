@@ -5512,148 +5512,9 @@ function New-DesignerInvocationProbeState {
         processScanProcess = $null
         processScanOutputPath = ""
         processScanStartedAtUtc = $null
-        infoBaseReleaseProcess = $null
-        infoBaseReleaseOutputPath = ""
-        infoBaseReleaseStartedAtUtc = $null
-        infoBaseReleaseLastCompletedAtUtc = $null
+        infoBaseReleaseDatabasePath = ""
         probeLastStatusPublishedAtUtc = [DateTime]::MinValue
     }
-}
-
-function Start-DesignerInfoBaseReleaseCheck {
-    param(
-        [Parameter(Mandatory = $true)][object]$ProbeState,
-        [string]$InfoBasePath
-    )
-
-    if ($null -ne $ProbeState.infoBaseReleaseProcess) {
-        throw "Designer infobase release check is already running."
-    }
-
-    $databasePath = Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
-    $outputPath = Join-Path (Get-Agent1cTempRoot) ("designer-infobase-release-probe-{0}-{1}.json" -f $PID, ([guid]::NewGuid().ToString("N")))
-    $inputBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{
-        outputPath = $outputPath
-        databasePath = $databasePath
-    } | ConvertTo-Json -Compress)))
-    $commandText = @"
-`$ErrorActionPreference = 'Stop'
-`$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
-`$payload = `$null
-try {
-    `$released = `$false
-    if (Test-Path -LiteralPath ([string]`$inputPayload.databasePath) -PathType Leaf -ErrorAction Stop) {
-        try {
-            `$stream = [System.IO.File]::Open(
-                [string]`$inputPayload.databasePath,
-                [System.IO.FileMode]::Open,
-                [System.IO.FileAccess]::Read,
-                [System.IO.FileShare]::None
-            )
-            `$stream.Dispose()
-            `$released = `$true
-        } catch {
-            `$released = `$false
-        }
-    }
-    `$payload = [ordered]@{ status='completed'; released=`$released; error='' }
-} catch {
-    `$payload = [ordered]@{ status='failed'; released=`$false; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
-}
-[System.IO.File]::WriteAllText([string]`$inputPayload.outputPath, ((`$payload | ConvertTo-Json -Compress) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
-if (`$payload.status -eq 'failed') { exit 1 }
-exit 0
-"@
-    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
-    $process = Start-Process `
-        -FilePath "powershell" `
-        -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-        -WorkingDirectory $script:ProjectRoot `
-        -WindowStyle Hidden `
-        -PassThru
-    if ($null -eq $process) {
-        throw "Could not start the bounded Designer infobase release check."
-    }
-    $ProbeState.infoBaseReleaseProcess = $process
-    $ProbeState.infoBaseReleaseOutputPath = $outputPath
-    $ProbeState.infoBaseReleaseStartedAtUtc = [DateTime]::UtcNow
-}
-
-function Stop-DesignerInfoBaseReleaseCheck {
-    param([Parameter(Mandatory = $true)][object]$ProbeState)
-
-    $termination = [pscustomobject]@{ confirmed = $true; error = "" }
-    if ($null -ne $ProbeState.infoBaseReleaseProcess) {
-        try {
-            $ProbeState.infoBaseReleaseProcess.Refresh()
-            if (-not $ProbeState.infoBaseReleaseProcess.HasExited) {
-                $termination = Stop-NativeProcessForSafety -Process $ProbeState.infoBaseReleaseProcess
-            }
-        } catch {
-            $termination = [pscustomobject]@{ confirmed = $false; error = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim()) }
-        }
-    }
-    if ($ProbeState.infoBaseReleaseOutputPath -and (Test-Path -LiteralPath $ProbeState.infoBaseReleaseOutputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Remove-Item -LiteralPath $ProbeState.infoBaseReleaseOutputPath -Force -ErrorAction SilentlyContinue
-    }
-    $ProbeState.infoBaseReleaseProcess = $null
-    $ProbeState.infoBaseReleaseOutputPath = ""
-    $ProbeState.infoBaseReleaseStartedAtUtc = $null
-    return $termination
-}
-
-function Receive-DesignerInfoBaseReleaseCheck {
-    param(
-        [Parameter(Mandatory = $true)][object]$ProbeState,
-        [string]$InfoBaseKind,
-        [string]$InfoBasePath
-    )
-
-    if ($InfoBaseKind -ne "file") {
-        return [pscustomobject]@{ status = "completed"; released = $true }
-    }
-    if ($null -eq $ProbeState.infoBaseReleaseProcess) {
-        Start-DesignerInfoBaseReleaseCheck -ProbeState $ProbeState -InfoBasePath $InfoBasePath
-    }
-    $now = [DateTime]::UtcNow
-    Publish-DesignerCompletionProbeStatus `
-        -ProbeState $ProbeState `
-        -Phase "infobase-release-check" `
-        -StartedAtUtc ([DateTime]$ProbeState.infoBaseReleaseStartedAtUtc) `
-        -LastCompletedAtUtc $ProbeState.infoBaseReleaseLastCompletedAtUtc
-    $ProbeState.infoBaseReleaseProcess.Refresh()
-    if (-not $ProbeState.infoBaseReleaseProcess.HasExited) {
-        $ageSeconds = [int][Math]::Floor(($now - [DateTime]$ProbeState.infoBaseReleaseStartedAtUtc).TotalSeconds)
-        if ($ageSeconds -ge [int]$ProbeState.subProbeTimeoutSeconds) {
-            $termination = Stop-DesignerInfoBaseReleaseCheck -ProbeState $ProbeState
-            throw "DESIGNER_COMPLETION_PROBE_TIMEOUT phase=infobase-release-check timeoutSeconds=$($ProbeState.subProbeTimeoutSeconds) terminationConfirmed=$($termination.confirmed) terminationError='$($termination.error)'"
-        }
-        return [pscustomobject]@{ status = "pending"; released = $false }
-    }
-
-    $ProbeState.infoBaseReleaseProcess.WaitForExit()
-    $exitCode = [int]$ProbeState.infoBaseReleaseProcess.ExitCode
-    $outputPath = [string]$ProbeState.infoBaseReleaseOutputPath
-    $payload = $null
-    try {
-        if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf -ErrorAction SilentlyContinue)) {
-            throw "Bounded Designer infobase release check did not create its result."
-        }
-        $payload = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    } finally {
-        if (Test-Path -LiteralPath $outputPath -PathType Leaf -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $outputPath -Force -ErrorAction SilentlyContinue
-        }
-        $ProbeState.infoBaseReleaseProcess = $null
-        $ProbeState.infoBaseReleaseOutputPath = ""
-        $ProbeState.infoBaseReleaseStartedAtUtc = $null
-    }
-    if ($exitCode -ne 0 -or $null -eq $payload -or [string]$payload.status -ne "completed") {
-        $errorText = if ($null -ne $payload) { [string]$payload.error } else { "unknown worker failure" }
-        throw "Designer infobase release check failed: $errorText"
-    }
-    $ProbeState.infoBaseReleaseLastCompletedAtUtc = [DateTime]::UtcNow
-    return [pscustomobject]@{ status = "completed"; released = [bool]$payload.released }
 }
 
 function Start-DesignerProcessEnumeration {
@@ -5672,6 +5533,7 @@ function Start-DesignerProcessEnumeration {
         operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
         trackedProcessIds = @($ProbeState.trackedProcessIds)
         logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
+        databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
     } | ConvertTo-Json -Compress)))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
@@ -5701,9 +5563,34 @@ try {
             WorkingSetSize = [int64]`$_.WorkingSetSize
         }
     })
-    `$payload = [ordered]@{ status='completed'; processes=`$processes; error='' }
+    `$infoBaseReleaseChecked = `$false
+    `$infoBaseReleased = `$false
+    if (`$inputPayload.databasePath -and `$processes.Count -eq 0) {
+        `$infoBaseReleaseChecked = `$true
+        if (Test-Path -LiteralPath ([string]`$inputPayload.databasePath) -PathType Leaf -ErrorAction Stop) {
+            try {
+                `$stream = [System.IO.File]::Open(
+                    [string]`$inputPayload.databasePath,
+                    [System.IO.FileMode]::Open,
+                    [System.IO.FileAccess]::Read,
+                    [System.IO.FileShare]::None
+                )
+                `$stream.Dispose()
+                `$infoBaseReleased = `$true
+            } catch {
+                `$infoBaseReleased = `$false
+            }
+        }
+    }
+    `$payload = [ordered]@{
+        status='completed'
+        processes=`$processes
+        infoBaseReleaseChecked=`$infoBaseReleaseChecked
+        infoBaseReleased=`$infoBaseReleased
+        error=''
+    }
 } catch {
-    `$payload = [ordered]@{ status='failed'; processes=@(); error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
+    `$payload = [ordered]@{ status='failed'; processes=@(); infoBaseReleaseChecked=`$false; infoBaseReleased=`$false; error=((`$_.Exception.Message -replace '[\r\n]+',' ').Trim()) }
 }
 [System.IO.File]::WriteAllText([string]`$inputPayload.outputPath, ((`$payload | ConvertTo-Json -Compress -Depth 4) + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding `$false))
 if (`$payload.status -eq 'failed') { exit 1 }
@@ -5758,9 +5645,10 @@ function Receive-DesignerProcessEnumeration {
         Start-DesignerProcessEnumeration -ProbeState $ProbeState -LogPath $LogPath
     }
     $now = [DateTime]::UtcNow
+    $probePhase = if ($ProbeState.infoBaseReleaseDatabasePath) { "infobase-release-check" } else { "owned-process-enumeration" }
     Publish-DesignerCompletionProbeStatus `
         -ProbeState $ProbeState `
-        -Phase "owned-process-enumeration" `
+        -Phase $probePhase `
         -StartedAtUtc ([DateTime]$ProbeState.processScanStartedAtUtc) `
         -LastCompletedAtUtc $ProbeState.processProbeLastCompletedAtUtc
     $ProbeState.processScanProcess.Refresh()
@@ -5768,7 +5656,7 @@ function Receive-DesignerProcessEnumeration {
         $ageSeconds = [int][Math]::Floor(($now - [DateTime]$ProbeState.processScanStartedAtUtc).TotalSeconds)
         if ($ageSeconds -ge [int]$ProbeState.subProbeTimeoutSeconds) {
             $termination = Stop-DesignerProcessEnumeration -ProbeState $ProbeState
-            throw "DESIGNER_COMPLETION_PROBE_TIMEOUT phase=owned-process-enumeration timeoutSeconds=$($ProbeState.subProbeTimeoutSeconds) terminationConfirmed=$($termination.confirmed) terminationError='$($termination.error)'"
+            throw "DESIGNER_COMPLETION_PROBE_TIMEOUT phase=$probePhase timeoutSeconds=$($ProbeState.subProbeTimeoutSeconds) terminationConfirmed=$($termination.confirmed) terminationError='$($termination.error)'"
         }
         return [pscustomobject]@{ status = "pending"; processes = @() }
     }
@@ -5795,7 +5683,12 @@ function Receive-DesignerProcessEnumeration {
         throw "Designer process enumeration failed: $errorText"
     }
     $ProbeState.processProbeLastCompletedAtUtc = [DateTime]::UtcNow
-    return [pscustomobject]@{ status = "completed"; processes = @($payload.processes) }
+    return [pscustomobject]@{
+        status = "completed"
+        processes = @($payload.processes)
+        infoBaseReleaseChecked = [bool](Get-StateValue -State $payload -Name "infoBaseReleaseChecked" -Default $false)
+        infoBaseReleased = [bool](Get-StateValue -State $payload -Name "infoBaseReleased" -Default $false)
+    }
 }
 
 function Get-DesignerInvocationProcessState {
@@ -5820,6 +5713,8 @@ function Get-DesignerInvocationProcessState {
                 cpuTime100ns = [int64]0
                 workingSetSampleAvailable = $false
                 workingSetMb = 0
+                infoBaseReleaseChecked = $false
+                infoBaseReleased = $false
                 detail = "owned process enumeration is pending"
             }
             $ProbeState.lastProcessState = $state
@@ -5876,6 +5771,8 @@ function Get-DesignerInvocationProcessState {
             cpuTime100ns = $cpuTime100ns
             workingSetSampleAvailable = $workingSetSampleAvailable
             workingSetMb = $(if ($workingSetSampleAvailable) { [int][Math]::Ceiling([double]$workingSetBytes / 1MB) } else { 0 })
+            infoBaseReleaseChecked = [bool](Get-StateValue -State $enumeration -Name "infoBaseReleaseChecked" -Default $false)
+            infoBaseReleased = [bool](Get-StateValue -State $enumeration -Name "infoBaseReleased" -Default $false)
             detail = ""
         }
         $ProbeState.processProbeFailureStartedAtUtc = $null
@@ -5898,6 +5795,8 @@ function Get-DesignerInvocationProcessState {
             cpuTime100ns = [int64]0
             workingSetSampleAvailable = $false
             workingSetMb = 0
+            infoBaseReleaseChecked = $false
+            infoBaseReleased = $false
             detail = (($_.Exception.Message -replace '[\r\n]+', ' ').Trim())
         }
     }
@@ -6038,6 +5937,11 @@ function Test-DesignerInvocationReleased {
         return $false
     }
 
+    $ProbeState.infoBaseReleaseDatabasePath = if ($RequireInfoBaseRelease -and $InfoBaseKind -eq "file" -and $ProbeState.processesReleaseConfirmed) {
+        Join-Path (Resolve-InfoBasePath $InfoBasePath) "1Cv8.1CD"
+    } else {
+        ""
+    }
     $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
     if (-not $processState.querySucceeded -or $processState.active) {
         $ProbeState.processesReleasedSinceUtc = $null
@@ -6049,7 +5953,7 @@ function Test-DesignerInvocationReleased {
             $ProbeState.processesReleaseConfirmed = $true
         }
     }
-    $infoBaseRelease = if (-not $RequireInfoBaseRelease) {
+    $infoBaseRelease = if (-not $RequireInfoBaseRelease -or $InfoBaseKind -ne "file") {
         [pscustomobject]@{ status = "completed"; released = $true }
     } elseif (-not $processState.querySucceeded -or $processState.active -or -not $ProbeState.processesReleaseConfirmed) {
         # An infobase cannot be fully released while its owned process is still
@@ -6057,11 +5961,13 @@ function Test-DesignerInvocationReleased {
         # Windows filesystem filters; perform it only after process release is
         # independently confirmed.
         [pscustomobject]@{ status = "deferred"; released = $false }
+    } elseif ([bool](Get-StateValue -State $processState -Name "infoBaseReleaseChecked" -Default $false)) {
+        [pscustomobject]@{
+            status = "completed"
+            released = [bool](Get-StateValue -State $processState -Name "infoBaseReleased" -Default $false)
+        }
     } else {
-        Receive-DesignerInfoBaseReleaseCheck `
-            -ProbeState $ProbeState `
-            -InfoBaseKind $InfoBaseKind `
-            -InfoBasePath $InfoBasePath
+        [pscustomobject]@{ status = "pending"; released = $false }
     }
     $infoBaseReleased = $infoBaseRelease.status -eq "completed" -and [bool]$infoBaseRelease.released
     $releaseProbeCompletedAtUtc = [DateTime]::UtcNow
@@ -6778,12 +6684,6 @@ function Invoke-Designer {
                 $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$processProbeTermination.error).Trim())
             }
         }
-        if ($null -ne $invocationProbeState.infoBaseReleaseProcess) {
-            $infoBaseProbeTermination = Stop-DesignerInfoBaseReleaseCheck -ProbeState $invocationProbeState
-            if (-not $infoBaseProbeTermination.confirmed -and $infoBaseProbeTermination.error) {
-                $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$infoBaseProbeTermination.error).Trim())
-            }
-        }
         $cleanup = Stop-DesignerInvocationOwnedProcesses -ProbeState $invocationProbeState -LogPath $logPath -UseTrackedOnly
         $timeoutCleanupState.attempted = [bool]$cleanup.attempted
         $timeoutCleanupState.confirmed = [bool]$cleanup.confirmed
@@ -6822,12 +6722,6 @@ function Invoke-Designer {
             $processProbeTermination = Stop-DesignerProcessEnumeration -ProbeState $invocationProbeState
             if (-not $processProbeTermination.confirmed -and $processProbeTermination.error) {
                 $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$processProbeTermination.error).Trim())
-            }
-        }
-        if ($null -ne $invocationProbeState -and $null -ne $invocationProbeState.infoBaseReleaseProcess) {
-            $infoBaseProbeTermination = Stop-DesignerInfoBaseReleaseCheck -ProbeState $invocationProbeState
-            if (-not $infoBaseProbeTermination.confirmed -and $infoBaseProbeTermination.error) {
-                $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$infoBaseProbeTermination.error).Trim())
             }
         }
     }
