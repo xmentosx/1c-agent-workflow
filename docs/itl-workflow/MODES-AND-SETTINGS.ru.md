@@ -113,4 +113,4 @@ ITL не включает и не выключает Browser Automation и не 
 
 `DEPENDENCY_MODE=fresh` разрешает получать актуальные версии зависимостей в пределах configured source и записывает разрешенные версии/hashes в lock. `locked` использует только уже зафиксированные значения.
 
-`VERIFICATION_POLICY=warn` требует явного подтверждения перед `/itl-result`, если проверка отсутствует, failed, stale, unknown или partial. `block` запрещает result и advanced close до fresh passed `/itl-check`; override отсутствует.
+`VERIFICATION_POLICY=warn` показывает заметное предупреждение, но не останавливает `/itl-result`, если проверка отсутствует, failed, stale, unknown или partial. `block` запрещает result до fresh passed `/itl-check`. Advanced `close-dev-branch` сохраняет отдельный явный override-контракт.

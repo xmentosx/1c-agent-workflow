@@ -13,4 +13,4 @@ If the agent shell tool supports `timeout_ms`, use `timeout_ms >= 3900000` so th
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action export-dev-branch-result
 ```
 
-If the JSON contains `confirmationRequired=true`, ask for explicit confirmation. After the developer confirms an unverified export, repeat the command with `-AllowUnverifiedResult`. Under `VERIFICATION_POLICY=block`, do not offer an override: run `/itl-check` first. On success with a non-empty `userReport`, return exactly that Russian Markdown report; it contains the full CF/CFE and manifest paths. Do not paraphrase the report or read `console.log`. For other failures, read only the last 80 lines of `logPath`.
+Under `VERIFICATION_POLICY=warn`, the helper warns and exports without confirmation. Under `VERIFICATION_POLICY=block`, it stops and `/itl-check` must run first. On success with a non-empty `userReport`, return exactly that Russian Markdown report; it contains the verification decision and full CF/CFE and manifest paths. Do not paraphrase the report or read `console.log`. For failures, read only the last 80 lines of `logPath`.

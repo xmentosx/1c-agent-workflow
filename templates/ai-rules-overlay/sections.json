@@ -1079,7 +1079,7 @@
                               "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "d178ddaa0fad971a7391ad61bff2c0cb6b1dfdf719b6eaf113c698c0bf4a3895"
+                              "resultSha256":  "7256662e901cd45611a192c8fb0a78fe9e398946104497be7a85a024ea018237"
                           },
                           {
                               "path":  "content/skills/grill-with-docs/SKILL.md",
@@ -1097,7 +1097,7 @@
                               "reason":  "Add the reviewed r29 implementation of ITL-GRILLING-001.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "89f174f9670719eaaa5c960072d31985386327d0ac16490f8ddfda3496b94f54"
+                              "resultSha256":  "55775cbb110e6aa5787975a5cd915cea9c9b07bbde139d253af32d4c2b2ebe7a"
                           },
                           {
                               "path":  "content/skills/grilling/SKILL.md",
@@ -1412,7 +1412,7 @@
                               "reason":  "Extend the focused grilling regression in r30 with native wrapper placement and installation coverage.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "f354ebf54534695c5b3526bdecd716c738c33caa2037f5a0ab10291914906bf1"
+                              "resultSha256":  "c41877c5c63c2b827dcaa11a2b85f2accda6811e7c08b06c60a2f6e2c7143346"
                           },
                           {
                               "path":  "tests/LayoutAndManifest.Tests.ps1",

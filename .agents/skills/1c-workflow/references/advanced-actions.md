@@ -72,6 +72,9 @@ check-dev-branch
 verify-dev-branch
 refresh-dev-branch
 refresh-dev-branch-lite
+refresh-all-dev-branches
+reset-dev-branch
+lock-config-repository-objects
 export-dev-branch-result
 close-dev-branch
 switch-master
@@ -82,6 +85,7 @@ release-e2e-snapshot
 release-e2e-restore
 release-e2e-prepare-ondemand
 release-e2e-config-roundtrip
+release-e2e-config-repository-lock-roundtrip
 release-e2e-extension-smoke
 ```
 
@@ -108,6 +112,8 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 `start-vanessa-profile` opens exactly one ownership-proven branch-local `TESTMANAGER -> TESTCLIENT` pair, positively proves the manager connection, and opens the specified `.feature` without `StartFeaturePlayer` or `run_scenario`. The pair stays open until `stop-vanessa-profile`. Start/reuse/status return `ITL_VANESSA_PROFILE_REPORT` with safe PID, port, infobase, feature, and connection fields only; they do not create JUnit or verification verdicts. `stop-vanessa-profile` delegates to the shared branch-safe Vanessa runtime release primitive and is idempotent. These actions are manual diagnostics, not `/itl-check` or release-gate substitutes.
 
 `release-e2e-config-roundtrip` is reserved for `scripts/invoke-release-e2e.ps1`. It dumps the dedicated branch infobase into ignored local state, writes evidence under ignored `build/test-results`, and proves that a root `Configuration.xml` `Comment` loaded in strict `Partial` mode roundtrips while `Ext/ParentConfigurations.bin` is present. Do not expose it as a slash command or use it for ordinary project work.
+
+`release-e2e-config-repository-lock-roundtrip` is reserved for the same runner and a disposable test repository. It locks and then releases only the mapped objects from one XML object list; it is never exposed as a project command.
 
 `release-e2e-snapshot` and `release-e2e-restore` are internal checkpoint actions for the same runner. They accept only a project-local ignored `.dt`; restore invalidates both configuration and extension fingerprints. Do not expose them as slash commands or use them as a general backup interface.
 

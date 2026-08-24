@@ -4024,7 +4024,8 @@ function Confirm-UnverifiedProceed {
         [object]$State,
         [string]$Operation,
         [object]$VerificationState = $null,
-        [switch]$Allow
+        [switch]$Allow,
+        [switch]$ProceedOnWarn
     )
 
     $verification = if ($null -ne $VerificationState) { $VerificationState } else { Get-VerificationState -State $State }
@@ -4061,6 +4062,11 @@ function Confirm-UnverifiedProceed {
             Write-Host "Result wording is restricted to: implemented; executable verification skipped. Do not report verified/done."
         }
         return $true
+    }
+
+    if ($ProceedOnWarn) {
+        Write-Host "verificationPolicy=warn permits $Operation without an explicit override."
+        return $false
     }
 
     throw "$Operation stopped because fresh passed Vanessa verification is missing. Run verify-dev-branch or rerun with explicit unverified override."
@@ -4117,7 +4123,7 @@ function Run-DevBranchTests {
     }
     Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "check-dev-branch"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "check-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
     $state = Assert-DevBranchApplicationReady -State $state -Operation "Vanessa verification"
     Sync-DevBranchContextToDotEnv -State $state

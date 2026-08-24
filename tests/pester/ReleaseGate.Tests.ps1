@@ -64,6 +64,15 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
+        $e2eText | Should -Match 'Action "refresh-all-dev-branches"'
+        $e2eText | Should -Match 'Action "reset-dev-branch"'
+        $e2eText | Should -Match 'Action "release-e2e-config-repository-lock-roundtrip"'
+        $e2eText | Should -Match 'Invoke-E2EServerResetProof'
+        $e2eText | Should -Match 'serverProjectRoot'
+        $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $lifecycleSource | Should -Match '/ConfigurationRepositoryLock'
+        $lifecycleSource | Should -Match '/ConfigurationRepositoryUnLock'
+        $lifecycleSource | Should -Match '\$Operation, "-Objects", \$ObjectListPath'
         $e2eText | Should -Match ([regex]::Escape('.agent-1c\runs\release-e2e'))
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/runs/'))
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
@@ -501,7 +510,7 @@ Describe "Release E2E orchestration" {
 </MetaDataObject>
 '@
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>fixture</ConfigDumpInfo>"
-            Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Ext\ParentConfigurations.bin") -Encoding Byte -Value ([byte[]](1, 2, 3, 4))
+            [IO.File]::WriteAllBytes((Join-Path $mainRoot "src\cf\Ext\ParentConfigurations.bin"), [byte[]](1, 2, 3, 4))
             [IO.File]::WriteAllBytes(
                 (Join-Path $mainRoot "tests\features\workflow-release-e2e.feature"),
                 [Convert]::FromBase64String('I2xhbmd1YWdlOiBydQoK0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUK')
@@ -766,6 +775,11 @@ switch ($Action) {
             $summary.seedParallelTestFixture | Should -BeTrue
             $summary.seedParallelBranchRuntimeConcurrent | Should -BeTrue
             $summary.seedParallelLiteRefreshConcurrent | Should -BeTrue
+            $summary.seedParallelRefreshAllPassed | Should -BeTrue
+            $summary.seedParallelDirtyCheckpointPassed | Should -BeTrue
+            $summary.seedParallelFileResetPassed | Should -BeTrue
+            $summary.seedParallelRepositoryLockRoundtripPassed | Should -BeTrue
+            $summary.seedParallelServerResetPassed | Should -BeTrue
             $summary.seedParallelLiteRefreshSourceCallCount | Should -Be 0
             $summary.seedParallelTargetMasterCommit | Should -Match '^[a-f0-9]{40}$'
             $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'

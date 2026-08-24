@@ -1731,6 +1731,232 @@
         }
     }
 
+    It "locks only the exact repository object list and blocks unresolved paths before Designer" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-objects-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{ devBranch = "itldev/lock"; devBranchKind = "configuration"; initializationStatus = "ready" }
+                $script:DesignerCalls = 0
+                $script:DesignerArgs = @()
+                $script:LockPlan = [pscustomobject]@{
+                    baseCommit = "base-sha"
+                    unresolvedPaths = @()
+                    items = @(
+                        [pscustomobject]@{ name = 'Справочник.Товары & "услуги"'; scope = "full" },
+                        [pscustomobject]@{ name = "ОбщийМодуль.Обмен"; scope = "partial" }
+                    )
+                }
+                function Read-DevBranchState { $state }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Get-SourceUsesRepository { $true }
+                function Get-ExportPath { "src/cf" }
+                function Get-ConfigRepositoryTransferPlan { $script:LockPlan }
+                function Get-SourceInfoBasePath { "srv\source" }
+                function Get-InfoBaseKind { "server" }
+                function New-RepositoryConnectionArgs { @("/ConfigurationRepositoryF", "repo", "-N", "user", "-P", "secret") }
+                function Get-EnvValue { param([string]$Name) if ($Name -eq "REPOSITORY_USER") { "user" } elseif ($Name -eq "REPOSITORY_PASSWORD") { "secret" } else { "" } }
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:DesignerCalls++; $script:DesignerArgs = @($DesignerArgs)
+                    $script:LastLogPath = Join-Path $tempRoot "designer.log"
+                    [IO.File]::WriteAllText($script:LastLogPath, "command /P secret completed", [Text.UTF8Encoding]::new($false))
+                }
+                function Set-RunStage {}
+
+                Lock-ConfigRepositoryObjects 6>$null
+                $xmlPath = [regex]::Match($script:RunUserReport, '(?m)^- Файл объектов: (.+)$').Groups[1].Value.Trim()
+                [xml]$xml = Get-Content -LiteralPath $xmlPath -Raw -Encoding UTF8
+                $requested = @($xml.Objects.Object | ForEach-Object { [pscustomobject]@{ name = [string]$_.fullName; children = [string]$_.includeChildObjects } })
+                $successCalls = $script:DesignerCalls
+                $successArgs = @($script:DesignerArgs)
+
+                $script:LockPlan = [pscustomobject]@{ baseCommit = "base-sha"; unresolvedPaths = @(); items = @() }
+                Lock-ConfigRepositoryObjects 6>$null
+                $afterNoOp = $script:DesignerCalls
+
+                $script:LockPlan = [pscustomobject]@{ baseCommit = "base-sha"; unresolvedPaths = @("src/cf/Unknown/неизвестно.xml"); items = @() }
+                $unresolved = ""
+                try { Lock-ConfigRepositoryObjects 6>$null } catch { $unresolved = $_.Exception.Message }
+                $redactedPath = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Recurse -File -Filter "repository-lock.log" | Select-Object -First 1 -ExpandProperty FullName)
+                [pscustomobject]@{ requested = $requested; successCalls = $successCalls; afterNoOp = $afterNoOp; args = $successArgs; unresolved = $unresolved; finalCalls = $script:DesignerCalls; redactedPath = [string]$redactedPath; redactedText = Read-Utf8Text -Path ([string]$redactedPath) }
+            }
+
+            $result.successCalls | Should -Be 1
+            $result.afterNoOp | Should -Be 1
+            $result.finalCalls | Should -Be 1
+            @($result.requested).Count | Should -Be 2
+            @($result.requested | Where-Object name -eq 'Справочник.Товары & "услуги"').children | Should -Be "true"
+            @($result.requested | Where-Object name -eq "ОбщийМодуль.Обмен").children | Should -Be "false"
+            @($result.args) | Should -Contain "/ConfigurationRepositoryLock"
+            @($result.args) | Should -Contain "-Objects"
+            (@($result.args) -join " ") | Should -Not -Match "ConfigurationRepositoryUpdateCfg|LoadCfg|LoadConfigFromFiles|-force|-revised"
+            $result.unresolved | Should -Match "LOCK_CONFIG_REPOSITORY_UNRESOLVED_PATHS"
+            $result.redactedPath | Should -Not -BeNullOrEmpty
+            $result.redactedText | Should -Not -Match "secret"
+            $result.redactedText | Should -Match "<redacted>"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "locks and releases the same exact object list in the Release E2E repository roundtrip" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-roundtrip-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $operations = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{ devBranch = "itldev/lock"; devBranchKind = "configuration"; initializationStatus = "ready" }
+                $script:RepositoryOperations = [System.Collections.Generic.List[object]]::new()
+                function Read-DevBranchState { $state }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Get-SourceUsesRepository { $true }
+                function Get-ExportPath { "src/cf" }
+                function Get-ConfigRepositoryTransferPlan { [pscustomobject]@{ baseCommit = "base"; unresolvedPaths = @(); items = @([pscustomobject]@{ name = "ОбщийМодуль.Обмен"; scope = "full" }) } }
+                function Get-SourceInfoBasePath { "srv\source" }
+                function Get-InfoBaseKind { "server" }
+                function New-RepositoryConnectionArgs { @("/ConfigurationRepositoryF", "repo", "-N", "user", "-P", "secret") }
+                function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:RepositoryOperations.Add([pscustomobject]@{ args = @($DesignerArgs) }) | Out-Null }
+                Invoke-ReleaseE2EConfigRepositoryLockRoundtrip 6>$null
+                @($script:RepositoryOperations)
+            }
+            @($operations) | Should -HaveCount 2
+            @($operations[0].args) | Should -Contain "/ConfigurationRepositoryLock"
+            @($operations[1].args) | Should -Contain "/ConfigurationRepositoryUnLock"
+            $firstObjects = @($operations[0].args)[@($operations[0].args).IndexOf("-Objects") + 1]
+            $secondObjects = @($operations[1].args)[@($operations[1].args).IndexOf("-Objects") + 1]
+            $firstObjects | Should -Be $secondObjects
+            Test-Path -LiteralPath $firstObjects -PathType Leaf | Should -BeTrue
+            (@($operations | ForEach-Object { @($_.args) }) -join " ") | Should -Not -Match "-force|-revised|ConfigurationRepositoryUpdateCfg"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "archives non-config delta resumably and creates a cleanup commit with the exact master tree" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-reset-archive с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot "docs") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.name "ITL Test"
+            & git -C $tempRoot config user.email "itl@example.invalid"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value ".agent-1c/branch-archives/"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "master config"
+            Set-Content -LiteralPath (Join-Path $tempRoot "docs\удалить меня.txt") -Encoding UTF8 -Value "master file"
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit -m "master" *> $null
+            & git -C $tempRoot branch -M master
+            $masterCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet -b itldev/reset
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value "branch config"
+            Remove-Item -LiteralPath (Join-Path $tempRoot "docs\удалить меня.txt")
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "openspec\changes\новая спека") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "openspec\changes\новая спека\spec.md") -Encoding UTF8 -Value "branch spec"
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit -m "branch work" *> $null
+            $oldHead = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:DumpCalls = 0
+                $state = [pscustomobject]@{ devBranch = "itldev/reset"; safeDevBranchName = "reset"; devBranchInfoBasePath = "C:\base"; infoBaseKind = "file" }
+                function Get-MainWorktreePath { $tempRoot }
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:DumpCalls++
+                    [IO.File]::WriteAllBytes([string]$DesignerArgs[1], [byte[]](1,2,3,4))
+                }
+                function Set-RunStage {}
+                $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) "reset") "fixture"
+                $first = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead $oldHead -ArchivePath $archivePath
+                $second = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead $oldHead -ArchivePath $archivePath
+                $manifest = Read-Utf8Text -Path $first.manifestPath | ConvertFrom-Json
+                $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+                [pscustomobject]@{
+                    first = $first; second = $second; manifest = $manifest; dumpCalls = $script:DumpCalls; newHead = $newHead
+                    newTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+                    masterTree = (Get-GitOutput @("rev-parse", "$masterCommit^{tree}")).Trim()
+                    parent = (Get-GitOutput @("rev-parse", "HEAD^")).Trim()
+                    message = (Get-GitOutput @("log", "-1", "--pretty=%s")).Trim()
+                }
+            }
+
+            $result.dumpCalls | Should -Be 1
+            $result.first.archivePath | Should -Be $result.second.archivePath
+            $result.manifest.schemaVersion | Should -Be 1
+            $result.manifest.masterTree | Should -Be $result.masterTree
+            @($result.manifest.files.path) | Should -Contain "openspec/changes/новая спека/spec.md"
+            @($result.manifest.deletedPaths) | Should -Contain "docs/удалить меня.txt"
+            @($result.manifest.excludedConfigurationPaths) | Should -Contain "src/cf/Configuration.xml"
+            $result.newTree | Should -Be $result.masterTree
+            $result.parent | Should -Be $oldHead
+            $result.message | Should -Be "chore: reset branch for next change"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects extension reset before checkpoint or mutation" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:CheckpointCalled = $false
+            function Read-DevBranchState { [pscustomobject]@{ devBranch = "itldev/ext"; devBranchKind = "extension"; initializationStatus = "ready" } }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Save-DevBranchCheckpoint { $script:CheckpointCalled = $true }
+            $message = ""
+            try { Reset-DevBranch 6>$null } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{ message = $message; checkpointCalled = $script:CheckpointCalled }
+        }
+        $result.message | Should -Match "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED"
+        $result.checkpointCalled | Should -BeFalse
+    }
+
+    It "restores the reset seed and unbinds repository-backed branch copies before initialization" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:DesignerCalls = 0
+            $script:DesignerArgs = @()
+            $seed = [pscustomobject]@{ configurationFingerprint = "master-fingerprint" }
+            function Restore-ExistingDevBranchFromSeed { $seed }
+            function Get-SourceUsesRepository { $true }
+            function Set-RunStage {}
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:DesignerCalls++
+                $script:DesignerArgs = @($DesignerArgs)
+            }
+            $restored = Restore-ExistingDevBranchRuntimeFromSeed `
+                -State ([pscustomobject]@{ devBranchInfoBasePath = "srv\branch"; infoBaseKind = "server" }) `
+                -ExpectedConfigurationFingerprint "master-fingerprint"
+            $cleared = @{}
+            Add-DevBranchResetTransientStateClearUpdates -State ([pscustomobject]@{
+                lastVanessaTestPort = 48151
+                lastVerificationSkippedComponents = @("vanessa")
+                lastResultPath = "old.cf"
+                eventLogDebtStatus = "failed"
+                devBranch = "itldev/reset"
+            }) -Updates $cleared
+            [pscustomobject]@{
+                designerCalls = $script:DesignerCalls
+                designerArgs = @($script:DesignerArgs)
+                repositoryUnbound = [bool]$restored.repositoryUnbound
+                fingerprint = [string]$restored.seed.configurationFingerprint
+                cleared = $cleared
+            }
+        }
+
+        $result.designerCalls | Should -Be 1
+        @($result.designerArgs) | Should -Be @("/ConfigurationRepositoryUnbindCfg", "-force")
+        $result.repositoryUnbound | Should -BeTrue
+        $result.fingerprint | Should -Be "master-fingerprint"
+        $result.cleared.lastVanessaTestPort | Should -Be 0
+        @($result.cleared.lastVerificationSkippedComponents).Count | Should -Be 0
+        $result.cleared.lastResultPath | Should -Be ""
+        $result.cleared.eventLogDebtStatus | Should -Be ""
+        $result.cleared.ContainsKey("devBranch") | Should -BeFalse
+    }
+
     It "exports a freshly verified dirty working tree without invoking the clean Git guard" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1807,7 +2033,8 @@
                     [object]$VerificationState,
                     [bool]$WorktreeClean,
                     [bool]$VerificationScopeCommitted,
-                    [bool]$UnverifiedOverride
+                    [bool]$UnverifiedOverride,
+                    [string]$VerificationDecision
                 )
                 $script:CapturedManifest = [pscustomobject]@{
                     resultPath = $ResultPath
@@ -1883,6 +2110,30 @@
         $result.loadAttempted | Should -BeFalse
     }
 
+    It "applies fresh warn and block result policy without changing the close override contract" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $stale = [pscustomobject]@{ isFreshPassed = $false; effectiveStatus = "stale"; reason = "changed"; verifiedAt = ""; verifiedCommit = ""; currentCommit = "current"; reportPath = "" }
+            $fresh = [pscustomobject]@{ isFreshPassed = $true; effectiveStatus = "passed" }
+
+            function Get-VerificationPolicy { "warn" }
+            $freshDecision = Confirm-UnverifiedProceed -State ([pscustomobject]@{}) -Operation "export-dev-branch-result" -VerificationState $fresh -ProceedOnWarn 6>$null
+            $warnDecision = Confirm-UnverifiedProceed -State ([pscustomobject]@{}) -Operation "export-dev-branch-result" -VerificationState $stale -ProceedOnWarn 6>$null
+            $closeFailure = ""
+            try { Confirm-UnverifiedProceed -State ([pscustomobject]@{}) -Operation "close-dev-branch" -VerificationState $stale 6>$null | Out-Null } catch { $closeFailure = $_.Exception.Message }
+
+            function Get-VerificationPolicy { "block" }
+            $blockFailure = ""
+            try { Confirm-UnverifiedProceed -State ([pscustomobject]@{}) -Operation "export-dev-branch-result" -VerificationState $stale -ProceedOnWarn 6>$null | Out-Null } catch { $blockFailure = $_.Exception.Message }
+            [pscustomobject]@{ fresh = $freshDecision; warn = $warnDecision; closeFailure = $closeFailure; blockFailure = $blockFailure }
+        }
+
+        $result.fresh | Should -BeFalse
+        $result.warn | Should -BeFalse
+        $result.closeFailure | Should -Match "explicit unverified override"
+        $result.blockFailure | Should -Match "verificationPolicy=block"
+    }
+
     It "records dirty working-tree provenance and verification fingerprints in result manifests" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-result-manifest-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -1923,7 +2174,7 @@
             }
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
-            $manifest.schemaVersion | Should -Be 2
+            $manifest.schemaVersion | Should -Be 3
             $manifest.commits.developmentBase | Should -Be "base-commit"
             $manifest.source.provenance | Should -Be "working-tree"
             $manifest.source.worktreeClean | Should -BeFalse
@@ -1932,6 +2183,9 @@
             $manifest.source.verificationFingerprint | Should -Be "v3|checked"
             $manifest.verification.verifiedFingerprint | Should -Be "v3|checked"
             $manifest.verification.currentFingerprint | Should -Be "v3|checked"
+            $manifest.verification.policy | Should -Be "warn"
+            $manifest.verification.decision | Should -Be "fresh-passed"
+            $manifest.unverifiedOverride | Should -BeFalse
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5707,7 +5961,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @("itl.md", "itl-check.md", "itl-litemode.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md")
+            $branchKiloCommands | Should -Be @(@("itl.md", "itl-check.md", "itl-litemode.md", "itl-lock-objects.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-reset-branch.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md") | Sort-Object)
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")

@@ -160,7 +160,7 @@ function Get-ItlVerificationRepairStatePath {
 
 function Start-ItlVerificationRepairSession {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-CurrentProjectRootMatchesDevBranchState -State $state -Operation "begin-verification-repair"
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "begin-verification-repair"
     $record = [pscustomobject][ordered]@{
         schemaVersion = 1
         sessionId = [guid]::NewGuid().ToString("N")

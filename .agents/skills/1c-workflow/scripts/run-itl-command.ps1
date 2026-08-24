@@ -377,7 +377,7 @@ function Find-LauncherRunDirectory {
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
     "begin-verification-repair", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
-    "refresh-dev-branch", "refresh-dev-branch-lite", "sync-master", "export-dev-branch-result", "update-workflow",
+    "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "sync-master", "export-dev-branch-result", "update-workflow",
     "itl-switch-client"
 )
 $action = Get-ArgumentValue -Arguments @($helperArgs) -Name "-Action"
@@ -618,15 +618,10 @@ if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $logTail = ((Get-Content -LiteralPath $logPath -Tail 80 -Encoding UTF8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
 }
 $confirmationRequired = $false
-if ($action -eq "export-dev-branch-result" -and ($errorText + "`n" + $logTail) -match '(?i)AllowUnverifiedResult|unverified|verification.*missing') {
-    $confirmationRequired = $true
-}
 $nextAction = if ($exitCode -eq 0 -and $requiredAction) {
     $requiredAction
 } elseif ($exitCode -eq 0) {
     "none"
-} elseif ($confirmationRequired) {
-    "Ask the developer for explicit confirmation, then rerun with -AllowUnverifiedResult."
 } elseif ($requiredAction) {
     $requiredAction
 } elseif ($errorCategory -eq "runner") {

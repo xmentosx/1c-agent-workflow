@@ -207,6 +207,9 @@ Describe "1C workflow ai_rules_1c client checks" {
             "itl-sync-master",
             "itl-refresh",
             "itl-refresh-lite",
+            "itl-refresh-all",
+            "itl-reset-branch",
+            "itl-lock-objects",
             "itl-result",
             "itl-verify-fix"
         )
@@ -236,6 +239,11 @@ Describe "1C workflow ai_rules_1c client checks" {
             Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"tools":["codex"],"files":{}}'
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\codex.yaml") -Encoding ASCII -Value "tool: codex"
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\kilocode.yaml") -Encoding ASCII -Value "tool: kilocode"
+            foreach ($skillName in @("grill-me", "grill-with-docs")) {
+                $skillRoot = Join-Path $projectRoot ".kilo\skills\$skillName"
+                New-Item -ItemType Directory -Force -Path $skillRoot | Out-Null
+                Set-Content -LiteralPath (Join-Path $skillRoot "SKILL.md") -Encoding UTF8 -Value "# $skillName"
+            }
             Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
 [CmdletBinding()]
 param(
@@ -325,7 +333,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -BeTrue
             (Test-Path -LiteralPath (Join-Path $tempRoot ".kilo\commands\custom.md") -PathType Leaf) | Should -BeTrue
             $masterKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $masterKiloCommands | Should -Be @("itl.md", "itl-litemode.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-status.md", "itl-switch-client.md", "itl-sync-master.md", "itl-update-workflow.md")
+            $masterKiloCommands | Should -Be @(@("itl.md", "itl-litemode.md", "itl-new-config-branch.md", "itl-new-extension-branch.md", "itl-refresh-all.md", "itl-status.md", "itl-switch-client.md", "itl-sync-master.md", "itl-update-workflow.md") | Sort-Object)
             $masterKiloCommands | Should -Not -Contain "itl-check.md"
             $masterKiloCommands | Should -Not -Contain "itl-verify-fix.md"
             $masterKiloCommands | Should -Not -Contain "itl-refresh.md"

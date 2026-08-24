@@ -371,8 +371,8 @@
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
             common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
-            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-switch-client.md.template")
-            dev = @("itl-check.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
+            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-switch-client.md.template")
+            dev = @("itl-check.md.template", "itl-lock-objects.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-reset-branch.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -487,6 +487,9 @@
             "/itl-sync-master",
             "/itl-refresh",
             "/itl-refresh-lite",
+            "/itl-refresh-all",
+            "/itl-reset-branch",
+            "/itl-lock-objects",
             "/itl-result"
         )) {
             $panelText | Should -Match ([regex]::Escape($command))
@@ -1026,6 +1029,9 @@
             ".agents/skills/itl-new-config-branch/",
             ".agents/skills/itl-new-extension-branch/",
             ".agents/skills/itl-switch-client/",
+            ".agents/skills/itl-refresh-all/",
+            ".agents/skills/itl-reset-branch/",
+            ".agents/skills/itl-lock-objects/",
             ".agents/skills/itl-update-workflow/",
             ".agents/skills/itl-check/",
             ".agents/skills/itl-sync-master/",

@@ -976,10 +976,14 @@ try {
             if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
             if ([bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
             if (-not [bool]$e2eSummary.seedParallelBranchRuntimeConcurrent -or -not [bool]$e2eSummary.seedParallelLiteRefreshConcurrent -or
+                -not [bool]$e2eSummary.seedParallelRefreshAllPassed -or -not [bool]$e2eSummary.seedParallelDirtyCheckpointPassed -or
+                -not [bool]$e2eSummary.seedParallelFileResetPassed -or
+                -not [bool]$e2eSummary.seedParallelRepositoryLockRoundtripPassed -or
+                -not [bool]$e2eSummary.seedParallelServerResetPassed -or
                 [string]$e2eSummary.seedParallelTargetMasterCommit -notmatch '^[a-f0-9]{40}$' -or
                 [int]$e2eSummary.seedParallelLiteRefreshSourceCallCount -ne 0 -or
                 [int]$e2eSummary.seedParallelBaselineCount -lt 0) {
-                throw "Release E2E did not prove latest-only file seed plus parallel branch runtime and lite refresh."
+                throw "Release E2E did not prove latest-only file seed, parallel branch runtime, dirty refresh-all, and archived file reset."
             }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }

@@ -390,12 +390,14 @@ In an `itldev/*` development worktree, show only:
 /itl-refresh
 /itl-sync-master
 /itl-refresh-lite
+/itl-reset-branch
+/itl-lock-objects
 /itl-result
 ```
 
 New branch commands create a sibling Git worktree by default and leave the current project folder on `master`. On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown, with no added introduction, conclusion, or separate worktree instruction. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, summarize it, or replace it with `requiredAction`; the Russian report already contains branch paths, MCP/Browser state, instructions, advice, and the window-opening action. For Codex, that action tells the developer to add the existing worktree folder as a separate Codex project, restart the Codex app so it loads the worktree's `.codex/config.toml` and MCP servers, and only then start a task in `Local`; it must not ask Codex to create another `Worktree`. Use `-UseCurrentWorktree` only when the developer explicitly asks for the legacy single-folder checkout mode.
 
-`/itl-refresh` remains the compatible full source → `master` → branch scenario and uses the same exact-response contract on success. `/itl-sync-master` performs the shared source/master synchronization and always rebuilds the single latest-only seed; `/itl-refresh-lite` then refreshes one branch from the exact current `master` SHA without source or seed access, so several branch worktrees may run it concurrently. Their Russian `userReport` is authoritative. Do not read or reproduce `console.log` on success, replace the report with a generic success sentence, or build a separate summary from diagnostic output.
+`/itl-refresh` remains the compatible full source → `master` → branch scenario and uses the same exact-response contract on success. Both refresh variants checkpoint accumulated non-ignored branch changes first. `/itl-sync-master` performs the shared source/master synchronization and always rebuilds the single latest-only seed; `/itl-refresh-lite` then refreshes one branch from the exact current `master` SHA without source or seed access. `/itl-refresh-all` performs one sync from clean `master` and refreshes every active ready branch with at most two workers. Their Russian `userReport` is authoritative. Do not read or reproduce `console.log` on success, replace the report with a generic success sentence, or build a separate summary from diagnostic output.
 
 `/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible client-native commands/skills or natural OpenSpec requests, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing `executionPath=quick-fix|full-cycle` and, independently, `planningMode=direct|OpenSpec`, with `direct` as the default; do not recommend `/itl-check` before checkable changes exist. Never promise universal `/opsx*`; for the qualified Codex bundle, show the explicit-only `$opsx-explore`, `$opsx-propose`, `$opsx-apply`, and `$opsx-archive` aliases while keeping the canonical `openspec-*` skills available for implicit routing. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 
@@ -415,6 +417,7 @@ $itl
 $itl-status
 $itl-new-config-branch
 $itl-new-extension-branch
+$itl-refresh-all
 $itl-update-workflow
 $itl-switch-client
 $itl-litemode
@@ -425,6 +428,9 @@ $itl-status
 $itl-check
 $itl-verify-fix
 $itl-refresh
+$itl-refresh-lite
+$itl-reset-branch
+$itl-lock-objects
 $itl-result
 $itl-litemode
 ```
@@ -445,7 +451,7 @@ Show development branch worktree paths.
 What 1C workflow actions are available?
 ```
 
-`/itl-result` follows `VERIFICATION_POLICY`. On success its compact result and Russian `userReport` contain the normalized absolute CF/CFE path, adjacent manifest path, and the full/partial configuration-repository transfer list for the current branch diff; return that report unchanged to the developer. The default `warn` policy preserves the current explicit unverified override flow and records the override in the result manifest. When `VERIFICATION_POLICY=block`, result export must stop until `/itl-check` or `verify-dev-branch helper alias` is fresh passed; do not bypass that with `-AllowUnverifiedResult`. `close-dev-branch` remains an advanced helper action only when the developer explicitly wants to mark a branch closed and hide it from active lists.
+`/itl-result` follows `VERIFICATION_POLICY`. On success its compact result and Russian `userReport` contain the normalized absolute CF/CFE path, adjacent schema-3 manifest path, and the full/partial configuration-repository transfer list for the current branch diff; return that report unchanged to the developer. The default `warn` policy emits a prominent warning and continues without confirmation. `block` stops result export until a fresh passed check; fingerprint changes during export always stop it. The legacy `-AllowUnverifiedResult` remains recorded only when explicitly passed. `close-dev-branch` keeps its separate explicit override contract.
 
 ## Completion Report
 

@@ -1,10 +1,10 @@
 # 1C Agent Workflow Reference Index
 
-Lifecycle routing index. Open a topic only when needed.
+Lifecycle index. Open as needed.
 
 ## User-Facing Menu
 
-When the user asks for help or the requested action is unclear, show the helper lifecycle panel. Its shape is:
+When help is requested or the action is unclear, show this helper lifecycle panel:
 
 ```text
 master:
@@ -13,6 +13,7 @@ master:
   /itl-new-config-branch <name>
   /itl-new-extension-branch <name>
   /itl-sync-master
+  /itl-refresh-all
   /itl-update-workflow
   /itl-switch-client <client>
   /itl-litemode <mode>
@@ -24,6 +25,8 @@ itldev/*:
   /itl-verify-fix
   /itl-refresh
   /itl-refresh-lite
+  /itl-reset-branch
+  /itl-lock-objects
   /itl-result
   /itl-litemode <mode>
 ```

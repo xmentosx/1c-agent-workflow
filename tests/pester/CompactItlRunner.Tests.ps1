@@ -635,7 +635,7 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "normalizes a zero helper exit and marks an unverified export as requiring confirmation" {
+    It "normalizes a zero helper exit without inventing confirmation for an unverified export" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-confirm-" + [guid]::NewGuid().ToString("N"))
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
@@ -650,8 +650,8 @@ exit 0
 '@
             $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "export-dev-branch-result"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
-            $summary.confirmationRequired | Should -BeTrue
-            $summary.nextAction | Should -Match 'explicit confirmation'
+            $summary.confirmationRequired | Should -BeFalse
+            $summary.nextAction | Should -Not -Match 'explicit confirmation'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 

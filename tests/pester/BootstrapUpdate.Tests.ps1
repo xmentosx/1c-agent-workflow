@@ -445,6 +445,9 @@ exit 0
         $HelperText | Should -Match "1c-code-metadata-mcp"
         $HelperText | Should -Match "1C-docs-mcp"
         $HelperText | Should -Match "1c-data-mcp"
+        $HelperText | Should -Match 'foreach \(\$skillName in @\("grill-me", "grill-with-docs"\)\)'
+        $HelperText | Should -Match "does not expose the exact display_name"
+        $HelperText | Should -Match ([regex]::Escape("Откройте новую задачу Codex"))
 
         (Test-Path -LiteralPath (Join-Path $RepoRoot ".kilo\commands\itl-update-rules.md") -PathType Leaf) | Should -Be $false
         $kiloTemplateText = (Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates") -Recurse -File -Filter "itl*.md.template" | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_.FullName }) -join [Environment]::NewLine
@@ -469,6 +472,12 @@ exit 0
             New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["codex"],"files":{}}'
+            foreach ($skillName in @("grill-me", "grill-with-docs")) {
+                $skillRoot = Join-Path $projectRoot ".agents\skills\$skillName"
+                New-Item -ItemType Directory -Force -Path (Join-Path $skillRoot "agents") | Out-Null
+                Set-Content -LiteralPath (Join-Path $skillRoot "SKILL.md") -Encoding UTF8 -Value "# $skillName"
+                Set-Content -LiteralPath (Join-Path $skillRoot "agents\openai.yaml") -Encoding UTF8 -Value "display_name: $skillName"
+            }
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\codex.yaml") -Encoding ASCII -Value "tool: codex"
             Set-Content -LiteralPath (Join-Path $rulesRoot "adapters\kilocode.yaml") -Encoding ASCII -Value "tool: kilocode"
             Set-Content -LiteralPath (Join-Path $rulesRoot "install.ps1") -Encoding UTF8 -Value @'
@@ -1160,6 +1169,9 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.seed.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\tools\event-log-exporter\EventLogExporter.xml") -PathType Leaf) | Should -Be $true
@@ -1655,6 +1667,9 @@ exit 0
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template",
@@ -1673,6 +1688,9 @@ exit 0
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-check.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template",
+            ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template",
             ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template"

@@ -20,7 +20,7 @@ Do not run a separate base update first. `/deploy-and-test` and `verify-dev-bran
 
 Both ITL keys accept `auto|manual|off`; missing/invalid uses safe effective `auto`. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
 
-When Vanessa is off, do not automatically author tests or add them to a new plan. A skipped component sets `lastVerificationStatus=partial`, clears fresh evidence, and records skipped components. `verificationPolicy=block` still requires full evidence. `warn` accepts partial result/close only with explicit confirmation and wording `implemented; executable verification skipped`.
+When Vanessa is off, do not automatically author tests or add them to a new plan. A skipped component sets `lastVerificationStatus=partial`, clears fresh evidence, and records skipped components. `verificationPolicy=block` still requires full evidence. For result export, `warn` proceeds after a visible warning; advanced close still requires its separate explicit confirmation.
 
 `VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real TestClient port/infobase conflict or the mode is set to `wait`.
 
@@ -54,7 +54,7 @@ Goal: export a CF or CFE artifact from the current development branch.
 
 1. Require the current `itldev/*` worktree. Do not require or create a Git commit.
 2. Check that the canonical effective-tree fingerprint still matches the successful verification before loading, before export, and after export.
-3. Apply `verificationPolicy`: default `warn` requires explicit unverified confirmation or `-AllowUnverifiedResult` when verification is missing, failed, stale, or unknown; `block` stops without an override path.
+3. Apply `verificationPolicy`: default `warn` prints a prominent warning and continues without confirmation or `-AllowUnverifiedResult` when verification is not fresh passed; `block` stops without an override path.
 4. Export CF for configuration branches and CFE for extension branches.
 5. Create `<artifact>.manifest.json` next to the exported artifact.
 6. Normalize the artifact and manifest to absolute paths, publish them as `resultPath` and `resultManifestPath` in run status/compact JSON, include both in `artifacts`, and return a short Russian `userReport` with the full paths.
@@ -62,7 +62,7 @@ Goal: export a CF or CFE artifact from the current development branch.
 
 The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
 
-The result manifest records artifact SHA256, operation, branch metadata, master/development base commits, whether the source came from a clean commit or the effective working tree, configuration and verification fingerprints, verification status/report/log, latest 1C log path, publication URL, manual import note, and whether an unverified override was used. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
+Result manifest schema 3 records artifact SHA256, operation, branch metadata, master/development base commits, working-tree provenance, configuration and verification fingerprints, verification status/report/log, `verification.policy`, `verification.decision` (`fresh-passed` or `warn-unverified`), latest 1C log path, publication URL, and manual import note. The legacy `unverifiedOverride` key remains false unless the legacy flag was actually passed. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 
 Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
 
@@ -71,7 +71,7 @@ The `v3` rollout intentionally treats stored legacy `v2` evidence as stale once;
 
 ## Verification Policy
 
-`verificationPolicy=warn` is the default and requires explicit unverified confirmation before result export or advanced close when verification is not fresh passed. `verificationPolicy=block` forbids result export and advanced close until `/itl-check` or `verify-dev-branch` is fresh passed.
+`verificationPolicy=warn` is the default: result export warns and continues, while advanced close retains its explicit unverified confirmation. `verificationPolicy=block` forbids both until `/itl-check` or `verify-dev-branch` is fresh passed. Fingerprint changes during export always stop the operation.
 
 Parallel independent development lines should use separate `itldev/*` worktrees. One development branch may remain long-lived and contain several sequential tasks, but verification freshness is still evaluated before result export.
 

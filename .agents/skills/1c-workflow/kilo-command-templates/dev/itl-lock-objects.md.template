@@ -1,0 +1,16 @@
+---
+description: Захватить в хранилище исходной базы изменённые объекты ветки
+agent: code
+---
+
+Use this command only from an active ready configuration `itldev/*` worktree whose source infobase uses a configuration repository.
+
+Run the helper directly from the current project directory:
+
+If the agent shell tool supports `timeout_ms`, run this lifecycle command with `timeout_ms >= 3900000` by default so the outer shell outlives the 3600-second 1C Designer/Enterprise limit. Do not use `120000 ms` or another short default.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action lock-config-repository-objects
+```
+
+The helper maps committed, staged, unstaged, deleted, and untracked configuration delta to an official XML object list and invokes only `/ConfigurationRepositoryLock -Objects` against the source infobase. It never loads configuration files and never widens the request to the full configuration. An empty list is a successful no-op; unresolved paths block before Designer starts. On success with a non-empty `userReport`, return exactly that Russian Markdown report. On failure, read only the last 80 lines of `logPath`.

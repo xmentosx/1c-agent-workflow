@@ -590,7 +590,7 @@ function Get-Agent1cLifecycleOperationLockScopes {
     param([string]$RequestedAction)
 
     $candidatePaths = @($script:ProjectRoot)
-    if ($RequestedAction -in @("refresh-dev-branch", "close-dev-branch", "sync-master")) {
+    if ($RequestedAction -in @("refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
 
@@ -2163,6 +2163,7 @@ function Ensure-GitIgnore {
         ".agent-1c/locks/",
         ".agent-1c/runtime/",
         ".agent-1c/branch-dumps/",
+        ".agent-1c/branch-archives/",
         ".agent-1c/config-dump/",
         ".agent-1c/extension-dump/",
         ".agent-1c/extension-init/",
@@ -2188,6 +2189,9 @@ function Ensure-GitIgnore {
         ".agents/skills/itl-new-config-branch/",
         ".agents/skills/itl-new-extension-branch/",
         ".agents/skills/itl-switch-client/",
+        ".agents/skills/itl-refresh-all/",
+        ".agents/skills/itl-reset-branch/",
+        ".agents/skills/itl-lock-objects/",
         ".agents/skills/itl-update-workflow/",
         ".agents/skills/itl-check/",
         ".agents/skills/itl-sync-master/",

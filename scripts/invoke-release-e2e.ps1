@@ -1036,6 +1036,14 @@ function Invoke-E2ESeedParallelProof {
     $targetMasterCommit = ""
     $branchRuntimeConcurrent = $false
     $liteRefreshConcurrent = $false
+    $refreshAllPassed = $false
+    $dirtyCheckpointPassed = $false
+    $fileResetPassed = $false
+    $repositoryLockRoundtripPassed = $false
+    $resetArchivePath = ""
+    $resetDtPath = ""
+    $resetOldHead = ""
+    $resetNewHead = ""
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()
     try {
         & git -C $MainRoot worktree add --quiet -b $branchA $worktreeA $masterAfterSync
@@ -1112,6 +1120,62 @@ function Invoke-E2ESeedParallelProof {
             throw "Lite refresh changed the observed source infobase artifact metadata."
         }
 
+        $dirtyRelativePath = "tests/release lifecycle $suffix/данные ветки.txt"
+        foreach ($target in @($worktreeA, $worktreeB)) {
+            $dirtyPath = Join-Path $target ($dirtyRelativePath.Replace('/', '\'))
+            [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
+            [IO.File]::WriteAllText($dirtyPath, "dirty checkpoint $suffix`r`n", [Text.UTF8Encoding]::new($false))
+        }
+        Invoke-E2EHelperAtRoot -Root $MainRoot -Action "refresh-all-dev-branches" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-refresh-all" -AdditionalArguments @("-MaxParallelBranches", "2") | Out-Null
+        $targetMasterCommit = (& git -C $MainRoot rev-parse HEAD).Trim()
+        $stateA = Get-E2EBranchStateAtRoot -Root $worktreeA -Name $nameA
+        $stateB = Get-E2EBranchStateAtRoot -Root $worktreeB -Name $nameB
+        foreach ($target in @(
+            [pscustomobject]@{ root = $worktreeA; state = $stateA },
+            [pscustomobject]@{ root = $worktreeB; state = $stateB }
+        )) {
+            if ([string]$target.state.value.lastRefreshMode -ne "lite" -or [string]$target.state.value.lastRefreshMasterCommit -cne $targetMasterCommit) {
+                throw "refresh-all did not record the exact synchronized master SHA."
+            }
+            $checkpointMessage = (& git -C $target.root log -1 --pretty=%s).Trim()
+            if ($checkpointMessage -cne "chore: checkpoint before branch refresh") {
+                throw "refresh-all did not checkpoint the dirty branch before refresh: $($target.root)"
+            }
+            if (-not (Test-Path -LiteralPath (Join-Path $target.root ($dirtyRelativePath.Replace('/', '\'))) -PathType Leaf)) {
+                throw "refresh-all checkpoint did not preserve the dirty branch file: $($target.root)"
+            }
+        }
+        $refreshAllPassed = $true
+        $dirtyCheckpointPassed = $true
+
+        Invoke-E2EHelperAtRoot -Root $worktreeA -BranchName $nameA -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-reset-file" | Out-Null
+        $stateA = Get-E2EBranchStateAtRoot -Root $worktreeA -Name $nameA
+        $resetArchivePath = [string]$stateA.value.resetArchivePath
+        $resetDtPath = [string]$stateA.value.resetArchiveDtPath
+        $resetOldHead = [string]$stateA.value.resetOldHead
+        $resetNewHead = [string]$stateA.value.resetNewHead
+        $masterTree = (& git -C $MainRoot rev-parse "$targetMasterCommit^{tree}").Trim()
+        $resetTree = (& git -C $worktreeA rev-parse "HEAD^{tree}").Trim()
+        $archivedDirtyPath = Join-Path (Join-Path $resetArchivePath "files") ($dirtyRelativePath.Replace('/', '\'))
+        if ([string]$stateA.value.resetStatus -ne "complete" -or
+            [string]$stateA.value.resetMasterCommit -cne $targetMasterCommit -or
+            $resetTree -cne $masterTree -or
+            -not (Test-Path -LiteralPath $resetArchivePath -PathType Container) -or
+            -not (Test-Path -LiteralPath $resetDtPath -PathType Leaf) -or
+            -not (Test-Path -LiteralPath ([string]$stateA.value.resetArchiveManifestPath) -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $archivedDirtyPath -PathType Leaf)) {
+            throw "File infobase reset did not preserve its verified archive or restore the exact master tree."
+        }
+        $fileResetPassed = $true
+
+        $configurationPathB = Join-Path $worktreeB "src\cf\Configuration.xml"
+        if (-not (Test-Path -LiteralPath $configurationPathB -PathType Leaf)) {
+            throw "Release repository lock probe requires src/cf/Configuration.xml."
+        }
+        [IO.File]::AppendAllText($configurationPathB, "`r`n<!-- ITL release repository lock $suffix -->`r`n", [Text.UTF8Encoding]::new($false))
+        Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "release-e2e-config-repository-lock-roundtrip" -TimeoutSeconds 3600 -LogPrefix "seed-parallel-repository-lock" | Out-Null
+        $repositoryLockRoundtripPassed = $true
+
         return [ordered]@{
             schemaVersion = 1
             testFixture = $false
@@ -1126,6 +1190,14 @@ function Invoke-E2ESeedParallelProof {
             liteRefreshSourceCallCount = 0
             branchRuntimeConcurrent = $branchRuntimeConcurrent
             liteRefreshConcurrent = $liteRefreshConcurrent
+            refreshAllPassed = $refreshAllPassed
+            dirtyCheckpointPassed = $dirtyCheckpointPassed
+            fileResetPassed = $fileResetPassed
+            repositoryLockRoundtripPassed = $repositoryLockRoundtripPassed
+            resetArchivePath = $resetArchivePath
+            resetDtPath = $resetDtPath
+            resetOldHead = $resetOldHead
+            resetNewHead = $resetNewHead
             targetMasterCommit = $targetMasterCommit
             branchA = [ordered]@{
                 branch = $branchA; worktreePath = $worktreeA; infoBasePath = [string]$stateA.value.devBranchInfoBasePath
@@ -1150,6 +1222,59 @@ function Invoke-E2ESeedParallelProof {
         if ($cleanupErrors.Count -gt 0) {
             throw "RELEASE_E2E_SEED_CLEANUP_FAILED: $($cleanupErrors -join '; ')"
         }
+    }
+}
+
+function Invoke-E2EServerResetProof {
+    param(
+        [string]$ServerProjectRoot,
+        [string]$ServerWorktreePath,
+        [string]$ServerDevBranchName
+    )
+
+    foreach ($path in @($ServerProjectRoot, $ServerWorktreePath)) {
+        if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Container)) {
+            throw "RELEASE_E2E_SERVER_STAND_REQUIRED: configure existing serverProjectRoot and serverWorktreePath."
+        }
+    }
+    if (-not $ServerDevBranchName) { throw "RELEASE_E2E_SERVER_STAND_REQUIRED: configure serverDevBranchName." }
+    $project = Get-Content -LiteralPath (Join-Path $ServerProjectRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ([string]$project.infoBaseKind -ne "server") {
+        throw "RELEASE_E2E_SERVER_STAND_REQUIRED: infoBaseKind must be server."
+    }
+    $stateBefore = Get-E2EBranchStateAtRoot -Root $ServerWorktreePath -Name $ServerDevBranchName
+    if ([string]$stateBefore.value.initializationStatus -ne "ready" -or [string]$stateBefore.value.devBranchKind -ne "configuration") {
+        throw "RELEASE_E2E_SERVER_BRANCH_NOT_READY: itldev/$ServerDevBranchName"
+    }
+    $dirtyRelativePath = "tests/release server reset/данные ветки.txt"
+    $dirtyPath = Join-Path $ServerWorktreePath ($dirtyRelativePath.Replace('/', '\'))
+    [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
+    [IO.File]::WriteAllText($dirtyPath, "server reset archive probe`r`n", [Text.UTF8Encoding]::new($false))
+    Invoke-E2EHelperAtRoot -Root $ServerWorktreePath -BranchName $ServerDevBranchName -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-reset-server" | Out-Null
+    $stateAfter = Get-E2EBranchStateAtRoot -Root $ServerWorktreePath -Name $ServerDevBranchName
+    $masterCommit = (& git -C $ServerProjectRoot rev-parse refs/heads/master).Trim()
+    $masterTree = (& git -C $ServerProjectRoot rev-parse "$masterCommit^{tree}").Trim()
+    $branchTree = (& git -C $ServerWorktreePath rev-parse "HEAD^{tree}").Trim()
+    $archivePath = [string]$stateAfter.value.resetArchivePath
+    $dtPath = [string]$stateAfter.value.resetArchiveDtPath
+    $archivedDirtyPath = Join-Path (Join-Path $archivePath "files") ($dirtyRelativePath.Replace('/', '\'))
+    if ([string]$stateAfter.value.resetStatus -ne "complete" -or
+        [string]$stateAfter.value.resetMasterCommit -cne $masterCommit -or
+        $branchTree -cne $masterTree -or
+        -not (Test-Path -LiteralPath $dtPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath ([string]$stateAfter.value.resetArchiveManifestPath) -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $archivedDirtyPath -PathType Leaf)) {
+        throw "Server infobase reset did not preserve its verified archive or restore the exact master tree."
+    }
+    return [ordered]@{
+        passed = $true
+        branch = "itldev/$ServerDevBranchName"
+        masterCommit = $masterCommit
+        oldHead = [string]$stateAfter.value.resetOldHead
+        newHead = [string]$stateAfter.value.resetNewHead
+        archivePath = $archivePath
+        dtPath = $dtPath
+        infoBasePath = [string]$stateAfter.value.devBranchInfoBasePath
     }
 }
 
@@ -1868,6 +1993,17 @@ try {
                     liteRefreshSourceCallCount = 0
                     branchRuntimeConcurrent = $true
                     liteRefreshConcurrent = $true
+                    refreshAllPassed = $true
+                    dirtyCheckpointPassed = $true
+                    fileResetPassed = $true
+                    repositoryLockRoundtripPassed = $true
+                    serverResetPassed = $true
+                    serverResetArchivePath = "test-server-archive"
+                    serverResetDtPath = "test-server-archive/infobase.dt"
+                    resetArchivePath = "test-archive"
+                    resetDtPath = "test-archive/infobase.dt"
+                    resetOldHead = ("2" * 40)
+                    resetNewHead = ("3" * 40)
                     targetMasterCommit = ("1" * 40)
                     branchA = [ordered]@{ branch = "itldev/test-a"; worktreePath = "test-a"; infoBasePath = "base-a"; seedSyncId = "test-fixture"; refreshMasterCommit = ("1" * 40); baselineCacheStatus = "seeded" }
                     branchB = [ordered]@{ branch = "itldev/test-b"; worktreePath = "test-b"; infoBasePath = "base-b"; seedSyncId = "test-fixture"; refreshMasterCommit = ("1" * 40); baselineCacheStatus = "seeded" }
@@ -1879,6 +2015,14 @@ try {
                     throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $mainRoot"
                 }
                 $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot))
+                $serverReset = Invoke-E2EServerResetProof `
+                    -ServerProjectRoot ([IO.Path]::GetFullPath([string]$config.serverProjectRoot)) `
+                    -ServerWorktreePath ([IO.Path]::GetFullPath([string]$config.serverWorktreePath)) `
+                    -ServerDevBranchName ([string]$config.serverDevBranchName)
+                $seedParallelEvidence["serverResetPassed"] = [bool]$serverReset.passed
+                $seedParallelEvidence["serverResetArchivePath"] = [string]$serverReset.archivePath
+                $seedParallelEvidence["serverResetDtPath"] = [string]$serverReset.dtPath
+                $seedParallelEvidence["serverReset"] = $serverReset
             }
             if ([string]$seedParallelEvidence.status -ne "passed" -or
                 [string]$seedParallelEvidence.seedArtifactKind -ne "file-1cd" -or
@@ -1887,6 +2031,11 @@ try {
                 [int]$seedParallelEvidence.liteRefreshSourceCallCount -ne 0 -or
                 -not [bool]$seedParallelEvidence.branchRuntimeConcurrent -or
                 -not [bool]$seedParallelEvidence.liteRefreshConcurrent -or
+                -not [bool]$seedParallelEvidence.refreshAllPassed -or
+                -not [bool]$seedParallelEvidence.dirtyCheckpointPassed -or
+                -not [bool]$seedParallelEvidence.fileResetPassed -or
+                -not [bool]$seedParallelEvidence.repositoryLockRoundtripPassed -or
+                -not [bool]$seedParallelEvidence.serverResetPassed -or
                 [string]$seedParallelEvidence.branchA.seedSyncId -cne [string]$seedParallelEvidence.branchB.seedSyncId -or
                 [string]$seedParallelEvidence.branchA.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
                 [string]$seedParallelEvidence.branchB.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
@@ -2449,6 +2598,15 @@ try {
         seedParallelTargetMasterCommit = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.targetMasterCommit } else { "" })
         seedParallelBranchRuntimeConcurrent = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.branchRuntimeConcurrent } else { $false })
         seedParallelLiteRefreshConcurrent = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.liteRefreshConcurrent } else { $false })
+        seedParallelRefreshAllPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.refreshAllPassed } else { $false })
+        seedParallelDirtyCheckpointPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.dirtyCheckpointPassed } else { $false })
+        seedParallelFileResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.fileResetPassed } else { $false })
+        seedParallelRepositoryLockRoundtripPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.repositoryLockRoundtripPassed } else { $false })
+        seedParallelServerResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.serverResetPassed } else { $false })
+        seedParallelServerResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.serverResetArchivePath } else { "" })
+        seedParallelServerResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.serverResetDtPath } else { "" })
+        seedParallelResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetArchivePath } else { "" })
+        seedParallelResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetDtPath } else { "" })
         seedParallelLiteRefreshSourceCallCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.liteRefreshSourceCallCount } else { -1 })
         seedParallelBaselineCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.seedBaselineCount } else { 0 })
         roundtripEvidencePath = $roundtripEvidencePath

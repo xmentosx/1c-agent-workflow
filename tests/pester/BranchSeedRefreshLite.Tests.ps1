@@ -336,6 +336,7 @@ param([string]$Operation,[string]$ProjectRoot)
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "refresh-dev-branch-lite") | Should -Be @([IO.Path]::GetFullPath($branchRoot))
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "initialize-dev-branch-runtime") | Should -Be @([IO.Path]::GetFullPath($branchRoot))
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "refresh-dev-branch").Count | Should -Be 2
+                @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "release-e2e-config-repository-lock-roundtrip").Count | Should -Be 2
             }
         } finally {
             Remove-Item -LiteralPath $branchRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -369,6 +370,7 @@ param([string]$Operation,[string]$ProjectRoot)
             function Read-DevBranchState { return $state }
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
+            function Save-DevBranchCheckpoint {}
             function Sync-DevBranchContextToDotEnv {}
             function Assert-CleanGit {}
             function Sync-Master { $script:syncCalls++ }
@@ -391,6 +393,124 @@ param([string]$Operation,[string]$ProjectRoot)
             { Invoke-RefreshDevBranchCore -SynchronizeMaster -OperationName "refresh-dev-branch" } | Should -Throw "*STOP_AFTER_MERGE*"
             $script:syncCalls | Should -Be 1
             $script:mergedCommit | Should -Be $sha
+        }
+    }
+
+    It "checkpoints staged unstaged untracked and deleted paths while excluding ignored runtime" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-refresh-checkpoint-пробел " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.name "ITL Test"
+            & git -C $tempRoot config user.email "itl@example.invalid"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value "ignored/"
+            foreach ($name in @("staged.txt", "unstaged.txt", "deleted.txt")) {
+                Set-Content -LiteralPath (Join-Path $tempRoot $name) -Encoding UTF8 -Value "base"
+            }
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit -m "base" *> $null
+
+            Set-Content -LiteralPath (Join-Path $tempRoot "staged.txt") -Encoding UTF8 -Value "staged"
+            & git -C $tempRoot add -- "staged.txt"
+            Set-Content -LiteralPath (Join-Path $tempRoot "unstaged.txt") -Encoding UTF8 -Value "unstaged"
+            Remove-Item -LiteralPath (Join-Path $tempRoot "deleted.txt")
+            Set-Content -LiteralPath (Join-Path $tempRoot "новый файл.txt") -Encoding UTF8 -Value "new"
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "ignored") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "ignored\runtime.log") -Encoding UTF8 -Value "runtime"
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $checkpoint = Save-DevBranchCheckpoint -Operation "refresh-dev-branch-lite"
+                $headAfterCheckpoint = Get-CurrentCommit
+                $second = Save-DevBranchCheckpoint -Operation "refresh-dev-branch-lite"
+                $gitDir = (Get-GitOutput @("rev-parse", "--git-dir")).Trim()
+                if (-not [IO.Path]::IsPathRooted($gitDir)) { $gitDir = Join-Path $tempRoot $gitDir }
+                Set-Content -LiteralPath (Join-Path $gitDir "CHERRY_PICK_HEAD") -Encoding ASCII -Value $headAfterCheckpoint
+                $blocked = ""
+                try { Save-DevBranchCheckpoint -Operation "refresh-dev-branch-lite" | Out-Null } catch { $blocked = $_.Exception.Message }
+                Remove-Item -LiteralPath (Join-Path $gitDir "CHERRY_PICK_HEAD") -Force
+                [pscustomobject]@{
+                    checkpoint = $checkpoint
+                    headAfterCheckpoint = $headAfterCheckpoint
+                    second = $second
+                    blocked = $blocked
+                    message = (Get-GitOutput @("log", "-1", "--pretty=%s")).Trim()
+                }
+            }
+
+            $result.checkpoint | Should -Be $result.headAfterCheckpoint
+            $result.second | Should -Be ""
+            $result.message | Should -Be "chore: checkpoint before branch refresh"
+            $result.blocked | Should -Match "CHERRY_PICK|cherry-pick"
+            @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
+            @(& git -C $tempRoot ls-files -- "новый файл.txt").Count | Should -Be 1
+            @(& git -C $tempRoot ls-files -- "ignored/runtime.log").Count | Should -Be 0
+            Test-Path -LiteralPath (Join-Path $tempRoot "deleted.txt") | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "syncs master once limits refresh-all to two workers and aggregates isolated failures" {
+        $entrypointText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
+        $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $entrypointText | Should -Match '\[ValidateRange\(1, 2\)\]\[int\]\$MaxParallelBranches = 2'
+        $entrypointText | Should -Match 'Add-Agent1cReexecArgument -Arguments \$arguments -Name "ExpectedMasterCommit"'
+        $lifecycleText | Should -Match '\$runner = Join-Path \$script:Agent1cScriptRoot "run-itl-command\.ps1"'
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-refresh-all-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:SyncCalls = 0
+                $script:Started = [System.Collections.Generic.List[string]]::new()
+                $script:Processes = [System.Collections.Generic.List[object]]::new()
+                $script:MaxObserved = 0
+                function Assert-MasterWorktreeContext {}
+                function Assert-CleanGit {}
+                function Sync-Master { $script:SyncCalls++ }
+                function Get-CurrentCommit { "1234567890abcdef1234567890abcdef12345678" }
+                function Get-ActiveReadyDevBranchTargets {
+                    [pscustomobject]@{ errors = @(); targets = @(
+                        [pscustomobject]@{ name = "one"; branch = "itldev/one"; worktreePath = $tempRoot },
+                        [pscustomobject]@{ name = "two"; branch = "itldev/two"; worktreePath = $tempRoot },
+                        [pscustomobject]@{ name = "three"; branch = "itldev/three"; worktreePath = $tempRoot }
+                    ) }
+                }
+                function Start-RefreshAllBranchProcess {
+                    param([object]$Target, [string]$MasterCommit, [string]$OutputRoot)
+                    foreach ($existing in @($script:Processes)) { $existing.process.Refresh() }
+                    $active = @($script:Processes | Where-Object { -not $_.process.HasExited }).Count
+                    if (($active + 1) -gt $script:MaxObserved) { $script:MaxObserved = $active + 1 }
+                    $script:Started.Add([string]$Target.branch) | Out-Null
+                    $stdout = Join-Path $OutputRoot ("$($Target.name).json")
+                    $stderr = Join-Path $OutputRoot ("$($Target.name).log")
+                    $isFailure = [string]$Target.name -eq "two"
+                    $payload = [ordered]@{ status = $(if ($isFailure) { "failed" } else { "succeeded" }); error = $(if ($isFailure) { "fixture conflict" } else { "" }); userReport = "branch $($Target.name)" }
+                    [IO.File]::WriteAllText($stdout, (($payload | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                    [IO.File]::WriteAllText($stderr, "", [Text.UTF8Encoding]::new($false))
+                    $exit = if ($isFailure) { 1 } else { 0 }
+                    $process = Start-Process -FilePath "powershell" -ArgumentList "-NoProfile -Command `"Start-Sleep -Milliseconds 700; exit $exit`"" -WindowStyle Hidden -PassThru
+                    $entry = [pscustomobject]@{ target = $Target; process = $process; stdout = $stdout; stderr = $stderr; startedAt = Get-Date }
+                    $script:Processes.Add($entry) | Out-Null
+                    return $entry
+                }
+                function Set-RunStage {}
+                $failure = ""
+                try { Refresh-AllDevBranches 6>$null } catch { $failure = $_.Exception.Message }
+                foreach ($entry in @($script:Processes)) { try { $entry.process.Dispose() } catch {} }
+                [pscustomobject]@{ syncCalls = $script:SyncCalls; started = @($script:Started); maxObserved = $script:MaxObserved; failure = $failure; report = $script:RunUserReport }
+            }
+
+            $result.syncCalls | Should -Be 1
+            @($result.started) | Should -Be @("itldev/one", "itldev/two", "itldev/three")
+            $result.maxObserved | Should -Be 2
+            $result.failure | Should -Match "REFRESH_ALL_BRANCH_FAILURE"
+            $result.report | Should -Match "itldev/one: succeeded"
+            $result.report | Should -Match "itldev/two: failed: fixture conflict"
+            $result.report | Should -Match "itldev/three: succeeded"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 }

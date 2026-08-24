@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -103,7 +103,9 @@ param(
     [int]$InternalOnDemandExpectedPort = 0,
     [string]$InterruptedVanessaInfoBasePath = "",
     [string]$InterruptedVanessaRunParamsPath = "",
-    [string]$InterruptedVanessaTestPorts = ""
+    [string]$InterruptedVanessaTestPorts = "",
+    [string]$ExpectedMasterCommit = "",
+    [ValidateRange(1, 2)][int]$MaxParallelBranches = 2
 )
 
 Set-StrictMode -Version Latest
@@ -263,6 +265,8 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowRef" -Value $BootstrapWorkflowRef
     Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowCommit" -Value $BootstrapWorkflowCommit
     Add-Agent1cReexecArgument -Arguments $arguments -Name "BootstrapWorkflowSource" -Value $BootstrapWorkflowSource
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "ExpectedMasterCommit" -Value $ExpectedMasterCommit
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "MaxParallelBranches" -Value $(if ($MaxParallelBranches -ne 2) { $MaxParallelBranches } else { $null })
     return [string[]]$arguments.ToArray()
 }
 
@@ -444,6 +448,9 @@ try {
         "update-dev-branch-base" { Update-DevBranchBase }
         "refresh-dev-branch" { Refresh-DevBranch }
         "refresh-dev-branch-lite" { Refresh-DevBranchLite }
+        "refresh-all-dev-branches" { Refresh-AllDevBranches }
+        "reset-dev-branch" { Reset-DevBranch }
+        "lock-config-repository-objects" { Lock-ConfigRepositoryObjects }
         "export-dev-branch-result" { Export-DevBranchResult }
         "close-dev-branch" { Close-DevBranch }
         "switch-master" { Switch-Master }
@@ -453,6 +460,7 @@ try {
         "release-e2e-restore" { Restore-ReleaseE2EInfobaseSnapshot }
         "release-e2e-prepare-ondemand" { Prepare-ReleaseE2EOnDemandDependencies }
         "release-e2e-config-roundtrip" { Invoke-ReleaseE2EConfigRoundtrip }
+        "release-e2e-config-repository-lock-roundtrip" { Invoke-ReleaseE2EConfigRepositoryLockRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     } }
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
