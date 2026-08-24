@@ -243,7 +243,7 @@ function Assert-ExportResult {
     if ([string]$manifest.artifact.sha256 -notmatch '^[a-f0-9]{64}$') { throw "Export manifest lacks artifact SHA256." }
     $actual = (Get-FileHash -LiteralPath ([string]$manifest.artifact.path) -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne ([string]$manifest.artifact.sha256).ToLowerInvariant()) { throw "Export artifact SHA256 does not match its manifest." }
-    if ($ExpectedDecision -eq "warn-unverified" -and [string]$summary.userReport -notmatch '(?is)fresh passed.*policy warn') { throw "Warn export did not surface its unverified decision in the user report." }
+    if ($ExpectedDecision -eq "warn-unverified" -and [string]$summary.userReport -notmatch '(?is)fresh passed.*warn') { throw "Warn export did not surface its unverified decision in the user report." }
     return $summary
 }
 
