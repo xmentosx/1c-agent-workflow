@@ -36,7 +36,12 @@ First publish and qualify the exact accumulated development candidate:
 
 This is the only broad check for a batch of ordinary source tasks. It runs one
 `Develop` gate on the final temporary candidate, publishes only after success,
-and leaves the queue intact on failure. No topic chat runs Full/Develop first.
+and leaves the queue intact on failure. When a new controlled-fork lock is
+`pending`, the same transaction first qualifies that exact preliminary tree,
+promotes only the lock, then runs `Develop` on the final `passed` tree; neither
+the preliminary workflow commit nor a pending dependency is pushed. A retry
+restores the promotion checkpoint instead of repeating its preliminary gate.
+No topic chat runs Full/Develop first.
 A passed `Develop` already owns the exact-tree Full/static evidence; a separate
 `Full` for that tree is redundant and must not be run.
 
@@ -53,6 +58,12 @@ It runs `Develop`, then `Release`, on the same temporary candidate and pushes
 only after both pass. Any failure preserves the queue and the old remote ref.
 On an exact-tree retry, passed `Develop` qualification is reused, so a failed
 `Release` does not trigger another Develop journey.
+
+Successful `PublishDevelop` output must state `developPublished=true`,
+`dependenciesInstallable=true`, and `masterReleased=false`. This completes the
+installable development channel, including owned component publication, but
+does not move stable `master`; only the explicit command below may report
+`masterReleased=true`.
 
 When that remote development commit is ready for the stable channel, run:
 
@@ -148,6 +159,8 @@ owned-component plan, from the exact SHA-matching local candidate: the GitHub
 owner/repository, annotated tag, asset name, and candidate
 commit must all match. Existing tags and assets are never repointed or
 overwritten; any mismatch or failed remote verification preserves the queue.
+The ai_rules finalizer additionally requires `compatibilityStatus=passed`; the
+presence of its remote immutable tag alone is not publication success.
 
 The finalizer covers every owned release surface: the controlled `ai_rules_1c`
 branch plus annotated tag, the patched Vanessa Automation asset, and the

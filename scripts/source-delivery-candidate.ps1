@@ -128,6 +128,210 @@ function Get-DeliveryComponentFinalizerIdentity {
     return Get-DeliveryFileIdentity -Path $path
 }
 
+function Get-DeliveryCompatibilityPromoterIdentity {
+    return Get-DeliveryFileIdentity -Path $script:CompatibilityPromoterScript
+}
+
+function Get-DependencyLockInstallability {
+    param([AllowNull()][object]$Lock)
+
+    if (-not $Lock) { return [pscustomobject]@{ installable = $true; aiRulesStatus = "not-applicable"; aiRulesRef = ""; blockers = @() } }
+    $lock = $Lock
+    $dependencies = $lock.dependencies
+    if (-not $dependencies) { throw "Candidate dependency lock does not contain dependencies." }
+    $blockers = @()
+    foreach ($property in @($dependencies.PSObject.Properties)) {
+        $statusProperty = $property.Value.PSObject.Properties["compatibilityStatus"]
+        if (-not $statusProperty) { continue }
+        $status = [string]$statusProperty.Value
+        if ($status -cne "passed") {
+            $blockers += [pscustomobject]@{ name = [string]$property.Name; status = $status }
+        }
+    }
+    $aiRulesProperty = $dependencies.PSObject.Properties["aiRules1c"]
+    $aiRules = if ($aiRulesProperty) { $aiRulesProperty.Value } else { $null }
+    if ($aiRules -and -not $aiRules.PSObject.Properties["compatibilityStatus"]) {
+        $blockers += [pscustomobject]@{ name = "aiRules1c"; status = "missing" }
+    }
+    $aiRulesStatus = if (-not $aiRules) { "not-applicable" } elseif ($aiRules.PSObject.Properties["compatibilityStatus"]) { [string]$aiRules.compatibilityStatus } else { "missing" }
+    $aiRulesRef = if ($aiRules -and $aiRules.PSObject.Properties["ref"]) { [string]$aiRules.ref } else { "" }
+    return [pscustomobject]@{
+        installable = ($blockers.Count -eq 0)
+        aiRulesStatus = $aiRulesStatus
+        aiRulesRef = $aiRulesRef
+        blockers = $blockers
+    }
+}
+
+function Get-DevelopCandidateInstallability {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+
+    $lockPath = Join-Path $CandidateRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return Get-DependencyLockInstallability -Lock $null }
+    return Get-DependencyLockInstallability -Lock (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json)
+}
+
+function Get-DevelopCommitInstallability {
+    param([Parameter(Mandatory = $true)][string]$Commit)
+
+    $result = Invoke-DeliveryGit -Arguments @("show", "${Commit}:templates/dependency-lock.json") -AllowFailure
+    if ($result.exitCode -ne 0) { return Get-DependencyLockInstallability -Lock $null }
+    return Get-DependencyLockInstallability -Lock ($result.stdout | ConvertFrom-Json)
+}
+
+function Assert-DevelopCandidateInstallable {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+
+    $state = Get-DevelopCandidateInstallability -CandidateRoot $CandidateRoot
+    if (-not [bool]$state.installable) {
+        $detail = @($state.blockers | ForEach-Object { "$([string]$_.name)=$([string]$_.status)" }) -join ", "
+        throw "Develop candidate is not installable because required dependency compatibility is not passed: $detail. Nothing may be pushed."
+    }
+    return $state
+}
+
+function Get-DevelopPromotionRef {
+    param([Parameter(Mandatory = $true)][string]$Identity)
+    return "refs/itl/develop-promotions/$Identity"
+}
+
+function Remove-DevelopPromotionRef {
+    param([AllowEmptyString()][string]$Ref)
+    if ($Ref) { [void](Invoke-DeliveryGit -Arguments @("update-ref", "-d", $Ref) -AllowFailure) }
+}
+
+function Get-DevelopCompatibilityQualificationPath {
+    param([Parameter(Mandatory = $true)][string]$Tree)
+    if ($Tree -notmatch '^[a-f0-9]{40}$') { throw "Invalid candidate tree for compatibility qualification: $Tree" }
+    return Join-Path (Get-DeliveryCommonGitDirectory) ("itl\compatibility-qualifications\$Tree\full.json")
+}
+
+function Save-DevelopCompatibilityQualification {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree)
+    $source = Join-Path $CandidateRoot "build\test-results\qualification\full.json"
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Full gate did not create reusable qualification file 'full.json'." }
+    $target = Get-DevelopCompatibilityQualificationPath -Tree $Tree
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+    $staging = "$target.$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        Copy-Item -LiteralPath $source -Destination $staging -Force
+        Move-Item -LiteralPath $staging -Destination $target -Force
+    } finally {
+        Remove-Item -LiteralPath $staging -Force -ErrorAction SilentlyContinue
+    }
+    return $target
+}
+
+function Restore-DevelopCompatibilityQualification {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [Parameter(Mandatory = $true)][string]$Tree)
+    $source = Get-DevelopCompatibilityQualificationPath -Tree $Tree
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return $false }
+    try {
+        $qualification = Get-Content -LiteralPath $source -Raw -Encoding UTF8 | ConvertFrom-Json
+        $head = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+        if ([string]$qualification.kind -cne "itl-workflow-full-qualification" -or [string]$qualification.status -cne "passed" -or
+            -not [bool]$qualification.reusable -or [string]$qualification.repository.commit -cne $head -or
+            [string]$qualification.repository.tree -cne $Tree -or -not [bool]$qualification.repository.worktreeClean -or
+            [int]$qualification.result.failed -ne 0 -or [int]$qualification.result.skipped -ne 0) { return $false }
+    } catch { return $false }
+    $targetRoot = Join-Path $CandidateRoot "build\test-results\qualification"
+    New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+    Copy-Item -LiteralPath $source -Destination (Join-Path $targetRoot "full.json") -Force
+    return $true
+}
+
+function Restore-DevelopCompatibilityPromotion {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidateRoot,
+        [Parameter(Mandatory = $true)][object]$Attempt,
+        [Parameter(Mandatory = $true)][string]$QueuedCandidate
+    )
+    if (-not ($Attempt.PSObject.Properties.Name -contains "promotionCommit") -or -not [string]$Attempt.promotionCommit) { return $false }
+    $promotionCommit = [string]$Attempt.promotionCommit
+    $promotionRef = [string]$Attempt.promotionRef
+    if ($promotionCommit -notmatch '^[a-f0-9]{40}$' -or -not $promotionRef) { throw "Recorded ai_rules compatibility promotion is invalid." }
+    $refCommit = (Invoke-DeliveryGit -Arguments @("rev-parse", "--verify", $promotionRef) -AllowFailure)
+    if ($refCommit.exitCode -ne 0 -or $refCommit.stdout.Trim() -cne $promotionCommit) { throw "Recorded ai_rules compatibility promotion ref is missing or changed: $promotionRef" }
+    if ((Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge-base", "--is-ancestor", $QueuedCandidate, $promotionCommit) -AllowFailure).exitCode -ne 0) {
+        throw "Recorded ai_rules compatibility promotion is not a descendant of the exact queued candidate."
+    }
+    $merge = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--ff-only", $promotionCommit) -AllowFailure
+    if ($merge.exitCode -ne 0) { throw "Unable to restore the recorded ai_rules compatibility promotion." }
+    return $true
+}
+
+function Invoke-DevelopCompatibilityPromotion {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidateRoot,
+        [Parameter(Mandatory = $true)][object]$Attempt,
+        [Parameter(Mandatory = $true)][string]$QueuedCandidate,
+        [Parameter(Mandatory = $true)][string]$QueuedTree,
+        [Parameter(Mandatory = $true)][string]$RemoteBefore,
+        [Parameter(Mandatory = $true)][DateTime]$OperationStartedAt
+    )
+    $state = Get-DevelopCandidateInstallability -CandidateRoot $CandidateRoot
+    if ([bool]$state.installable) { return $false }
+    $unsupported = @($state.blockers | Where-Object { [string]$_.name -cne "aiRules1c" -or [string]$_.status -cne "pending" })
+    if ($unsupported.Count -gt 0 -or [string]$state.aiRulesStatus -cne "pending") {
+        [void](Assert-DevelopCandidateInstallable -CandidateRoot $CandidateRoot)
+    }
+    if (-not (Test-Path -LiteralPath $script:CompatibilityPromoterScript -PathType Leaf)) {
+        throw "ai_rules compatibility promoter is missing: $script:CompatibilityPromoterScript"
+    }
+
+    $compatibilityQualificationRestored = $false
+    $recordedCompatibilityTree = if ($Attempt.PSObject.Properties.Name -contains "compatibilityQualifiedTree") { [string]$Attempt.compatibilityQualifiedTree } else { "" }
+    $recordedCompatibilityEnvironment = if ($Attempt.PSObject.Properties.Name -contains "compatibilityEnvironmentIdentity") { [string]$Attempt.compatibilityEnvironmentIdentity } else { "" }
+    if ($recordedCompatibilityTree -ceq $QueuedTree -and $recordedCompatibilityEnvironment -ceq (Get-DevelopPublicationEnvironmentIdentity)) {
+        $compatibilityQualificationRestored = Restore-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree
+    }
+    if (-not $compatibilityQualificationRestored) {
+        Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-qualification"
+        Assert-DevelopPublicationOperationBudget -StartedAt $OperationStartedAt -NextStage "ai_rules compatibility qualification"
+        try {
+            Invoke-SourceGate -Mode "Full" -WorkingRoot $CandidateRoot -TargetBaseRef $RemoteBefore
+            [void](Save-DevelopCompatibilityQualification -CandidateRoot $CandidateRoot -Tree $QueuedTree)
+            $Attempt | Add-Member -NotePropertyName compatibilityQualifiedTree -NotePropertyValue $QueuedTree -Force
+            $Attempt | Add-Member -NotePropertyName compatibilityEnvironmentIdentity -NotePropertyValue (Get-DevelopPublicationEnvironmentIdentity) -Force
+            Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage "compatibility-qualification"
+            Write-DevelopPublicationAttempt -Attempt $Attempt
+        } catch {
+            Register-DevelopPublicationStageFailure -Attempt $Attempt -Stage "compatibility-qualification" -Message $_.Exception.Message
+            throw
+        }
+    }
+
+    Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"
+    try {
+        $promotionOutput = @(& $script:CompatibilityPromoterScript -RepositoryRoot $CandidateRoot -QualificationPath (Join-Path $CandidateRoot "build\test-results\qualification\full.json") 6>&1)
+        $status = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("status", "--porcelain", "--untracked-files=no")
+        $unexpected = @($status.stdout -split "`r?`n" | Where-Object { $_ -and $_ -notmatch '^ M templates/dependency-lock\.json$' })
+        if ($unexpected.Count -gt 0) { throw "ai_rules compatibility promotion changed unexpected tracked paths: $($unexpected -join ', ')" }
+        [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("add", "--", "templates/dependency-lock.json"))
+        $revision = [int]((Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.aiRules1c.downstreamRevision)
+        $commit = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("commit", "-m", "chore: promote ai rules r$revision compatibility") -AllowFailure
+        if ($commit.exitCode -ne 0) { throw "Unable to commit the ai_rules compatibility promotion." }
+        $promotionCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+        $promotionTree = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        $promotionRef = Get-DevelopPromotionRef -Identity ([string]$Attempt.identity)
+        [void](Invoke-DeliveryGit -Arguments @("update-ref", $promotionRef, $promotionCommit))
+        $Attempt | Add-Member -NotePropertyName promotionSourceCandidate -NotePropertyValue $QueuedCandidate -Force
+        $Attempt | Add-Member -NotePropertyName promotionCommit -NotePropertyValue $promotionCommit -Force
+        $Attempt | Add-Member -NotePropertyName promotionRef -NotePropertyValue $promotionRef -Force
+        $Attempt | Add-Member -NotePropertyName compatibilityPromoterIdentity -NotePropertyValue (Get-DeliveryCompatibilityPromoterIdentity) -Force
+        $Attempt.candidate = $promotionCommit
+        $Attempt.tree = $promotionTree
+        $Attempt.phase = "candidate-built"
+        Clear-DevelopPublicationStageFailure -Attempt $Attempt -Stage "compatibility-promotion"
+        Write-DevelopPublicationAttempt -Attempt $Attempt
+        [void](Assert-DevelopCandidateInstallable -CandidateRoot $CandidateRoot)
+        return $true
+    } catch {
+        Register-DevelopPublicationStageFailure -Attempt $Attempt -Stage "compatibility-promotion" -Message $_.Exception.Message
+        throw
+    }
+}
+
 function Get-DevelopPublicationIdentity {
     param(
         [Parameter(Mandatory = $true)][string]$RemoteBefore,
@@ -137,9 +341,10 @@ function Get-DevelopPublicationIdentity {
     )
     $queue = @($Entries | ForEach-Object { "$([string]$_.id)|$([string]$_.base)|$([string]$_.head)" }) -join "`n"
     $gateIdentity = Get-DeliveryFileIdentity -Path $script:GateScript
+    $promoterIdentity = Get-DeliveryCompatibilityPromoterIdentity
     return Get-DeliveryTextSha256 -Text (@(
         "remote=$($script:Remote)", "remoteBefore=$RemoteBefore", "candidate=$Candidate", "tree=$Tree",
-        "requireRelease=$([bool]$RequireRelease)", "gate=$gateIdentity", "queue=$queue"
+        "requireRelease=$([bool]$RequireRelease)", "gate=$gateIdentity", "promoter=$promoterIdentity", "queue=$queue"
     ) -join "`n")
 }
 
@@ -248,6 +453,7 @@ function New-DevelopPublicationAttempt {
         candidate = $Candidate; tree = $Tree; requireRelease = [bool]$RequireRelease; phase = "candidate-built"
         gateIdentity = (Get-DeliveryFileIdentity -Path $script:GateScript)
         componentFinalizerIdentity = (Get-DeliveryComponentFinalizerIdentity)
+        compatibilityPromoterIdentity = (Get-DeliveryCompatibilityPromoterIdentity)
         queue = @($Entries | ForEach-Object { [pscustomobject]@{ id = [string]$_.id; base = [string]$_.base; head = [string]$_.head } })
         componentPlan = $ComponentPlan; componentPublication = $null; failures = @(); startedAt = $now; updatedAt = $now
     }
@@ -304,10 +510,18 @@ function Complete-InterruptedDevelopPublication {
     }
     $remoteTree = Get-GitValue -Arguments @("rev-parse", "$RemoteBefore^{tree}")
     if ($remoteTree -ne [string]$attempt.tree) { return $null }
+    $installability = Get-DevelopCommitInstallability -Commit $RemoteBefore
+    if (-not [bool]$installability.installable) { throw "Published develop is not installable; recovery will not report success." }
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
     Sync-LocalDevelopAfterPublish
+    if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
     Remove-DevelopPublicationAttempt
-    return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree; releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true }
+    return [pscustomobject]@{
+        status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree
+        developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
+        aiRulesCompatibility = [string]$installability.aiRulesStatus
+        releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true
+    }
 }
 
 function Publish-AccumulatedDevelop {
@@ -325,6 +539,18 @@ function Publish-AccumulatedDevelop {
     try {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
+        $queuedTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        $queuedCandidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+        $attemptIdentity = Get-DevelopPublicationIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $queuedCandidate -Tree $queuedTree
+        $attempt = Read-DevelopPublicationAttempt
+        $priorAttempt = $attempt
+        if ($attempt -and [string]$attempt.identity -ne $attemptIdentity -and $attempt.PSObject.Properties.Name -contains "promotionRef") {
+            Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef)
+        }
+        $promotionRestored = $false
+        if ($attempt -and [string]$attempt.identity -eq $attemptIdentity) {
+            $promotionRestored = Restore-DevelopCompatibilityPromotion -CandidateRoot $worktree.path -Attempt $attempt -QueuedCandidate $queuedCandidate
+        }
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
@@ -332,9 +558,6 @@ function Publish-AccumulatedDevelop {
             Write-Host "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
         }
         $RequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
-        $attemptIdentity = Get-DevelopPublicationIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree
-        $attempt = Read-DevelopPublicationAttempt
-        $priorAttempt = $attempt
         if (-not $attempt -or [string]$attempt.identity -ne $attemptIdentity) {
             $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree -ComponentPlan $componentPlan
         } elseif ($attempt.PSObject.Properties.Name -contains "componentPlan") {
@@ -342,6 +565,22 @@ function Publish-AccumulatedDevelop {
         } else {
             $attempt | Add-Member -NotePropertyName componentPlan -NotePropertyValue $componentPlan
         }
+        $attempt.candidate = $candidate
+        $attempt.tree = $candidateTree
+        Write-DevelopPublicationAttempt -Attempt $attempt
+
+        $prePromotionInstallability = Get-DevelopCandidateInstallability -CandidateRoot $worktree.path
+        if (-not $promotionRestored -and [string]$prePromotionInstallability.aiRulesStatus -eq "pending") {
+            [void](Invoke-DevelopCompatibilityPromotion -CandidateRoot $worktree.path -Attempt $attempt -QueuedCandidate $queuedCandidate -QueuedTree $queuedTree -RemoteBefore $remoteBefore -OperationStartedAt $operationStartedAt)
+            $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+            $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+            $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+            $attempt.componentPlan = $componentPlan
+            $attempt.candidate = $candidate
+            $attempt.tree = $candidateTree
+            Write-DevelopPublicationAttempt -Attempt $attempt
+        }
+        [void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)
         $developEnvironmentIdentity = Get-DevelopPublicationEnvironmentIdentity
         $exactDevelopQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
         if (-not $exactDevelopQualificationRestored) {
@@ -413,6 +652,7 @@ function Publish-AccumulatedDevelop {
                 throw
             }
         }
+        $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "push"
         try {
             $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure
@@ -427,9 +667,15 @@ function Publish-AccumulatedDevelop {
         if ($remoteAfter -ne $candidate) { throw "Published develop verification failed: expected $candidate, remote reports $remoteAfter." }
         Clear-PublishedQueueEntries -PublishedCommit $candidate
         Sync-LocalDevelopAfterPublish
+        if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
         Remove-DevelopPublicationAttempt
         $deliverySucceeded = $true
-        return [pscustomobject]@{ status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree; releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication }
+        return [pscustomobject]@{
+            status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree
+            developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $false
+            aiRulesCompatibility = [string]$installability.aiRulesStatus
+            releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
+        }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
         if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
@@ -480,6 +726,7 @@ function Release-DevelopToMaster {
             }
         }
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
         Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
         [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
@@ -501,7 +748,11 @@ function Release-DevelopToMaster {
         Publish-ReleaseVersion -Commit $candidate
         Sync-LocalDevelopAfterPublish
         $deliverySucceeded = $true
-        return [pscustomobject]@{ status = "released"; commit = $candidate; tree = $candidateTree; version = $Version }
+        return [pscustomobject]@{
+            status = "released"; commit = $candidate; tree = $candidateTree; version = $Version
+            developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
+            aiRulesCompatibility = [string]$installability.aiRulesStatus
+        }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
         if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }

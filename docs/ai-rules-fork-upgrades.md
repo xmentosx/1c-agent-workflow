@@ -2,7 +2,7 @@
 
 ## Current develop candidate
 
-The `develop` workflow is pinned to `itl-main-410951e7-r32` at fork commit `507ac7cb8f6da63f1dc38e91c34d70164e5ff01b`. Its exact upstream provenance is `refs/heads/main@410951e74fd3e6b7a763cf49757935b9a34d3f31`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `32`, and compatibility state; project templates, code, docs, and tests must agree with it. Compatibility starts as `pending` on `develop` and changes to `passed` only through a separate evidence-backed promotion.
+The `develop` workflow is pinned to `itl-main-410951e7-r32` at fork commit `507ac7cb8f6da63f1dc38e91c34d70164e5ff01b`. Its exact upstream provenance is `refs/heads/main@410951e74fd3e6b7a763cf49757935b9a34d3f31`. `templates/dependency-lock.json` is the single source of this tag, commit, upstream provenance, downstream revision `32`, and compatibility state; project templates, code, docs, and tests must agree with it. The published candidate is `passed`. A newly registered fork revision starts as `pending`, but that state is not publishable: `PublishDevelop` owns its evidence-backed promotion and final qualification.
 
 Fork `main` mirrors upstream and is never consumed by installed projects. Downstream changes exist only on immutable release branches/tags; the current pair is `release/itl-main-410951e7-r32` / `itl-main-410951e7-r32`, which point to the same release commit. Older immutable releases remain published only for provenance. `r32` retains the r31 validation contract and exposes the exact Codex command names `grill-me` and `grill-with-docs`.
 
@@ -16,7 +16,7 @@ Use `scripts/build-ai-rules-release.ps1` as the only normal downstream reconstru
 
 For a new upstream commit, create a new release branch from that commit, update only the path decisions and hashes affected by the audit, and rebuild. Never carry the previous release branch forward. A `resolved` entry is not a custom patch language: Git stores the reviewed merge result and the ledger only verifies its hash. If upstream did not change, increment the downstream revision while retaining the upstream short SHA in the immutable tag.
 
-Run the fork Full gate, preview publication with `publish-fork-release.ps1 -WhatIf`, then publish exactly one immutable branch/tag. Never repoint a release tag.
+Run the fork Full gate and preview publication with `publish-fork-release.ps1 -WhatIf`, but do not expose the new branch/tag remotely while the workflow lock is `pending`. Keep the clean exact local release checkout and immutable refs for `PublishDevelop`: it qualifies the pending candidate, promotes only the lock, qualifies the resulting installable candidate, and then its component finalizer publishes exactly one immutable branch/tag before the single workflow push. Never repoint a release tag. Direct `promote-ai-rules-compatibility.ps1` remains a supervised recovery tool, not a separate normal publication step.
 
 ## Single-client migration
 

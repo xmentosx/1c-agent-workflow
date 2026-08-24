@@ -527,6 +527,42 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Not -Match '(?im)^\s*\$home\s*='
     }
 
+    It "rejects a non-installable workflow source before managed files are copied" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl update preflight путь " + [guid]::NewGuid().ToString("N"))
+        $sourceRoot = Join-Path $tempRoot "workflow source"
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $sourceRoot "templates") | Out-Null
+            $lockPath = Join-Path $sourceRoot "templates\dependency-lock.json"
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ ref = "itl-v1-r99"; commit = ("a" * 40); compatibilityStatus = "pending" } } }
+            [IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+            $blocked = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try { Assert-WorkflowSourceAiRulesInstallable -SourceRoot $sourceRoot; "not-blocked" } catch { $_.Exception.Message }
+            }
+            $blocked | Should -Match "blocked before managed files are copied"
+            $blocked | Should -Match "compatibilityStatus=pending"
+
+            $skipped = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help -SkipAiRules *> $null
+                Assert-WorkflowSourceAiRulesInstallable -SourceRoot $sourceRoot
+                "skipped"
+            }
+            $skipped | Should -Be "skipped"
+
+            $lock.dependencies.aiRules1c.compatibilityStatus = "passed"
+            [IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $passed = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Assert-WorkflowSourceAiRulesInstallable -SourceRoot $sourceRoot
+                "passed"
+            }
+            $passed | Should -Be "passed"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "wires ITL workflow package update through the helper and advanced docs" {
         $agentEntrypointText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1") -Raw -Encoding UTF8
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
@@ -545,6 +581,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Assert-WorkflowPackageUpdateContext"
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
         $agentEntrypointText | Should -Match '"update-workflow"\s*\{\s*Update-WorkflowPackage\s*\}'
+        $lifecycleText.IndexOf('Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.copy"')
         $lifecycleText.IndexOf("Install-ItlUiTools -BestEffort") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf("Sync-ItlClientSurface") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $HelperText | Should -Match "function Write-PostInitClientReloadHandoff"
@@ -1582,6 +1619,7 @@ exit 0
                 function Assert-WorkflowUpdateCommitIdentity {}
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
+                function Assert-WorkflowSourceAiRulesInstallable {}
                 function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
                 function Copy-WorkflowManagedFile { $script:copyCalls++ }
                 function Update-WorkflowPackageLockEntry {}

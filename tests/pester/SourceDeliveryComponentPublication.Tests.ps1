@@ -14,6 +14,23 @@ Describe "Source develop queue and delivery" {
         }
         $DeliverySourceText | Should -Match 'Owned component publication requires exact-candidate Release qualification'
         $DeliverySourceText | Should -Match 'Get-DeliveryComponentFinalizerIdentity'
+        $DeliverySourceText | Should -Match 'compatibilityStatus = \[string\]\$lock\.compatibilityStatus; installable = \$true'
+    }
+
+    It "refuses to finalize a remotely present ai rules tag while compatibility is pending" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Invoke-AiRulesComponentPublicationFinalize')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive "pending rules candidate"
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot "templates") | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{
+                repo = "https://example.invalid/ai_rules_1c.git"; ref = "itl-v1-r99"; commit = ("a" * 40)
+                upstreamCommit = ("b" * 40); downstreamRevision = 99; compatibilityStatus = "pending"
+            } } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot "templates\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+            { Invoke-AiRulesComponentPublicationFinalize -CandidateRoot $candidateRoot -CandidateCommit ("c" * 40) } |
+                Should -Throw "*is published remotely but is not installable: compatibilityStatus=pending*"
+        }
     }
 
     It "classifies exact, partial, and missing immutable ai_rules remote refs" {

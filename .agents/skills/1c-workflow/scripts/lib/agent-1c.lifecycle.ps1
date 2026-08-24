@@ -3856,6 +3856,24 @@ function Assert-WorkflowPackageUpdateContext {
     Assert-WorkflowTrackedGitClean
 }
 
+function Assert-WorkflowSourceAiRulesInstallable {
+    param([Parameter(Mandatory = $true)][string]$SourceRoot)
+
+    if ($SkipAiRules) { return }
+    $lockPath = Join-Path $SourceRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
+        throw "Workflow source dependency lock is missing before update: $lockPath"
+    }
+    $lock = Read-Utf8Text -Path $lockPath | ConvertFrom-Json
+    $entry = Get-ConfigValueFromObject -Object $lock -Path "dependencies.aiRules1c" -Default $null
+    $ref = [string](Get-ConfigValueFromObject -Object $entry -Path "ref" -Default "")
+    $commit = [string](Get-ConfigValueFromObject -Object $entry -Path "commit" -Default "")
+    $status = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityStatus" -Default "")
+    if (-not $entry -or -not $ref -or $commit -notmatch '^[a-f0-9]{40}$' -or $status -cne "passed") {
+        throw "Workflow source requires ai_rules_1c $(if ($ref) { $ref } else { '<unknown>' }) with compatibilityStatus=$(if ($status) { $status } else { '<missing>' }). Update is blocked before managed files are copied. Complete PublishDevelop for that exact controlled fork, or explicitly use -SkipAiRules."
+    }
+}
+
 function Update-WorkflowPackage {
     Write-Section "Update ITL workflow package"
     if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {
@@ -3869,6 +3887,8 @@ function Update-WorkflowPackage {
 
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+        Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
+        Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
 
         Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"

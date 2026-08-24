@@ -64,6 +64,18 @@ Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encod
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -Encoding UTF8 -Value ("$Mode " + (& git rev-parse HEAD).Trim())
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
+if ($Mode -eq 'Full') {
+    $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
+    New-Item -ItemType Directory -Force -Path $qualification | Out-Null
+    $head = (& git rev-parse HEAD).Trim()
+    $tree = (& git rev-parse 'HEAD^{tree}').Trim()
+    $full = [ordered]@{
+        kind = 'itl-workflow-full-qualification'; status = 'passed'; reusable = $true
+        repository = [ordered]@{ commit = $head; tree = $tree; worktreeClean = $true }
+        result = [ordered]@{ passed = 1; failed = 0; skipped = 0 }
+    }
+    Set-Content -LiteralPath (Join-Path $qualification 'full.json') -Encoding UTF8 -Value ($full | ConvertTo-Json -Depth 6)
+}
 if ($Mode -eq 'Develop') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null
@@ -83,6 +95,16 @@ if ($Mode -eq 'Develop') {
 if ($Mode -eq 'Release' -and $env:ITL_TEST_FAIL_DELIVERY_RELEASE -eq 'true') { exit 14 }
 exit 0
 '@
+        $fakePromoter = Join-Path $root "fake-compatibility-promoter.ps1"
+        Set-Content -LiteralPath $fakePromoter -Encoding UTF8 -Value @'
+param([string]$RepositoryRoot, [string]$QualificationPath)
+$lockPath = Join-Path $RepositoryRoot 'templates\dependency-lock.json'
+$lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$lock.dependencies.aiRules1c.compatibilityStatus = 'passed'
+$lock.dependencies.aiRules1c.compatibilityCheckedAt = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+[IO.File]::WriteAllText($lockPath, (($lock | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\compatibility-promoter.log') -Encoding UTF8 -Value $QualificationPath
+'@
         $fakeFinalizer = Join-Path $root "fake-component-finalizer.ps1"
         Set-Content -LiteralPath $fakeFinalizer -Encoding UTF8 -Value @'
 param([string]$RepositoryRoot, [string]$SourceRepositoryRoot, [string]$CandidateCommit, [string]$Remote, [switch]$ReleaseQualified)
@@ -93,10 +115,31 @@ Add-Content -LiteralPath (Join-Path $SourceRepositoryRoot 'build\component-final
 if ($env:ITL_TEST_FAIL_COMPONENT_FINALIZER -eq 'true') { [Console]::Error.WriteLine('fixture component finalizer failed'); exit 17 }
 exit 0
 '@
-        & git -C $root add fake-gate.ps1 fake-component-finalizer.ps1
+        & git -C $root add fake-gate.ps1 fake-compatibility-promoter.ps1 fake-component-finalizer.ps1
         & git -C $root commit --quiet -m "test: add gate" *> $null
         & git -C $root push --quiet origin develop *> $null
-        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); candidateLog = (Join-Path $root 'build\gate-candidates.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); developBaseLog = (Join-Path $root 'build\gate-develop-bases.log'); developRouteInputLog = (Join-Path $root 'build\gate-develop-route-input.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+        return [pscustomobject]@{ root = $root; remote = $remote; gate = $fakeGate; promoter = $fakePromoter; promoterLog = (Join-Path $root 'build\compatibility-promoter.log'); finalizer = $fakeFinalizer; finalizerLog = (Join-Path $root 'build\component-finalizer.log'); modeLog = (Join-Path $root 'build\gate-modes.log'); candidateLog = (Join-Path $root 'build\gate-candidates.log'); targetBaseLog = (Join-Path $root 'build\gate-target-bases.log'); developBaseLog = (Join-Path $root 'build\gate-develop-bases.log'); developRouteInputLog = (Join-Path $root 'build\gate-develop-route-input.log'); releaseResumeLog = (Join-Path $root 'build\gate-release-resume.log'); base = (& git -C $root rev-parse HEAD).Trim() }
+    }
+    function Set-DeliveryAiRulesLock {
+        param([Parameter(Mandatory = $true)][object]$Fixture, [string]$CompatibilityStatus = "pending")
+        $templateRoot = Join-Path $Fixture.root "templates"
+        New-Item -ItemType Directory -Force -Path $templateRoot | Out-Null
+        $lock = [ordered]@{
+            schemaVersion = 1
+            dependencies = [ordered]@{
+                aiRules1c = [ordered]@{
+                    repo = "https://example.invalid/ai_rules_1c.git"
+                    ref = "itl-v1.0.0-r99"
+                    commit = ("a" * 40)
+                    upstreamRef = "v1.0.0"
+                    upstreamCommit = ("b" * 40)
+                    downstreamRevision = 99
+                    compatibilityStatus = $CompatibilityStatus
+                    compatibilityCheckedAt = $(if ($CompatibilityStatus -eq "passed") { [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") } else { "" })
+                }
+            }
+        }
+        [IO.File]::WriteAllText((Join-Path $templateRoot "dependency-lock.json"), (($lock | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     }
     function Remove-DeliveryFixture {
         param([object]$Fixture)

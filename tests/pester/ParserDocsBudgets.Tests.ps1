@@ -169,6 +169,8 @@
         $agentsText | Should -Match 'Do not run a broad gate merely because a chat is ending'
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
         $agentsText | Should -Match 'integrates registered ranges, runs `Develop`'
+        $agentsText | Should -Match 'auto-promotes pending fork locks under a durable checkpoint'
+        $agentsText | Should -Match ([regex]::Escape('"Publish" never implies `ReleaseMaster`/master'))
         $agentsText | Should -Match '`-RequireRelease`.*that candidate.*`Release`'
         $agentsText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
         $agentsText | Should -Match 'queue must be empty and local `develop` must equal `origin/develop`'
@@ -178,6 +180,9 @@
         $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
         $agentsText | Should -Match 'Widen one layer only for a concrete gap'
         $agentsText | Should -Match 'Browse or use MCP only when external or current state is required'
+        foreach ($field in @('developPublished=true', 'dependenciesInstallable=true', 'masterReleased=false', 'masterReleased=true')) {
+            $qualityText | Should -Match ([regex]::Escape($field))
+        }
         $agentsText | Should -Match 'budgets protect routing and readability'
         $agentsText | Should -Match 'Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget'
         $agentsText | Should -Match 'propose an explicit limit change with a short rationale'
