@@ -1120,7 +1120,8 @@ function Invoke-E2ESeedParallelProof {
             throw "Lite refresh changed the observed source infobase artifact metadata."
         }
 
-        $dirtyRelativePath = "tests/release lifecycle $suffix/данные ветки.txt"
+        $dirtyFileName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0LTQsNC90L3Ri9C1INCy0LXRgtC60LgudHh0"))
+        $dirtyRelativePath = "tests/release lifecycle $suffix/$dirtyFileName"
         foreach ($target in @($worktreeA, $worktreeB)) {
             $dirtyPath = Join-Path $target ($dirtyRelativePath.Replace('/', '\'))
             [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
@@ -1246,7 +1247,8 @@ function Invoke-E2EServerResetProof {
     if ([string]$stateBefore.value.initializationStatus -ne "ready" -or [string]$stateBefore.value.devBranchKind -ne "configuration") {
         throw "RELEASE_E2E_SERVER_BRANCH_NOT_READY: itldev/$ServerDevBranchName"
     }
-    $dirtyRelativePath = "tests/release server reset/данные ветки.txt"
+    $dirtyFileName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0LTQsNC90L3Ri9C1INCy0LXRgtC60LgudHh0"))
+    $dirtyRelativePath = "tests/release server reset/$dirtyFileName"
     $dirtyPath = Join-Path $ServerWorktreePath ($dirtyRelativePath.Replace('/', '\'))
     [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
     [IO.File]::WriteAllText($dirtyPath, "server reset archive probe`r`n", [Text.UTF8Encoding]::new($false))
