@@ -229,13 +229,21 @@ function Assert-FreshVerificationResult {
 }
 
 function Assert-ExportResult {
-    param([Parameter(Mandatory = $true)][object]$ProcessResult)
+    param(
+        [Parameter(Mandatory = $true)][object]$ProcessResult,
+        [ValidateSet("fresh-passed", "warn-unverified")][string]$ExpectedDecision = "fresh-passed"
+    )
     $summary = Read-CompactSummary -ProcessResult $ProcessResult
     if ([string]$summary.status -ne "succeeded" -or -not (Test-Path -LiteralPath ([string]$summary.resultManifestPath) -PathType Leaf)) { throw "Export did not produce a successful result manifest." }
     $manifest = Get-Content -LiteralPath ([string]$summary.resultManifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (-not [bool]$manifest.verification.freshPassed -or [string]$manifest.artifact.sha256 -notmatch '^[a-f0-9]{64}$') { throw "Export manifest lacks fresh verification or artifact SHA256." }
+    $expectedFreshPassed = $ExpectedDecision -eq "fresh-passed"
+    if ([int]$manifest.schemaVersion -ne 3 -or [string]$manifest.verification.policy -ne "warn" -or [string]$manifest.verification.decision -ne $ExpectedDecision -or [bool]$manifest.verification.freshPassed -ne $expectedFreshPassed -or [bool]$manifest.unverifiedOverride) {
+        throw "Export manifest does not match the expected '$ExpectedDecision' verification decision."
+    }
+    if ([string]$manifest.artifact.sha256 -notmatch '^[a-f0-9]{64}$') { throw "Export manifest lacks artifact SHA256." }
     $actual = (Get-FileHash -LiteralPath ([string]$manifest.artifact.path) -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne ([string]$manifest.artifact.sha256).ToLowerInvariant()) { throw "Export artifact SHA256 does not match its manifest." }
+    if ($ExpectedDecision -eq "warn-unverified" -and [string]$summary.userReport -notmatch '(?is)fresh passed.*policy warn') { throw "Warn export did not surface its unverified decision in the user report." }
     return $summary
 }
 
@@ -443,8 +451,8 @@ try {
             & git -C $freshBranchRoot commit -m "test: make verification stale" | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Unable to commit the stale-verification boundary." }
         })
-        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "stale-export-recovery" -Operation {
-            [void](Assert-FailedRecoveryRoute -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 300 -AllowFailure))
+        [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "stale-export-warn" -Operation {
+            [void](Assert-ExportResult -ExpectedDecision "warn-unverified" -ProcessResult (Invoke-InstalledAction -Name "fresh-stale-export" -Root $freshBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600))
         })
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "recovery-check" -Operation {
             [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "fresh-recovery-check" -Root $freshBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
