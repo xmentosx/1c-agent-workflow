@@ -91,6 +91,16 @@ remote HEAD как границу `Develop`, выполняет обычный f
 и сверяет удалённый SHA/tree. Конфликт, сдвиг remote или ошибка gate сохраняют
 очередь.
 
+Если exact candidate содержит новый controlled-fork lock со статусом `pending`,
+`PublishDevelop` сначала выполняет `Full` для этого дерева, evidence-backed
+promoter меняет только `templates/dependency-lock.json` на `passed` и создаёт
+обычный дочерний promotion commit, после чего `Develop` проверяет уже финальное
+дерево. Только этот installable commit допускается к component finalizer и push;
+промежуточный workflow commit с `pending` никогда не попадает в remote. Promotion
+commit и локальный ref входят в durable checkpoint: повтор после сбоя финального
+gate восстанавливает их и не повторяет preliminary `Develop` или promoter.
+Любой другой непрошедший compatibility status закрыто блокирует публикацию.
+
 Если `develop` должен получить только release-qualified кандидат, к той же
 команде добавляется `-RequireRelease`. Оркестратор последовательно выполняет
 `Develop` и `Release` на одном временном commit и делает единственный push лишь
@@ -106,6 +116,12 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
 `-RetryBlockedStage`. Scope `deliveryPostGate` сохраняет broad proof.
+
+Успешный JSON явно различает каналы поставки: для `PublishDevelop` это
+`developPublished=true`, `dependenciesInstallable=true`, `masterReleased=false`
+и фактический `aiRulesCompatibility`; только `ReleaseMaster` возвращает
+`masterReleased=true`. Поэтому слово «опубликовать» без указания stable/master
+означает полностью устанавливаемый `origin/develop`, но не релиз в `master`.
 
 Перед gate команда строит exact-candidate plan для всех owned release surfaces:
 controlled `ai_rules_1c`, patched Vanessa Automation и `itl-ondemand-mcp`.
@@ -158,9 +174,13 @@ SHA-256 matches; an invalid explicit environment path fails closed.
 .\scripts\check.ps1 -Mode Full -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic
 ```
 
-После успешного Full `scripts/promote-ai-rules-compatibility.ps1` сверяет exact
-HEAD/tree, fork qualification и меняет только status/timestamp. Неявный Full и
-Release требуют `compatibilityStatus=passed`.
+В нормальной поставке этот Full запускает `PublishDevelop`, затем
+`scripts/promote-ai-rules-compatibility.ps1` сверяет exact HEAD/tree и fork
+qualification, меняет только status/timestamp, а оркестратор создаёт promotion
+commit и запускает финальный Develop. Прямой promoter оставлен для
+контролируемого recovery; его результат нельзя публиковать без финальной
+квалификации. Обычный не-promotion Full и Release требуют
+`compatibilityStatus=passed`.
 
 ## Release в master
 

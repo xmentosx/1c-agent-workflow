@@ -13,7 +13,12 @@ It "publishes the qualified candidate and clears only reachable queue entries" {
             $head = (& git -C $fixture.root rev-parse HEAD).Trim()
             Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-QueueId", "publish") | Out-Null
             $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
-            ($result.stdout | ConvertFrom-Json).status | Should -Be "published"
+            $payload = $result.stdout | ConvertFrom-Json
+            $payload.status | Should -Be "published"
+            $payload.developPublished | Should -BeTrue
+            $payload.dependenciesInstallable | Should -BeTrue
+            $payload.masterReleased | Should -BeFalse
+            $payload.aiRulesCompatibility | Should -Be "not-applicable"
             $finalizerRecord = Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json
             $finalizerRecord.candidateCommit | Should -Be $head
             $finalizerRecord.remoteHead | Should -Be $fixture.base
@@ -23,6 +28,26 @@ It "publishes the qualified candidate and clears only reachable queue entries" {
             Test-Path -LiteralPath (Join-Path $fixture.root ".git\itl\qualifications\$tree\develop.json") | Should -BeTrue
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+It "classifies incompatible dependencies before qualification or push" {
+        foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DependencyLockInstallability')) { Invoke-Expression $definition.Extent.Text }
+        foreach ($status in @("pending", "failed", "")) {
+            $lock = [pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99"; compatibilityStatus = $status } } }
+            $state = Get-DependencyLockInstallability -Lock $lock
+            $state.installable | Should -BeFalse
+            @($state.blockers).Count | Should -Be 1
+        }
+        $missing = Get-DependencyLockInstallability -Lock ([pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99" } } })
+        $missing.installable | Should -BeFalse
+        $missing.aiRulesStatus | Should -Be "missing"
+        (Get-DependencyLockInstallability -Lock ([pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99"; compatibilityStatus = "passed" } } })).installable | Should -BeTrue
+        $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
+        $publisher.IndexOf('[void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
+        $publisher.LastIndexOf('Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path') | Should -BeLessThan $publisher.IndexOf('@("push", $script:Remote')
+        $promotion = (Get-DeliveryFunctionDefinitions -Names @('Invoke-DevelopCompatibilityPromotion')).Extent.Text
+        $promotion | Should -Match 'Restore-DevelopCompatibilityQualification'
+        $promotion.IndexOf('Write-DevelopPublicationAttempt -Attempt $Attempt') | Should -BeLessThan $promotion.IndexOf('Assert-DevelopPublicationStageMayRun -Attempt $Attempt -Stage "compatibility-promotion"')
     }
 
 It "passes origin develop as the Develop base and restores its route reports before the gate" {
@@ -83,6 +108,7 @@ It "publishes develop only after the exact candidate passes Develop and required
         $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
         try {
             $fixture = New-DeliveryFixture
+            Set-DeliveryAiRulesLock -Fixture $fixture -CompatibilityStatus "pending"
             New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
             Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ReleaseQualified.Tests.ps1") -Encoding UTF8 -Value "Describe 'release-qualified publish' { It 'works' { `$true | Should -BeTrue } }"
             & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: release-qualified publish" *> $null
@@ -91,22 +117,36 @@ It "publishes develop only after the exact candidate passes Develop and required
             Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
 
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "true"
-            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"')) -AllowFailure
+            $failed = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'), "-CompatibilityPromoterScript", ('"' + $fixture.promoter + '"')) -AllowFailure
             $failed.exitCode | Should -Not -Be 0
             (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Not -Be $candidate
             @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
-            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-promotions) | Should -Not -BeNullOrEmpty
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Full", "Develop", "Release")
+            @((Get-Content -LiteralPath $fixture.promoterLog -Encoding UTF8)).Count | Should -Be 1
             @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Auto")
 
             Remove-Item -LiteralPath $fixture.modeLog -Force
             Remove-Item -LiteralPath $fixture.releaseResumeLog -Force
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = "false"
-            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-ReleaseResumeMode", "Restart", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
+            $published = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-ReleaseResumeMode", "Restart", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'), "-CompatibilityPromoterScript", ('"' + $fixture.promoter + '"'))
             $payload = $published.stdout | ConvertFrom-Json
             $payload.releaseQualified | Should -BeTrue
-            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
+            $payload.developPublished | Should -BeTrue
+            $payload.dependenciesInstallable | Should -BeTrue
+            $payload.masterReleased | Should -BeFalse
+            $payload.aiRulesCompatibility | Should -Be "passed"
+            $payload.commit | Should -Not -Be $candidate
+            & git -C $fixture.root merge-base --is-ancestor $candidate $payload.commit
+            $LASTEXITCODE | Should -Be 0
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $payload.commit
+            $publishedLock = (& git --git-dir=$($fixture.remote) show "$($payload.commit):templates/dependency-lock.json") | ConvertFrom-Json
+            $publishedLock.dependencies.aiRules1c.compatibilityStatus | Should -Be "passed"
             @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Release")
+            @((Get-Content -LiteralPath $fixture.promoterLog -Encoding UTF8)).Count | Should -Be 1
             @((Get-Content -LiteralPath $fixture.releaseResumeLog -Encoding UTF8)) | Should -Be @("Restart")
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-promotions) | Should -BeNullOrEmpty
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
         } finally {
             $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
             Remove-DeliveryFixture -Fixture $fixture

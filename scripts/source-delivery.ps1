@@ -12,6 +12,7 @@ param(
     [string]$E2EProjectRoot = "",
     [string]$GateScript = "",
     [string]$ComponentFinalizerScript = "",
+    [string]$CompatibilityPromoterScript = "",
     [string]$Version = "",
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
@@ -31,6 +32,7 @@ $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 $script:Remote = $Remote
 $script:GateScript = if ($GateScript) { [System.IO.Path]::GetFullPath($GateScript) } else { Join-Path $script:Root "scripts\check.ps1" }
 $script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.Path]::GetFullPath($ComponentFinalizerScript) } else { "" }
+$script:CompatibilityPromoterScript = if ($CompatibilityPromoterScript) { [System.IO.Path]::GetFullPath($CompatibilityPromoterScript) } else { Join-Path $script:Root "scripts\promote-ai-rules-compatibility.ps1" }
 $script:QueueRoot = "refs/itl/develop-queue"
 
 function Invoke-DeliveryGit {

@@ -169,6 +169,9 @@ function Invoke-AiRulesComponentPublicationFinalize {
     foreach ($field in @("repo", "ref", "commit", "upstreamCommit", "downstreamRevision")) {
         if ($null -eq $lock.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$lock.$field)) { throw "ai_rules_1c lock is missing '$field'." }
     }
+    if ([string]$lock.compatibilityStatus -cne "passed") {
+        throw "ai_rules_1c '$($lock.ref)' is published remotely but is not installable: compatibilityStatus=$($lock.compatibilityStatus)."
+    }
     $local = Get-DeliveryLocalAiRulesSource -Lock $lock
     $remote = Get-DeliveryAiRulesRemoteState -SourceRoot $local.root -Lock $lock
     if ($remote.status -in @("partial", "mismatch")) {
@@ -198,6 +201,7 @@ function Invoke-AiRulesComponentPublicationFinalize {
         schemaVersion = 1; status = "passed"; component = "aiRules1c"; candidateCommit = $CandidateCommit
         releaseTag = [string]$lock.ref; releaseBranch = [string]$remote.releaseBranch; commit = ([string]$lock.commit).ToLowerInvariant()
         upstreamCommit = ([string]$lock.upstreamCommit).ToLowerInvariant(); remoteMutated = $mutated
+        compatibilityStatus = [string]$lock.compatibilityStatus; installable = $true
         qualificationPath = [string]$local.qualificationPath; verifiedAt = [DateTime]::UtcNow.ToString("o")
     }
     Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "ai-rules-1c.json" -Evidence $evidence
@@ -412,7 +416,11 @@ function Get-OwnedComponentPublicationPlan {
         status = "planned"; candidateCommit = $CandidateCommit
         requiresRelease = [bool]($vanessa.status -eq "missing" -or $onDemand.status -eq "missing")
         components = @(
-            [pscustomobject]@{ name = "aiRules1c"; status = $rules.status; releaseRequired = $false },
+            [pscustomobject]@{
+                name = "aiRules1c"; status = $rules.status; releaseRequired = $false
+                compatibilityStatus = [string]$lock.aiRules1c.compatibilityStatus
+                compatibilityPromotionRequired = ([string]$lock.aiRules1c.compatibilityStatus -cne "passed")
+            },
             [pscustomobject]@{ name = "vanessaAutomation"; status = $vanessa.status; releaseRequired = [bool]($vanessa.status -eq "missing") },
             [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; releaseRequired = [bool]($onDemand.status -eq "missing") }
         )
