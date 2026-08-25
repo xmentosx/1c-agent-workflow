@@ -408,6 +408,24 @@
         $errorText | Should -Match "target is the source infobase"
     }
 
+    It "accepts branch reset as an Enterprise normalization reason" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-SourceInfoBasePath { return "C:\bases\source" }
+            function Invoke-DevBranchEnterpriseAutoUpdate {
+                param([object]$State)
+                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; updatedAt = "2026-08-25T12:00:00+03:00" }
+            }
+            $updates = @{}
+            $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+            Ensure-DevBranchEnterpriseNormalized -State $state -Reason branch-reset -Updates $updates 6>$null | Out-Null
+            $updates
+        }
+
+        $result.enterpriseNormalizationStatus | Should -Be "passed"
+        $result.enterpriseNormalizationReason | Should -Be "branch-reset"
+    }
+
     It "blocks managed application startup when current sources are not loaded" {
         $message = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

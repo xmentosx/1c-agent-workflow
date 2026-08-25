@@ -1060,7 +1060,7 @@ function Assert-EnterpriseNormalizationTargetsBranchCopy {
 function Ensure-DevBranchEnterpriseNormalized {
     param(
         [object]$State,
-        [ValidateSet("branch-copy", "config-load", "legacy-preflight")]
+        [ValidateSet("branch-copy", "branch-reset", "config-load", "legacy-preflight")]
         [string]$Reason = "legacy-preflight",
         [hashtable]$Updates = $null
     )
