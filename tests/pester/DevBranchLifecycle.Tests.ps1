@@ -1819,6 +1819,72 @@
         }
     }
 
+    It "surfaces repository lock conflicts with the exact object owner and a redacted direct log" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-conflict с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{ devBranch = "itldev/lock"; devBranchKind = "configuration"; initializationStatus = "ready" }
+                function Read-DevBranchState { $state }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Get-SourceUsesRepository { $true }
+                function Get-ExportPath { "src/cf" }
+                function Get-ConfigRepositoryTransferPlan {
+                    [pscustomobject]@{
+                        baseCommit = "base-sha"
+                        unresolvedPaths = @()
+                        items = @([pscustomobject]@{ name = "Справочник.упо_Проекты.Форма.ФормаСписка"; scope = "full" })
+                    }
+                }
+                function Get-SourceInfoBasePath { "srv\source" }
+                function Get-InfoBaseKind { "server" }
+                function New-RepositoryConnectionArgs { @("/ConfigurationRepositoryF", "repo", "-N", "user", "-P", "secret") }
+                function Get-EnvValue { param([string]$Name) if ($Name -eq "REPOSITORY_PASSWORD") { "secret" } else { "" } }
+                function Invoke-Designer {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    $script:LastLogPath = Join-Path $tempRoot "designer.log"
+                    $lines = @(
+                        "---- Начало операции с хранилищем конфигурации ----",
+                        "Объект захвачен для редактирования другим пользователем: Справочник.упо_Проекты.Форма.ФормаСписка (Проценко2)",
+                        "repository password: secret",
+                        "---- Операция с хранилищем конфигурации завершена ----",
+                        "Ошибка захвата объектов в хранилище"
+                    )
+                    [IO.File]::WriteAllLines($script:LastLogPath, $lines, [Text.UTF8Encoding]::new($false))
+                    throw "1C Designer failed with exit code 1. Log: $script:LastLogPath"
+                }
+                function Set-RunStage { param([string]$Stage, [string]$Detail); $script:CapturedStage = $Stage; $script:CapturedStageDetail = $Detail }
+
+                $errorMessage = ""
+                try { Lock-ConfigRepositoryObjects 6>$null } catch { $errorMessage = $_.Exception.Message }
+                [pscustomobject]@{
+                    errorMessage = $errorMessage
+                    stage = $script:CapturedStage
+                    stageDetail = $script:CapturedStageDetail
+                    errorCategory = $script:RunErrorCategory
+                    requiredAction = $script:RunRequiredAction
+                    lastLogPath = $script:LastLogPath
+                    redactedText = Read-Utf8Text -Path $script:LastLogPath
+                }
+            }
+
+            $result.errorMessage | Should -Match "LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT"
+            $result.errorMessage | Should -Match ([regex]::Escape("Справочник.упо_Проекты.Форма.ФормаСписка"))
+            $result.errorMessage | Should -Match "Проценко2"
+            $result.errorMessage | Should -Match ([regex]::Escape("Редактированный лог: $($result.lastLogPath)"))
+            $result.stage | Should -Be "repository-lock.conflict"
+            $result.stageDetail | Should -BeLike "LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT*"
+            $result.errorCategory | Should -Be "runner"
+            $result.requiredAction | Should -Match ([regex]::Escape("/itl-lock-objects"))
+            Split-Path -Leaf $result.lastLogPath | Should -Be "repository-lock.log"
+            $result.redactedText | Should -Not -Match "secret"
+            $result.redactedText | Should -Match "<redacted>"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "locks and releases the same exact object list in the Release E2E repository roundtrip" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-roundtrip-" + [guid]::NewGuid().ToString("N"))
         try {

@@ -8551,6 +8551,46 @@ function Write-ConfigRepositoryLockRedactedLog {
     return (Resolve-Agent1cFullPath -Path $path)
 }
 
+function Get-ConfigRepositoryLockConflictSummary {
+    param(
+        [string]$LogPath,
+        [ValidateRange(1, 50)][int]$MaximumItems = 10
+    )
+
+    if (-not $LogPath -or -not (Test-Path -LiteralPath $LogPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return ""
+    }
+
+    try {
+        $text = Read-Utf8Text -Path $LogPath
+    } catch {
+        return ""
+    }
+    $pattern = '(?im)^\s*Объект захвачен для редактирования другим пользователем:\s*(?<object>.+?)\s+\((?<owner>[^()\r\n]+)\)\s*$'
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $conflicts = [System.Collections.Generic.List[object]]::new()
+    foreach ($match in [regex]::Matches($text, $pattern)) {
+        $objectName = [string]$match.Groups["object"].Value.Trim()
+        $owner = [string]$match.Groups["owner"].Value.Trim()
+        if (-not $objectName -or -not $owner) { continue }
+        if ($seen.Add("$objectName`0$owner")) {
+            $conflicts.Add([pscustomobject]@{ objectName = $objectName; owner = $owner }) | Out-Null
+        }
+    }
+    if ($conflicts.Count -eq 0) {
+        return ""
+    }
+
+    $visible = @($conflicts | Select-Object -First $MaximumItems)
+    if ($conflicts.Count -eq 1) {
+        return "LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT: объект $($visible[0].objectName) уже захвачен пользователем $($visible[0].owner)."
+    }
+
+    $details = @($visible | ForEach-Object { "$($_.objectName) — $($_.owner)" })
+    $remainder = if ($conflicts.Count -gt $visible.Count) { "; ещё $($conflicts.Count - $visible.Count)" } else { "" }
+    return "LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT: объекты уже захвачены другими пользователями: $($details -join '; ')$remainder."
+}
+
 function Invoke-ConfigRepositoryObjectOperation {
     param(
         [Parameter(Mandatory = $true)][ValidateSet("/ConfigurationRepositoryLock", "/ConfigurationRepositoryUnLock")][string]$Operation,
@@ -8597,8 +8637,31 @@ function Lock-ConfigRepositoryObjects {
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
     Set-RunStage -Stage "repository-lock.designer" -Detail "Locking the exact changed configuration objects in the source repository."
-    Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
-    $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+    try {
+        Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
+        $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+    } catch {
+        $designerError = $_.Exception.Message
+        $redactedLogPath = ""
+        try {
+            $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+        } catch {
+            $redactedLogPath = ""
+        }
+        $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
+        $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
+        if ($conflictSummary) {
+            if ($redactedLogPath) { $script:LastLogPath = $redactedLogPath }
+            Set-RunStage -Stage "repository-lock.conflict" -Detail $conflictSummary
+            Set-RunFailureContext `
+                -Category "runner" `
+                -RequiredAction "Освободите перечисленные объекты в хранилище или согласуйте это с указанными пользователями, затем повторите /itl-lock-objects."
+            $logDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
+            throw "$conflictSummary$logDetail"
+        }
+        $redactedLogDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
+        throw "$designerError$redactedLogDetail"
+    }
 
     Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
     Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)

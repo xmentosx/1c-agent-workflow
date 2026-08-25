@@ -577,6 +577,14 @@
         $refreshBranch | Should -Match "/itl-check"
     }
 
+    It "reports exact repository object lock conflicts without a console-log hop" {
+        $lockObjects = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template")
+        $lockObjects | Should -Match "LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT"
+        $lockObjects | Should -Match "exact objects and repository users"
+        $lockObjects | Should -Match "requiredAction"
+        $lockObjects | Should -Match 'without reading `console\.log`'
+    }
+
     It "keeps the native /itl contract compact and consistent" {
         $rulesTemplateText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\USER-RULES.append.md")
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
