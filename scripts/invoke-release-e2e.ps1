@@ -1040,11 +1040,13 @@ function Invoke-E2ESeedParallelProof {
     $dirtyCheckpointPassed = $false
     $fileResetPassed = $false
     $repositoryLockRoundtripPassed = $false
+    $repositoryLockProbePath = ""
     $resetArchivePath = ""
     $resetDtPath = ""
     $resetOldHead = ""
     $resetNewHead = ""
     $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+    $proofError = ""
     try {
         & git -C $MainRoot worktree add --quiet -b $branchA $worktreeA $masterAfterSync
         if ($LASTEXITCODE -ne 0) { throw "Could not create seed proof worktree A." }
@@ -1172,11 +1174,7 @@ function Invoke-E2ESeedParallelProof {
         }
         $fileResetPassed = $true
 
-        $configurationPathB = Join-Path $worktreeB "src\cf\Configuration.xml"
-        if (-not (Test-Path -LiteralPath $configurationPathB -PathType Leaf)) {
-            throw "Release repository lock probe requires src/cf/Configuration.xml."
-        }
-        [IO.File]::AppendAllText($configurationPathB, "`r`n<!-- ITL release repository lock $suffix -->`r`n", [Text.UTF8Encoding]::new($false))
+        $repositoryLockProbePath = New-E2ERepositoryLockProbeCommit -Root $worktreeB -Suffix $suffix
         Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "release-e2e-config-repository-lock-roundtrip" -TimeoutSeconds 3600 -LogPrefix "seed-parallel-repository-lock" | Out-Null
         $repositoryLockRoundtripPassed = $true
 
@@ -1198,6 +1196,7 @@ function Invoke-E2ESeedParallelProof {
             dirtyCheckpointPassed = $dirtyCheckpointPassed
             fileResetPassed = $fileResetPassed
             repositoryLockRoundtripPassed = $repositoryLockRoundtripPassed
+            repositoryLockProbePath = $repositoryLockProbePath
             resetArchivePath = $resetArchivePath
             resetDtPath = $resetDtPath
             resetOldHead = $resetOldHead
@@ -1215,6 +1214,9 @@ function Invoke-E2ESeedParallelProof {
             }
             capturedAt = [DateTime]::UtcNow.ToString("o")
         }
+    } catch {
+        $proofError = $_.Exception.Message
+        throw
     } finally {
         foreach ($spec in @(
             [pscustomobject]@{ root = $worktreeA; name = $nameA; branch = $branchA },
@@ -1224,7 +1226,8 @@ function Invoke-E2ESeedParallelProof {
         }
         Restore-E2ESeedMainBranch -MainRoot $MainRoot -MasterBranch $masterBranch -MasterAfterSync $masterAfterSync -CleanupErrors $cleanupErrors
         if ($cleanupErrors.Count -gt 0) {
-            throw "RELEASE_E2E_SEED_CLEANUP_FAILED: $($cleanupErrors -join '; ')"
+            $primary = if ($proofError) { " Primary failure: $proofError" } else { "" }
+            throw "RELEASE_E2E_SEED_CLEANUP_FAILED:$primary Cleanup failure: $($cleanupErrors -join '; ')"
         }
     }
 }

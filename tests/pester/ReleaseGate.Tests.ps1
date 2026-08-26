@@ -71,6 +71,14 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel \$suffix'
         $e2eText | Should -Match 'Action "reset-dev-branch"'
         $e2eText | Should -Match 'Action "release-e2e-config-repository-lock-roundtrip"'
+        $e2eText | Should -Match 'New-E2ERepositoryLockProbeCommit -Root \$worktreeB'
+        $e2eText | Should -Not -Match 'AppendAllText\(\$configurationPathB'
+        $e2eText | Should -Match 'Primary failure: \$proofError'
+        $seedStageText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\seed-parallel.ps1") -Raw -Encoding UTF8
+        $seedStageText | Should -Match 'seed-parallel" -Version 3'
+        $seedStageText | Should -Match 'src/cf/CommonModules/\[\^/\]\+/Ext/Module\\\.bsl'
+        $seedStageText | Should -Match 'Get-RepositoryGitPathList.*"-z"'
+        $seedStageText | Should -Not -Match 'tests/'
         $e2eText | Should -Match 'Invoke-E2EServerResetProof'
         $e2eText | Should -Match 'serverProjectRoot'
         $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
@@ -495,7 +503,7 @@ Describe "Release E2E orchestration" {
             & git -C $mainRoot config user.name "ITL Test"
             Set-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/snapshots/`n.agent-1c/release-e2e-actions.log`n.agent-1c/release-e2e-partial-list.txt`n.agents/`nbuild/`n"
             Set-Content -LiteralPath (Join-Path $mainRoot "README.md") -Encoding ASCII -Value "fixture"
-            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot ".agent-1c"), (Join-Path $mainRoot "tests\features") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $mainRoot "src\cf\Ext"), (Join-Path $mainRoot "src\cf\CommonModules\ITLRepositoryProbe\Ext"), (Join-Path $mainRoot ".agent-1c"), (Join-Path $mainRoot "tests\features") | Out-Null
             $dependencyLock = [ordered]@{
                 schemaVersion = 1
                 mode = "fresh"
@@ -515,6 +523,8 @@ Describe "Release E2E orchestration" {
 '@
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<ConfigDumpInfo>fixture</ConfigDumpInfo>"
             [IO.File]::WriteAllBytes((Join-Path $mainRoot "src\cf\Ext\ParentConfigurations.bin"), [byte[]](1, 2, 3, 4))
+            [IO.File]::WriteAllText((Join-Path $mainRoot "src\cf\CommonModules\ITLRepositoryProbe.xml"), '<MetaDataObject><CommonModule><Properties><Name>ITLRepositoryProbe</Name></Properties></CommonModule></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $mainRoot "src\cf\CommonModules\ITLRepositoryProbe\Ext\Module.bsl"), "Процедура Проверка() Экспорт`r`nКонецПроцедуры`r`n", [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllBytes(
                 (Join-Path $mainRoot "tests\features\workflow-release-e2e.feature"),
                 [Convert]::FromBase64String('I2xhbmd1YWdlOiBydQoK0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUK')
