@@ -94,7 +94,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=16 HEAD 2>$null)) {
+        foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=8 HEAD 2>$null)) {
             if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
         }
         $worktreeLines = @(& git -C $RepositoryRoot worktree list --porcelain 2>$null)
@@ -104,13 +104,19 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     }
     if ($worktreeExitCode -eq 0) {
         $candidateRoot = ""
+        $recentRootByHead = @{}
         foreach ($line in $worktreeLines) {
             if ([string]$line -match '^worktree\s+(.+)$') {
                 try { $candidateRoot = [IO.Path]::GetFullPath($Matches[1]) } catch { $candidateRoot = "" }
             } elseif ($candidateRoot -and [string]$line -match '^HEAD\s+([a-f0-9]{40})$' -and $recentHeads.Contains([string]$Matches[1])) {
-                $candidateRoots.Add($candidateRoot)
+                $head = [string]$Matches[1]
+                try { $modifiedAt = (Get-Item -LiteralPath $candidateRoot -ErrorAction Stop).LastWriteTimeUtc } catch { continue }
+                if (-not $recentRootByHead.ContainsKey($head) -or $modifiedAt -gt $recentRootByHead[$head].modifiedAt) {
+                    $recentRootByHead[$head] = [pscustomobject]@{ path = $candidateRoot; modifiedAt = $modifiedAt }
+                }
             }
         }
+        foreach ($head in @($recentRootByHead.Keys | Sort-Object)) { $candidateRoots.Add([string]$recentRootByHead[$head].path) }
     }
     $validCandidates = New-Object System.Collections.Generic.List[string]
     if ($configuredArchive) { $validCandidates.Add($configuredArchive) | Out-Null }
