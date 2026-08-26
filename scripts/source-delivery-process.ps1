@@ -22,9 +22,13 @@ function Get-SourceGateHardBudgetSeconds {
         [switch]$AllowMissingCatalog
     )
 
+    # An injected gate is not the repository quality gate and may use a
+    # deliberately minimal fixture repository. Give it the maximum wrapper
+    # allowance; its own process remains subject to the no-progress watchdog.
+    if ($AllowMissingCatalog) { return 7500 }
+
     $catalogPath = Join-Path $WorkingRoot "tests\quality-contracts.json"
     if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
-        if ($AllowMissingCatalog) { return 7500 }
         throw "Quality contract catalog is missing: $catalogPath"
     }
     $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json

@@ -18,6 +18,7 @@ It "keeps the delivery wrapper budget above the authoritative child gate budget"
         $missingRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl delivery budget ' + [guid]::NewGuid().ToString('N'))
         { Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot } | Should -Throw '*Quality contract catalog is missing*'
         (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot -AllowMissingCatalog) | Should -Be 7500
+        (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $RepoRoot -AllowMissingCatalog) | Should -Be 7500
     }
 
 It "converts typed and round-trip delivery timestamps without current-culture stringification" {
