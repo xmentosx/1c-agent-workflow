@@ -78,12 +78,18 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match 'AppendAllText\(\$configurationPathB'
         $e2eText | Should -Match 'Primary failure: \$proofError'
         $seedStageText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\seed-parallel.ps1") -Raw -Encoding UTF8
-        $seedStageText | Should -Match 'seed-parallel" -Version 4'
+        $seedStageText | Should -Match 'seed-parallel" -Version 5'
         $seedStageText | Should -Match 'src/cf/CommonModules/\[\^/\]\+/Ext/Module\\\.bsl'
         $seedStageText | Should -Match 'Get-RepositoryGitPathList.*"-z"'
         $seedStageText | Should -Not -Match 'tests/'
+        $serverResetStageText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\server-reset.ps1") -Raw -Encoding UTF8
+        $serverResetStageText | Should -Match 'server-reset" -Version 1 -Paths'
+        $serverResetStageText | Should -Not -Match 'DependsOn'
         $e2eText | Should -Match 'Invoke-E2EServerResetProof'
         $e2eText | Should -Match 'serverProjectRoot'
+        $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "seed-parallel" -Status "passed".*?Test-E2EStagePassed -Name "server-reset"'
+        $e2eText | Should -Match 'Set-E2EStageStatus -Name "server-reset" -Status "failed" -ErrorText \$_\.Exception\.Message'
+        $e2eText | Should -Match '(?s)\$stageConfiguration = if \(\$Name -eq "server-reset"\).*?serverProjectRoot = Get-E2EReleaseConfigValue.*?stageConfiguration = \$stageConfiguration'
         $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleSource | Should -Match '/ConfigurationRepositoryLock'
         $lifecycleSource | Should -Match '/ConfigurationRepositoryUnLock'
@@ -699,6 +705,29 @@ switch ($Action) {
 }
 '@
 
+            # Fail between the file and server reset capabilities. The next run
+            # must resume at server-reset without repeating seed-parallel.
+            $serverFailureSummaryPath = Join-Path $tempRoot "server-reset-failure-summary.json"
+            $oldServerFailureFlag = $env:ITL_TEST_RELEASE_SERVER_RESET_FAILURE
+            $env:ITL_TEST_RELEASE_SERVER_RESET_FAILURE = "true"
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $serverFailureOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $serverFailureSummaryPath 2>&1
+                $serverFailureExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+                $env:ITL_TEST_RELEASE_SERVER_RESET_FAILURE = $oldServerFailureFlag
+            }
+            $serverFailureExitCode | Should -Not -Be 0
+            Test-Path -LiteralPath $serverFailureSummaryPath -PathType Leaf | Should -BeTrue -Because ($serverFailureOutput -join [Environment]::NewLine)
+            $serverFailureSummary = Get-Content -LiteralPath $serverFailureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $serverFailureSummary.error | Should -Match '^RELEASE_E2E_TEST_SERVER_RESET_FAILURE'
+            $serverFailureSummary.stages.'seed-parallel'.status | Should -Be "passed"
+            $serverFailureSummary.stages.'server-reset'.status | Should -Be "failed"
+            @($serverFailureSummary.executedStages) | Should -Be @("seed-parallel", "server-reset")
+
             # Fail once at the extension stage after the expensive configuration
             # stages have passed, then prove Auto resume reuses those checkpoints.
             $failureSummaryPath = Join-Path $tempRoot "release-failure-summary.json"
@@ -719,6 +748,9 @@ switch ($Action) {
             $failureSummary = Get-Content -LiteralPath $failureSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $failureSummary.status | Should -Be "failed"
             $failureSummary.error | Should -Match "release-e2e-extension-smoke failed with exit code 1"
+            @($failureSummary.resumedStages) | Should -Contain "seed-parallel"
+            @($failureSummary.executedStages) | Should -Not -Contain "seed-parallel"
+            @($failureSummary.executedStages) | Should -Contain "server-reset"
             @($failureSummary.executedStages) | Should -Contain "config-cadence"
             @($failureSummary.executedStages) | Should -Contain "config-roundtrip"
             $targetMarkerStep = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUgKNCg0LDRgdGI0LjRgNC10L3QuNC1KQ=='))
@@ -828,7 +860,7 @@ switch ($Action) {
             $LASTEXITCODE | Should -Be 0
             $promotionSummary = Get-Content -LiteralPath $promotionSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $promotionSummary.crossReleaseReuse | Should -BeFalse
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 $promotionSummary.stages.$stageName.execution | Should -Be "reused"
             }
             @($promotionSummary.executedStages).Count | Should -Be 1
@@ -904,7 +936,7 @@ switch ($Action) {
             $LASTEXITCODE | Should -Be 0
             $managedAdvanceSummary = Get-Content -LiteralPath $managedAdvanceSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $managedAdvanceSummary.crossReleaseReuse | Should -BeTrue
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke")) {
                 @($managedAdvanceSummary.resumedStages) | Should -Contain $stageName
                 $managedAdvanceSummary.stages.$stageName.execution | Should -Be "reused"
             }
@@ -932,7 +964,7 @@ switch ($Action) {
             $sameCommitResumeSummary.crossReleaseReuse | Should -BeFalse
             @($sameCommitResumeSummary.executedStages) | Should -Contain "verification-refresh"
             @($sameCommitResumeSummary.executedStages) | Should -Contain "result-cleanup"
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 @($sameCommitResumeSummary.executedStages) | Should -Not -Contain $stageName
             }
             $checkpointAfterManagedAdvance = Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -974,7 +1006,7 @@ switch ($Action) {
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $harnessSummaryPath -ResumeMode Auto
             $LASTEXITCODE | Should -Be 0
             $harnessSummary = Get-Content -LiteralPath $harnessSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 @($harnessSummary.resumedStages) | Should -Contain $stageName
                 $harnessSummary.stages.$stageName.execution | Should -Be "reused"
                 @($harnessSummary.executedStages) | Should -Not -Contain $stageName
@@ -999,7 +1031,7 @@ switch ($Action) {
                 -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $materializationSummaryPath -ResumeMode Auto
             $LASTEXITCODE | Should -Be 0
             $materializationSummary = Get-Content -LiteralPath $materializationSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 $materializationSummary.stages.$stageName.execution | Should -Be "reused"
                 @($materializationSummary.executedStages) | Should -Not -Contain $stageName
             }

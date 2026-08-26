@@ -22,6 +22,14 @@ if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
     throw "Dedicated E2E stand config is missing: $configPath. Start from templates/release-e2e.example.json."
 }
 $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
+
+function Get-E2EReleaseConfigValue {
+    param([string]$Name)
+    $property = $config.PSObject.Properties[$Name]
+    if ($null -eq $property) { return "" }
+    return [string]$property.Value
+}
+
 $devBranchName = [string]$config.devBranchName
 $worktreePath = [System.IO.Path]::GetFullPath([string]$config.worktreePath)
 if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
@@ -145,6 +153,8 @@ $onDemandMcpTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEAS
 $configCadenceEvidencePath = Join-Path $outputRoot "config-cadence.json"
 $seedParallelEvidencePath = Join-Path $outputRoot "seed-parallel.json"
 $seedParallelEvidence = $null
+$serverResetEvidencePath = Join-Path $outputRoot "server-reset.json"
+$serverResetEvidence = $null
 $seedParallelTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SEED_PARALLEL") -eq "true"
 $extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
@@ -771,7 +781,7 @@ function Test-E2EStagePassed {
     if ([string]$record.status -ne "passed") { return $false }
     $expectedFingerprint = Get-E2EStageFingerprint -Name $Name
     if ([string]$record.fingerprint -ne $expectedFingerprint) {
-        $stageOrder = @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")
+        $stageOrder = @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")
         $stageIndex = [Array]::IndexOf($stageOrder, $Name)
         $boundaryIndex = [Array]::IndexOf($stageOrder, $continuationBoundaryStage)
         $legacyFingerprint = if ($previousRunnerSha256) { Get-E2EStageFingerprint -Name $Name -RunnerSha256 $previousRunnerSha256 } else { "" }
@@ -1277,7 +1287,7 @@ function Invoke-E2EServerResetProof {
     $dirtyPath = Join-Path $ServerWorktreePath ($dirtyRelativePath.Replace('/', '\'))
     [IO.Directory]::CreateDirectory((Split-Path -Parent $dirtyPath)) | Out-Null
     [IO.File]::WriteAllText($dirtyPath, "server reset archive probe`r`n", [Text.UTF8Encoding]::new($false))
-    Invoke-E2EHelperAtRoot -Root $ServerWorktreePath -BranchName $ServerDevBranchName -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-reset-server" | Out-Null
+    Invoke-E2EHelperAtRoot -Root $ServerWorktreePath -BranchName $ServerDevBranchName -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "server-reset" | Out-Null
     $stateAfter = Get-E2EBranchStateAtRoot -Root $ServerWorktreePath -Name $ServerDevBranchName
     $masterCommit = (& git -C $ServerProjectRoot rev-parse refs/heads/master).Trim()
     $masterTree = (& git -C $ServerProjectRoot rev-parse "$masterCommit^{tree}").Trim()
@@ -1386,7 +1396,7 @@ function Test-E2EManagedRefreshHead {
     }
     return $false
 }
-foreach ($stageModule in @("seed-parallel.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
+foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
 
@@ -1426,10 +1436,17 @@ function Get-E2EStageFingerprint {
     }
     $dependencies = @()
     foreach ($dependency in @($definition.dependsOn)) { $dependencies += [ordered]@{ name = $dependency; fingerprint = Get-E2EStageFingerprint -Name $dependency -RunnerSha256 $RunnerSha256 } }
+    $stageConfiguration = if ($Name -eq "server-reset") {
+        [ordered]@{
+            serverProjectRoot = Get-E2EReleaseConfigValue -Name "serverProjectRoot"
+            serverWorktreePath = Get-E2EReleaseConfigValue -Name "serverWorktreePath"
+            serverDevBranchName = Get-E2EReleaseConfigValue -Name "serverDevBranchName"
+        }
+    } else { $null }
     $payload = [ordered]@{
         name = $Name; version = [int]$definition.version; runnerSha256 = $RunnerSha256; helperSha256 = $helperSha256
         aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
-        inputs = $inputs; dependencies = $dependencies
+        inputs = $inputs; dependencies = $dependencies; stageConfiguration = $stageConfiguration
     }
     $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($payload | ConvertTo-Json -Depth 12 -Compress))
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -1670,7 +1687,7 @@ function Find-E2ECompletedCapabilityCache {
         $candidates.Add($file) | Out-Null
     }
 
-    $capabilityStages = @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
+    $capabilityStages = @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
     foreach ($file in $candidates) {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
@@ -1878,10 +1895,10 @@ if ($checkpoint) {
         $previousRunnerSha256 = [string]$identity.runnerSha256
         $releaseContinuationProof = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit $previousWorkflowCommit -CurrentCommit $workflowCommit -CurrentTree $workflowTree
         if ($releaseContinuationProof) {
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")) {
                 [void](Restore-E2EInterruptedCapabilityStage -Name $stageName)
             }
-            foreach ($stageName in @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")) {
+            foreach ($stageName in @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp", "verification-refresh", "result-cleanup")) {
                 if ($checkpoint["stages"].Contains($stageName) -and [string]$checkpoint["stages"][$stageName].status -ne "passed") {
                     $continuationBoundaryStage = $stageName
                     break
@@ -2033,9 +2050,6 @@ try {
                     dirtyCheckpointPassed = $true
                     fileResetPassed = $true
                     repositoryLockRoundtripPassed = $true
-                    serverResetPassed = $true
-                    serverResetArchivePath = "test-server-archive"
-                    serverResetDtPath = "test-server-archive/infobase.dt"
                     resetArchivePath = "test-archive"
                     resetDtPath = "test-archive/infobase.dt"
                     resetOldHead = ("2" * 40)
@@ -2051,14 +2065,6 @@ try {
                     throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $mainRoot"
                 }
                 $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot))
-                $serverReset = Invoke-E2EServerResetProof `
-                    -ServerProjectRoot ([IO.Path]::GetFullPath([string]$config.serverProjectRoot)) `
-                    -ServerWorktreePath ([IO.Path]::GetFullPath([string]$config.serverWorktreePath)) `
-                    -ServerDevBranchName ([string]$config.serverDevBranchName)
-                $seedParallelEvidence["serverResetPassed"] = [bool]$serverReset.passed
-                $seedParallelEvidence["serverResetArchivePath"] = [string]$serverReset.archivePath
-                $seedParallelEvidence["serverResetDtPath"] = [string]$serverReset.dtPath
-                $seedParallelEvidence["serverReset"] = $serverReset
             }
             if ([string]$seedParallelEvidence.status -ne "passed" -or
                 [string]$seedParallelEvidence.seedArtifactKind -ne "file-1cd" -or
@@ -2071,7 +2077,6 @@ try {
                 -not [bool]$seedParallelEvidence.dirtyCheckpointPassed -or
                 -not [bool]$seedParallelEvidence.fileResetPassed -or
                 -not [bool]$seedParallelEvidence.repositoryLockRoundtripPassed -or
-                -not [bool]$seedParallelEvidence.serverResetPassed -or
                 [string]$seedParallelEvidence.branchA.seedSyncId -cne [string]$seedParallelEvidence.branchB.seedSyncId -or
                 [string]$seedParallelEvidence.branchA.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
                 [string]$seedParallelEvidence.branchB.refreshMasterCommit -cne [string]$seedParallelEvidence.targetMasterCommit -or
@@ -2095,6 +2100,55 @@ try {
         Set-E2EStageReused -Name "seed-parallel" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
         $seedParallelEvidencePath = Get-E2EReusedStageEvidencePath -Name "seed-parallel" -DefaultPath $seedParallelEvidencePath
         $seedParallelEvidence = Get-Content -LiteralPath $seedParallelEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+
+    if (-not (Test-E2EStagePassed -Name "server-reset")) {
+        Set-E2EStageStatus -Name "server-reset" -Status "running"
+        $executedStages += "server-reset"
+        try {
+            if ([Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SERVER_RESET_FAILURE") -eq "true") {
+                throw "RELEASE_E2E_TEST_SERVER_RESET_FAILURE"
+            }
+            if ($seedParallelTestFixture) {
+                $serverResetEvidence = [ordered]@{
+                    schemaVersion = 1
+                    testFixture = $true
+                    status = "passed"
+                    passed = $true
+                    archivePath = "test-server-archive"
+                    dtPath = "test-server-archive/infobase.dt"
+                    capturedAt = [DateTime]::UtcNow.ToString("o")
+                }
+            } else {
+                $serverProjectRoot = Get-E2EReleaseConfigValue -Name "serverProjectRoot"
+                $serverWorktreePath = Get-E2EReleaseConfigValue -Name "serverWorktreePath"
+                $serverDevBranchName = Get-E2EReleaseConfigValue -Name "serverDevBranchName"
+                $serverResetEvidence = Invoke-E2EServerResetProof `
+                    -ServerProjectRoot $serverProjectRoot `
+                    -ServerWorktreePath $serverWorktreePath `
+                    -ServerDevBranchName $serverDevBranchName
+                $serverResetEvidence["schemaVersion"] = 1
+                $serverResetEvidence["status"] = "passed"
+                $serverResetEvidence["capturedAt"] = [DateTime]::UtcNow.ToString("o")
+            }
+            if ([string]$serverResetEvidence.status -ne "passed" -or -not [bool]$serverResetEvidence.passed) {
+                throw "Release E2E server-reset evidence is incomplete."
+            }
+            [IO.File]::WriteAllText(
+                $serverResetEvidencePath,
+                (($serverResetEvidence | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+                [Text.UTF8Encoding]::new($false)
+            )
+            Set-E2EStageStatus -Name "server-reset" -Status "passed" -EvidencePath $serverResetEvidencePath
+        } catch {
+            Set-E2EStageStatus -Name "server-reset" -Status "failed" -ErrorText $_.Exception.Message
+            throw
+        }
+    } else {
+        $resumedStages += "server-reset"
+        Set-E2EStageReused -Name "server-reset" -Reason $(if ($crossReleaseReuse) { "exact stage fingerprint across workflow release" } else { "same release checkpoint" })
+        $serverResetEvidencePath = Get-E2EReusedStageEvidencePath -Name "server-reset" -DefaultPath $serverResetEvidencePath
+        $serverResetEvidence = Get-Content -LiteralPath $serverResetEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
     if (-not (Test-E2EStagePassed -Name "config-cadence")) {
@@ -2629,6 +2683,7 @@ try {
         configLoadMode = "partial"
         configCadenceEvidencePath = $configCadenceEvidencePath
         seedParallelEvidencePath = $seedParallelEvidencePath
+        serverResetEvidencePath = $serverResetEvidencePath
         seedParallelTestFixture = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.testFixture } else { $false })
         seedParallelSyncId = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.seedSyncId } else { "" })
         seedParallelTargetMasterCommit = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.targetMasterCommit } else { "" })
@@ -2638,9 +2693,9 @@ try {
         seedParallelDirtyCheckpointPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.dirtyCheckpointPassed } else { $false })
         seedParallelFileResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.fileResetPassed } else { $false })
         seedParallelRepositoryLockRoundtripPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.repositoryLockRoundtripPassed } else { $false })
-        seedParallelServerResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.serverResetPassed } else { $false })
-        seedParallelServerResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.serverResetArchivePath } else { "" })
-        seedParallelServerResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.serverResetDtPath } else { "" })
+        seedParallelServerResetPassed = $(if ($serverResetEvidence) { [bool]$serverResetEvidence.passed } else { $false })
+        seedParallelServerResetArchivePath = $(if ($serverResetEvidence) { [string]$serverResetEvidence.archivePath } else { "" })
+        seedParallelServerResetDtPath = $(if ($serverResetEvidence) { [string]$serverResetEvidence.dtPath } else { "" })
         seedParallelResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetArchivePath } else { "" })
         seedParallelResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetDtPath } else { "" })
         seedParallelLiteRefreshSourceCallCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.liteRefreshSourceCallCount } else { -1 })
