@@ -445,8 +445,8 @@ try {
         [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
     }
     `$pipelineSucceeded = `$?
-    if (`$LASTEXITCODE -is [int]) { `$helperExitCode = [int]`$LASTEXITCODE }
-    elseif (`$pipelineSucceeded) { `$helperExitCode = 0 }
+    if (`$pipelineSucceeded) { `$helperExitCode = 0 }
+    elseif (`$LASTEXITCODE -is [int]) { `$helperExitCode = [int]`$LASTEXITCODE }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
     [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
