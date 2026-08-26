@@ -65,6 +65,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
         $e2eText | Should -Match 'Action "refresh-all-dev-branches"'
+        $e2eText | Should -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel`r`n"'
+        $e2eText | Should -Not -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel \$suffix'
         $e2eText | Should -Match 'Action "reset-dev-branch"'
         $e2eText | Should -Match 'Action "release-e2e-config-repository-lock-roundtrip"'
         $e2eText | Should -Match 'Invoke-E2EServerResetProof'

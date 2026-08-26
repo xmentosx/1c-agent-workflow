@@ -1087,7 +1087,10 @@ function Invoke-E2ESeedParallelProof {
             throw "Parallel seed branches scanned their new logs instead of installing the seed baseline."
         }
 
-        [IO.File]::WriteAllText($probePath, "ITL Release seed parallel $suffix`r`n", [Text.UTF8Encoding]::new($false))
+        # refresh-all also reaches persistent ready branches in the stand. Keep
+        # the probe blob identical across releases so repeated add/add merges
+        # remain idempotent instead of stranding those branches in conflict.
+        [IO.File]::WriteAllText($probePath, "ITL Release seed parallel`r`n", [Text.UTF8Encoding]::new($false))
         & git -C $MainRoot add -- "itl-release-seed-parallel.txt"
         if ($LASTEXITCODE -ne 0) { throw "Could not stage seed parallel probe commit." }
         & git -C $MainRoot commit -m "test: advance master for parallel lite refresh" *> $null
