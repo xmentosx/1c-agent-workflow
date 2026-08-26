@@ -179,6 +179,10 @@ Describe "Release gate scripts" {
 
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -BaseRef \$BaseRef'
+        $check | Should -Not -Match '\$plannedJourneys = \$allJourneys'
+        $check | Should -Match 'DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan'
+        $check | Should -Match '\$routeIdentitySha256 = if \(\$continued\) \{ \[string\]\$record\.identitySha256 \}'
+        $check | Should -Match 'IdentitySha256 \(\[string\]\$baseline\.identitySha256\) -StandStateSha256 \$developStandStateSha256'
         $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
         $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
         $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'

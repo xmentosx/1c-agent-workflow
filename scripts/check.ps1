@@ -547,7 +547,10 @@ function Test-DevelopQualification {
                 $record = if ($property) { $property.Value } else { $null }
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
                 $journeyPath = if ([IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } else { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') }
-                $routeValid = Test-DevelopE2ERouteReport -Path $journeyPath -Journey $journey -Tree ([string]$record.evidenceTree) -IdentitySha256 ([string]$qualification.identitySha256) -StandStateSha256 $ExpectedStandStateSha256
+                $continued = [string]$record.execution -eq "continued"
+                $routeIdentitySha256 = if ($continued) { [string]$record.identitySha256 } else { [string]$qualification.identitySha256 }
+                if ($continued -and ($routeIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or [string]$record.standStateSha256 -notmatch '^[a-f0-9]{64}$')) { return $null }
+                $routeValid = Test-DevelopE2ERouteReport -Path $journeyPath -Journey $journey -Tree ([string]$record.evidenceTree) -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $ExpectedStandStateSha256
                 if (-not $routeValid) { return $null }
                 if ((Get-FileHash -LiteralPath $journeyPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) { return $null }
             }
@@ -883,23 +886,30 @@ try {
         $baselineRepositoryMatches = $null -ne $baseline -and (([string]$baseline.repository.commit -eq $baseCommit -and [string]$baseline.repository.tree -eq $baseTree) -or
             ([string]$baseline.repository.commit -eq $commit -and [string]$baseline.repository.tree -eq $tree))
         $baselineValid = $null -ne $baseline -and [int]$baseline.schemaVersion -eq 3 -and [string]$baseline.status -eq "passed" -and $baselineRepositoryMatches -and
-            [string]$baseline.identitySha256 -eq $developIdentitySha256 -and $baseline.PSObject.Properties["journeys"]
+            [string]$baseline.identitySha256 -match '^[a-f0-9]{64}$' -and $baseline.PSObject.Properties["journeys"]
         if ($baselineValid) {
             foreach ($journey in @($allJourneys | Where-Object { $_ -notin $plannedJourneys })) {
                 $property = $baseline.journeys.PSObject.Properties[$journey]
                 $record = if ($property) { $property.Value } else { $null }
                 $path = if ($record -and [IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } elseif ($record) { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') } else { "" }
-                if (-not $record -or -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256) -or
+                if (-not $record -or -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 ([string]$baseline.identitySha256) -StandStateSha256 $developStandStateSha256) -or
                     (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) {
                     $baselineValid = $false
                     break
                 }
-                $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $path -Root $repoRoot; sha256 = ([string]$record.sha256).ToLowerInvariant(); evidenceCommit = [string]$record.evidenceCommit; evidenceTree = [string]$record.evidenceTree; execution = "continued" }
+                $routeRecords[$journey] = [ordered]@{
+                    path = Get-RelativeRepositoryPath -Path $path -Root $repoRoot
+                    sha256 = ([string]$record.sha256).ToLowerInvariant()
+                    evidenceCommit = [string]$record.evidenceCommit
+                    evidenceTree = [string]$record.evidenceTree
+                    identitySha256 = [string]$baseline.identitySha256
+                    standStateSha256 = [string]$record.standStateSha256
+                    execution = "continued"
+                }
             }
         }
         if (-not $baselineValid -and $plannedJourneys.Count -lt $allJourneys.Count) {
-            $plannedJourneys = $allJourneys
-            $routeRecords = [ordered]@{}
+            throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
         }
         $effectivePlan = [pscustomobject][ordered]@{
             schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
@@ -933,7 +943,7 @@ try {
             $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
             if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
-            $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $commit; evidenceTree = $tree; standStateSha256 = $developStandStateSha256; execution = $(if (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
+            $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $commit; evidenceTree = $tree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
         }
         foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
         $combined = [ordered]@{ schemaVersion = 2; kind = "itl-develop-e2e-combined"; status = "passed"; candidate = [ordered]@{ commit = $commit; tree = $tree }; identitySha256 = $developIdentitySha256; plan = $effectivePlan; journeys = $routeRecords; finishedAt = [DateTime]::UtcNow.ToString("o") }

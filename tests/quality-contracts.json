@@ -54,7 +54,6 @@
   "developJourneys": {
     "names": ["upgrade", "fresh"],
     "fullPaths": [
-      "scripts/check.ps1",
       "scripts/source-delivery.ps1",
       "scripts/source-delivery-candidate.ps1",
       "scripts/invoke-develop-e2e.ps1",

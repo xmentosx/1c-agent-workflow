@@ -61,7 +61,7 @@ Describe "Develop E2E journey qualification router" {
         $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
         Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
         @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
-        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/check.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/check.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery-candidate.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
