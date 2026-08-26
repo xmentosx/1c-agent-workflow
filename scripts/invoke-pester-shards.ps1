@@ -55,6 +55,7 @@ $trackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arg
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
 $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
 $script:pesterVanessaArchiveCandidates = @()
+$script:pesterExternalIdentityCache = @{}
 $script:pesterLegacyExternalIdentityCache = @{}
 $sharedInputs = @(
     "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1"
@@ -147,9 +148,17 @@ function Initialize-VanessaSourceBuildArchiveForPester {
 function Get-ExternalInputIdentity {
     param([string]$Name)
     $value = [Environment]::GetEnvironmentVariable($Name, "Process")
-    if (-not $value) { return "env:$Name=<unset>" }
+    $cacheKey = "$Name`n$value"
+    if ($script:pesterExternalIdentityCache.ContainsKey($cacheKey)) { return [string]$script:pesterExternalIdentityCache[$cacheKey] }
+    if (-not $value) {
+        $script:pesterExternalIdentityCache[$cacheKey] = "env:$Name=<unset>"
+        return [string]$script:pesterExternalIdentityCache[$cacheKey]
+    }
     $identity = "env:$Name"
-    if (Test-Path -LiteralPath $value -PathType Leaf) { return "$identity|kind=file|sha256=$(Get-PesterShardFileSha256 -Path $value)" }
+    if (Test-Path -LiteralPath $value -PathType Leaf) {
+        $script:pesterExternalIdentityCache[$cacheKey] = "$identity|kind=file|sha256=$(Get-PesterShardFileSha256 -Path $value)"
+        return [string]$script:pesterExternalIdentityCache[$cacheKey]
+    }
     if (Test-Path -LiteralPath $value -PathType Container) {
         $previousPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
@@ -162,10 +171,12 @@ function Get-ExternalInputIdentity {
             $statusExitCode = $LASTEXITCODE
         } finally { $ErrorActionPreference = $previousPreference }
         if ($headExitCode -eq 0 -and $treeExitCode -eq 0 -and $statusExitCode -eq 0 -and $head.Count -eq 1 -and $tree.Count -eq 1) {
-            return "$identity|kind=git|commit=$($head[0].Trim())|tree=$($tree[0].Trim())|trackedClean=$($tracked.Count -eq 0)"
+            $script:pesterExternalIdentityCache[$cacheKey] = "$identity|kind=git|commit=$($head[0].Trim())|tree=$($tree[0].Trim())|trackedClean=$($tracked.Count -eq 0)"
+            return [string]$script:pesterExternalIdentityCache[$cacheKey]
         }
     }
-    return "$identity|kind=unresolved|path=$value"
+    $script:pesterExternalIdentityCache[$cacheKey] = "$identity|kind=unresolved|path=$value"
+    return [string]$script:pesterExternalIdentityCache[$cacheKey]
 }
 
 function Get-LegacyExternalInputIdentity {
