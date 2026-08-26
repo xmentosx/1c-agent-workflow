@@ -64,8 +64,9 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
-        $e2eText | Should -Match '\$generatedCommitRecords = @\(\$cache\["generatedCommits"\] \| Where-Object \{ \$null -ne \$_ \}\)'
+        $e2eText | Should -Match '\$generatedCommitRecords = @\(Get-E2EGeneratedCommitRecords -Value \$cache\["generatedCommits"\]\)'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA'
+        $e2eText | Should -Match 'Get-E2EGeneratedCommitRecords -Value \$cache\["generatedCommits"\]'
         $e2eText | Should -Match 'Action "refresh-all-dev-branches"'
         $e2eText | Should -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel`r`n"'
         $e2eText | Should -Not -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel \$suffix'
@@ -90,6 +91,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "seed-parallel" -Status "passed".*?Test-E2EStagePassed -Name "server-reset"'
         $e2eText | Should -Match 'Set-E2EStageStatus -Name "server-reset" -Status "failed" -ErrorText \$_\.Exception\.Message'
         $e2eText | Should -Match '(?s)\$stageConfiguration = if \(\$Name -eq "server-reset"\).*?serverProjectRoot = Get-E2EReleaseConfigValue.*?stageConfiguration = \$stageConfiguration'
+        $e2eText | Should -Match '(?s)if \(-not \$seedParallelTestFixture\).*?Assert-E2EServerResetStandConfigured.*?Test-E2EStagePassed -Name "seed-parallel"'
         $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleSource | Should -Match '/ConfigurationRepositoryLock'
         $lifecycleSource | Should -Match '/ConfigurationRepositoryUnLock'
@@ -704,6 +706,25 @@ switch ($Action) {
     default { throw "unexpected action: $Action" }
 }
 '@
+
+            # A missing server stand is rejected before any expensive stage.
+            $preflightSummaryPath = Join-Path $tempRoot "server-preflight-failure-summary.json"
+            $env:ITL_TEST_RELEASE_SEED_PARALLEL = "false"
+            $previousPreference = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            try {
+                $preflightOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $preflightSummaryPath 2>&1
+                $preflightExitCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $previousPreference
+                $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
+            }
+            $preflightExitCode | Should -Not -Be 0
+            Test-Path -LiteralPath $preflightSummaryPath -PathType Leaf | Should -BeTrue -Because ($preflightOutput -join [Environment]::NewLine)
+            $preflightSummary = Get-Content -LiteralPath $preflightSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $preflightSummary.error | Should -Match '^RELEASE_E2E_SERVER_STAND_REQUIRED'
+            @($preflightSummary.executedStages) | Should -BeNullOrEmpty
 
             # Fail between the file and server reset capabilities. The next run
             # must resume at server-reset without repeating seed-parallel.

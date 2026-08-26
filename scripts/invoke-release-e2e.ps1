@@ -570,6 +570,16 @@ function ConvertTo-E2EHashtable {
     return $Value
 }
 
+function Get-E2EGeneratedCommitRecords {
+    param([object]$Value)
+    return @($Value | Where-Object {
+        if ($null -eq $_) { return $false }
+        if ($_ -is [System.Collections.IDictionary]) { return $_.Count -gt 0 }
+        if ($_ -is [pscustomobject]) { return $_.PSObject.Properties.Count -gt 0 }
+        return $true
+    })
+}
+
 function Get-E2EFileSha256 {
     param([string]$Path)
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
@@ -622,7 +632,7 @@ function Register-E2EGeneratedCommit {
     param([string]$Kind, [string]$Commit)
     if ($null -eq $checkpoint) { throw "Release E2E checkpoint is not initialized before generated commit '$Commit'." }
     $records = @()
-    if ($checkpoint.Contains("generatedCommits")) { $records = @($checkpoint["generatedCommits"]) }
+    if ($checkpoint.Contains("generatedCommits")) { $records = @(Get-E2EGeneratedCommitRecords -Value $checkpoint["generatedCommits"]) }
     $checkpoint["generatedCommits"] = @($records + [ordered]@{
         kind = $Kind
         commit = $Commit
@@ -1261,7 +1271,7 @@ function Invoke-E2ESeedParallelProof {
     }
 }
 
-function Invoke-E2EServerResetProof {
+function Assert-E2EServerResetStandConfigured {
     param(
         [string]$ServerProjectRoot,
         [string]$ServerWorktreePath,
@@ -1274,7 +1284,11 @@ function Invoke-E2EServerResetProof {
         }
     }
     if (-not $ServerDevBranchName) { throw "RELEASE_E2E_SERVER_STAND_REQUIRED: configure serverDevBranchName." }
-    $project = Get-Content -LiteralPath (Join-Path $ServerProjectRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    $serverProjectPath = Join-Path $ServerProjectRoot ".agent-1c\project.json"
+    if (-not (Test-Path -LiteralPath $serverProjectPath -PathType Leaf)) {
+        throw "RELEASE_E2E_SERVER_STAND_REQUIRED: server project.json is missing."
+    }
+    $project = Get-Content -LiteralPath $serverProjectPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$project.infoBaseKind -ne "server") {
         throw "RELEASE_E2E_SERVER_STAND_REQUIRED: infoBaseKind must be server."
     }
@@ -1282,6 +1296,19 @@ function Invoke-E2EServerResetProof {
     if ([string]$stateBefore.value.initializationStatus -ne "ready" -or [string]$stateBefore.value.devBranchKind -ne "configuration") {
         throw "RELEASE_E2E_SERVER_BRANCH_NOT_READY: itldev/$ServerDevBranchName"
     }
+}
+
+function Invoke-E2EServerResetProof {
+    param(
+        [string]$ServerProjectRoot,
+        [string]$ServerWorktreePath,
+        [string]$ServerDevBranchName
+    )
+
+    Assert-E2EServerResetStandConfigured `
+        -ServerProjectRoot $ServerProjectRoot `
+        -ServerWorktreePath $ServerWorktreePath `
+        -ServerDevBranchName $ServerDevBranchName
     $dirtyFileName = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("0LTQsNC90L3Ri9C1INCy0LXRgtC60LgudHh0"))
     $dirtyRelativePath = "tests/release server reset/$dirtyFileName"
     $dirtyPath = Join-Path $ServerWorktreePath ($dirtyRelativePath.Replace('/', '\'))
@@ -1636,7 +1663,7 @@ function Save-E2ECapabilityCache {
             Copy-Item -LiteralPath $source -Destination (Join-Path $staging $relative) -Force
             $record["evidencePath"] = Join-Path $target $relative
         }
-        $generatedCommitRecords = @($cached["generatedCommits"] | Where-Object { $null -ne $_ })
+        $generatedCommitRecords = @(Get-E2EGeneratedCommitRecords -Value $cached["generatedCommits"])
         $manifest = [ordered]@{
             schemaVersion = 1
             sourceRunId = $cacheId
@@ -1817,11 +1844,10 @@ function Import-E2ECapabilityCache {
     # which can be older than the interrupted checkpoint's runner.
     $script:previousRunnerSha256 = [string]$cache["identity"]["runnerSha256"]
     $commitMap = @{}
-    # PowerShell 5.1 can deserialize an empty JSON array as a single null
-    # element after the hashtable conversion. Older interrupted capability
-    # caches therefore legitimately contain generatedCommits: [null]. Treat
-    # that as an empty list instead of indexing the null record.
-    $generatedCommitRecords = @($cache["generatedCommits"] | Where-Object { $null -ne $_ })
+    # PowerShell 5.1 can deserialize an empty JSON array as a null or empty
+    # record after repeated checkpoint conversion. Treat only those empty
+    # artifacts as an empty list; malformed non-empty records still fail closed.
+    $generatedCommitRecords = @(Get-E2EGeneratedCommitRecords -Value $cache["generatedCommits"])
     foreach ($record in $generatedCommitRecords) {
         if (-not $record.Contains("commit") -or -not [string]$record["commit"]) {
             throw "RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA."
@@ -2027,6 +2053,12 @@ if (-not $checkpoint) {
 
 try {
     [void](Get-E2EState)
+    if (-not $seedParallelTestFixture) {
+        Assert-E2EServerResetStandConfigured `
+            -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
+            -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
+            -ServerDevBranchName (Get-E2EReleaseConfigValue -Name "serverDevBranchName")
+    }
     if (-not (Test-E2EStagePassed -Name "seed-parallel")) {
         Set-E2EStageStatus -Name "seed-parallel" -Status "running"
         $executedStages += "seed-parallel"
