@@ -868,9 +868,14 @@ try {
         $developRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
         if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
         if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
-        $developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
         $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
+        $developFullProof = if ($existingQualification) { [pscustomobject]@{ qualification = $existingQualification } } else { $null }
+        $exactDevelopProof = Test-DevelopQualification -Commit $commit -Tree $tree -FullProof $developFullProof -ExpectedIdentitySha256 $developIdentitySha256 -ExpectedStandStateSha256 $developStandStateSha256
+        if ($exactDevelopProof -and [string]$exactDevelopProof.reuseKind -in @("exact-commit", "ancestor-same-tree")) {
+            Add-ReusedStage -Name "develop-e2e" -Reason "exact route-aware Develop qualification" -Detail $developQualificationFullPath
+        } else {
+        $developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
         $qualificationRoot = Split-Path -Parent $developQualificationFullPath
         New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
         $routeRecords = [ordered]@{}
@@ -949,6 +954,7 @@ try {
         $combined = [ordered]@{ schemaVersion = 2; kind = "itl-develop-e2e-combined"; status = "passed"; candidate = [ordered]@{ commit = $commit; tree = $tree }; identitySha256 = $developIdentitySha256; plan = $effectivePlan; journeys = $routeRecords; finishedAt = [DateTime]::UtcNow.ToString("o") }
         [IO.File]::WriteAllText($developE2EReportPath, (($combined | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -IdentitySha256 $developIdentitySha256 -JourneyRecords $routeRecords)
+        }
     }
 
     if ($effectiveMode -eq "Release") {

@@ -179,6 +179,9 @@ Describe "Release gate scripts" {
 
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -BaseRef \$BaseRef'
+        $check | Should -Match '\$exactDevelopProof = Test-DevelopQualification -Commit \$commit -Tree \$tree -FullProof \$developFullProof'
+        $check | Should -Match 'Add-ReusedStage -Name "develop-e2e" -Reason "exact route-aware Develop qualification"'
+        $check | Should -Match '(?s)if \(\$exactDevelopProof.*?\) \{.*?exact route-aware Develop qualification.*?\} else \{\s*\$developPlan = Resolve-DevelopE2EJourneyPlan'
         $check | Should -Not -Match '\$plannedJourneys = \$allJourneys'
         $check | Should -Match 'DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan'
         $check | Should -Match '\$routeIdentitySha256 = if \(\$continued\) \{ \[string\]\$record\.identitySha256 \}'
