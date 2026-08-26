@@ -54,6 +54,7 @@ $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
 $trackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("ls-files", "-z"))
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
 $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+$script:pesterVanessaArchiveCandidates = @()
 $sharedInputs = @(
     "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1"
 )
@@ -87,27 +88,34 @@ function Initialize-VanessaSourceBuildArchiveForPester {
 
     $candidateRoots = New-Object System.Collections.Generic.List[string]
     $candidateRoots.Add($RepositoryRoot)
+    $recentHeads = New-Object System.Collections.Generic.HashSet[string]([StringComparer]::OrdinalIgnoreCase)
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
+        foreach ($head in @(& git -C $RepositoryRoot rev-list --max-count=16 HEAD 2>$null)) {
+            if ([string]$head -match '^[a-f0-9]{40}$') { [void]$recentHeads.Add([string]$head) }
+        }
         $worktreeLines = @(& git -C $RepositoryRoot worktree list --porcelain 2>$null)
         $worktreeExitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
     }
     if ($worktreeExitCode -eq 0) {
+        $candidateRoot = ""
         foreach ($line in $worktreeLines) {
             if ([string]$line -match '^worktree\s+(.+)$') {
-                try { $candidateRoots.Add([IO.Path]::GetFullPath($Matches[1])) } catch {}
+                try { $candidateRoot = [IO.Path]::GetFullPath($Matches[1]) } catch { $candidateRoot = "" }
+            } elseif ($candidateRoot -and [string]$line -match '^HEAD\s+([a-f0-9]{40})$' -and $recentHeads.Contains([string]$Matches[1])) {
+                $candidateRoots.Add($candidateRoot)
             }
         }
     }
+    $validCandidates = New-Object System.Collections.Generic.List[string]
     foreach ($root in @($candidateRoots | Select-Object -Unique)) {
         $candidate = Join-Path $root ("build\third-party\vanessa-automation\$folderName\$assetName")
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
         if ((Get-PesterShardFileSha256 -Path $candidate) -eq $expected) {
-            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [IO.Path]::GetFullPath($candidate)
-            return
+            $validCandidates.Add([IO.Path]::GetFullPath($candidate)) | Out-Null
         }
     }
 
@@ -118,7 +126,11 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         if ($sharedHash -ne $expected) {
             throw "Shared Vanessa source-build cache entry has an impossible SHA-address mismatch: expected=$expected actual=$sharedHash path=$sharedArchive"
         }
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
+        $validCandidates.Add([IO.Path]::GetFullPath($sharedArchive)) | Out-Null
+    }
+    $script:pesterVanessaArchiveCandidates = @($validCandidates | Select-Object -Unique)
+    if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [string]$script:pesterVanessaArchiveCandidates[0]
         return
     }
 
@@ -126,6 +138,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     if (-not $url) { throw "Locked Vanessa source-build URL is missing and no exact shared candidate was found." }
     New-Item -ItemType Directory -Force -Path $sharedDirectory | Out-Null
     [void](Invoke-ItlImmutableFileDownload -Uri $url -DestinationPath $sharedArchive -ExpectedSha256 $expected -Label "Pester Vanessa source-build archive")
+    $script:pesterVanessaArchiveCandidates = @([IO.Path]::GetFullPath($sharedArchive))
     $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $sharedArchive
 }
 
@@ -133,11 +146,43 @@ function Get-ExternalInputIdentity {
     param([string]$Name)
     $value = [Environment]::GetEnvironmentVariable($Name, "Process")
     if (-not $value) { return "env:$Name=<unset>" }
-    $identity = "env:$Name=$value"
-    if (Test-Path -LiteralPath $value -PathType Leaf) { return "$identity|sha256=$(Get-PesterShardFileSha256 -Path $value)" }
+    $identity = "env:$Name"
+    if (Test-Path -LiteralPath $value -PathType Leaf) { return "$identity|kind=file|sha256=$(Get-PesterShardFileSha256 -Path $value)" }
     if (Test-Path -LiteralPath $value -PathType Container) {
-        $head = (& git -C $value rev-parse HEAD 2>$null); $tree = (& git -C $value rev-parse 'HEAD^{tree}' 2>$null)
-        if ($LASTEXITCODE -eq 0) { return "$identity|commit=$($head.Trim())|tree=$($tree.Trim())" }
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $head = @(& git -C $value rev-parse HEAD 2>$null)
+            $headExitCode = $LASTEXITCODE
+            $tree = @(& git -C $value rev-parse 'HEAD^{tree}' 2>$null)
+            $treeExitCode = $LASTEXITCODE
+            $tracked = @(& git -C $value status --porcelain --untracked-files=no 2>$null)
+            $statusExitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousPreference }
+        if ($headExitCode -eq 0 -and $treeExitCode -eq 0 -and $statusExitCode -eq 0 -and $head.Count -eq 1 -and $tree.Count -eq 1) {
+            return "$identity|kind=git|commit=$($head[0].Trim())|tree=$($tree[0].Trim())|trackedClean=$($tracked.Count -eq 0)"
+        }
+    }
+    return "$identity|kind=unresolved|path=$value"
+}
+
+function Get-LegacyExternalInputIdentity {
+    param([string]$Name, [string]$Value)
+    if (-not $Value) { return "env:$Name=<unset>" }
+    $identity = "env:$Name=$Value"
+    if (Test-Path -LiteralPath $Value -PathType Leaf) { return "$identity|sha256=$(Get-PesterShardFileSha256 -Path $Value)" }
+    if (Test-Path -LiteralPath $Value -PathType Container) {
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $head = @(& git -C $Value rev-parse HEAD 2>$null)
+            $headExitCode = $LASTEXITCODE
+            $tree = @(& git -C $Value rev-parse 'HEAD^{tree}' 2>$null)
+            $treeExitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $previousPreference }
+        if ($headExitCode -eq 0 -and $treeExitCode -eq 0 -and $head.Count -eq 1 -and $tree.Count -eq 1) {
+            return "$identity|commit=$($head[0].Trim())|tree=$($tree[0].Trim())"
+        }
     }
     return "$identity|unresolved"
 }
@@ -162,7 +207,7 @@ function Get-ShardTrackedFileIdentity {
 }
 
 function Get-ShardInputDigest {
-    param([string[]]$Paths)
+    param([string[]]$Paths, [hashtable]$ExternalIdentityOverrides)
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
@@ -172,7 +217,10 @@ function Get-ShardInputDigest {
     $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $pester) { return "" }
     $lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")
-    foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
+    foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) {
+        if ($ExternalIdentityOverrides -and $ExternalIdentityOverrides.ContainsKey($name)) { $lines.Add([string]$ExternalIdentityOverrides[$name]) }
+        else { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
+    }
     foreach ($path in $inputs) {
         $absolute=Join-Path $RepositoryRoot $path.Replace('/','\')
         if(Test-Path -LiteralPath $absolute -PathType Leaf){$lines.Add("$path=$(Get-ShardTrackedFileIdentity -RelativePath $path -AbsolutePath $absolute)")}
@@ -291,6 +339,18 @@ foreach ($item in $items) {
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
+    $legacyDigests = New-Object System.Collections.Generic.List[string]
+    if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
+        $legacyAiRulesIdentity = Get-LegacyExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" -Value ([Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE_PATH", "Process"))
+        foreach ($archiveCandidate in $script:pesterVanessaArchiveCandidates) {
+            $overrides = @{
+                ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
+                ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
+            }
+            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides
+            if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
+        }
+    }
     if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
             $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -311,7 +371,19 @@ foreach ($item in $items) {
     $payload = [ordered]@{ schemaVersion = 1; worker = $index; estimatedSeconds = [double]$item.weight; inputDigest = $digest; paths = @([string]$item.path) }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
-    if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue "exact owner input fingerprint" -Force }
+    $reuseReason = "exact owner input fingerprint"
+    if (-not $cached) {
+        foreach ($legacyDigest in $legacyDigests) {
+            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
+            if (-not $cached) { continue }
+            $cached | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
+            [IO.File]::WriteAllText($resultPath, (($cached | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+            $reuseReason = "legacy external path normalized to exact content identity"
+            break
+        }
+    }
+    if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue $reuseReason -Force }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest
         planPath = $planPath; resultPath = $resultPath; junitPath = $workerJunit; stdoutPath = $stdoutPath; stderrPath = $stderrPath; stdinPath = $stdinPath
