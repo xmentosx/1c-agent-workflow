@@ -1597,6 +1597,7 @@ function Save-E2ECapabilityCache {
             Copy-Item -LiteralPath $source -Destination (Join-Path $staging $relative) -Force
             $record["evidencePath"] = Join-Path $target $relative
         }
+        $generatedCommitRecords = @($cached["generatedCommits"] | Where-Object { $null -ne $_ })
         $manifest = [ordered]@{
             schemaVersion = 1
             sourceRunId = $cacheId
@@ -1604,7 +1605,7 @@ function Save-E2ECapabilityCache {
             stages = $cached["stages"]
             snapshots = $cached["snapshots"]
             stateFiles = $cached["stateFiles"]
-            generatedCommits = @($cached["generatedCommits"])
+            generatedCommits = $generatedCommitRecords
             configEvidence = $(if ($cached.Contains("configEvidence")) { $cached["configEvidence"] } else { $null })
             createdAt = [DateTime]::UtcNow.ToString("o")
         }
@@ -1777,7 +1778,15 @@ function Import-E2ECapabilityCache {
     # which can be older than the interrupted checkpoint's runner.
     $script:previousRunnerSha256 = [string]$cache["identity"]["runnerSha256"]
     $commitMap = @{}
-    foreach ($record in @($cache["generatedCommits"])) {
+    # PowerShell 5.1 can deserialize an empty JSON array as a single null
+    # element after the hashtable conversion. Older interrupted capability
+    # caches therefore legitimately contain generatedCommits: [null]. Treat
+    # that as an empty list instead of indexing the null record.
+    $generatedCommitRecords = @($cache["generatedCommits"] | Where-Object { $null -ne $_ })
+    foreach ($record in $generatedCommitRecords) {
+        if (-not $record.Contains("commit") -or -not [string]$record["commit"]) {
+            throw "RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA."
+        }
         $oldCommit = [string]$record["commit"]
         & git -C $worktreePath cherry-pick $oldCommit *> $null
         if ($LASTEXITCODE -ne 0) {
@@ -1788,7 +1797,7 @@ function Import-E2ECapabilityCache {
         $commitMap[$oldCommit] = $newCommit
         $record["commit"] = $newCommit
     }
-    $checkpoint["generatedCommits"] = @($cache["generatedCommits"])
+    $checkpoint["generatedCommits"] = $generatedCommitRecords
     $checkpoint["expectedHead"] = (& git -C $worktreePath rev-parse HEAD).Trim()
     foreach ($stageName in @($cache["stages"].Keys)) {
         $checkpoint["stages"][$stageName] = $cache["stages"][$stageName]

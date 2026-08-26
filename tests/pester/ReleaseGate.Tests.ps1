@@ -64,6 +64,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
+        $e2eText | Should -Match '\$generatedCommitRecords = @\(\$cache\["generatedCommits"\] \| Where-Object \{ \$null -ne \$_ \}\)'
+        $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA'
         $e2eText | Should -Match 'Action "refresh-all-dev-branches"'
         $e2eText | Should -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel`r`n"'
         $e2eText | Should -Not -Match '\[IO\.File\]::WriteAllText\(\$probePath, "ITL Release seed parallel \$suffix'
