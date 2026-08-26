@@ -8685,8 +8685,6 @@ function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
     $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\release-e2e-repository-lock-{0}" -f ([guid]::NewGuid().ToString("N")))
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $repositoryEnvironment = $null
-    $repositoryCreated = $false
-    $roundtripError = ""
     try {
         if (-not (Get-SourceUsesRepository)) {
             $repositoryEnvironment = @{}
@@ -8702,7 +8700,6 @@ function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
                 -InfoBasePath (Get-SourceInfoBasePath) `
                 -InfoBaseKind (Get-InfoBaseKind) `
                 -DesignerArgs ((New-RepositoryConnectionArgs) + @("/ConfigurationRepositoryCreate")) | Out-Null
-            $repositoryCreated = $true
         }
 
         $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
@@ -8729,26 +8726,10 @@ function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
         Add-RunUserReportLine -Lines $report -Label "Файл объектов" -Value $objectListPath
         foreach ($item in @($plan.items)) { $report.Add("- $([string]$item.name) ($([string]$item.scope))") }
         Write-AndSetRunUserReport -Lines $report
-    } catch {
-        $roundtripError = $_.Exception.Message
-        throw
     } finally {
-        try {
-            if ($repositoryCreated) {
-                Set-RunStage -Stage "repository-lock.unbind" -Detail "Unbinding the source snapshot from the disposable Release E2E repository."
-                Invoke-Designer `
-                    -InfoBasePath (Get-SourceInfoBasePath) `
-                    -InfoBaseKind (Get-InfoBaseKind) `
-                    -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
-            }
-        } catch {
-            $primary = if ($roundtripError) { " Primary failure: $roundtripError" } else { "" }
-            throw "RELEASE_E2E_CONFIG_REPOSITORY_CLEANUP_FAILED:$primary Cleanup failure: $($_.Exception.Message)"
-        } finally {
-            if ($null -ne $repositoryEnvironment) {
-                foreach ($name in $repositoryEnvironment.Keys) {
-                    [Environment]::SetEnvironmentVariable($name, $repositoryEnvironment[$name], "Process")
-                }
+        if ($null -ne $repositoryEnvironment) {
+            foreach ($name in $repositoryEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $repositoryEnvironment[$name], "Process")
             }
         }
     }

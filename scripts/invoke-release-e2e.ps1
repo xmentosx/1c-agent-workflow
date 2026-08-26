@@ -1175,8 +1175,26 @@ function Invoke-E2ESeedParallelProof {
         $fileResetPassed = $true
 
         $repositoryLockProbePath = New-E2ERepositoryLockProbeCommit -Root $worktreeB -Suffix $suffix
-        Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "release-e2e-config-repository-lock-roundtrip" -TimeoutSeconds 3600 -LogPrefix "seed-parallel-repository-lock" | Out-Null
-        $repositoryLockRoundtripPassed = $true
+        $repositoryLockError = $null
+        try {
+            Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "release-e2e-config-repository-lock-roundtrip" -TimeoutSeconds 3600 -LogPrefix "seed-parallel-repository-lock" | Out-Null
+            $repositoryLockRoundtripPassed = $true
+        } catch {
+            $repositoryLockError = $_
+        }
+
+        $repositoryLockCleanupError = $null
+        try {
+            Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-repository-lock-cleanup" | Out-Null
+            $repositoryLockCleanupPassed = $true
+        } catch {
+            $repositoryLockCleanupError = $_
+        }
+        if ($null -ne $repositoryLockCleanupError) {
+            $primary = if ($null -ne $repositoryLockError) { " Primary failure: $($repositoryLockError.Exception.Message)" } else { "" }
+            throw "RELEASE_E2E_CONFIG_REPOSITORY_CLEANUP_FAILED:$primary Cleanup failure: $($repositoryLockCleanupError.Exception.Message)"
+        }
+        if ($null -ne $repositoryLockError) { throw $repositoryLockError }
 
         return [ordered]@{
             schemaVersion = 1
@@ -1196,6 +1214,7 @@ function Invoke-E2ESeedParallelProof {
             dirtyCheckpointPassed = $dirtyCheckpointPassed
             fileResetPassed = $fileResetPassed
             repositoryLockRoundtripPassed = $repositoryLockRoundtripPassed
+            repositoryLockCleanupPassed = $repositoryLockCleanupPassed
             repositoryLockProbePath = $repositoryLockProbePath
             resetArchivePath = $resetArchivePath
             resetDtPath = $resetDtPath
