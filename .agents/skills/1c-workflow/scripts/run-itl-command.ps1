@@ -440,13 +440,22 @@ if ($windowed) {
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
 `$helperExitCode = 1
+`$global:LASTEXITCODE = `$null
 try {
     $helperInvocation *>&1 | ForEach-Object {
         [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
     }
-    `$pipelineSucceeded = `$?
-    if (`$pipelineSucceeded) { `$helperExitCode = 0 }
-    elseif (`$LASTEXITCODE -is [int]) { `$helperExitCode = [int]`$LASTEXITCODE }
+    `$terminalStatus = `$null
+    try {
+        if (Test-Path -LiteralPath $(ConvertTo-PowerShellLiteral -Value $statusPath) -PathType Leaf) {
+            `$terminalStatus = Get-Content -LiteralPath $(ConvertTo-PowerShellLiteral -Value $statusPath) -Raw -Encoding UTF8 | ConvertFrom-Json
+        }
+    } catch { `$terminalStatus = `$null }
+    `$terminalState = [string]`$terminalStatus.status
+    if (`$terminalState -eq 'succeeded') { `$helperExitCode = 0 }
+    elseif (`$terminalState -eq 'failed') { `$helperExitCode = [Math]::Max(1, [int]`$terminalStatus.exitCode) }
+    elseif (`$LASTEXITCODE -is [int] -and `$LASTEXITCODE -ne 0) { `$helperExitCode = [int]`$LASTEXITCODE }
+    else { `$helperExitCode = 0 }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
     [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
