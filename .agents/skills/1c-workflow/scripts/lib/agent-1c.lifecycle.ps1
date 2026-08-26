@@ -9311,6 +9311,10 @@ function Refresh-AllDevBranches {
         foreach ($entry in @($running)) {
             $entry.process.Refresh()
             if (-not $entry.process.HasExited) { continue }
+            # HasExited can become true before Start-Process finishes flushing
+            # redirected streams. The parameterless wait completes that flush and
+            # releases the file handles before the compact summary is read.
+            $entry.process.WaitForExit()
             $stdoutText = if (Test-Path -LiteralPath $entry.stdout -PathType Leaf) { Read-Utf8Text -Path $entry.stdout } else { "" }
             $stderrText = if (Test-Path -LiteralPath $entry.stderr -PathType Leaf) { Read-Utf8Text -Path $entry.stderr } else { "" }
             $summary = $null

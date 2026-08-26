@@ -493,7 +493,16 @@ param([string]$Operation,[string]$ProjectRoot)
                     # the parallel process observer retains a mismatched native
                     # code. A terminal failure remains failed with native exit 0.
                     $exit = if ([string]$Target.name -eq "one") { 1 } else { 0 }
-                    $process = Start-Process -FilePath "powershell" -ArgumentList "-NoProfile -Command `"Start-Sleep -Milliseconds 700; exit $exit`"" -WindowStyle Hidden -PassThru
+                    $stdoutLock = [IO.File]::Open($stdout, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+                    $process = [pscustomobject]@{ startedAt = Get-Date; exitCode = $exit; stdoutLock = $stdoutLock }
+                    $process | Add-Member -MemberType ScriptProperty -Name HasExited -Value { ((Get-Date) - $this.startedAt).TotalMilliseconds -ge 700 }
+                    $process | Add-Member -MemberType ScriptMethod -Name Refresh -Value {}
+                    $process | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value {
+                        if ($null -ne $this.stdoutLock) { $this.stdoutLock.Dispose(); $this.stdoutLock = $null }
+                    }
+                    $process | Add-Member -MemberType ScriptMethod -Name Dispose -Value {
+                        if ($null -ne $this.stdoutLock) { $this.stdoutLock.Dispose(); $this.stdoutLock = $null }
+                    }
                     $entry = [pscustomobject]@{ target = $Target; process = $process; stdout = $stdout; stderr = $stderr; startedAt = Get-Date }
                     $script:Processes.Add($entry) | Out-Null
                     return $entry
