@@ -246,7 +246,8 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$priorResult\.paths = @\(\[string\]\$item\.path\)'
         $runner | Should -Match 'Initialize-VanessaSourceBuildArchiveForPester'; $runner | Should -Match 'worktree list --porcelain'
         $runner | Should -Match 'itl\\dependencies\\vanessa-automation'; $runner | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$url -DestinationPath \$sharedArchive -ExpectedSha256 \$expected'
-        $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match 'legacy external path normalized to exact content identity'
+        $runner | Should -Match 'pesterLegacyExternalIdentityCache'; $runner | Should -Match '\$configuredArchive'; $runner | Should -Match 'legacy external path normalized to exact content identity'
+        $runner | Should -Match 'legacyInputDigests'; $runner | Should -Match 'legacyArchiveCandidates'
         $worker | Should -Match 'Invoke-Pester -Configuration'
     }
     It "reuses only a passed shard with the same owner inputs" {

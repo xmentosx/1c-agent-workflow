@@ -74,6 +74,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     }
 
     $configured = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+    $configuredArchive = ""
     if ($configured) {
         try { $configured = [IO.Path]::GetFullPath($configured) } catch { throw "Configured Vanessa source-build path is invalid: $configured" }
         if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
@@ -83,8 +84,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         if ($actual -ne $expected) {
             throw "Configured Vanessa source-build SHA256 differs from the dependency lock: expected=$expected actual=$actual path=$configured"
         }
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $configured
-        return
+        $configuredArchive = $configured
     }
 
     $candidateRoots = New-Object System.Collections.Generic.List[string]
@@ -112,6 +112,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
         }
     }
     $validCandidates = New-Object System.Collections.Generic.List[string]
+    if ($configuredArchive) { $validCandidates.Add($configuredArchive) | Out-Null }
     foreach ($root in @($candidateRoots | Select-Object -Unique)) {
         $candidate = Join-Path $root ("build\third-party\vanessa-automation\$folderName\$assetName")
         if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
@@ -131,7 +132,7 @@ function Initialize-VanessaSourceBuildArchiveForPester {
     }
     $script:pesterVanessaArchiveCandidates = @($validCandidates | Select-Object -Unique)
     if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
-        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = [string]$script:pesterVanessaArchiveCandidates[0]
+        $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $(if ($configuredArchive) { $configuredArchive } else { [string]$script:pesterVanessaArchiveCandidates[0] })
         return
     }
 
@@ -379,7 +380,15 @@ foreach ($item in $items) {
     }
     Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
     [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
-    $payload = [ordered]@{ schemaVersion = 1; worker = $index; estimatedSeconds = [double]$item.weight; inputDigest = $digest; paths = @([string]$item.path) }
+    $payload = [ordered]@{
+        schemaVersion = 1
+        worker = $index
+        estimatedSeconds = [double]$item.weight
+        inputDigest = $digest
+        legacyInputDigests = @($legacyDigests)
+        legacyArchiveCandidates = @($script:pesterVanessaArchiveCandidates)
+        paths = @([string]$item.path)
+    }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
     $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
     $reuseReason = "exact owner input fingerprint"
