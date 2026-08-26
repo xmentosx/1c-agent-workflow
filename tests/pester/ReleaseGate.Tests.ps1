@@ -16,6 +16,7 @@ Describe "Release gate scripts" {
             )
             @($errors) | Should -BeNullOrEmpty
         }
+        $checkText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $e2eText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $e2eText | Should -Match "FromBase64String"
         $e2eText | Should -Not -Match "Функционал: Четыре независимых"
@@ -91,7 +92,12 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "seed-parallel" -Status "passed".*?Test-E2EStagePassed -Name "server-reset"'
         $e2eText | Should -Match 'Set-E2EStageStatus -Name "server-reset" -Status "failed" -ErrorText \$_\.Exception\.Message'
         $e2eText | Should -Match '(?s)\$stageConfiguration = if \(\$Name -eq "server-reset"\).*?serverProjectRoot = Get-E2EReleaseConfigValue.*?stageConfiguration = \$stageConfiguration'
-        $e2eText | Should -Match '(?s)if \(-not \$seedParallelTestFixture\).*?Assert-E2EServerResetStandConfigured.*?Test-E2EStagePassed -Name "seed-parallel"'
+        $e2eText | Should -Match '(?s)if \(\$serverResetConfigured\).*?Assert-E2EServerResetStandConfigured.*?Test-E2EStagePassed -Name "seed-parallel"'
+        $e2eText | Should -Match '(?s)serverResetDisposition\.status -eq "unverified".*?status = "unverified".*?passed = \$false'
+        $e2eText | Should -Match 'serverResetReason = \[string\]\(Get-E2ERecordValue'
+        $e2eText | Should -Match 'seedParallelServerResetArchivePath = \[string\]\(Get-E2ERecordValue'
+        $checkText | Should -Not -Match '-not \[bool\]\$e2eSummary\.seedParallelServerResetPassed -or'
+        $checkText | Should -Match 'serverResetStatus -ne "unverified"'
         $lifecycleSource = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $lifecycleSource | Should -Match '/ConfigurationRepositoryLock'
         $lifecycleSource | Should -Match '/ConfigurationRepositoryUnLock'
@@ -494,6 +500,22 @@ Describe "Release gate scripts" {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    It "classifies an absent server stand as unverified without disabling configured server proof" {
+        . (Join-Path $RepoRoot "scripts\release-e2e\common.ps1")
+        . (Join-Path $RepoRoot "scripts\release-e2e\server-reset.ps1")
+
+        $absent = Get-ReleaseE2EServerResetDisposition
+        $absent.status | Should -Be "unverified"
+        $absent.configured | Should -BeFalse
+
+        $partial = Get-ReleaseE2EServerResetDisposition -ServerProjectRoot "server-root"
+        $partial.status | Should -Be "invalid"
+
+        $configured = Get-ReleaseE2EServerResetDisposition -ServerProjectRoot "server-root" -ServerWorktreePath "server-worktree" -ServerDevBranchName "release-server"
+        $configured.status | Should -Be "configured"
+        $configured.configured | Should -BeTrue
+    }
 }
 
 Describe "Release E2E orchestration" {
@@ -507,8 +529,10 @@ Describe "Release E2E orchestration" {
         $summaryPath = Join-Path $tempRoot "release-summary.json"
         $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
         $oldSeedParallelFixture = $env:ITL_TEST_RELEASE_SEED_PARALLEL
+        $oldServerResetFixture = $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE
         $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = "true"
         $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
+        $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = "true"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $aiRulesRoot init *> $null
@@ -707,25 +731,6 @@ switch ($Action) {
 }
 '@
 
-            # A missing server stand is rejected before any expensive stage.
-            $preflightSummaryPath = Join-Path $tempRoot "server-preflight-failure-summary.json"
-            $env:ITL_TEST_RELEASE_SEED_PARALLEL = "false"
-            $previousPreference = $ErrorActionPreference
-            $ErrorActionPreference = "Continue"
-            try {
-                $preflightOutput = & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") `
-                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $preflightSummaryPath 2>&1
-                $preflightExitCode = $LASTEXITCODE
-            } finally {
-                $ErrorActionPreference = $previousPreference
-                $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
-            }
-            $preflightExitCode | Should -Not -Be 0
-            Test-Path -LiteralPath $preflightSummaryPath -PathType Leaf | Should -BeTrue -Because ($preflightOutput -join [Environment]::NewLine)
-            $preflightSummary = Get-Content -LiteralPath $preflightSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $preflightSummary.error | Should -Match '^RELEASE_E2E_SERVER_STAND_REQUIRED'
-            @($preflightSummary.executedStages) | Should -BeNullOrEmpty
-
             # Fail between the file and server reset capabilities. The next run
             # must resume at server-reset without repeating seed-parallel.
             $serverFailureSummaryPath = Join-Path $tempRoot "server-reset-failure-summary.json"
@@ -858,6 +863,7 @@ switch ($Action) {
             $summary.seedParallelFileResetPassed | Should -BeTrue
             $summary.seedParallelRepositoryLockRoundtripPassed | Should -BeTrue
             $summary.seedParallelServerResetPassed | Should -BeTrue
+            $summary.serverResetStatus | Should -Be "passed"
             $summary.seedParallelLiteRefreshSourceCallCount | Should -Be 0
             $summary.seedParallelTargetMasterCommit | Should -Match '^[a-f0-9]{40}$'
             $summary.extensionSmokeName | Should -Match '^ITLReleaseSmoke\d{14}$'
@@ -1146,6 +1152,26 @@ switch ($Action) {
             Test-Path -LiteralPath $legacyRunRoot | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $preferredRunRoot "checkpoint.json") -PathType Leaf | Should -BeTrue
 
+            # A configured server proof remains testable, but omitting the
+            # server stand must produce explicit unverified evidence and pass.
+            $optionalServerCheckpoint = Get-Content -LiteralPath (Join-Path $preferredRunRoot "checkpoint.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $optionalServerCheckpoint.stages.PSObject.Properties.Remove("server-reset")
+            [IO.File]::WriteAllText((Join-Path $preferredRunRoot "checkpoint.json"), (($optionalServerCheckpoint | ConvertTo-Json -Depth 32) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $optionalServerSummaryPath = Join-Path $tempRoot "optional-server-summary.json"
+            $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = "false"
+            try {
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $optionalServerSummaryPath -ResumeMode Auto
+                $LASTEXITCODE | Should -Be 0
+            } finally {
+                $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = "true"
+            }
+            $optionalServerSummary = Get-Content -LiteralPath $optionalServerSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $optionalServerSummary.serverResetConfigured | Should -BeFalse
+            $optionalServerSummary.serverResetStatus | Should -Be "unverified"
+            $optionalServerSummary.seedParallelServerResetPassed | Should -BeFalse
+            @($optionalServerSummary.executedStages) | Should -Not -Contain "server-reset"
+
             # A corrupt checkpoint must be refused before any expensive stage.
             $checkpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
             Set-Content -LiteralPath $checkpointPath -Encoding UTF8 -Value "{broken"
@@ -1164,6 +1190,7 @@ switch ($Action) {
         } finally {
             $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = $oldOnDemandFixture
             $env:ITL_TEST_RELEASE_SEED_PARALLEL = $oldSeedParallelFixture
+            $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = $oldServerResetFixture
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

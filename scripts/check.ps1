@@ -997,11 +997,17 @@ try {
                 -not [bool]$e2eSummary.seedParallelRefreshAllPassed -or -not [bool]$e2eSummary.seedParallelDirtyCheckpointPassed -or
                 -not [bool]$e2eSummary.seedParallelFileResetPassed -or
                 -not [bool]$e2eSummary.seedParallelRepositoryLockRoundtripPassed -or
-                -not [bool]$e2eSummary.seedParallelServerResetPassed -or
                 [string]$e2eSummary.seedParallelTargetMasterCommit -notmatch '^[a-f0-9]{40}$' -or
                 [int]$e2eSummary.seedParallelLiteRefreshSourceCallCount -ne 0 -or
                 [int]$e2eSummary.seedParallelBaselineCount -lt 0) {
                 throw "Release E2E did not prove latest-only file seed, parallel branch runtime, dirty refresh-all, and archived file reset."
+            }
+            if ([bool]$e2eSummary.serverResetConfigured) {
+                if ([string]$e2eSummary.serverResetStatus -ne "passed" -or -not [bool]$e2eSummary.seedParallelServerResetPassed) {
+                    throw "Configured Release server-reset did not pass."
+                }
+            } elseif ([string]$e2eSummary.serverResetStatus -ne "unverified") {
+                throw "Release without a server stand must report server-reset as unverified."
             }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }

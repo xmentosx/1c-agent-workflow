@@ -30,6 +30,18 @@ function Get-E2EReleaseConfigValue {
     return [string]$property.Value
 }
 
+function Get-E2ERecordValue {
+    param([object]$Record, [string]$Name, [object]$Default = $null)
+    if ($null -eq $Record) { return $Default }
+    if ($Record -is [System.Collections.IDictionary]) {
+        if ($Record.Contains($Name)) { return $Record[$Name] }
+        return $Default
+    }
+    $property = $Record.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $Default }
+    return $property.Value
+}
+
 $devBranchName = [string]$config.devBranchName
 $worktreePath = [System.IO.Path]::GetFullPath([string]$config.worktreePath)
 if (-not $devBranchName -or -not (Test-Path -LiteralPath $worktreePath -PathType Container)) {
@@ -156,6 +168,7 @@ $seedParallelEvidence = $null
 $serverResetEvidencePath = Join-Path $outputRoot "server-reset.json"
 $serverResetEvidence = $null
 $seedParallelTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SEED_PARALLEL") -eq "true"
+$serverResetTestFixture = [Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SERVER_RESET_FIXTURE") -eq "true"
 $extensionSmokeName = "ITLReleaseSmoke" + [DateTime]::UtcNow.ToString("yyyyMMddHHmmss")
 
 function ConvertTo-NativeArgument {
@@ -1426,6 +1439,12 @@ function Test-E2EManagedRefreshHead {
 foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
+$serverResetDisposition = Get-ReleaseE2EServerResetDisposition `
+    -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
+    -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
+    -ServerDevBranchName (Get-E2EReleaseConfigValue -Name "serverDevBranchName") `
+    -TestFixture:$serverResetTestFixture
+$serverResetConfigured = [bool]$serverResetDisposition.configured
 
 function Get-E2EStageInputFiles {
     param([string]$Name)
@@ -1714,7 +1733,11 @@ function Find-E2ECompletedCapabilityCache {
         $candidates.Add($file) | Out-Null
     }
 
-    $capabilityStages = @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
+    $capabilityStages = if ($serverResetConfigured -or $serverResetTestFixture) {
+        @("seed-parallel", "server-reset", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
+    } else {
+        @("seed-parallel", "config-cadence", "config-roundtrip", "extension-smoke", "ondemand-mcp")
+    }
     foreach ($file in $candidates) {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
@@ -2053,7 +2076,10 @@ if (-not $checkpoint) {
 
 try {
     [void](Get-E2EState)
-    if (-not $seedParallelTestFixture) {
+    if ([string]$serverResetDisposition.status -eq "invalid") {
+        throw "RELEASE_E2E_SERVER_STAND_INVALID: $([string]$serverResetDisposition.reason). Configure all of serverProjectRoot, serverWorktreePath, and serverDevBranchName, or omit all three."
+    }
+    if ($serverResetConfigured) {
         Assert-E2EServerResetStandConfigured `
             -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
             -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
@@ -2134,14 +2160,29 @@ try {
         $seedParallelEvidence = Get-Content -LiteralPath $seedParallelEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
 
-    if (-not (Test-E2EStagePassed -Name "server-reset")) {
+    if ([string]$serverResetDisposition.status -eq "unverified") {
+        $serverResetEvidence = [ordered]@{
+            schemaVersion = 1
+            testFixture = $false
+            status = "unverified"
+            passed = $false
+            configured = $false
+            reason = [string]$serverResetDisposition.reason
+            capturedAt = [DateTime]::UtcNow.ToString("o")
+        }
+        [IO.File]::WriteAllText(
+            $serverResetEvidencePath,
+            (($serverResetEvidence | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+            [Text.UTF8Encoding]::new($false)
+        )
+    } elseif (-not (Test-E2EStagePassed -Name "server-reset")) {
         Set-E2EStageStatus -Name "server-reset" -Status "running"
         $executedStages += "server-reset"
         try {
             if ([Environment]::GetEnvironmentVariable("ITL_TEST_RELEASE_SERVER_RESET_FAILURE") -eq "true") {
                 throw "RELEASE_E2E_TEST_SERVER_RESET_FAILURE"
             }
-            if ($seedParallelTestFixture) {
+            if ($serverResetTestFixture) {
                 $serverResetEvidence = [ordered]@{
                     schemaVersion = 1
                     testFixture = $true
@@ -2716,6 +2757,9 @@ try {
         configCadenceEvidencePath = $configCadenceEvidencePath
         seedParallelEvidencePath = $seedParallelEvidencePath
         serverResetEvidencePath = $serverResetEvidencePath
+        serverResetConfigured = $serverResetConfigured
+        serverResetStatus = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "status" -Default "not-run")
+        serverResetReason = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "reason" -Default "")
         seedParallelTestFixture = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.testFixture } else { $false })
         seedParallelSyncId = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.seedSyncId } else { "" })
         seedParallelTargetMasterCommit = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.targetMasterCommit } else { "" })
@@ -2725,9 +2769,9 @@ try {
         seedParallelDirtyCheckpointPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.dirtyCheckpointPassed } else { $false })
         seedParallelFileResetPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.fileResetPassed } else { $false })
         seedParallelRepositoryLockRoundtripPassed = $(if ($seedParallelEvidence) { [bool]$seedParallelEvidence.repositoryLockRoundtripPassed } else { $false })
-        seedParallelServerResetPassed = $(if ($serverResetEvidence) { [bool]$serverResetEvidence.passed } else { $false })
-        seedParallelServerResetArchivePath = $(if ($serverResetEvidence) { [string]$serverResetEvidence.archivePath } else { "" })
-        seedParallelServerResetDtPath = $(if ($serverResetEvidence) { [string]$serverResetEvidence.dtPath } else { "" })
+        seedParallelServerResetPassed = [bool](Get-E2ERecordValue -Record $serverResetEvidence -Name "passed" -Default $false)
+        seedParallelServerResetArchivePath = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "archivePath" -Default "")
+        seedParallelServerResetDtPath = [string](Get-E2ERecordValue -Record $serverResetEvidence -Name "dtPath" -Default "")
         seedParallelResetArchivePath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetArchivePath } else { "" })
         seedParallelResetDtPath = $(if ($seedParallelEvidence) { [string]$seedParallelEvidence.resetDtPath } else { "" })
         seedParallelLiteRefreshSourceCallCount = $(if ($seedParallelEvidence) { [int]$seedParallelEvidence.liteRefreshSourceCallCount } else { -1 })

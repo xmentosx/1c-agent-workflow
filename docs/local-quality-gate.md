@@ -204,6 +204,11 @@ Release сохраняет provenance/immutable dependencies, live MCP и Vaness
 isolation, `maxConcurrentSessions <= 3`, измеренный `ownedProcessExitWaitMs`,
 snapshot rollback, config/extension roundtrip, fresh passed check, CF/CFE SHA и
 cleanup. Он требует существующий Develop proof и не повторяет standard journeys.
+Серверные инфобазы остаются поддерживаемым runtime-контуром. Если все три поля
+`serverProjectRoot`, `serverWorktreePath` и `serverDevBranchName` отсутствуют,
+Release явно записывает `server-reset: unverified` и продолжает публикацию; это
+не является passed evidence. Полностью настроенный серверный стенд запускает
+прежний обязательный `server-reset`, а частичная конфигурация блокирует Release.
 При новом workflow-кандидате `Auto` переносит совпавшие capability proofs в
 неизменяемый cache, создаёт новый rollback baseline/HEAD и всегда повторяет
 свежую проверку, export и cleanup. `-ReleaseResumeMode Restart` остаётся

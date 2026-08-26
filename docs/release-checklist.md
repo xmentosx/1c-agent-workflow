@@ -83,6 +83,10 @@ environment, workflow tree, fork qualification and Develop live report. A
 descendant commit may reuse it only when the evidence commit is its ancestor and
 the tree plus every inventoried SHA remain identical. Release refuses to start
 without matching Develop evidence, so standard user journeys are not repeated.
+Server infobases remain supported, but a release may proceed without a configured
+server stand. In that case the summary must report `server-reset: unverified`;
+it must not claim passed server evidence. When any server stand field is present,
+all three fields are required and the real server reset proof remains blocking.
 
 `Full`, `Develop`, and `Release` first create one immutable
 `build/test-results/local/release-context.json`. Do not start Designer,
