@@ -15,6 +15,30 @@ function ConvertTo-DeliveryUtcDateTime {
     ).UtcDateTime
 }
 
+function Get-SourceGateHardBudgetSeconds {
+    param(
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$WorkingRoot,
+        [switch]$AllowMissingCatalog
+    )
+
+    $catalogPath = Join-Path $WorkingRoot "tests\quality-contracts.json"
+    if (-not (Test-Path -LiteralPath $catalogPath -PathType Leaf)) {
+        if ($AllowMissingCatalog) { return 7500 }
+        throw "Quality contract catalog is missing: $catalogPath"
+    }
+    $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $effectiveMode = if ($Mode -eq "Fast") { "Smoke" } else { $Mode }
+    $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
+    $propertyName = "${budgetPrefix}HardSeconds"
+    $property = $catalog.budgets.PSObject.Properties[$propertyName]
+    if (-not $property -or [int]$property.Value -le 0) { throw "Invalid $effectiveMode hard budget in the quality contract catalog." }
+
+    # The child owns the authoritative gate budget. The wrapper only adds time
+    # for the child to finalize its summary and exit without racing that budget.
+    return [int]$property.Value + 300
+}
+
 function Stop-DeliveryProcessTree {
     param([AllowNull()][object]$Process)
     if (-not $Process) { return }
@@ -404,7 +428,8 @@ function Invoke-SourceGate {
         $process = $started.process
         $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
-        $hardSeconds = switch ($Mode) { "Targeted" { 900 } "Smoke" { 120 } "Full" { 1300 } "Develop" { 5400 } "Release" { 7200 } default { 1200 } }
+        $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
+        $hardSeconds = Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:($gate -ne $authoritativeGate)
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L

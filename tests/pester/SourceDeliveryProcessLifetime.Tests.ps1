@@ -1,6 +1,25 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+It "keeps the delivery wrapper budget above the authoritative child gate budget" {
+        $definition = Get-DeliveryFunctionDefinitions -Names @('Get-SourceGateHardBudgetSeconds') | Select-Object -First 1
+        $definition | Should -Not -BeNullOrEmpty
+        Invoke-Expression $definition.Extent.Text
+        $catalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests\quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+
+        foreach ($mode in @('Targeted', 'Smoke', 'Full', 'Develop', 'Release')) {
+            $budgetPrefix = $mode.Substring(0, 1).ToLowerInvariant() + $mode.Substring(1)
+            $childHardSeconds = [int]$catalog.budgets.("${budgetPrefix}HardSeconds")
+            $wrapperHardSeconds = Get-SourceGateHardBudgetSeconds -Mode $mode -WorkingRoot $RepoRoot
+            $wrapperHardSeconds | Should -Be ($childHardSeconds + 300)
+            $wrapperHardSeconds | Should -BeGreaterThan $childHardSeconds
+        }
+
+        $missingRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl delivery budget ' + [guid]::NewGuid().ToString('N'))
+        { Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot } | Should -Throw '*Quality contract catalog is missing*'
+        (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $missingRoot -AllowMissingCatalog) | Should -Be 7500
+    }
+
 It "converts typed and round-trip delivery timestamps without current-culture stringification" {
         $definition = Get-DeliveryFunctionDefinitions -Names @('ConvertTo-DeliveryUtcDateTime') | Select-Object -First 1
         Invoke-Expression $definition.Extent.Text
