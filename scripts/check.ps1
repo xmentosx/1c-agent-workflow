@@ -897,7 +897,9 @@ try {
                 $property = $baseline.journeys.PSObject.Properties[$journey]
                 $record = if ($property) { $property.Value } else { $null }
                 $path = if ($record -and [IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } elseif ($record) { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') } else { "" }
-                if (-not $record -or -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 ([string]$baseline.identitySha256) -StandStateSha256 $developStandStateSha256) -or
+                $baselineRouteIdentitySha256 = if ([string]$record.execution -eq "continued") { [string]$record.identitySha256 } else { [string]$baseline.identitySha256 }
+                if (-not $record -or $baselineRouteIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or
+                    -not (Test-DevelopE2ERouteReport -Path $path -Tree ([string]$record.evidenceTree) -Journey $journey -IdentitySha256 $baselineRouteIdentitySha256 -StandStateSha256 $developStandStateSha256) -or
                     (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$record.sha256).ToLowerInvariant()) {
                     $baselineValid = $false
                     break
@@ -907,7 +909,7 @@ try {
                     sha256 = ([string]$record.sha256).ToLowerInvariant()
                     evidenceCommit = [string]$record.evidenceCommit
                     evidenceTree = [string]$record.evidenceTree
-                    identitySha256 = [string]$baseline.identitySha256
+                    identitySha256 = $baselineRouteIdentitySha256
                     standStateSha256 = [string]$record.standStateSha256
                     execution = "continued"
                 }
