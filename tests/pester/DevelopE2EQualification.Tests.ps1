@@ -163,7 +163,16 @@ Describe "Develop E2E journey qualification router" {
             & git -C $root commit -m 'add stand config' *> $null
             & git -C $root worktree add -b itldev/develop-state $developRoot *> $null
 
-            $cleanHash = Get-DevelopE2EStandStateSha256 -ProjectRoot $root
+            $previousPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Stop'
+                $cleanState = Get-DevelopE2EStandContentState -ProjectRoot $root
+            } finally {
+                $ErrorActionPreference = $previousPreference
+            }
+            [string]$cleanState.repositories[0].content.'src/cfe' | Should -Be ''
+            [string]$cleanState.repositories[1].content.'src/cfe' | Should -Be ''
+            $cleanHash = Get-DevelopE2ECanonicalJsonSha256 -Value $cleanState
             $legacyState = [ordered]@{ schemaVersion=1; repositories=@(
                 [ordered]@{ role='master'; path=[IO.Path]::GetFullPath($root).ToLowerInvariant(); head=(& git -C $root rev-parse HEAD).Trim(); trackedClean=$true },
                 [ordered]@{ role='develop'; path=[IO.Path]::GetFullPath($developRoot).ToLowerInvariant(); head=(& git -C $developRoot rev-parse HEAD).Trim(); trackedClean=$true }

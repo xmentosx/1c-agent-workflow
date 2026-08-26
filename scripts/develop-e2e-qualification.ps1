@@ -126,8 +126,15 @@ function Get-DevelopE2EStandContentState {
         if ($RequireClean -and -not $trackedClean) { throw "Develop E2E $($entry.role) stand has tracked changes: $path" }
         $content = [ordered]@{}
         foreach ($repoPath in @("src/cf", "src/cfe", "tests/features")) {
-            $objectId = (& git -C $path rev-parse "$resolvedCommit`:$repoPath" 2>$null).Trim()
-            if ($LASTEXITCODE -ne 0 -or $objectId -notmatch '^[a-f0-9]{40}$') { $objectId = "" }
+            $treeEntry = (@(& git -C $path ls-tree -d $resolvedCommit -- $repoPath 2>$null) -join [Environment]::NewLine).Trim()
+            if ($LASTEXITCODE -ne 0) { throw "Develop E2E cannot inspect $($entry.role) stand content '$repoPath' at '$resolvedCommit': $path" }
+            $objectId = ""
+            if ($treeEntry) {
+                if ($treeEntry -notmatch '^040000\s+tree\s+([a-f0-9]{40})\t') {
+                    throw "Develop E2E received an invalid $($entry.role) stand tree entry for '$repoPath' at '$resolvedCommit': $path"
+                }
+                $objectId = [string]$Matches[1]
+            }
             $content[$repoPath] = $objectId
         }
         $state.repositories += [ordered]@{
