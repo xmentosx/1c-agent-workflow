@@ -489,7 +489,10 @@ param([string]$Operation,[string]$ProjectRoot)
                     $payload = [ordered]@{ status = $(if ($isFailure) { "failed" } else { "succeeded" }); error = $(if ($isFailure) { "fixture conflict" } else { "" }); userReport = "branch $($Target.name)" }
                     [IO.File]::WriteAllText($stdout, (($payload | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
                     [IO.File]::WriteAllText($stderr, "", [Text.UTF8Encoding]::new($false))
-                    $exit = if ($isFailure) { 1 } else { 0 }
+                    # A valid compact terminal summary owns the outcome even when
+                    # the parallel process observer retains a mismatched native
+                    # code. A terminal failure remains failed with native exit 0.
+                    $exit = if ([string]$Target.name -eq "one") { 1 } else { 0 }
                     $process = Start-Process -FilePath "powershell" -ArgumentList "-NoProfile -Command `"Start-Sleep -Milliseconds 700; exit $exit`"" -WindowStyle Hidden -PassThru
                     $entry = [pscustomobject]@{ target = $Target; process = $process; stdout = $stdout; stderr = $stderr; startedAt = Get-Date }
                     $script:Processes.Add($entry) | Out-Null

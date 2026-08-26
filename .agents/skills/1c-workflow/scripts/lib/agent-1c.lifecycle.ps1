@@ -9315,7 +9315,11 @@ function Refresh-AllDevBranches {
             $stderrText = if (Test-Path -LiteralPath $entry.stderr -PathType Leaf) { Read-Utf8Text -Path $entry.stderr } else { "" }
             $summary = $null
             try { if ($stdoutText) { $summary = $stdoutText | ConvertFrom-Json } } catch {}
-            $succeeded = $entry.process.ExitCode -eq 0 -and $null -ne $summary -and [string]$summary.status -eq "succeeded"
+            # The compact runner's terminal JSON is authoritative. Under parallel
+            # Start-Process collection Windows PowerShell can expose a stale
+            # non-zero ExitCode even after the owned runner validated and emitted
+            # a terminal success. Missing or malformed JSON still fails closed.
+            $succeeded = $null -ne $summary -and [string]$summary.status -eq "succeeded"
             $detail = if ($null -ne $summary -and $summary.error) { [string]$summary.error } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
             $results.Add([pscustomobject]@{
                 branch = [string]$entry.target.branch
