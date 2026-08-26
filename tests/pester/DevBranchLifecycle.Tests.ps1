@@ -1886,7 +1886,7 @@
     }
 
     It "locks and releases the same exact object list in the Release E2E repository roundtrip" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-roundtrip-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lock-roundtrip с пробелом-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $operations = & {
@@ -1895,24 +1895,29 @@
                 $script:RepositoryOperations = [System.Collections.Generic.List[object]]::new()
                 function Read-DevBranchState { $state }
                 function Assert-DevelopmentBranchWorktreeContext {}
-                function Get-SourceUsesRepository { $true }
+                function Get-SourceUsesRepository { $false }
                 function Get-ExportPath { "src/cf" }
                 function Get-ConfigRepositoryTransferPlan { [pscustomobject]@{ baseCommit = "base"; unresolvedPaths = @(); items = @([pscustomobject]@{ name = "ОбщийМодуль.Обмен"; scope = "full" }) } }
                 function Get-SourceInfoBasePath { "srv\source" }
                 function Get-InfoBaseKind { "server" }
-                function New-RepositoryConnectionArgs { @("/ConfigurationRepositoryF", "repo", "-N", "user", "-P", "secret") }
                 function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:RepositoryOperations.Add([pscustomobject]@{ args = @($DesignerArgs) }) | Out-Null }
                 Invoke-ReleaseE2EConfigRepositoryLockRoundtrip 6>$null
                 @($script:RepositoryOperations)
             }
-            @($operations) | Should -HaveCount 2
-            @($operations[0].args) | Should -Contain "/ConfigurationRepositoryLock"
-            @($operations[1].args) | Should -Contain "/ConfigurationRepositoryUnLock"
-            $firstObjects = @($operations[0].args)[@($operations[0].args).IndexOf("-Objects") + 1]
-            $secondObjects = @($operations[1].args)[@($operations[1].args).IndexOf("-Objects") + 1]
+            @($operations) | Should -HaveCount 3
+            @($operations[0].args) | Should -Contain "/ConfigurationRepositoryCreate"
+            @($operations[1].args) | Should -Contain "/ConfigurationRepositoryLock"
+            @($operations[2].args) | Should -Contain "/ConfigurationRepositoryUnLock"
+            $repositoryPath = @($operations[0].args)[@($operations[0].args).IndexOf("/ConfigurationRepositoryF") + 1]
+            $repositoryPath | Should -Match ([regex]::Escape(" с пробелом-"))
+            $repositoryPath | Should -Be @($operations[1].args)[@($operations[1].args).IndexOf("/ConfigurationRepositoryF") + 1]
+            $repositoryPath | Should -Be @($operations[2].args)[@($operations[2].args).IndexOf("/ConfigurationRepositoryF") + 1]
+            $firstObjects = @($operations[1].args)[@($operations[1].args).IndexOf("-Objects") + 1]
+            $secondObjects = @($operations[2].args)[@($operations[2].args).IndexOf("-Objects") + 1]
             $firstObjects | Should -Be $secondObjects
             Test-Path -LiteralPath $firstObjects -PathType Leaf | Should -BeTrue
             (@($operations | ForEach-Object { @($_.args) }) -join " ") | Should -Not -Match "-force|-revised|ConfigurationRepositoryUpdateCfg"
+            [Environment]::GetEnvironmentVariable("SOURCE_USES_REPOSITORY", "Process") | Should -BeNullOrEmpty
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

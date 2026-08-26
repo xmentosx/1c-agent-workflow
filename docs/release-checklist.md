@@ -19,6 +19,11 @@
    replace the generated fixture HEAD recorded by the Release checkpoint.
 7. Run `/itl-check` once manually to prove the stand itself is healthy.
 
+The Release seed probe creates its own disposable configuration repository inside
+the temporary branch run root when the dedicated stand does not use a repository.
+It binds only the disposable branch infobase, performs the mandatory exact-object
+lock/unlock roundtrip, and restores the helper process environment afterward.
+
 The fixture branch remains dedicated to workflow releases. Reset its disposable
 database from the in-stand source snapshot whenever state may have leaked
 between runs. Replace that snapshot explicitly when a new baseline is intended;

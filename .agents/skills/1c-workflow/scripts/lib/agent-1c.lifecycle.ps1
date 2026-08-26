@@ -8679,34 +8679,60 @@ function Lock-ConfigRepositoryObjects {
 function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "release-e2e-config-repository-lock-roundtrip"
-    if ((Get-DevBranchKind -State $state) -ne "configuration" -or -not (Get-SourceUsesRepository)) {
-        throw "RELEASE_E2E_CONFIG_REPOSITORY_REQUIRED: configure a disposable test repository for the source infobase."
-    }
-    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
-    if (@($plan.unresolvedPaths).Count -gt 0) {
-        throw "RELEASE_E2E_CONFIG_REPOSITORY_UNRESOLVED: $(@($plan.unresolvedPaths) -join ', ')"
-    }
-    if (@($plan.items).Count -eq 0) {
-        throw "RELEASE_E2E_CONFIG_REPOSITORY_DELTA_REQUIRED: the release probe must change at least one mapped configuration object."
+    if ((Get-DevBranchKind -State $state) -ne "configuration") {
+        throw "RELEASE_E2E_CONFIG_REPOSITORY_REQUIRED: the release repository probe requires a configuration branch."
     }
     $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\release-e2e-repository-lock-{0}" -f ([guid]::NewGuid().ToString("N")))
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-    $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
-    $locked = $false
+    $repositoryEnvironment = $null
     try {
-        Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
-        $locked = $true
+        if (-not (Get-SourceUsesRepository)) {
+            $repositoryEnvironment = @{}
+            foreach ($name in @("SOURCE_USES_REPOSITORY", "REPOSITORY_PATH", "REPOSITORY_USER", "REPOSITORY_PASSWORD")) {
+                $repositoryEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+            }
+            [Environment]::SetEnvironmentVariable("SOURCE_USES_REPOSITORY", "true", "Process")
+            [Environment]::SetEnvironmentVariable("REPOSITORY_PATH", (Join-Path $runRoot "repository"), "Process")
+            [Environment]::SetEnvironmentVariable("REPOSITORY_USER", "itl-release", "Process")
+            [Environment]::SetEnvironmentVariable("REPOSITORY_PASSWORD", "", "Process")
+            Set-RunStage -Stage "repository-lock.provision" -Detail "Creating a disposable configuration repository for the Release E2E branch."
+            Invoke-Designer `
+                -InfoBasePath (Get-SourceInfoBasePath) `
+                -InfoBaseKind (Get-InfoBaseKind) `
+                -DesignerArgs ((New-RepositoryConnectionArgs) + @("/ConfigurationRepositoryCreate")) | Out-Null
+        }
+
+        $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
+        if (@($plan.unresolvedPaths).Count -gt 0) {
+            throw "RELEASE_E2E_CONFIG_REPOSITORY_UNRESOLVED: $(@($plan.unresolvedPaths) -join ', ')"
+        }
+        if (@($plan.items).Count -eq 0) {
+            throw "RELEASE_E2E_CONFIG_REPOSITORY_DELTA_REQUIRED: the release probe must change at least one mapped configuration object."
+        }
+        $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
+        $locked = $false
+        try {
+            Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
+            $locked = $true
+        } finally {
+            if ($locked) {
+                Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryUnLock" -ObjectListPath $objectListPath
+            }
+        }
+
+        $report = [System.Collections.Generic.List[string]]::new()
+        $report.Add("## Release E2E: точечный захват объектов")
+        Add-RunUserReportLine -Lines $report -Label "Результат" -Value "захват и освобождение выполнены"
+        Add-RunUserReportLine -Lines $report -Label "Файл объектов" -Value $objectListPath
+        foreach ($item in @($plan.items)) { $report.Add("- $([string]$item.name) ($([string]$item.scope))") }
+        Write-AndSetRunUserReport -Lines $report
     } finally {
-        if ($locked) {
-            Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryUnLock" -ObjectListPath $objectListPath
+        if ($null -ne $repositoryEnvironment) {
+            foreach ($name in $repositoryEnvironment.Keys) {
+                [Environment]::SetEnvironmentVariable($name, $repositoryEnvironment[$name], "Process")
+            }
         }
     }
-    $report = [System.Collections.Generic.List[string]]::new()
-    $report.Add("## Release E2E: точечный захват объектов")
-    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "захват и освобождение выполнены"
-    Add-RunUserReportLine -Lines $report -Label "Файл объектов" -Value $objectListPath
-    foreach ($item in @($plan.items)) { $report.Add("- $([string]$item.name) ($([string]$item.scope))") }
-    Write-AndSetRunUserReport -Lines $report
 }
 
 function Assert-DevBranchCheckpointGitState {
