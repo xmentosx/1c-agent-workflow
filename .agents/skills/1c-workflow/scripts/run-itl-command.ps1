@@ -445,17 +445,10 @@ try {
     $helperInvocation *>&1 | ForEach-Object {
         [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), ([string]`$_ + [Environment]::NewLine), `$utf8)
     }
-    `$terminalStatus = `$null
-    try {
-        if (Test-Path -LiteralPath $(ConvertTo-PowerShellLiteral -Value $statusPath) -PathType Leaf) {
-            `$terminalStatus = Get-Content -LiteralPath $(ConvertTo-PowerShellLiteral -Value $statusPath) -Raw -Encoding UTF8 | ConvertFrom-Json
-        }
-    } catch { `$terminalStatus = `$null }
-    `$terminalState = [string]`$terminalStatus.status
-    if (`$terminalState -eq 'succeeded') { `$helperExitCode = 0 }
-    elseif (`$terminalState -eq 'failed') { `$helperExitCode = [Math]::Max(1, [int]`$terminalStatus.exitCode) }
-    elseif (`$LASTEXITCODE -is [int] -and `$LASTEXITCODE -ne 0) { `$helperExitCode = [int]`$LASTEXITCODE }
-    else { `$helperExitCode = 0 }
+    `$pipelineSucceeded = `$?
+    if (`$LASTEXITCODE -is [int] -and `$LASTEXITCODE -ne 0) { `$helperExitCode = [int]`$LASTEXITCODE }
+    elseif (`$pipelineSucceeded) { `$helperExitCode = 0 }
+    else { `$helperExitCode = 1 }
 } catch {
     [Console]::Error.WriteLine(`$_.Exception.Message)
     [IO.File]::AppendAllText($(ConvertTo-PowerShellLiteral -Value $logPath), (`$_.Exception.Message + [Environment]::NewLine), `$utf8)
@@ -553,7 +546,14 @@ try {
 }
 
 $status = Read-JsonFile -Path $statusPath
-if ([string](Get-ObjectValue -Object $status -Name "status" -Default "") -eq "failed" -and $exitCode -eq 0) { $exitCode = [Math]::Max(1, [int](Get-ObjectValue -Object $status -Name "exitCode" -Default 1)) }
+$terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
+if ($terminalStatus -eq "succeeded") {
+    # A valid terminal success is authoritative over a handled native probe
+    # code inherited by the PowerShell helper host.
+    $exitCode = 0
+} elseif ($terminalStatus -eq "failed" -and $exitCode -eq 0) {
+    $exitCode = [Math]::Max(1, [int](Get-ObjectValue -Object $status -Name "exitCode" -Default 1))
+}
 if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed")) {
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
