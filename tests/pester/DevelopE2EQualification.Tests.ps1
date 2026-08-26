@@ -30,6 +30,9 @@ BeforeAll {
         [IO.File]::WriteAllText($helperPath, "param([ValidateSet('status')][string]`$Action)`n", [Text.UTF8Encoding]::new($false))
         New-Item -ItemType Directory -Force -Path (Join-Path $Root "scripts") | Out-Null
         [IO.File]::WriteAllText((Join-Path $Root "scripts\check.ps1"), "param()`n", [Text.UTF8Encoding]::new($false))
+        New-Item -ItemType Directory -Force -Path (Join-Path $Root "src\cf"), (Join-Path $Root "tests\features") | Out-Null
+        [IO.File]::WriteAllText((Join-Path $Root "src\cf\Configuration.xml"), "<Configuration />`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $Root "tests\features\fixture.feature"), "# language: ru`n", [Text.UTF8Encoding]::new($false))
         $catalog = [ordered]@{
             schemaVersion = 1
             continuationScopes = [ordered]@{ static=@('tests/pester/*'); deliveryPostGate=@('post-gate/*'); gate=@('scripts/*'); develop=@('develop/*'); release=@('release/*') }
@@ -62,6 +65,8 @@ Describe "Develop E2E journey qualification router" {
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery-candidate.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/develop-e2e-qualification.ps1'
+        @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'tests/quality-contracts.json'
         foreach ($leaf in @('scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1')) {
             @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
         }
@@ -147,7 +152,7 @@ Describe "Develop E2E journey qualification router" {
         }
     }
 
-    It "changes the stand-state hash when a tracked stand HEAD or cleanliness changes" {
+    It "ignores unrelated clean HEAD advances but invalidates tracked dirt and runtime content changes" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl develop stand state " + [guid]::NewGuid().ToString('N'))
         $developRoot = $root + '-develop'
         try {
@@ -159,12 +164,24 @@ Describe "Develop E2E journey qualification router" {
             & git -C $root worktree add -b itldev/develop-state $developRoot *> $null
 
             $cleanHash = Get-DevelopE2EStandStateSha256 -ProjectRoot $root
+            $legacyState = [ordered]@{ schemaVersion=1; repositories=@(
+                [ordered]@{ role='master'; path=[IO.Path]::GetFullPath($root).ToLowerInvariant(); head=(& git -C $root rev-parse HEAD).Trim(); trackedClean=$true },
+                [ordered]@{ role='develop'; path=[IO.Path]::GetFullPath($developRoot).ToLowerInvariant(); head=(& git -C $developRoot rev-parse HEAD).Trim(); trackedClean=$true }
+            ) }
+            $legacyHash = Get-DevelopE2ECanonicalJsonSha256 -Value $legacyState
             Add-Content -LiteralPath (Join-Path $developRoot 'README.md') -Encoding UTF8 -Value 'dirty'
             $dirtyHash = Get-DevelopE2EStandStateSha256 -ProjectRoot $root
             $dirtyHash | Should -Not -Be $cleanHash
             & git -C $developRoot add README.md
             & git -C $developRoot commit -m 'advance stand' *> $null
+            (Get-DevelopE2EStandStateSha256 -ProjectRoot $root) | Should -Be $cleanHash
+            Test-DevelopE2ELegacyStandContinuation -ProjectRoot $root -RecordedSha256 $legacyHash | Should -BeTrue
+
+            Add-Content -LiteralPath (Join-Path $developRoot 'src\cf\Configuration.xml') -Encoding UTF8 -Value '<!-- runtime change -->'
+            & git -C $developRoot add src/cf/Configuration.xml
+            & git -C $developRoot commit -m 'change runtime content' *> $null
             (Get-DevelopE2EStandStateSha256 -ProjectRoot $root) | Should -Not -Be $cleanHash
+            Test-DevelopE2ELegacyStandContinuation -ProjectRoot $root -RecordedSha256 $legacyHash | Should -BeFalse
         } finally {
             if (Test-Path -LiteralPath $root) { & git -C $root worktree remove --force $developRoot *> $null }
             if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }

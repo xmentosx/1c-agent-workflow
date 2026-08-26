@@ -1904,10 +1904,11 @@
                 Invoke-ReleaseE2EConfigRepositoryLockRoundtrip 6>$null
                 @($script:RepositoryOperations)
             }
-            @($operations) | Should -HaveCount 3
+            @($operations) | Should -HaveCount 4
             @($operations[0].args) | Should -Contain "/ConfigurationRepositoryCreate"
             @($operations[1].args) | Should -Contain "/ConfigurationRepositoryLock"
             @($operations[2].args) | Should -Contain "/ConfigurationRepositoryUnLock"
+            @($operations[3].args) | Should -Be @("/ConfigurationRepositoryUnbindCfg", "-force")
             $repositoryPath = @($operations[0].args)[@($operations[0].args).IndexOf("/ConfigurationRepositoryF") + 1]
             $repositoryPath | Should -Match ([regex]::Escape(" с пробелом-"))
             $repositoryPath | Should -Be @($operations[1].args)[@($operations[1].args).IndexOf("/ConfigurationRepositoryF") + 1]
@@ -1916,7 +1917,7 @@
             $secondObjects = @($operations[2].args)[@($operations[2].args).IndexOf("-Objects") + 1]
             $firstObjects | Should -Be $secondObjects
             Test-Path -LiteralPath $firstObjects -PathType Leaf | Should -BeTrue
-            (@($operations | ForEach-Object { @($_.args) }) -join " ") | Should -Not -Match "-force|-revised|ConfigurationRepositoryUpdateCfg"
+            (@($operations[0..2] | ForEach-Object { @($_.args) }) -join " ") | Should -Not -Match "-force|-revised|ConfigurationRepositoryUpdateCfg"
             [Environment]::GetEnvironmentVariable("SOURCE_USES_REPOSITORY", "Process") | Should -BeNullOrEmpty
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

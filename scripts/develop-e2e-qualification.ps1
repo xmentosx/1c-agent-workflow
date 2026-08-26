@@ -92,7 +92,7 @@ function Get-DevelopE2ECanonicalJsonSha256 {
     } finally { $sha.Dispose() }
 }
 
-function Get-DevelopE2EStandStateSha256 {
+function Get-DevelopE2EStandRepositories {
     param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
     $root = [IO.Path]::GetFullPath($ProjectRoot)
@@ -100,17 +100,80 @@ function Get-DevelopE2EStandStateSha256 {
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { throw "Develop E2E stand config is missing: $configPath" }
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $developRoot = [IO.Path]::GetFullPath([string]$config.developWorktreePath)
-    $state = [ordered]@{ schemaVersion = 1; repositories = @() }
-    $repositories = @([pscustomobject]@{ path = $root; role = "master" }, [pscustomobject]@{ path = $developRoot; role = "develop" })
-    foreach ($entry in $repositories) {
+    return @(
+        [pscustomobject]@{ path = $root; role = "master" },
+        [pscustomobject]@{ path = $developRoot; role = "develop" }
+    )
+}
+
+function Get-DevelopE2EStandContentState {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [string]$MasterCommit = "HEAD",
+        [string]$DevelopCommit = "HEAD",
+        [switch]$RequireClean
+    )
+
+    $state = [ordered]@{ schemaVersion = 2; repositories = @() }
+    foreach ($entry in @(Get-DevelopE2EStandRepositories -ProjectRoot $ProjectRoot)) {
         $path = [string]$entry.path
-        $head = (& git -C $path rev-parse HEAD 2>$null).Trim()
-        if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E cannot resolve $($entry.role) stand HEAD: $path" }
+        $commit = if ([string]$entry.role -eq "master") { $MasterCommit } else { $DevelopCommit }
+        $resolvedCommit = (& git -C $path rev-parse $commit 2>$null).Trim()
+        if ($LASTEXITCODE -ne 0 -or $resolvedCommit -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E cannot resolve $($entry.role) stand commit '$commit': $path" }
         $tracked = @(& git -C $path status --porcelain --untracked-files=no 2>$null)
         if ($LASTEXITCODE -ne 0) { throw "Develop E2E cannot inspect $($entry.role) stand state: $path" }
-        $state.repositories += [ordered]@{ role = [string]$entry.role; path = $path.ToLowerInvariant(); head = $head; trackedClean = $tracked.Count -eq 0 }
+        $trackedClean = $tracked.Count -eq 0
+        if ($RequireClean -and -not $trackedClean) { throw "Develop E2E $($entry.role) stand has tracked changes: $path" }
+        $content = [ordered]@{}
+        foreach ($repoPath in @("src/cf", "src/cfe", "tests/features")) {
+            $objectId = (& git -C $path rev-parse "$resolvedCommit`:$repoPath" 2>$null).Trim()
+            if ($LASTEXITCODE -ne 0 -or $objectId -notmatch '^[a-f0-9]{40}$') { $objectId = "" }
+            $content[$repoPath] = $objectId
+        }
+        $state.repositories += [ordered]@{
+            role = [string]$entry.role
+            path = $path.ToLowerInvariant()
+            trackedClean = $trackedClean
+            content = $content
+        }
     }
-    return Get-DevelopE2ECanonicalJsonSha256 -Value $state
+    return $state
+}
+
+function Get-DevelopE2EStandStateSha256 {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+    return Get-DevelopE2ECanonicalJsonSha256 -Value (Get-DevelopE2EStandContentState -ProjectRoot $ProjectRoot)
+}
+
+function Test-DevelopE2ELegacyStandContinuation {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][string]$RecordedSha256
+    )
+
+    if ($RecordedSha256 -notmatch '^[a-f0-9]{64}$') { return $false }
+    try {
+        $repositories = @(Get-DevelopE2EStandRepositories -ProjectRoot $ProjectRoot)
+        $currentState = Get-DevelopE2EStandContentState -ProjectRoot $ProjectRoot -RequireClean
+        $currentSha256 = Get-DevelopE2ECanonicalJsonSha256 -Value $currentState
+        $masterHeads = @(& git -C ([string]$repositories[0].path) reflog --format=%H -n 64 2>$null | Where-Object { $_ -match '^[a-f0-9]{40}$' } | Select-Object -Unique)
+        $developHeads = @(& git -C ([string]$repositories[1].path) reflog --format=%H -n 128 2>$null | Where-Object { $_ -match '^[a-f0-9]{40}$' } | Select-Object -Unique)
+        foreach ($masterHead in $masterHeads) {
+            foreach ($developHead in $developHeads) {
+                $legacyState = [ordered]@{ schemaVersion = 1; repositories = @(
+                    [ordered]@{ role = "master"; path = ([string]$repositories[0].path).ToLowerInvariant(); head = [string]$masterHead; trackedClean = $true },
+                    [ordered]@{ role = "develop"; path = ([string]$repositories[1].path).ToLowerInvariant(); head = [string]$developHead; trackedClean = $true }
+                ) }
+                if ((Get-DevelopE2ECanonicalJsonSha256 -Value $legacyState) -ne $RecordedSha256) { continue }
+                $recordedState = Get-DevelopE2EStandContentState -ProjectRoot $ProjectRoot -MasterCommit ([string]$masterHead) -DevelopCommit ([string]$developHead)
+                return (Get-DevelopE2ECanonicalJsonSha256 -Value $recordedState) -eq $currentSha256
+            }
+        }
+    } catch {
+        return $false
+    }
+    return $false
 }
 
 function New-DevelopE2ERouteReport {
@@ -154,15 +217,22 @@ function Test-DevelopE2ERouteReport {
         [Parameter(Mandatory = $true)][string]$Tree,
         [Parameter(Mandatory = $true)][ValidateSet("upgrade", "fresh")][string]$Journey,
         [Parameter(Mandatory = $true)][string]$IdentitySha256,
-        [Parameter(Mandatory = $true)][string]$StandStateSha256
+        [Parameter(Mandatory = $true)][string]$StandStateSha256,
+        [string]$ProjectRoot = ""
     )
 
     if ($Tree -notmatch '^[a-f0-9]{40}$' -or $IdentitySha256 -notmatch '^[a-f0-9]{64}$' -or $StandStateSha256 -notmatch '^[a-f0-9]{64}$' -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
     try {
+        if (-not $ProjectRoot) {
+            $projectRootVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
+            if ($projectRootVariable -and [string]$projectRootVariable.Value) { $ProjectRoot = [string]$projectRootVariable.Value }
+        }
         $report = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $standMatches = [string]$report.standStateSha256 -eq $StandStateSha256 -or
+            ($ProjectRoot -and (Test-DevelopE2ELegacyStandContinuation -ProjectRoot $ProjectRoot -RecordedSha256 ([string]$report.standStateSha256)))
         if ([int]$report.schemaVersion -ne 1 -or [string]$report.kind -ne "itl-develop-e2e-route-report" -or
             [string]$report.status -ne "passed" -or [string]$report.repository.tree -ne $Tree -or
-            [string]$report.identitySha256 -ne $IdentitySha256 -or [string]$report.standStateSha256 -ne $StandStateSha256 -or [string]$report.journey -ne $Journey -or
+            [string]$report.identitySha256 -ne $IdentitySha256 -or -not $standMatches -or [string]$report.journey -ne $Journey -or
             [string]$report.plan.kind -ne "itl-develop-e2e-journey-plan" -or
             [string]$report.planSha256 -ne (Get-DevelopE2ECanonicalJsonSha256 -Value $report.plan)) { return $false }
         return $Journey -in @($report.plan.journeys | ForEach-Object { [string]$_ }) -and

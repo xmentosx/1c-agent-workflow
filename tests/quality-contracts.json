@@ -29,6 +29,7 @@
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
       "scripts/develop-static-qualification.ps1",
+      "scripts/develop-e2e-qualification.ps1",
       "scripts/git-path-list.ps1",
       "scripts/quality-contracts.ps1",
       "scripts/resolve-targeted-tests.ps1",
@@ -58,10 +59,8 @@
       "scripts/source-delivery-candidate.ps1",
       "scripts/invoke-develop-e2e.ps1",
       "scripts/develop-e2e-cleanup.ps1",
-      "scripts/develop-e2e-qualification.ps1",
       "scripts/git-path-list.ps1",
-      "scripts/quality-contracts.ps1",
-      "tests/quality-contracts.json"
+      "scripts/quality-contracts.ps1"
     ],
     "routes": {
       "upgrade": {
