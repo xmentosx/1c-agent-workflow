@@ -1220,6 +1220,7 @@ function Invoke-E2ESeedParallelProof {
         try {
             Invoke-E2EHelperAtRoot -Root $worktreeB -BranchName $nameB -Action "reset-dev-branch" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-repository-lock-cleanup" | Out-Null
             $repositoryLockCleanupPassed = $true
+            $stateB = Get-E2EBranchStateAtRoot -Root $worktreeB -Name $nameB
         } catch {
             $repositoryLockCleanupError = $_
         }
@@ -2124,6 +2125,14 @@ try {
                 }
                 $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot))
             }
+            # Persist the complete observed record before aggregate validation.
+            # A late contract mismatch must be diagnosable without rerunning the
+            # expensive runtime proof merely to recover its field values.
+            [IO.File]::WriteAllText(
+                $seedParallelEvidencePath,
+                (($seedParallelEvidence | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
+                [Text.UTF8Encoding]::new($false)
+            )
             if ([string]$seedParallelEvidence.status -ne "passed" -or
                 [string]$seedParallelEvidence.seedArtifactKind -ne "file-1cd" -or
                 -not [bool]$seedParallelEvidence.seedPreservedByLiteRefresh -or
@@ -2143,11 +2152,6 @@ try {
                 [string]$seedParallelEvidence.branchB.baselineCacheStatus -ne "seeded") {
                 throw "Release E2E seed-parallel evidence is incomplete."
             }
-            [IO.File]::WriteAllText(
-                $seedParallelEvidencePath,
-                (($seedParallelEvidence | ConvertTo-Json -Depth 10) + [Environment]::NewLine),
-                [Text.UTF8Encoding]::new($false)
-            )
             Set-E2EStageStatus -Name "seed-parallel" -Status "passed" -EvidencePath $seedParallelEvidencePath
         } catch {
             Set-E2EStageStatus -Name "seed-parallel" -Status "failed" -ErrorText $_.Exception.Message
