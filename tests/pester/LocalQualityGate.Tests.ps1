@@ -169,6 +169,7 @@ Get-PesterShardFileSha256 -Path `$Path
         }
         $developJourney | Should -Match ([regex]::Escape("fresh passed.*warn"))
         $developJourney | Should -Not -Match ([regex]::Escape("fresh passed.*policy warn"))
+        $developJourney | Should -Match 'SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE\|SOURCE_USES_REPOSITORY'
         $developJourney | Should -Match '\[Console\]::OutputEncoding = \$utf8'
         $developJourney | Should -Match '\$OutputEncoding = \$utf8'
         $developJourney | Should -Match 'tests\\features\\ITLDevelopJourney\.feature.*stale verification boundary'
