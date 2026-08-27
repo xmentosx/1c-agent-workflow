@@ -192,9 +192,14 @@ commit и запускает финальный Develop. Прямой promoter �
 
 Очередь должна быть пустой, а локальный `develop` совпадать с
 `origin/develop`. Оркестратор включает отсутствующие изменения текущего
-`origin/master`, получает/reuses Develop proof точного дерева, запускает
-release-only E2E, затем без squash/force продвигает тот же commit в `develop` и
-`master` и повторно читает remote refs.
+`origin/master`, получает/reuses Develop proof точного дерева и запускает
+release-only E2E. Для GitHub он публикует временную release-ветку, создаёт или
+возобновляет PR в защищённый `master`, выполняет разрешённый linear-history
+rebase merge и затем без force присоединяет фактический master commit к
+`develop`. Для остальных Git remote сохраняется атомарный fast-forward обеих
+веток. В обоих случаях финальная сверка требует одинаковое квалифицированное
+дерево в `develop` и `master`; retry безопасно завершает прерванную сверку после
+уже слитого PR.
 
 `-Version itl-workflow-vX.Y.Z` отдельно создаёт annotated tag и GitHub Release
 после успешного продвижения веток. Без `-Version` происходит только перенос в

@@ -317,4 +317,78 @@ It "never uses force push for develop or master" {
         $text = $DeliverySourceText; $text | Should -Not -Match 'push[^\r\n]*(--force|-f\b|--force-with-lease)'
         foreach ($marker in @('HEAD:refs/heads/develop', 'push", "--atomic"', 'HEAD:refs/heads/master')) { $text | Should -Match ([regex]::Escape($marker)) }
     }
+
+It "uses a GitHub pull request for protected master and reconciles develop without force" {
+        $fixture = $null
+        $fakeBin = $null
+        $oldPath = $env:PATH
+        $oldGhScript = $env:ITL_TEST_GH_SCRIPT
+        $oldGhRemote = $env:ITL_TEST_GH_REMOTE
+        try {
+            $fixture = New-DeliveryFixture
+            & git --git-dir=$($fixture.remote) update-ref refs/heads/master $fixture.base
+            Set-Content -LiteralPath (Join-Path $fixture.root "release.txt") -Encoding UTF8 -Value "qualified"
+            & git -C $fixture.root add release.txt
+            & git -C $fixture.root commit --quiet -m "feat: protected release" *> $null
+            & git -C $fixture.root push --quiet origin develop *> $null
+            $candidate = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $candidateTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+
+            $fakeBin = Join-Path ([IO.Path]::GetTempPath()) ("fake gh путь " + [guid]::NewGuid().ToString("N"))
+            New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
+            $fakeGhScript = Join-Path $fakeBin "fake-gh.ps1"
+            [IO.File]::WriteAllText($fakeGhScript, @'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$CliArgs)
+if ($CliArgs[0] -eq 'repo' -and $CliArgs[1] -eq 'view') { 'fixture/repository'; exit 0 }
+if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'list') { exit 0 }
+if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'create') { 'https://github.com/fixture/repository/pull/17'; exit 0 }
+if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'view') { '17'; exit 0 }
+if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'merge') {
+    $line = @(& git --git-dir=$env:ITL_TEST_GH_REMOTE for-each-ref '--format=%(objectname) %(refname)' 'refs/heads/itl/release-master-*' | Select-Object -First 1)
+    if (-not $line) { exit 31 }
+    $parts = $line[0] -split ' ', 2
+    $candidate = $parts[0]
+    $releaseRef = $parts[1]
+    $tree = (& git --git-dir=$env:ITL_TEST_GH_REMOTE rev-parse "$candidate^{tree}").Trim()
+    $master = (& git --git-dir=$env:ITL_TEST_GH_REMOTE rev-parse refs/heads/master).Trim()
+    $env:GIT_AUTHOR_NAME = 'GitHub Fixture'; $env:GIT_AUTHOR_EMAIL = 'fixture@example.invalid'
+    $env:GIT_COMMITTER_NAME = 'GitHub Fixture'; $env:GIT_COMMITTER_EMAIL = 'fixture@example.invalid'
+    $rebased = (& git --git-dir=$env:ITL_TEST_GH_REMOTE commit-tree $tree -p $master -m 'rebase protected release').Trim()
+    & git --git-dir=$env:ITL_TEST_GH_REMOTE update-ref refs/heads/master $rebased $master
+    if ($LASTEXITCODE -ne 0) { exit 32 }
+    & git --git-dir=$env:ITL_TEST_GH_REMOTE update-ref -d $releaseRef $candidate
+    'merged'; exit 0
+}
+exit 30
+'@, [Text.UTF8Encoding]::new($false))
+            $fakeGhCommand = @'
+@echo off
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%ITL_TEST_GH_SCRIPT%" %*
+exit /b %ERRORLEVEL%
+'@
+            [IO.File]::WriteAllText((Join-Path $fakeBin "gh.cmd"), $fakeGhCommand, [Text.Encoding]::ASCII)
+            $env:ITL_TEST_GH_SCRIPT = $fakeGhScript
+            $env:ITL_TEST_GH_REMOTE = $fixture.remote
+            $env:PATH = $fakeBin + [IO.Path]::PathSeparator + $oldPath
+
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "ReleaseMaster", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
+            $payload = $result.stdout | ConvertFrom-Json
+
+            $payload.status | Should -Be "released"
+            $payload.publicationMode | Should -Be "github-pull-request"
+            $payload.pullRequest | Should -Be "17"
+            $payload.candidateCommit | Should -Be $candidate
+            $payload.masterCommit | Should -Not -Be $candidate
+            (& git --git-dir=$($fixture.remote) rev-parse "$($payload.masterCommit)^{tree}").Trim() | Should -Be $candidateTree
+            (& git --git-dir=$($fixture.remote) rev-parse "$($payload.developCommit)^{tree}").Trim() | Should -Be $candidateTree
+            & git --git-dir=$($fixture.remote) merge-base --is-ancestor $payload.masterCommit $payload.developCommit
+            $LASTEXITCODE | Should -Be 0
+        } finally {
+            $env:PATH = $oldPath
+            if ($null -eq $oldGhScript) { Remove-Item Env:ITL_TEST_GH_SCRIPT -ErrorAction SilentlyContinue } else { $env:ITL_TEST_GH_SCRIPT = $oldGhScript }
+            if ($null -eq $oldGhRemote) { Remove-Item Env:ITL_TEST_GH_REMOTE -ErrorAction SilentlyContinue } else { $env:ITL_TEST_GH_REMOTE = $oldGhRemote }
+            Remove-DeliveryFixture -Fixture $fixture
+            if ($fakeBin) { Remove-Item -LiteralPath $fakeBin -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
