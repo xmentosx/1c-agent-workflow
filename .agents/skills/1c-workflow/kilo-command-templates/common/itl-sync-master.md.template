@@ -11,6 +11,6 @@ If the agent shell tool supports `timeout_ms`, run this lifecycle command with `
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action sync-master
 ```
 
-The helper updates the source infobase from its configuration repository when that integration is configured, exports and commits the current source configuration to installed-project `master`, and always rebuilds the single latest branch seed including its event-log signature baseline. It does not refresh the current development branch. On failure, read only the last 80 lines of `logPath`; a failed seed must be recovered by repeating this command and must never be bypassed by copying source directly.
+The helper follows `SOURCE_REPOSITORY_UPDATE_MODE`: `workflow` updates the source infobase from its configured repository first, while `external` captures the current source state without mutating source. It exports and commits that configuration to installed-project `master` and always rebuilds the single latest branch seed including its event-log signature baseline. It does not refresh the current development branch. On failure, read only the last 80 lines of `logPath`; a failed seed must be recovered by repeating this command and must never be bypassed by copying source directly.
 
 On success with a non-empty `userReport`, make the final response exactly that report rendered as Markdown. Otherwise report the exact seed sync ID and committed `master` SHA from the bounded result/log without adding unrelated actions.

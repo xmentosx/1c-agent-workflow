@@ -38,6 +38,7 @@ Use this as `.agent-1c/project.json`:
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceUsesRepository": true,
+  "sourceRepositoryUpdateMode": "workflow",
   "sourceInfoBasePath": "",
   "sourceServerName": "",
   "sourceInfoBaseName": "",

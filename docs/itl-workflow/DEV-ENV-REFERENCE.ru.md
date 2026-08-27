@@ -30,6 +30,7 @@
 | `DESIGNER_DUMP_STABILITY_SECONDS` | Интервал стабильности файлов результата или `/Out` перед приемкой операции Designer | default `5`; `0..300` | user |
 | `INFOBASE_KIND` | Тип исходной базы | `file`/`server`, default `file` | user |
 | `SOURCE_USES_REPOSITORY` | Используется ли хранилище 1С | `true`/`false` | init/user |
+| `SOURCE_REPOSITORY_UPDATE_MODE` | Кто обновляет исходную базу из хранилища перед фиксацией в `master` | `workflow`/`external`, default `workflow` | `/itl-repository-mode` из `master` |
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |
 | `SOURCE_SERVER_NAME` | Сервер исходной базы | строка | init/user |
 | `SOURCE_INFOBASE_NAME` | Имя серверной исходной базы | строка | init/user |

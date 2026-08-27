@@ -428,8 +428,8 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 18
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-switch-client")) {
+            @($masterFiles.Keys).Count | Should -Be 20
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
                 [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")

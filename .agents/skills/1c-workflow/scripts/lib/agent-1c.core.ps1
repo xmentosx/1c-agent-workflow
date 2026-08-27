@@ -2448,6 +2448,30 @@ function Get-SourceUsesRepository {
     return ConvertTo-BoolSetting -Value $value -Default $true
 }
 
+function Get-SourceRepositoryUpdateModeState {
+    $raw = [string](Get-Setting `
+        -EnvName "SOURCE_REPOSITORY_UPDATE_MODE" `
+        -ConfigName "sourceRepositoryUpdateMode" `
+        -Default "workflow")
+    $normalized = $raw.Trim().ToLowerInvariant()
+    if (-not $normalized) {
+        $normalized = "workflow"
+    }
+    return [pscustomobject]@{
+        raw = $raw
+        effective = $normalized
+        valid = $normalized -in @("workflow", "external")
+    }
+}
+
+function Get-SourceRepositoryUpdateMode {
+    $state = Get-SourceRepositoryUpdateModeState
+    if (-not $state.valid) {
+        throw "SOURCE_REPOSITORY_UPDATE_MODE_INVALID: '$($state.raw)'. Use workflow or external."
+    }
+    return [string]$state.effective
+}
+
 function Get-WebPublishByDefault {
     $envValue = Get-EnvValue -Name "WEB_PUBLISH_BY_DEFAULT"
     if ($null -ne $envValue -and -not [string]::IsNullOrWhiteSpace([string]$envValue)) {

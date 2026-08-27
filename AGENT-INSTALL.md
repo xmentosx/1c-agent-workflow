@@ -349,9 +349,10 @@ On a repeated bootstrap, `cancelled` is left untouched and never resumed automat
 1. Required software check with install suggestions.
 2. Git initialization when `.git` is absent.
 3. Checkout or creation of local `master`.
-4. Source infobase update from 1C configuration repository storage when `SOURCE_USES_REPOSITORY=true`; otherwise this step is skipped and the current source infobase state is used.
+4. Apply the source repository policy. With `SOURCE_USES_REPOSITORY=true` and `SOURCE_REPOSITORY_UPDATE_MODE=workflow` (the backward-compatible default), update the source infobase from storage. With mode `external`, skip both repository and database-configuration updates against source and use its current state. When storage is not configured, this step is also skipped.
 5. Dump of configuration files into fixed `src/cf`.
-   - If `SOURCE_USES_REPOSITORY=true`, the dump command must also pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP`.
+   - In `workflow` mode, the repository update command must pass `/ConfigurationRepositoryF`, `/ConfigurationRepositoryN`, and `/ConfigurationRepositoryP`.
+   - In `external` mode, ITL must not pass `/ConfigurationRepositoryUpdateCfg` or `/UpdateDBCfg` against source; repository topology remains enabled so copied seeds and branch infobases are still unbound.
    - If `SOURCE_USES_REPOSITORY=false`, repository values must not be requested or passed; the developer manually updates the source infobase before `/itl-refresh` when needed.
    - First dump is full when `src/cf` is empty.
    - Later dumps are incremental with `-update -force` when `src/cf/ConfigDumpInfo.xml` exists.
@@ -399,6 +400,8 @@ New branch commands create a sibling Git worktree by default and leave the curre
 
 `/itl-refresh` remains the compatible full source → `master` → branch scenario and uses the same exact-response contract on success. Both refresh variants checkpoint accumulated non-ignored branch changes first. `/itl-sync-master` performs the shared source/master synchronization and always rebuilds the single latest-only seed; `/itl-refresh-lite` then refreshes one branch from the exact current `master` SHA without source or seed access. `/itl-refresh-all` performs one sync from clean `master` and refreshes every active ready branch with at most two workers. Their Russian `userReport` is authoritative. Do not read or reproduce `console.log` on success, replace the report with a generic success sentence, or build a separate summary from diagnostic output.
 
+From the main `master` worktree, `/itl-repository-mode workflow|external|status` changes or reports the local `SOURCE_REPOSITORY_UPDATE_MODE` without dirtying Git. The command is intentionally absent from `itldev/*` surfaces.
+
 `/itl` must present the lifecycle as a process panel, not as a flat command list: current state, recommended next step, lifecycle path, visible client-native commands/skills or natural OpenSpec requests, then grouped additional helper actions. In a fresh clean `itldev/*` branch with `verification missing`, recommend choosing `executionPath=quick-fix|full-cycle` and, independently, `planningMode=direct|OpenSpec`, with `direct` as the default; do not recommend `/itl-check` before checkable changes exist. Never promise universal `/opsx*`; for the qualified Codex bundle, show the explicit-only `$opsx-explore`, `$opsx-propose`, `$opsx-apply`, and `$opsx-archive` aliases while keeping the canonical `openspec-*` skills available for implicit routing. Recommend `/itl-check` after checkable configuration/extension/Vanessa feature changes or stale/failed/unknown verification.
 
 The native `/itl` command wrapper must return successful helper `-Action help` stdout unchanged inside exactly one fenced `text` block with no content outside it, preserving every line break, blank line, and indentation. It must not summarize, translate, split the panel into custom sections, merge OpenSpec into visible slash commands, omit `Lifecycle:` or `Additional helper actions:`, or append a "no lifecycle actions executed" note; on helper failure it reports the actual error instead of fabricating a panel. Existing open worktrees may have a stale ignored command surface; update the package from `master` or an active dev worktree, then run `/itl-refresh` in the dev worktree, or use `switch-dev-branch` when changing branches.
@@ -419,6 +422,7 @@ $itl-new-config-branch
 $itl-new-extension-branch
 $itl-refresh-all
 $itl-update-workflow
+$itl-repository-mode
 $itl-switch-client
 $itl-litemode
 

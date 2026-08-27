@@ -1,10 +1,10 @@
 # 1C Agent Workflow Reference Index
 
-Lifecycle index. Open as needed.
+Lifecycle index.
 
 ## User-Facing Menu
 
-When help is requested or the action is unclear, show this helper lifecycle panel:
+For help or an unclear action, show:
 
 ```text
 master:
@@ -16,6 +16,7 @@ master:
   /itl-refresh-all
   /itl-update-workflow
   /itl-switch-client <client>
+  /itl-repository-mode <workflow|external|status>
   /itl-litemode <mode>
 
 itldev/*:

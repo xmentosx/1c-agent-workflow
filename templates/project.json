@@ -18,6 +18,7 @@
   "platformPath": "",
   "infoBaseKind": "file",
   "sourceUsesRepository": true,
+  "sourceRepositoryUpdateMode": "workflow",
   "sourceInfoBasePath": "",
   "sourceServerName": "",
   "sourceInfoBaseName": "",
