@@ -777,7 +777,7 @@ try {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
                 $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers)
                 if ($resolvedAiRulesSource) { $shardArguments += @("-AiRulesSource", $resolvedAiRulesSource) }
-                Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $pesterHardBudgetSeconds -LogName "pester-shards"
+                Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $pesterHardBudgetSeconds -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-shards"
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
                 if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }
                 $shardSummary = Get-Content -LiteralPath $shardSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json

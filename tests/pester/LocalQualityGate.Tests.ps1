@@ -100,7 +100,7 @@ Describe "Local quality gate contract" {
         $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'SelectionPath", \$selectionPath\) -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
-        $check | Should -Match '-TimeoutSeconds \$pesterHardBudgetSeconds -LogName "pester-shards"' -Because "the complete Pester inventory must use the catalog Full hard budget"
+        $check | Should -Match '-TimeoutSeconds \$pesterHardBudgetSeconds -ProgressPaths \(Join-Path \$outputRoot "pester-shards"\) -LogName "pester-shards"' -Because "the complete Pester inventory must use the catalog Full hard budget and treat shard artifacts as live progress"
         [int]$catalog.budgets.targetedHardSeconds | Should -BeGreaterOrEqual 1200
         [int]$catalog.budgets.fullHardSeconds | Should -BeGreaterOrEqual 1300
         [int]($catalog.contracts | Where-Object id -eq "source-delivery").budgetSeconds | Should -BeGreaterOrEqual 1200
