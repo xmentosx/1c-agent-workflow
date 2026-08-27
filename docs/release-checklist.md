@@ -67,6 +67,12 @@ records are mandatory for reuse; a reconciliation that changes the candidate
 falls back to the complete release gate. Any failure before develop publication
 preserves the queue and old remote refs.
 
+If the process stops after publishing `develop`, the durable release-train
+checkpoint remains in the common Git directory. Re-running `PromoteRelease`
+with an empty queue resumes the exact qualified commit/tree and does not repeat
+Develop or Release. The checkpoint is removed only after verified master
+publication.
+
 `PublishDevelop -RequireRelease` remains available only when the development
 channel itself must be release-qualified but `master` is intentionally not being
 moved. Do not follow it immediately with `ReleaseMaster`; use `PromoteRelease`
@@ -77,6 +83,12 @@ Successful `PublishDevelop` output must state `developPublished=true`,
 installable development channel, including owned component publication, but
 does not move stable `master`; only `PromoteRelease` or the explicit command below may report
 `masterReleased=true`.
+
+Every successful development publication or master release performs a
+best-effort post-success cleanup of exact ITL-generated candidate worktrees,
+disposable fresh/release-seed projects, stale 1C launcher registrations, and old
+launcher backups. Configured reusable stands and any active path are preserved;
+cleanup warnings do not rewrite a verified publication as failed.
 
 When that remote development commit is ready for the stable channel, run:
 

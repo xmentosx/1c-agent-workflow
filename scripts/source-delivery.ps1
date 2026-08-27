@@ -10,10 +10,13 @@ param(
     [string[]]$CoverageContract = @(),
     [string]$AiRulesSource = "",
     [string]$E2EProjectRoot = "",
+    [string]$FreshProjectsRoot = "C:\itlj",
     [string]$GateScript = "",
     [string]$ComponentFinalizerScript = "",
     [string]$CompatibilityPromoterScript = "",
     [string]$Version = "",
+    [ValidateSet("Summary", "Runs", "Full")]
+    [string]$StatusDetail = "Summary",
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
     [switch]$RetryBlockedStage,
@@ -65,6 +68,7 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-queue.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-component.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
 if ($RequireRelease -and $Action -ne "PublishDevelop") {
@@ -73,15 +77,32 @@ if ($RequireRelease -and $Action -ne "PublishDevelop") {
 if ($RetryBlockedStage -and $Action -ne "PublishDevelop") {
     throw "-RetryBlockedStage is valid only with -Action PublishDevelop."
 }
+if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
 $script:ActiveOperation = $null
 try {
     if ($Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }
     $result = switch ($Action) {
         "RegisterChange" { Register-SourceChange }
-        "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries); activeOperation = (Get-DeliveryOperationStatus); runHistory = (Get-DeliveryRunHistory) } }
+        "Status" {
+            $history = Get-DeliveryRunHistory -Limit $(if ($StatusDetail -eq "Summary") { 3 } else { 20 }) -IncludeDetails:($StatusDetail -eq "Full")
+            $attempt = Read-DevelopPublicationAttempt
+            [pscustomobject]@{
+                status = "ok"
+                queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
+                activeOperation = (Get-DeliveryOperationStatus)
+                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
+                runHistory = $history
+            }
+        }
         "PublishDevelop" { Publish-AccumulatedDevelop }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster }
         "ReleaseMaster" { Release-DevelopToMaster }
+    }
+    if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1") -and
+        $Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster") -and
+        $result -and [string]$result.status -in @("published", "released")) {
+        $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot
+        $result | Add-Member -NotePropertyName cleanup -NotePropertyValue $cleanup -Force
     }
     $result | ConvertTo-Json -Depth 8
 } finally {

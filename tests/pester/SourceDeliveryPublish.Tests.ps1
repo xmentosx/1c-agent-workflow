@@ -71,6 +71,29 @@ It "keeps function names unique across the split delivery implementation" {
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 
+    It "resumes a durable release train after develop was published by an earlier process" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root push --quiet origin "HEAD:refs/heads/master" *> $null
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ResumeTrain.Tests.ps1") -Encoding UTF8 -Value "Describe 'resume train' { It 'works' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'resume-train'"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: resume release train" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+            $published = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))).stdout | ConvertFrom-Json
+            $attemptPath = Join-Path $fixture.root ".git\itl\publication-attempts\develop.json"; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $attemptPath) | Out-Null
+            $attempt = [ordered]@{ schemaVersion=1; phase='remote-pushed'; candidate=$published.commit; tree=$published.tree; requireRelease=$true; startedAt=$published.qualificationStartedAt }
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+            $released = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PromoteRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))).stdout | ConvertFrom-Json
+            $released.status | Should -Be 'released'; $released.resumedReleaseTrain | Should -BeTrue; $released.qualificationReused | Should -BeTrue
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @('Develop','Release')
+            Test-Path -LiteralPath $attemptPath | Should -BeFalse
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
     It "rejects a malformed component finalizer before broad qualification" {
         $fixture = $null
         $brokenFinalizer = Join-Path ([IO.Path]::GetTempPath()) ("itl-broken-finalizer-" + [guid]::NewGuid().ToString("N") + ".ps1")

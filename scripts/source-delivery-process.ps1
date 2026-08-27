@@ -528,11 +528,16 @@ function Write-DeliveryRunRecord {
 }
 
 function Get-DeliveryRunHistory {
-    param([int]$Limit = 20)
+    param([int]$Limit = 3, [switch]$IncludeDetails)
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; if (-not (Test-Path -LiteralPath $runRoot)) { return [pscustomobject]@{ root = $runRoot; count = 0; totalDurationMs = 0; byMode = @(); lastRuns = @() } }
     $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} })
     $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
-    return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = @($runs | Select-Object -First $Limit) }
+    $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
+        @($runs | Select-Object -First $Limit | ForEach-Object {
+            [pscustomobject]@{ mode=$_.mode; status=$_.status; startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
+        })
+    }
+    return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = $lastRuns }
 }
 
 function Get-DeliveryQualificationCachePath {

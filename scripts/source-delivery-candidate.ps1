@@ -514,8 +514,11 @@ function Complete-InterruptedDevelopPublication {
     if (-not [bool]$installability.installable) { throw "Published develop is not installable; recovery will not report success." }
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
     Sync-LocalDevelopAfterPublish
-    if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
-    Remove-DevelopPublicationAttempt
+    $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
+    if (-not $retainAttempt) {
+        if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+        Remove-DevelopPublicationAttempt
+    }
     return [pscustomobject]@{
         status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree
         developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
@@ -670,8 +673,11 @@ function Publish-AccumulatedDevelop {
         if ($remoteAfter -ne $candidate) { throw "Published develop verification failed: expected $candidate, remote reports $remoteAfter." }
         Clear-PublishedQueueEntries -PublishedCommit $candidate
         Sync-LocalDevelopAfterPublish
-        if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
-        Remove-DevelopPublicationAttempt
+        $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
+        if (-not $retainAttempt) {
+            if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+            Remove-DevelopPublicationAttempt
+        }
         $deliverySucceeded = $true
         return [pscustomobject]@{
             status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree
@@ -904,11 +910,25 @@ function Release-DevelopToMaster {
 function Promote-AccumulatedDevelopToMaster {
     $entries = @(Get-QueueEntries)
     if ($entries.Count -eq 0) {
-        Write-Verbose "PromoteRelease found an empty queue; using the ordinary ReleaseMaster qualification path."
+        [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
+        $remoteDevelop = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
+        $attempt = Read-DevelopPublicationAttempt
+        if ($attempt -and [bool]$attempt.requireRelease -and [string]$attempt.phase -eq "remote-pushed" -and [string]$attempt.candidate -eq $remoteDevelop -and
+            [string]$attempt.tree -eq (Get-GitValue -Arguments @("rev-parse", "$remoteDevelop^{tree}"))) {
+            Write-Verbose "PromoteRelease resumes the durable exact-candidate release train without repeating Develop or Release."
+            $released = Release-DevelopToMaster -PrequalifiedCommit $remoteDevelop -PrequalifiedTree ([string]$attempt.tree) -PrequalifiedNotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -ReusePrequalifiedGates
+            if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+            Remove-DevelopPublicationAttempt
+            $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
+            $released | Add-Member -NotePropertyName resumedReleaseTrain -NotePropertyValue $true -Force
+            return $released
+        }
+        Write-Verbose "PromoteRelease found no resumable train; using the ordinary ReleaseMaster qualification path."
         return Release-DevelopToMaster
     }
 
     $script:RequireRelease = $true
+    $script:RetainDevelopPublicationAttempt = $true
     $published = Publish-AccumulatedDevelop
     if (-not [bool]$published.developPublished -or -not [bool]$published.releaseQualified) {
         throw "PromoteRelease requires an exact candidate published to develop with Release qualification."
@@ -919,6 +939,9 @@ function Promote-AccumulatedDevelopToMaster {
         -PrequalifiedTree ([string]$published.tree) `
         -PrequalifiedNotBefore $notBefore `
         -ReusePrequalifiedGates
+    $attempt = Read-DevelopPublicationAttempt
+    if ($attempt -and $attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+    Remove-DevelopPublicationAttempt
     $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
     $released | Add-Member -NotePropertyName developQualificationCommit -NotePropertyValue ([string]$published.commit) -Force
     return $released

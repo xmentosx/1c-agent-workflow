@@ -75,7 +75,21 @@ function Write-DevelopE2ELauncherSectionsRemoved {
     $removedNames = @($Sections | Where-Object { $SectionStarts -contains [int]$_.start } | ForEach-Object { [string]$_.name })
     Write-Host "Removed stale Develop E2E entries from 1C launcher list: $($removedNames -join ', ')"
     Write-Host "Launcher list backup: $backupPath"
+    Remove-DevelopE2ELauncherListBackups -ListPath $ListPath
     return $true
+}
+
+function Remove-DevelopE2ELauncherListBackups {
+    param([Parameter(Mandatory = $true)][string]$ListPath, [int]$Keep = 3)
+
+    if ($Keep -lt 1) { throw "Launcher backup retention must keep at least one backup." }
+    $directory = Split-Path -Parent $ListPath
+    $leaf = Split-Path -Leaf $ListPath
+    $backups = @(Get-ChildItem -LiteralPath $directory -File -Force -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -match ('^' + [regex]::Escape($leaf) + '\.\d{8}-\d{6}-\d{3}\.bak$')
+    } | Sort-Object LastWriteTimeUtc, Name -Descending)
+    foreach ($backup in @($backups | Select-Object -Skip $Keep)) { Remove-Item -LiteralPath $backup.FullName -Force }
+    return [pscustomobject]@{ retained = [Math]::Min($Keep, $backups.Count); removed = [Math]::Max(0, $backups.Count - $Keep) }
 }
 
 function Remove-DevelopE2ELauncherRegistration {
@@ -151,8 +165,10 @@ function Remove-DevelopE2EStaleLauncherRegistrations {
             $connect = [string]$section.values["Connect"]
             if ($connect -notmatch '^File="([^"]+)";$') { continue }
             $infoBasePath = [IO.Path]::GetFullPath($matches[1])
-            $expectedPrefix = [IO.Path]::GetFullPath((Join-Path $resolvedRoot "$projectName-develop-golden")).TrimEnd('\') + '\'
-            if (-not $infoBasePath.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $infoBasePath)) { continue }
+            $expectedSuffix = "\$projectName-develop-golden\.agent-1c\infobases\dev-branches\develop-golden"
+            if (-not $infoBasePath.StartsWith($resolvedRoot, [StringComparison]::OrdinalIgnoreCase) -or
+                -not $infoBasePath.EndsWith($expectedSuffix, [StringComparison]::OrdinalIgnoreCase) -or
+                (Test-Path -LiteralPath $infoBasePath)) { continue }
             $starts.Add([int]$section.start)
             [void]$projects.Add($projectName)
         }
@@ -173,6 +189,53 @@ function Remove-DevelopE2EStaleLauncherRegistrations {
     } finally {
         $lock.Dispose()
     }
+}
+
+function Remove-ReleaseE2EStaleLauncherRegistrations {
+    param([string]$LauncherListPath = "", [string]$SeedRoot = "D:\Git")
+
+    if (-not $LauncherListPath) { $LauncherListPath = Get-DevelopE2ELauncherListPath }
+    if (-not (Test-Path -LiteralPath $LauncherListPath -PathType Leaf)) { return 0 }
+    $lock = Enter-DevelopE2ELauncherListLock -ListPath $LauncherListPath
+    try {
+        $lines = @([IO.File]::ReadAllLines($LauncherListPath))
+        $sections = @(Get-DevelopE2ELauncherSections -Lines $lines)
+        $starts = [Collections.Generic.List[int]]::new()
+        foreach ($section in $sections) {
+            if ([string]$section.name -notmatch '^itl-workflow-e2e-pm5-release-seed-([ab])-([0-9a-f]{8})$') { continue }
+            $family = $matches[1]; $id = $matches[2]
+            if (-not $section.values.ContainsKey("Folder") -or $section.values["Folder"] -cne "/ITL/itl-workflow-e2e-pm5" -or
+                -not $section.values.ContainsKey("Connect")) { continue }
+            $connect = [string]$section.values["Connect"]
+            if ($connect -notmatch '^File="([^"]+)";$') { continue }
+            $infoBasePath = [IO.Path]::GetFullPath($matches[1])
+            $expected = [IO.Path]::GetFullPath((Join-Path $SeedRoot "itls$family-$id\.agent-1c\infobases\dev-branches\release-seed-$family-$id"))
+            if (-not [string]::Equals($infoBasePath, $expected, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $infoBasePath)) { continue }
+            $starts.Add([int]$section.start)
+        }
+        if ($starts.Count -eq 0) { return 0 }
+        [void](Write-DevelopE2ELauncherSectionsRemoved -ListPath $LauncherListPath -Lines $lines -Sections $sections -SectionStarts $starts.ToArray())
+        return $starts.Count
+    } finally { $lock.Dispose() }
+}
+
+function Remove-DevelopE2EStaleFreshProjects {
+    param([Parameter(Mandatory = $true)][string]$FreshProjectsRoot, [string[]]$PreservePaths = @(), [string]$LauncherListPath = "")
+
+    $root = [IO.Path]::GetFullPath($FreshProjectsRoot).TrimEnd('\')
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return [pscustomobject]@{ removedProjects = 0; entries = @() } }
+    $preserved = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in $PreservePaths) { if ($path) { [void]$preserved.Add(([IO.Path]::GetFullPath($path)).TrimEnd('\')) } }
+    $removed = [Collections.Generic.List[object]]::new()
+    $projects = @(Get-ChildItem -LiteralPath $root -Directory -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^d-[0-9a-f]{8}$' } | Sort-Object FullName -Descending)
+    foreach ($project in $projects) {
+        $projectPath = [IO.Path]::GetFullPath($project.FullName).TrimEnd('\')
+        if ($preserved.Contains($projectPath)) { continue }
+        $branchPath = "$projectPath-develop-golden"
+        Remove-DevelopE2EFreshProject -FreshProjectsRoot $root -Path $projectPath -BranchPath $branchPath -LauncherListPath $LauncherListPath
+        $removed.Add([pscustomobject]@{ path = $projectPath; branchPath = $branchPath }) | Out-Null
+    }
+    return [pscustomobject]@{ removedProjects = $removed.Count; entries = @($removed) }
 }
 
 function Remove-DevelopE2EFreshProject {

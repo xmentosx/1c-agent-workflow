@@ -107,7 +107,7 @@ function Add-StageResult {
     param(
         [string]$Name,
         [string]$Status,
-        [ValidateSet("executed", "reused", "skipped")][string]$Execution,
+        [ValidateSet("executed", "reused", "skipped", "infrastructure-retried-once")][string]$Execution,
         [string]$Reason,
         [string]$Detail,
         [datetime]$StartedAt,
@@ -134,16 +134,29 @@ function Invoke-GateStage {
     )
     $stageStartedAt = [DateTime]::UtcNow
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    try {
-        $result = & $Body
-        $stopwatch.Stop()
-        Add-StageResult -Name $Name -Status "passed" -Execution "executed" -Reason $Reason -Detail $Detail -StartedAt $stageStartedAt -DurationMs $stopwatch.ElapsedMilliseconds
-        return $result
-    } catch {
-        $stopwatch.Stop()
-        Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason $Reason -Detail $_.Exception.Message -StartedAt $stageStartedAt -DurationMs $stopwatch.ElapsedMilliseconds
-        throw
-    }
+    $attempt = 0
+    do {
+        $attempt++
+        try {
+            $result = & $Body
+            $stopwatch.Stop()
+            $execution = if ($attempt -eq 1) { "executed" } else { "infrastructure-retried-once" }
+            Add-StageResult -Name $Name -Status "passed" -Execution $execution -Reason $Reason -Detail $Detail -StartedAt $stageStartedAt -DurationMs $stopwatch.ElapsedMilliseconds
+            return $result
+        } catch {
+            $message = $_.Exception.Message
+            $infrastructure = $message -match '(?i)(connection (?:reset|aborted)|temporarily unavailable|timed out waiting for|429\b|ECONNRESET|RPC server is unavailable|process could not be started|cannot access the file because it is being used by another process)'
+            $retrySafeLeaf = $Name -in @("fork-check", "ai-rules-compatibility")
+            if ($attempt -eq 1 -and $infrastructure -and $retrySafeLeaf) {
+                Write-Warning "Infrastructure failure in retry-safe leaf '$Name'; retrying this leaf once: $message"
+                continue
+            }
+            $stopwatch.Stop()
+            $failureClass = if ($infrastructure) { "infrastructure" } else { "owner" }
+            Add-StageResult -Name $Name -Status "failed" -Execution "executed" -Reason "$Reason; failureClass=$failureClass; attempts=$attempt" -Detail $message -StartedAt $stageStartedAt -DurationMs $stopwatch.ElapsedMilliseconds
+            throw
+        }
+    } while ($attempt -lt 2)
 }
 
 function Add-ReusedStage {
@@ -521,7 +534,7 @@ function Test-DevelopQualification {
     if (-not (Test-Path -LiteralPath $developQualificationFullPath -PathType Leaf) -or -not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { return $null }
     try {
         $qualification = Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if ([int]$qualification.schemaVersion -notin @(1, 2, 3) -or [string]$qualification.kind -ne "itl-workflow-develop-qualification" -or [string]$qualification.status -ne "passed") { return $null }
+        if ([int]$qualification.schemaVersion -notin @(1, 2, 3, 4) -or [string]$qualification.kind -ne "itl-workflow-develop-qualification" -or [string]$qualification.status -ne "passed") { return $null }
         if ([int]$qualification.schemaVersion -ge 2 -and $qualification.PSObject.Properties["continuation"] -and -not (Test-RecordedWorkflowContinuation -Record $qualification.continuation -Commit ([string]$qualification.repository.commit) -Tree ([string]$qualification.repository.tree))) { return $null }
         $reuseKind = Get-WorkflowQualificationReuseKind -RepositoryRoot $repoRoot -SchemaVersion 2 -QualifiedCommit ([string]$qualification.repository.commit) -EvidenceCommit ([string]$qualification.repository.evidenceCommit) -QualifiedTree ([string]$qualification.repository.tree) -CurrentCommit $Commit -CurrentTree $Tree
         $continuation = $null
@@ -539,10 +552,21 @@ function Test-DevelopQualification {
         $reportPath = if ([IO.Path]::IsPathRooted([string]$qualification.e2e.path)) { [string]$qualification.e2e.path } else { Join-Path $repoRoot ([string]$qualification.e2e.path).Replace('/', '\') }
         if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) { return $null }
         if ((Get-FileHash -LiteralPath $reportPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne ([string]$qualification.e2e.sha256).ToLowerInvariant()) { return $null }
-        if ([int]$qualification.schemaVersion -eq 3) {
+        if ([int]$qualification.schemaVersion -ge 3) {
             if ([string]$qualification.identitySha256 -notmatch '^[a-f0-9]{64}$' -or -not $qualification.PSObject.Properties["journeys"] -or
                 ($ExpectedIdentitySha256 -and [string]$qualification.identitySha256 -ne $ExpectedIdentitySha256)) { return $null }
-            foreach ($journey in @("upgrade", "fresh")) {
+            $requiredJourneys = @("upgrade", "fresh")
+            if ([int]$qualification.schemaVersion -eq 4) {
+                if (-not $qualification.PSObject.Properties["plan"] -or [string]$qualification.plan.kind -ne "itl-develop-e2e-journey-plan") { return $null }
+                $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([string]$report.kind -ne "itl-develop-e2e-combined" -or [string]$report.status -ne "passed" -or
+                    [string]$report.candidate.tree -ne $Tree -or
+                    (Get-DevelopE2ECanonicalJsonSha256 -Value $report.plan) -ne (Get-DevelopE2ECanonicalJsonSha256 -Value $qualification.plan)) { return $null }
+                $requiredJourneys = @($qualification.journeys.PSObject.Properties | ForEach-Object { [string]$_.Name })
+                if (@($qualification.plan.journeys).Count -eq 0 -and $requiredJourneys.Count -ne 0) { return $null }
+            }
+            foreach ($journey in $requiredJourneys) {
+                if ($journey -notin @("upgrade", "fresh")) { return $null }
                 $property = $qualification.journeys.PSObject.Properties[$journey]
                 $record = if ($property) { $property.Value } else { $null }
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
@@ -564,7 +588,7 @@ function Write-DevelopContinuationQualification {
 
     $source = $SourceProof.qualification
     $qualification = [ordered]@{
-        schemaVersion = $(if ([int]$source.schemaVersion -eq 3) { 3 } else { 2 })
+        schemaVersion = $(if ([int]$source.schemaVersion -ge 3) { [int]$source.schemaVersion } else { 2 })
         kind = "itl-workflow-develop-qualification"
         status = "passed"
         reusable = $true
@@ -588,23 +612,24 @@ function Write-DevelopContinuationQualification {
         }
         finishedAt = [DateTime]::UtcNow.ToString("o")
     }
-    if ([int]$source.schemaVersion -eq 3) {
+    if ([int]$source.schemaVersion -ge 3) {
         $qualification["identitySha256"] = [string]$source.identitySha256
         $qualification["journeys"] = $source.journeys
+        if ([int]$source.schemaVersion -eq 4) { $qualification["plan"] = $source.plan }
     }
     [IO.File]::WriteAllText($developQualificationFullPath, (($qualification | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     return $qualification
 }
 
 function Write-DevelopQualification {
-    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords)
+    param([string]$Commit, [string]$Tree, [string]$ReportPath, [string]$IdentitySha256, [object]$JourneyRecords, [object]$Plan)
     if (-not (Test-Path -LiteralPath $qualificationFullPath -PathType Leaf)) { throw "Develop qualification requires reusable Full evidence." }
     $root = Split-Path -Parent $developQualificationFullPath
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     $canonicalReport = Join-Path $root "develop-e2e-summary.json"
     Copy-Item -LiteralPath $ReportPath -Destination $canonicalReport -Force
     $qualification = [ordered]@{
-        schemaVersion = 3
+        schemaVersion = 4
         kind = "itl-workflow-develop-qualification"
         status = "passed"
         reusable = $true
@@ -612,6 +637,7 @@ function Write-DevelopQualification {
         fullQualificationSha256 = (Get-FileHash -LiteralPath $qualificationFullPath -Algorithm SHA256).Hash.ToLowerInvariant()
         e2e = [ordered]@{ path = Get-RelativeRepositoryPath -Path $canonicalReport -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $canonicalReport -Algorithm SHA256).Hash.ToLowerInvariant() }
         identitySha256 = $IdentitySha256
+        plan = $Plan
         journeys = $JourneyRecords
         finishedAt = [DateTime]::UtcNow.ToString("o")
     }
@@ -915,7 +941,7 @@ try {
                 }
             }
         }
-        if (-not $baselineValid -and $plannedJourneys.Count -lt $allJourneys.Count) {
+        if (-not $baselineValid -and $plannedJourneys.Count -gt 0 -and $plannedJourneys.Count -lt $allJourneys.Count) {
             throw "DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan and rerun earlier journeys."
         }
         $effectivePlan = [pscustomobject][ordered]@{
@@ -952,10 +978,12 @@ try {
             if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
             $routeRecords[$journey] = [ordered]@{ path = Get-RelativeRepositoryPath -Path $routePath -Root $repoRoot; sha256 = (Get-FileHash -LiteralPath $routePath -Algorithm SHA256).Hash.ToLowerInvariant(); evidenceCommit = $commit; evidenceTree = $tree; identitySha256 = $developIdentitySha256; standStateSha256 = $developStandStateSha256; execution = $(if (@($stages | Where-Object { [string]$_.name -eq "develop-e2e-$journey" -and [string]$_.execution -eq "reused" }).Count -gt 0) { "reused" } else { "executed" }) }
         }
-        foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
+        if ($plannedJourneys.Count -gt 0) {
+            foreach ($journey in $allJourneys) { if (-not $routeRecords.Contains($journey)) { throw "Develop E2E has no valid '$journey' journey evidence." } }
+        }
         $combined = [ordered]@{ schemaVersion = 2; kind = "itl-develop-e2e-combined"; status = "passed"; candidate = [ordered]@{ commit = $commit; tree = $tree }; identitySha256 = $developIdentitySha256; plan = $effectivePlan; journeys = $routeRecords; finishedAt = [DateTime]::UtcNow.ToString("o") }
         [IO.File]::WriteAllText($developE2EReportPath, (($combined | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -IdentitySha256 $developIdentitySha256 -JourneyRecords $routeRecords)
+        [void](Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $developE2EReportPath -IdentitySha256 $developIdentitySha256 -JourneyRecords $routeRecords -Plan $effectivePlan)
         }
     }
 

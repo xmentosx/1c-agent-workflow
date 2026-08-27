@@ -77,11 +77,14 @@ Describe "Develop E2E journey qualification router" {
         { Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $invalid } | Should -Throw '*unique exact repository-relative paths*'
     }
 
-    It "routes installed owners to both journeys and standalone CodeChecker to none" {
+    It "routes each installed owner to the journey that exercises its behavior" {
         $installed = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
         $installed.reason | Should -Be 'quality-contract-route'
         @($installed.contracts) | Should -Be @('mcp-hosts')
-        @($installed.journeys) | Should -Be @('upgrade','fresh')
+        @($installed.journeys) | Should -Be @('fresh')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('templates/dependency-lock.json') | Select-Object -ExpandProperty journeys) | Should -Be @('fresh')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/build-ai-rules-release.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade')
+        @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('.agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
 
         $standalone = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('vibecoding1c-mcp-host/codechecker-overlay/retry_policy.py')
         $standalone.reason | Should -Be 'no-develop-journey-route'
@@ -95,12 +98,12 @@ Describe "Develop E2E journey qualification router" {
             @($plan.contracts) | Should -Be @("source-delivery-$leaf")
             @($plan.journeys) | Should -BeNullOrEmpty
         }
-        foreach ($path in @('scripts/source-delivery.ps1','scripts/source-delivery-candidate.ps1')) {
-            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
-            $plan.reason | Should -Be 'no-develop-journey-route'
-            @($plan.contracts) | Should -Be @('source-delivery')
-            @($plan.journeys) | Should -BeNullOrEmpty
-        }
+        $entrypoint = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
+        @($entrypoint.contracts) | Should -Be @('source-delivery-entrypoint'); @($entrypoint.journeys) | Should -BeNullOrEmpty
+        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
+        @($candidate.contracts) | Should -Be @('source-delivery-candidate'); @($candidate.journeys) | Should -BeNullOrEmpty
+        $cleanup = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/develop-e2e-cleanup.ps1')
+        @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 
     It "fails closed for unknown and orchestration paths but skips direct tests" {

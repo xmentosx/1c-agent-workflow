@@ -17,7 +17,8 @@ closed instead of silently retesting or rewriting another range.
 `-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
 `base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
-публикуются. `-Action Status` показывает очередь и накопительную историю
+публикуются. `-Action Status` показывает компактную очередь, текущую фазу и три
+последних запуска; `-StatusDetail Full` добавляет полные stage/test records
 успешных/неуспешных gate из общего Git-каталога `.git/itl/runs` со временем по режимам.
 
 ## Уровни проверки
@@ -162,12 +163,13 @@ live-отчётов. Каталог владельцев сопоставляе�
 input identity. Отсутствующая или несовместимая baseline qualification также
 закрыто переключает выполнение на обе journey.
 
-В текущем каталоге все владельцы установленного package участвуют в обеих
-journey: upgrade и fresh пересекают одни и те же bootstrap/lifecycle/runtime
-границы. Поэтому owner selection сейчас прежде всего исключает live 1C E2E для
-source-only и standalone-host изменений; независимые checkpoint уже не дают
-повторять прошедшую journey после сбоя второй. Разделять эти owner-наборы можно
-только вместе с фактическим устранением общей runtime-границы из одной journey.
+Маршруты различают наблюдаемое поведение: update/controlled-rules владельцы идут
+в `upgrade`, init/dependency/lifecycle/MCP владельцы — в `fresh`, а общие
+download/refresh/Vanessa границы — в обе journey. Source-delivery, документация,
+standalone host и прямые тесты не запускают live 1C journey. Если план пуст,
+точный Full плюс owner Targeted образуют явное `no-develop-journey-route`
+доказательство; искусственная baseline двух journey не требуется. Неизвестный
+путь и сама orchestration по-прежнему закрыто выбирают обе journey.
 
 ## Controlled fork и Full
 
@@ -210,6 +212,17 @@ installability, owned-component plan и read-only finalizer preflight. Втор�
 commit/tree и наличии двух passed run records, созданных текущей publication
 attempt. Если reconciliation с `master` меняет candidate, reuse закрывается и
 обычный release gate выполняется полностью.
+
+После публикации в `develop` release-train checkpoint остаётся в общем Git
+каталоге до подтверждённого `master`. Поэтому новый процесс `PromoteRelease`
+возобновляет тот же commit/tree и не повторяет уже прошедшие Develop/Release.
+
+После успешного `PublishDevelop`, `PromoteRelease` или `ReleaseMaster` запускается
+best-effort уборка: удаляются только worktree/ветки с точными ITL-generated
+именами, disposable fresh/release-seed стенды, отсутствующие записи `ibases.v8i`
+и старые backup списка баз (остаются три). Текущий/активный и настроенные
+release/develop стенды сохраняются; ошибка уборки возвращается как warning и не
+отменяет уже подтверждённую публикацию.
 
 ## Release уже опубликованного develop в master
 
@@ -268,3 +281,8 @@ master and dedicated Develop stand worktrees. If a later journey fails, the retr
 both the static proof and every completed journey, then resumes with the first
 missing journey. A different tree, environment/fork/stand/package identity,
 missing evidence, or corrupt cache disables reuse for that evidence.
+
+Gate помечает сбой как owner или infrastructure. Только безопасные read-only
+leaf stages (`fork-check`, `ai-rules-compatibility`) получают один автоматический
+повтор при узко распознанной временной инфраструктурной ошибке. Pester, live 1C
+journey, Release E2E и assertion failures автоматически не повторяются.
