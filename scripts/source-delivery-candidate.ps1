@@ -711,7 +711,7 @@ function Get-ReleaseRemoteCommit {
     return ($line[0] -split "`t")[0].Trim()
 }
 
-function Get-DeliveryGitHubRepository {
+function Get-ReleaseGitHubRepository {
     param([string]$CandidateRoot)
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return "" }
     $remoteUrl = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("remote", "get-url", $script:Remote) -AllowFailure
@@ -849,7 +849,7 @@ function Release-DevelopToMaster {
                 throw "Release candidate does not contain both fetched remote branch histories. Nothing was published."
             }
         }
-        $githubRepository = Get-DeliveryGitHubRepository -CandidateRoot $worktree.path
+        $githubRepository = Get-ReleaseGitHubRepository -CandidateRoot $worktree.path
         if ($githubRepository) {
             $publication = Publish-ReleaseThroughGitHubPullRequest -CandidateRoot $worktree.path -Repository $githubRepository -Candidate $candidate -CandidateTree $candidateTree -ExpectedDevelop $remoteDevelop -ExpectedMaster $remoteMaster
         } else {
