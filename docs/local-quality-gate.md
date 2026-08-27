@@ -73,6 +73,12 @@ hard budget Develop равен 90 минутам, а внешняя оболоч
 на сборку кандидата, push и удалённую сверку. Для `ReleaseMaster` требуется
 `timeout_ms >= 7800000`.
 
+Полный Pester inventory имеет hard budget 30 минут: обязательные процессные
+source-delivery fixtures на текущем стенде измеренно не укладываются в прежние
+1300 секунд. Каталог `pester-shards` входит в progress fingerprint, поэтому
+лимит не скрывает зависание: отсутствие новых worker/result-артефактов по-прежнему
+останавливает стадию отдельным no-progress watchdog.
+
 Оркестратор атомарно создаёт общий для worktree delivery-operation lock и
 публикует его через `Status` вместе с owner/gate PID. Если внешняя оболочка
 прервана, но gate жив, повторный Publish/Release блокируется. После завершения
