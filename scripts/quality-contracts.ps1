@@ -72,6 +72,20 @@ function Test-QualityContractCatalog {
             if (-not (Test-Path -LiteralPath $testPath -PathType Leaf)) { throw "Quality contract '$($contract.id)' references missing test '$test'." }
         }
     }
+    $allowedPesterExternalInputs = @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
+    $pesterExternalInputsProperty = $Catalog.PSObject.Properties["pesterExternalInputs"]
+    $pesterExternalInputMappings = $(if ($pesterExternalInputsProperty) { @($pesterExternalInputsProperty.Value.PSObject.Properties) } else { @() })
+    foreach ($property in $pesterExternalInputMappings) {
+        $test = ([string]$property.Name).Replace('\', '/')
+        $inputs = @($property.Value | ForEach-Object { [string]$_ })
+        $testPath = Join-Path $RepositoryRoot $test.Replace('/', '\')
+        if (-not (Test-Path -LiteralPath $testPath -PathType Leaf) -or $test -notlike "tests/pester/*.Tests.ps1") {
+            throw "Pester external input mapping references missing or invalid test '$test'."
+        }
+        if ($inputs.Count -eq 0 -or @($inputs | Sort-Object -Unique).Count -ne $inputs.Count -or @($inputs | Where-Object { $_ -notin $allowedPesterExternalInputs }).Count -gt 0) {
+            throw "Pester external input mapping for '$test' must contain unique supported environment names."
+        }
+    }
     foreach ($journeyName in $expectedDevelopJourneys) {
         $contractIds = @($Catalog.developJourneys.routes.$journeyName.contracts | ForEach-Object { [string]$_ })
         if ($contractIds.Count -eq 0 -or @($contractIds | Sort-Object -Unique).Count -ne $contractIds.Count) {

@@ -81,6 +81,9 @@
     "tests/pester/TriageContract.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1",
     "tests/pester/VanessaTestGuide.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1"
   },
+  "pesterExternalInputs": {
+    "tests/pester/BootstrapUpdate.Tests.ps1": ["ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE"]
+  },
   "contracts": [
     {
       "id": "immutable-download",
@@ -98,7 +101,7 @@
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
       "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
       "id": "source-delivery-entrypoint",
