@@ -703,6 +703,118 @@ function Assert-ReleaseVersionRequest {
     if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw "GitHub CLI is required before a versioned master release can start." }
 }
 
+function Get-ReleaseRemoteCommit {
+    param([string]$CandidateRoot, [string]$Branch)
+    $remote = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("ls-remote", $script:Remote, "refs/heads/$Branch")
+    $line = @($remote.stdout -split "`r?`n" | Where-Object { $_ })
+    if ($line.Count -ne 1) { throw "Remote branch '$Branch' could not be resolved uniquely during release publication." }
+    return ($line[0] -split "`t")[0].Trim()
+}
+
+function Get-DeliveryGitHubRepository {
+    param([string]$CandidateRoot)
+    if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { return "" }
+    $remoteUrl = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("remote", "get-url", $script:Remote) -AllowFailure
+    if ($remoteUrl.exitCode -ne 0 -or -not $remoteUrl.stdout.Trim()) { return "" }
+    $repository = Invoke-DeliveryGitHubCli -Arguments @("repo", "view", $remoteUrl.stdout.Trim(), "--json", "nameWithOwner", "--jq", ".nameWithOwner") -AllowFailure
+    if ($repository.exitCode -ne 0) { return "" }
+    return $repository.text.Trim()
+}
+
+function Complete-ReleaseDevelopReconciliation {
+    param(
+        [string]$CandidateRoot,
+        [string]$CandidateTree,
+        [string]$ExpectedDevelop,
+        [string]$MasterCommit
+    )
+    $currentDevelop = Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "develop"
+    if ($currentDevelop -ne $ExpectedDevelop) {
+        throw "origin/develop moved during protected master publication. Master may already be released; rerun ReleaseMaster after inspecting the remote refs."
+    }
+    $masterAncestor = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge-base", "--is-ancestor", $MasterCommit, "HEAD") -AllowFailure
+    if ($masterAncestor.exitCode -ne 0) {
+        $merge = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--no-ff", "--no-edit", $MasterCommit) -AllowFailure
+        if ($merge.exitCode -ne 0) {
+            [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge", "--abort") -AllowFailure)
+            throw "Master was released at $MasterCommit, but develop could not reconcile that protected-branch commit. Rerun ReleaseMaster after diagnosis."
+        }
+    }
+    $developCommit = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
+    $developTree = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+    if ($developTree -ne $CandidateTree) {
+        throw "Protected master publication changed the qualified tree while reconciling develop. Nothing further was published."
+    }
+    $push = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure
+    if ($push.exitCode -ne 0) {
+        throw "Master was released at $MasterCommit, but the develop reconciliation push was rejected. Rerun ReleaseMaster; no force push is permitted."
+    }
+    if ((Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "develop") -ne $developCommit) {
+        throw "Remote develop verification failed after protected master publication."
+    }
+    return $developCommit
+}
+
+function Publish-ReleaseThroughGitHubPullRequest {
+    param(
+        [string]$CandidateRoot,
+        [string]$Repository,
+        [string]$Candidate,
+        [string]$CandidateTree,
+        [string]$ExpectedDevelop,
+        [string]$ExpectedMaster
+    )
+    [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("fetch", $script:Remote, "develop", "master"))
+    if ((Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "develop") -ne $ExpectedDevelop -or
+        (Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "master") -ne $ExpectedMaster) {
+        throw "Remote develop or master moved before protected master publication. Nothing was published."
+    }
+
+    $masterCommit = $ExpectedMaster
+    $masterTree = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "$masterCommit^{tree}")).stdout.Trim()
+    $pullRequest = $null
+    if ($masterTree -ne $CandidateTree) {
+        $releaseBranch = "itl/release-master-" + $Candidate.Substring(0, 12)
+        $remoteRelease = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("ls-remote", $script:Remote, "refs/heads/$releaseBranch") -AllowFailure
+        $remoteReleaseCommit = if ($remoteRelease.stdout.Trim()) { (($remoteRelease.stdout.Trim() -split "`t")[0]).Trim() } else { "" }
+        if ($remoteReleaseCommit -and $remoteReleaseCommit -ne $Candidate) {
+            throw "Remote release branch '$releaseBranch' points to an unexpected commit. Nothing was published."
+        }
+        if (-not $remoteReleaseCommit) {
+            [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("push", $script:Remote, "$Candidate`:refs/heads/$releaseBranch"))
+        }
+
+        $existing = Invoke-DeliveryGitHubCli -Arguments @("pr", "list", "--repo", $Repository, "--state", "open", "--base", "master", "--head", $releaseBranch, "--json", "number", "--jq", ".[0].number")
+        $pullRequest = $existing.text.Trim()
+        if (-not $pullRequest) {
+            [void](Invoke-DeliveryGitHubCli -Arguments @("pr", "create", "--repo", $Repository, "--base", "master", "--head", $releaseBranch, "--title", "Release develop to master", "--body", "Automated ReleaseMaster promotion of qualified develop tree $CandidateTree."))
+            $pullRequest = (Invoke-DeliveryGitHubCli -Arguments @("pr", "view", $releaseBranch, "--repo", $Repository, "--json", "number", "--jq", ".number")).text.Trim()
+        }
+        if (-not $pullRequest) { throw "GitHub did not return a pull request number for the protected master release." }
+        $merged = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--rebase", "--delete-branch") -AllowFailure
+        if ($merged.exitCode -ne 0) {
+            throw "Qualified release PR #$pullRequest could not be merged: $($merged.text)"
+        }
+        [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("fetch", $script:Remote, "develop", "master"))
+        $masterCommit = Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "master"
+        if ((Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("merge-base", "--is-ancestor", $ExpectedMaster, $masterCommit) -AllowFailure).exitCode -ne 0) {
+            throw "Protected master publication did not fast-forward from the fetched master."
+        }
+        $masterTree = (Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("rev-parse", "$masterCommit^{tree}")).stdout.Trim()
+        if ($masterTree -ne $CandidateTree) {
+            throw "Protected master publication produced a tree that differs from the qualified release candidate."
+        }
+    }
+
+    $developCommit = Complete-ReleaseDevelopReconciliation -CandidateRoot $CandidateRoot -CandidateTree $CandidateTree -ExpectedDevelop $ExpectedDevelop -MasterCommit $masterCommit
+    return [pscustomobject]@{
+        mode = $(if ($pullRequest) { "github-pull-request" } else { "github-pull-request-recovery" })
+        pullRequest = $pullRequest
+        masterCommit = $masterCommit
+        developCommit = $developCommit
+    }
+}
+
 function Release-DevelopToMaster {
     Assert-ReleaseVersionRequest
     Assert-CleanDeliveryWorktree
@@ -737,19 +849,28 @@ function Release-DevelopToMaster {
                 throw "Release candidate does not contain both fetched remote branch histories. Nothing was published."
             }
         }
-        $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", "--atomic", $script:Remote, "HEAD:refs/heads/develop", "HEAD:refs/heads/master") -AllowFailure
-        if ($push.exitCode -ne 0) { throw "Release candidate passed, but the atomic develop/master fast-forward push was rejected. Neither branch was published and no force push was attempted." }
+        $githubRepository = Get-DeliveryGitHubRepository -CandidateRoot $worktree.path
+        if ($githubRepository) {
+            $publication = Publish-ReleaseThroughGitHubPullRequest -CandidateRoot $worktree.path -Repository $githubRepository -Candidate $candidate -CandidateTree $candidateTree -ExpectedDevelop $remoteDevelop -ExpectedMaster $remoteMaster
+        } else {
+            $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", "--atomic", $script:Remote, "HEAD:refs/heads/develop", "HEAD:refs/heads/master") -AllowFailure
+            if ($push.exitCode -ne 0) { throw "Release candidate passed, but the atomic develop/master fast-forward push was rejected. Neither branch was published and no force push was attempted." }
+            $publication = [pscustomobject]@{ mode = "atomic-git"; pullRequest = $null; masterCommit = $candidate; developCommit = $candidate }
+        }
         foreach ($branch in @("develop", "master")) {
-            $remoteCommit = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("ls-remote", $script:Remote, "refs/heads/$branch")).stdout.Split([char]9)[0].Trim()
-            if ($remoteCommit -ne $candidate) { throw "Remote $branch verification failed after release." }
+            $remoteCommit = Get-ReleaseRemoteCommit -CandidateRoot $worktree.path -Branch $branch
+            $expectedCommit = if ($branch -eq "develop") { $publication.developCommit } else { $publication.masterCommit }
+            if ($remoteCommit -ne $expectedCommit) { throw "Remote $branch commit verification failed after release." }
             $remoteTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "$remoteCommit^{tree}")).stdout.Trim()
             if ($remoteTree -ne $candidateTree) { throw "Remote $branch tree verification failed after release." }
         }
-        Publish-ReleaseVersion -Commit $candidate
+        Publish-ReleaseVersion -Commit $publication.masterCommit
         Sync-LocalDevelopAfterPublish
         $deliverySucceeded = $true
         return [pscustomobject]@{
-            status = "released"; commit = $candidate; tree = $candidateTree; version = $Version
+            status = "released"; commit = $publication.masterCommit; candidateCommit = $candidate; tree = $candidateTree; version = $Version
+            publicationMode = $publication.mode; pullRequest = $publication.pullRequest
+            developCommit = $publication.developCommit; masterCommit = $publication.masterCommit
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
             aiRulesCompatibility = [string]$installability.aiRulesStatus
         }

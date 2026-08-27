@@ -211,7 +211,7 @@ function Invoke-AiRulesComponentPublicationFinalize {
 function Invoke-DeliveryGitHubCli {
     param([string[]]$Arguments, [switch]$AllowFailure)
     $gh = Get-Command gh -ErrorAction SilentlyContinue
-    if (-not $gh) { throw "GitHub CLI is required to finalize an unpublished Vanessa component." }
+    if (-not $gh) { throw "GitHub CLI is required for GitHub-backed delivery publication." }
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         # Windows PowerShell converts native stderr redirected through the success

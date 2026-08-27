@@ -78,6 +78,12 @@ When that remote development commit is ready for the stable channel, run:
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
+For a GitHub remote, `ReleaseMaster` completes the protected `master` update
+through a generated pull request and the repository's allowed rebase merge. It
+then reconciles that actual master commit into `develop` without force and
+verifies that both remote branches contain the qualified tree. A retry resumes
+this reconciliation when the pull request was already merged.
+
 Qualification records the exact tests, gate scripts, merged shard JUnit,
 environment, workflow tree, fork qualification and Develop live report. A
 descendant commit may reuse it only when the evidence commit is its ancestor and
