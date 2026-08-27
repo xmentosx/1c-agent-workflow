@@ -1,6 +1,17 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+It "keeps function names unique across the split delivery implementation" {
+        $names = foreach ($path in $DeliverySourcePaths) {
+            $tokens = $null
+            $parseErrors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors)
+            @($parseErrors) | Should -BeNullOrEmpty
+            @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true) | ForEach-Object Name)
+        }
+        @($names | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name) | Should -BeNullOrEmpty
+    }
+
 It "publishes the qualified candidate and clears only reachable queue entries" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
