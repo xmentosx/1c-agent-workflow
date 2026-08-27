@@ -371,18 +371,33 @@ exit /b %ERRORLEVEL%
             $env:ITL_TEST_GH_REMOTE = $fixture.remote
             $env:PATH = $fakeBin + [IO.Path]::PathSeparator + $oldPath
 
-            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "ReleaseMaster", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))
-            $payload = $result.stdout | ConvertFrom-Json
+            $definitions = @(Get-DeliveryFunctionDefinitions -Names @(
+                'Invoke-DeliveryGitHubCli',
+                'Get-ReleaseRemoteCommit',
+                'Complete-ReleaseDevelopReconciliation',
+                'Publish-ReleaseThroughGitHubPullRequest'
+            ) | ForEach-Object { $_.Extent.Text })
+            $payload = & {
+                param([string[]]$FunctionDefinitions, [string]$Root, [string]$Repository, [string]$Commit, [string]$Tree, [string]$ExpectedMaster)
+                . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
+                function Invoke-WorktreeGit {
+                    param([string]$Root, [string[]]$Arguments, [switch]$AllowFailure)
+                    return Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure
+                }
+                foreach ($definition in $FunctionDefinitions) { Invoke-Expression $definition }
+                $script:Remote = "origin"
+                Publish-ReleaseThroughGitHubPullRequest -CandidateRoot $Root -Repository $Repository -Candidate $Commit -CandidateTree $Tree -ExpectedDevelop $Commit -ExpectedMaster $ExpectedMaster
+            } $definitions $fixture.root "fixture/repository" $candidate $candidateTree $fixture.base
 
-            $payload.status | Should -Be "released"
-            $payload.publicationMode | Should -Be "github-pull-request"
+            $payload.mode | Should -Be "github-pull-request"
             $payload.pullRequest | Should -Be "17"
-            $payload.candidateCommit | Should -Be $candidate
             $payload.masterCommit | Should -Not -Be $candidate
             (& git --git-dir=$($fixture.remote) rev-parse "$($payload.masterCommit)^{tree}").Trim() | Should -Be $candidateTree
             (& git --git-dir=$($fixture.remote) rev-parse "$($payload.developCommit)^{tree}").Trim() | Should -Be $candidateTree
             & git --git-dir=$($fixture.remote) merge-base --is-ancestor $payload.masterCommit $payload.developCommit
             $LASTEXITCODE | Should -Be 0
+            $releaseSource = (Get-DeliveryFunctionDefinitions -Names @('Release-DevelopToMaster')).Extent.Text
+            $releaseSource | Should -Match ([regex]::Escape('Publish-ReleaseThroughGitHubPullRequest'))
         } finally {
             $env:PATH = $oldPath
             if ($null -eq $oldGhScript) { Remove-Item Env:ITL_TEST_GH_SCRIPT -ErrorAction SilentlyContinue } else { $env:ITL_TEST_GH_SCRIPT = $oldGhScript }
