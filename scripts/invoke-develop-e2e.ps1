@@ -415,7 +415,7 @@ try {
             }
             New-Item -ItemType Directory -Force -Path (Join-Path $freshRoot ".agent-1c") | Out-Null
             Copy-Item -LiteralPath (Join-Path $ProjectRoot ".agent-1c\project.json") -Destination (Join-Path $freshRoot ".agent-1c\project.json")
-            $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE|SOURCE_USES_REPOSITORY)=' })
+            $envLines = @([IO.File]::ReadAllLines((Join-Path $ProjectRoot ".dev.env"), [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_|ROCTUP_MCP_|VANESSA_MCP_|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)=' })
             $envLines += "SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE=confirmed"
             [IO.File]::WriteAllText((Join-Path $freshRoot ".dev.env"), (($envLines -join [Environment]::NewLine) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         })

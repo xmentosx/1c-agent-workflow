@@ -543,6 +543,8 @@
         $surfaceIndex | Should -BeGreaterThan $dataMcpIndex
         $readyIndex | Should -BeGreaterThan $surfaceIndex
         $initBlock | Should -Match 'Resuming final Enterprise normalization for existing development branch copy'
+        $initBlock | Should -Match '\$branchCopyMayUseRepository = \$sourceUsesRepository -or \$configuredSourceUsesRepository'
+        $initBlock | Should -Match 'if \(\$branchCopyMayUseRepository -and -not \$repositoryUnbound\)'
         $initBlock | Should -Match 'enterpriseNormalizationStatus'
     }
 

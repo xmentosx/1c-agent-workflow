@@ -6948,6 +6948,10 @@ function Initialize-DevBranchRuntime {
 
     $kind = Get-InfoBaseKind
     $sourceUsesRepository = Get-SourceUsesRepository
+    $configuredSourceUsesRepository = ConvertTo-BoolSetting `
+        -Value (Get-ConfigValue -Path "sourceUsesRepository" -Default $sourceUsesRepository) `
+        -Default $sourceUsesRepository
+    $branchCopyMayUseRepository = $sourceUsesRepository -or $configuredSourceUsesRepository
     $source = Get-SourceInfoBasePath
     if (-not $DevBranchInfoBasePath) {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
@@ -7174,13 +7178,13 @@ function Initialize-DevBranchRuntime {
         $currentStatus = "infobase-copied"
 
         $repositoryUnbound = ConvertTo-BoolSetting -Value $stateHash["repositoryUnbound"] -Default $false
-        if ($sourceUsesRepository -and -not $repositoryUnbound) {
+        if ($branchCopyMayUseRepository -and -not $repositoryUnbound) {
             Invoke-Designer `
                 -InfoBasePath $DevBranchInfoBasePath `
                 -InfoBaseKind $kind `
                 -DesignerArgs @("/ConfigurationRepositoryUnbindCfg", "-force") | Out-Null
             $repositoryUnbound = $true
-        } elseif (-not $sourceUsesRepository) {
+        } elseif (-not $branchCopyMayUseRepository) {
             Write-Host "Source infobase is configured without repository connection. Skipping repository unbind for development branch copy."
         }
         $stateHash["repositoryUnbound"] = $repositoryUnbound
