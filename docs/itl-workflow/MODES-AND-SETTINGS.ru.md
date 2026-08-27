@@ -37,6 +37,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
+| Обновление source из хранилища 1С | `/itl-repository-mode`, `SOURCE_REPOSITORY_UPDATE_MODE` | `workflow`, `external` | `workflow` | основной `master` |
 | Оркестрация | `/economymode`, `ORCHESTRATION` | `standard`, `economy` | `standard` | проект |
 | Модели субагентов | `SUBAGENT_MODEL_CODING`, `SUBAGENT_MODEL_ANALYSIS`, `SUBAGENT_MODEL_LIGHT` | model id клиента или пусто | модель клиента | после re-render/restart |
 | Профиль головной модели | `/rulesmodel`, `AGENT_MODEL` | `opus5`, `sonnet5`, `fable5`, `gpt56`, `auto` | `auto` | новый чат после смены |
@@ -46,6 +47,16 @@ ITL не включает и не выключает Browser Automation и не 
 | Быстрый путь отладки | `DEBUG_FAST_PATH` | `standard`, `extended`, `off` | `standard` | проект |
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
 | Выгрузка без fresh pass | `VERIFICATION_POLICY` | `warn`, `block` | `warn` | проект |
+
+## ITL `/itl-repository-mode`
+
+Команда доступна только в основной worktree `master` и меняет локальный `.dev.env`, не создавая Git-изменений:
+
+- `workflow` — перед фиксацией source в `master` ITL выполняет `/ConfigurationRepositoryUpdateCfg` и `/UpdateDBCfg`;
+- `external` — пользователь обновляет source сам, а ITL только фиксирует её текущее состояние в `master` и latest-only seed;
+- `status` — показать режим без изменения.
+
+`SOURCE_USES_REPOSITORY` при этом остается `true`: режим не скрывает топологию хранилища, поэтому seed и базы веток по-прежнему безопасно отвязываются. Неизвестное значение блокирует синхронизацию до исправления режима, чтобы ITL не мутировал source по неясной политике.
 
 ## Статические проверки `ai_rules_1c`: `/litemode`
 

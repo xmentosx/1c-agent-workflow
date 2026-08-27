@@ -1207,6 +1207,7 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\common\itl-sync-master.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-refresh-all.md.template") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-repository-mode.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-reset-branch.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-lock-objects.md.template") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template") -PathType Leaf) | Should -Be $true

@@ -44,6 +44,7 @@ update-workflow
 update-ai-rules
 doctor
 itl-litemode
+itl-repository-mode
 itl-switch-client
 update1cbase
 loadfrom1cbase

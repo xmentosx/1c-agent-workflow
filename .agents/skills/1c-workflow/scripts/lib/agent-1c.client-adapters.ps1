@@ -849,7 +849,7 @@ function Get-ItlRoutineCommandNames {
         "itl.md", "itl-status.md", "itl-sync-master.md", "itl-new-config-branch.md",
         "itl-new-extension-branch.md", "itl-check.md", "itl-refresh.md",
         "itl-refresh-lite.md", "itl-refresh-all.md", "itl-reset-branch.md", "itl-lock-objects.md",
-        "itl-result.md", "itl-update-workflow.md", "itl-litemode.md", "itl-switch-client.md"
+        "itl-result.md", "itl-update-workflow.md", "itl-litemode.md", "itl-repository-mode.md", "itl-switch-client.md"
     )
 }
 

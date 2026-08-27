@@ -1,0 +1,14 @@
+---
+description: Показать или изменить владельца обновления исходной базы из хранилища 1С
+agent: code
+---
+
+Use only from the `master` worktree. Pass `workflow`, `external`, or `status` as `-Mode`; use `status` when omitted.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action itl-repository-mode -Mode status
+```
+
+`workflow` allows ITL source synchronization to run `/ConfigurationRepositoryUpdateCfg` and `/UpdateDBCfg`. `external` leaves the source infobase unchanged and captures its current configuration into `master` and the latest seed. The source remains repository-configured, so copied seeds and branch infobases are still unbound normally.
+
+On success, return the complete helper stdout unchanged inside exactly one fenced `text` code block with nothing outside it. If the helper fails, report the actual error.

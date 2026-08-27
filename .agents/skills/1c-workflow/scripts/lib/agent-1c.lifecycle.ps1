@@ -17,6 +17,13 @@ function Update-BaseFromRepository {
         return $false
     }
 
+    $updateMode = Get-SourceRepositoryUpdateMode
+    if ($updateMode -eq "external") {
+        Write-Host "Source repository update skipped by external mode; master dump uses current source infobase state."
+        Write-Host "ITL will not run /ConfigurationRepositoryUpdateCfg or /UpdateDBCfg against the source infobase."
+        return $false
+    }
+
     $repositoryArgs = (New-RepositoryConnectionArgs) + @(
         "/ConfigurationRepositoryUpdateCfg", "-force",
         "/UpdateDBCfg"
@@ -28,6 +35,32 @@ function Update-BaseFromRepository {
         -DesignerArgs $repositoryArgs | Out-Null
 
     return $true
+}
+
+function Write-SourceRepositoryUpdateModeStatus {
+    $state = Get-SourceRepositoryUpdateModeState
+    $suffix = if ($state.valid) { "" } else { " (invalid; source synchronization is blocked)" }
+    Write-Host "SOURCE_REPOSITORY_UPDATE_MODE=$($state.effective)$suffix"
+    Write-Host "SOURCE_USES_REPOSITORY=$((Get-SourceUsesRepository).ToString().ToLowerInvariant())"
+}
+
+function Set-SourceRepositoryUpdateMode {
+    param([string]$Mode)
+
+    Assert-MasterWorktreeContext -Operation "itl-repository-mode"
+    $normalized = $Mode.Trim().ToLowerInvariant()
+    if (-not $normalized -or $normalized -eq "status") {
+        Write-SourceRepositoryUpdateModeStatus
+        return
+    }
+    if ($normalized -notin @("workflow", "external")) {
+        throw "itl-repository-mode supports: workflow|external|status."
+    }
+
+    Set-DotEnvValues -Values @{ SOURCE_REPOSITORY_UPDATE_MODE = $normalized }
+    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
+    Write-Host "Source repository update mode changed: $normalized"
+    Write-SourceRepositoryUpdateModeStatus
 }
 
 function Assert-ExportPathInsideProject {
@@ -4618,6 +4651,7 @@ function Write-InitRunUserReport {
     $usesRepository = [bool](Get-RunUserReportObservedValue -Read { Get-SourceUsesRepository } -Default $false)
     Add-RunUserReportLine -Lines $lines -Label "Хранилище конфигурации" -Value $(if ($usesRepository) { "используется" } else { "не используется" })
     if ($usesRepository) {
+        Add-RunUserReportLine -Lines $lines -Label "Обновление исходной базы из хранилища" -Value (Get-RunUserReportObservedValue -Read { Get-SourceRepositoryUpdateMode })
         Add-RunUserReportLine -Lines $lines -Label "Адрес хранилища" -Value (Get-RunUserReportObservedValue -Read { Get-RepositoryPath })
         Add-RunUserReportLine -Lines $lines -Label "Пользователь хранилища" -Value (Get-RunUserReportObservedValue -Read { Get-EnvValue -Name "REPOSITORY_USER" }) -Default "<пусто>"
     }
@@ -6119,10 +6153,10 @@ function Initialize-Project {
     Ensure-GitIgnore
     Checkout-Master
 
-    $sourceUsesRepository = Get-SourceUsesRepository
+    $sourceRepositoryUpdated = $false
     if (-not $dumpWasCompleted) {
-        Set-RunStage -Stage "init.repository-update" -Detail "Updating source infobase from 1C repository"
-        Update-BaseFromRepository
+        Set-RunStage -Stage "init.repository-update" -Detail "Applying the source repository update policy"
+        $sourceRepositoryUpdated = Update-BaseFromRepository
         Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
@@ -6156,7 +6190,7 @@ function Initialize-Project {
                 -ConfigurationFileCount $configSource.fileCount | Out-Null
         }
     }
-    $dumpMessage = if ($sourceUsesRepository) { "sync: export 1C configuration from repository" } else { "sync: export 1C configuration from source infobase" }
+    $dumpMessage = if ($sourceRepositoryUpdated) { "sync: export 1C configuration from repository" } else { "sync: export current 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
     Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
@@ -6223,8 +6257,9 @@ function Sync-Master {
     Checkout-Master
     Clear-DevBranchContext
     $sourceUsesRepository = Get-SourceUsesRepository
-    Set-RunStage -Stage "sync-master.repository-update" -Detail "Updating the source infobase from the 1C repository"
-    Update-BaseFromRepository
+    $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
+    Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
+    $sourceRepositoryUpdated = Update-BaseFromRepository
     if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
         Set-RunStage -Stage "sync-master.seed" -Detail "Rebuilding the branch seed from the source infobase"
         $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
@@ -6245,7 +6280,7 @@ function Sync-Master {
             -ConfigurationFingerprint $configSource.fingerprint `
             -ConfigurationFileCount $configSource.fileCount
     }
-    $dumpMessage = if ($sourceUsesRepository) { "sync: refresh 1C configuration from repository" } else { "sync: refresh 1C configuration from source infobase" }
+    $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
     Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
     Sync-KiloItlCommandSurface
@@ -6254,6 +6289,8 @@ function Sync-Master {
     $report = [System.Collections.Generic.List[string]]::new()
     $report.Add("## Синхронизация master и seed")
     Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
+    Add-RunUserReportLine -Lines $report -Label "Режим обновления из хранилища" -Value $sourceRepositoryUpdateMode
+    Add-RunUserReportLine -Lines $report -Label "Обновление исходной базы из хранилища" -Value $(if ($sourceRepositoryUpdated) { "выполнено ITL" } elseif ($sourceUsesRepository) { "пропущено; используется текущее состояние исходной базы" } else { "не применяется" })
     Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value (Get-CurrentCommit)
     Add-RunUserReportLine -Lines $report -Label "Seed sync ID" -Value ([string]$seed.syncId)
     Add-RunUserReportLine -Lines $report -Label "Seed" -Value ([string]$seed.artifactPath)
@@ -9982,6 +10019,7 @@ function Show-WorkflowStatus {
     Write-Host "Git branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })"
     Write-Host "Git commit: $currentCommit"
     Write-Host "Git worktree: $(if ($dirty) { 'dirty' } else { 'clean' })"
+    Write-SourceRepositoryUpdateModeStatus
     Write-WorkflowPackageStatusLines
     Write-KiloClientSkillProvenanceStatusLines
     Write-AiRules1cStatusLines
@@ -10711,6 +10749,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-refresh-all"
         Write-ItlActiveClientCommandText "  /itl-update-workflow"
         Write-ItlActiveClientCommandText "  /itl-switch-client <client>"
+        Write-ItlActiveClientCommandText "  /itl-repository-mode <workflow|external|status>"
         Write-ItlActiveClientCommandText "  /itl-litemode <mode>"
         Write-Host ""
         Write-Host "Активные worktree разработки:"
