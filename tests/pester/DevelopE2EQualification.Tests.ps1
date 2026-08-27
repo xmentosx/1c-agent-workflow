@@ -62,12 +62,10 @@ Describe "Develop E2E journey qualification router" {
         Test-QualityContractCatalog -RepositoryRoot $RepoRoot -Catalog $catalog | Should -BeTrue
         @($catalog.developJourneys.names) | Should -Be @('upgrade','fresh')
         @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/check.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery.ps1'
-        @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/source-delivery-candidate.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Contain 'scripts/git-path-list.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'scripts/develop-e2e-qualification.ps1'
         @($catalog.developJourneys.fullPaths) | Should -Not -Contain 'tests/quality-contracts.json'
-        foreach ($leaf in @('scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1')) {
+        foreach ($leaf in @('scripts/source-delivery.ps1','scripts/source-delivery-process.ps1','scripts/source-delivery-queue.ps1','scripts/source-delivery-component.ps1','scripts/source-delivery-candidate.ps1')) {
             @($catalog.developJourneys.fullPaths) | Should -Not -Contain $leaf
         }
 
@@ -97,6 +95,12 @@ Describe "Develop E2E journey qualification router" {
             @($plan.contracts) | Should -Be @("source-delivery-$leaf")
             @($plan.journeys) | Should -BeNullOrEmpty
         }
+        foreach ($path in @('scripts/source-delivery.ps1','scripts/source-delivery-candidate.ps1')) {
+            $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($path)
+            $plan.reason | Should -Be 'no-develop-journey-route'
+            @($plan.contracts) | Should -Be @('source-delivery')
+            @($plan.journeys) | Should -BeNullOrEmpty
+        }
     }
 
     It "fails closed for unknown and orchestration paths but skips direct tests" {
@@ -106,14 +110,10 @@ Describe "Develop E2E journey qualification router" {
         @($unknown.journeys) | Should -Be @('upgrade','fresh')
         @($unknown.unknownPaths) | Should -Be @($unknownPath)
 
-        $orchestration = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery.ps1')
+        $orchestration = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/invoke-develop-e2e.ps1')
         $orchestration.reason | Should -Be 'develop-orchestration-full-path'
-        @($orchestration.matchedFullPaths) | Should -Be @('scripts/source-delivery.ps1')
+        @($orchestration.matchedFullPaths) | Should -Be @('scripts/invoke-develop-e2e.ps1')
         @($orchestration.journeys) | Should -Be @('upgrade','fresh')
-        $candidate = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/source-delivery-candidate.ps1')
-        $candidate.reason | Should -Be 'develop-orchestration-full-path'
-        @($candidate.matchedFullPaths) | Should -Be @('scripts/source-delivery-candidate.ps1')
-        @($candidate.journeys) | Should -Be @('upgrade','fresh')
         @(Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/git-path-list.ps1') | Select-Object -ExpandProperty journeys) | Should -Be @('upgrade','fresh')
 
         $direct = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('tests/pester/DependencyLocks.Tests.ps1')
@@ -161,7 +161,7 @@ Describe "Develop E2E journey qualification router" {
             Write-Utf8Json -Path $configPath -Value ([ordered]@{ developWorktreePath=$developRoot })
             & git -C $root add -- .agent-1c/release-e2e.json
             & git -C $root commit -m 'add stand config' *> $null
-            & git -C $root worktree add -b itldev/develop-state $developRoot *> $null
+            & git -C $root worktree add --quiet -b itldev/develop-state $developRoot *> $null
 
             $previousPreference = $ErrorActionPreference
             try {

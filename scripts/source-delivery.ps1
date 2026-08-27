@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")]
+    [ValidateSet("RegisterChange", "Status", "PublishDevelop", "PromoteRelease", "ReleaseMaster")]
     [string]$Action,
     [string]$RepositoryRoot = "",
     [string]$Remote = "origin",
@@ -75,11 +75,12 @@ if ($RetryBlockedStage -and $Action -ne "PublishDevelop") {
 }
 $script:ActiveOperation = $null
 try {
-    if ($Action -in @("PublishDevelop", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }
+    if ($Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }
     $result = switch ($Action) {
         "RegisterChange" { Register-SourceChange }
         "Status" { [pscustomobject]@{ status = "ok"; queue = @(Get-QueueEntries); activeOperation = (Get-DeliveryOperationStatus); runHistory = (Get-DeliveryRunHistory) } }
         "PublishDevelop" { Publish-AccumulatedDevelop }
+        "PromoteRelease" { Promote-AccumulatedDevelopToMaster }
         "ReleaseMaster" { Release-DevelopToMaster }
     }
     $result | ConvertTo-Json -Depth 8

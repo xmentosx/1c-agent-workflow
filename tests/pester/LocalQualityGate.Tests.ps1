@@ -89,11 +89,17 @@ Describe "Local quality gate contract" {
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
-        foreach ($gateLeaf in @("scripts/source-delivery-process.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-candidate.ps1")) {
-            @($catalog.continuationScopes.gate) | Should -Contain $gateLeaf
+        $postGatePaths = @(
+            "scripts/source-delivery.ps1",
+            "scripts/source-delivery-process.ps1",
+            "scripts/source-delivery-queue.ps1",
+            "scripts/source-delivery-candidate.ps1",
+            "scripts/source-delivery-component.ps1"
+        )
+        @($catalog.continuationScopes.deliveryPostGate) | Should -Be $postGatePaths
+        foreach ($postGatePath in $postGatePaths) {
+            @($catalog.continuationScopes.gate) | Should -Not -Contain $postGatePath
         }
-        @($catalog.continuationScopes.deliveryPostGate) | Should -Be @("scripts/source-delivery-component.ps1")
-        @($catalog.continuationScopes.gate) | Should -Not -Contain "scripts/source-delivery-component.ps1"
         @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
         $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
@@ -176,7 +182,7 @@ Get-PesterShardFileSha256 -Path `$Path
     It "removes an exact disposable E2E repository, worktree, and launcher registration" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-e2e-cleanup-" + [guid]::NewGuid().ToString("N")); $main = Join-Path $root "d-1234abcd"; $branch = Join-Path $root "d-1234abcd-develop-golden"; $launcher = Join-Path $root "appdata\1C\1CEStart\ibases.v8i"
         try { New-Item -ItemType Directory -Force -Path $main | Out-Null; & git -C $main init *> $null; & git -C $main config user.name "ITL Test"; & git -C $main config user.email "itl-test@example.invalid"
-            Set-Content -LiteralPath (Join-Path $main "value.txt") -Value "one" -Encoding ASCII; & git -C $main add value.txt; & git -C $main commit -m init *> $null; & git -C $main worktree add -b itldev/develop-golden $branch *> $null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
+            Set-Content -LiteralPath (Join-Path $main "value.txt") -Value "one" -Encoding ASCII; & git -C $main add value.txt; & git -C $main commit -m init *> $null; & git -C $main worktree add --quiet -b itldev/develop-golden $branch *> $null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $launcher) | Out-Null; $infoBase = Join-Path $branch ".agent-1c\infobases\dev-branches\develop-golden"; New-Item -ItemType Directory -Force -Path $infoBase | Out-Null
             @('[keep]','Connect=File="C:\keep";','Folder=/','', '[d-1234abcd-develop-golden]','Connect=File="C:\keep-duplicate";','Folder=/Other','', '[d-1234abcd-develop-golden]',"Connect=File=`"$infoBase`";",'Folder=/ITL/d-1234abcd','', '[d-1234abcd]','OrderInList=-1','Folder=/ITL') | Set-Content -LiteralPath $launcher -Encoding UTF8
             Remove-DevelopE2EFreshProject -FreshProjectsRoot $root -Path $main -BranchPath $branch -LauncherListPath $launcher; Test-Path -LiteralPath $main | Should -BeFalse; Test-Path -LiteralPath $branch | Should -BeFalse

@@ -521,6 +521,7 @@ function Complete-InterruptedDevelopPublication {
         developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
         aiRulesCompatibility = [string]$installability.aiRulesStatus
         releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true
+        qualificationStartedAt = [string]$attempt.startedAt
     }
 }
 
@@ -555,9 +556,10 @@ function Publish-AccumulatedDevelop {
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         if ([bool]$componentPlan.requiresRelease -and -not [bool]$RequireRelease) {
-            Write-Host "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
+            Write-Verbose "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
         }
         $RequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
+        [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         if (-not $attempt -or [string]$attempt.identity -ne $attemptIdentity) {
             $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree -ComponentPlan $componentPlan
         } elseif ($attempt.PSObject.Properties.Name -contains "componentPlan") {
@@ -575,6 +577,7 @@ function Publish-AccumulatedDevelop {
             $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+            [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
             $attempt.componentPlan = $componentPlan
             $attempt.candidate = $candidate
             $attempt.tree = $candidateTree
@@ -675,6 +678,7 @@ function Publish-AccumulatedDevelop {
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $false
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
+            qualificationStartedAt = [string]$attempt.startedAt
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
@@ -816,6 +820,12 @@ function Publish-ReleaseThroughGitHubPullRequest {
 }
 
 function Release-DevelopToMaster {
+    param(
+        [string]$PrequalifiedCommit = "",
+        [string]$PrequalifiedTree = "",
+        [DateTime]$PrequalifiedNotBefore = [DateTime]::MinValue,
+        [switch]$ReusePrequalifiedGates
+    )
     Assert-ReleaseVersionRequest
     Assert-CleanDeliveryWorktree
     if (@(Get-QueueEntries).Count -gt 0) { throw "ReleaseMaster requires an empty develop queue. Publish accumulated develop changes first." }
@@ -837,12 +847,21 @@ function Release-DevelopToMaster {
                 throw "origin/master conflicts with develop. Resolve the release reconciliation on develop and publish it first."
             }
         }
+        $candidateBeforeGate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
-        [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+        $qualificationReused = $false
+        if ($ReusePrequalifiedGates -and $candidateBeforeGate -ceq $PrequalifiedCommit -and $candidateTree -ceq $PrequalifiedTree -and
+            (Test-ExactPassedDeliveryRun -Mode "Develop" -Candidate $candidateBeforeGate -Tree $candidateTree -NotBefore $PrequalifiedNotBefore) -and
+            (Test-ExactPassedDeliveryRun -Mode "Release" -Candidate $candidateBeforeGate -Tree $candidateTree -NotBefore $PrequalifiedNotBefore)) {
+            $qualificationReused = $true
+            Write-Verbose "Release train reuses exact-candidate Develop and Release qualification; no runtime gate is repeated."
+        } else {
+            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
+            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+            Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+        }
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         foreach ($oldHead in @($remoteDevelop, $remoteMaster)) {
             if ((Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge-base", "--is-ancestor", $oldHead, $candidate) -AllowFailure).exitCode -ne 0) {
@@ -873,10 +892,34 @@ function Release-DevelopToMaster {
             developCommit = $publication.developCommit; masterCommit = $publication.masterCommit
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
             aiRulesCompatibility = [string]$installability.aiRulesStatus
+            qualificationReused = $qualificationReused
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
         if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
         elseif ($worktree) { Write-Warning "Release candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). No force push was attempted." }
     }
+}
+
+function Promote-AccumulatedDevelopToMaster {
+    $entries = @(Get-QueueEntries)
+    if ($entries.Count -eq 0) {
+        Write-Verbose "PromoteRelease found an empty queue; using the ordinary ReleaseMaster qualification path."
+        return Release-DevelopToMaster
+    }
+
+    $script:RequireRelease = $true
+    $published = Publish-AccumulatedDevelop
+    if (-not [bool]$published.developPublished -or -not [bool]$published.releaseQualified) {
+        throw "PromoteRelease requires an exact candidate published to develop with Release qualification."
+    }
+    $notBefore = ConvertTo-DeliveryUtcDateTime -Value $published.qualificationStartedAt
+    $released = Release-DevelopToMaster `
+        -PrequalifiedCommit ([string]$published.commit) `
+        -PrequalifiedTree ([string]$published.tree) `
+        -PrequalifiedNotBefore $notBefore `
+        -ReusePrequalifiedGates
+    $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
+    $released | Add-Member -NotePropertyName developQualificationCommit -NotePropertyValue ([string]$published.commit) -Force
+    return $released
 }

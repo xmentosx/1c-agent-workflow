@@ -50,24 +50,32 @@ No topic chat runs Full/Develop first.
 A passed `Develop` already owns the exact-tree Full/static evidence; a separate
 `Full` for that tree is redundant and must not be run.
 
-When `develop` itself must remain unchanged until release evidence passes, use
-the transactional variant:
+When the accumulated queue must reach both `develop` and stable `master`, use one
+release train instead of `PublishDevelop -RequireRelease` followed by
+`ReleaseMaster`:
 
 ```powershell
-.\scripts\source-delivery.ps1 -Action PublishDevelop -RequireRelease `
+.\scripts\source-delivery.ps1 -Action PromoteRelease `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-It runs `Develop`, then `Release`, on the same temporary candidate and pushes
-only after both pass. Any failure preserves the queue and the old remote ref.
-On an exact-tree retry, passed `Develop` qualification is reused, so a failed
-`Release` does not trigger another Develop journey.
+It runs `Develop`, then `Release`, on one temporary candidate, publishes that
+candidate to `develop`, and promotes the same qualified tree to `master` without
+running either gate again. Exact commit/tree and current-attempt passed run
+records are mandatory for reuse; a reconciliation that changes the candidate
+falls back to the complete release gate. Any failure before develop publication
+preserves the queue and old remote refs.
+
+`PublishDevelop -RequireRelease` remains available only when the development
+channel itself must be release-qualified but `master` is intentionally not being
+moved. Do not follow it immediately with `ReleaseMaster`; use `PromoteRelease`
+for that combined intent.
 
 Successful `PublishDevelop` output must state `developPublished=true`,
 `dependenciesInstallable=true`, and `masterReleased=false`. This completes the
 installable development channel, including owned component publication, but
-does not move stable `master`; only the explicit command below may report
+does not move stable `master`; only `PromoteRelease` or the explicit command below may report
 `masterReleased=true`.
 
 When that remote development commit is ready for the stable channel, run:

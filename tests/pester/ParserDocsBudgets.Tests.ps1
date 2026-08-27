@@ -147,6 +147,7 @@
         $agentsText | Should -Match ([regex]::Escape('controlled `ai_rules_1c` fork owns'))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action RegisterChange"))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PublishDevelop"))
+        $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action PromoteRelease"))
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
@@ -168,12 +169,11 @@
         $agentsText | Should -Match 'Read-only source maintenance.*does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`'
         $agentsText | Should -Match 'Do not run a broad gate merely because a chat is ending'
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
-        $agentsText | Should -Match 'integrates registered ranges, runs `Develop`'
-        $agentsText | Should -Match 'auto-promotes pending fork locks under a durable checkpoint'
-        $agentsText | Should -Match ([regex]::Escape('"Publish" never implies `ReleaseMaster`/master'))
-        $agentsText | Should -Match '`-RequireRelease`.*that candidate.*`Release`'
+        $agentsText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
+        $agentsText | Should -Match ([regex]::Escape('"Publish" never implies master'))
+        $agentsText | Should -Match '`-RequireRelease`.*master must remain unchanged'
         $agentsText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
-        $agentsText | Should -Match 'queue must be empty and local `develop` must equal `origin/develop`'
+        $agentsText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
         $agentsText | Should -Match 'Do not ask which gate to run'
         $agentsText | Should -Match 'Do not activate them for source-repository maintenance'
         $agentsText | Should -Match 'separate installed project whose root the user identifies'

@@ -50,8 +50,9 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 владелец теста отключает кэш для шарда. Провальные результаты не кэшируются.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
-ранние возможности. `tests/quality-contracts.json` объявляет четыре continuation
-scope: `static`, `gate`, `develop`, `release`. Между ancestor-кандидатом и новым
+ранние возможности. `tests/quality-contracts.json` объявляет пять continuation
+scope: `static`, `deliveryPostGate`, `gate`, `develop`, `release`. Между
+ancestor-кандидатом и новым
 commit все изменённые пути должны целиком принадлежать этим scope, а новый
 commit/tree должен иметь точный прошедший `Targeted` с неизменённым tracked state.
 Тогда Full/Develop evidence накладывается на этот Targeted и выполнение
@@ -121,11 +122,14 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 первой незавершённой фазы; сбой finalizer/push не повторяет gate. Новая identity
 кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
-`-RetryBlockedStage`. Scope `deliveryPostGate` сохраняет broad proof.
+`-RetryBlockedStage`. Scope `deliveryPostGate` включает только delivery control
+plane, покрытый собственными source-delivery regression-тестами. Его исправление
+сохраняет Full/Develop/Release proof установленного workflow; изменение реального
+gate/develop/release harness по-прежнему инвалидирует соответствующий proof.
 
 Успешный JSON явно различает каналы поставки: для `PublishDevelop` это
 `developPublished=true`, `dependenciesInstallable=true`, `masterReleased=false`
-и фактический `aiRulesCompatibility`; только `ReleaseMaster` возвращает
+и фактический `aiRulesCompatibility`; только `PromoteRelease` или `ReleaseMaster` возвращает
 `masterReleased=true`. Поэтому слово «опубликовать» без указания stable/master
 означает полностью устанавливаемый `origin/develop`, но не релиз в `master`.
 
@@ -188,7 +192,26 @@ commit и запускает финальный Develop. Прямой promoter �
 квалификации. Обычный не-promotion Full и Release требуют
 `compatibilityStatus=passed`.
 
-## Release в master
+## Единое продвижение develop и master
+
+Если одна поставка должна опубликовать непустую очередь сразу в оба канала,
+используется одна операция:
+
+```powershell
+.\scripts\source-delivery.ps1 -Action PromoteRelease `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+```
+
+Она строит один exact candidate, выполняет `Develop` и `Release`, публикует его в
+`develop`, затем выпускает то же дерево в `master`. Перед дорогими gate проходят
+installability, owned-component plan и read-only finalizer preflight. Второй
+`Develop`/`Release` перед master запрещён: reuse разрешается только при совпадении
+commit/tree и наличии двух passed run records, созданных текущей publication
+attempt. Если reconciliation с `master` меняет candidate, reuse закрывается и
+обычный release gate выполняется полностью.
+
+## Release уже опубликованного develop в master
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
@@ -197,7 +220,8 @@ commit и запускает финальный Develop. Прямой promoter �
 ```
 
 Очередь должна быть пустой, а локальный `develop` совпадать с
-`origin/develop`. Оркестратор включает отсутствующие изменения текущего
+`origin/develop`. Этот маршрут нужен для уже опубликованного development channel;
+для непустой очереди используется `PromoteRelease`. Оркестратор включает отсутствующие изменения текущего
 `origin/master`, получает/reuses Develop proof точного дерева и запускает
 release-only E2E. Для GitHub он публикует временную release-ветку, создаёт или
 возобновляет PR в защищённый `master`, выполняет разрешённый linear-history
