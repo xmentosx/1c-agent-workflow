@@ -86,8 +86,10 @@ does not move stable `master`; only `PromoteRelease` or the explicit command bel
 
 Every successful development publication or master release performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
-disposable fresh/release-seed projects, stale 1C launcher registrations, and old
-launcher backups. Configured reusable stands and any active path are preserved;
+stale source-delivery test fixtures, disposable fresh/release-seed projects and
+closed seed archives, stale 1C launcher registrations, and managed launcher
+backups in both current and legacy timestamp formats. Configured reusable stands,
+active paths, incomplete-branch state, and manually named backups are preserved;
 cleanup warnings do not rewrite a verified publication as failed.
 
 When that remote development commit is ready for the stable channel, run:

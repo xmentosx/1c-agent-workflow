@@ -86,7 +86,7 @@ function Remove-DevelopE2ELauncherListBackups {
     $directory = Split-Path -Parent $ListPath
     $leaf = Split-Path -Leaf $ListPath
     $backups = @(Get-ChildItem -LiteralPath $directory -File -Force -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -match ('^' + [regex]::Escape($leaf) + '\.\d{8}-\d{6}-\d{3}\.bak$')
+        $_.Name -match ('^' + [regex]::Escape($leaf) + '\.\d{8}-\d{6}(?:-\d{3})?\.bak$')
     } | Sort-Object LastWriteTimeUtc, Name -Descending)
     foreach ($backup in @($backups | Select-Object -Skip $Keep)) { Remove-Item -LiteralPath $backup.FullName -Force }
     return [pscustomobject]@{ retained = [Math]::Min($Keep, $backups.Count); removed = [Math]::Max(0, $backups.Count - $Keep) }
