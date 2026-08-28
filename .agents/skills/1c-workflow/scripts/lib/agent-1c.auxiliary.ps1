@@ -14,6 +14,153 @@ function ConvertTo-AuxiliaryContourId {
     return $value
 }
 
+function Assert-AuxiliarySetupScalar {
+    param([string]$Name, [AllowEmptyString()][string]$Value)
+    if ($Value -match '[\r\n]') {
+        throw "ITL_AUXILIARY_SETUP_VALUE_INVALID: '$Name' must be a single line."
+    }
+}
+
+function ConvertTo-AuxiliarySetupExtensions {
+    param([string[]]$Values)
+    $result = [System.Collections.Generic.List[object]]::new()
+    foreach ($value in @($Values)) {
+        $separator = $value.IndexOf('=')
+        if ($separator -lt 1 -or $separator -ge ($value.Length - 1)) {
+            throw "ITL_AUXILIARY_SETUP_EXTENSION_INVALID: use 'ExtensionName=project/relative/path'."
+        }
+        $name = $value.Substring(0, $separator).Trim()
+        $path = $value.Substring($separator + 1).Trim()
+        Assert-AuxiliarySetupScalar -Name "extension name" -Value $name
+        Assert-AuxiliarySetupScalar -Name "extension path" -Value $path
+        [void](Assert-ExportPathInsideProject -ExportPath $path)
+        $result.Add([ordered]@{ name = $name; path = $path })
+    }
+    return @($result.ToArray())
+}
+
+function Set-AuxiliaryDotEnvValuesAtomic {
+    param([Parameter(Mandatory = $true)][hashtable]$Values)
+    $path = Join-Path $script:ProjectRoot ".dev.env"
+    $lines = if (Test-Path -LiteralPath $path -PathType Leaf) { @(Read-Utf8Lines -Path $path) } else { @() }
+    $seen = @{}
+    $updated = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in $lines) {
+        $replacement = $line
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=') {
+            $name = $matches[1]
+            if ($Values.ContainsKey($name)) {
+                $replacement = "$name=$($Values[$name])"
+                $seen[$name] = $true
+            }
+        }
+        $updated.Add($replacement)
+    }
+    foreach ($name in @($Values.Keys | Sort-Object)) {
+        if (-not $seen.ContainsKey($name)) { $updated.Add("$name=$($Values[$name])") }
+    }
+    Write-Utf8TextAtomic -Path $path -Value (($updated.ToArray() -join [Environment]::NewLine) + [Environment]::NewLine)
+}
+
+function Configure-AuxiliaryContour {
+    if ([string]::IsNullOrWhiteSpace($AuxiliaryContourName)) {
+        throw "ITL_AUXILIARY_SETUP_INCOMPLETE: contour name is required."
+    }
+    $id = ConvertTo-AuxiliaryContourId -Name $AuxiliaryContourName
+    $baseMode = $AuxiliaryBaseMode.Trim().ToLowerInvariant()
+    if ($baseMode -notin @("managed-file", "attached-readonly", "attached-disposable")) {
+        throw "ITL_AUXILIARY_SETUP_INCOMPLETE: choose managed-file, attached-readonly, or attached-disposable."
+    }
+    $sourceMode = if ($AuxiliarySourceMode) { $AuxiliarySourceMode.Trim().ToLowerInvariant() } else { "load-only" }
+    $configurationPath = if ($AuxiliaryConfigurationPath) { $AuxiliaryConfigurationPath.Trim() } else { Get-ExportPath }
+    $displayName = if ($AuxiliaryDisplayName) { $AuxiliaryDisplayName.Trim() } else { $id }
+    foreach ($item in @(
+        @{ name = "display name"; value = $displayName },
+        @{ name = "configuration path"; value = $configurationPath },
+        @{ name = "infobase path"; value = $AuxiliaryInfoBasePath },
+        @{ name = "infobase user"; value = $AuxiliaryInfoBaseUser },
+        @{ name = "tests path"; value = $AuxiliaryTestsPath }
+    )) { Assert-AuxiliarySetupScalar -Name $item.name -Value ([string]$item.value) }
+    if ($baseMode -eq "attached-readonly" -and $sourceMode -ne "load-only") {
+        throw "ITL_AUXILIARY_SETUP_READONLY_SOURCE_INVALID: attached-readonly requires load-only."
+    }
+    if ($baseMode -eq "attached-readonly" -and ([bool]$AuxiliaryIncludePrimaryTests -or $AuxiliaryTestsPath -or $AuxiliaryExtension.Count -gt 0)) {
+        throw "ITL_AUXILIARY_SETUP_READONLY_AUTOMATION_INVALID: attached-readonly accepts no automated tests or extension loads."
+    }
+    if ($baseMode -eq "managed-file" -and ($AuxiliaryInfoBaseKind -or $AuxiliaryInfoBasePath -or $AuxiliaryInfoBaseUser -or $AuxiliaryPasswordMode -ne "keep")) {
+        throw "ITL_AUXILIARY_SETUP_MANAGED_CONNECTION_INVALID: managed-file creates its own connection and accepts no external connection settings."
+    }
+    if ($baseMode -ne "managed-file" -and ($AuxiliaryInfoBaseKind -notin @("file", "server") -or [string]::IsNullOrWhiteSpace($AuxiliaryInfoBasePath))) {
+        throw "ITL_AUXILIARY_SETUP_CONNECTION_INCOMPLETE: an attached contour requires infobase kind and path."
+    }
+    [void](Assert-ExportPathInsideProject -ExportPath $configurationPath)
+    if ($AuxiliaryTestsPath) { [void](Assert-ExportPathInsideProject -ExportPath $AuxiliaryTestsPath) }
+    $extensions = @(ConvertTo-AuxiliarySetupExtensions -Values $AuxiliaryExtension)
+    $connectionRef = $id.ToUpperInvariant().Replace('-', '_')
+    $entry = [ordered]@{
+        displayName = $displayName
+        configurationPath = $configurationPath
+        baseMode = $baseMode
+        connectionRef = $connectionRef
+        sourceMode = $sourceMode
+        tests = [ordered]@{ includePrimary = [bool]$AuxiliaryIncludePrimaryTests; path = $AuxiliaryTestsPath }
+        extensions = $extensions
+        mcp = [ordered]@{ roctup = [bool]$AuxiliaryMcpRoctup; vanessaUi = [bool]$AuxiliaryMcpVanessaUi }
+    }
+
+    $configPath = $script:ConfigPath
+    $configExisted = Test-Path -LiteralPath $configPath -PathType Leaf
+    $originalConfig = if ($configExisted) { Read-Utf8Text -Path $configPath } else { "" }
+    $config = if ($configExisted) { ConvertTo-Agent1cHashtable -Object ($originalConfig | ConvertFrom-Json) } else { New-DefaultProjectConfig }
+    $contours = if ($config.Contains("auxiliaryContours") -and $null -ne $config["auxiliaryContours"]) { ConvertTo-Agent1cHashtable -Object $config["auxiliaryContours"] } else { [ordered]@{} }
+    $contours[$id] = $entry
+    $config["auxiliaryContours"] = $contours
+
+    $previousConfig = $script:Config
+    try {
+        $script:Config = (($config | ConvertTo-Json -Depth 12) | ConvertFrom-Json)
+        [void]@(Get-AuxiliaryContourDefinitions)
+    } finally { $script:Config = $previousConfig }
+
+    $dotEnvPath = Join-Path $script:ProjectRoot ".dev.env"
+    $dotEnvExisted = Test-Path -LiteralPath $dotEnvPath -PathType Leaf
+    $originalDotEnv = if ($dotEnvExisted) { Read-Utf8Text -Path $dotEnvPath } else { "" }
+    try {
+        if ($baseMode -ne "managed-file") {
+            $prefix = "ITL_AUX_${connectionRef}_"
+            $envValues = @{
+                ($prefix + "INFOBASE_KIND") = $AuxiliaryInfoBaseKind
+                ($prefix + "INFOBASE_PATH") = $AuxiliaryInfoBasePath
+                ($prefix + "USER") = $AuxiliaryInfoBaseUser
+            }
+            if ($AuxiliaryPasswordMode -eq "empty") {
+                $envValues[$prefix + "PASSWORD"] = ""
+            } elseif ($AuxiliaryPasswordMode -eq "clipboard") {
+                if (-not (Get-Command Get-Clipboard -ErrorAction SilentlyContinue)) {
+                    throw "ITL_AUXILIARY_SETUP_CLIPBOARD_UNAVAILABLE: copy the password and retry on Windows PowerShell."
+                }
+                $password = [string](Get-Clipboard -Raw -ErrorAction Stop)
+                if ([string]::IsNullOrEmpty($password)) { throw "ITL_AUXILIARY_SETUP_CLIPBOARD_EMPTY: copy the password and retry." }
+                Assert-AuxiliarySetupScalar -Name "password from clipboard" -Value $password
+                $envValues[$prefix + "PASSWORD"] = $password
+            }
+            Set-AuxiliaryDotEnvValuesAtomic -Values $envValues
+        }
+        Write-Utf8TextAtomic -Path $configPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+        Read-ProjectConfig
+        $configuredContour = Get-AuxiliaryContour -Name $id
+    } catch {
+        if ($configExisted) { Write-Utf8TextAtomic -Path $configPath -Value $originalConfig }
+        elseif (Test-Path -LiteralPath $configPath -PathType Leaf) { Remove-Item -LiteralPath $configPath -Force }
+        if ($dotEnvExisted) { Write-Utf8TextAtomic -Path $dotEnvPath -Value $originalDotEnv }
+        elseif (Test-Path -LiteralPath $dotEnvPath -PathType Leaf) { Remove-Item -LiteralPath $dotEnvPath -Force }
+        throw
+    }
+    Sync-AuxiliaryContourMcpClientConfig -Contour $configuredContour
+    $nextAction = if ($baseMode -eq "attached-readonly") { "status or diagnostic MCP" } else { "update-auxiliary-contour" }
+    Write-Host "Auxiliary contour configured: $id. Connection secrets were not written to tracked files. Next action: $nextAction."
+}
+
 function Get-AuxiliaryContourDefinitions {
     $root = Get-ConfigValue -Path "auxiliaryContours" -Default $null
     if ($null -eq $root) { return @() }

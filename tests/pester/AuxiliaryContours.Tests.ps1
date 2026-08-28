@@ -198,4 +198,125 @@ Describe "ITL auxiliary contour contract" {
             Test-Path -LiteralPath (Join-Path $archives[0].FullName "1Cv8.1CD") -PathType Leaf | Should -BeTrue
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "configures a managed contour without requiring manual project file edits" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{})
+        try {
+            & $HelperPath -ProjectRoot $root -Action configure-auxiliary-contour `
+                -AuxiliaryContourName exchange `
+                -AuxiliaryDisplayName "Приёмник обмена" `
+                -AuxiliaryBaseMode managed-file `
+                -AuxiliarySourceMode read-write `
+                -AuxiliaryConfigurationPath "src/configs/exchange/cf" `
+                -AuxiliaryIncludePrimaryTests `
+                -AuxiliaryTestsPath "tests/auxiliary/exchange" `
+                -AuxiliaryExtension @("ExchangeSupport=src/configs/exchange/cfe/ExchangeSupport") *> $null
+            $LASTEXITCODE | Should -Be 0
+            $config = Get-Content -LiteralPath (Join-Path $root ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $config.aiRules.tools | Should -Contain "codex"
+            $config.auxiliaryContours.exchange.displayName | Should -Be "Приёмник обмена"
+            $config.auxiliaryContours.exchange.baseMode | Should -Be "managed-file"
+            $config.auxiliaryContours.exchange.sourceMode | Should -Be "read-write"
+            $config.auxiliaryContours.exchange.tests.includePrimary | Should -BeTrue
+            $config.auxiliaryContours.exchange.tests.path | Should -Be "tests/auxiliary/exchange"
+            $config.auxiliaryContours.exchange.extensions[0].name | Should -Be "ExchangeSupport"
+            Test-Path -LiteralPath (Join-Path $root ".dev.env") | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "stores an attached connection atomically and reads its password from clipboard without output" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{})
+        try {
+            Set-Content -LiteralPath (Join-Path $root ".dev.env") -Encoding UTF8 -Value "PRESERVE_ME=yes"
+            $messages = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $AuxiliaryContourName = "server-perf"
+                $AuxiliaryDisplayName = "Серверный замер"
+                $AuxiliaryBaseMode = "attached-disposable"
+                $AuxiliarySourceMode = "load-only"
+                $AuxiliaryConfigurationPath = "src/cf"
+                $AuxiliaryInfoBaseKind = "server"
+                $AuxiliaryInfoBasePath = "Сервер с пробелом\Тестовая база"
+                $AuxiliaryInfoBaseUser = "Тестовый пользователь"
+                $AuxiliaryPasswordMode = "clipboard"
+                $AuxiliaryIncludePrimaryTests = $true
+                $AuxiliaryTestsPath = ""
+                $AuxiliaryExtension = @()
+                $AuxiliaryMcpRoctup = $true
+                $AuxiliaryMcpVanessaUi = $false
+                function Get-Clipboard { [CmdletBinding()] param([switch]$Raw); "секрет=42" }
+                Configure-AuxiliaryContour
+            } *>&1
+            ($messages | Out-String) | Should -Not -Match ([regex]::Escape("секрет=42"))
+            $envText = Get-Content -LiteralPath (Join-Path $root ".dev.env") -Raw -Encoding UTF8
+            $envLines = @($envText -split '\r?\n')
+            $envLines | Should -Contain "PRESERVE_ME=yes"
+            $envLines | Should -Contain "ITL_AUX_SERVER_PERF_INFOBASE_KIND=server"
+            $envText | Should -Match ([regex]::Escape("ITL_AUX_SERVER_PERF_INFOBASE_PATH=Сервер с пробелом\Тестовая база"))
+            $envLines | Should -Contain "ITL_AUX_SERVER_PERF_PASSWORD=секрет=42"
+            $config = Get-Content -LiteralPath (Join-Path $root ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $config.auxiliaryContours.'server-perf'.baseMode | Should -Be "attached-disposable"
+            $config.auxiliaryContours.'server-perf'.mcp.roctup | Should -BeTrue
+            ($config | ConvertTo-Json -Depth 12) | Should -Not -Match "секрет=42"
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "rejects an unsafe setup before changing project or local connection state" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{})
+        try {
+            $configPath = Join-Path $root ".agent-1c\project.json"
+            $before = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+            & $HelperPath -ProjectRoot $root -Action configure-auxiliary-contour -AuxiliaryContourName bad -AuxiliaryBaseMode managed-file -AuxiliarySourceMode read-write -AuxiliaryConfigurationPath src/cf *> $null
+            $LASTEXITCODE | Should -Be 1
+            (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8) | Should -BeExactly $before
+            Test-Path -LiteralPath (Join-Path $root ".dev.env") | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "does not let the setup questionnaire grant automation rights to a read-only base" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{})
+        try {
+            $configPath = Join-Path $root ".agent-1c\project.json"
+            $before = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
+            & $HelperPath -ProjectRoot $root -Action configure-auxiliary-contour -AuxiliaryContourName audit -AuxiliaryBaseMode attached-readonly -AuxiliaryInfoBaseKind server -AuxiliaryInfoBasePath "server\audit" -AuxiliaryIncludePrimaryTests *> $null
+            $LASTEXITCODE | Should -Be 1
+            (Get-Content -LiteralPath $configPath -Raw -Encoding UTF8) | Should -BeExactly $before
+            Test-Path -LiteralPath (Join-Path $root ".dev.env") | Should -BeFalse
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "preserves every setup choice through canonical helper reexecution" {
+        $arguments = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help `
+                -AuxiliaryContourName exchange `
+                -AuxiliaryDisplayName "Приёмник обмена" `
+                -AuxiliaryBaseMode managed-file `
+                -AuxiliarySourceMode read-write `
+                -AuxiliaryConfigurationPath "src/configs/exchange/cf" `
+                -AuxiliaryIncludePrimaryTests `
+                -AuxiliaryTestsPath "tests/auxiliary/exchange" `
+                -AuxiliaryExtension @("One=src/cfe/One", "Two=src/cfe/Two") `
+                -AuxiliaryMcpRoctup `
+                -AuxiliaryMcpVanessaUi *> $null
+            @(Get-Agent1cReexecArguments)
+        }
+        $joined = $arguments -join "`n"
+        foreach ($expected in @("-AuxiliaryContourName", "exchange", "-AuxiliaryDisplayName", "Приёмник обмена", "-AuxiliaryBaseMode", "managed-file", "-AuxiliarySourceMode", "read-write", "-AuxiliaryConfigurationPath", "src/configs/exchange/cf", "-AuxiliaryIncludePrimaryTests", "-AuxiliaryTestsPath", "tests/auxiliary/exchange", "-AuxiliaryExtension", "One=src/cfe/One", "Two=src/cfe/Two", "-AuxiliaryMcpRoctup", "-AuxiliaryMcpVanessaUi")) {
+            $joined | Should -Match ([regex]::Escape($expected))
+        }
+    }
+
+    It "documents agent-led setup as the only normal user path" {
+        $guidePath = Join-Path $RepoRoot "docs\itl-workflow\AUXILIARY-CONTOURS.ru.md"
+        $guide = Get-Content -LiteralPath $guidePath -Raw -Encoding UTF8
+        $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\auxiliary-contours.md") -Raw -Encoding UTF8
+        (Get-Content -LiteralPath $guidePath -Encoding UTF8).Count | Should -BeGreaterThan 120
+        $decode = { param([string]$Value) [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value)) }
+        $guide | Should -Match ([regex]::Escape((& $decode "0J/QvtC70YzQt9C+0LLQsNGC0LXQu9GMINC90LUg0YDQtdC00LDQutGC0LjRgNGD0LXRgg==")))
+        $guide | Should -Match ([regex]::Escape((& $decode "0J/QsNGA0L7Qu9GMINC90LUg0L3Rg9C20L3QviDQvtGC0L/RgNCw0LLQu9GP0YLRjCDQsiDRh9Cw0YI=")))
+        $guide | Should -Match ([regex]::Escape((& $decode "0JDQs9C10L3RgiDQv9C+0YHQu9C10LTQvtCy0LDRgtC10LvRjNC90L4g0YPRgtC+0YfQvdC40YI=")))
+        $reference | Should -Match 'never edits.*project\.json.*\.dev\.env'
+        $reference | Should -Match 'Never ask the user to paste a password into chat'
+        $reference | Should -Match 'configure-auxiliary-contour'
+    }
 }

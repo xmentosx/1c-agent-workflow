@@ -82,6 +82,7 @@ switch-master
 switch-dev-branch
 list-dev-branches
 status
+configure-auxiliary-contour
 status-auxiliary-contours
 update-auxiliary-contour
 dump-auxiliary-contour
@@ -96,7 +97,7 @@ release-e2e-config-repository-lock-roundtrip
 release-e2e-extension-smoke
 ```
 
-Additional contours are optional advanced topology, not new routine slash commands. Route their configuration, safety modes, test sets, CF export, extensions, and MCP names to `auxiliary-contours.md`. Every mutating contour action requires `-AuxiliaryContourName`; there is no implicit active-contour switch.
+Additional contours are optional advanced topology, not new routine slash commands. Route their agent-led questionnaire, configuration, safety modes, tests, CF, extensions, and MCP to `auxiliary-contours.md`; never tell the user to edit workflow files. Every mutating contour action requires an exact contour name; there is no implicit active-contour switch.
 
 Extension helper actions are advanced/helper commands. `new-extension-dev-branch` normally collects and performs extension initialization as its second internal phase. If parameters are unknown, it records `pending`; on first entry the agent collects them in chat and invokes `init-dev-branch-extension` internally. Never expose that PowerShell invocation or generate a visible initialization slash command. Keep recovery-only `set-dev-branch-extension`/`dump-dev-branch-extension` available through helper actions or natural-language requests. `set-dev-branch-extension` records context only and never creates an extension. New development branches register `itl-roctup-data` and `itl-vanessa-ui`; their backend processes are private on-demand runtime, not helper actions.
 
