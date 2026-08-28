@@ -205,8 +205,8 @@ function Get-BranchSeedServerProviderCapabilities {
 function Get-SourceEventLogLookbackDays {
     $raw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "7")
     $value = 0
-    if (-not [int]::TryParse($raw.Trim(), [ref]$value) -or $value -lt 0 -or $value -gt 7) {
-        Write-Host "[WARN] Invalid SOURCE_EVENT_LOG_LOOKBACK_DAYS '$raw'; using the safe default 7. Supported range: 0..7."
+    if (-not [int]::TryParse($raw.Trim(), [ref]$value) -or $value -lt 0) {
+        Write-Host "[WARN] Invalid SOURCE_EVENT_LOG_LOOKBACK_DAYS '$raw'; using the safe default 7. Use zero or a positive integer."
         return 7
     }
     return $value

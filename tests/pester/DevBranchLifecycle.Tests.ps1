@@ -3526,6 +3526,22 @@
         }
     }
 
+    It "accepts source event-log lookback longer than seven days" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-SourceEventLogLookbackDays | Should -Be 365
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "falls back to a full segment scan when an apparent append changed the cached prefix" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-cache-prefix-test-" + [guid]::NewGuid().ToString("N"))
         try {
