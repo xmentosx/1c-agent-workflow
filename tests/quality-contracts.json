@@ -119,7 +119,13 @@
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryPublish.Tests.ps1",
       "paths": ["scripts/source-delivery-candidate.ps1"],
-      "tests": ["tests/pester/SourceDeliveryPublish.Tests.ps1"]
+      "tests": [
+        "tests/pester/SourceDeliveryPublish.Tests.ps1",
+        "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1",
+        "tests/pester/SourceDeliveryPublishQualification.Tests.ps1",
+        "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
+        "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1"
+      ]
     },
     {
       "id": "source-delivery-cleanup",
@@ -137,7 +143,7 @@
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
       "paths": ["tests/pester/SourceDelivery.TestSupport.ps1"],
-      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
     },
     {
       "id": "source-delivery-process",

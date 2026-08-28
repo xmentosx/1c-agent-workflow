@@ -39,6 +39,17 @@ It "converts typed and round-trip delivery timestamps without current-culture st
         }
     }
 
+It "persists compact gate and release stage timing for the publication result" {
+        $write = Get-DeliveryFunctionDefinitions -Names @('Write-DeliveryRunRecord') | Select-Object -First 1
+        $summary = Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryQualificationTimingSummary') | Select-Object -First 1
+        $write.Extent.Text | Should -Match 'releaseE2E'
+        $write.Extent.Text | Should -Match 'executedStages'
+        $write.Extent.Text | Should -Match 'invalidationDetails'
+        $write.Extent.Text | Should -Match 'slowestStages'
+        $summary.Extent.Text | Should -Match 'operationDurationMs'
+        $summary.Extent.Text | Should -Match 'gateDurationMs'
+    }
+
 It "fails fast below Windows 10 or Windows Server 2016 before using atomic job-list launch" {
         $startDefinition = Get-DeliveryFunctionDefinitions -Names @('Start-DeliveryProcess') | Select-Object -First 1
         $startDefinition.Extent.Text | Should -Match 'AssertAtomicJobListSupport\(\);\s*IntPtr job = CreateJobObject'
