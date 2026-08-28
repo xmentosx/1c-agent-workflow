@@ -34,6 +34,7 @@
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |
 | `SOURCE_SERVER_NAME` | Сервер исходной базы | строка | init/user |
 | `SOURCE_INFOBASE_NAME` | Имя серверной исходной базы | строка | init/user |
+| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | Глубина исходного журнала для baseline сигнатур; `0` полностью отключает его чтение | целое `0..7`, default `7` | user |
 | `BASE_CONFIGURATION_VERSION` | Локальный override семейства конфигурации | `PM4`/`PM5`; пусто = project.json | user |
 | `IB_USER` | Пользователь копии базы | пусто = без имени | user/secret |
 | `IB_PASSWORD` | Пароль копии базы | пусто = без пароля | user/secret |

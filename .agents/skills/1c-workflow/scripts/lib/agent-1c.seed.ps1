@@ -202,24 +202,87 @@ function Get-BranchSeedServerProviderCapabilities {
     }
 }
 
+function Get-SourceEventLogLookbackDays {
+    $raw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "7")
+    $value = 0
+    if (-not [int]::TryParse($raw.Trim(), [ref]$value) -or $value -lt 0 -or $value -gt 7) {
+        Write-Host "[WARN] Invalid SOURCE_EVENT_LOG_LOOKBACK_DAYS '$raw'; using the safe default 7. Supported range: 0..7."
+        return 7
+    }
+    return $value
+}
+
+function New-EmptySourceEventLogSeedBaseline {
+    param(
+        [int]$LookbackDays,
+        [string]$WindowStart,
+        [string]$CacheStatus,
+        [string]$FailureEvidence = "",
+        [string]$Reader = "direct-stream"
+    )
+
+    $logDirectory = ""
+    if ((Get-InfoBaseKind) -eq "file") {
+        $logDirectory = Join-Path (Resolve-InfoBasePath (Get-SourceInfoBasePath)) "1Cv8Log"
+    }
+    return [ordered]@{
+        schemaVersion = 2
+        createdAt = (Get-Date).ToString("o")
+        reason = "source-seed"
+        reader = $Reader
+        logDirectory = $logDirectory
+        lookbackDays = $LookbackDays
+        windowStart = $WindowStart
+        errorCount = 0
+        signatureCount = 0
+        signatures = @()
+        durationMs = 0
+        cache = [ordered]@{
+            status = $CacheStatus
+            path = ""
+            sourceKey = ""
+            segmentCount = 0
+        }
+        failureEvidence = $FailureEvidence
+    }
+}
+
 function Get-SourceEventLogSeedBaseline {
+    $lookbackDays = Get-SourceEventLogLookbackDays
+    $windowStart = if ($lookbackDays -gt 0) { (Get-Date).AddDays(-$lookbackDays) } else { $null }
+    $windowStartText = if ($null -ne $windowStart) { $windowStart.ToString("o") } else { "" }
+    if ($lookbackDays -eq 0) {
+        Write-Host "Source event log baseline is disabled by SOURCE_EVENT_LOG_LOOKBACK_DAYS=0."
+        return (New-EmptySourceEventLogSeedBaseline -LookbackDays 0 -WindowStart "" -CacheStatus "disabled" -Reader "disabled")
+    }
+
     $kind = Get-InfoBaseKind
     if ($kind -ne "file") {
-        $provider = Get-BranchSeedServerProviderCapabilities
-        $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $provider.path `
-            -Operation "event-log-baseline" `
-            -ProjectRoot $script:ProjectRoot `
-            -SourceInfoBasePath (Get-SourceInfoBasePath) 2>&1)
-        if ($LASTEXITCODE -ne 0) {
-            throw "SERVER_SEED_BASELINE_FAILED: provider exited with code $LASTEXITCODE. $($output -join ' ')"
-        }
         try {
+            $provider = Get-BranchSeedServerProviderCapabilities
+            if (@($provider.capabilities) -notcontains "event-log-baseline-lookback") {
+                $message = "Server seed provider does not advertise event-log-baseline-lookback; source event-log signatures are skipped."
+                Write-Host "[WARN] $message"
+                return (New-EmptySourceEventLogSeedBaseline -LookbackDays $lookbackDays -WindowStart $windowStartText -CacheStatus "provider-lookback-unsupported" -FailureEvidence $message -Reader "server-provider")
+            }
+            $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $provider.path `
+                -Operation "event-log-baseline" `
+                -ProjectRoot $script:ProjectRoot `
+                -SourceInfoBasePath (Get-SourceInfoBasePath) `
+                -EventLogLookbackDays $lookbackDays 2>&1)
+            if ($LASTEXITCODE -ne 0) {
+                throw "SERVER_SEED_BASELINE_FAILED: provider exited with code $LASTEXITCODE. $($output -join ' ')"
+            }
             $providerBaseline = (($output -join [Environment]::NewLine) | ConvertFrom-Json)
+            if ([int]$providerBaseline.schemaVersion -ne 2 -or
+                $null -eq $providerBaseline.PSObject.Properties["signatures"] -or
+                [int](Get-StateValue -State $providerBaseline -Name "lookbackDays" -Default -1) -ne $lookbackDays) {
+                throw "SERVER_SEED_BASELINE_INVALID: schemaVersion=2, signatures, and matching lookbackDays are required."
+            }
         } catch {
-            throw "SERVER_SEED_BASELINE_INVALID: provider output is not JSON. $($_.Exception.Message)"
-        }
-        if ([int]$providerBaseline.schemaVersion -ne 2 -or $null -eq $providerBaseline.PSObject.Properties["signatures"]) {
-            throw "SERVER_SEED_BASELINE_INVALID: schemaVersion=2 and signatures are required."
+            $message = $_.Exception.Message
+            Write-Host "[WARN] Source event-log baseline provider failed; seed creation will continue without source signatures. $message"
+            return (New-EmptySourceEventLogSeedBaseline -LookbackDays $lookbackDays -WindowStart $windowStartText -CacheStatus "provider-failed" -FailureEvidence $message -Reader "server-provider")
         }
         $signatures = @($providerBaseline.signatures | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
         return [ordered]@{
@@ -228,6 +291,8 @@ function Get-SourceEventLogSeedBaseline {
             reason = "source-seed"
             reader = "server-provider"
             logDirectory = ""
+            lookbackDays = $lookbackDays
+            windowStart = [string](Get-StateValue -State $providerBaseline -Name "windowStart" -Default $windowStartText)
             errorCount = [int](Get-StateValue -State $providerBaseline -Name "errorCount" -Default $signatures.Count)
             signatureCount = $signatures.Count
             signatures = $signatures
@@ -249,37 +314,23 @@ function Get-SourceEventLogSeedBaseline {
         stateProjectRoot = Get-MainWorktreePath
     }
     try {
-        $readResult = Read-DevBranchEventLogBaselineWithCache -State $sourceState
+        $readResult = Read-DevBranchEventLogBaselineWithCache -State $sourceState -StartTime $windowStart -BestEffort
     } catch {
-        if ($_.Exception.Message -notmatch "1Cv8\.lgf was not found") {
-            throw
-        }
-        return [ordered]@{
-            schemaVersion = 2
-            createdAt = (Get-Date).ToString("o")
-            reason = "source-seed"
-            reader = "direct-stream"
-            logDirectory = Join-Path (Resolve-InfoBasePath (Get-SourceInfoBasePath)) "1Cv8Log"
-            errorCount = 0
-            signatureCount = 0
-            signatures = @()
-            durationMs = 0
-            cache = [ordered]@{
-                status = "empty-source-log"
-                path = ""
-                sourceKey = ""
-                segmentCount = 0
-            }
-            failureEvidence = ""
-        }
+        $message = $_.Exception.Message
+        $status = if ($message -match "1Cv8\.lgf was not found") { "empty-source-log" } else { "unavailable" }
+        Write-Host "[WARN] Source event log baseline could not be read; seed creation will continue without source signatures. $message"
+        return (New-EmptySourceEventLogSeedBaseline -LookbackDays $lookbackDays -WindowStart $windowStartText -CacheStatus $status -FailureEvidence $message)
     }
     $signatures = @($readResult.signatures)
+    $failedSegmentCount = [int](Get-StateValue -State $readResult -Name "failedSegmentCount" -Default 0)
     return [ordered]@{
         schemaVersion = 2
         createdAt = (Get-Date).ToString("o")
         reason = "source-seed"
         reader = $readResult.reader
         logDirectory = $readResult.logDirectory
+        lookbackDays = $lookbackDays
+        windowStart = $windowStartText
         errorCount = $readResult.errorCount
         signatureCount = $signatures.Count
         signatures = $signatures
@@ -290,7 +341,7 @@ function Get-SourceEventLogSeedBaseline {
             sourceKey = $readResult.sourceKey
             segmentCount = $readResult.segmentCount
         }
-        failureEvidence = ""
+        failureEvidence = $(if ($failedSegmentCount -gt 0) { "$failedSegmentCount source event-log segment(s) were skipped; see warnings." } else { "" })
     }
 }
 
