@@ -507,7 +507,9 @@
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
             $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
             $runText | Should -Match '-ExpectedSessionCount 1'
-            $runText | Should -Match '(?s)-AdditionalSessionAdmissions.*?infoBasePath = \[string\]\$state\.devBranchInfoBasePath.*?requiredSessions = \[int\]\$testClientTopology\.requiredTestClientSlots.*?expectedChildRole = "test-client"'
+        $runText | Should -Match 'Get-VanessaTestClientAdmissionTargets -Topology \$testClientTopology -DefaultState \$state'
+        $runText | Should -Match '-AdditionalSessionAdmissions \$admissionTargets'
+        $runText | Should -Match '(?s)foreach \(\$target in \$admissionTargets\).*?Stop-OneCInfoBaseSessionProcesses.*?-InfoBaseKind \$target\.infoBaseKind.*?-InfoBasePath \$target\.infoBasePath'
             $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

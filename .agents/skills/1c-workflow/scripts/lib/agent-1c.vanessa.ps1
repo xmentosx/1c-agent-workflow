@@ -10,6 +10,9 @@
 }
 
 function Get-VanessaFeaturesPath {
+    if ($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.featuresPath) {
+        return [string]$script:ActiveAuxiliaryVanessaContext.featuresPath
+    }
     if ($VanessaFeaturePath) {
         return $VanessaFeaturePath
     }
@@ -19,6 +22,9 @@ function Get-VanessaFeaturesPath {
 }
 
 function Get-VanessaReportsPath {
+    if ($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.reportsPath) {
+        return [string]$script:ActiveAuxiliaryVanessaContext.reportsPath
+    }
     $value = Get-Setting -EnvName "VANESSA_REPORTS_PATH" -ConfigName "vanessaAutomation.reportsPath" -Default (Get-ConfigValue -Path "testResultsPath" -Default "build/test-results/vanessa")
     return [string]$value
 }
@@ -792,8 +798,9 @@ function Read-VanessaTestClientManifest {
     } catch {
         throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' is not valid JSON. $($_.Exception.Message)"
     }
-    if ([int](Get-StateValue -State $manifest -Name "schemaVersion" -Default 0) -ne 1) {
-        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' must use schemaVersion=1."
+    $schemaVersion = [int](Get-StateValue -State $manifest -Name "schemaVersion" -Default 0)
+    if ($schemaVersion -notin @(1, 2)) {
+        throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: '$path' must use schemaVersion=1 or schemaVersion=2."
     }
 
     $allowedRoot = @("schemaVersion", "maxConcurrency", "profiles")
@@ -809,6 +816,7 @@ function Read-VanessaTestClientManifest {
     $manifestProfiles = $(if ($null -eq $profilesProperty -or $null -eq $profilesProperty.Value) { @() } else { @($profilesProperty.Value) })
     foreach ($profile in $manifestProfiles) {
         $allowedProfile = @("name", "user", "userEnv", "passwordEnv", "synonym", "clientType")
+        if ($schemaVersion -ge 2) { $allowedProfile += "contour" }
         foreach ($property in @($profile.PSObject.Properties)) {
             $propertyName = [string]$property.Name
             if ($propertyName -match '(?i)^password(?:Value)?$|secret') {
@@ -848,12 +856,18 @@ function Read-VanessaTestClientManifest {
             throw "ITL_VANESSA_TESTCLIENT_MANIFEST_INVALID: profile '$name' clientType must be Thin or Thick."
         }
 
+        $contour = ([string](Get-StateValue -State $profile -Name "contour" -Default "primary")).Trim().ToLowerInvariant()
+        if ($contour -ne "primary") {
+            $contour = ConvertTo-AuxiliaryContourId -Name $contour
+            Get-AuxiliaryContour -Name $contour | Out-Null
+        }
         $profiles.Add([pscustomobject][ordered]@{
             name = $name
             user = $user
             password = $password
             synonym = [string](Get-StateValue -State $profile -Name "synonym" -Default "")
             clientType = $clientType
+            contour = $contour
         })
     }
 
@@ -906,6 +920,7 @@ function Get-VanessaTestClientTopology {
                 password = [string](Get-EnvValue -Name "IB_PASSWORD")
                 synonym = ""
                 clientType = "Thin"
+                contour = "primary"
             })
         }
     }
@@ -934,6 +949,62 @@ function Get-VanessaTestClientTopology {
         requiredTestClientSlots = [int]$requirements.maximumConcurrency
         requiresExtensionTestClient = [bool]$requirements.requiresExtensionTestClient
     }
+}
+
+function Get-VanessaTestClientProfileConnection {
+    param([Parameter(Mandatory = $true)][object]$Profile, [Parameter(Mandatory = $true)][object]$DefaultState)
+    $contourName = [string](Get-StateValue -State $Profile -Name "contour" -Default "primary")
+    if ($contourName -eq "primary" -and $script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.contour) {
+        $contourName = [string]$script:ActiveAuxiliaryVanessaContext.contour.name
+    }
+    if ([string]::IsNullOrWhiteSpace($contourName) -or $contourName -eq "primary") {
+        return [pscustomobject]@{
+            contour = "primary"
+            kind = [string](Get-StateValue -State $DefaultState -Name "infoBaseKind" -Default (Get-InfoBaseKind))
+            path = [string](Get-StateValue -State $DefaultState -Name "devBranchInfoBasePath" -Default "")
+            user = [string](Get-StateValue -State $Profile -Name "user" -Default "")
+            password = [string](Get-StateValue -State $Profile -Name "password" -Default "")
+        }
+    }
+    $contour = Get-AuxiliaryContour -Name $contourName
+    $ready = Assert-AuxiliaryContourReady -Contour $contour -Operation "Vanessa TestClient profile '$([string]$Profile.name)'"
+    $profileUser = [string](Get-StateValue -State $Profile -Name "user" -Default "")
+    $profilePassword = [string](Get-StateValue -State $Profile -Name "password" -Default "")
+    return [pscustomobject]@{
+        contour = $contour.name
+        kind = $ready.connection.kind
+        path = $ready.connection.path
+        user = $(if ($profileUser) { $profileUser } else { $ready.connection.user })
+        password = $(if ($profilePassword) { $profilePassword } else { $ready.connection.password })
+    }
+}
+
+function Get-VanessaTestClientAdmissionTargets {
+    param([Parameter(Mandatory = $true)][object]$Topology, [Parameter(Mandatory = $true)][object]$DefaultState)
+    $targets = [ordered]@{}
+    $profiles = @($Topology.profiles)
+    $requiredSlots = [Math]::Max(0, [int](Get-StateValue -State $Topology -Name "requiredTestClientSlots" -Default 0))
+    $requiredNames = @{}
+    foreach ($name in @(Get-StateValue -State $Topology -Name "requiredProfiles" -Default @())) {
+        $requiredNames[([string]$name).ToLowerInvariant()] = $true
+    }
+    $selected = [System.Collections.Generic.List[object]]::new()
+    foreach ($profile in $profiles) {
+        if ($requiredNames.ContainsKey(([string]$profile.name).ToLowerInvariant())) { $selected.Add($profile) }
+    }
+    foreach ($profile in $profiles) {
+        if ($selected.Count -ge $requiredSlots) { break }
+        if (-not $selected.Contains($profile)) { $selected.Add($profile) }
+    }
+    foreach ($profile in @($selected.ToArray())) {
+        $connection = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $DefaultState
+        $key = [string](Get-OneCInfoBaseIdentity -InfoBaseKind $connection.kind -InfoBasePath $connection.path).key
+        if (-not $targets.Contains($key)) {
+            $targets[$key] = [ordered]@{ infoBaseKind = $connection.kind; infoBasePath = $connection.path; requiredSessions = 0; expectedChildRole = "test-client"; purpose = "vanessa-test-clients-$($connection.contour)" }
+        }
+        $targets[$key].requiredSessions = [int]$targets[$key].requiredSessions + 1
+    }
+    return @($targets.Values | ForEach-Object { [pscustomobject]$_ })
 }
 
 function Get-VanessaApplicationFeatureFiles {
@@ -3461,12 +3532,13 @@ function New-VanessaParamsFile {
     $testClientRecords = New-Object System.Collections.Generic.List[object]
     for ($profileIndex = 0; $profileIndex -lt $profiles.Count; $profileIndex++) {
         $profile = $profiles[$profileIndex]
+        $profileConnection = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $State
         $testClientRecord = [ordered]@{}
         $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP")] = [string]$profile.name
         $testClientRecord[(ConvertFrom-Utf8Base64 "0KHQuNC90L7QvdC40Lw=")] = [string]$profile.synonym
-        $testClientRecord[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU=")] = New-VanessaTestClientInfoBaseArg -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU=")] = New-VanessaTestClientInfoBaseArg -InfoBaseKind $profileConnection.kind -InfoBasePath $profileConnection.path
         $testClientRecord[(ConvertFrom-Utf8Base64 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA=")] = [int]$assignedPorts[$profileIndex]
-        $testClientRecord[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User ([string]$profile.user) -Password ([string]$profile.password)
+        $testClientRecord[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User $profileConnection.user -Password $profileConnection.password
         $testClientRecord[(ConvertFrom-Utf8Base64 "0KLQuNC/0JrQu9C40LXQvdGC0LA=")] = $(if ([string]$profile.clientType -eq "Thick") { ConvertFrom-Utf8Base64 "0KLQvtC70YHRgtGL0Lk=" } else { ConvertFrom-Utf8Base64 "0KLQvtC90LrQuNC5" })
         $testClientRecord[(ConvertFrom-Utf8Base64 "0JjQvNGP0JrQvtC80L/RjNGO0YLQtdGA0LA=")] = "localhost"
         $testClientRecord[(ConvertFrom-Utf8Base64 "UElE0JrQu9C40LXQvdGC0LDQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = 0
@@ -4290,7 +4362,7 @@ function Run-DevBranchTests {
     $enterpriseArgs = @("/Execute", $vanessa.epfPath, "/C$command")
     $logPath = ""
     $currentCommit = Get-CurrentCommit
-    $currentFingerprint = Get-VerificationFingerprint
+    $currentFingerprint = if ($script:ActiveAuxiliaryVanessaContext) { [string]$script:ActiveAuxiliaryVanessaContext.verificationFingerprint } else { Get-VerificationFingerprint }
     $timeoutSeconds = Get-VanessaTestTimeoutSeconds
     $runStartedAt = Get-Date
     $runFinishedAt = $null
@@ -4305,6 +4377,7 @@ function Run-DevBranchTests {
         -RunDirectory $runDirectory `
         -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name })
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
+    $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
         $logPath = Invoke-Enterprise `
@@ -4315,18 +4388,11 @@ function Run-DevBranchTests {
             -EnterpriseArgs $enterpriseArgs `
             -TestClientPort $testPort `
             -ExpectedSessionCount 1 `
-            -AdditionalSessionAdmissions @([pscustomobject]@{
-                infoBaseKind = [string]$state.infoBaseKind
-                infoBasePath = [string]$state.devBranchInfoBasePath
-                requiredSessions = [int]$testClientTopology.requiredTestClientSlots
-                expectedChildRole = "test-client"
-                purpose = "vanessa-test-clients"
-            }) `
+            -AdditionalSessionAdmissions $admissionTargets `
             -SessionLimitRecovery {
-                Stop-OneCInfoBaseSessionProcesses `
-                    -InfoBaseKind $state.infoBaseKind `
-                    -InfoBasePath $state.devBranchInfoBasePath `
-                    -Reason "managed Vanessa verification admission" | Out-Null
+                foreach ($target in $admissionTargets) {
+                    Stop-OneCInfoBaseSessionProcesses -InfoBaseKind $target.infoBaseKind -InfoBasePath $target.infoBasePath -Reason "managed Vanessa verification admission" | Out-Null
+                }
             } `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
@@ -4414,7 +4480,7 @@ function Run-DevBranchTests {
         $updates["lastVanessaCleanupDurationMs"] = $cleanupDurationMs
         $updates["lastVanessaEventLogDurationMs"] = $eventLogDurationMs
         $updates["lastVanessaPostProcessDurationMs"] = [int64]$postProcessStopwatch.ElapsedMilliseconds
-        Update-DevBranchState -State $state -Updates $updates
+        Update-ActiveVanessaVerificationState -State $state -Updates $updates
         throw
     }
     Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading JUnit and event-log evidence."
@@ -4529,7 +4595,7 @@ function Run-DevBranchTests {
     foreach ($key in $eventLogDebtUpdates.Keys) { $updates[$key] = $eventLogDebtUpdates[$key] }
     foreach ($key in $eventLogBoundaryUpdates.Keys) { $updates[$key] = $eventLogBoundaryUpdates[$key] }
     Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
-    Update-DevBranchState -State $state -Updates $updates
+    Update-ActiveVanessaVerificationState -State $state -Updates $updates
 
     Write-Host "Vanessa tests finished."
     Write-Host "Verification status: $($verification.status)"

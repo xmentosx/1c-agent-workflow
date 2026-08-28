@@ -767,6 +767,8 @@ function Invoke-ConfigLoadWithFallback {
         [string]$ListFilePath,
         [int]$FileCount,
         [string]$ExtensionName = "",
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("Auto", "Partial", "Full")]
         [string]$Mode = "Auto",
         [switch]$ResetConfigDumpInfo
@@ -791,6 +793,7 @@ function Invoke-ConfigLoadWithFallback {
             Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -User $User -Password $Password `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
             } catch {
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
@@ -812,7 +815,7 @@ function Invoke-ConfigLoadWithFallback {
         $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-partial", "-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")
         $script:LastNativeProcessStarted = $false
         try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $partialArgs | Out-Null
+            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs $partialArgs | Out-Null
             return [pscustomobject]@{
                 loadModeUsed = "partial"
                 partialLogPath = $script:LastLogPath
@@ -863,6 +866,7 @@ function Invoke-ConfigLoadWithFallback {
             Write-Warning "Partial load log: $partialLogPath"
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -User $User -Password $Password `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
                 return [pscustomobject]@{
                     loadModeUsed = "full-fallback"
@@ -10341,6 +10345,7 @@ function Close-DevBranch {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "close-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
+    Stop-ItlOnDemandBackends -Strict
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "close-dev-branch"
     $state = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $state

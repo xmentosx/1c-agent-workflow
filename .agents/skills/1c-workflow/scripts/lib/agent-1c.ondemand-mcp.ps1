@@ -264,7 +264,52 @@ function Get-ItlOnDemandMcpEndpointDescriptors {
             toolTimeoutSeconds = 600
         }
     }
+    foreach ($contour in @(Get-AuxiliaryContourDefinitions)) {
+        if (-not $contour.mcpRoctup -and -not $contour.mcpVanessaUi) { continue }
+        $contourHelper = Write-ItlOnDemandAuxiliaryHelperWrapper -Contour $contour
+        foreach ($family in @("roctup", "vanessa-ui")) {
+            if (($family -eq "roctup" -and -not $contour.mcpRoctup) -or ($family -eq "vanessa-ui" -and -not $contour.mcpVanessaUi)) { continue }
+            $definition = Get-ItlOnDemandMcpFamilyDefinition -Family $family
+            $suffix = if ($family -eq "roctup") { "roctup" } else { "vanessa-ui" }
+            $endpoints += [pscustomobject]@{
+                name = "itl-$suffix-aux-$($contour.name)"
+                transport = "stdio"
+                command = $executable
+                args = @("serve", "--family", $family, "--project-root", $root, "--catalog", $definition.catalogPath, "--helper", $contourHelper, "--surface", "gateway", "--idle-timeout", "10m")
+                startupTimeoutSeconds = 20
+                toolTimeoutSeconds = 600
+            }
+        }
+    }
     return @($endpoints)
+}
+
+function Write-ItlOnDemandAuxiliaryHelperWrapper {
+    param([Parameter(Mandatory = $true)][object]$Contour)
+    $directory = Join-Path $script:ProjectRoot ".agent-1c\mcp\ondemand\helpers"
+    New-Item -ItemType Directory -Force -Path $directory | Out-Null
+    $path = Join-Path $directory "$($Contour.name).ps1"
+    $content = @'
+[CmdletBinding()]
+param(
+    [string]$ProjectRoot,
+    [string]$InternalOnDemandOperation,
+    [string]$InternalOnDemandFamily,
+    [string]$InternalOnDemandInstanceId,
+    [string]$InternalOnDemandCatalogSha256,
+    [string]$InternalOnDemandReplacementInstanceId = "",
+    [int]$InternalOnDemandExpectedPid = 0,
+    [int]$InternalOnDemandExpectedPort = 0
+)
+$helper = Join-Path $ProjectRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+$forward = @{}
+foreach ($entry in $PSBoundParameters.GetEnumerator()) { $forward[$entry.Key] = $entry.Value }
+$forward["InternalOnDemandAuxiliaryContour"] = "__ITL_AUXILIARY_CONTOUR__"
+& $helper @forward
+exit $LASTEXITCODE
+'@.Replace("__ITL_AUXILIARY_CONTOUR__", [string]$Contour.name)
+    Write-Utf8TextAtomic -Path $path -Value ($content + [Environment]::NewLine)
+    return $path
 }
 
 function Write-ItlOnDemandMcpClientConfig {
@@ -320,21 +365,19 @@ function Get-ItlOnDemandVanessaTestClientPortKey {
 }
 
 function New-ItlOnDemandVanessaParamsFile {
-    param([object]$State, [string]$InstanceId, [int]$TestClientPort, [string]$VanessaVersion)
+    param([object]$State, [string]$InstanceId, [int]$TestClientPort, [string]$VanessaVersion, [string]$User = (Get-EnvValue -Name "IB_USER"), [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"))
 
     $directory = Split-Path -Parent (Get-ItlOnDemandRuntimePath -Family "vanessa-ui" -InstanceId $InstanceId)
     New-Item -ItemType Directory -Force -Path $directory | Out-Null
     $path = Join-Path $directory "$InstanceId.VAParams.json"
     $infoBaseKind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind))
     $infoBasePath = [string](Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
-    $user = Get-EnvValue -Name "IB_USER"
-
     $profile = [ordered]@{}
     $profile[(ConvertFrom-Utf8Base64 "0JjQvNGP")] = "itl-ondemand"
     $profile[(ConvertFrom-Utf8Base64 "0KHQuNC90L7QvdC40Lw=")] = "ITL on-demand TestClient"
     $profile[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCY0L3RhNC+0LHQsNC30LU=")] = New-VanessaTestClientInfoBaseArg -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
     $profile[(ConvertFrom-Utf8Base64 "0J/QvtGA0YLQl9Cw0L/Rg9GB0LrQsNCi0LXRgdGC0JrQu9C40LXQvdGC0LA=")] = $TestClientPort
-    $profile[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User $user -Password (Get-EnvValue -Name "IB_PASSWORD")
+    $profile[(ConvertFrom-Utf8Base64 "0JTQvtC/0J/QsNGA0LDQvNC10YLRgNGL")] = New-VanessaTestClientAdditionalParams -User $User -Password $Password
     $profile[(ConvertFrom-Utf8Base64 "0KLQuNC/0JrQu9C40LXQvdGC0LA=")] = ConvertFrom-Utf8Base64 "0KLQvtC90LrQuNC5"
     $profile[(ConvertFrom-Utf8Base64 "0JjQvNGP0JrQvtC80L/RjNGO0YLQtdGA0LA=")] = "localhost"
     $profile[(ConvertFrom-Utf8Base64 "UElE0JrQu9C40LXQvdGC0LDQotC10YHRgtC40YDQvtCy0LDQvdC40Y8=")] = 0
@@ -703,7 +746,8 @@ function Recover-ItlOnDemandBackendInstance {
         [string]$ReplacementInstanceId,
         [int]$ExpectedPid,
         [int]$ExpectedPort,
-        [string]$CatalogSha256
+        [string]$CatalogSha256,
+        [string]$AuxiliaryContour = ""
     )
 
     $runtimeState = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
@@ -718,7 +762,7 @@ function Recover-ItlOnDemandBackendInstance {
         throw "ITL_ONDEMAND_RECOVERY_NOT_STALE: status=$($health.status) pidAlive=$($health.pidAlive) portOpen=$($health.portOpen) owned=$($health.owned)."
     }
     Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership | Out-Null
-    return (Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $ReplacementInstanceId -CatalogSha256 $CatalogSha256)
+    return (Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $ReplacementInstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour)
 }
 
 function Confirm-ItlOnDemandBackendRunning {
@@ -797,7 +841,22 @@ function Ensure-ItlOnDemandVanessaTestClient {
     }
 
     $state = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand Vanessa TestClient"
-    $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand Vanessa TestClient start"
+    $targetUser = [string](Get-EnvValue -Name "IB_USER")
+    $targetPassword = [string](Get-EnvValue -Name "IB_PASSWORD")
+    $runtimeContour = [string](Get-StateValue -State $runtimeState -Name "auxiliaryContour" -Default "")
+    if ($runtimeContour) {
+        $contour = Get-AuxiliaryContour -Name $runtimeContour
+        $connection = Get-AuxiliaryContourConnection -Contour $contour
+        $stateHash = ConvertTo-Agent1cHashtable -Object $state
+        $stateHash["devBranchInfoBasePath"] = $connection.path
+        $stateHash["infoBaseKind"] = $connection.kind
+        $stateHash["auxiliaryContour"] = $contour.name
+        $state = [pscustomobject]$stateHash
+        $targetUser = $connection.user
+        $targetPassword = $connection.password
+    } else {
+        $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand Vanessa TestClient start"
+    }
     $testClientPort = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPort" -Default 0) -Default 0
     $recordedPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
     $previousPid = 0
@@ -854,6 +913,8 @@ function Ensure-ItlOnDemandVanessaTestClient {
         $testClientResult = Start-EnterpriseBackground `
             -InfoBasePath $state.devBranchInfoBasePath `
             -InfoBaseKind $state.infoBaseKind `
+            -User $targetUser `
+            -Password $targetPassword `
             -UseTestClient `
             -TestClientPort $testClientPort `
             -SessionLimitRecovery {
@@ -909,10 +970,27 @@ function Ensure-ItlOnDemandVanessaTestClient {
 }
 
 function Start-ItlOnDemandBackendInstance {
-    param([string]$Family, [string]$InstanceId, [string]$CatalogSha256)
+    param([string]$Family, [string]$InstanceId, [string]$CatalogSha256, [string]$AuxiliaryContour = "")
 
-    $state = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand MCP"
-    $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand $Family backend start"
+    $primaryState = Read-CurrentDevBranchStateForRoctupMcp -Operation "ITL on-demand MCP"
+    $state = $primaryState
+    $targetUser = [string](Get-EnvValue -Name "IB_USER")
+    $targetPassword = [string](Get-EnvValue -Name "IB_PASSWORD")
+    if ($AuxiliaryContour) {
+        $contour = Get-AuxiliaryContour -Name $AuxiliaryContour
+        $connection = Get-AuxiliaryContourConnection -Contour $contour
+        Assert-InfoBaseAvailable -Kind $connection.kind -Path $connection.path -SettingName "auxiliary contour '$($contour.name)'"
+        if ($contour.baseMode -ne "attached-readonly") { Assert-AuxiliaryContourReady -Contour $contour -Operation "ITL on-demand $Family backend start" | Out-Null }
+        $stateHash = ConvertTo-Agent1cHashtable -Object $state
+        $stateHash["devBranchInfoBasePath"] = $connection.path
+        $stateHash["infoBaseKind"] = $connection.kind
+        $stateHash["auxiliaryContour"] = $contour.name
+        $state = [pscustomobject]$stateHash
+        $targetUser = $connection.user
+        $targetPassword = $connection.password
+    } else {
+        $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand $Family backend start"
+    }
     $existing = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
     if ($null -ne $existing -and (Test-ItlOnDemandOwnedProcess -RuntimeState $existing) -and (Test-TcpPortOpen -Port ([int]$existing.port))) {
         if (-not (Test-ItlOnDemandPortOwnedByProcess -Port ([int]$existing.port) -ProcessId ([int]$existing.pid))) {
@@ -954,12 +1032,11 @@ function Start-ItlOnDemandBackendInstance {
             $url = Get-RoctupMcpUrl -Port $port
             $version = [string]$artifact.version
         } else {
-            if (-not [bool](Get-StateValue -State $state -Name "unsafeActionProtectionConfirmed" -Default $false)) {
+            if (-not [bool](Get-StateValue -State $primaryState -Name "unsafeActionProtectionConfirmed" -Default $false)) {
                 throw "ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED: run configure-dev-branch-unsafe-action-protection for this worktree."
             }
-            $state = Ensure-VanessaMcpInstalled -State $state
-            $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
-            $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
+            $serviceState = Ensure-VanessaMcpInstalled -State $primaryState
+            $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $serviceState
             $vanessa = Get-VanessaAutomationState
             if (-not $vanessa.ready) { throw "Vanessa Automation runtime is not installed." }
             $range = Get-VanessaMcpPortRange
@@ -973,7 +1050,7 @@ function Start-ItlOnDemandBackendInstance {
             $testClientPortLease = Resolve-ItlManagedPortLease -Family $testClientPortFamily -Key $testClientPortKey -Start $testRange.start -End $testRange.end -State $state -Subject "Vanessa on-demand TestClient port" -LeaseToken $testClientPortLeaseToken
             $testClientPort = [int]$testClientPortLease.port
             $testClientPortLeaseToken = [string]$testClientPortLease.leaseToken
-            $vanessaParamsPath = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId $InstanceId -TestClientPort $testClientPort -VanessaVersion ([string]$vanessa.version)
+            $vanessaParamsPath = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId $InstanceId -TestClientPort $testClientPort -VanessaVersion ([string]$vanessa.version) -User $targetUser -Password $targetPassword
             $url = Get-VanessaMcpUrl -Port $port
             $command = "runMcp;mcpPort=$port;VAParams=$vanessaParamsPath;QuietInstallVanessaExt;DisableFirstRunHelper;UseEditor=true;usevanessaeditor=true"
             $clientVersion = [string](Get-StateValue -State $state -Name "vanessaMcpClientMcpVersion" -Default "")
@@ -998,6 +1075,7 @@ function Start-ItlOnDemandBackendInstance {
             clientMcpSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "clientMcpSafeMode" -Default $true) } else { $null })
             vaExtensionSafeMode = $(if ($Family -eq "vanessa-ui") { [bool](Get-StateValue -State $vanessaSafeModeProof -Name "vaExtensionSafeMode" -Default $true) } else { $null })
             infoBasePath = [string]$state.devBranchInfoBasePath
+            auxiliaryContour = $AuxiliaryContour
             managerInfoBaseKind = $(if ($Family -eq "vanessa-ui") { [string]$serviceInfoBase.kind } else { [string]$state.infoBaseKind })
             managerInfoBasePath = $(if ($Family -eq "vanessa-ui") { [string]$serviceInfoBase.path } else { [string]$state.devBranchInfoBasePath })
             testClientProfile = $(if ($Family -eq "vanessa-ui") { "itl-ondemand" } else { "" })
@@ -1013,6 +1091,8 @@ function Start-ItlOnDemandBackendInstance {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $state.devBranchInfoBasePath `
                 -InfoBaseKind $state.infoBaseKind `
+                -User $targetUser `
+                -Password $targetPassword `
                 -SessionLimitRecovery {
                     Stop-OneCInfoBaseSessionProcesses `
                         -InfoBaseKind $state.infoBaseKind `
@@ -1098,7 +1178,8 @@ function Invoke-ItlOnDemandBackendBroker {
         [string]$CatalogSha256,
         [string]$ReplacementInstanceId,
         [int]$ExpectedPid,
-        [int]$ExpectedPort
+        [int]$ExpectedPort,
+        [string]$AuxiliaryContour = ""
     )
     $startHandle = $null
     if ($Operation -eq "ensure" -or $Operation -eq "ensure-test-client" -or $Operation -eq "mark-running" -or $Operation -eq "recover") {
@@ -1113,7 +1194,7 @@ function Invoke-ItlOnDemandBackendBroker {
     } elseif ($InstanceId -notmatch '^[a-f0-9]{32}$') {
         throw "Invalid on-demand MCP instance id."
     } elseif ($Operation -eq "ensure") {
-        $result = Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -CatalogSha256 $CatalogSha256
+        $result = Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour
     } elseif ($Operation -eq "ensure-test-client") {
         if ($Family -ne "vanessa-ui") {
             throw "ITL_ONDEMAND_ARGUMENTS_INVALID: ensure-test-client is available only for vanessa-ui."
@@ -1134,7 +1215,8 @@ function Invoke-ItlOnDemandBackendBroker {
             -ReplacementInstanceId $ReplacementInstanceId `
             -ExpectedPid $ExpectedPid `
             -ExpectedPort $ExpectedPort `
-            -CatalogSha256 $CatalogSha256
+            -CatalogSha256 $CatalogSha256 `
+            -AuxiliaryContour $AuxiliaryContour
     } else {
         $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
     }

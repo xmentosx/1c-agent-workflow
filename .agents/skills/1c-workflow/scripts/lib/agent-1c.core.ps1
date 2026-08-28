@@ -452,6 +452,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "help",
         "doctor",
         "status",
+        "status-auxiliary-contours",
         "context-benchmark",
         "list-dev-branches",
         "get-dev-workspace-plan",
@@ -2243,6 +2244,7 @@ function Get-OneCSourceGitAttributesManagedLines {
         "# BEGIN ITL MANAGED: preserve 1C source bytes",
         "src/cf/** -text",
         "src/cfe/** -text",
+        "src/configs/** -text",
         "# END ITL MANAGED: preserve 1C source bytes"
     )
 }
