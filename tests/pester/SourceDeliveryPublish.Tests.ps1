@@ -12,7 +12,7 @@ It "keeps function names unique across the split delivery implementation" {
         @($names | Group-Object | Where-Object Count -gt 1 | Select-Object -ExpandProperty Name) | Should -BeNullOrEmpty
     }
 
-It "publishes the qualified candidate and clears only reachable queue entries" {
+    It "publishes the qualified candidate and clears only reachable queue entries" {
         $fixture = $null; try {
             $fixture = New-DeliveryFixture
             $tests = Join-Path $fixture.root "tests\pester"
@@ -41,6 +41,85 @@ It "publishes the qualified candidate and clears only reachable queue entries" {
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 
+    It "promotes one exact qualified candidate through develop and master without repeating gates" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root push --quiet origin "HEAD:refs/heads/master" *> $null
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ReleaseTrain.Tests.ps1") -Encoding UTF8 -Value "Describe 'release train' { It 'works' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'release-train'"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "feat: release train" *> $null
+            $candidate = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PromoteRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))
+            $payload = $result.stdout | ConvertFrom-Json
+
+            $payload.status | Should -Be "released"
+            $payload.releaseTrain | Should -BeTrue
+            $payload.qualificationReused | Should -BeTrue
+            $payload.developPublished | Should -BeTrue
+            $payload.masterReleased | Should -BeTrue
+            $payload.developQualificationCommit | Should -Be $candidate
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @("Develop", "Release")
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $candidate
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/master).Trim() | Should -Be $candidate
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+    It "resumes a durable release train after develop was published by an earlier process" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root push --quiet origin "HEAD:refs/heads/master" *> $null
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\ResumeTrain.Tests.ps1") -Encoding UTF8 -Value "Describe 'resume train' { It 'works' { `$true | Should -BeTrue } }"
+            Set-Content -LiteralPath (Join-Path $fixture.root "behavior.ps1") -Encoding UTF8 -Value "'resume-train'"
+            & git -C $fixture.root add --all; & git -C $fixture.root commit -m "feat: resume release train" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+            $published = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RequireRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $fixture.finalizer + '"'))).stdout | ConvertFrom-Json
+            $attemptPath = Join-Path $fixture.root ".git\itl\publication-attempts\develop.json"; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $attemptPath) | Out-Null
+            $attempt = [ordered]@{ schemaVersion=1; phase='remote-pushed'; candidate=$published.commit; tree=$published.tree; requireRelease=$true; startedAt=$published.qualificationStartedAt }
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+            $released = (Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PromoteRelease", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'))).stdout | ConvertFrom-Json
+            $released.status | Should -Be 'released'; $released.resumedReleaseTrain | Should -BeTrue; $released.qualificationReused | Should -BeTrue
+            @((Get-Content -LiteralPath $fixture.modeLog -Encoding UTF8)) | Should -Be @('Develop','Release')
+            Test-Path -LiteralPath $attemptPath | Should -BeFalse
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+    It "rejects a malformed component finalizer before broad qualification" {
+        $fixture = $null
+        $brokenFinalizer = Join-Path ([IO.Path]::GetTempPath()) ("itl-broken-finalizer-" + [guid]::NewGuid().ToString("N") + ".ps1")
+        try {
+            $fixture = New-DeliveryFixture
+            New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root "tests\pester") | Out-Null
+            Set-Content -LiteralPath (Join-Path $fixture.root "tests\pester\Preflight.Tests.ps1") -Encoding UTF8 -Value "Describe 'preflight' { It 'works' { `$true | Should -BeTrue } }"
+            & git -C $fixture.root add --all
+            & git -C $fixture.root commit -m "test: finalizer preflight" *> $null
+            Invoke-DeliveryTestPowerShell -Arguments @("-Action", "RegisterChange", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"')) | Out-Null
+            Remove-Item -LiteralPath $fixture.modeLog -Force -ErrorAction SilentlyContinue
+            [IO.File]::WriteAllText($brokenFinalizer, "param([string]`$RepositoryRoot", [Text.UTF8Encoding]::new($false))
+
+            $result = Invoke-DeliveryTestPowerShell -Arguments @("-Action", "PublishDevelop", "-RepositoryRoot", ('"' + $fixture.root + '"'), "-GateScript", ('"' + $fixture.gate + '"'), "-ComponentFinalizerScript", ('"' + $brokenFinalizer + '"')) -AllowFailure
+
+            $result.exitCode | Should -Not -Be 0
+            $result.stderr | Should -Match "parse errors"
+            Test-Path -LiteralPath $fixture.modeLog | Should -BeFalse
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
+            @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $brokenFinalizer -Force -ErrorAction SilentlyContinue
+            Remove-DeliveryFixture -Fixture $fixture
+        }
+    }
+
 It "classifies incompatible dependencies before qualification or push" {
         foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DependencyLockInstallability')) { Invoke-Expression $definition.Extent.Text }
         foreach ($status in @("pending", "failed", "")) {
@@ -55,6 +134,7 @@ It "classifies incompatible dependencies before qualification or push" {
         (Get-DependencyLockInstallability -Lock ([pscustomobject]@{ dependencies = [pscustomobject]@{ aiRules1c = [pscustomobject]@{ ref = "itl-v1-r99"; compatibilityStatus = "passed" } } })).installable | Should -BeTrue
         $publisher = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
         $publisher.IndexOf('[void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
+        $publisher.IndexOf('Assert-ComponentPublicationFinalizerPreflight') | Should -BeLessThan $publisher.IndexOf('Invoke-SourceGate -Mode "Develop"')
         $publisher.LastIndexOf('Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path') | Should -BeLessThan $publisher.IndexOf('@("push", $script:Remote')
         $promotion = (Get-DeliveryFunctionDefinitions -Names @('Invoke-DevelopCompatibilityPromotion')).Extent.Text
         $promotion | Should -Match 'Restore-DevelopCompatibilityQualification'
@@ -355,6 +435,8 @@ if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'list') { exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'create') { 'https://github.com/fixture/repository/pull/17'; exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'view') { '17'; exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'merge') {
+    if ($CliArgs -contains '--rebase') { "GraphQL: This branch can't be rebased"; exit 33 }
+    if (-not ($CliArgs -contains '--squash')) { exit 34 }
     $line = @(& git --git-dir=$env:ITL_TEST_GH_REMOTE for-each-ref '--format=%(objectname) %(refname)' 'refs/heads/itl/release-master-*' | Select-Object -First 1)
     if (-not $line) { exit 31 }
     $parts = $line[0] -split ' ', 2

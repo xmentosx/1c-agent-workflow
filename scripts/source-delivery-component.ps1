@@ -427,6 +427,51 @@ function Get-OwnedComponentPublicationPlan {
     }
 }
 
+function Assert-ComponentPublicationFinalizerPreflight {
+    param(
+        [Parameter(Mandatory = $true)][string]$CandidateRoot,
+        [Parameter(Mandatory = $true)][string]$CandidateCommit,
+        [Parameter(Mandatory = $true)][object]$Plan
+    )
+
+    if ([string]$Plan.status -cne "planned" -or [string]$CandidateCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "Component publication preflight received an invalid candidate plan."
+    }
+    if ($script:ComponentFinalizerScript) {
+        if (-not (Test-Path -LiteralPath $script:ComponentFinalizerScript -PathType Leaf)) {
+            throw "Component finalizer seam was not found: $($script:ComponentFinalizerScript)"
+        }
+        $tokens = $null
+        $parseErrors = $null
+        [void][Management.Automation.Language.Parser]::ParseFile($script:ComponentFinalizerScript, [ref]$tokens, [ref]$parseErrors)
+        if (@($parseErrors).Count -gt 0) {
+            throw "Component finalizer seam has PowerShell parse errors: $($parseErrors[0].Message)"
+        }
+        return [pscustomobject]@{ status = "passed"; component = "test-seam"; candidateCommit = $CandidateCommit }
+    }
+
+    $components = @($Plan.components)
+    $expectedNames = @("aiRules1c", "itlOndemandMcp", "vanessaAutomation")
+    $actualNames = @($components | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    if (($actualNames -join "`n") -cne (($expectedNames | Sort-Object) -join "`n")) {
+        throw "Component publication plan must contain exactly: $($expectedNames -join ', ')."
+    }
+    foreach ($component in $components) {
+        if (-not [string]$component.status) { throw "Component publication plan '$([string]$component.name)' has no status." }
+        if ([bool]$component.releaseRequired -and -not [bool]$RequireRelease) {
+            throw "Component '$([string]$component.name)' requires Release qualification before finalization."
+        }
+    }
+
+    $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot
+    foreach ($property in @("owner", "repo", "slug")) {
+        if (-not $repository.PSObject.Properties[$property] -or -not [string]$repository.$property) {
+            throw "Component publication repository identity lacks '$property'."
+        }
+    }
+    return [pscustomobject]@{ status = "passed"; candidateCommit = $CandidateCommit; githubRepository = [string]$repository.slug }
+}
+
 function Invoke-ComponentPublicationFinalizer {
     param([string]$CandidateRoot, [string]$CandidateCommit)
     if (-not $script:ComponentFinalizerScript) {

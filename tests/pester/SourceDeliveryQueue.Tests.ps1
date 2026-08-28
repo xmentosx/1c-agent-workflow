@@ -1,13 +1,13 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
-It "parses the orchestrator and exposes only the four delivery actions" {
+It "parses the orchestrator and exposes the bounded delivery actions" {
         $tokens = $null
         $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($DeliveryScript, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
         $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
-        @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "ReleaseMaster")
+        @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "PromoteRelease", "ReleaseMaster")
         $text = $DeliverySourceText
         $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
         $text | Should -Match 'publication-attempts\\develop\.json'
@@ -16,6 +16,7 @@ It "parses the orchestrator and exposes only the four delivery actions" {
         $text | Should -Match 'same failure twice'
         $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
         $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
+        $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
     }
 
 It "resolves the repository root after parameter binding in Windows PowerShell 5.1" {

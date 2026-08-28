@@ -514,13 +514,17 @@ function Complete-InterruptedDevelopPublication {
     if (-not [bool]$installability.installable) { throw "Published develop is not installable; recovery will not report success." }
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
     Sync-LocalDevelopAfterPublish
-    if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
-    Remove-DevelopPublicationAttempt
+    $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
+    if (-not $retainAttempt) {
+        if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+        Remove-DevelopPublicationAttempt
+    }
     return [pscustomobject]@{
         status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree
         developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
         aiRulesCompatibility = [string]$installability.aiRulesStatus
         releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true
+        qualificationStartedAt = [string]$attempt.startedAt
     }
 }
 
@@ -555,9 +559,10 @@ function Publish-AccumulatedDevelop {
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
         if ([bool]$componentPlan.requiresRelease -and -not [bool]$RequireRelease) {
-            Write-Host "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
+            Write-Verbose "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
         }
         $RequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
+        [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         if (-not $attempt -or [string]$attempt.identity -ne $attemptIdentity) {
             $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree -ComponentPlan $componentPlan
         } elseif ($attempt.PSObject.Properties.Name -contains "componentPlan") {
@@ -575,6 +580,7 @@ function Publish-AccumulatedDevelop {
             $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+            [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
             $attempt.componentPlan = $componentPlan
             $attempt.candidate = $candidate
             $attempt.tree = $candidateTree
@@ -667,14 +673,18 @@ function Publish-AccumulatedDevelop {
         if ($remoteAfter -ne $candidate) { throw "Published develop verification failed: expected $candidate, remote reports $remoteAfter." }
         Clear-PublishedQueueEntries -PublishedCommit $candidate
         Sync-LocalDevelopAfterPublish
-        if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
-        Remove-DevelopPublicationAttempt
+        $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt
+        if (-not $retainAttempt) {
+            if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+            Remove-DevelopPublicationAttempt
+        }
         $deliverySucceeded = $true
         return [pscustomobject]@{
             status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $false
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
+            qualificationStartedAt = [string]$attempt.startedAt
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
@@ -791,9 +801,12 @@ function Publish-ReleaseThroughGitHubPullRequest {
             $pullRequest = (Invoke-DeliveryGitHubCli -Arguments @("pr", "view", $releaseBranch, "--repo", $Repository, "--json", "number", "--jq", ".number")).text.Trim()
         }
         if (-not $pullRequest) { throw "GitHub did not return a pull request number for the protected master release." }
-        $merged = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--rebase", "--delete-branch") -AllowFailure
-        if ($merged.exitCode -ne 0) {
-            throw "Qualified release PR #$pullRequest could not be merged: $($merged.text)"
+        $rebased = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--rebase", "--delete-branch") -AllowFailure
+        if ($rebased.exitCode -ne 0) {
+            $squashed = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--squash", "--delete-branch") -AllowFailure
+            if ($squashed.exitCode -ne 0) {
+                throw "Qualified release PR #$pullRequest could not be merged by rebase or squash. Rebase: $($rebased.text) Squash: $($squashed.text)"
+            }
         }
         [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("fetch", $script:Remote, "develop", "master"))
         $masterCommit = Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "master"
@@ -816,6 +829,12 @@ function Publish-ReleaseThroughGitHubPullRequest {
 }
 
 function Release-DevelopToMaster {
+    param(
+        [string]$PrequalifiedCommit = "",
+        [string]$PrequalifiedTree = "",
+        [DateTime]$PrequalifiedNotBefore = [DateTime]::MinValue,
+        [switch]$ReusePrequalifiedGates
+    )
     Assert-ReleaseVersionRequest
     Assert-CleanDeliveryWorktree
     if (@(Get-QueueEntries).Count -gt 0) { throw "ReleaseMaster requires an empty develop queue. Publish accumulated develop changes first." }
@@ -837,12 +856,21 @@ function Release-DevelopToMaster {
                 throw "origin/master conflicts with develop. Resolve the release reconciliation on develop and publish it first."
             }
         }
+        $candidateBeforeGate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
-        [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-        Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+        $qualificationReused = $false
+        if ($ReusePrequalifiedGates -and $candidateBeforeGate -ceq $PrequalifiedCommit -and $candidateTree -ceq $PrequalifiedTree -and
+            (Test-ExactPassedDeliveryRun -Mode "Develop" -Candidate $candidateBeforeGate -Tree $candidateTree -NotBefore $PrequalifiedNotBefore) -and
+            (Test-ExactPassedDeliveryRun -Mode "Release" -Candidate $candidateBeforeGate -Tree $candidateTree -NotBefore $PrequalifiedNotBefore)) {
+            $qualificationReused = $true
+            Write-Verbose "Release train reuses exact-candidate Develop and Release qualification; no runtime gate is repeated."
+        } else {
+            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
+            [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+            Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+        }
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         foreach ($oldHead in @($remoteDevelop, $remoteMaster)) {
             if ((Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge-base", "--is-ancestor", $oldHead, $candidate) -AllowFailure).exitCode -ne 0) {
@@ -873,10 +901,51 @@ function Release-DevelopToMaster {
             developCommit = $publication.developCommit; masterCommit = $publication.masterCommit
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
             aiRulesCompatibility = [string]$installability.aiRulesStatus
+            qualificationReused = $qualificationReused
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
         if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
         elseif ($worktree) { Write-Warning "Release candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). No force push was attempted." }
     }
+}
+
+function Promote-AccumulatedDevelopToMaster {
+    $entries = @(Get-QueueEntries)
+    if ($entries.Count -eq 0) {
+        [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
+        $remoteDevelop = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
+        $attempt = Read-DevelopPublicationAttempt
+        if ($attempt -and [bool]$attempt.requireRelease -and [string]$attempt.phase -eq "remote-pushed" -and [string]$attempt.candidate -eq $remoteDevelop -and
+            [string]$attempt.tree -eq (Get-GitValue -Arguments @("rev-parse", "$remoteDevelop^{tree}"))) {
+            Write-Verbose "PromoteRelease resumes the durable exact-candidate release train without repeating Develop or Release."
+            $released = Release-DevelopToMaster -PrequalifiedCommit $remoteDevelop -PrequalifiedTree ([string]$attempt.tree) -PrequalifiedNotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -ReusePrequalifiedGates
+            if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+            Remove-DevelopPublicationAttempt
+            $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
+            $released | Add-Member -NotePropertyName resumedReleaseTrain -NotePropertyValue $true -Force
+            return $released
+        }
+        Write-Verbose "PromoteRelease found no resumable train; using the ordinary ReleaseMaster qualification path."
+        return Release-DevelopToMaster
+    }
+
+    $script:RequireRelease = $true
+    $script:RetainDevelopPublicationAttempt = $true
+    $published = Publish-AccumulatedDevelop
+    if (-not [bool]$published.developPublished -or -not [bool]$published.releaseQualified) {
+        throw "PromoteRelease requires an exact candidate published to develop with Release qualification."
+    }
+    $notBefore = ConvertTo-DeliveryUtcDateTime -Value $published.qualificationStartedAt
+    $released = Release-DevelopToMaster `
+        -PrequalifiedCommit ([string]$published.commit) `
+        -PrequalifiedTree ([string]$published.tree) `
+        -PrequalifiedNotBefore $notBefore `
+        -ReusePrequalifiedGates
+    $attempt = Read-DevelopPublicationAttempt
+    if ($attempt -and $attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
+    Remove-DevelopPublicationAttempt
+    $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
+    $released | Add-Member -NotePropertyName developQualificationCommit -NotePropertyValue ([string]$published.commit) -Force
+    return $released
 }

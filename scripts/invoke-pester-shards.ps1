@@ -57,6 +57,13 @@ $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType 
 $script:pesterVanessaArchiveCandidates = @()
 $script:pesterExternalIdentityCache = @{}
 $script:pesterLegacyExternalIdentityCache = @{}
+$pesterExternalInputsByTest = @{}
+$pesterExternalInputsProperty = $catalog.PSObject.Properties["pesterExternalInputs"]
+if ($pesterExternalInputsProperty) {
+    foreach ($property in @($pesterExternalInputsProperty.Value.PSObject.Properties)) {
+        $pesterExternalInputsByTest[([string]$property.Name).Replace('\', '/')] = @($property.Value | ForEach-Object { [string]$_ })
+    }
+}
 $sharedInputs = @(
     "tests/pester/TestSupport.ps1", "scripts/run-pester-shard.ps1"
 )
@@ -236,7 +243,11 @@ function Get-ShardTrackedFileIdentity {
 }
 
 function Get-ShardInputDigest {
-    param([string[]]$Paths, [hashtable]$ExternalIdentityOverrides)
+    param(
+        [string[]]$Paths,
+        [hashtable]$ExternalIdentityOverrides,
+        [switch]$IncludeLegacyGlobalExternalInputs
+    )
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
@@ -246,7 +257,14 @@ function Get-ShardInputDigest {
     $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $pester) { return "" }
     $lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")
-    foreach ($name in @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")) {
+    $externalInputNames = if ($IncludeLegacyGlobalExternalInputs) {
+        @("ITL_AI_RULES_SOURCE_PATH", "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE")
+    } else {
+        @($relativeTests | ForEach-Object {
+            if ($pesterExternalInputsByTest.ContainsKey([string]$_)) { @($pesterExternalInputsByTest[[string]$_]) }
+        } | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    }
+    foreach ($name in $externalInputNames) {
         if ($ExternalIdentityOverrides -and $ExternalIdentityOverrides.ContainsKey($name)) { $lines.Add([string]$ExternalIdentityOverrides[$name]) }
         else { $lines.Add((Get-ExternalInputIdentity -Name $name)) }
     }
@@ -369,6 +387,23 @@ foreach ($item in $items) {
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $legacyDigests = New-Object System.Collections.Generic.List[string]
+    $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs
+    if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
+    $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
+    $requiredExternalInputs = $(if ($pesterExternalInputsByTest.ContainsKey($relativeItemPath)) { @($pesterExternalInputsByTest[$relativeItemPath]) } else { @() })
+    if ("ITL_AI_RULES_SOURCE_PATH" -notin $requiredExternalInputs) {
+        $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+            ITL_AI_RULES_SOURCE_PATH = "env:ITL_AI_RULES_SOURCE_PATH=<unset>"
+        }
+        if ($priorUnsetAiRulesDigest -and $priorUnsetAiRulesDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetAiRulesDigest)) { $legacyDigests.Add($priorUnsetAiRulesDigest) | Out-Null }
+    }
+    if ("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -notin $requiredExternalInputs) {
+        $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+            ITL_AI_RULES_SOURCE_PATH = $(if ("ITL_AI_RULES_SOURCE_PATH" -in $requiredExternalInputs) { Get-ExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" } else { "env:ITL_AI_RULES_SOURCE_PATH=<unset>" })
+            ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = "env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=<unset>"
+        }
+        if ($priorUnsetExternalDigest -and $priorUnsetExternalDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetExternalDigest)) { $legacyDigests.Add($priorUnsetExternalDigest) | Out-Null }
+    }
     if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
         $legacyAiRulesIdentity = Get-LegacyExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" -Value ([Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE_PATH", "Process"))
         foreach ($archiveCandidate in $script:pesterVanessaArchiveCandidates) {
@@ -376,7 +411,7 @@ foreach ($item in $items) {
                 ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
                 ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
             }
-            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides
+            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs
             if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
         }
     }

@@ -45,7 +45,9 @@ Describe "Local quality gate contract" {
         $ownedTests = @($catalog.contracts | ForEach-Object { @($_.tests) } | ForEach-Object { ([string]$_).Replace('\\','/') } | Sort-Object -Unique); @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot "tests\pester") -File -Filter "*.Tests.ps1" | ForEach-Object { "tests/pester/$($_.Name)" } | Where-Object { $_ -notin $ownedTests }) | Should -BeNullOrEmpty
         @(Get-PublicLifecycleActions -RepositoryRoot $RepoRoot).Count | Should -BeGreaterThan 50
         $known = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("docs/путь с пробелами/пример.md", "scripts/source-delivery.ps1"); @($known.unknownPaths) | Should -BeNullOrEmpty
-        @($known.tests) | Should -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        @($known.tests) | Should -Contain "tests/pester/SourceDeliveryQueue.Tests.ps1"
+        @($known.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
+        @($known.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
         $unknown = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("unowned/новый файл.ps1")
         @($unknown.unknownPaths) | Should -Be @("unowned/новый файл.ps1")
         $retired = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/TriageContract.Tests.ps1")
@@ -54,7 +56,7 @@ Describe "Local quality gate contract" {
         @($retiredDelivery.tests) | Should -Be @("tests/pester/SourceDeliveryPublish.Tests.ps1")
         $sourceRules = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("AGENTS.md")
         @($sourceRules.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
-        @($sourceRules.tests) | Should -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        @($sourceRules.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
         $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
         @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
         @($roctupOnly.tests) | Should -Be @("tests/pester/RoctupPortLifecycle.Tests.ps1")
@@ -89,11 +91,18 @@ Describe "Local quality gate contract" {
         $componentOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("scripts/source-delivery-component.ps1")
         @($componentOnly.contracts.id) | Should -Be @("source-delivery-component")
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
-        foreach ($gateLeaf in @("scripts/source-delivery-process.ps1", "scripts/source-delivery-queue.ps1", "scripts/source-delivery-candidate.ps1")) {
-            @($catalog.continuationScopes.gate) | Should -Contain $gateLeaf
+        $postGatePaths = @(
+            "scripts/source-delivery.ps1",
+            "scripts/source-delivery-process.ps1",
+            "scripts/source-delivery-queue.ps1",
+            "scripts/source-delivery-candidate.ps1",
+            "scripts/source-delivery-component.ps1",
+            "scripts/source-delivery-cleanup.ps1"
+        )
+        @($catalog.continuationScopes.deliveryPostGate) | Should -Be $postGatePaths
+        foreach ($postGatePath in $postGatePaths) {
+            @($catalog.continuationScopes.gate) | Should -Not -Contain $postGatePath
         }
-        @($catalog.continuationScopes.deliveryPostGate) | Should -Be @("scripts/source-delivery-component.ps1")
-        @($catalog.continuationScopes.gate) | Should -Not -Contain "scripts/source-delivery-component.ps1"
         @($catalog.contracts.paths | ForEach-Object { @($_) } | Where-Object { [string]$_ -in @("*", "**", "*/*") }) | Should -BeNullOrEmpty
         $catalog.PSObject.Properties["baseline"] | Should -BeNullOrEmpty
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
@@ -103,7 +112,7 @@ Describe "Local quality gate contract" {
         $check | Should -Match '-TimeoutSeconds \$pesterHardBudgetSeconds -ProgressPaths \(Join-Path \$outputRoot "pester-shards"\) -LogName "pester-shards"' -Because "the complete Pester inventory must use the catalog Full hard budget and treat shard artifacts as live progress"
         [int]$catalog.budgets.targetedHardSeconds | Should -BeGreaterOrEqual 1200
         [int]$catalog.budgets.fullHardSeconds | Should -BeGreaterOrEqual 1800
-        [int]($catalog.contracts | Where-Object id -eq "source-delivery").budgetSeconds | Should -BeGreaterOrEqual 1200
+        [int]($catalog.contracts | Where-Object id -eq "source-delivery-candidate").budgetSeconds | Should -BeGreaterOrEqual 1200
     }
     It "owns shard archive and cache hashing without Get-FileHash" {
         $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
@@ -158,6 +167,9 @@ Get-PesterShardFileSha256 -Path `$Path
         $check | Should -Match '\$canonicalHash -ne \$expectedHash -and \$byteHash -ne \$expectedHash'
         $check | Should -Match 'static-tracked-state'; $check | Should -Match ([regex]::Escape("-split ','"))
         foreach ($gateLeaf in @('source-delivery-process.ps1','source-delivery-queue.ps1','source-delivery-component.ps1','source-delivery-candidate.ps1')) { $check | Should -Match ([regex]::Escape($gateLeaf)) }
+        $delivery | Should -Match 'StatusDetail'; $delivery | Should -Match 'Invoke-SourceDeliveryPostSuccessCleanup'
+        $check | Should -Match 'infrastructure-retried-once'; $check | Should -Match 'retrySafeLeaf'
+        $check | Should -Match '\$plannedJourneys\.Count -gt 0 -and \$plannedJourneys\.Count -lt \$allJourneys\.Count'
         $qualification | Should -Match 'merge-base --is-ancestor'
         $promoter | Should -Match 'qualificationSha256'
         $promoter | Should -Match 'compatibilityStatus'
@@ -176,7 +188,7 @@ Get-PesterShardFileSha256 -Path `$Path
     It "removes an exact disposable E2E repository, worktree, and launcher registration" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-e2e-cleanup-" + [guid]::NewGuid().ToString("N")); $main = Join-Path $root "d-1234abcd"; $branch = Join-Path $root "d-1234abcd-develop-golden"; $launcher = Join-Path $root "appdata\1C\1CEStart\ibases.v8i"
         try { New-Item -ItemType Directory -Force -Path $main | Out-Null; & git -C $main init *> $null; & git -C $main config user.name "ITL Test"; & git -C $main config user.email "itl-test@example.invalid"
-            Set-Content -LiteralPath (Join-Path $main "value.txt") -Value "one" -Encoding ASCII; & git -C $main add value.txt; & git -C $main commit -m init *> $null; & git -C $main worktree add -b itldev/develop-golden $branch *> $null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
+            Set-Content -LiteralPath (Join-Path $main "value.txt") -Value "one" -Encoding ASCII; & git -C $main add value.txt; & git -C $main commit -m init *> $null; & git -C $main worktree add --quiet -b itldev/develop-golden $branch *> $null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $launcher) | Out-Null; $infoBase = Join-Path $branch ".agent-1c\infobases\dev-branches\develop-golden"; New-Item -ItemType Directory -Force -Path $infoBase | Out-Null
             @('[keep]','Connect=File="C:\keep";','Folder=/','', '[d-1234abcd-develop-golden]','Connect=File="C:\keep-duplicate";','Folder=/Other','', '[d-1234abcd-develop-golden]',"Connect=File=`"$infoBase`";",'Folder=/ITL/d-1234abcd','', '[d-1234abcd]','OrderInList=-1','Folder=/ITL') | Set-Content -LiteralPath $launcher -Encoding UTF8
             Remove-DevelopE2EFreshProject -FreshProjectsRoot $root -Path $main -BranchPath $branch -LauncherListPath $launcher; Test-Path -LiteralPath $main | Should -BeFalse; Test-Path -LiteralPath $branch | Should -BeFalse
@@ -190,6 +202,28 @@ Get-PesterShardFileSha256 -Path `$Path
             $missing = Join-Path $root "d-11111111-develop-golden\.agent-1c\infobases\dev-branches\develop-golden"; @('[d-11111111-develop-golden]',"Connect=File=`"$missing`";",'Folder=/ITL/d-11111111','', '[d-11111111]','OrderInList=-1','Folder=/ITL','', '[d-22222222-develop-golden]',"Connect=File=`"$existing`";",'Folder=/ITL/d-22222222','', '[d-22222222]','OrderInList=-1','Folder=/ITL','', '[user-base]','Connect=File="C:\user";','Folder=/') | Set-Content -LiteralPath $launcher -Encoding UTF8
             Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $root -LauncherListPath $launcher | Should -Be 1; $launcherText = Get-Content -LiteralPath $launcher -Raw -Encoding UTF8
             $launcherText | Should -Not -Match 'd-11111111'; $launcherText | Should -Match 'd-22222222-develop-golden'; $launcherText | Should -Match '\[user-base\]'
+        } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+    }
+    It "finds nested special-path fresh entries and retains only three launcher backups" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl nested launcher Проект " + [guid]::NewGuid().ToString("N")); $launcher = Join-Path $root "appdata\1C\1CEStart\ibases.v8i"
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $launcher) | Out-Null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
+            $missing = Join-Path $root "p Проект\d-11111111-develop-golden\.agent-1c\infobases\dev-branches\develop-golden"
+            @('[d-11111111-develop-golden]',"Connect=File=`"$missing`";",'Folder=/ITL/d-11111111','', '[d-11111111]','OrderInList=-1','Folder=/ITL') | Set-Content -LiteralPath $launcher -Encoding UTF8
+            1..5 | ForEach-Object { Copy-Item -LiteralPath $launcher -Destination "$launcher.2026082$_-120000-000.bak" }
+            Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $root -LauncherListPath $launcher | Should -Be 1
+            @(Get-ChildItem -LiteralPath (Split-Path -Parent $launcher) -Filter 'ibases.v8i.*.bak').Count | Should -Be 3
+            Get-Content -LiteralPath $launcher -Raw -Encoding UTF8 | Should -Not -Match 'd-11111111'
+        } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
+    }
+    It "removes only exact missing release-seed launcher entries" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl release launcher " + [guid]::NewGuid().ToString("N")); $launcher = Join-Path $root "appdata\1C\1CEStart\ibases.v8i"
+        try {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $launcher) | Out-Null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")
+            $missing = Join-Path $root 'itlsa-1234abcd\.agent-1c\infobases\dev-branches\release-seed-a-1234abcd'
+            @('[itl-workflow-e2e-pm5-release-seed-a-1234abcd]',"Connect=File=`"$missing`";",'Folder=/ITL/itl-workflow-e2e-pm5','', '[user-base]',"Connect=File=`"$missing`";",'Folder=/') | Set-Content -LiteralPath $launcher -Encoding UTF8
+            Remove-ReleaseE2EStaleLauncherRegistrations -LauncherListPath $launcher -SeedRoot $root | Should -Be 1
+            $text = Get-Content -LiteralPath $launcher -Raw -Encoding UTF8; $text | Should -Not -Match 'itl-workflow-e2e-pm5-release-seed'; $text | Should -Match '\[user-base\]'
         } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
     }
     It "removes verified Develop E2E CF exports while preserving unrelated result files" {
@@ -257,16 +291,32 @@ Get-PesterShardFileSha256 -Path `$Path
         try { New-Item -ItemType Directory -Force -Path $testRoot | Out-Null; & git -C $root init *> $null; & git -C $root config user.name "ITL Test"; & git -C $root config user.email "itl-test@example.invalid"; & git -C $root config core.autocrlf true
             $testPath = Join-Path $testRoot "Cache.Tests.ps1"; Set-Content -LiteralPath $testPath -Encoding UTF8 -Value "Describe 'cache' { It 'passes' { `$true | Should -BeTrue } }"
             $archiveOne = Join-Path $root "archive путь one.zip"; $archiveTwo = Join-Path $root "archive путь two.zip"; [IO.File]::WriteAllBytes($archiveOne, [byte[]](1,2,3,4)); [IO.File]::WriteAllBytes($archiveTwo, [byte[]](1,2,3,4))
-            $catalog = [ordered]@{ schemaVersion=1; contracts=@([ordered]@{id='cache';owner='fixture';primaryTest='tests/pester/Cache.Tests.ps1';gate='full';budgetSeconds=30;paths=@('fixture/*');tests=@('tests/pester/Cache.Tests.ps1')}) }; [IO.File]::WriteAllText((Join-Path $root "tests\quality-contracts.json"), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false)); $selectionPath=Join-Path $root 'selection.json'; [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/Cache.Tests.ps1"]}', [Text.UTF8Encoding]::new($false)); & git -C $root add --all; & git -C $root commit -m fixture *> $null
+            $catalog = [ordered]@{ schemaVersion=1; pesterExternalInputs=[ordered]@{'tests/pester/Cache.Tests.ps1'=@('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE')}; contracts=@([ordered]@{id='cache';owner='fixture';primaryTest='tests/pester/Cache.Tests.ps1';gate='full';budgetSeconds=30;paths=@('fixture/*');tests=@('tests/pester/Cache.Tests.ps1')}) }; [IO.File]::WriteAllText((Join-Path $root "tests\quality-contracts.json"), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false)); $selectionPath=Join-Path $root 'selection.json'; [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/Cache.Tests.ps1"]}', [Text.UTF8Encoding]::new($false)); & git -C $root add --all; & git -C $root commit -m fixture *> $null
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archiveOne
             $invoke = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"; $out1 = Join-Path $root "out1"; $firstRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out1, "-JunitPath", (Join-Path $out1 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $firstRun.exitCode | Should -Be 0 -Because ((@($firstRun.stdout) + @($firstRun.stderr)) -join [Environment]::NewLine); $first = ($firstRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             $digest = [string]$first.workers[0].inputDigest; $entryRoot = Join-Path $root ".git\itl\pester-shards\v1\$digest"; $nested = Join-Path $entryRoot ".$digest.fixture.tmp"; New-Item -ItemType Directory -Path $nested | Out-Null; Get-ChildItem -LiteralPath $entryRoot -File | Move-Item -Destination $nested
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archiveTwo
             $out2 = Join-Path $root "out2"; $secondRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out2, "-JunitPath", (Join-Path $out2 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $secondRun.exitCode | Should -Be 0; $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json; $first.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1
-            $lfText = (Get-Content -LiteralPath $testPath -Raw -Encoding UTF8).Replace("`r`n", "`n"); [IO.File]::WriteAllText($testPath, $lfText, [Text.UTF8Encoding]::new($true)); (& git -C $root diff --quiet -- "tests/pester/Cache.Tests.ps1"); $LASTEXITCODE | Should -Be 0
+            $originalBytes = [IO.File]::ReadAllBytes($testPath); $originalHasBom = $originalBytes.Length -ge 3 -and $originalBytes[0] -eq 0xEF -and $originalBytes[1] -eq 0xBB -and $originalBytes[2] -eq 0xBF
+            $lfText = (Get-Content -LiteralPath $testPath -Raw -Encoding UTF8).Replace("`r`n", "`n"); [IO.File]::WriteAllText($testPath, $lfText, [Text.UTF8Encoding]::new($originalHasBom)); (& git -C $root diff --quiet -- "tests/pester/Cache.Tests.ps1"); $LASTEXITCODE | Should -Be 0
             $out3 = Join-Path $root "out3"; $lineEndingRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out3, "-JunitPath", (Join-Path $out3 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $lineEndingRun.exitCode | Should -Be 0 -Because ((@($lineEndingRun.stdout) + @($lineEndingRun.stderr)) -join [Environment]::NewLine); $lineEnding = ($lineEndingRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json; $lineEnding.executedWorkerCount | Should -Be 0; $lineEnding.reusedWorkerCount | Should -Be 1; [string]$lineEnding.workers[0].inputDigest | Should -Be $digest
-            Add-Content -LiteralPath $testPath -Encoding UTF8 -Value "# changed owner input"; $out4 = Join-Path $root "out4"; $fourthRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out4, "-JunitPath", (Join-Path $out4 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $fourthRun.exitCode | Should -Be 0; $fourth = ($fourthRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json; $fourth.executedWorkerCount | Should -Be 1
+            [IO.File]::WriteAllBytes($archiveTwo, [byte[]](9,8,7,6)); $out4 = Join-Path $root "out4"; $externalRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out4, "-JunitPath", (Join-Path $out4 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $externalRun.exitCode | Should -Be 0; $external = ($externalRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json; $external.executedWorkerCount | Should -Be 1; [string]$external.workers[0].inputDigest | Should -Not -Be $digest
+            Add-Content -LiteralPath $testPath -Encoding UTF8 -Value "# changed owner input"; $out5 = Join-Path $root "out5"; $fifthRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out5, "-JunitPath", (Join-Path $out5 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $fifthRun.exitCode | Should -Be 0; $fifth = ($fifthRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json; $fifth.executedWorkerCount | Should -Be 1
         } finally { [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $previousArchive, 'Process'); Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "keeps undeclared external identities out of a shard digest" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-shard-external-scope-" + [guid]::NewGuid().ToString("N")); $testRoot = Join-Path $root "tests\pester"
+        $previousArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'Process'); $previousRules = [Environment]::GetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH', 'Process')
+        try {
+            New-Item -ItemType Directory -Force -Path $testRoot | Out-Null; & git -C $root init *> $null; & git -C $root config user.name "ITL Test"; & git -C $root config user.email "itl-test@example.invalid"
+            Set-Content -LiteralPath (Join-Path $testRoot "Cache.Tests.ps1") -Encoding UTF8 -Value "Describe 'cache' { It 'passes' { `$true | Should -BeTrue } }"
+            $archiveOne = Join-Path $root "archive один.zip"; $archiveTwo = Join-Path $root "archive два.zip"; [IO.File]::WriteAllBytes($archiveOne, [byte[]](1)); [IO.File]::WriteAllBytes($archiveTwo, [byte[]](2))
+            $rulesOne = Join-Path $root "rules один"; $rulesTwo = Join-Path $root "rules два"; New-Item -ItemType Directory -Path $rulesOne, $rulesTwo | Out-Null
+            $catalog = [ordered]@{ schemaVersion=1; pesterExternalInputs=[ordered]@{}; contracts=@([ordered]@{id='cache';owner='fixture';primaryTest='tests/pester/Cache.Tests.ps1';gate='full';budgetSeconds=30;paths=@('fixture/*');tests=@('tests/pester/Cache.Tests.ps1')}) }; [IO.File]::WriteAllText((Join-Path $root "tests\quality-contracts.json"), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false)); $selectionPath=Join-Path $root 'selection.json'; [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/Cache.Tests.ps1"]}', [Text.UTF8Encoding]::new($false)); & git -C $root add --all; & git -C $root commit -m fixture *> $null
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archiveOne; $env:ITL_AI_RULES_SOURCE_PATH = $rulesOne; $invoke = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"; $out1 = Join-Path $root "out1"; $firstRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out1, "-JunitPath", (Join-Path $out1 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $firstRun.exitCode | Should -Be 0; $first = ($firstRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archiveTwo; $env:ITL_AI_RULES_SOURCE_PATH = $rulesTwo; $out2 = Join-Path $root "out2"; $secondRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out2, "-JunitPath", (Join-Path $out2 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $secondRun.exitCode | Should -Be 0; $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $first.executedWorkerCount | Should -Be 1; $second.executedWorkerCount | Should -Be 0; $second.reusedWorkerCount | Should -Be 1; [string]$second.workers[0].inputDigest | Should -Be ([string]$first.workers[0].inputDigest)
+        } finally { [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $previousArchive, 'Process'); [Environment]::SetEnvironmentVariable('ITL_AI_RULES_SOURCE_PATH', $previousRules, 'Process'); Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
     It "reuses an unchanged passed test file across runner and neighboring test repairs" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl runner путь " + [guid]::NewGuid().ToString("N")); $testRoot = Join-Path $root "tests\pester"; $scriptRoot = Join-Path $root "scripts"

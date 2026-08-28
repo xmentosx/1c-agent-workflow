@@ -34,6 +34,7 @@
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |
 | `SOURCE_SERVER_NAME` | Сервер исходной базы | строка | init/user |
 | `SOURCE_INFOBASE_NAME` | Имя серверной исходной базы | строка | init/user |
+| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | Глубина исходного журнала для baseline сигнатур; `0` полностью отключает его чтение | целое `>=0`, default `7` | user |
 | `BASE_CONFIGURATION_VERSION` | Локальный override семейства конфигурации | `PM4`/`PM5`; пусто = project.json | user |
 | `IB_USER` | Пользователь копии базы | пусто = без имени | user/secret |
 | `IB_PASSWORD` | Пароль копии базы | пусто = без пароля | user/secret |
@@ -90,6 +91,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 |---|---|---|---|
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
+| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
 | `VERIFICATION_POLICY` | Политика result/close | `warn`/`block`, default `warn` | user |
 | `GITHUB_TOKEN` | GitHub API token | строка или пусто; имеет приоритет | user/secret |
 | `GH_TOKEN` | Fallback GitHub token | строка или пусто | user/secret |

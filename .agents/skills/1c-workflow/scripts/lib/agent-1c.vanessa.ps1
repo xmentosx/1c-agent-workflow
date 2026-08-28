@@ -2382,15 +2382,47 @@ function Test-OneCEventLogAppendOnlyChange {
     return $true
 }
 
+function Test-OneCEventLogSegmentMayOverlapBaselineWindow {
+    param(
+        [System.IO.FileInfo]$File,
+        [datetime]$StartTime
+    )
+
+    $stem = [System.IO.Path]::GetFileNameWithoutExtension($File.Name)
+    if ($stem -match '^(?<date>\d{8})') {
+        $segmentDate = [datetime]::MinValue
+        if ([datetime]::TryParseExact(
+            [string]$Matches.date,
+            "yyyyMMdd",
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeLocal,
+            [ref]$segmentDate
+        )) {
+            return $segmentDate.Date -ge $StartTime.Date
+        }
+    }
+
+    return $File.LastWriteTime -ge $StartTime
+}
+
 function Read-DevBranchEventLogBaselineWithCache {
-    param([object]$State)
+    param(
+        [object]$State,
+        [Nullable[datetime]]$StartTime = $null,
+        [switch]$BestEffort
+    )
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $logDirectory = Get-DevBranchEventLogDirectory -State $State
     $sourceKey = Get-DevBranchEventLogSourceKey -State $State
     $cacheRoot = Get-DevBranchEventLogSignatureCacheRoot -State $State
     $cachePath = Join-Path $cacheRoot ($sourceKey + ".json")
-    $files = @(Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue | Sort-Object Name)
+    $cacheWindowStart = if ($null -ne $StartTime) { ([datetime]$StartTime).ToUniversalTime().ToString("o") } else { "" }
+    $files = @(
+        Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue |
+            Where-Object { $null -eq $StartTime -or (Test-OneCEventLogSegmentMayOverlapBaselineWindow -File $_ -StartTime ([datetime]$StartTime)) } |
+            Sort-Object Name
+    )
 
     $cache = $null
     $cacheStatus = "rebuilt"
@@ -2401,8 +2433,12 @@ function Read-DevBranchEventLogBaselineWithCache {
                 [string](Get-StateValue -State $candidate -Name "sourceKey" -Default "") -ne $sourceKey) {
                 throw "incompatible cache schema or source key"
             }
-            $cache = $candidate
-            $cacheStatus = "hit"
+            if ([string](Get-StateValue -State $candidate -Name "windowStart" -Default "") -ne $cacheWindowStart) {
+                Write-Host "Event log signature cache window changed; rebuilding the bounded source baseline."
+            } else {
+                $cache = $candidate
+                $cacheStatus = "hit"
+            }
         } catch {
             Write-Host "[WARN] Event log signature cache is damaged or incompatible; rebuilding it: $cachePath"
             $cache = $null
@@ -2425,67 +2461,79 @@ function Read-DevBranchEventLogBaselineWithCache {
     $scannedBytes = [int64]0
     $appendSegmentCount = 0
     $fullSegmentCount = 0
+    $failures = @()
     foreach ($file in $files) {
-        $snapshot = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
-        $snapshotLength = [int64]$snapshot.Length
-        $lastWrite = $snapshot.LastWriteTimeUtc.ToString("o")
         $cached = if ($cachedByName.ContainsKey($file.Name)) { $cachedByName[$file.Name] } else { $null }
-        $unchanged = $null -ne $cached -and [int64]$cached.length -eq $snapshotLength -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
-        if ($unchanged) {
-            $segments += $cached
-            continue
-        }
+        $appendOnly = $false
+        try {
+            $snapshot = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
+            $snapshotLength = [int64]$snapshot.Length
+            $lastWrite = $snapshot.LastWriteTimeUtc.ToString("o")
+            $unchanged = $null -ne $cached -and [int64]$cached.length -eq $snapshotLength -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
+            if ($unchanged) {
+                $segments += $cached
+                continue
+            }
 
-        if ($cacheStatus -eq "hit") { $cacheStatus = "updated" }
-        $appendOnly = $null -ne $cached -and (Test-OneCEventLogAppendOnlyChange -File $snapshot -Cached $cached)
-        if ($appendOnly) {
-            $startOffset = [int64]$cached.length
-            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
-                path = $snapshot.FullName
-                startOffset = $startOffset
-                endOffset = $snapshotLength
-            }))
-            $signatures = @(
-                @($cached.signatures) + @($events | ForEach-Object { $_.signature }) |
-                    Where-Object { $_ } |
-                    Sort-Object -Unique
-            )
-            $errorCount = [int]$cached.errorCount + $events.Count
-            $scanMode = "append"
-            $scannedBytes += $snapshotLength - $startOffset
-            $appendSegmentCount++
-        } else {
-            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
-                path = $snapshot.FullName
-                startOffset = [int64]0
-                endOffset = $snapshotLength
-            }))
-            $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
-            $errorCount = $events.Count
-            $scanMode = "full"
-            $scannedBytes += $snapshotLength
-            $fullSegmentCount++
-        }
-        $proofFile = Get-Item -LiteralPath $snapshot.FullName -ErrorAction Stop
-        $proof = Get-OneCEventLogSegmentProof -File $proofFile -EndOffset $snapshotLength
-        if (-not [bool]$proof.completeBoundary) {
-            throw "EVENT_LOG_SEGMENT_UNSAFE_BOUNDARY: full rescan did not reach a complete record boundary: $($file.FullName)"
-        }
-        $segments += [ordered]@{
-            name = $snapshot.Name
-            length = $snapshotLength
-            lastWriteTimeUtc = $lastWrite
-            errorCount = $errorCount
-            signatureCount = $signatures.Count
-            signatures = @($signatures)
-            scanMode = $scanMode
-            creationTimeUtcTicks = $proof.creationTimeUtcTicks
-            prefixLength = $proof.prefixLength
-            prefixSha256 = $proof.prefixSha256
-            boundaryStart = $proof.boundaryStart
-            boundaryLength = $proof.boundaryLength
-            boundarySha256 = $proof.boundarySha256
-            completeBoundary = $proof.completeBoundary
+            if ($cacheStatus -eq "hit") { $cacheStatus = "updated" }
+            $appendOnly = $null -ne $cached -and (Test-OneCEventLogAppendOnlyChange -File $snapshot -Cached $cached)
+            if ($appendOnly) {
+                $startOffset = [int64]$cached.length
+                $events = @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                    path = $snapshot.FullName
+                    startOffset = $startOffset
+                    endOffset = $snapshotLength
+                }))
+                $signatures = @(
+                    @($cached.signatures) + @($events | ForEach-Object { $_.signature }) |
+                        Where-Object { $_ } |
+                        Sort-Object -Unique
+                )
+                $errorCount = [int]$cached.errorCount + $events.Count
+                $scanMode = "append"
+                $scannedBytes += $snapshotLength - $startOffset
+                $appendSegmentCount++
+            } else {
+                $events = @(Read-OneCEventLogDirect -State $State -StartTime $StartTime -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                    path = $snapshot.FullName
+                    startOffset = [int64]0
+                    endOffset = $snapshotLength
+                }))
+                $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+                $errorCount = $events.Count
+                $scanMode = "full"
+                $scannedBytes += $snapshotLength
+                $fullSegmentCount++
+            }
+            $proofFile = Get-Item -LiteralPath $snapshot.FullName -ErrorAction Stop
+            $proof = Get-OneCEventLogSegmentProof -File $proofFile -EndOffset $snapshotLength
+            if (-not [bool]$proof.completeBoundary) {
+                throw "EVENT_LOG_SEGMENT_UNSAFE_BOUNDARY: full rescan did not reach a complete record boundary: $($file.FullName)"
+            }
+            $segments += [ordered]@{
+                name = $snapshot.Name
+                length = $snapshotLength
+                lastWriteTimeUtc = $lastWrite
+                errorCount = $errorCount
+                signatureCount = $signatures.Count
+                signatures = @($signatures)
+                scanMode = $scanMode
+                creationTimeUtcTicks = $proof.creationTimeUtcTicks
+                prefixLength = $proof.prefixLength
+                prefixSha256 = $proof.prefixSha256
+                boundaryStart = $proof.boundaryStart
+                boundaryLength = $proof.boundaryLength
+                boundarySha256 = $proof.boundarySha256
+                completeBoundary = $proof.completeBoundary
+            }
+        } catch {
+            if (-not $BestEffort) { throw }
+            $failure = [ordered]@{ segment = $file.FullName; error = $_.Exception.Message }
+            $failures += $failure
+            Write-Host "[WARN] Source event log segment was skipped; seed baseline remains usable: $($file.FullName). $($_.Exception.Message)"
+            if ($appendOnly -and $null -ne $cached) {
+                $segments += $cached
+            }
         }
     }
 
@@ -2495,6 +2543,7 @@ function Read-DevBranchEventLogBaselineWithCache {
             schemaVersion = 2
             sourceKey = $sourceKey
             reader = "direct-stream"
+            windowStart = $cacheWindowStart
             updatedAt = (Get-Date).ToString("o")
             segments = @($segments)
         }
@@ -2519,6 +2568,8 @@ function Read-DevBranchEventLogBaselineWithCache {
         scannedBytes = $scannedBytes
         appendSegmentCount = $appendSegmentCount
         fullSegmentCount = $fullSegmentCount
+        failedSegmentCount = $failures.Count
+        failures = @($failures)
     }
 }
 

@@ -158,16 +158,30 @@ function Get-ItlVerificationRepairStatePath {
     return (Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json")
 }
 
+function Get-ItlVerificationRepairMaximumAttempts {
+    $rawValue = Get-EnvValue -Name "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS" -Default 5
+    $text = ([string]$rawValue).Trim()
+    $parsed = 0
+    if ($text -notmatch '^\d+$' -or
+        -not [int]::TryParse($text, [ref]$parsed) -or
+        $parsed -lt 1 -or
+        $parsed -gt 100) {
+        throw "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS must be an integer between 1 and 100. Actual: '$rawValue'."
+    }
+    return $parsed
+}
+
 function Start-ItlVerificationRepairSession {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "begin-verification-repair"
+    $maximumAttempts = Get-ItlVerificationRepairMaximumAttempts
     $record = [pscustomobject][ordered]@{
         schemaVersion = 1
         sessionId = [guid]::NewGuid().ToString("N")
         projectRoot = $script:ProjectRoot
         branch = Get-CurrentBranch
         attempts = 0
-        maximumAttempts = 3
+        maximumAttempts = $maximumAttempts
         status = "active"
         startedAt = (Get-Date).ToString("o")
         updatedAt = (Get-Date).ToString("o")
@@ -176,8 +190,8 @@ function Start-ItlVerificationRepairSession {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
     Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
     Write-Host "Repair session: $($record.sessionId)"
-    Write-Host "Repair attempts: 0/3"
-    Set-RunUserReport -Report "Repair session: $($record.sessionId). Repair attempts: 0/3."
+    Write-Host "Repair attempts: 0/$maximumAttempts"
+    Set-RunUserReport -Report "Repair session: $($record.sessionId). Repair attempts: 0/$maximumAttempts."
 }
 
 function Get-ItlMatchingVerificationRepairSession {
@@ -219,15 +233,22 @@ function Use-ItlVerificationRepairAttempt {
     if ($VerificationTrigger -ne "repair") { return }
     $record = Get-ItlMatchingVerificationRepairSession
     $path = Get-ItlVerificationRepairStatePath
-    if ([int]$record.attempts -ge 3) {
+    $maximumAttempts = 0
+    if ($null -eq $record.PSObject.Properties["maximumAttempts"] -or
+        -not [int]::TryParse(([string]$record.maximumAttempts), [ref]$maximumAttempts) -or
+        $maximumAttempts -lt 1 -or
+        $maximumAttempts -gt 100) {
+        throw "Repair session $($record.sessionId) has invalid maximumAttempts. Begin a new /itl-verify-fix invocation."
+    }
+    if ([int]$record.attempts -ge $maximumAttempts) {
         Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
-        throw "Repair session $($record.sessionId) exhausted its three full verification runs. Return blocker diagnostics; a fourth run is forbidden."
+        throw "Repair session $($record.sessionId) exhausted its $maximumAttempts full verification runs. Return blocker diagnostics; another full run is forbidden."
     }
     $record.attempts = [int]$record.attempts + 1
     $record.updatedAt = (Get-Date).ToString("o")
     Write-Utf8Text -Path $path -Value (($record | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
     Write-Host "Repair session: $($record.sessionId)"
-    Write-Host "Repair attempt: $($record.attempts)/3"
+    Write-Host "Repair attempt: $($record.attempts)/$maximumAttempts"
 }
 
 function Complete-ItlVerificationRepairSession {

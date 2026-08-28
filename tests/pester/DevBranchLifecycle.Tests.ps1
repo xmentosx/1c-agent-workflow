@@ -3052,6 +3052,7 @@
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS=1800"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_EVENT_LOG_READER=auto"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_LOOKBACK_DAYS=7"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "TESTMANAGER -> TESTCLIENT"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
     }
@@ -3453,6 +3454,91 @@
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "bounds the source baseline window and skips a damaged segment in best-effort mode" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-window-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $oldSegment = Join-Path $logDir "20260701.lgp"
+            $recentSegment = Join-Path $logDir "20260708.lgp"
+            $damagedSegment = Join-Path $logDir "20260709.lgp"
+            $unknownOldSegment = Join-Path $logDir "legacy-segment.lgp"
+            Set-Content -LiteralPath $oldSegment -Encoding UTF8 -Value '{20260701100000,E,"_$PerformError$_","Catalog.Items","Old","Outside segment window"}'
+            Set-Content -LiteralPath $recentSegment -Encoding UTF8 -Value @(
+                '{20260708100000,E,"_$PerformError$_","Catalog.Items","Old","Outside exact window"}',
+                '{20260708130000,E,"_$PerformError$_","Catalog.Items","New","Inside exact window"}'
+            )
+            Set-Content -LiteralPath $damagedSegment -Encoding UTF8 -Value '{20260709100000,E,"_$PerformError$_","Catalog.Items","Broken","Incomplete"'
+            Set-Content -LiteralPath $unknownOldSegment -Encoding UTF8 -Value '{20260708140000,E,"_$PerformError$_","Catalog.Items","Unknown","Old file"}'
+            (Get-Item -LiteralPath $unknownOldSegment).LastWriteTime = [datetime]"2026-07-01T00:00:00"
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $result = Read-DevBranchEventLogBaselineWithCache `
+                    -State $state `
+                    -StartTime ([datetime]"2026-07-08T12:00:00") `
+                    -BestEffort 6>$null
+
+                $result.errorCount | Should -Be 1
+                $result.signatureCount | Should -Be 1
+                $result.segmentCount | Should -Be 1
+                $result.failedSegmentCount | Should -Be 1
+                @($result.failures.segment) | Should -Contain $damagedSegment
+                $result.scannedBytes | Should -Be (Get-Item -LiteralPath $recentSegment).Length
+                $cache = Read-Utf8Text -Path $result.cachePath | ConvertFrom-Json
+                @($cache.segments.name) | Should -Be @("20260708.lgp")
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "disables source event-log reading when lookback is zero" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-disabled-test-" + [guid]::NewGuid().ToString("N"))
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return (Join-Path $tempRoot "missing-source") }
+                function Read-DevBranchEventLogBaselineWithCache { throw "reader must not be called" }
+                $baseline = Get-SourceEventLogSeedBaseline
+                $baseline.reader | Should -Be "disabled"
+                $baseline.lookbackDays | Should -Be 0
+                $baseline.signatureCount | Should -Be 0
+                $baseline.cache.status | Should -Be "disabled"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts source event-log lookback longer than seven days" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-SourceEventLogLookbackDays | Should -Be 365
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

@@ -17,7 +17,8 @@ closed instead of silently retesting or rewriting another range.
 `-CoverageContract` не нужен, если диапазон уже содержит изменённый Pester-тест.
 Регистрация сама выполняет `Targeted` и только после успеха атомарно записывает
 `base/head` под `refs/itl/develop-queue/*`. Эти refs общие для worktree, но не
-публикуются. `-Action Status` показывает очередь и накопительную историю
+публикуются. `-Action Status` показывает компактную очередь, текущую фазу и три
+последних запуска; `-StatusDetail Full` добавляет полные stage/test records
 успешных/неуспешных gate из общего Git-каталога `.git/itl/runs` со временем по режимам.
 
 ## Уровни проверки
@@ -45,13 +46,16 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 `.git/itl/pester-shards/v1`. Если файл падает, новые файлы больше не запускаются;
 после исправления уже прошедшие файлы берутся из cache, выполнение начинается с
 исправленного файла и продолжается дальше. Reuse возможен только при совпадении
-самого test-файла, всех входов его контрактов, общих runner/locks,
-версий PowerShell/Pester и identity controlled fork/Vanessa build. Неизвестный
-владелец теста отключает кэш для шарда. Провальные результаты не кэшируются.
+самого test-файла, всех входов его контрактов, общих runner/locks и версий
+PowerShell/Pester. Внешняя identity входит только для test-файлов, явно
+перечисленных в `pesterExternalInputs`; смена controlled fork или Vanessa build
+не сбрасывает не связанные с ними шарды. Неизвестный владелец теста отключает
+кэш для шарда. Провальные результаты не кэшируются.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
-ранние возможности. `tests/quality-contracts.json` объявляет четыре continuation
-scope: `static`, `gate`, `develop`, `release`. Между ancestor-кандидатом и новым
+ранние возможности. `tests/quality-contracts.json` объявляет пять continuation
+scope: `static`, `deliveryPostGate`, `gate`, `develop`, `release`. Между
+ancestor-кандидатом и новым
 commit все изменённые пути должны целиком принадлежать этим scope, а новый
 commit/tree должен иметь точный прошедший `Targeted` с неизменённым tracked state.
 Тогда Full/Develop evidence накладывается на этот Targeted и выполнение
@@ -121,11 +125,14 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 первой незавершённой фазы; сбой finalizer/push не повторяет gate. Новая identity
 кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
-`-RetryBlockedStage`. Scope `deliveryPostGate` сохраняет broad proof.
+`-RetryBlockedStage`. Scope `deliveryPostGate` включает только delivery control
+plane, покрытый собственными source-delivery regression-тестами. Его исправление
+сохраняет Full/Develop/Release proof установленного workflow; изменение реального
+gate/develop/release harness по-прежнему инвалидирует соответствующий proof.
 
 Успешный JSON явно различает каналы поставки: для `PublishDevelop` это
 `developPublished=true`, `dependenciesInstallable=true`, `masterReleased=false`
-и фактический `aiRulesCompatibility`; только `ReleaseMaster` возвращает
+и фактический `aiRulesCompatibility`; только `PromoteRelease` или `ReleaseMaster` возвращает
 `masterReleased=true`. Поэтому слово «опубликовать» без указания stable/master
 означает полностью устанавливаемый `origin/develop`, но не релиз в `master`.
 
@@ -158,12 +165,13 @@ live-отчётов. Каталог владельцев сопоставляе�
 input identity. Отсутствующая или несовместимая baseline qualification также
 закрыто переключает выполнение на обе journey.
 
-В текущем каталоге все владельцы установленного package участвуют в обеих
-journey: upgrade и fresh пересекают одни и те же bootstrap/lifecycle/runtime
-границы. Поэтому owner selection сейчас прежде всего исключает live 1C E2E для
-source-only и standalone-host изменений; независимые checkpoint уже не дают
-повторять прошедшую journey после сбоя второй. Разделять эти owner-наборы можно
-только вместе с фактическим устранением общей runtime-границы из одной journey.
+Маршруты различают наблюдаемое поведение: update/controlled-rules владельцы идут
+в `upgrade`, init/dependency/lifecycle/MCP владельцы — в `fresh`, а общие
+download/refresh/Vanessa границы — в обе journey. Source-delivery, документация,
+standalone host и прямые тесты не запускают live 1C journey. Если план пуст,
+точный Full плюс owner Targeted образуют явное `no-develop-journey-route`
+доказательство; искусственная baseline двух journey не требуется. Неизвестный
+путь и сама orchestration по-прежнему закрыто выбирают обе journey.
 
 ## Controlled fork и Full
 
@@ -188,7 +196,37 @@ commit и запускает финальный Develop. Прямой promoter �
 квалификации. Обычный не-promotion Full и Release требуют
 `compatibilityStatus=passed`.
 
-## Release в master
+## Единое продвижение develop и master
+
+Если одна поставка должна опубликовать непустую очередь сразу в оба канала,
+используется одна операция:
+
+```powershell
+.\scripts\source-delivery.ps1 -Action PromoteRelease `
+  -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
+  -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
+```
+
+Она строит один exact candidate, выполняет `Develop` и `Release`, публикует его в
+`develop`, затем выпускает то же дерево в `master`. Перед дорогими gate проходят
+installability, owned-component plan и read-only finalizer preflight. Второй
+`Develop`/`Release` перед master запрещён: reuse разрешается только при совпадении
+commit/tree и наличии двух passed run records, созданных текущей publication
+attempt. Если reconciliation с `master` меняет candidate, reuse закрывается и
+обычный release gate выполняется полностью.
+
+После публикации в `develop` release-train checkpoint остаётся в общем Git
+каталоге до подтверждённого `master`. Поэтому новый процесс `PromoteRelease`
+возобновляет тот же commit/tree и не повторяет уже прошедшие Develop/Release.
+
+После успешного `PublishDevelop`, `PromoteRelease` или `ReleaseMaster` запускается
+best-effort уборка: удаляются только worktree/ветки с точными ITL-generated
+именами, disposable fresh/release-seed стенды, отсутствующие записи `ibases.v8i`
+и старые backup списка баз (остаются три). Текущий/активный и настроенные
+release/develop стенды сохраняются; ошибка уборки возвращается как warning и не
+отменяет уже подтверждённую публикацию.
+
+## Release уже опубликованного develop в master
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action ReleaseMaster `
@@ -197,7 +235,8 @@ commit и запускает финальный Develop. Прямой promoter �
 ```
 
 Очередь должна быть пустой, а локальный `develop` совпадать с
-`origin/develop`. Оркестратор включает отсутствующие изменения текущего
+`origin/develop`. Этот маршрут нужен для уже опубликованного development channel;
+для непустой очереди используется `PromoteRelease`. Оркестратор включает отсутствующие изменения текущего
 `origin/master`, получает/reuses Develop proof точного дерева и запускает
 release-only E2E. Для GitHub он публикует временную release-ветку, создаёт или
 возобновляет PR в защищённый `master`, выполняет разрешённый linear-history
@@ -244,3 +283,8 @@ master and dedicated Develop stand worktrees. If a later journey fails, the retr
 both the static proof and every completed journey, then resumes with the first
 missing journey. A different tree, environment/fork/stand/package identity,
 missing evidence, or corrupt cache disables reuse for that evidence.
+
+Gate помечает сбой как owner или infrastructure. Только безопасные read-only
+leaf stages (`fork-check`, `ai-rules-compatibility`) получают один автоматический
+повтор при узко распознанной временной инфраструктурной ошибке. Pester, live 1C
+journey, Release E2E и assertion failures автоматически не повторяются.

@@ -206,7 +206,7 @@ Describe "Release gate scripts" {
         $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
         $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
         $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
-        $check | Should -Match 'schemaVersion = 3'
+        $check | Should -Match 'schemaVersion = 4'
         $check | Should -Match 'execution = "continued"'
         $check | Should -Match 'ExpectedIdentitySha256'
         $check | Should -Match 'ExpectedStandStateSha256'

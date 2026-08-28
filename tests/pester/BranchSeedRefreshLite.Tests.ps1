@@ -263,13 +263,13 @@
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $providerPath = Join-Path $tempRoot "provider.ps1"
             Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
-param([string]$Operation,[string]$ProjectRoot,[string]$SourceInfoBasePath)
+param([string]$Operation,[string]$ProjectRoot,[string]$SourceInfoBasePath,[int]$EventLogLookbackDays)
 if ($Operation -eq "capabilities") {
-    [pscustomobject]@{ schemaVersion = 2; capabilities = @("restore-seed","event-log-baseline") } | ConvertTo-Json -Compress
+    [pscustomobject]@{ schemaVersion = 2; capabilities = @("restore-seed","event-log-baseline","event-log-baseline-lookback") } | ConvertTo-Json -Compress
     exit 0
 }
 if ($Operation -eq "event-log-baseline") {
-    [pscustomobject]@{ schemaVersion = 2; errorCount = 2; signatures = @("server error","ошибка сервера"); cacheStatus = "hit"; sourceKey = "server" } | ConvertTo-Json -Compress
+    [pscustomobject]@{ schemaVersion = 2; errorCount = 2; signatures = @("server error","ошибка сервера"); cacheStatus = "hit"; sourceKey = "server"; lookbackDays = $EventLogLookbackDays; windowStart = "bounded" } | ConvertTo-Json -Compress
     exit 0
 }
 exit 1
@@ -284,9 +284,12 @@ exit 1
                 @($contract.capabilities) | Should -Contain "event-log-baseline"
                 function Get-InfoBaseKind { return "server" }
                 function Get-SourceInfoBasePath { return "server\base" }
+                function Get-SourceEventLogLookbackDays { return 7 }
                 $baseline = Get-SourceEventLogSeedBaseline
                 @($baseline.signatures) | Should -Be @("server error", "ошибка сервера")
                 $baseline.cache.status | Should -Be "hit"
+                $baseline.lookbackDays | Should -Be 7
+                $baseline.windowStart | Should -Be "bounded"
             }
 
             Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'

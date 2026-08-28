@@ -19,15 +19,16 @@
       "tests/fixtures/*"
     ],
     "deliveryPostGate": [
-      "scripts/source-delivery-component.ps1"
-    ],
-    "gate": [
-      "scripts/check.ps1",
-      "scripts/release-qualification.ps1",
       "scripts/source-delivery.ps1",
       "scripts/source-delivery-process.ps1",
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
+      "scripts/source-delivery-component.ps1",
+      "scripts/source-delivery-cleanup.ps1"
+    ],
+    "gate": [
+      "scripts/check.ps1",
+      "scripts/release-qualification.ps1",
       "scripts/develop-static-qualification.ps1",
       "scripts/develop-e2e-qualification.ps1",
       "scripts/git-path-list.ps1",
@@ -54,19 +55,16 @@
   "developJourneys": {
     "names": ["upgrade", "fresh"],
     "fullPaths": [
-      "scripts/source-delivery.ps1",
-      "scripts/source-delivery-candidate.ps1",
       "scripts/invoke-develop-e2e.ps1",
-      "scripts/develop-e2e-cleanup.ps1",
       "scripts/git-path-list.ps1",
       "scripts/quality-contracts.ps1"
     ],
     "routes": {
       "upgrade": {
-        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "branch-refresh-result", "vanessa-verification", "clients-rules"]
       },
       "fresh": {
-        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts"]
       }
     }
   },
@@ -82,6 +80,9 @@
     "tests/pester/SourceDelivery.Tests.ps1": "tests/pester/SourceDeliveryPublish.Tests.ps1",
     "tests/pester/TriageContract.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1",
     "tests/pester/VanessaTestGuide.Tests.ps1": "tests/pester/ParserDocsBudgets.Tests.ps1"
+  },
+  "pesterExternalInputs": {
+    "tests/pester/BootstrapUpdate.Tests.ps1": ["ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE"]
   },
   "contracts": [
     {
@@ -100,16 +101,43 @@
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
       "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
-      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
+      "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
-      "id": "source-delivery",
-      "owner": "develop and master delivery",
+      "id": "source-delivery-entrypoint",
+      "owner": "delivery entrypoint and status",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
+      "paths": ["scripts/source-delivery.ps1"],
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-candidate",
+      "owner": "develop and master candidate publication",
+      "gate": "targeted",
+      "budgetSeconds": 1200,
+      "primaryTest": "tests/pester/SourceDeliveryPublish.Tests.ps1",
+      "paths": ["scripts/source-delivery-candidate.ps1"],
+      "tests": ["tests/pester/SourceDeliveryPublish.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-cleanup",
+      "owner": "post-publication disposable runtime cleanup",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryCleanup.Tests.ps1",
+      "paths": ["scripts/source-delivery-cleanup.ps1", "scripts/develop-e2e-cleanup.ps1"],
+      "tests": ["tests/pester/SourceDeliveryCleanup.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-fixtures",
+      "owner": "delivery test fixtures",
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
-      "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-candidate.ps1", "scripts/git-path-list.ps1", "tests/pester/SourceDelivery.TestSupport.ps1", "AGENTS.md", "docs/local-quality-gate.md", "docs/release-checklist.md"],
-      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+      "paths": ["tests/pester/SourceDelivery.TestSupport.ps1"],
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
     },
     {
       "id": "source-delivery-process",
@@ -144,7 +172,7 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/develop-e2e-cleanup.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
       "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {
