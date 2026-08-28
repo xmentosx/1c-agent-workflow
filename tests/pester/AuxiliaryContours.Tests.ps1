@@ -1,4 +1,4 @@
-Describe "ITL auxiliary contour contract" {
+﻿Describe "ITL auxiliary contour contract" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
