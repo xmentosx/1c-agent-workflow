@@ -1,4 +1,4 @@
-BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
+﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
     It "promotes one exact qualified candidate through develop and master without repeating gates" {
