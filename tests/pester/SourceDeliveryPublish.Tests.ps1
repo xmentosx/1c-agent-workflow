@@ -435,6 +435,8 @@ if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'list') { exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'create') { 'https://github.com/fixture/repository/pull/17'; exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'view') { '17'; exit 0 }
 if ($CliArgs[0] -eq 'pr' -and $CliArgs[1] -eq 'merge') {
+    if ($CliArgs -contains '--rebase') { "GraphQL: This branch can't be rebased"; exit 33 }
+    if (-not ($CliArgs -contains '--squash')) { exit 34 }
     $line = @(& git --git-dir=$env:ITL_TEST_GH_REMOTE for-each-ref '--format=%(objectname) %(refname)' 'refs/heads/itl/release-master-*' | Select-Object -First 1)
     if (-not $line) { exit 31 }
     $parts = $line[0] -split ' ', 2

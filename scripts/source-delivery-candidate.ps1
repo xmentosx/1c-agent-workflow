@@ -801,9 +801,12 @@ function Publish-ReleaseThroughGitHubPullRequest {
             $pullRequest = (Invoke-DeliveryGitHubCli -Arguments @("pr", "view", $releaseBranch, "--repo", $Repository, "--json", "number", "--jq", ".number")).text.Trim()
         }
         if (-not $pullRequest) { throw "GitHub did not return a pull request number for the protected master release." }
-        $merged = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--rebase", "--delete-branch") -AllowFailure
-        if ($merged.exitCode -ne 0) {
-            throw "Qualified release PR #$pullRequest could not be merged: $($merged.text)"
+        $rebased = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--rebase", "--delete-branch") -AllowFailure
+        if ($rebased.exitCode -ne 0) {
+            $squashed = Invoke-DeliveryGitHubCli -Arguments @("pr", "merge", $pullRequest, "--repo", $Repository, "--squash", "--delete-branch") -AllowFailure
+            if ($squashed.exitCode -ne 0) {
+                throw "Qualified release PR #$pullRequest could not be merged by rebase or squash. Rebase: $($rebased.text) Squash: $($squashed.text)"
+            }
         }
         [void](Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("fetch", $script:Remote, "develop", "master"))
         $masterCommit = Get-ReleaseRemoteCommit -CandidateRoot $CandidateRoot -Branch "master"
