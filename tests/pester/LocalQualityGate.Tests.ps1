@@ -284,6 +284,11 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match 'legacyInputDigests'; $runner | Should -Match 'legacyArchiveCandidates'
         $runner | Should -Match 'rev-list --max-count=8 HEAD'; $runner | Should -Match 'recentRootByHead'
         $runner | Should -Match 'hash-object --path \$RelativePath -- \$AbsolutePath'
+        $runner | Should -Match 'ls-files", "-t", "-s", "-m", "-z"'
+        $runner | Should -Match 'pesterTrackedIdentityCache'
+        $runner | Should -Not -Match '& git -C \$RepositoryRoot diff --quiet'
+        $runner | Should -Match 'fingerprintPlanMs'; $runner | Should -Match 'cacheLookupMs'; $runner | Should -Match 'workerSpanMs'
+        $runner.IndexOf('$workerSpanStopwatch.Stop()') | Should -BeGreaterThan $runner.IndexOf('while (-not $stopScheduling -and $pendingSerial.Count -gt 0)')
         $runner | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
         $worker | Should -Match 'SpecialFolder\]::MyDocuments'
         $worker | Should -Match 'Invoke-Pester -Configuration'
@@ -302,7 +307,24 @@ Get-PesterShardFileSha256 -Path `$Path
             & git -C $root add --all; & git -C $root commit -m proven *> $null
             $out2 = Join-Path $root "out2"; $secondRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out2, "-JunitPath", (Join-Path $out2 "pester.xml"), "-WorkerCount", "1", "-SelectionPath", $selectionPath); $secondRun.exitCode | Should -Be 0 -Because ((@($secondRun.stdout) + @($secondRun.stderr)) -join [Environment]::NewLine); $second = ($secondRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             $first.executedWorkerCount | Should -Be 1; $second.reusedWorkerCount | Should -Be 1; [string]$second.workers[0].inputDigest | Should -Be ([string]$first.workers[0].inputDigest)
+            $second.legacyDigestCount | Should -Be 0
+            $second.fingerprintPlanMs | Should -BeGreaterOrEqual 0
+            $second.cacheLookupMs | Should -BeGreaterOrEqual 0
+            $second.workerSpanMs | Should -BeGreaterOrEqual 0
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    It "runs owner-selected upgrade before complete Pester and records shard timing metrics" {
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $early = $check.IndexOf('owner-selected fail-fast $journey journey before complete Pester')
+        $pester = $check.IndexOf('Invoke-GateStage -Name "pester"')
+        $early | Should -BeGreaterOrEqual 0
+        $early | Should -BeLessThan $pester
+        $check | Should -Match 'Set-StageMetrics -Name "pester"'
+        $check | Should -Match 'executedWorkerCount = \[int\]\$pesterShardSummary\.executedWorkerCount'
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        @($catalog.developJourneys.failFastOrder) | Should -Be @("upgrade")
+        @($catalog.developJourneys.routes.upgrade.contracts) | Should -Contain "lifecycle"
     }
     It "reuses only a passed shard with the same owner inputs" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-shard-cache-" + [guid]::NewGuid().ToString("N")); $testRoot = Join-Path $root "tests\pester"

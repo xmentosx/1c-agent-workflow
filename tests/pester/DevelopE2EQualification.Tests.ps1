@@ -243,18 +243,24 @@ Describe "Develop E2E journey qualification router" {
 
     It "recomputes mutable stand identity after a journey before checkpointing it" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\check.ps1') -Raw -Encoding UTF8
-        $journeyInvocation = $check.IndexOf('Invoke-PowerShellChild -ScriptPath $developScript', [StringComparison]::Ordinal)
-        $postJourneyIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $journeyInvocation, [StringComparison]::Ordinal)
+        $helperStart = $check.IndexOf('function Ensure-DevelopE2ERoute', [StringComparison]::Ordinal)
+        $helperEnd = $check.IndexOf('function ConvertTo-NativeArgument', $helperStart, [StringComparison]::Ordinal)
+        $journeyInvocation = $check.IndexOf('Invoke-PowerShellChild -ScriptPath $script:developScript', $helperStart, [StringComparison]::Ordinal)
+        $postJourneyIdentity = $check.IndexOf('$identitySha256 = Get-DevelopE2EIdentitySha256', $journeyInvocation, [StringComparison]::Ordinal)
         $routeReport = $check.IndexOf('$routeReport = New-DevelopE2ERouteReport', $journeyInvocation, [StringComparison]::Ordinal)
         $routeSave = $check.IndexOf('Save-DevelopE2EQualification', $journeyInvocation, [StringComparison]::Ordinal)
-        $postStageIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $routeSave, [StringComparison]::Ordinal)
-        $routeValidation = $check.IndexOf('Test-DevelopE2ERouteReport -Path $routePath', $routeSave, [StringComparison]::Ordinal)
+        $ensureCall = $check.IndexOf('$routePath = Ensure-DevelopE2ERoute', $helperEnd, [StringComparison]::Ordinal)
+        $postStageIdentity = $check.IndexOf('$developIdentitySha256 = Get-DevelopE2EIdentitySha256', $ensureCall, [StringComparison]::Ordinal)
+        $routeValidation = $check.IndexOf('Test-DevelopE2ERouteReport -Path $routePath', $postStageIdentity, [StringComparison]::Ordinal)
 
+        $helperStart | Should -BeGreaterThan -1
+        $helperEnd | Should -BeGreaterThan $helperStart
         $journeyInvocation | Should -BeGreaterThan -1
         $postJourneyIdentity | Should -BeGreaterThan $journeyInvocation
         $routeReport | Should -BeGreaterThan $postJourneyIdentity
         $routeSave | Should -BeGreaterThan $routeReport
-        $postStageIdentity | Should -BeGreaterThan $routeSave
+        $ensureCall | Should -BeGreaterThan $helperEnd
+        $postStageIdentity | Should -BeGreaterThan $ensureCall
         $routeValidation | Should -BeGreaterThan $postStageIdentity
     }
 }

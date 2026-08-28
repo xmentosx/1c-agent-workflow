@@ -159,15 +159,19 @@ Describe "Develop static qualification cache" {
         $match.reuseKind | Should -Be "independent-exact-tree"
     }
 
-    It "wires restore before Full validation and save before Develop E2E" {
+    It "wires restore before Full validation, fail-fast E2E before Pester, and save before final route composition" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
         $restoreIndex = $check.IndexOf('Get-DevelopStaticQualificationCacheMatch', [StringComparison]::Ordinal)
         $validationIndex = $check.IndexOf('-AllowIndependentExactTree:$AllowIndependentExactTree', [StringComparison]::Ordinal)
+        $earlyE2EIndex = $check.IndexOf('[void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan', [StringComparison]::Ordinal)
+        $pesterIndex = $check.IndexOf('Invoke-GateStage -Name "pester"', [StringComparison]::Ordinal)
         $saveIndex = $check.IndexOf('Save-DevelopStaticQualification', [StringComparison]::Ordinal)
-        $e2eIndex = $check.IndexOf('Invoke-GateStage -Name "develop-e2e-$journey"', [StringComparison]::Ordinal)
+        $finalE2EIndex = $check.IndexOf('$routePath = Ensure-DevelopE2ERoute -Journey $journey -Plan $effectivePlan', [StringComparison]::Ordinal)
         $restoreIndex | Should -BeGreaterThan -1
         $validationIndex | Should -BeGreaterThan $restoreIndex
-        $saveIndex | Should -BeGreaterThan $validationIndex
-        $e2eIndex | Should -BeGreaterThan $saveIndex
+        $earlyE2EIndex | Should -BeGreaterThan -1
+        $pesterIndex | Should -BeGreaterThan $earlyE2EIndex
+        $saveIndex | Should -BeGreaterThan $pesterIndex
+        $finalE2EIndex | Should -BeGreaterThan $saveIndex
     }
 }

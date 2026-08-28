@@ -54,6 +54,7 @@
   },
   "developJourneys": {
     "names": ["upgrade", "fresh"],
+    "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
       "scripts/git-path-list.ps1",
@@ -61,7 +62,7 @@
     ],
     "routes": {
       "upgrade": {
-        "contracts": ["immutable-download", "bootstrap-update", "branch-refresh-result", "vanessa-verification", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "lifecycle", "branch-refresh-result", "vanessa-verification", "clients-rules"]
       },
       "fresh": {
         "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts"]
@@ -100,7 +101,7 @@
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
-      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
+      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
       "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
@@ -178,7 +179,7 @@
       "gate": "develop",
       "budgetSeconds": 5400,
       "primaryTest": "tests/pester/ReleaseGate.Tests.ps1",
-      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-release-readiness.ps1"],
+      "paths": ["scripts/invoke-develop-e2e.ps1", "scripts/invoke-release-e2e.ps1", "scripts/release-e2e/*", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1"],
       "tests": ["tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/ReleaseUnsafeActionProtection.Tests.ps1"]
     },
     {

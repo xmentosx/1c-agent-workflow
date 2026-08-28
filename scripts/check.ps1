@@ -86,6 +86,7 @@ $stages = New-Object System.Collections.Generic.List[object]
 $pesterResult = $null
 $qualifiedResult = $null
 $pesterVersion = ""
+$pesterShardSummary = $null
 $failure = $null
 $aiRulesRelease = $null
 $forkSourceRoot = ""
@@ -93,6 +94,10 @@ $forkQualificationPath = ""
 $forkQualificationSha256 = ""
 $e2eReportPath = ""
 $developE2EReportPath = ""
+$developPlan = $null
+$developScript = ""
+$developRulesSource = ""
+$developQualificationRoot = ""
 $reuseQualification = $false
 $qualificationReuseKind = ""
 $existingQualification = $null
@@ -167,6 +172,49 @@ function Add-ReusedStage {
 function Add-SkippedStage {
     param([string]$Name, [string]$Reason, [string]$Detail = "")
     Add-StageResult -Name $Name -Status "skipped" -Execution "skipped" -Reason $Reason -Detail $Detail -StartedAt ([DateTime]::UtcNow) -DurationMs 0
+}
+
+function Set-StageMetrics {
+    param([string]$Name, [object]$Metrics)
+    if (-not $Metrics) { return }
+    $stage = @($script:stages | Where-Object { [string]$_['name'] -eq $Name } | Select-Object -Last 1)
+    if ($stage.Count -eq 0) { return }
+    $stage[0]['metrics'] = $Metrics
+}
+
+function Ensure-DevelopE2ERoute {
+    param(
+        [Parameter(Mandatory = $true)][string]$Journey,
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [string]$Reason = "owner-selected public journey"
+    )
+    $routePath = Join-Path $script:developQualificationRoot ("develop-e2e-$Journey.json")
+    $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+    $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
+    if (Restore-DevelopE2EQualification -RepositoryRoot $repoRoot -OutputPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256) {
+        if (@($script:stages | Where-Object { [string]$_['name'] -eq "develop-e2e-$Journey" }).Count -eq 0) {
+            Add-ReusedStage -Name "develop-e2e-$Journey" -Reason "exact-tree SHA-verified journey checkpoint" -Detail $routePath
+        }
+        return $routePath
+    }
+
+    $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
+    Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
+        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey) -TimeoutSeconds 5400 -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
+        if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
+        $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $result = @($raw.journeys | Where-Object { [string]$_.name -eq $Journey }) | Select-Object -First 1
+        if ([int]$raw.schemaVersion -ne 2 -or [string]$raw.kind -ne "itl-develop-e2e" -or [string]$raw.status -ne "passed" -or
+            [string]$raw.candidate.tree -ne $tree -or @($raw.requestedJourneys).Count -ne 1 -or [string]$raw.requestedJourneys[0] -ne $Journey -or [string]$result.status -ne "passed") {
+            throw "Develop E2E $Journey did not qualify the exact candidate tree: $([string]$raw.error)"
+        }
+        $identitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $script:releaseContext -ForkIdentity $script:aiRulesRelease -ProjectRoot $E2EProjectRoot
+        $standStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
+        $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $Plan -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256 -JourneyResult $result
+        [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $Journey -IdentitySha256 $identitySha256 -StandStateSha256 $standStateSha256)
+    } | Out-Null
+    return $routePath
 }
 
 function ConvertTo-NativeArgument {
@@ -396,6 +444,7 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\develop-static-qualification.ps1"),
         (Join-Path $repoRoot "scripts\develop-e2e-qualification.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
+        (Join-Path $repoRoot "scripts\test-powershell-encoding.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
@@ -698,6 +747,17 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "git diff --check failed." }
     } | Out-Null
 
+    if ($effectiveMode -eq "Targeted") {
+        $encodingPath = Join-Path $outputRoot "powershell-encoding.json"
+        Invoke-GateStage -Name "powershell-encoding" -Reason "register-time Windows PowerShell 5.1 encoding preflight" -Detail $encodingPath -Body {
+            $encodingArguments = @("-RepositoryRoot", $repoRoot, "-OutputPath", $encodingPath)
+            if ($BaseRef) { $encodingArguments += @("-BaseRef", $BaseRef) }
+            Invoke-PowerShellChild -ScriptPath (Join-Path $repoRoot "scripts\test-powershell-encoding.ps1") -Arguments $encodingArguments -TimeoutSeconds 120 -NoProgressSeconds 90 -LogName "powershell-encoding"
+            $encoding = Get-Content -LiteralPath $encodingPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$encoding.status -ne "passed") { throw "PowerShell encoding preflight reports '$([string]$encoding.status)'." }
+        } | Out-Null
+    }
+
     if ($effectiveMode -in @("Full", "Develop", "Release")) {
         $releaseContextPath = Join-Path $outputRoot "release-context.json"
         $readinessScript = Join-Path $repoRoot "scripts\test-release-readiness.ps1"
@@ -716,6 +776,29 @@ try {
             if (-not $archivePath) { throw "Release readiness did not resolve the Vanessa Automation archive." }
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archivePath
         } | Out-Null
+    }
+
+    if ($effectiveMode -eq "Develop") {
+        if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
+        $script:developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
+        $script:developRulesSource = $(if ($aiRulesRelease -and [string]$aiRulesRelease.sourceRoot) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
+        if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
+        $script:developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
+        $script:developQualificationRoot = Split-Path -Parent $developQualificationFullPath
+        New-Item -ItemType Directory -Force -Path $developQualificationRoot | Out-Null
+        $earlyPlan = [pscustomobject][ordered]@{
+            schemaVersion = 1; kind = "itl-develop-e2e-journey-plan"; reason = [string]$developPlan.reason
+            paths = @($developPlan.paths); contracts = @($developPlan.contracts); journeys = @($developPlan.journeys)
+            unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
+        }
+        $plannedEarlyJourneys = @($developPlan.journeys | ForEach-Object { [string]$_ })
+        $allDevelopJourneys = @($qualityCatalog.developJourneys.names | ForEach-Object { [string]$_ })
+        $canRunFailFast = @($allDevelopJourneys | Where-Object { $_ -notin $plannedEarlyJourneys }).Count -eq 0
+        foreach ($journey in @($qualityCatalog.developJourneys.failFastOrder | ForEach-Object { [string]$_ })) {
+            if (-not $canRunFailFast) { continue }
+            if ($journey -notin @($developPlan.journeys | ForEach-Object { [string]$_ })) { continue }
+            [void](Ensure-DevelopE2ERoute -Journey $journey -Plan $earlyPlan -Reason "owner-selected fail-fast $journey journey before complete Pester")
+        }
     }
 
     $releaseDevelopIdentitySha256 = ""
@@ -790,6 +873,7 @@ try {
                     $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
                     Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
                     $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $script:pesterShardSummary = $selectionResult
                 } else {
                     $planPath = Join-Path $outputRoot "pester-selection-plan.json"; $resultPath = Join-Path $outputRoot "pester-selection-result.json"
                     $plan = [ordered]@{ schemaVersion = 1; worker = 0; paths = @($selection.tests) }
@@ -807,11 +891,23 @@ try {
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
                 if (-not (Test-Path -LiteralPath $shardSummaryPath -PathType Leaf)) { throw "Pester shard summary was not created." }
                 $shardSummary = Get-Content -LiteralPath $shardSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $script:pesterShardSummary = $shardSummary
                 $script:pesterVersion = [string]$shardSummary.pesterVersion
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$shardSummary.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$shardSummary.passed; FailedCount = [int]$shardSummary.failed; SkippedCount = [int]$shardSummary.skipped }
             }
             if ([string]$script:pesterResult.Result -ne "Passed") { throw "Pester did not pass: result=$($script:pesterResult.Result), failed=$($script:pesterResult.FailedCount)." }
         } | Out-Null
+        if ($pesterShardSummary) {
+            Set-StageMetrics -Name "pester" -Metrics ([ordered]@{
+                executedWorkerCount = [int]$pesterShardSummary.executedWorkerCount
+                reusedWorkerCount = [int]$pesterShardSummary.reusedWorkerCount
+                fingerprintPlanMs = [int64]$pesterShardSummary.fingerprintPlanMs
+                cacheLookupMs = [int64]$pesterShardSummary.cacheLookupMs
+                workerSpanMs = [int64]$pesterShardSummary.workerSpanMs
+                identityInventoryMs = [int64]$pesterShardSummary.identityInventoryMs
+                legacyDigestCount = [int]$pesterShardSummary.legacyDigestCount
+            })
+        }
     }
 
     if ($effectiveMode -in @("Full", "Develop", "Release")) {
@@ -890,10 +986,6 @@ try {
 
     if ($effectiveMode -eq "Develop") {
         $developE2EReportPath = Join-Path $outputRoot "develop-e2e-summary.json"
-        $developScript = Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"
-        $developRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
-        if (-not $developRulesSource) { throw "Develop E2E requires a local exact controlled-fork checkout." }
-        if (-not $BaseRef) { throw "Develop E2E requires BaseRef so live journey ownership cannot be inferred from an unbounded candidate." }
         $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
         $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
         $developFullProof = if ($existingQualification) { [pscustomobject]@{ qualification = $existingQualification } } else { $null }
@@ -901,8 +993,7 @@ try {
         if ($exactDevelopProof -and [string]$exactDevelopProof.reuseKind -in @("exact-commit", "ancestor-same-tree")) {
             Add-ReusedStage -Name "develop-e2e" -Reason "exact route-aware Develop qualification" -Detail $developQualificationFullPath
         } else {
-        $developPlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -BaseRef $BaseRef -Catalog $qualityCatalog
-        $qualificationRoot = Split-Path -Parent $developQualificationFullPath
+        $qualificationRoot = $developQualificationRoot
         New-Item -ItemType Directory -Force -Path $qualificationRoot | Out-Null
         $routeRecords = [ordered]@{}
         $plannedJourneys = @($developPlan.journeys | ForEach-Object { [string]$_ })
@@ -950,29 +1041,7 @@ try {
             unknownPaths = @($developPlan.unknownPaths); matchedFullPaths = @($developPlan.matchedFullPaths)
         }
         foreach ($journey in $plannedJourneys) {
-            $routePath = Join-Path $qualificationRoot ("develop-e2e-$journey.json")
-            $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
-            $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
-            if (Restore-DevelopE2EQualification -RepositoryRoot $repoRoot -OutputPath $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256) {
-                Add-ReusedStage -Name "develop-e2e-$journey" -Reason "exact-tree SHA-verified journey checkpoint" -Detail $routePath
-            } else {
-                $rawPath = Join-Path $outputRoot ("develop-e2e-$journey-raw.json")
-                Invoke-GateStage -Name "develop-e2e-$journey" -Reason "owner-selected public $journey journey" -Detail $rawPath -Body {
-                    Invoke-PowerShellChild -ScriptPath $developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $developRulesSource, "-OutputPath", $rawPath, "-Journey", $journey) -TimeoutSeconds 5400 -NoProgressSeconds 900 -LogName "develop-e2e-$journey"
-                    if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $journey summary was not created." }
-                    $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                    $result = @($raw.journeys | Where-Object { [string]$_.name -eq $journey }) | Select-Object -First 1
-                    if ([int]$raw.schemaVersion -ne 2 -or [string]$raw.kind -ne "itl-develop-e2e" -or [string]$raw.status -ne "passed" -or
-                        [string]$raw.candidate.tree -ne $tree -or @($raw.requestedJourneys).Count -ne 1 -or [string]$raw.requestedJourneys[0] -ne $journey -or [string]$result.status -ne "passed") {
-                        throw "Develop E2E $journey did not qualify the exact candidate tree: $([string]$raw.error)"
-                    }
-                    $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
-                    $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
-                    $routeReport = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $effectivePlan -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256 -JourneyResult $result
-                    [IO.File]::WriteAllText($routePath, (($routeReport | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-                    [void](Save-DevelopE2EQualification -RepositoryRoot $repoRoot -ReportPath $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)
-                } | Out-Null
-            }
+            $routePath = Ensure-DevelopE2ERoute -Journey $journey -Plan $effectivePlan -Reason "owner-selected public $journey journey"
             $developIdentitySha256 = Get-DevelopE2EIdentitySha256 -ReleaseContext $releaseContext -ForkIdentity $aiRulesRelease -ProjectRoot $E2EProjectRoot
             $developStandStateSha256 = Get-DevelopE2EStandStateSha256 -ProjectRoot $E2EProjectRoot
             if (-not (Test-DevelopE2ERouteReport -Path $routePath -Tree $tree -Journey $journey -IdentitySha256 $developIdentitySha256 -StandStateSha256 $developStandStateSha256)) { throw "Develop E2E $journey route proof is invalid after execution or restore." }
