@@ -2633,22 +2633,34 @@
 
             $cfDirectory = Join-Path $tempRoot "src\cf\Каталог с пробелом"
             $cfeDirectory = Join-Path $tempRoot "src\cfe\Расширение с пробелом\Ext"
-            New-Item -ItemType Directory -Force -Path $cfDirectory, $cfeDirectory | Out-Null
+            $auxiliaryDirectory = Join-Path $tempRoot "src\configs\Обмен с пробелом\cf"
+            New-Item -ItemType Directory -Force -Path $cfDirectory, $cfeDirectory, $auxiliaryDirectory | Out-Null
             $branchPath = "src/cf/Каталог с пробелом/Модуль.bsl"
             $lfPath = "src/cf/Каталог с пробелом/Только LF.xml"
             $mixedPath = "src/cf/Каталог с пробелом/Смешанный.xml"
             $binaryPath = "src/cfe/Расширение с пробелом/Ext/Данные.bin"
+            $auxiliaryPath = "src/configs/Обмен с пробелом/cf/Модуль.bsl"
             $utf8 = [System.Text.UTF8Encoding]::new($false)
             $baseBranchBytes = $utf8.GetBytes("Строка1`r`nСтрока2`r`n")
             $branchBytes = $utf8.GetBytes("Строка1`r`nИзменение ветки`r`n")
             $lfBytes = $utf8.GetBytes("<root>`n  <value>ЛФ</value>`n</root>`n")
             $mixedBytes = $utf8.GetBytes("<root>`r`n  <value>mixed</value>`n</root>`r`n")
             $binaryBytes = [byte[]](0, 13, 10, 255, 1, 10, 2, 13, 10, 0)
-            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ".gitattributes"), $utf8.GetBytes("*.md text eol=lf`n"))
+            $baseAuxiliaryBytes = $utf8.GetBytes("Строка1`r`nИсходный обмен`r`n")
+            $branchAuxiliaryBytes = $utf8.GetBytes("Строка1`r`nИзменение обмена`r`n")
+            $legacyAttributes = @(
+                "*.md text eol=lf",
+                "# BEGIN ITL MANAGED: preserve 1C source bytes",
+                "src/cf/** -text",
+                "src/cfe/** -text",
+                "# END ITL MANAGED: preserve 1C source bytes"
+            ) -join "`n"
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ".gitattributes"), $utf8.GetBytes($legacyAttributes + "`n"))
             [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($branchPath.Replace("/", "\"))), $baseBranchBytes)
             [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($lfPath.Replace("/", "\"))), $lfBytes)
             [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($mixedPath.Replace("/", "\"))), $mixedBytes)
             [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($binaryPath.Replace("/", "\"))), $binaryBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($auxiliaryPath.Replace("/", "\"))), $baseAuxiliaryBytes)
             & git -C $tempRoot add --all
             & git -C $tempRoot commit --quiet -m "baseline before byte contract"
             & git -C $tempRoot branch "itldev/байты"
@@ -2660,11 +2672,13 @@
             $masterCommitted | Should -BeTrue
             $masterCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
             (& git -C $tempRoot check-attr text -- $branchPath) | Should -Match 'text: unset'
+            (& git -C $tempRoot check-attr text -- $auxiliaryPath) | Should -Match 'text: unset'
 
             & git -C $tempRoot checkout --quiet "itldev/байты"
             & git -C $tempRoot reset --hard --quiet HEAD
             [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($branchPath.Replace("/", "\"))), $branchBytes)
-            & git -C $tempRoot add -- $branchPath
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($auxiliaryPath.Replace("/", "\"))), $branchAuxiliaryBytes)
+            & git -C $tempRoot add -- $branchPath $auxiliaryPath
             & git -C $tempRoot commit --quiet -m "branch source change"
             $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
 
@@ -2678,12 +2692,14 @@
             & git -C $tempRoot worktree add --detach --quiet $checkoutRoot HEAD
             $attributesText = [System.IO.File]::ReadAllText((Join-Path $checkoutRoot ".gitattributes"))
             $attributesText | Should -Match '^\*\.md text eol=lf'
+            $attributesText | Should -Match 'src/configs/\*\* -text'
             $attributesText.TrimEnd() | Should -Match '# END ITL MANAGED: preserve 1C source bytes$'
             $expectedByPath = [ordered]@{
                 $branchPath = $branchBytes
                 $lfPath = $lfBytes
                 $mixedPath = $mixedBytes
                 $binaryPath = $binaryBytes
+                $auxiliaryPath = $branchAuxiliaryBytes
             }
             foreach ($entry in $expectedByPath.GetEnumerator()) {
                 $actual = [System.IO.File]::ReadAllBytes((Join-Path $checkoutRoot ($entry.Key.Replace("/", "\"))))

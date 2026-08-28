@@ -5947,9 +5947,13 @@ function Commit-AuthoritativeExportPathIfChanged {
     }
     $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
 
-    Ensure-OneCSourceGitAttributes | Out-Null
+    $attributesChanged = Ensure-OneCSourceGitAttributes
     Invoke-Git @("add", "--", ".gitattributes")
-    $sourcePaths = @(Rebuild-OneCSourceGitIndex -SourcePaths @($repoExportPath, (Get-ExtensionsPath)))
+    $rebuildPaths = @($repoExportPath, (Get-ExtensionsPath))
+    if ($attributesChanged) {
+        $rebuildPaths += "src/configs"
+    }
+    $sourcePaths = @(Rebuild-OneCSourceGitIndex -SourcePaths $rebuildPaths)
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
     $commitPaths = @(".gitattributes") + $sourcePaths
@@ -6571,7 +6575,7 @@ function Complete-OneCSourceByteContractMergeTransition {
     $mergeBase = (Get-GitOutput @("merge-base", $BranchCommit, $TargetCommit)).Trim()
     $branchChangedSourcePaths = @(Get-GitPathList -Arguments @(
         "diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $mergeBase, $BranchCommit,
-        "--", (Get-ExportPath), (Get-ExtensionsPath)
+        "--", (Get-ExportPath), (Get-ExtensionsPath), "src/configs"
     ))
     Update-OneCSourceGitIndexFromWorktreePaths -RepoPaths @($branchChangedSourcePaths + $CursorPaths)
     Invoke-Git @("checkout-index", "--force", "--all")
