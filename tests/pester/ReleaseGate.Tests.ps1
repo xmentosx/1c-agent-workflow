@@ -51,19 +51,22 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'continuationBoundaryStage'
         $e2eText | Should -Match 'exact Targeted continuation after completed release'
         $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
+        $e2eText | Should -Match 'invalidationDetails'
         $e2eText | Should -Match 'if \(\(\$executedStages -contains "config-cadence"\) -or \$crossReleaseReuse -or -not \$verificationRefreshPassed\)'
-        $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "verification-refresh" -Status "running".*?Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @\(\s*"-ConfigLoadMode", "Full"'
+        $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "verification-refresh" -Status "running".*?Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @\(\s*"-ConfigLoadMode", "Auto"'
         $resultCleanupBlock = [regex]::Match($e2eText, '(?s)\$resultPassed = Test-E2EStagePassed -Name "result-cleanup".*?\n\s*\$sealedCapabilityPath =').Value
         $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "status" -TimeoutSeconds 120\s*\r?\n'
         $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200\s*\| Out-Null'
         $resultCleanupBlock | Should -Not -Match 'VanessaFeaturePath'
         $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
-        $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
+        $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{\s*\$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
+        $e2eText | Should -Match 'release-preflight-sync-master'
+        $e2eText | Should -Match 'Invoke-E2ESeedParallelProof -MainRoot .*? -PreflightMasterHead \$preflightSeedMasterHead'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
         $e2eText | Should -Match '\$generatedCommitRecords = @\(Get-E2EGeneratedCommitRecords -Value \$cache\["generatedCommits"\]\)'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA'
@@ -624,7 +627,7 @@ switch ($Action) {
         if (($releaseCheckCount -lt 3 -and $VanessaFilterTags -ne "@itl_release_flat") -or ($releaseCheckCount -eq 3 -and $VanessaFilterTags)) { throw "release E2E must leave only the final canonical recovery run unfiltered" }
         if ($releaseCheckCount -le 3 -and [System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E capability checks must run the dedicated four-scenario feature file" }
         if ($releaseCheckCount -gt 3 -and $VanessaFeaturePath) { throw "release E2E verification refresh must be unfiltered" }
-        if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Full") { throw "release E2E verification refresh must establish a full configuration load" }
+if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E2E verification refresh must route unchanged payload through automatic load selection" }
         $listPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-partial-list.txt"
         Set-Content -LiteralPath $listPath -Encoding UTF8 -Value "Configuration.xml"
         $reportPath = Join-Path $ProjectRoot "build\test-results\vanessa\mock"

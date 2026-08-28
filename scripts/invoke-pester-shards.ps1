@@ -239,6 +239,18 @@ function Get-ShardTrackedFileIdentity {
             return "git-blob:$($blob[0].Trim())"
         }
     }
+    # Hash dirty and untracked bytes exactly as Git will store them. This keeps a
+    # focused pre-commit proof reusable after the identical files are committed,
+    # while --path still applies repository attributes and clean filters.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $worktreeBlob = @(& git -C $RepositoryRoot hash-object --path $RelativePath -- $AbsolutePath 2>$null)
+        $worktreeBlobExitCode = $LASTEXITCODE
+    } finally { $ErrorActionPreference = $previousPreference }
+    if ($worktreeBlobExitCode -eq 0 -and $worktreeBlob.Count -eq 1 -and $worktreeBlob[0].Trim() -match '^[a-f0-9]{40,64}$') {
+        return "git-blob:$($worktreeBlob[0].Trim())"
+    }
     return "worktree-sha256:$(Get-PesterShardFileSha256 -Path $AbsolutePath)"
 }
 
@@ -471,7 +483,25 @@ foreach ($item in $items) {
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
-    $Entry.process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $Entry.stdinPath -RedirectStandardOutput $Entry.stdoutPath -RedirectStandardError $Entry.stderrPath -PassThru
+    $originalPowerShellModulePath = $env:PSModulePath
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    try {
+        if ($resetModulePathForWindowsPowerShell) {
+            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
+            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
+                catch { return $true }
+            })
+            $env:PSModulePath = $compatibleModuleRoots -join ';'
+        }
+        $Entry.process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $Entry.stdinPath -RedirectStandardOutput $Entry.stdoutPath -RedirectStandardError $Entry.stderrPath -PassThru
+    } finally {
+        if ($resetModulePathForWindowsPowerShell) {
+            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
+            else { $env:PSModulePath = $originalPowerShellModulePath }
+        }
+    }
     $null = $Entry.process.Handle
 }
 

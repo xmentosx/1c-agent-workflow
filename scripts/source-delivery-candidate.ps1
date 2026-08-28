@@ -525,6 +525,7 @@ function Complete-InterruptedDevelopPublication {
         aiRulesCompatibility = [string]$installability.aiRulesStatus
         releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true
         qualificationStartedAt = [string]$attempt.startedAt
+        qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $remoteTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt)
     }
 }
 
@@ -685,6 +686,7 @@ function Publish-AccumulatedDevelop {
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
             qualificationStartedAt = [string]$attempt.startedAt
+            qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -OperationStartedAt $operationStartedAt
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
@@ -835,6 +837,7 @@ function Release-DevelopToMaster {
         [DateTime]$PrequalifiedNotBefore = [DateTime]::MinValue,
         [switch]$ReusePrequalifiedGates
     )
+    $operationStartedAt = [DateTime]::UtcNow
     Assert-ReleaseVersionRequest
     Assert-CleanDeliveryWorktree
     if (@(Get-QueueEntries).Count -gt 0) { throw "ReleaseMaster requires an empty develop queue. Publish accumulated develop changes first." }
@@ -902,6 +905,7 @@ function Release-DevelopToMaster {
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             qualificationReused = $qualificationReused
+            qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore $(if ($PrequalifiedNotBefore -gt [DateTime]::MinValue) { $PrequalifiedNotBefore } else { $operationStartedAt }) -OperationStartedAt $operationStartedAt
         }
     } finally {
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
