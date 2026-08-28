@@ -56,6 +56,73 @@
             }
         }
 
+        function New-LifecycleMergeSourceIntegrityFixture {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl source Целостность " + [guid]::NewGuid().ToString("N"))
+            $configRoot = Join-Path $tempRoot "src\cf"
+            $validatorRoot = Join-Path $tempRoot "tools с пробелом"
+            New-Item -ItemType Directory -Force -Path $configRoot, $validatorRoot | Out-Null
+            $configurationPath = Join-Path $configRoot "Configuration.xml"
+            $baseConfiguration = @"
+<Configuration>
+  <ChildObjects>
+    <Constant>Alpha</Constant>
+    <Constant>Omega</Constant>
+    <Catalog>Products</Catalog>
+    <Document>Order</Document>
+    <Report>Sales</Report>
+    <CommonForm>Main</CommonForm>
+  </ChildObjects>
+</Configuration>
+"@
+            [System.IO.File]::WriteAllText($configurationPath, $baseConfiguration, [System.Text.UTF8Encoding]::new($false))
+            Set-Content -LiteralPath (Join-Path $configRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            $branchConfiguration = $baseConfiguration.Replace("    <CommonForm>Main</CommonForm>", "    <Constant>Shared</Constant>`r`n    <CommonForm>Main</CommonForm>")
+            [System.IO.File]::WriteAllText($configurationPath, $branchConfiguration, [System.Text.UTF8Encoding]::new($false))
+            Set-Content -LiteralPath (Join-Path $tempRoot "branch.txt") -Encoding UTF8 -Value "branch"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & git -C $tempRoot checkout --quiet master
+            $masterConfiguration = $baseConfiguration.Replace("    <Constant>Omega</Constant>", "    <Constant>Shared</Constant>`r`n    <Constant>Omega</Constant>")
+            [System.IO.File]::WriteAllText($configurationPath, $masterConfiguration, [System.Text.UTF8Encoding]::new($false))
+            Set-Content -LiteralPath (Join-Path $tempRoot "master.txt") -Encoding UTF8 -Value "master"
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master" *> $null
+            $targetCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet itldev/test
+
+            $validatorPath = Join-Path $validatorRoot "cf-validate.ps1"
+            $validator = @'
+param([string]$ConfigPath, [int]$MaxErrors, [string]$OutFile)
+$source = [System.IO.File]::ReadAllText((Join-Path $ConfigPath "Configuration.xml"), [System.Text.Encoding]::UTF8)
+$count = [regex]::Matches($source, "<Constant>Shared</Constant>").Count
+$message = if ($count -gt 1) { "[ERROR] 5. Duplicate: Constant.Shared" } else { "=== Validation OK ===" }
+[System.IO.File]::WriteAllText($OutFile, $message, [System.Text.UTF8Encoding]::new($true))
+if ($count -gt 1) { exit 1 }
+exit 0
+'@
+            [System.IO.File]::WriteAllText($validatorPath, $validator, [System.Text.UTF8Encoding]::new($false))
+            Add-Content -LiteralPath (Join-Path $tempRoot ".git\info\exclude") -Encoding UTF8 -Value "tools с пробелом/"
+
+            return [pscustomobject]@{
+                root = $tempRoot
+                branchCommit = $branchCommit
+                targetCommit = $targetCommit
+                configurationPath = $configurationPath
+                validatorPath = $validatorPath
+            }
+        }
+
         function Copy-AutoUpdateToolFixture {
             param([string]$TargetRoot)
             $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -691,6 +758,38 @@
         }
     }
 
+    It "blocks changed configuration source before runtime drain or Designer when root validation fails" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:ValidationCalls = 0
+            $script:DrainCalls = 0
+            $script:DesignerCalls = 0
+            function Get-CurrentCommit { "head" }
+            function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "changed"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
+            function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); missingFiles = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" } }
+            function Assert-OneCConfigurationSourceIntegrity { $script:ValidationCalls++; throw "ONEC_SOURCE_INTEGRITY_FAILED fixture" }
+            function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCalls++ }
+            function Invoke-Designer { $script:DesignerCalls++ }
+            $message = ""
+            try {
+                Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{
+                message = $message
+                validationCalls = $script:ValidationCalls
+                drainCalls = $script:DrainCalls
+                designerCalls = $script:DesignerCalls
+            }
+        }
+
+        $result.message | Should -Be "ONEC_SOURCE_INTEGRITY_FAILED fixture"
+        $result.validationCalls | Should -Be 1
+        $result.drainCalls | Should -Be 0
+        $result.designerCalls | Should -Be 0
+    }
+
     It "keeps root Configuration.xml in the exact partial load list" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -706,6 +805,7 @@
                 }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param(
@@ -752,6 +852,7 @@
                 }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param(
@@ -796,6 +897,7 @@
                 }
             }
             function New-ConfigLoadListFile { throw "partial list must not be created" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCalls++ }
             function Invoke-Designer {
                 param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
@@ -870,6 +972,7 @@
                 }
             }
             function New-ConfigLoadListFile { "C:\logs\changed-files.txt" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {
                 param([object]$State, [string]$Reason, [string]$InfoBasePath)
                 $script:Sequence += "drain"
@@ -914,6 +1017,7 @@
                 }
             }
             function New-ConfigLoadListFile { "C:\logs\changed-files.txt" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: ownership mismatch" }
             function Invoke-Designer { $script:DesignerCallCount++ }
 
@@ -943,6 +1047,7 @@
                 [pscustomobject]@{ files = @("Configuration.xml", "CommonModules\Модуль.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" }
             }
             function New-ConfigLoadListFile { return "C:\logs\changed-files.txt" }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer {
                 param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
@@ -994,6 +1099,7 @@
                 param([object]$State, [hashtable]$Updates)
                 $script:StateUpdates = $Updates
             }
+            function Assert-OneCConfigurationSourceIntegrity {}
 
             $message = ""
             try {
@@ -1231,6 +1337,7 @@
             $script:Calls = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-e"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function New-ConfigLoadListFile { throw "list must not be created" }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
             function Invoke-Designer { param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs); $script:Calls++; $script:LastLogPath = "C:\logs\full.log" }
@@ -1249,6 +1356,7 @@
             $script:DrainCallCount = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-f"; fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @(); baseCommit = ""; currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $true; fullLoadReason = "designer-tree-proof-missing" } }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function Invoke-Designer { $script:DesignerCallCount++ }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{}) -ExportPath "src/cf" 6>$null
@@ -1264,6 +1372,7 @@
             $script:DrainCallCount = 0
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-g"; treeObjectId = ("b" * 40); fileCount = 1; absoluteExportPath = "C:\src" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = ("a" * 40); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false } }
+            function Assert-OneCConfigurationSourceIntegrity {}
             function New-ConfigLoadListFile { throw "list preparation failed" }
             function Invoke-Designer { $script:DesignerCallCount++ }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCallCount++ }
@@ -1393,6 +1502,7 @@
                     fullFallbackError = ""
                 }
             }
+            function Assert-OneCConfigurationSourceIntegrity {}
 
             $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
                 lastConfigDesignerFingerprint = ""
@@ -1545,6 +1655,7 @@
                     fullFallbackError = ""
                 }
             }
+            function Assert-OneCConfigurationSourceIntegrity {}
 
             $state = [pscustomobject]@{
                 lastConfigDesignerFingerprint = ("a" * 64)
@@ -2684,6 +2795,7 @@
 
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Assert-OneCConfigurationSourceIntegrity {}
                 Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $masterCommit -BranchCommit $branchCommit
             }
 
@@ -5365,6 +5477,101 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "blocks a clean Git merge with duplicate root metadata and commits it after the agent fixes, stages, and retries" {
+        $fixture = New-LifecycleMergeSourceIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.validatorPath
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:FailureCategory = ""
+                $script:RequiredAction = ""
+                $script:FailureStage = ""
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage { param([string]$Stage, [string]$Detail); $script:FailureStage = $Stage }
+                function Set-RunFailureContext { param([string]$Category, [string]$RequiredAction); $script:FailureCategory = $Category; $script:RequiredAction = $RequiredAction }
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+
+                $firstMessage = ""
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {
+                    $firstMessage = $_.Exception.Message
+                }
+                $headBeforeFix = Get-CurrentCommit
+                $mergeInProgressBeforeFix = Test-GitMergeInProgress
+                $categoryBeforeFix = $script:FailureCategory
+                $requiredActionBeforeFix = $script:RequiredAction
+                $stageBeforeFix = $script:FailureStage
+                $pendingStageBeforeFix = $script:MergeState.pendingMergeStage
+                $conflictsBeforeFix = @($script:MergeState.pendingMergeConflictPaths)
+
+                $source = [System.IO.File]::ReadAllText($Fixture.configurationPath, [System.Text.Encoding]::UTF8)
+                $duplicate = "    <Constant>Shared</Constant>"
+                $lastDuplicate = $source.LastIndexOf($duplicate, [System.StringComparison]::Ordinal)
+                $source = $source.Remove($lastDuplicate, $duplicate.Length + 2)
+                [System.IO.File]::WriteAllText($Fixture.configurationPath, $source, [System.Text.UTF8Encoding]::new($false))
+                Invoke-Git @("add", "--", "src/cf/Configuration.xml")
+
+                $retryMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $retryMessage = $_.Exception.Message
+                }
+                $head = Get-CurrentCommit
+                [pscustomobject]@{
+                    firstMessage = $firstMessage
+                    retryMessage = $retryMessage
+                    category = $categoryBeforeFix
+                    requiredAction = $requiredActionBeforeFix
+                    failureStage = $stageBeforeFix
+                    pendingStageBeforeFix = $pendingStageBeforeFix
+                    conflictsBeforeFix = $conflictsBeforeFix
+                    headBeforeFix = $headBeforeFix
+                    mergeInProgressBeforeFix = $mergeInProgressBeforeFix
+                    head = $head
+                    parents = @(Get-GitCommitParents -Commit $head)
+                    restartCount = $script:RestartCount
+                    mergeInProgress = Test-GitMergeInProgress
+                    pendingStage = $script:MergeState.pendingMergeStage
+                    status = @(& git -C $Fixture.root status --porcelain)
+                }
+            } $fixture
+
+            $result.firstMessage | Should -Match "^ONEC_SOURCE_INTEGRITY_FAILED"
+            $result.firstMessage | Should -Match "Duplicate: Constant.Shared"
+            $result.category | Should -Be "source-integrity"
+            $result.requiredAction | Should -Be "fix-listed-source-integrity-run-git-add-repeat-same-itl-command-no-manual-commit"
+            $result.failureStage | Should -Be "source-integrity.failed"
+            $result.pendingStageBeforeFix | Should -Be "conflicts"
+            $result.conflictsBeforeFix | Should -Be @("src/cf/Configuration.xml")
+            $result.headBeforeFix | Should -Be $fixture.branchCommit
+            $result.mergeInProgressBeforeFix | Should -BeTrue
+            $result.retryMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+            $result.mergeInProgress | Should -BeFalse
+            $result.pendingStage | Should -Be "merged"
+            $result.status | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "leaves unresolved conflicts untouched and commits them after resolution, staging, and the same command retry" {
         $fixture = New-LifecycleMergeConflictFixture
         try {
@@ -5387,6 +5594,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 }
                 function Set-RunStage {}
                 function Set-RunFailureContext {}
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
 
                 try {
@@ -5468,6 +5676,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     }
                     function Set-RunStage {}
                     function Set-RunFailureContext {}
+                    function Assert-OneCConfigurationSourceIntegrity {}
                     function Restart-Agent1cAfterDevBranchMerge { throw "unexpected restart" }
                     try {
                         Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
@@ -5526,6 +5735,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 }
                 function Set-RunStage {}
                 function Set-RunFailureContext {}
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Restart-Agent1cAfterDevBranchMerge { throw "unexpected restart" }
                 try {
                     Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
@@ -5580,6 +5790,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 }
                 function Set-RunStage {}
                 function Set-RunFailureContext {}
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
                 try {
                     Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
@@ -5721,6 +5932,7 @@ if (`$?) { exit 0 } else { exit 1 }
 
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Assert-OneCConfigurationSourceIntegrity {}
                 Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch master
             }
 

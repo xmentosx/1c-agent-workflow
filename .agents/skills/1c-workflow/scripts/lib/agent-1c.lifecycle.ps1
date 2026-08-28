@@ -633,6 +633,72 @@ function Get-ConfigSourceFingerprint {
     }
 }
 
+function Get-OneCConfigurationSourceValidatorPath {
+    $override = Get-Variable -Name OneCConfigurationSourceValidatorPathOverride -Scope Script -ErrorAction SilentlyContinue
+    $activeClient = ""
+    $validatorPath = if ($null -ne $override -and -not [string]::IsNullOrWhiteSpace([string]$override.Value)) {
+        [System.IO.Path]::GetFullPath([string]$override.Value)
+    } else {
+        $activeClient = Get-ItlActiveClient
+        $skillRoot = Get-AiRules1cInstalledSkillRoot -SkillName "1c-metadata-manage" -Client $activeClient
+        Join-Path $skillRoot "tools\1c-cf-manage\scripts\cf-validate.ps1"
+    }
+    if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
+        $source = if ($activeClient) { "active ai_rules_1c client '$activeClient'" } else { "the test or Release tool override" }
+        throw "ONEC_SOURCE_VALIDATOR_MISSING source='$source' path='$validatorPath'. Run pinned update-ai-rules from master, then repeat the same ITL command."
+    }
+    return $validatorPath
+}
+
+function Assert-OneCConfigurationSourceIntegrity {
+    param([string]$ExportPath = (Get-ExportPath))
+
+    $script:RunSourceIntegrityPaths = @()
+    try {
+        $validatorPath = Get-OneCConfigurationSourceValidatorPath
+    } catch {
+        Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
+        throw
+    }
+
+    $absoluteExportPath = Assert-ExportPathInsideProject -ExportPath $ExportPath
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    $configurationRepoPath = "$repoExportPath/Configuration.xml"
+    $reportPath = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-cf-validate-" -Extension ".txt"
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $validatorPath `
+            -ConfigPath $absoluteExportPath `
+            -MaxErrors 30 `
+            -OutFile $reportPath *> $null
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            return
+        }
+
+        $details = if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+            (Read-Utf8Text -Path $reportPath).Trim() -replace "\r?\n", " | "
+        } else {
+            "cf-validate did not create its UTF-8 report"
+        }
+        if ($details.Length -gt 2000) {
+            $details = $details.Substring(0, 2000) + "..."
+        }
+        $script:RunSourceIntegrityPaths = @($configurationRepoPath)
+        Set-RunStage -Stage "source-integrity.failed" -Detail "Configuration source validation failed before a merge commit or Designer load."
+        Set-RunFailureContext `
+            -Category "source-integrity" `
+            -RequiredAction $(if (Test-GitMergeInProgress) {
+                "fix-listed-source-integrity-run-git-add-repeat-same-itl-command-no-manual-commit"
+            } else {
+                "fix-listed-source-integrity-then-repeat-same-itl-command"
+            })
+        throw "ONEC_SOURCE_INTEGRITY_FAILED path='$configurationRepoPath' validator='cf-validate' exitCode='$exitCode' details='$details'. Fix the listed source defect and repeat the same ITL command. If a merge is in progress, run git add for the fixed file and do not create the merge commit manually."
+    } finally {
+        Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-LegacyConfigSourceFingerprint {
     param([string]$Fingerprint)
 
@@ -1545,6 +1611,10 @@ function Load-ConfigFromFiles {
         Write-Warning "$message. Skipping partial Designer startup and running a full load."
         Set-RunStage -Stage "config-load.partial-preflight-fallback" -Detail "The partial $ContentKind inventory contains $($missingPartialFiles.Count) absent source file(s); Designer partial load was skipped."
         $Mode = "Full"
+    }
+
+    if ($ContentKind -eq "configuration") {
+        Assert-OneCConfigurationSourceIntegrity -ExportPath $changeSet.absoluteExportPath
     }
 
     $listFilePath = ""
@@ -6640,6 +6710,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
             -TargetCommit $MasterBranch `
             -CursorPaths $allDumpInfoPaths
     }
+    Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
     Invoke-Git @("commit", "--no-edit")
 }
 
@@ -6697,12 +6768,17 @@ function Invoke-NewDevBranchLifecycleMerge {
     try {
         Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $TargetCommit -BranchCommit $branchCommit
     } catch {
+        $mergeFailure = $_
         if (-not (Test-GitMergeInProgress)) {
-            throw
+            throw $mergeFailure
         }
         $stateAfterConflict = Read-DevBranchState -Name $DevBranchName
         $allowedPaths = @(Get-DevBranchMergeIndexPaths)
         $conflictPaths = @(Get-DevBranchMergeUnmergedPaths)
+        $sourceValidationFailure = $mergeFailure.Exception.Message -match '^ONEC_SOURCE_(INTEGRITY_FAILED|VALIDATOR_MISSING)'
+        if ($sourceValidationFailure -and $script:RunSourceIntegrityPaths.Count -gt 0) {
+            $conflictPaths = @($script:RunSourceIntegrityPaths)
+        }
         Set-PendingDevBranchMergeTransaction `
             -State $stateAfterConflict `
             -Operation $Operation `
@@ -6712,6 +6788,9 @@ function Invoke-NewDevBranchLifecycleMerge {
             -Stage "conflicts" `
             -AllowedPaths $allowedPaths `
             -ConflictPaths $conflictPaths
+        if ($sourceValidationFailure) {
+            throw $mergeFailure
+        }
         Stop-DevBranchLifecycleMergeForConflicts `
             -Operation $Operation `
             -Stage $ConflictStage `
@@ -6913,6 +6992,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
         }
 
+        Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
