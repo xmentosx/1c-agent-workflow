@@ -82,7 +82,8 @@ Describe "Kilo verification recovery command" {
             "Fix a defective scenario",
             "fix the implementation",
             "rerun the full",
-            "three failed runs",
+            "configured maximum",
+            "ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS",
             "blocker diagnostics",
             "fresh pass"
         )) {

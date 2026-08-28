@@ -788,7 +788,7 @@
         $recoveryText | Should -Match "reuse it unchanged"
         $recoveryText | Should -Match "do not add or edit a test merely because this command was invoked"
         $recoveryText | Should -Match "-Action\s+check-dev-branch"
-        $recoveryText | Should -Match "three failed runs"
+        $recoveryText | Should -Match "configured maximum"
 
         $menuText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")
         $menuText | Should -Match ([regex]::Escape("/itl-check"))

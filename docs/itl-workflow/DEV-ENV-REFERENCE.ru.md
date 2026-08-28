@@ -90,6 +90,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 |---|---|---|---|
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
+| `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
 | `VERIFICATION_POLICY` | Политика result/close | `warn`/`block`, default `warn` | user |
 | `GITHUB_TOKEN` | GitHub API token | строка или пусто; имеет приоритет | user/secret |
 | `GH_TOKEN` | Fallback GitHub token | строка или пусто | user/secret |

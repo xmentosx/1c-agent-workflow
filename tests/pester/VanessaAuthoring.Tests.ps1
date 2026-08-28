@@ -73,7 +73,7 @@
         $reference | Should -Match 'terminal failed `/itl-check`.*named UI/runtime question unresolved'
         $reference | Should -Match 'unchanged tree.*owned cleanup finish.*before editing or spending the next full repair attempt'
         $reference | Should -Match 'Skip this diagnostic when the artifacts already answer the question'
-        $reference | Should -Match 'consumes no repair attempt, creates no pass.*three-run limit.*final `/itl-check`'
+        $reference | Should -Match 'consumes no repair attempt, creates no pass.*configured repair-session limit.*final `/itl-check`'
 
         $repairTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-verify-fix.md.template") -Raw -Encoding UTF8
         $repairTemplate | Should -Match 'conditional post-failure runtime diagnostic from `vanessa-authoring.md`'
@@ -247,7 +247,7 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "enforces three helper-owned repair attempts" {
+    It "defaults to five helper-owned repair attempts and honors a bounded environment override" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-repair-budget-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c\dev-branches") | Out-Null
@@ -261,25 +261,51 @@
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dev-branches\demo.json") -Encoding UTF8 -Value ($state | ConvertTo-Json)
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                $VerificationTrigger = 'repair'
-                Start-ItlVerificationRepairSession *> $null
-                $record = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
-                $missingIdError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
-                $RepairSessionId = 'wrong-session'
-                $mismatchError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
-                $RepairSessionId = [string]$record.sessionId
-                Use-ItlVerificationRepairAttempt *> $null
-                Use-ItlVerificationRepairAttempt *> $null
-                Use-ItlVerificationRepairAttempt *> $null
-                [pscustomobject]@{
-                    missingIdError = $missingIdError
-                    mismatchError = $mismatchError
-                    exhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                $savedLimit = $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS
+                $savedPrefixedLimit = $env:AGENT_1C_ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS
+                try {
+                    $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $null
+                    $env:AGENT_1C_ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $null
+                    $VerificationTrigger = 'repair'
+                    Start-ItlVerificationRepairSession *> $null
+                    $record = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $missingIdError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    $RepairSessionId = 'wrong-session'
+                    $mismatchError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    $RepairSessionId = [string]$record.sessionId
+                    foreach ($attempt in 1..5) { Use-ItlVerificationRepairAttempt *> $null }
+                    $defaultExhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+
+                    $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '2'
+                    Start-ItlVerificationRepairSession *> $null
+                    $overrideRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $RepairSessionId = [string]$overrideRecord.sessionId
+                    foreach ($attempt in 1..2) { Use-ItlVerificationRepairAttempt *> $null }
+                    $overrideExhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+
+                    $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '0'
+                    $invalidLimitError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    [pscustomobject]@{
+                        defaultMaximum = [int]$record.maximumAttempts
+                        overrideMaximum = [int]$overrideRecord.maximumAttempts
+                        missingIdError = $missingIdError
+                        mismatchError = $mismatchError
+                        defaultExhaustedError = $defaultExhaustedError
+                        overrideExhaustedError = $overrideExhaustedError
+                        invalidLimitError = $invalidLimitError
+                    }
+                } finally {
+                    $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $savedLimit
+                    $env:AGENT_1C_ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = $savedPrefixedLimit
                 }
             }
+            $result.defaultMaximum | Should -Be 5
+            $result.overrideMaximum | Should -Be 2
             $result.missingIdError | Should -Match 'requires RepairSessionId'
             $result.mismatchError | Should -Match 'Repair session mismatch'
-            $result.exhaustedError | Should -Match 'exhausted its three full verification runs'
+            $result.defaultExhaustedError | Should -Match 'exhausted its 5 full verification runs'
+            $result.overrideExhaustedError | Should -Match 'exhausted its 2 full verification runs'
+            $result.invalidLimitError | Should -Match 'ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS must be an integer between 1 and 100'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
