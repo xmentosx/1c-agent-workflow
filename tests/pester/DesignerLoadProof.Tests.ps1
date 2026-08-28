@@ -30,6 +30,7 @@ Describe "1C Designer load proof invalidation" {
                 }
                 function Get-CurrentCommit { "head" }
                 function New-ConfigLoadListFile { "C:\load-list.txt" }
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function Invoke-ConfigLoadWithFallback {
                     param(
@@ -160,6 +161,7 @@ Describe "1C Designer load proof invalidation" {
                 function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\src" } }
                 function Get-CurrentCommit { "head" }
                 function New-ConfigLoadListFile { "C:\load-list.txt" }
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function New-ConfigDumpInfoLoadSnapshot { [pscustomobject]@{ path = "C:\ConfigDumpInfo.xml"; existed = $false; backupPath = ""; preserveBackup = $false } }
                 function Restore-ConfigDumpInfoLoadSnapshot {}
@@ -281,6 +283,7 @@ Describe "1C Designer load proof invalidation" {
                     [pscustomobject]@{ files = @(); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false }
                 }
                 function Get-CurrentCommit { "head" }
+                function Assert-OneCConfigurationSourceIntegrity {}
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function Invoke-ConfigLoadWithFallback {
                     param([string]$Mode, [switch]$ResetConfigDumpInfo)
