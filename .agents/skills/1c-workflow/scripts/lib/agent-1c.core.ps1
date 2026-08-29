@@ -357,7 +357,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -389,6 +389,12 @@ function Set-RunFailureContextFromMessage {
     }
 
     $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")
+    if ($Message -match '^(?i:ITL_CONFIG_LOAD_FAILED)\b' -and
+        $PSBoundParameters.ContainsKey("RequestedAction") -and
+        $RequestedAction -in $verificationActions) {
+        Set-RunFailureContext -Category "config-load-failed" -RequiredAction "/itl-verify-fix"
+        return
+    }
     if ($PSBoundParameters.ContainsKey("RequestedAction") -and $RequestedAction -notin $verificationActions) {
         Set-RunFailureContext -Category $category
         return

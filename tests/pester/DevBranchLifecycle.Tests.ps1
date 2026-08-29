@@ -531,6 +531,23 @@ exit 0
         $result.requiredAction | Should -Be "update-dev-branch-base"
     }
 
+    It "routes failed check config loads to verification repair without suggesting refresh recovery" {
+        $message = "ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery."
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message $message -RequestedAction "check-dev-branch"
+            [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+
+        $result.category | Should -Be "config-load-failed"
+        $result.requiredAction | Should -Be "/itl-verify-fix"
+        $result.requiredAction | Should -Not -Match "refresh|sync-master"
+        $HelperText | Should -Not -Match "safe recovery is to recreate its copy"
+        $HelperText | Should -Match "Do not run refresh-dev-branch or sync-master as recovery"
+    }
+
     It "does not use the Designer tree cursor as application readiness evidence" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -1113,7 +1130,10 @@ exit 0
         $result.updates.lastConfigPartialLogPath | Should -Be "C:\logs\partial.log"
         $result.updates.lastConfigFullFallbackLogPath | Should -Be "C:\logs\full.log"
         $result.updates.ContainsKey("lastConfigBaseUpdatedCommit") | Should -BeFalse
-        $result.message | Should -Match "intermediate state"
+        $result.message | Should -Match "^ITL_CONFIG_LOAD_FAILED:"
+        $result.message | Should -Match "repeat /itl-check"
+        $result.message | Should -Match "Do not run refresh-dev-branch or sync-master as recovery"
+        $result.message | Should -Not -Match "recreate its copy"
     }
 
     It "supports diagnostic Partial and emergency Full modes without crossing modes" {
