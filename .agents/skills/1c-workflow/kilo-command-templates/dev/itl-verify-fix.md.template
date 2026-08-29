@@ -5,7 +5,7 @@ agent: code
 
 Use this recovery command only from an active `itldev/*` development branch worktree when the current change may have skipped relevant Vanessa coverage or a complete verification cycle.
 
-Begin one helper-owned repair session and retain the printed session id. It permits at most the configured number of full verification runs (`ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS`, default `5`):
+Begin one helper-owned repair session and retain the printed session id. It permits at most the configured number of unfiltered full verification runs (`ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS`, default `5`); do not pass `VanessaFeaturePath` or `VanessaFilterTags`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action begin-verification-repair
@@ -24,6 +24,6 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 The helper owns the branch infobase update, Vanessa Automation `TESTMANAGER -> TESTCLIENT` run, JUnit/status/log evidence, and event-log baseline check. Do not run a separate base update first.
 
-If verification fails, inspect the Vanessa report/status/log, the 1C log, event-log evidence, and the current change before editing. Fix a defective scenario when requirement evidence shows the test is wrong; fix the implementation when the product change is wrong. Treat missing UI elements and assertion mismatches as ambiguous until diagnosed. Before an evidence-dependent UI edit or the next full attempt, apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md`; it is not an extra gate or repair attempt. Never delete, skip, filter, or weaken the core observable assertion merely to make the run green. After every edit rerun the full helper with the same repair session because previous evidence is stale. After the configured maximum of failed runs the helper refuses another full run; then return blocker diagnostics and do not claim completion.
+If verification fails, inspect the Vanessa report/status/log, the 1C log, event-log evidence, and the current change before editing. Fix a defective scenario when requirement evidence shows the test is wrong; fix the implementation when the product change is wrong. Treat missing UI elements and assertion mismatches as ambiguous until diagnosed. Before an evidence-dependent UI edit or the next full attempt, apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md`; it is not an extra gate or repair attempt. Never delete, skip, filter, or weaken the core observable assertion merely to make the run green. After every edit rerun the full helper with the same active repair session because previous evidence is stale. After the configured maximum of failed runs the helper marks the session exhausted and refuses another full run; return blocker diagnostics. After a pass it marks the session passed; resume the original task instead of starting another repair.
 
 On fresh pass, report the reused or added scenario names, whether tests changed, the branch infobase update result, Vanessa report path, and event-log result.

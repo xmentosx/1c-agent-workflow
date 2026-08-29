@@ -3632,6 +3632,20 @@ function Protect-VanessaVerificationDiagnosticText {
     return $safe
 }
 
+function Test-ItlDiagnosticVerificationScope {
+    return (-not [string]::IsNullOrWhiteSpace([string]$VanessaFeaturePath) -or
+        -not [string]::IsNullOrWhiteSpace([string]$VanessaFilterTags))
+}
+
+function Get-VanessaDiagnosticSignature {
+    param([string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+    return (Get-StringSha256 -Value (($Text -replace '\s+', ' ').Trim()))
+}
+
 function Test-VanessaTestClientConnectionFailure {
     param([string]$Diagnostic)
 
@@ -3792,13 +3806,47 @@ function Get-VanessaJunitSummary {
                         $diagnosticParts += [string]$failureNode.InnerText
                     }
                 }
+                $junitDiagnostic = $diagnosticParts -join " "
+                $primaryDiagnostic = $junitDiagnostic
+                $primarySource = "junit-failure"
+                $secondaryDiagnostic = ""
+                if ($caseFailure -or $caseError) {
+                    $suite = $case.ParentNode
+                    $suiteFailedCases = @($suite.SelectNodes('./*[local-name()="testcase" and (*[local-name()="failure"] or *[local-name()="error"])]'))
+                    if ($suiteFailedCases.Count -eq 1) {
+                        $properties = @{}
+                        foreach ($property in @($suite.SelectNodes('./*[local-name()="properties"]/*[local-name()="property"]'))) {
+                            if ($property.Attributes["name"] -and $property.Attributes["value"]) {
+                                $properties[[string]$property.Attributes["name"].Value] = [string]$property.Attributes["value"].Value
+                            }
+                        }
+                        $caseName = $(if ($case.Attributes["name"]) { [string]$case.Attributes["name"].Value } else { "" })
+                        $scenarioName = $(if ($properties.ContainsKey("ИмяСценария")) { [string]$properties["ИмяСценария"] } else { "" })
+                        if ([string]::IsNullOrWhiteSpace($scenarioName) -or [string]::Equals($scenarioName, $caseName, [System.StringComparison]::Ordinal)) {
+                            foreach ($propertyName in @("ТекстОшибки", "ТекстИсключенияПлатформыОчищенный")) {
+                                if ($properties.ContainsKey($propertyName) -and -not [string]::IsNullOrWhiteSpace([string]$properties[$propertyName])) {
+                                    $primaryDiagnostic = [string]$properties[$propertyName]
+                                    $primarySource = "junit-property:$propertyName"
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+                if ($primarySource -ne "junit-failure" -and
+                    (Get-VanessaDiagnosticSignature -Text $primaryDiagnostic) -ne (Get-VanessaDiagnosticSignature -Text $junitDiagnostic)) {
+                    $secondaryDiagnostic = Protect-VanessaVerificationDiagnosticText -Text $junitDiagnostic
+                }
                 $summary.testCases += [pscustomobject][ordered]@{
                     name = $(if ($case.Attributes["name"]) { [string]$case.Attributes["name"].Value } else { "" })
                     className = $(if ($case.Attributes["classname"]) { [string]$case.Attributes["classname"].Value } else { "" })
                     skipped = $caseSkipped
                     failure = $caseFailure
                     error = $caseError
-                    diagnostic = Protect-VanessaVerificationDiagnosticText -Text ($diagnosticParts -join " ")
+                    diagnostic = Protect-VanessaVerificationDiagnosticText -Text $primaryDiagnostic
+                    diagnosticSignature = Get-VanessaDiagnosticSignature -Text $primaryDiagnostic
+                    diagnosticSource = $primarySource
+                    secondaryDiagnostic = $secondaryDiagnostic
                     source = $file.FullName
                 }
             }
@@ -3899,6 +3947,9 @@ function Get-VanessaVerificationStatus {
                 status = "failed"
                 reason = $reason
                 failureCategory = $failureCategory
+                primaryErrorSignature = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSignature } else { "" })
+                primaryErrorSource = $(if ($failedCases.Count -gt 0) { [string]$failedCases[0].diagnosticSource } else { "" })
+                secondaryDiagnostics = @($failedCases | ForEach-Object { $_.secondaryDiagnostic } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
             }
         }
         if ($junit.tests -gt 0) {
@@ -3929,6 +3980,87 @@ function Get-VanessaVerificationStatus {
     return [pscustomobject]@{
         status = "unknown"
         reason = "Vanessa finished, but no reliable status or JUnit result was found."
+    }
+}
+
+function Test-VanessaEventLogConfirmsPrimaryFailure {
+    param(
+        [Parameter(Mandatory = $true)][object]$Verification,
+        [Parameter(Mandatory = $true)][object]$EventLogVerification
+    )
+
+    if ([string](Get-StateValue -State $Verification -Name "status" -Default "") -ne "failed" -or
+        [string](Get-StateValue -State $EventLogVerification -Name "status" -Default "") -ne "failed") {
+        return $false
+    }
+    $primarySignature = [string](Get-StateValue -State $Verification -Name "primaryErrorSignature" -Default "")
+    $reportPath = [string](Get-StateValue -State $EventLogVerification -Name "reportPath" -Default "")
+    if ([string]::IsNullOrWhiteSpace($primarySignature) -or
+        [string]::IsNullOrWhiteSpace($reportPath) -or
+        -not (Test-Path -LiteralPath $reportPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    try {
+        $report = Read-Utf8Text -Path $reportPath | ConvertFrom-Json
+        $errors = @($report.errors)
+        if ($errors.Count -eq 0) { return $false }
+        foreach ($eventError in $errors) {
+            if ((Get-VanessaDiagnosticSignature -Text ([string]$eventError.comment)) -ne $primarySignature) {
+                return $false
+            }
+        }
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Get-VanessaVerificationFailureRoute {
+    param(
+        [Parameter(Mandatory = $true)][object]$Verification,
+        [Parameter(Mandatory = $true)][object]$EventLogVerification,
+        [bool]$EventLogConfirmsPrimaryFailure = $false
+    )
+
+    $verificationStatus = [string](Get-StateValue -State $Verification -Name "status" -Default "")
+    $reason = [string](Get-StateValue -State $Verification -Name "reason" -Default "")
+    $failureCategory = [string](Get-StateValue -State $Verification -Name "failureCategory" -Default "")
+    $eventLogFailedIndependently = ([string](Get-StateValue -State $EventLogVerification -Name "status" -Default "") -eq "failed" -and
+        -not $EventLogConfirmsPrimaryFailure)
+
+    $category = "product-assertion"
+    $requiredAction = ""
+    if ($verificationStatus -eq "unknown") {
+        $category = "runner"
+    } elseif ($eventLogFailedIndependently) {
+        $category = "event-log"
+    } elseif ($failureCategory) {
+        $category = $failureCategory
+    } elseif ($reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
+        $category = "unsupported-step"
+    } elseif ($reason -match '(?i)(scenario context|scenario-context)') {
+        $category = "scenario-context"
+    } elseif ($reason -match '^ITL_VANESSA_TAG_FILTER_') {
+        $category = "runner"
+    }
+
+    if ($category -eq "runner") {
+        if ($failureCategory -eq "runner") {
+            $requiredAction = "inspect-testclient-startup-diagnostics-and-repeat-original-command"
+        }
+        elseif (Test-ItlDiagnosticVerificationScope) {
+            $requiredAction = "fix-and-repeat-original-check"
+        }
+    } elseif (Test-ItlDiagnosticVerificationScope) {
+        $requiredAction = "fix-and-repeat-original-check"
+    } else {
+        $requiredAction = "/itl-verify-fix"
+    }
+
+    return [pscustomobject]@{
+        category = $category
+        requiredAction = $requiredAction
     }
 }
 
@@ -4241,7 +4373,7 @@ function Run-DevBranchTests {
     if ($VerificationTrigger -eq "repair") {
         Get-ItlMatchingVerificationRepairSession | Out-Null
     }
-    if ($VanessaFeaturePath -or $VanessaFilterTags) {
+    if (Test-ItlDiagnosticVerificationScope) {
         $RecordFullVerificationEvidence = $false
     }
     Set-RunStage -Stage "vanessa.prepare" -Detail "Preparing Vanessa Automation verification."
@@ -4544,17 +4676,15 @@ function Run-DevBranchTests {
         $eventLogDebtUpdates = $debtResult.updates
         $eventLogBoundaryUpdates = Complete-DevBranchEventLogObservation -State $state -Status $eventLogVerification.status -Fingerprint $currentFingerprint -ReportPath $eventLogVerification.reportPath
     }
+    $eventLogConfirmsPrimaryFailure = Test-VanessaEventLogConfirmsPrimaryFailure `
+        -Verification $verification `
+        -EventLogVerification $eventLogVerification
     $postProcessStopwatch.Stop()
     if ($eventLogVerification.status -eq "failed") {
-        $verification = [pscustomobject]@{
-            status = "failed"
-            reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
-        }
+        $verification.status = "failed"
+        $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
     } elseif ($eventLogVerification.status -eq "passed" -and $verification.status -eq "passed") {
-        $verification = [pscustomobject]@{
-            status = "passed"
-            reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
-        }
+        $verification.reason = "$($verification.reason) Event log: $($eventLogVerification.reason)"
     }
     $updates = @{
         lastVanessaTestAt = (Get-Date).ToString("o")
@@ -4609,22 +4739,14 @@ function Run-DevBranchTests {
     }
     if ($verification.status -ne "passed") {
         Set-RunStage -Stage "vanessa.failed" -Detail $verification.reason
+        $failureRoute = Get-VanessaVerificationFailureRoute `
+            -Verification $verification `
+            -EventLogVerification $eventLogVerification `
+            -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure
+        Set-RunFailureContext -Category $failureRoute.category -RequiredAction $failureRoute.requiredAction
         if ($verification.status -eq "unknown") {
-            Set-RunFailureContext -Category "runner"
             Write-OneCVanessaProcessDiagnostics -State $state -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
             Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
-        } elseif ($eventLogVerification.status -eq "failed") {
-            Set-RunFailureContext -Category "event-log" -RequiredAction "/itl-verify-fix"
-        } elseif ([string](Get-StateValue -State $verification -Name "failureCategory" -Default "") -eq "runner") {
-            Set-RunFailureContext -Category "runner" -RequiredAction "inspect-testclient-startup-diagnostics-and-repeat-original-command"
-        } elseif ([string]$verification.reason -match '(?i)(undefined step|step.+not found|unsupported-step)') {
-            Set-RunFailureContext -Category "unsupported-step" -RequiredAction "/itl-verify-fix"
-        } elseif ([string]$verification.reason -match '(?i)(scenario context|scenario-context)') {
-            Set-RunFailureContext -Category "scenario-context" -RequiredAction "/itl-verify-fix"
-        } elseif ([string]$verification.reason -match '^ITL_VANESSA_TAG_FILTER_') {
-            Set-RunFailureContext -Category "runner"
-        } else {
-            Set-RunFailureContext -Category "product-assertion" -RequiredAction "/itl-verify-fix"
         }
         throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
     }

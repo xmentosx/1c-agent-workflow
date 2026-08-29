@@ -10211,16 +10211,22 @@ function Show-WorkflowStatus {
 function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    Assert-ItlVerificationRepairScope -Trigger $trigger
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $checkExportPath)
+    $repairAttemptConsumed = $false
+    $repairVerificationPassed = $false
     try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
     if ($trigger -eq "repair") {
         Get-ItlMatchingVerificationRepairSession | Out-Null
-        if ($fullProofEligible) { Use-ItlVerificationRepairAttempt }
+        if ($fullProofEligible) {
+            Use-ItlVerificationRepairAttempt
+            $repairAttemptConsumed = $true
+        }
     }
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
@@ -10238,8 +10244,14 @@ function Invoke-DevBranchCheck {
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
         if ($verification.status -eq "passed" -and $evidenceKind -eq "full") {
             Complete-ItlVerificationRepairSession
+            $repairVerificationPassed = $true
         }
     }
+    } catch {
+        if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
+            Complete-ItlVerificationRepairFailure
+        }
+        throw
     } finally {
         try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }

@@ -41,9 +41,11 @@
         $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $check = [regex]::Match($lifecycle, '(?s)function Invoke-DevBranchCheck \{(?<body>.*?)\n\}')
         $check.Success | Should -BeTrue
+        $check.Groups['body'].Value.IndexOf('Assert-ItlVerificationRepairScope') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Invoke-DevBranchVanessaRuntimeRelease')
         $check.Groups['body'].Value.IndexOf('Assert-VanessaVerificationPreflight') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Update-DevBranchBase')
         $check.Groups['body'].Value.IndexOf('Ensure-DevBranchEventLogPendingCursor') | Should -BeLessThan $check.Groups['body'].Value.IndexOf('Update-DevBranchBase')
         $check.Groups['body'].Value | Should -Match '(?s)Invoke-ItlVerificationCycle.+EventLogCursorPath'
+        $check.Groups['body'].Value | Should -Match '(?s)catch \{.+Complete-ItlVerificationRepairFailure.+throw'
         $check.Groups['body'].Value | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease'
         $check.Groups['body'].Value | Should -Not -Match 'Authoring'
 
@@ -280,8 +282,25 @@
                     Start-ItlVerificationRepairSession *> $null
                     $overrideRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RepairSessionId = [string]$overrideRecord.sessionId
+                    Use-ItlVerificationRepairAttempt *> $null
+                    Complete-ItlVerificationRepairFailure
+                    $overrideFirstFailureRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    Use-ItlVerificationRepairAttempt *> $null
+                    Complete-ItlVerificationRepairFailure
+                    $overrideTerminalRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $script:RunRequiredAction = ''
+                    $overrideExhaustedError = try { Get-ItlMatchingVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    $overrideExhaustedAction = $script:RunRequiredAction
+
+                    Start-ItlVerificationRepairSession *> $null
+                    $passedRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $RepairSessionId = [string]$passedRecord.sessionId
                     foreach ($attempt in 1..2) { Use-ItlVerificationRepairAttempt *> $null }
-                    $overrideExhaustedError = try { Use-ItlVerificationRepairAttempt *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    Complete-ItlVerificationRepairSession
+                    $passedTerminalRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $script:RunRequiredAction = ''
+                    $passedReuseError = try { Get-ItlMatchingVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
+                    $passedReuseAction = $script:RunRequiredAction
 
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '0'
                     $invalidLimitError = try { Start-ItlVerificationRepairSession *> $null; 'not-blocked' } catch { $_.Exception.Message }
@@ -292,6 +311,12 @@
                         mismatchError = $mismatchError
                         defaultExhaustedError = $defaultExhaustedError
                         overrideExhaustedError = $overrideExhaustedError
+                        overrideFirstFailureStatus = [string]$overrideFirstFailureRecord.status
+                        overrideTerminalStatus = [string]$overrideTerminalRecord.status
+                        overrideExhaustedAction = $overrideExhaustedAction
+                        passedTerminalStatus = [string]$passedTerminalRecord.status
+                        passedReuseError = $passedReuseError
+                        passedReuseAction = $passedReuseAction
                         invalidLimitError = $invalidLimitError
                     }
                 } finally {
@@ -304,7 +329,14 @@
             $result.missingIdError | Should -Match 'requires RepairSessionId'
             $result.mismatchError | Should -Match 'Repair session mismatch'
             $result.defaultExhaustedError | Should -Match 'exhausted its 5 full verification runs'
-            $result.overrideExhaustedError | Should -Match 'exhausted its 2 full verification runs'
+            $result.overrideFirstFailureStatus | Should -Be 'active'
+            $result.overrideTerminalStatus | Should -Be 'exhausted'
+            $result.overrideExhaustedError | Should -Match 'terminal \(status=exhausted\)'
+            $result.overrideExhaustedAction | Should -Be 'report-blocker'
+            $result.passedTerminalStatus | Should -Be 'passed'
+            $result.passedReuseError | Should -Match 'already passed'
+            $result.passedReuseError | Should -Not -Match 'Begin a new /itl-verify-fix'
+            $result.passedReuseAction | Should -Be 'stop-repair-and-resume-original-task'
             $result.invalidLimitError | Should -Match 'ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS must be an integer between 1 and 100'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -314,27 +346,43 @@
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $directUpdates = @{}
             Add-VanessaVerificationEvidenceUpdates -Updates $directUpdates -Status 'passed' -Reason 'focused scenario passed' -Commit 'abc' -Fingerprint 'fingerprint' -ReportPath 'report' -LogPath 'log'
+            $failedDiagnosticUpdates = @{}
+            Add-VanessaVerificationEvidenceUpdates -Updates $failedDiagnosticUpdates -Status 'failed' -Reason 'focused scenario failed' -Commit 'abc' -Fingerprint 'fingerprint' -ReportPath 'report' -LogPath 'log'
             $fullUpdates = @{}
             Add-VanessaVerificationEvidenceUpdates -Updates $fullUpdates -Status 'passed' -Reason 'full suite passed' -Commit 'abc' -Fingerprint 'fingerprint' -ReportPath 'report' -LogPath 'log' -RecordFullVerificationEvidence
             $VanessaFilterTags = '@focused'
             $filteredEligible = Test-ItlFullVerificationProofEligible -Trigger command
+            $script:RunErrorCategory = ''
+            $script:RunRequiredAction = ''
+            $filteredRepairError = try { Assert-ItlVerificationRepairScope -Trigger repair; 'not-blocked' } catch { $_.Exception.Message }
+            $filteredRepairCategory = $script:RunErrorCategory
+            $filteredRepairAction = $script:RunRequiredAction
             $VanessaFilterTags = ''
             $VanessaFeaturePath = 'tests/features/focused.feature'
             [pscustomobject]@{
                 direct = [pscustomobject]$directUpdates
+                failedDiagnostic = [pscustomobject]$failedDiagnosticUpdates
                 full = [pscustomobject]$fullUpdates
                 filteredEligible = $filteredEligible
                 featureEligible = Test-ItlFullVerificationProofEligible -Trigger command
+                filteredRepairError = $filteredRepairError
+                filteredRepairCategory = $filteredRepairCategory
+                filteredRepairAction = $filteredRepairAction
             }
         }
 
         $result.direct.lastVerificationStatus | Should -Be 'partial'
         $result.direct.lastVerificationEvidenceKind | Should -Be 'diagnostic'
         $result.direct.lastVerifiedFingerprint | Should -Be ''
+        $result.failedDiagnostic.lastVerificationStatus | Should -Be 'partial'
+        $result.failedDiagnostic.lastVerifiedFingerprint | Should -Be ''
         $result.full.lastVerificationStatus | Should -Be 'passed'
         $result.full.lastVerifiedFingerprint | Should -Be 'fingerprint'
         $result.filteredEligible | Should -BeFalse
         $result.featureEligible | Should -BeFalse
+        $result.filteredRepairError | Should -Match 'cannot be combined with VanessaFeaturePath or VanessaFilterTags'
+        $result.filteredRepairCategory | Should -Be 'runner'
+        $result.filteredRepairAction | Should -Be 'repeat-original-diagnostic-without-repair-session'
     }
 
     It "bypasses missing suite when Vanessa mode is off" {
