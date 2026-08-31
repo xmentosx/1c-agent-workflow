@@ -1,0 +1,16 @@
+---
+description: Скопировать текущую ветку разработки с базой и evidence
+agent: code
+---
+
+Use this command only from an active ready `itldev/*` worktree. Treat any text after `/itl-fork-branch` as the new development branch name. If it is missing, ask for one short value.
+
+Run the monitored helper directly from the current project directory with `timeout_ms >= 3900000` when supported:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action fork-dev-branch -DevBranchName "<new-dev-branch-name>"
+```
+
+The helper checkpoints the current Git state, snapshots the exact current infobase, and creates a sibling worktree and independent infobase. It copies logs and verification evidence into immutable fork history. Fresh passed verification is inherited only when the source proof is fresh and the effective verification tree, environment, and restored base identity match; otherwise the copied proof remains history and the target is stale. PID, locks, ports, active MCP/runtime processes, and publication are recreated or left disabled, never copied.
+
+Repeat the same command after interruption; do not repair the staging journal, worktree, or infobase manually. On success with a non-empty `userReport`, return it exactly as Russian Markdown. On failure, follow `requiredAction`; read only the last 80 lines of `logPath` for an unclassified runner failure.

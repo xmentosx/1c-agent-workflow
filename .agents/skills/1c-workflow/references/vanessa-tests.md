@@ -25,6 +25,11 @@ or long regressions only when explicitly requested.
 
 No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-authoring.md`. MCP is diagnostic and never replaces `/itl-check`.
 
+### Branch-local suite selection
+
+For acceptance/explicit catalogs and proof reuse, read
+`verification-suite-selection.md` only when classifying tests or diagnosing selection.
+
 ## Context Economy
 
 - Search steps by meaning; use Vanessa UI MCP only for runtime UI evidence.

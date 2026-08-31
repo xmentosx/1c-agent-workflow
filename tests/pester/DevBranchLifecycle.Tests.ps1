@@ -56,6 +56,57 @@
             }
         }
 
+        function New-LifecyclePostMergeCursorFixture {
+            param(
+                [string]$Subject = "chore: persist branch configuration synchronization cursor",
+                [ValidateSet("cursor", "foreign")][string]$ChangedPath = "cursor",
+                [ValidateSet("none", "extra", "merge")][string]$AdditionalHead = "none",
+                [switch]$SkipCursor
+            )
+
+            $fixture = New-LifecycleMergeConflictFixture
+            & git -C $fixture.root merge --no-ff --no-commit $fixture.targetCommit *> $null
+            Set-Content -LiteralPath (Join-Path $fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved"
+            Set-Content -LiteralPath (Join-Path $fixture.root "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "branch-cursor"
+            & git -C $fixture.root add .
+            & git -C $fixture.root commit --no-edit *> $null
+            $mergeCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+
+            $cursorCommit = $mergeCommit
+            if (-not $SkipCursor) {
+                if ($ChangedPath -eq "cursor") {
+                    Set-Content -LiteralPath (Join-Path $fixture.root "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "post-merge-cursor"
+                } else {
+                    Set-Content -LiteralPath (Join-Path $fixture.root "unrelated.txt") -Encoding UTF8 -Value "post-merge-foreign"
+                }
+                & git -C $fixture.root add .
+                & git -C $fixture.root commit -m $Subject *> $null
+                $cursorCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            }
+
+            if (-not $SkipCursor -and $AdditionalHead -eq "extra") {
+                Set-Content -LiteralPath (Join-Path $fixture.root "branch.txt") -Encoding UTF8 -Value "extra"
+                & git -C $fixture.root add .
+                & git -C $fixture.root commit -m "extra commit" *> $null
+            } elseif (-not $SkipCursor -and $AdditionalHead -eq "merge") {
+                & git -C $fixture.root checkout --quiet -b cursor-side
+                Set-Content -LiteralPath (Join-Path $fixture.root "side.txt") -Encoding UTF8 -Value "side"
+                & git -C $fixture.root add .
+                & git -C $fixture.root commit -m "side" *> $null
+                & git -C $fixture.root checkout --quiet itldev/test
+                & git -C $fixture.root merge --no-ff cursor-side -m "extra merge" *> $null
+            }
+
+            return [pscustomobject]@{
+                root = $fixture.root
+                branchCommit = $fixture.branchCommit
+                targetCommit = $fixture.targetCommit
+                mergeCommit = $mergeCommit
+                cursorCommit = $cursorCommit
+                head = (& git -C $fixture.root rev-parse HEAD).Trim()
+            }
+        }
+
         function New-LifecycleMergeSourceIntegrityFixture {
             $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl source Целостность " + [guid]::NewGuid().ToString("N"))
             $configRoot = Join-Path $tempRoot "src\cf"
@@ -473,6 +524,56 @@ exit 0
             } catch { $_.Exception.Message }
         }
         $errorText | Should -Match "target is the source infobase"
+    }
+
+    It "persists passed Enterprise normalization evidence before later refresh work can fail" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-normalization-evidence-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $statePath = Join-Path $tempRoot "branch.json"
+            Set-Content -LiteralPath $statePath -Encoding UTF8 -Value "{}"
+            $result = & {
+                param($StatePath)
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:PersistedStatuses = [System.Collections.Generic.List[string]]::new()
+                function Get-SourceInfoBasePath { return "C:\bases\source" }
+                function Invoke-DevBranchEnterpriseAutoUpdate {
+                    [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\current-enterprise.log"; updatedAt = "2026-08-31T18:00:48+03:00" }
+                }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    if ($Updates.ContainsKey("enterpriseNormalizationStatus")) {
+                        $script:PersistedStatuses.Add([string]$Updates.enterpriseNormalizationStatus) | Out-Null
+                    }
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $State.PSObject.Properties[$key]) {
+                            $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $State.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                $state = [pscustomobject]@{ statePath = $StatePath; devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+                $updates = @{}
+                Ensure-DevBranchEnterpriseNormalized -State $state -Reason config-load -Updates $updates 6>$null | Out-Null
+                try { throw "simulated later runner failure" } catch {}
+                [pscustomobject]@{
+                    statuses = @($script:PersistedStatuses)
+                    persistedStatus = $state.enterpriseNormalizationStatus
+                    persistedAt = $state.enterpriseNormalizedAt
+                    persistedLog = $state.lastEnterpriseAutoUpdateLogPath
+                    pendingUpdatesStatus = $updates.enterpriseNormalizationStatus
+                }
+            } $statePath
+
+            $result.statuses | Should -Be @("pending", "passed")
+            $result.persistedStatus | Should -Be "passed"
+            $result.persistedAt | Should -Be "2026-08-31T18:00:48+03:00"
+            $result.persistedLog | Should -Be "C:\logs\current-enterprise.log"
+            $result.pendingUpdatesStatus | Should -Be "passed"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 
     It "accepts branch reset as an Enterprise normalization reason" {
@@ -2177,6 +2278,232 @@ exit 0
         $result.cleared.lastResultPath | Should -Be ""
         $result.cleared.eventLogDebtStatus | Should -Be ""
         $result.cleared.ContainsKey("devBranch") | Should -BeFalse
+    }
+
+    It "inherits fork verification only for the exact fresh snapshot contract" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $snapshot = [pscustomobject]@{
+                sourceVerification = [pscustomobject]@{ isFreshPassed = $true; fingerprint = "v3|exact" }
+                sourceEnvironmentFingerprint = "environment"
+            }
+            $exact = Get-DevBranchForkVerificationDecision -Snapshot $snapshot -TargetFingerprint "v3|exact" -TargetEnvironmentFingerprint "environment" -BaseRestoreProven $true
+            $changedTree = Get-DevBranchForkVerificationDecision -Snapshot $snapshot -TargetFingerprint "v3|changed" -TargetEnvironmentFingerprint "environment" -BaseRestoreProven $true
+            $changedEnvironment = Get-DevBranchForkVerificationDecision -Snapshot $snapshot -TargetFingerprint "v3|exact" -TargetEnvironmentFingerprint "other" -BaseRestoreProven $true
+            $unprovenBase = Get-DevBranchForkVerificationDecision -Snapshot $snapshot -TargetFingerprint "v3|exact" -TargetEnvironmentFingerprint "environment" -BaseRestoreProven $false
+            [pscustomobject]@{ exact = $exact; changedTree = $changedTree; changedEnvironment = $changedEnvironment; unprovenBase = $unprovenBase }
+        }
+
+        $result.exact.inherited | Should -BeTrue
+        $result.changedTree.inherited | Should -BeFalse
+        $result.changedEnvironment.inherited | Should -BeFalse
+        $result.unprovenBase.inherited | Should -BeFalse
+        $result.changedTree.reason | Should -Match "fingerprintMatches=False"
+    }
+
+    It "keeps fork evidence while replacing branch and runtime identity" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $source = [pscustomobject]@{
+                devBranchName = "source"
+                safeDevBranchName = "source"
+                devBranch = "itldev/source"
+                worktreePath = "C:\source"
+                devBranchInfoBasePath = "C:\source-base"
+                lastVerificationStatus = "passed"
+                lastVerifiedFingerprint = "v3|exact"
+                lastVerifiedReportPath = "C:\evidence\report.md"
+                launcherInfoBaseId = "old-launcher"
+                roctupMcpPid = 111
+                roctupMcpPort = 48100
+                vanessaMcpPid = 222
+                publicationUrl = "http://old"
+                lastVanessaTestPid = 333
+            }
+            $snapshot = [pscustomobject]@{
+                targetBranchName = "fork"
+                targetSafeName = "fork"
+                targetGitBranch = "itldev/fork"
+                targetWorktreePath = "C:\fork"
+                sourceCommit = "abc123"
+                forkId = "fork-id"
+                sourceGitBranch = "itldev/source"
+                sourceBranchName = "source"
+                artifactSha256 = "sha"
+                artifactKind = "file-1cd"
+            }
+            New-ForkedDevBranchState -SourceState $source -Snapshot $snapshot -TargetInfoBasePath "C:\fork-base" -TargetHistoryRoot "C:\fork\.agent-1c\fork-history\fork-id" -MainProjectRoot "C:\main"
+        }
+
+        $result.devBranch | Should -Be "itldev/fork"
+        $result.devBranchInfoBasePath | Should -Be "C:\fork-base"
+        $result.lastVerificationStatus | Should -Be "passed"
+        $result.lastVerifiedFingerprint | Should -Be "v3|exact"
+        $result.lastVerifiedReportPath | Should -Be "C:\evidence\report.md"
+        $result.launcherInfoBaseId | Should -Be ""
+        $result.roctupMcpPid | Should -Be ""
+        $result.roctupMcpPort | Should -Be 0
+        $result.vanessaMcpPid | Should -Be ""
+        $result.publicationStatus | Should -Be "disabled"
+        $result.publicationUrl | Should -Be ""
+        $result.Contains("lastVanessaTestPid") | Should -BeFalse
+
+        {
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Assert-DevBranchForkInfoBaseIsolated `
+                    -SourceState ([pscustomobject]@{ devBranchInfoBasePath = "C:\same-base" }) `
+                    -Snapshot ([pscustomobject]@{ infoBaseKind = "file"; sourceGitBranch = "itldev/source"; targetGitBranch = "itldev/fork" }) `
+                    -TargetInfoBasePath "C:\same-base\."
+            }
+        } | Should -Throw "*DEV_BRANCH_FORK_INFOBASE_NOT_ISOLATED*"
+    }
+
+    It "copies file fork bases atomically and preserves the DoNotCopy marker" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fork-base-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourcePath = Join-Path $tempRoot "snapshot"
+            $targetPath = Join-Path $tempRoot "target"
+            New-Item -ItemType Directory -Force -Path $sourcePath | Out-Null
+            $artifactPath = Join-Path $sourcePath "1Cv8.1CD"
+            [System.IO.File]::WriteAllBytes($artifactPath, [byte[]](1, 2, 3, 4, 5))
+            Set-Content -LiteralPath (Join-Path $sourcePath "DoNotCopy.txt") -Encoding UTF8 -Value "keep"
+            $sha = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Restore-DevBranchForkInfoBase -Snapshot ([pscustomobject]@{
+                    infoBaseKind = "file"
+                    artifactPath = $artifactPath
+                    artifactSha256 = $sha
+                    forkId = "atomic"
+                }) -TargetInfoBasePath $targetPath
+            }
+
+            $result | Should -BeTrue
+            (Get-FileHash -LiteralPath (Join-Path $targetPath "1Cv8.1CD") -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $sha
+            Test-Path -LiteralPath (Join-Path $targetPath "DoNotCopy.txt") -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath "$targetPath.fork-partial-atomic" | Should -BeFalse
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "archives source event logs and referenced verification evidence with hashes" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fork-history-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $eventLogRoot = Join-Path $tempRoot "1Cv8Log"
+            $historyRoot = Join-Path $tempRoot "history"
+            $evidencePath = Join-Path $tempRoot "verification-report.md"
+            New-Item -ItemType Directory -Force -Path $eventLogRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $eventLogRoot "20260831000000.lgp") -Encoding UTF8 -Value "historical log"
+            Set-Content -LiteralPath $evidencePath -Encoding UTF8 -Value "fresh passed evidence"
+
+            $history = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Get-DevBranchEventLogDirectory { $eventLogRoot }
+                New-DevBranchForkHistorySnapshot `
+                    -SourceState ([pscustomobject]@{
+                        devBranch = "itldev/source"
+                        devBranchName = "source"
+                        safeDevBranchName = "source"
+                        lastVerifiedReportPath = $evidencePath
+                        roctupMcpPid = 123
+                        publicationUrl = "http://source"
+                        lastVanessaStatusPath = "C:\temporary-run\status.json"
+                    }) `
+                    -HistoryRoot $historyRoot `
+                    -SourceCommit "source-commit" `
+                    -EventLogBaseline ([pscustomobject]@{
+                        reader = "fixture"
+                        logDirectory = $eventLogRoot
+                        errorCount = 1
+                        signatures = @("sig-1")
+                        durationMs = 5
+                        cacheStatus = "hit"
+                        cachePath = "cache.json"
+                        sourceKey = "source"
+                        segmentCount = 1
+                    })
+            }
+
+            Test-Path -LiteralPath (Join-Path $historyRoot "event-log\20260831000000.lgp") -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $historyRoot "evidence\lastVerifiedReportPath") -PathType Leaf | Should -BeTrue
+            $history.evidencePaths.lastVerifiedReportPath | Should -Be "evidence/lastVerifiedReportPath"
+            @($history.files | Where-Object path -eq "event-log/20260831000000.lgp").Count | Should -Be 1
+            @($history.files | Where-Object path -eq "evidence/lastVerifiedReportPath").Count | Should -Be 1
+            $archivedState = Get-Content -LiteralPath (Join-Path $historyRoot "source-state.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($archivedState.PSObject.Properties.Name) | Should -Not -Contain "roctupMcpPid"
+            @($archivedState.PSObject.Properties.Name) | Should -Not -Contain "publicationUrl"
+            @($archivedState.PSObject.Properties.Name) | Should -Not -Contain "lastVanessaStatusPath"
+            $archivedState.lastVerifiedReportPath | Should -Be "evidence/lastVerifiedReportPath"
+            $historyManifest = Get-Content -LiteralPath (Join-Path $historyRoot "history-manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $historyManifest.sourceCommit | Should -Be "source-commit"
+            $historyManifest.rawEventLogCopied | Should -BeTrue
+
+            $targetProjectRoot = Join-Path $tempRoot "target-project"
+            New-Item -ItemType Directory -Force -Path $targetProjectRoot | Out-Null
+            $installedHistory = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:ProjectRoot = $targetProjectRoot
+                Install-DevBranchForkHistory `
+                    -Snapshot ([pscustomobject]@{ historyPath = $historyRoot; historyFiles = @($history.files); forkId = "history" }) `
+                    -TargetHistoryRoot (Join-Path $targetProjectRoot ".agent-1c\fork-history\history")
+            }
+            Test-Path -LiteralPath (Join-Path $installedHistory "event-log\20260831000000.lgp") -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath "$installedHistory.partial-history" | Should -BeFalse
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "installs the exact fork dependency lock idempotently and rejects drift" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fork-lock-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $snapshotRoot = Join-Path $tempRoot "snapshot"
+            $targetRoot = Join-Path $tempRoot "target"
+            New-Item -ItemType Directory -Force -Path $snapshotRoot, $targetRoot | Out-Null
+            $snapshotLockPath = Join-Path $snapshotRoot "dependency-lock.json"
+            Set-Content -LiteralPath $snapshotLockPath -Encoding UTF8 -Value '{"mode":"locked"}'
+            $sha = (Get-FileHash -LiteralPath $snapshotLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $snapshotDotEnvPath = Join-Path $snapshotRoot ".dev.env"
+            Set-Content -LiteralPath $snapshotDotEnvPath -Encoding UTF8 -Value 'SETTING=source'
+            $dotEnvSha = (Get-FileHash -LiteralPath $snapshotDotEnvPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $snapshot = [pscustomobject]@{
+                dependencyLockPath = $snapshotLockPath
+                dependencyLockSha256 = $sha
+                dotEnvPath = $snapshotDotEnvPath
+                dotEnvSha256 = $dotEnvSha
+                forkId = "lock"
+            }
+
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $first = Install-DevBranchForkDependencyLock -Snapshot $snapshot -TargetProjectRoot $targetRoot
+                $second = Install-DevBranchForkDependencyLock -Snapshot $snapshot -TargetProjectRoot $targetRoot
+                $dotEnv = Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetRoot
+                [pscustomobject]@{ first = $first; second = $second; dotEnv = $dotEnv }
+            }
+            $result.first | Should -Be $result.second
+            (Get-FileHash -LiteralPath $result.first -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $sha
+            (Get-FileHash -LiteralPath $result.dotEnv -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $dotEnvSha
+
+            Set-Content -LiteralPath $result.first -Encoding UTF8 -Value '{"mode":"changed"}'
+            {
+                & {
+                    . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                    Install-DevBranchForkDependencyLock -Snapshot $snapshot -TargetProjectRoot $targetRoot
+                }
+            } | Should -Throw "*DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH*"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "exports a freshly verified dirty working tree without invoking the clean Git guard" {
@@ -4952,6 +5279,42 @@ if (`$?) { exit 0 } else { exit 1 }
         $report | Should -Match "Откройте новое окно клиента в worktree"
     }
 
+    It "reports fork provenance history and inherited verification explicitly" {
+        $report = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-Vibecoding1cMcpStatusSummary { [pscustomobject]@{ active = @(); skipped = @(); staleServers = @(); missingConfigId = @() } }
+            function Format-Vibecoding1cMcpStatusList { param([object[]]$Items); "<none>" }
+            function Get-KiloBrowserAutomationDisplay { return $null }
+            $script:RunRequiredAction = "Откройте worktree копии в отдельном project."
+            $state = [pscustomobject]@{
+                devBranchKind = "configuration"
+                devBranch = "itldev/fork-report"
+                mainWorktreePath = "C:\fixture\main"
+                worktreePath = "C:\fixture\fork-report"
+                devBranchInfoBasePath = "C:\fixture\ib-fork"
+                launcherInfoBaseName = "fixture-fork"
+                launcherFolder = "/ITL/fixture"
+                publicationStatus = "disabled"
+                roctupMcpStatus = "stopped"
+                vanessaMcpStatus = "stopped"
+                forkedFromBranch = "itldev/source"
+                forkedFromCommit = "abc123"
+                forkHistoryPath = "C:\fixture\fork-report\.agent-1c\fork-history\id"
+                forkVerificationInherited = $true
+                forkVerificationReason = "fresh passed inherited from the exact fork snapshot"
+            }
+            Write-DevBranchRunUserReport -State $state -AdvisoryRoot $state.worktreePath -Operation forked 6>$null
+            $script:RunUserReport
+        }
+
+        $report | Should -Match "## Копия ветки разработки"
+        $report | Should -Match "Скопировано из ветки: itldev/source"
+        $report | Should -Match "История логов и проверок:"
+        $report | Should -Match "Verification evidence: fresh passed унаследована"
+        $report | Should -Match "повторять ту же проверку до новых изменений не требуется"
+        $report | Should -Match "Откройте worktree копии"
+    }
+
     It "builds a complete safe Russian refresh report with an explicit successful result" {
         $report = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
@@ -5351,6 +5714,7 @@ if (`$?) { exit 0 } else { exit 1 }
     It "routes interactive branch creation through the compact runner and monitored launcher" {
         $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
+        $forkBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-fork-branch.md.template")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
 
         foreach ($text in @($configBranchTemplate, $extensionBranchTemplate)) {
@@ -5363,6 +5727,8 @@ if (`$?) { exit 0 } else { exit 1 }
         $extensionBranchTemplate | Should -Match "ExtensionSourcePath"
         $extensionBranchTemplate | Should -Match "Never ask the developer to open a terminal or copy a PowerShell command"
         $extensionBranchTemplate | Should -Match "-OfferOpenAgent"
+        $forkBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action fork-dev-branch"))
+        $forkBranchTemplate | Should -Not -Match ([regex]::Escape("run-itl-command.ps1 -Windowed"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
         $fastSkill | Should -Not -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action"))
@@ -5850,6 +6216,189 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.pendingCommit | Should -Be $result.manualCommit
             $result.pendingStage | Should -Be "merged"
             $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "migrates the existing helper-owned refresh cursor HEAD without replacing the recorded merge commit" {
+        $fixture = New-LifecyclePostMergeCursorFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:RestartCount = 0
+                $script:MergeState = [pscustomobject]@{
+                    safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
+                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                    pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergeResult = "merge-commit"
+                }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+                $resumeMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $resumeMessage = $_.Exception.Message
+                }
+                $postMergeAccepted = $false
+                try {
+                    Assert-DevBranchLifecycleMergePostMerge -State $script:MergeState -Operation "refresh-dev-branch" | Out-Null
+                    $postMergeAccepted = $true
+                } catch {}
+                [pscustomobject]@{
+                    resumeMessage = $resumeMessage
+                    mergeCommit = $script:MergeState.pendingMergeCommit
+                    postMergeHead = $script:MergeState.pendingMergePostMergeHead
+                    postMergeAccepted = $postMergeAccepted
+                    restartCount = $script:RestartCount
+                }
+            } $fixture
+
+            $result.resumeMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.mergeCommit | Should -Be $fixture.mergeCommit
+            $result.postMergeHead | Should -Be $fixture.cursorCommit
+            $result.postMergeAccepted | Should -BeTrue
+            $result.restartCount | Should -Be 1
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects unproven post-merge descendants instead of widening cursor recovery" {
+        foreach ($case in @(
+            @{ name = "foreign path"; subject = "chore: persist branch configuration synchronization cursor"; changedPath = "foreign"; additionalHead = "none" },
+            @{ name = "wrong subject"; subject = "manual cursor"; changedPath = "cursor"; additionalHead = "none" },
+            @{ name = "additional commit"; subject = "chore: persist branch configuration synchronization cursor"; changedPath = "cursor"; additionalHead = "extra" },
+            @{ name = "merge commit"; subject = "chore: persist branch configuration synchronization cursor"; changedPath = "cursor"; additionalHead = "merge" }
+        )) {
+            $fixture = New-LifecyclePostMergeCursorFixture -Subject $case.subject -ChangedPath $case.changedPath -AdditionalHead $case.additionalHead
+            try {
+                $result = & {
+                    param($Fixture)
+                    . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                    $DevBranchName = "test"
+                    $script:RestartCount = 0
+                    $script:MergeState = [pscustomobject]@{
+                        safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
+                        pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                        pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                        pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                        pendingMergeCommit = $Fixture.mergeCommit; pendingMergeResult = "merge-commit"
+                    }
+                    function Read-DevBranchState { return $script:MergeState }
+                    function Update-DevBranchState {
+                        param([object]$State, [hashtable]$Updates)
+                        foreach ($key in $Updates.Keys) {
+                            if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                                $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                            } else {
+                                $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                            }
+                        }
+                    }
+                    function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++ }
+                    $message = ""
+                    try {
+                        Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                    } catch {
+                        $message = $_.Exception.Message
+                    }
+                    [pscustomobject]@{
+                        message = $message
+                        mergeCommit = $script:MergeState.pendingMergeCommit
+                        postMergeHead = [string](Get-StateValue -State $script:MergeState -Name "pendingMergePostMergeHead" -Default "")
+                        restartCount = $script:RestartCount
+                    }
+                } $fixture
+
+                $result.message | Should -Match "^LIFECYCLE_MERGE_POST_HEAD_MISMATCH" -Because $case.name
+                $result.mergeCommit | Should -Be $fixture.mergeCommit -Because $case.name
+                $result.postMergeHead | Should -BeNullOrEmpty -Because $case.name
+                $result.restartCount | Should -Be 0 -Because $case.name
+            } finally {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "checkpoints the helper cursor before a later runner failure and resumes from that exact HEAD" {
+        $fixture = New-LifecyclePostMergeCursorFixture -SkipCursor
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:RestartCount = 0
+                $script:MergeState = [pscustomobject]@{
+                    safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
+                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                    pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.mergeCommit; pendingMergeResult = "merge-commit"
+                }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+
+                Set-Content -LiteralPath (Join-Path $Fixture.root "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "post-merge-cursor"
+                Set-Content -LiteralPath (Join-Path $Fixture.root "foreign.txt") -Encoding UTF8 -Value "later runner failure"
+                $loadResult = [pscustomobject]@{ currentCommit = "stale" }
+                $failure = ""
+                try {
+                    Complete-RefreshConfigDumpInfoPostcondition `
+                        -LoadResult $loadResult `
+                        -ExportPath "src/cf" `
+                        -State $script:MergeState `
+                        -Operation "refresh-dev-branch"
+                } catch {
+                    $failure = $_.Exception.Message
+                }
+                Remove-Item -LiteralPath (Join-Path $Fixture.root "foreign.txt") -Force
+                $resumeMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $resumeMessage = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    failure = $failure
+                    resumeMessage = $resumeMessage
+                    mergeCommit = $script:MergeState.pendingMergeCommit
+                    postMergeHead = $script:MergeState.pendingMergePostMergeHead
+                    head = Get-CurrentCommit
+                    restartCount = $script:RestartCount
+                }
+            } $fixture
+
+            $result.failure | Should -Match "^Git worktree is not clean"
+            $result.resumeMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.mergeCommit | Should -Be $fixture.mergeCommit
+            $result.postMergeHead | Should -Be $result.head
+            $result.postMergeHead | Should -Not -Be $fixture.mergeCommit
             $result.restartCount | Should -Be 1
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
@@ -6386,7 +6935,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @(@("itl.md", "itl-check.md", "itl-litemode.md", "itl-lock-objects.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-reset-branch.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md") | Sort-Object)
+            $branchKiloCommands | Should -Be @(@("itl.md", "itl-check.md", "itl-fork-branch.md", "itl-litemode.md", "itl-lock-objects.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-reset-branch.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md") | Sort-Object)
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")

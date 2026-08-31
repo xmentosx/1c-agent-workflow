@@ -371,11 +371,12 @@
             }
         }
 
-        $result.direct.lastVerificationStatus | Should -Be 'partial'
-        $result.direct.lastVerificationEvidenceKind | Should -Be 'diagnostic'
-        $result.direct.lastVerifiedFingerprint | Should -Be ''
-        $result.failedDiagnostic.lastVerificationStatus | Should -Be 'partial'
-        $result.failedDiagnostic.lastVerifiedFingerprint | Should -Be ''
+        @($result.direct.PSObject.Properties.Name) | Should -Not -Contain 'lastVerificationStatus'
+        $result.direct.lastDiagnosticVerificationStatus | Should -Be 'passed'
+        @($result.direct.PSObject.Properties.Name) | Should -Not -Contain 'lastVerifiedFingerprint'
+        @($result.failedDiagnostic.PSObject.Properties.Name) | Should -Not -Contain 'lastVerificationStatus'
+        $result.failedDiagnostic.lastDiagnosticVerificationStatus | Should -Be 'failed'
+        @($result.failedDiagnostic.PSObject.Properties.Name) | Should -Not -Contain 'lastVerifiedFingerprint'
         $result.full.lastVerificationStatus | Should -Be 'passed'
         $result.full.lastVerifiedFingerprint | Should -Be 'fingerprint'
         $result.filteredEligible | Should -BeFalse

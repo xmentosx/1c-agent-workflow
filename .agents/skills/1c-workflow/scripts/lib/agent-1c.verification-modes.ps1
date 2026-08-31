@@ -315,17 +315,63 @@ function Invoke-ItlVerificationCycle {
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
         $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
-        try {
-            Run-DevBranchTests `
-                -RecordFullVerificationEvidence:$recordFullProof `
-                -EventLogCursorPath $EventLogCursorPath `
-                -EventLogBoundaryAt $EventLogBoundaryAt `
-                -EventLogCursorScope $EventLogCursorScope
-        } finally { $script:ItlSkipEventLogForVerification = $false }
+        $selectionPlan = $null
+        if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext) {
+            $featuresPath = Get-VanessaFeaturesPath
+            $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+            if ($applicationFeatureFiles.Count -gt 0) {
+                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+            }
+        }
+        if ($null -ne $selectionPlan -and $selectionPlan.mode -eq "reuse") {
+            Assert-DevelopmentBranchWorktreeContext -State $state -Operation "check-dev-branch"
+            Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"
+            $state = Assert-DevBranchApplicationReady -State $state -Operation "verification proof reuse"
+            try {
+                if ($eventLog.run) {
+                    Test-ItlEventLogCurrent -State $state -CursorPath $EventLogCursorPath -BoundaryAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope -Trigger $Trigger
+                }
+                $state = Read-DevBranchState -Name $DevBranchName
+                $updates = @{
+                    lastVerificationSelectionMode = "reuse"
+                    lastVerificationSelectedSuites = @()
+                    lastVerificationSelectionReason = [string]$selectionPlan.reason
+                }
+                Add-VanessaVerificationEvidenceUpdates `
+                    -Updates $updates `
+                    -Status "passed" `
+                    -Reason "$($selectionPlan.reason) Event-log verification passed." `
+                    -Commit (Get-CurrentCommit) `
+                    -Fingerprint (Get-VerificationFingerprint) `
+                    -ReportPath ([string](Get-StateValue -State $state -Name "lastVerifiedReportPath" -Default "")) `
+                    -LogPath ([string](Get-StateValue -State $state -Name "lastVerificationLogPath" -Default "")) `
+                    -RecordFullVerificationEvidence
+                Complete-VerificationSelectionProof -Plan $selectionPlan
+                Update-DevBranchState -State $state -Updates $updates
+                Write-Host "Vanessa verification selection: reuse; no acceptance feature was affected, so Vanessa was not started."
+            } finally {
+                $script:ItlSkipEventLogForVerification = $false
+            }
+        } else {
+            $script:ActiveVerificationSelectionPlan = $selectionPlan
+            try {
+                Run-DevBranchTests `
+                    -RecordFullVerificationEvidence:$recordFullProof `
+                    -EventLogCursorPath $EventLogCursorPath `
+                    -EventLogBoundaryAt $EventLogBoundaryAt `
+                    -EventLogCursorScope $EventLogCursorScope
+            } finally {
+                $script:ItlSkipEventLogForVerification = $false
+                $script:ActiveVerificationSelectionPlan = $null
+            }
+        }
     } elseif ($eventLog.run) {
         Test-ItlEventLogCurrent -State $state -CursorPath $EventLogCursorPath -BoundaryAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope -Trigger $Trigger
     }
     $state = Read-DevBranchState -Name $DevBranchName
+    if (Test-ItlDiagnosticVerificationScope) {
+        return
+    }
     $skipped = @($decisions | Where-Object { -not $_.run })
     if ($skipped.Count -gt 0) {
         Set-ItlPartialVerificationEvidence -State $state -Decisions $decisions -Trigger $Trigger

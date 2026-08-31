@@ -3397,23 +3397,20 @@ function New-VanessaExecutionFeaturePath {
     param(
         [string]$FeaturePath,
         [string]$RunDirectory,
-        [object]$TestClientTopology
+        [object]$TestClientTopology,
+        [string[]]$SelectedFeatureFiles = @()
     )
 
     $resolvedFeaturePath = Resolve-ProjectPath $FeaturePath
-    if ($null -eq $TestClientTopology -or [int]$TestClientTopology.requiredTestClientSlots -le 0) {
-        return $resolvedFeaturePath
-    }
-
-    $profiles = @($TestClientTopology.profiles)
-    if ($profiles.Count -eq 0) {
-        return $resolvedFeaturePath
-    }
+    $allFeatureFiles = @(Get-VanessaFeatureFiles -FeaturePath $resolvedFeaturePath)
+    $selectedFiles = @($SelectedFeatureFiles | ForEach-Object { Resolve-Agent1cFullPath -Path $_ } | Sort-Object -Unique)
+    $stageSelection = ($selectedFiles.Count -gt 0 -and $selectedFiles.Count -lt $allFeatureFiles.Count)
+    $executionFiles = if ($selectedFiles.Count -gt 0) { $selectedFiles } else { $allFeatureFiles }
+    $profiles = @(if ($null -ne $TestClientTopology) { @($TestClientTopology.profiles) } else { @() })
 
     $genericOpenPattern = '^(?<indent>[^\S\r\n]*)(?:Дано|И|Когда|Тогда|Но)[^\S\r\n]+Я[^\S\r\n]+запускаю[^\S\r\n]+сценарий[^\S\r\n]+открытия[^\S\r\n]+TestClient[^\S\r\n]+или[^\S\r\n]+подключаю[^\S\r\n]+уже[^\S\r\n]+существующий[^\S\r\n]*$'
-    $featureFiles = @(Get-VanessaFeatureFiles -FeaturePath $resolvedFeaturePath)
     $filesToNormalize = New-Object System.Collections.Generic.List[string]
-    foreach ($featureFile in $featureFiles) {
+    foreach ($featureFile in $executionFiles) {
         $hasGenericOpener = @([System.IO.File]::ReadAllLines($featureFile) | Where-Object {
             [regex]::IsMatch([string]$_, $genericOpenPattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
         }).Count -gt 0
@@ -3421,18 +3418,32 @@ function New-VanessaExecutionFeaturePath {
             $filesToNormalize.Add($featureFile)
         }
     }
-    if ($filesToNormalize.Count -eq 0) {
+    if (-not $stageSelection -and $filesToNormalize.Count -eq 0) {
         return $resolvedFeaturePath
     }
 
-    $defaultProfileName = [string]$profiles[0].name
-    if ([string]::IsNullOrWhiteSpace($defaultProfileName) -or $defaultProfileName.Contains("'")) {
+    $defaultProfileName = if ($profiles.Count -gt 0) { [string]$profiles[0].name } else { "" }
+    if ($filesToNormalize.Count -gt 0 -and ([string]::IsNullOrWhiteSpace($defaultProfileName) -or $defaultProfileName.Contains("'"))) {
         throw "ITL_VANESSA_DEFAULT_TESTCLIENT_PROFILE_INVALID: the first TestClient profile must have a non-empty name without a single quote when a scenario uses the generic TestClient opener. Use an explicit named-profile step instead."
     }
 
     $stagedRoot = Join-Path $RunDirectory "execution-features"
     if (Test-Path -LiteralPath $resolvedFeaturePath -PathType Container) {
-        Copy-Item -LiteralPath $resolvedFeaturePath -Destination $stagedRoot -Recurse -Force
+        if ($stageSelection) {
+            New-Item -ItemType Directory -Force -Path $stagedRoot | Out-Null
+            $librariesPath = Join-Path $resolvedFeaturePath "Libraries"
+            if (Test-Path -LiteralPath $librariesPath -PathType Container) {
+                Copy-Item -LiteralPath $librariesPath -Destination (Join-Path $stagedRoot "Libraries") -Recurse -Force
+            }
+            foreach ($selectedFile in $selectedFiles) {
+                $relativePath = $selectedFile.Substring($resolvedFeaturePath.Length).TrimStart([char[]]@('\', '/'))
+                $targetPath = Join-Path $stagedRoot $relativePath
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
+                Copy-Item -LiteralPath $selectedFile -Destination $targetPath -Force
+            }
+        } else {
+            Copy-Item -LiteralPath $resolvedFeaturePath -Destination $stagedRoot -Recurse -Force
+        }
         $stagedFeaturePath = $stagedRoot
     } else {
         New-Item -ItemType Directory -Force -Path $stagedRoot | Out-Null
@@ -3465,7 +3476,12 @@ function New-VanessaExecutionFeaturePath {
         }
     }
 
-    Write-Host "Vanessa generic TestClient opener normalized to product profile '$defaultProfileName' in $normalizedCount execution feature file(s); sources were not modified."
+    if ($stageSelection) {
+        Write-Host "Vanessa suite selection staged $($selectedFiles.Count) application feature file(s); Libraries were retained."
+    }
+    if ($normalizedCount -gt 0) {
+        Write-Host "Vanessa generic TestClient opener normalized to product profile '$defaultProfileName' in $normalizedCount execution feature file(s); sources were not modified."
+    }
     return $stagedFeaturePath
 }
 
@@ -3479,13 +3495,15 @@ function New-VanessaParamsFile {
         [string]$VanessaVersion = "",
         [object]$TestClientTopology = $null,
         [int[]]$TestPorts = @(),
-        [string]$FilterTags = $VanessaFilterTags
+        [string]$FilterTags = $VanessaFilterTags,
+        [string[]]$SelectedFeatureFiles = @()
     )
 
     $resolvedFeaturePath = New-VanessaExecutionFeaturePath `
         -FeaturePath $FeaturePath `
         -RunDirectory $RunDirectory `
-        -TestClientTopology $TestClientTopology
+        -TestClientTopology $TestClientTopology `
+        -SelectedFeatureFiles $SelectedFeatureFiles
     $infoBaseKind = Get-StateValue -State $State -Name "infoBaseKind" -Default (Get-InfoBaseKind)
     $infoBasePath = Require-Value "devBranchInfoBasePath" (Get-StateValue -State $State -Name "devBranchInfoBasePath")
     $windowSearchTimeout = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "VANESSA_TEST_WINDOW_SEARCH_TIMEOUT_SECONDS" -Default 60) -Default 60
@@ -4092,7 +4110,9 @@ function Get-VerificationFingerprintScopePaths {
     return @(
         (Get-ExportPath),
         (Get-ExtensionsPath),
-        (Get-VanessaFeaturesPath)
+        (Get-VanessaFeaturesPath),
+        "tests/verification-suites.shared.json",
+        "tests/verification-suites.branch.json"
     )
 }
 
@@ -4350,16 +4370,13 @@ function Add-VanessaVerificationEvidenceUpdates {
         return
     }
 
-    $Updates["lastVerificationStatus"] = "partial"
-    $Updates["lastVerificationEvidenceKind"] = "diagnostic"
-    $Updates["lastVerificationTrigger"] = "diagnostic"
-    $Updates["lastVerificationSkippedComponents"] = @("full-suite")
-    $Updates["lastVerificationReason"] = "Diagnostic Vanessa run status=$Status; it does not create full verification proof. $Reason"
-    $Updates["lastVerifiedCommit"] = ""
-    $Updates["lastVerifiedFingerprint"] = ""
-    $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
-    $Updates["lastVerifiedReportPath"] = ""
-    $Updates["lastVerificationLogPath"] = ""
+    $Updates["lastDiagnosticVerificationStatus"] = $Status
+    $Updates["lastDiagnosticVerificationReason"] = $Reason
+    $Updates["lastDiagnosticVerificationCommit"] = $Commit
+    $Updates["lastDiagnosticVerificationFingerprint"] = $Fingerprint
+    $Updates["lastDiagnosticVerificationAt"] = (Get-Date).ToString("o")
+    $Updates["lastDiagnosticVerificationReportPath"] = $ReportPath
+    $Updates["lastDiagnosticVerificationLogPath"] = $LogPath
 }
 
 function Run-DevBranchTests {
@@ -4398,6 +4415,18 @@ function Run-DevBranchTests {
         throw "No Vanessa .feature files found under '$featuresPath'. Create tests in tests/features before running dev branch tests."
     }
     $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+    $selectionPlan = $null
+    if ($RecordFullVerificationEvidence -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
+        $selectionPlan = if ($null -ne $script:ActiveVerificationSelectionPlan) {
+            $script:ActiveVerificationSelectionPlan
+        } else {
+            New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+        }
+        $applicationFeatureFiles = @($selectionPlan.selectedFeatureFiles)
+        $script:ActiveVerificationSelectionPlan = $selectionPlan
+        Write-Host "Vanessa verification selection: $($selectionPlan.mode); suites=$(@($selectionPlan.selectedSuiteIds) -join ','); files=$($applicationFeatureFiles.Count)."
+        Write-Host "Vanessa verification selection reason: $($selectionPlan.reason)"
+    }
 
     try {
         $testClientTopology = Get-VanessaTestClientTopology -FeatureFiles $applicationFeatureFiles -FilterTags $VanessaFilterTags
@@ -4469,7 +4498,8 @@ function Run-DevBranchTests {
         -VanessaVersion $vanessa.version `
         -TestClientTopology $testClientTopology `
         -TestPorts $testPorts `
-        -FilterTags $VanessaFilterTags
+        -FilterTags $VanessaFilterTags `
+        -SelectedFeatureFiles $applicationFeatureFiles
     Publish-Agent1cVanessaRunEvidence `
         -State $state `
         -TestPorts $testPorts `
@@ -4613,6 +4643,7 @@ function Run-DevBranchTests {
         $updates["lastVanessaEventLogDurationMs"] = $eventLogDurationMs
         $updates["lastVanessaPostProcessDurationMs"] = [int64]$postProcessStopwatch.ElapsedMilliseconds
         Update-ActiveVanessaVerificationState -State $state -Updates $updates
+        $script:ActiveVerificationSelectionPlan = $null
         throw
     }
     Set-RunStage -Stage "vanessa.postprocess" -Detail "Cleaning up and reading JUnit and event-log evidence."
@@ -4724,8 +4755,17 @@ function Run-DevBranchTests {
     }
     foreach ($key in $eventLogDebtUpdates.Keys) { $updates[$key] = $eventLogDebtUpdates[$key] }
     foreach ($key in $eventLogBoundaryUpdates.Keys) { $updates[$key] = $eventLogBoundaryUpdates[$key] }
+    if ($null -ne $selectionPlan) {
+        $updates["lastVerificationSelectionMode"] = [string]$selectionPlan.mode
+        $updates["lastVerificationSelectedSuites"] = @($selectionPlan.selectedSuiteIds)
+        $updates["lastVerificationSelectionReason"] = [string]$selectionPlan.reason
+    }
+    if ($verification.status -eq "passed" -and $RecordFullVerificationEvidence -and $null -ne $selectionPlan) {
+        Complete-VerificationSelectionProof -Plan $selectionPlan
+    }
     Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
     Update-ActiveVanessaVerificationState -State $state -Updates $updates
+    $script:ActiveVerificationSelectionPlan = $null
 
     Write-Host "Vanessa tests finished."
     Write-Host "Verification status: $($verification.status)"
