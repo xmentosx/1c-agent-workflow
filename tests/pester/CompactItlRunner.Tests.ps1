@@ -150,6 +150,67 @@ exit 0
         }
     }
 
+    It "bootstraps only branch refresh actions through the clean master runner" {
+        $cyrillicName = -join ([char[]](0x0432, 0x0435, 0x0442, 0x043A, 0x0430))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl refresh $cyrillicName " + [guid]::NewGuid().ToString("N"))
+        $mainRoot = Join-Path $tempRoot "main project"
+        $devRoot = Join-Path $tempRoot "dev $cyrillicName"
+        $devBranch = "itldev/$cyrillicName"
+        try {
+            $mainScripts = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $mainScripts | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $mainScripts "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $mainScripts "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="main-runtime:$Action" }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            & git -C $mainRoot init *> $null
+            & git -C $mainRoot config user.email "test@example.com"
+            & git -C $mainRoot config user.name "Test User"
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit -m init *> $null
+            & git -C $mainRoot branch -M master
+            & git -C $mainRoot worktree add -b $devBranch $devRoot *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $branchHelper = Join-Path $devRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+            Set-Content -LiteralPath $branchHelper -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="branch-runtime:$Action" }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            $branchRunner = Join-Path $devRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
+            Push-Location $devRoot
+            try {
+                foreach ($refreshAction in @("refresh-dev-branch", "refresh-dev-branch-lite")) {
+                    $processResult = Invoke-TestPowerShellFile -FilePath $branchRunner -Arguments @("--", "-Action", $refreshAction)
+                    $processResult.exitCode | Should -Be 0 -Because (($processResult.stderr + $processResult.stdout) -join [Environment]::NewLine)
+                    $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+                    $summary.userReport | Should -Be "main-runtime:$refreshAction"
+                    $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $status.projectRoot | Should -Be ([IO.Path]::GetFullPath($devRoot))
+                    ($processResult.stderr -join "`n") | Should -Match "ITL refresh runtime: delegating action=$refreshAction"
+                }
+
+                $localResult = Invoke-TestPowerShellFile -FilePath $branchRunner -Arguments @("--", "-Action", "check-dev-branch")
+                $localResult.exitCode | Should -Be 0 -Because (($localResult.stderr + $localResult.stdout) -join [Environment]::NewLine)
+                (($localResult.stdout -join "`n") | ConvertFrom-Json).userReport | Should -Be "branch-runtime:check-dev-branch"
+
+                Add-Content -LiteralPath (Join-Path $mainScripts "agent-1c.ps1") -Encoding UTF8 -Value "# dirty runtime"
+                $dirtyResult = Invoke-TestPowerShellFile -FilePath $branchRunner -Arguments @("--", "-Action", "refresh-dev-branch-lite")
+                $dirtyResult.exitCode | Should -Not -Be 0
+                (($dirtyResult.stderr + $dirtyResult.stdout) -join "`n") | Should -Match "REFRESH_MASTER_RUNTIME_DIRTY"
+            } finally {
+                Pop-Location
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "resolves the ITL Caveman mode and level matrix from project env with safe defaults" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-response-style-" + [guid]::NewGuid().ToString("N"))
         $previousMode = [Environment]::GetEnvironmentVariable("CAVEMAN", "Process")
@@ -189,7 +250,7 @@ exit 0
                 try {
                     $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
                 } finally { Pop-Location }
-                $processResult.exitCode | Should -Be 0
+                $processResult.exitCode | Should -Be 0 -Because $processResult.combinedText
                 $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
                 $summary.responseStyle.mode | Should -Be $case.expectedMode
                 $summary.responseStyle.level | Should -Be $case.expectedLevel

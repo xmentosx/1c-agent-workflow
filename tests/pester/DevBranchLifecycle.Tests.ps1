@@ -3362,6 +3362,61 @@ exit 0
         }
     }
 
+    It "hands the post-merge phase to the helper from the updated development branch" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-post-merge-handoff-" + [guid]::NewGuid().ToString("N"))
+        $branchRoot = Join-Path $tempRoot "branch"
+        try {
+            $branchHelperPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $branchHelperPath) | Out-Null
+            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "# updated branch helper"
+            $result = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                $script:Agent1cScriptPath = Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1"
+                $script:CapturedScriptPath = ""
+                $script:CapturedArguments = @()
+                function Invoke-Agent1cFreshProcess {
+                    param([string]$ScriptPath, [string[]]$AdditionalArguments)
+                    $script:CapturedScriptPath = $ScriptPath
+                    $script:CapturedArguments = @($AdditionalArguments)
+                    throw "handoff-stop"
+                }
+                try {
+                    Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
+                } catch {
+                    if ($_.Exception.Message -ne "handoff-stop") { throw }
+                }
+                [pscustomobject]@{
+                    scriptPath = $script:CapturedScriptPath
+                    arguments = @($script:CapturedArguments)
+                }
+            }
+            $result.scriptPath | Should -Be $branchHelperPath
+            $result.arguments | Should -Be @("-LifecyclePhase", "post-merge")
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails closed when the updated development branch helper is missing after merge" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-post-merge-missing-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Invoke-Agent1cFreshProcess { throw "unexpected reexec" }
+                try {
+                    Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch-lite"
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+            $message | Should -Match "DEV_BRANCH_POST_MERGE_HELPER_MISSING"
+            $message | Should -Match "refresh-dev-branch-lite"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "accepts the main-helper lifecycle phase emitted by a stale branch helper" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-main-helper-phase-" + [guid]::NewGuid().ToString("N"))
 
