@@ -14,10 +14,12 @@ logs/
 .agent-1c/event-log-baselines/
 .agent-1c/event-log-cursors/
 .agent-1c/event-log-signature-cache/
+.agent-1c/event-log-checks/
 .agent-1c/runs/
 .agent-1c/source-infobase-unsafe-action-protection.json
 .agent-1c/vanessa-authoring/
 .agent-1c/verification-repair/
+.agent-1c/verification-selection/
 .agent-1c/diagnostics/context-benchmark/
 .agent-1c/locks/
 .agent-1c/runtime/

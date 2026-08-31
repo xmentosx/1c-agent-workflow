@@ -366,6 +366,7 @@ $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
 $script:ActiveVanessaRunEvidence = $null
 $script:ActiveAuxiliaryVanessaContext = $null
+$script:ActiveVerificationSelectionPlan = $null
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
@@ -375,6 +376,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.ports.ps1",
     "agent-1c.sessions.ps1",
     "agent-1c.vanessa.ps1",
+    "agent-1c.verification-selection.ps1",
     "agent-1c.seed.ps1",
     "agent-1c.vibecoding1c-mcp.ps1",
     "agent-1c.data-mcp.ps1",
