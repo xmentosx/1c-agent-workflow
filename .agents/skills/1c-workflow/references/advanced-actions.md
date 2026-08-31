@@ -58,6 +58,7 @@ adopt-dev-worktree
 initialize-dev-branch-runtime
 new-dev-branch
 new-extension-dev-branch
+fork-dev-branch
 configure-dev-branch-unsafe-action-protection
 init-dev-branch-extension
 set-dev-branch-extension

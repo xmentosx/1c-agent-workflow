@@ -4465,13 +4465,14 @@ function Open-AgentWorktreeBestEffort {
 function Write-DevBranchWorktreeOpenMessage {
     param(
         [string]$MainProjectPath,
-        [string]$WorktreePath
+        [string]$WorktreePath,
+        [string]$SourceContext = "master"
     )
 
     Write-Host ""
     Write-Host "Ветка разработки создана."
     Write-Host ""
-    Write-Host "Текущая папка осталась на master:"
+    Write-Host "Текущая папка осталась на ${SourceContext}:"
     Write-Host $MainProjectPath
     Write-Host ""
     Write-Host "Рабочая папка новой ветки:"
@@ -4776,7 +4777,7 @@ function Write-DevBranchRunUserReport {
     param(
         [object]$State,
         [string]$AdvisoryRoot,
-        [ValidateSet("created", "refreshed")]
+        [ValidateSet("created", "forked", "refreshed")]
         [string]$Operation = "created",
         [AllowNull()][object]$LoadResult = $null
     )
@@ -4785,8 +4786,9 @@ function Write-DevBranchRunUserReport {
     $lines = [System.Collections.Generic.List[string]]::new()
     $advice = [System.Collections.Generic.List[string]]::new()
     $isRefresh = $Operation -eq "refreshed"
-    $lines.Add($(if ($isRefresh) { "## Обновление ветки разработки" } else { "## Ветка разработки" }))
-    if ($isRefresh) {
+    $isFork = $Operation -eq "forked"
+    $lines.Add($(if ($isRefresh) { "## Обновление ветки разработки" } elseif ($isFork) { "## Копия ветки разработки" } else { "## Ветка разработки" }))
+    if ($isRefresh -or $isFork) {
         Add-RunUserReportLine -Lines $lines -Label "Результат" -Value "успешно"
     }
     Add-RunUserReportLine -Lines $lines -Label "Тип" -Value (ConvertTo-RunUserReportStateDisplay -Value (Get-DevBranchKind -State $State) -Kind BranchKind)
@@ -4794,6 +4796,14 @@ function Write-DevBranchRunUserReport {
     Add-RunUserReportLine -Lines $lines -Label "Основной worktree" -Value (Get-StateValue -State $State -Name "mainWorktreePath" -Default "")
     Add-RunUserReportLine -Lines $lines -Label "Worktree разработки" -Value (Get-StateValue -State $State -Name "worktreePath" -Default $AdvisoryRoot)
     Add-RunUserReportLine -Lines $lines -Label "Информационная база" -Value (Get-StateValue -State $State -Name "devBranchInfoBasePath" -Default "")
+    if ($isFork) {
+        Add-RunUserReportLine -Lines $lines -Label "Скопировано из ветки" -Value (Get-StateValue -State $State -Name "forkedFromBranch" -Default "")
+        Add-RunUserReportLine -Lines $lines -Label "Исходный коммит" -Value (Get-StateValue -State $State -Name "forkedFromCommit" -Default "")
+        Add-RunUserReportLine -Lines $lines -Label "История логов и проверок" -Value (Get-StateValue -State $State -Name "forkHistoryPath" -Default "")
+        $verificationInherited = [bool](Get-StateValue -State $State -Name "forkVerificationInherited" -Default $false)
+        Add-RunUserReportLine -Lines $lines -Label "Verification evidence" -Value $(if ($verificationInherited) { "fresh passed унаследована" } else { "скопирована как история; текущая проверка stale" })
+        Add-RunUserReportLine -Lines $lines -Label "Решение по проверке" -Value (Get-StateValue -State $State -Name "forkVerificationReason" -Default "")
+    }
     if ($isRefresh) {
         $refreshMode = [string](Get-StateValue -State $State -Name "lastRefreshMode" -Default "full")
         Add-RunUserReportLine -Lines $lines -Label "Режим" -Value $(if ($refreshMode -eq "lite") { "облегчённый, без исходной базы и seed" } else { "полный, с синхронизацией master" })
@@ -4851,6 +4861,12 @@ function Write-DevBranchRunUserReport {
         $advice.Add("- Перед продолжением разработки выполните /itl-check.")
         if ((Get-DevBranchKind -State $State) -eq "extension") {
             $advice.Add("- Файлы расширения при обновлении ветки не загружались; /itl-check обновит расширение в базе перед проверкой.")
+        }
+    } elseif ($isFork) {
+        if ([bool](Get-StateValue -State $State -Name "forkVerificationInherited" -Default $false)) {
+            $advice.Add("- Уже проверенное состояние перенесено как fresh passed; повторять ту же проверку до новых изменений не требуется.")
+        } else {
+            $advice.Add("- Evidence и логи сохранены в истории, но условия безопасного наследования fresh passed не совпали; перед завершением новой работы выполните /itl-check.")
         }
     } elseif ((Get-DevBranchKind -State $State) -eq "extension") {
         if ($extensionStatus -eq "pending") {
@@ -7701,6 +7717,855 @@ function Initialize-DevBranchRuntimeAction {
         -MainProjectRoot (Resolve-Agent1cFullPath -Path $MainWorktreePath) `
         -WorktreePath $worktreePath `
         -CreatedWithWorktree $true
+}
+
+function Get-DevBranchForkStagingRoot {
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Get-MainWorktreePath) ".agent-1c\fork-staging"))
+}
+
+function Get-DevBranchForkStagingPath {
+    param([Parameter(Mandatory = $true)][string]$SafeDevBranchName)
+
+    return (Resolve-Agent1cFullPath -Path (Join-Path (Get-DevBranchForkStagingRoot) $SafeDevBranchName))
+}
+
+function Assert-DevBranchForkStagingPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $root = (Get-DevBranchForkStagingRoot).TrimEnd("\", "/")
+    $resolved = (Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/")
+    if (-not $resolved.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "DEV_BRANCH_FORK_STAGING_PATH_OUTSIDE_ROOT: $resolved"
+    }
+    return $resolved
+}
+
+function Get-DevBranchForkEnvironmentFingerprint {
+    $platformPath = [string](Get-PlatformPath)
+    $platformVersion = ""
+    if ($platformPath -and (Test-Path -LiteralPath $platformPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        try { $platformVersion = [string](Get-Item -LiteralPath $platformPath).VersionInfo.FileVersion } catch { $platformVersion = "" }
+    }
+    $dependencyLockSha256 = ""
+    if ($script:DependencyLockPath -and (Test-Path -LiteralPath $script:DependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $dependencyLockSha256 = (Get-FileHash -LiteralPath $script:DependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    return (Get-StringSha256 -Value ("platform={0}|version={1}|dependencyLock={2}" -f $platformPath, $platformVersion, $dependencyLockSha256))
+}
+
+function Copy-DevBranchForkEvidenceReference {
+    param(
+        [Parameter(Mandatory = $true)][string]$FieldName,
+        [string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [Parameter(Mandatory = $true)][hashtable]$EvidencePaths
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SourcePath) -or -not (Test-Path -LiteralPath $SourcePath -ErrorAction SilentlyContinue)) {
+        return
+    }
+    $relativePath = "evidence/$FieldName"
+    $destination = Join-Path $HistoryRoot ($relativePath.Replace("/", [IO.Path]::DirectorySeparatorChar))
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+    Copy-Item -LiteralPath $SourcePath -Destination $destination -Recurse -Force
+    $EvidencePaths[$FieldName] = $relativePath
+}
+
+function Remove-DevBranchForkTransientState {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$State)
+
+    foreach ($key in @($State.Keys)) {
+        $name = [string]$key
+        if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath") -or
+            $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|dataMcp|vibecoding1c)' -or
+            $name -match '^(?:reset|pendingMerge|pendingRefresh|lifecycleMerge|lastResult|finalResult|close|eventLogPendingCursor)' -or
+            $name -match '(?i)(?:pid|pids|port|ports|leasetoken|lockpath|locked)$') {
+            [void]$State.Remove($key)
+        }
+    }
+    return $State
+}
+
+function New-DevBranchForkHistorySnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$SourceState,
+        [Parameter(Mandatory = $true)][string]$HistoryRoot,
+        [Parameter(Mandatory = $true)][object]$EventLogBaseline,
+        [Parameter(Mandatory = $true)][string]$SourceCommit
+    )
+
+    New-Item -ItemType Directory -Force -Path $HistoryRoot | Out-Null
+    $sourceStateHash = ConvertTo-Agent1cHashtable -Object $SourceState
+    Remove-DevBranchForkTransientState -State $sourceStateHash | Out-Null
+
+    $baseline = [ordered]@{
+        schemaVersion = 2
+        createdAt = (Get-Date).ToString("o")
+        reason = "fork-boundary"
+        reader = [string]$EventLogBaseline.reader
+        logDirectory = [string]$EventLogBaseline.logDirectory
+        errorCount = [int]$EventLogBaseline.errorCount
+        signatureCount = @($EventLogBaseline.signatures).Count
+        signatures = @($EventLogBaseline.signatures)
+        durationMs = [int64]$EventLogBaseline.durationMs
+        cache = [ordered]@{
+            status = [string]$EventLogBaseline.cacheStatus
+            path = [string]$EventLogBaseline.cachePath
+            sourceKey = [string]$EventLogBaseline.sourceKey
+            segmentCount = [int]$EventLogBaseline.segmentCount
+        }
+    }
+    Write-Utf8Text -Path (Join-Path $HistoryRoot "event-log-baseline.json") -Value (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
+    $sourceEventLog = [string](Get-StateValue -State $EventLogBaseline -Name "logDirectory" -Default "")
+    if ($sourceEventLog -and (Test-Path -LiteralPath $sourceEventLog -PathType Container -ErrorAction SilentlyContinue)) {
+        Copy-Item -LiteralPath $sourceEventLog -Destination (Join-Path $HistoryRoot "event-log") -Recurse -Force
+    }
+
+    $evidencePaths = @{}
+    $evidenceFieldNames = @(
+        "lastVerifiedReportPath", "lastVerificationLogPath",
+        "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+        "lastVanessaReportPath", "lastVanessaLogPath",
+        "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
+    )
+    foreach ($fieldName in $evidenceFieldNames) {
+        Copy-DevBranchForkEvidenceReference `
+            -FieldName $fieldName `
+            -SourcePath ([string](Get-StateValue -State $SourceState -Name $fieldName -Default "")) `
+            -HistoryRoot $HistoryRoot `
+            -EvidencePaths $evidencePaths
+    }
+    foreach ($fieldName in $evidenceFieldNames) {
+        $sourceStateHash[$fieldName] = if ($evidencePaths.ContainsKey($fieldName)) { [string]$evidencePaths[$fieldName] } else { "" }
+    }
+    Write-Utf8Text -Path (Join-Path $HistoryRoot "source-state.json") -Value (($sourceStateHash | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+    $historyManifest = [ordered]@{
+        schemaVersion = 1
+        createdAt = (Get-Date).ToString("o")
+        sourceBranch = [string]$SourceState.devBranch
+        sourceBranchName = [string]$SourceState.devBranchName
+        sourceCommit = $SourceCommit
+        eventLogBaselinePath = "event-log-baseline.json"
+        rawEventLogCopied = (Test-Path -LiteralPath (Join-Path $HistoryRoot "event-log") -PathType Container -ErrorAction SilentlyContinue)
+        evidencePaths = $evidencePaths
+    }
+    Write-Utf8Text -Path (Join-Path $HistoryRoot "history-manifest.json") -Value (($historyManifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+
+    $hashes = @()
+    $prefix = $HistoryRoot.TrimEnd("\", "/") + [IO.Path]::DirectorySeparatorChar
+    foreach ($file in @(Get-ChildItem -LiteralPath $HistoryRoot -Recurse -File -Force -ErrorAction Stop | Sort-Object FullName)) {
+        $relative = $file.FullName.Substring($prefix.Length).Replace("\", "/")
+        $hashes += [ordered]@{
+            path = $relative
+            length = [int64]$file.Length
+            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+    }
+    return [pscustomobject]@{
+        evidencePaths = $evidencePaths
+        files = @($hashes)
+        baselinePath = "event-log-baseline.json"
+    }
+}
+
+function Read-DevBranchForkSnapshot {
+    param([Parameter(Mandatory = $true)][string]$StagingPath)
+
+    $resolved = Assert-DevBranchForkStagingPath -Path $StagingPath
+    $manifestPath = Join-Path $resolved "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "DEV_BRANCH_FORK_SNAPSHOT_MISSING: $manifestPath"
+    }
+    $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json
+    if ([int](Get-StateValue -State $manifest -Name "schemaVersion" -Default 0) -ne 1 -or [string]$manifest.status -ne "ready") {
+        throw "DEV_BRANCH_FORK_SNAPSHOT_INVALID: $manifestPath"
+    }
+    $artifactPath = Resolve-Agent1cFullPath -Path ([string]$manifest.artifactPath)
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        throw "DEV_BRANCH_FORK_ARTIFACT_MISSING: $artifactPath"
+    }
+    $actualSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha256 -cne [string]$manifest.artifactSha256) {
+        throw "DEV_BRANCH_FORK_ARTIFACT_SHA_MISMATCH expected='$($manifest.artifactSha256)' actual='$actualSha256' path='$artifactPath'"
+    }
+    $dependencyLockPath = [string](Get-StateValue -State $manifest -Name "dependencyLockPath" -Default "")
+    if ($dependencyLockPath) {
+        $dependencyLockPath = Resolve-Agent1cFullPath -Path $dependencyLockPath
+        if (-not (Test-Path -LiteralPath $dependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            throw "DEV_BRANCH_FORK_DEPENDENCY_LOCK_MISSING: $dependencyLockPath"
+        }
+        $dependencyLockSha256 = (Get-FileHash -LiteralPath $dependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($dependencyLockSha256 -cne [string]$manifest.dependencyLockSha256) {
+            throw "DEV_BRANCH_FORK_DEPENDENCY_LOCK_SHA_MISMATCH expected='$($manifest.dependencyLockSha256)' actual='$dependencyLockSha256' path='$dependencyLockPath'"
+        }
+    }
+    $dotEnvPath = [string](Get-StateValue -State $manifest -Name "dotEnvPath" -Default "")
+    if ($dotEnvPath) {
+        $dotEnvPath = Resolve-Agent1cFullPath -Path $dotEnvPath
+        if (-not (Test-Path -LiteralPath $dotEnvPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            throw "DEV_BRANCH_FORK_DOT_ENV_MISSING: $dotEnvPath"
+        }
+        $dotEnvSha256 = (Get-FileHash -LiteralPath $dotEnvPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($dotEnvSha256 -cne [string]$manifest.dotEnvSha256) {
+            throw "DEV_BRANCH_FORK_DOT_ENV_SHA_MISMATCH expected='$($manifest.dotEnvSha256)' actual='$dotEnvSha256' path='$dotEnvPath'"
+        }
+    }
+    $manifest | Add-Member -NotePropertyName manifestPath -NotePropertyValue $manifestPath -Force
+    $manifest | Add-Member -NotePropertyName stagingPath -NotePropertyValue $resolved -Force
+    return $manifest
+}
+
+function New-DevBranchForkSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$SourceState,
+        [Parameter(Mandatory = $true)][string]$TargetBranchName,
+        [Parameter(Mandatory = $true)][string]$TargetSafeName,
+        [Parameter(Mandatory = $true)][string]$TargetGitBranch,
+        [Parameter(Mandatory = $true)][string]$TargetWorktreePath,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][object]$SourceVerification,
+        [Parameter(Mandatory = $true)][string]$SourceEnvironmentFingerprint
+    )
+
+    $stagingPath = Get-DevBranchForkStagingPath -SafeDevBranchName $TargetSafeName
+    $manifestPath = Join-Path $stagingPath "manifest.json"
+    if (Test-Path -LiteralPath $manifestPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $existing = Read-DevBranchForkSnapshot -StagingPath $stagingPath
+        if ([string]$existing.sourceCommit -cne $SourceCommit -or
+            [string]$existing.sourceGitBranch -cne [string]$SourceState.devBranch -or
+            [string]$existing.targetGitBranch -cne $TargetGitBranch) {
+            throw "DEV_BRANCH_FORK_SNAPSHOT_IDENTITY_MISMATCH: $manifestPath"
+        }
+        return $existing
+    }
+    if (Test-Path -LiteralPath $stagingPath -ErrorAction SilentlyContinue) {
+        throw "DEV_BRANCH_FORK_STAGING_INCOMPLETE: $stagingPath. Repeat after the previous failed operation has been diagnosed."
+    }
+
+    New-Item -ItemType Directory -Force -Path $stagingPath | Out-Null
+    try {
+        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $SourceState -Reason "development branch fork snapshot"
+        Set-RunStage -Stage "fork.snapshot.infobase" -Detail "Creating an immutable snapshot of the exact source branch infobase."
+        $kind = [string](Get-StateValue -State $SourceState -Name "infoBaseKind" -Default "file")
+        if ($kind -eq "file") {
+            $artifactDirectory = Join-Path $stagingPath "infobase"
+            New-Item -ItemType Directory -Force -Path $artifactDirectory | Out-Null
+            $sourceBasePath = Resolve-InfoBasePath ([string]$SourceState.devBranchInfoBasePath)
+            $sourceArtifact = Join-Path $sourceBasePath "1Cv8.1CD"
+            if (-not (Test-Path -LiteralPath $sourceArtifact -PathType Leaf -ErrorAction SilentlyContinue)) {
+                throw "DEV_BRANCH_FORK_SOURCE_ARTIFACT_MISSING: $sourceArtifact"
+            }
+            $artifactPath = Join-Path $artifactDirectory "1Cv8.1CD"
+            Copy-Item -LiteralPath $sourceArtifact -Destination $artifactPath
+            Copy-BranchSeedFileDoNotCopyMarker -SourceInfoBasePath $sourceBasePath -DestinationInfoBasePath $artifactDirectory
+            $artifactKind = "file-1cd"
+        } else {
+            $artifactPath = Join-Path $stagingPath "infobase.dt"
+            Invoke-Designer `
+                -InfoBasePath ([string]$SourceState.devBranchInfoBasePath) `
+                -InfoBaseKind "server" `
+                -DesignerArgs @("/DumpIB", $artifactPath) | Out-Null
+            $artifactKind = "server-dt"
+        }
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf -ErrorAction SilentlyContinue) -or (Get-Item -LiteralPath $artifactPath).Length -le 0) {
+            throw "DEV_BRANCH_FORK_ARTIFACT_EMPTY: $artifactPath"
+        }
+        $artifactSha256 = (Get-FileHash -LiteralPath $artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+        Set-RunStage -Stage "fork.snapshot.event-log" -Detail "Capturing the source event-log boundary after the base snapshot."
+        $eventLogBaseline = Read-DevBranchEventLogBaselineData -State $SourceState
+        Set-RunStage -Stage "fork.snapshot.history" -Detail "Copying branch-local logs and verification evidence into the fork history bundle."
+        $historyRoot = Join-Path $stagingPath "history"
+        $history = New-DevBranchForkHistorySnapshot -SourceState $SourceState -HistoryRoot $historyRoot -EventLogBaseline $eventLogBaseline -SourceCommit $SourceCommit
+        $dependencyLockPath = ""
+        $dependencyLockSha256 = ""
+        if ($script:DependencyLockPath -and (Test-Path -LiteralPath $script:DependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            $dependencyLockPath = Join-Path $stagingPath "dependency-lock.json"
+            Copy-Item -LiteralPath $script:DependencyLockPath -Destination $dependencyLockPath
+            $dependencyLockSha256 = (Get-FileHash -LiteralPath $dependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        $dotEnvPath = ""
+        $dotEnvSha256 = ""
+        $sourceDotEnvPath = Join-Path $script:ProjectRoot ".dev.env"
+        if (Test-Path -LiteralPath $sourceDotEnvPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            $dotEnvPath = Join-Path $stagingPath ".dev.env"
+            Copy-Item -LiteralPath $sourceDotEnvPath -Destination $dotEnvPath
+            $dotEnvSha256 = (Get-FileHash -LiteralPath $dotEnvPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        }
+        $manifest = [ordered]@{
+            schemaVersion = 1
+            status = "ready"
+            forkId = [guid]::NewGuid().ToString("N")
+            createdAt = (Get-Date).ToString("o")
+            sourceBranchName = [string]$SourceState.devBranchName
+            sourceSafeName = [string]$SourceState.safeDevBranchName
+            sourceGitBranch = [string]$SourceState.devBranch
+            sourceWorktreePath = [string]$SourceState.worktreePath
+            sourceCommit = $SourceCommit
+            sourceVerification = [ordered]@{
+                status = [string]$SourceVerification.status
+                effectiveStatus = [string]$SourceVerification.effectiveStatus
+                isFreshPassed = [bool]$SourceVerification.isFreshPassed
+                fingerprint = [string]$SourceVerification.currentFingerprint
+                verifiedFingerprint = [string]$SourceVerification.verifiedFingerprint
+                verifiedCommit = [string]$SourceVerification.verifiedCommit
+                verifiedAt = [string]$SourceVerification.verifiedAt
+            }
+            sourceEnvironmentFingerprint = $SourceEnvironmentFingerprint
+            targetBranchName = $TargetBranchName
+            targetSafeName = $TargetSafeName
+            targetGitBranch = $TargetGitBranch
+            targetWorktreePath = $TargetWorktreePath
+            infoBaseKind = $kind
+            artifactKind = $artifactKind
+            artifactPath = $artifactPath
+            artifactSha256 = $artifactSha256
+            artifactLength = [int64](Get-Item -LiteralPath $artifactPath).Length
+            historyPath = $historyRoot
+            historyFiles = @($history.files)
+            evidencePaths = $history.evidencePaths
+            baselinePath = Join-Path $historyRoot ([string]$history.baselinePath)
+            dependencyLockPath = $dependencyLockPath
+            dependencyLockSha256 = $dependencyLockSha256
+            dotEnvPath = $dotEnvPath
+            dotEnvSha256 = $dotEnvSha256
+        }
+        Write-Utf8TextAtomic -Path $manifestPath -Value (($manifest | ConvertTo-Json -Depth 16) + [Environment]::NewLine)
+        return (Read-DevBranchForkSnapshot -StagingPath $stagingPath)
+    } catch {
+        $resolved = Assert-DevBranchForkStagingPath -Path $stagingPath
+        if (Test-Path -LiteralPath $resolved -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    }
+}
+
+function New-ForkedDevBranchState {
+    param(
+        [Parameter(Mandatory = $true)][object]$SourceState,
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetInfoBasePath,
+        [Parameter(Mandatory = $true)][string]$TargetHistoryRoot,
+        [Parameter(Mandatory = $true)][string]$MainProjectRoot
+    )
+
+    $state = ConvertTo-Agent1cHashtable -Object $SourceState
+    Remove-DevBranchForkTransientState -State $state | Out-Null
+
+    $now = (Get-Date).ToString("o")
+    $state["devBranchName"] = [string]$Snapshot.targetBranchName
+    $state["safeDevBranchName"] = [string]$Snapshot.targetSafeName
+    $state["devBranch"] = [string]$Snapshot.targetGitBranch
+    $state["createdWithWorktree"] = $true
+    $state["worktreePath"] = [string]$Snapshot.targetWorktreePath
+    $state["mainWorktreePath"] = $MainProjectRoot
+    $state["createdFromCommit"] = [string]$Snapshot.sourceCommit
+    $state["lastConfigBaseUpdatedCommit"] = [string]$Snapshot.sourceCommit
+    $state["devBranchInfoBasePath"] = $TargetInfoBasePath
+    $state["createdAt"] = $now
+    $state["forkedAt"] = $now
+    $state["forkId"] = [string]$Snapshot.forkId
+    $state["forkedFromBranch"] = [string]$Snapshot.sourceGitBranch
+    $state["forkedFromBranchName"] = [string]$Snapshot.sourceBranchName
+    $state["forkedFromCommit"] = [string]$Snapshot.sourceCommit
+    $state["forkHistoryPath"] = $TargetHistoryRoot
+    $state["forkSnapshotArtifactSha256"] = [string]$Snapshot.artifactSha256
+    $state["forkSnapshotArtifactKind"] = [string]$Snapshot.artifactKind
+    $state["publicationStatus"] = "disabled"
+    $state["publicationMode"] = "none"
+    $state["publicationUrl"] = ""
+    $state["publicationError"] = ""
+    $state["launcherRegistered"] = $false
+    $state["launcherInfoBaseName"] = ""
+    $state["launcherFolder"] = ""
+    $state["launcherInfoBaseId"] = ""
+    $state["launcherListPath"] = ""
+    $state["roctupMcpStatus"] = "stopped"
+    $state["roctupMcpPort"] = 0
+    $state["roctupMcpUrl"] = ""
+    $state["roctupMcpHealthUrl"] = ""
+    $state["roctupMcpPid"] = ""
+    $state["vanessaMcpStatus"] = "stopped"
+    $state["vanessaMcpPort"] = 0
+    $state["vanessaMcpUrl"] = ""
+    $state["vanessaMcpPid"] = ""
+    return $state
+}
+
+function Get-DevBranchForkVerificationDecision {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetFingerprint,
+        [Parameter(Mandatory = $true)][string]$TargetEnvironmentFingerprint,
+        [bool]$BaseRestoreProven
+    )
+
+    $sourceFresh = [bool](Get-StateValue -State $Snapshot.sourceVerification -Name "isFreshPassed" -Default $false)
+    $sourceFingerprint = [string](Get-StateValue -State $Snapshot.sourceVerification -Name "fingerprint" -Default "")
+    $fingerprintMatches = $sourceFingerprint -and $sourceFingerprint -ceq $TargetFingerprint
+    $environmentMatches = [string]$Snapshot.sourceEnvironmentFingerprint -and [string]$Snapshot.sourceEnvironmentFingerprint -ceq $TargetEnvironmentFingerprint
+    $inherited = $sourceFresh -and $fingerprintMatches -and $environmentMatches -and $BaseRestoreProven
+    $reason = if ($inherited) {
+        "fresh passed inherited from the exact fork snapshot"
+    } else {
+        "verification retained as history only: sourceFresh=$sourceFresh fingerprintMatches=$fingerprintMatches environmentMatches=$environmentMatches baseRestoreProven=$BaseRestoreProven"
+    }
+    return [pscustomobject]@{
+        inherited = $inherited
+        reason = $reason
+        sourceFingerprint = $sourceFingerprint
+        targetFingerprint = $TargetFingerprint
+        environmentMatches = $environmentMatches
+    }
+}
+
+function Assert-DevBranchForkHistoryPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $root = (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot ".agent-1c\fork-history")).TrimEnd("\", "/")
+    $resolved = (Resolve-Agent1cFullPath -Path $Path).TrimEnd("\", "/")
+    if (-not $resolved.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw "DEV_BRANCH_FORK_HISTORY_PATH_OUTSIDE_ROOT: $resolved"
+    }
+    return $resolved
+}
+
+function Assert-DevBranchForkHistoryReady {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetHistoryRoot
+    )
+
+    $resolved = Assert-DevBranchForkHistoryPath -Path $TargetHistoryRoot
+    foreach ($entry in @($Snapshot.historyFiles)) {
+        $path = Join-Path $resolved (([string]$entry.path).Replace("/", [IO.Path]::DirectorySeparatorChar))
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
+            throw "DEV_BRANCH_FORK_HISTORY_FILE_MISSING: $path"
+        }
+        $actual = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -cne [string]$entry.sha256) {
+            throw "DEV_BRANCH_FORK_HISTORY_SHA_MISMATCH expected='$($entry.sha256)' actual='$actual' path='$path'"
+        }
+    }
+    return $resolved
+}
+
+function Install-DevBranchForkHistory {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetHistoryRoot
+    )
+
+    $resolved = Assert-DevBranchForkHistoryPath -Path $TargetHistoryRoot
+    if (-not (Test-Path -LiteralPath $resolved -PathType Container -ErrorAction SilentlyContinue)) {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $resolved) | Out-Null
+        $partialPath = Assert-DevBranchForkHistoryPath -Path ("$resolved.partial-$($Snapshot.forkId)")
+        if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $partialPath -Recurse -Force
+        }
+        try {
+            Copy-Item -LiteralPath ([string]$Snapshot.historyPath) -Destination $partialPath -Recurse -Force
+            Assert-DevBranchForkHistoryReady -Snapshot $Snapshot -TargetHistoryRoot $partialPath | Out-Null
+            Move-Item -LiteralPath $partialPath -Destination $resolved
+        } finally {
+            if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $partialPath -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    return (Assert-DevBranchForkHistoryReady -Snapshot $Snapshot -TargetHistoryRoot $resolved)
+}
+
+function Restore-DevBranchForkInfoBase {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetInfoBasePath
+    )
+
+    if ([string]$Snapshot.infoBaseKind -eq "file") {
+        $targetPath = Resolve-Agent1cFullPath -Path $TargetInfoBasePath
+        $targetArtifact = Join-Path $targetPath "1Cv8.1CD"
+        if (-not (Test-Path -LiteralPath $targetArtifact -PathType Leaf -ErrorAction SilentlyContinue)) {
+            if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
+                throw "DEV_BRANCH_FORK_TARGET_INFOBASE_INVALID: $targetPath"
+            }
+            $partialPath = Resolve-Agent1cFullPath -Path ("$targetPath.fork-partial-$($Snapshot.forkId)")
+            $expectedPartialPath = "$targetPath.fork-partial-$($Snapshot.forkId)"
+            if ($partialPath -cne $expectedPartialPath) {
+                throw "DEV_BRANCH_FORK_PARTIAL_INFOBASE_PATH_INVALID expected='$expectedPartialPath' actual='$partialPath'"
+            }
+            if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $partialPath -Recurse -Force
+            }
+            try {
+                New-Item -ItemType Directory -Force -Path $partialPath | Out-Null
+                $partialArtifact = Join-Path $partialPath "1Cv8.1CD"
+                Copy-Item -LiteralPath ([string]$Snapshot.artifactPath) -Destination $partialArtifact
+                $partialSha256 = (Get-FileHash -LiteralPath $partialArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($partialSha256 -cne [string]$Snapshot.artifactSha256) {
+                    throw "DEV_BRANCH_FORK_TARGET_ARTIFACT_SHA_MISMATCH expected='$($Snapshot.artifactSha256)' actual='$partialSha256' path='$partialArtifact'"
+                }
+                Copy-BranchSeedFileDoNotCopyMarker `
+                    -SourceInfoBasePath (Split-Path -Parent ([string]$Snapshot.artifactPath)) `
+                    -DestinationInfoBasePath $partialPath
+                Move-Item -LiteralPath $partialPath -Destination $targetPath
+            } finally {
+                if (Test-Path -LiteralPath $partialPath -ErrorAction SilentlyContinue) {
+                    Remove-Item -LiteralPath $partialPath -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+        $actual = (Get-FileHash -LiteralPath $targetArtifact -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -cne [string]$Snapshot.artifactSha256) {
+            throw "DEV_BRANCH_FORK_TARGET_ARTIFACT_SHA_MISMATCH expected='$($Snapshot.artifactSha256)' actual='$actual' path='$targetArtifact'"
+        }
+        return $true
+    }
+
+    $provider = Get-BranchSeedServerProviderCapabilities
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $provider.path `
+        -Operation "restore-seed" `
+        -ProjectRoot $script:ProjectRoot `
+        -DevBranchName ([string]$Snapshot.targetBranchName) `
+        -SeedArtifactPath ([string]$Snapshot.artifactPath) `
+        -DevBranchInfoBasePath $TargetInfoBasePath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Server fork restore provider failed with exit code $LASTEXITCODE."
+    }
+    return $true
+}
+
+function Install-DevBranchForkDependencyLock {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetProjectRoot
+    )
+
+    $snapshotDependencyLockPath = [string](Get-StateValue -State $Snapshot -Name "dependencyLockPath" -Default "")
+    if (-not $snapshotDependencyLockPath) { return "" }
+
+    $targetDependencyLockPath = Join-Path (Resolve-Agent1cFullPath -Path $TargetProjectRoot) ".agent-1c\dependency-lock.json"
+    if (Test-Path -LiteralPath $targetDependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        $targetDependencyLockSha256 = (Get-FileHash -LiteralPath $targetDependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($targetDependencyLockSha256 -cne [string]$Snapshot.dependencyLockSha256) {
+            throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+        }
+        return $targetDependencyLockPath
+    }
+
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetDependencyLockPath) | Out-Null
+    $temporaryDependencyLockPath = "$targetDependencyLockPath.fork-$($Snapshot.forkId).tmp"
+    try {
+        Copy-Item -LiteralPath $snapshotDependencyLockPath -Destination $temporaryDependencyLockPath
+        $copiedDependencyLockSha256 = (Get-FileHash -LiteralPath $temporaryDependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($copiedDependencyLockSha256 -cne [string]$Snapshot.dependencyLockSha256) {
+            throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_SHA_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$copiedDependencyLockSha256' path='$temporaryDependencyLockPath'"
+        }
+        Move-Item -LiteralPath $temporaryDependencyLockPath -Destination $targetDependencyLockPath
+    } finally {
+        Remove-Item -LiteralPath $temporaryDependencyLockPath -Force -ErrorAction SilentlyContinue
+    }
+    return $targetDependencyLockPath
+}
+
+function Install-DevBranchForkDotEnv {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetProjectRoot
+    )
+
+    $snapshotDotEnvPath = [string](Get-StateValue -State $Snapshot -Name "dotEnvPath" -Default "")
+    if (-not $snapshotDotEnvPath) { return "" }
+
+    $targetDotEnvPath = Join-Path (Resolve-Agent1cFullPath -Path $TargetProjectRoot) ".dev.env"
+    $temporaryDotEnvPath = "$targetDotEnvPath.fork-$($Snapshot.forkId).tmp"
+    try {
+        Copy-Item -LiteralPath $snapshotDotEnvPath -Destination $temporaryDotEnvPath -Force
+        $copiedSha256 = (Get-FileHash -LiteralPath $temporaryDotEnvPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($copiedSha256 -cne [string]$Snapshot.dotEnvSha256) {
+            throw "DEV_BRANCH_FORK_TARGET_DOT_ENV_SHA_MISMATCH expected='$($Snapshot.dotEnvSha256)' actual='$copiedSha256' path='$temporaryDotEnvPath'"
+        }
+        Move-Item -LiteralPath $temporaryDotEnvPath -Destination $targetDotEnvPath -Force
+    } finally {
+        Remove-Item -LiteralPath $temporaryDotEnvPath -Force -ErrorAction SilentlyContinue
+    }
+    return $targetDotEnvPath
+}
+
+function Assert-DevBranchForkInfoBaseIsolated {
+    param(
+        [Parameter(Mandatory = $true)][object]$SourceState,
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$TargetInfoBasePath
+    )
+
+    $kind = [string]$Snapshot.infoBaseKind
+    $targetIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $kind -InfoBasePath $TargetInfoBasePath
+    $sourceIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $kind -InfoBasePath ([string]$SourceState.devBranchInfoBasePath)
+    if ([string]$targetIdentity.key -eq [string]$sourceIdentity.key) {
+        throw "DEV_BRANCH_FORK_INFOBASE_NOT_ISOLATED: target infobase resolves to the source branch infobase. Choose a different DevBranchInfoBasePath."
+    }
+
+    foreach ($statePath in @(Get-DevBranchStateFiles | Select-Object -Unique)) {
+        try { $otherState = Read-DevBranchStateFile -Path $statePath } catch { continue }
+        $otherBranch = [string](Get-StateValue -State $otherState -Name "devBranch" -Default "")
+        if ($otherBranch -in @([string]$Snapshot.sourceGitBranch, [string]$Snapshot.targetGitBranch)) { continue }
+        $otherPath = [string](Get-StateValue -State $otherState -Name "devBranchInfoBasePath" -Default "")
+        if (-not $otherPath) { continue }
+        $otherKind = [string](Get-StateValue -State $otherState -Name "infoBaseKind" -Default $kind)
+        try { $otherIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind $otherKind -InfoBasePath $otherPath } catch { continue }
+        if ([string]$targetIdentity.key -eq [string]$otherIdentity.key) {
+            throw "DEV_BRANCH_FORK_INFOBASE_ALREADY_OWNED: target='$TargetInfoBasePath' branch='$otherBranch' state='$statePath'"
+        }
+    }
+}
+
+function Initialize-ForkedDevBranchRuntime {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$MainProjectRoot
+    )
+
+    $safeName = [string]$Snapshot.targetSafeName
+    $statePath = Join-Path $script:ProjectRoot ".agent-1c\dev-branches\$safeName.json"
+    $sourceState = Read-Utf8Text -Path (Join-Path ([string]$Snapshot.historyPath) "source-state.json") | ConvertFrom-Json
+    $targetInfoBasePath = if ($DevBranchInfoBasePath) {
+        $DevBranchInfoBasePath
+    } else {
+        Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safeName
+    }
+    Assert-DevBranchForkInfoBaseIsolated -SourceState $sourceState -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+    Install-DevBranchForkDependencyLock -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot | Out-Null
+    $targetHistoryRoot = Join-Path $script:ProjectRoot ".agent-1c\fork-history\$($Snapshot.forkId)"
+    $stateHash = New-ForkedDevBranchState `
+        -SourceState $sourceState `
+        -Snapshot $Snapshot `
+        -TargetInfoBasePath $targetInfoBasePath `
+        -TargetHistoryRoot $targetHistoryRoot `
+        -MainProjectRoot $MainProjectRoot
+    $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "fork-initializing"
+
+    try {
+        Set-RunStage -Stage "fork.restore.infobase" -Detail "Restoring the forked branch infobase from the immutable source snapshot."
+        $baseRestoreProven = Restore-DevBranchForkInfoBase -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+        Install-DevBranchForkHistory -Snapshot $Snapshot -TargetHistoryRoot $targetHistoryRoot
+
+        $baselineSourcePath = Join-Path $targetHistoryRoot "event-log-baseline.json"
+        $baseline = Read-Utf8Text -Path $baselineSourcePath | ConvertFrom-Json
+        $baseline.logDirectory = if ([string]$Snapshot.infoBaseKind -eq "file") { Join-Path (Resolve-InfoBasePath $targetInfoBasePath) "1Cv8Log" } else { "" }
+        $baseline.reason = "fork-boundary"
+        $baseline.cache.status = "fork-history"
+        $baseline.cache.path = ""
+        $baselinePath = Join-Path $script:ProjectRoot ".agent-1c\event-log-baselines\$safeName.json"
+        Write-Utf8Text -Path $baselinePath -Value (($baseline | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+        $stateHash["eventLogBaselinePath"] = $baselinePath
+        $stateHash["eventLogBaselineCreatedAt"] = [string]$baseline.createdAt
+        $stateHash["eventLogBaselineReader"] = [string]$baseline.reader
+        $stateHash["eventLogBaselineErrorCount"] = [int]$baseline.errorCount
+        $stateHash["eventLogBaselineSignatureCount"] = [int]$baseline.signatureCount
+        $stateHash["eventLogBaselineHash"] = Get-StringSha256 -Value ((@($baseline.signatures) -join "`n"))
+        $stateHash["eventLogBaselineCacheStatus"] = "fork-history"
+        $stateHash["eventLogBaselineCachePath"] = ""
+        $stateHash["eventLogBaselineDurationMs"] = [int64]$baseline.durationMs
+        $stateHash["eventLogBaselineSegmentCount"] = [int]$baseline.cache.segmentCount
+        $stateHash["lastVanessaEventLogBaselinePath"] = $baselinePath
+
+        $evidencePaths = ConvertTo-Agent1cHashtable -Object $Snapshot.evidencePaths
+        foreach ($fieldName in @(
+            "lastVerifiedReportPath", "lastVerificationLogPath",
+            "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+            "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
+            "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
+        )) {
+            if ($evidencePaths.ContainsKey($fieldName)) {
+                $stateHash[$fieldName] = Join-Path $targetHistoryRoot (([string]$evidencePaths[$fieldName]).Replace("/", [IO.Path]::DirectorySeparatorChar))
+            } else {
+                $stateHash[$fieldName] = ""
+            }
+        }
+
+        $launcher = Register-DevBranchInLauncher `
+            -InfoBaseKind ([string]$Snapshot.infoBaseKind) `
+            -InfoBasePath $targetInfoBasePath `
+            -SafeDevBranchName $safeName `
+            -ProjectRootForFolder $MainProjectRoot
+        $stateHash["launcherRegistered"] = $launcher.registered
+        $stateHash["launcherInfoBaseName"] = $launcher.name
+        $stateHash["launcherFolder"] = $launcher.folder
+        $stateHash["launcherInfoBaseId"] = $launcher.id
+        $stateHash["launcherListPath"] = $launcher.listPath
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "launcher-registered"
+
+        $state = Read-DevBranchStateFile -Path $statePath
+        Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
+        Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
+        $state = Invoke-DevBranchDefaultMcpSetup -State $state
+        Invoke-DevBranchVibecoding1cMcpInheritance -MainProjectRoot $MainProjectRoot
+        Sync-KiloItlCommandSurface
+
+        $targetFingerprint = Get-VerificationFingerprint
+        $targetEnvironmentFingerprint = Get-DevBranchForkEnvironmentFingerprint
+        $verificationDecision = Get-DevBranchForkVerificationDecision `
+            -Snapshot $Snapshot `
+            -TargetFingerprint $targetFingerprint `
+            -TargetEnvironmentFingerprint $targetEnvironmentFingerprint `
+            -BaseRestoreProven:$baseRestoreProven
+        $state = Read-DevBranchStateFile -Path $statePath
+        $finalHash = ConvertTo-Agent1cHashtable -Object $state
+        [void]$finalHash.Remove("statePath")
+        [void]$finalHash.Remove("stateProjectRoot")
+        $finalHash["forkVerificationInherited"] = [bool]$verificationDecision.inherited
+        $finalHash["forkVerificationReason"] = [string]$verificationDecision.reason
+        $finalHash["forkSourceVerificationFingerprint"] = [string]$verificationDecision.sourceFingerprint
+        $finalHash["forkTargetVerificationFingerprint"] = [string]$verificationDecision.targetFingerprint
+        $finalHash["forkSourceEnvironmentFingerprint"] = [string]$Snapshot.sourceEnvironmentFingerprint
+        $finalHash["forkTargetEnvironmentFingerprint"] = $targetEnvironmentFingerprint
+        if ($verificationDecision.inherited) {
+            $finalHash["lastVerificationStatus"] = "passed"
+            $finalHash["lastVerifiedFingerprint"] = $targetFingerprint
+        } elseif ([string](Get-StateValue -State $sourceState -Name "lastVerificationStatus" -Default "") -eq "passed") {
+            $finalHash["lastVerificationStatus"] = "stale"
+            $finalHash["lastVerificationStaleAt"] = (Get-Date).ToString("o")
+            $finalHash["lastVerificationStaleReason"] = [string]$verificationDecision.reason
+        }
+        $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $finalHash -Status "ready"
+        $state = Read-DevBranchStateFile -Path $statePath
+        Ensure-DevBranchEventLogPendingCursor -State $state -Reason "fork-dev-branch" | Out-Null
+        $state = Read-DevBranchStateFile -Path $statePath
+
+        $stagingPath = Assert-DevBranchForkStagingPath -Path ([string]$Snapshot.stagingPath)
+        if (Test-Path -LiteralPath $stagingPath -PathType Container -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $stagingPath -Recurse -Force
+        }
+        Set-RunDevBranchState -State $state
+        return $state
+    } catch {
+        $errorMessage = $_.Exception.Message
+        if (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue) {
+            $failed = Read-DevBranchStateFile -Path $statePath
+            $failedHash = ConvertTo-Agent1cHashtable -Object $failed
+            [void]$failedHash.Remove("statePath")
+            [void]$failedHash.Remove("stateProjectRoot")
+            Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $failedHash -Status "fork-failed" -ErrorMessage $errorMessage | Out-Null
+        }
+        throw
+    }
+}
+
+function Invoke-ForkDevBranchRuntimeAfterSnapshot {
+    param(
+        [Parameter(Mandatory = $true)][object]$Snapshot,
+        [Parameter(Mandatory = $true)][string]$MainProjectRoot,
+        [Parameter(Mandatory = $true)][string]$WorktreePath
+    )
+
+    Set-RunStage -Stage "fork.snapshot-complete" -Detail "Fork snapshot completed; releasing source locks before target restoration."
+    Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
+    Exit-Agent1cLifecycleOperation
+    Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
+        Enter-Agent1cLifecycleOperation -RequestedAction "fork-dev-branch"
+        Initialize-ForkedDevBranchRuntime -Snapshot $Snapshot -MainProjectRoot $MainProjectRoot | Out-Null
+    }
+}
+
+function Fork-DevBranch {
+    Require-Value "DevBranchName" $DevBranchName | Out-Null
+    $sourceGitBranch = (Get-GitOutput @("branch", "--show-current")).Trim()
+    if ($sourceGitBranch -notlike "itldev/*") {
+        throw "fork-dev-branch must be run from the development branch that should be copied."
+    }
+    $sourceBranchName = $sourceGitBranch.Substring("itldev/".Length)
+    $sourceState = Read-DevBranchState -Name $sourceBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $sourceState -Operation "fork-dev-branch"
+    Assert-DevBranchExtensionInitialized -State $sourceState -Operation "fork-dev-branch"
+    if ([string](Get-StateValue -State $sourceState -Name "workspaceProvider" -Default "external") -eq "opencode") {
+        throw "DEV_BRANCH_FORK_WORKSPACE_PROVIDER_UNSUPPORTED: OpenCode native workspaces require a provider-owned fork operation."
+    }
+    $sourceState = Assert-DevBranchApplicationReady -State $sourceState -Operation "fork-dev-branch"
+
+    $targetSafeName = ConvertTo-SafeName $DevBranchName
+    $targetGitBranch = if ($DevBranch) { $DevBranch } else { "itldev/$targetSafeName" }
+    if ($targetGitBranch -ceq $sourceGitBranch) {
+        throw "DEV_BRANCH_FORK_TARGET_EQUALS_SOURCE: $targetGitBranch"
+    }
+    $mainProjectRoot = Get-MainWorktreePath
+    $targetWorktreePath = Resolve-DevBranchWorktreePath -SafeDevBranchName $targetSafeName
+    $branchExists = Test-GitBranchExists -Branch $targetGitBranch
+
+    if ($branchExists) {
+        $worktree = Find-GitWorktreeByBranch -Branch $targetGitBranch
+        if ($null -eq $worktree -or -not $worktree.path) {
+            throw "DEV_BRANCH_FORK_TARGET_WORKTREE_MISSING: $targetGitBranch"
+        }
+        $targetWorktreePath = Resolve-Agent1cFullPath -Path $worktree.path
+        $existingState = $null
+        try { $existingState = Read-DevBranchState -Name $DevBranchName } catch { $existingState = $null }
+        if ($null -ne $existingState -and
+            (Get-DevBranchInitializationStatus -State $existingState) -eq "ready" -and
+            [string](Get-StateValue -State $existingState -Name "forkedFromBranch" -Default "") -ceq $sourceGitBranch -and
+            [string](Get-StateValue -State $existingState -Name "devBranch" -Default "") -ceq $targetGitBranch) {
+            $currentSourceCommit = Get-CurrentCommit
+            $forkedFromCommit = [string](Get-StateValue -State $existingState -Name "forkedFromCommit" -Default "")
+            if ($forkedFromCommit -cne $currentSourceCommit) {
+                throw "DEV_BRANCH_FORK_TARGET_ALREADY_READY: target='$targetGitBranch' forkedFromCommit='$forkedFromCommit' currentSourceCommit='$currentSourceCommit'. Choose a new target branch name for the current source state."
+            }
+            $completedStagingPath = Get-DevBranchForkStagingPath -SafeDevBranchName $targetSafeName
+            if (Test-Path -LiteralPath $completedStagingPath -PathType Container -ErrorAction SilentlyContinue) {
+                $completedSnapshot = Read-DevBranchForkSnapshot -StagingPath $completedStagingPath
+                if ([string]$completedSnapshot.forkId -cne [string](Get-StateValue -State $existingState -Name "forkId" -Default "")) {
+                    throw "DEV_BRANCH_FORK_COMPLETED_STAGING_IDENTITY_MISMATCH: $completedStagingPath"
+                }
+                Remove-Item -LiteralPath (Assert-DevBranchForkStagingPath -Path $completedStagingPath) -Recurse -Force
+            }
+            Set-RunDevBranchState -State $existingState
+            Write-DevBranchWorktreeOpenMessage -MainProjectPath $script:ProjectRoot -WorktreePath $targetWorktreePath -SourceContext $sourceGitBranch
+            Open-AgentWorktreeBestEffort -WorktreePath $targetWorktreePath
+            Write-DevBranchRunUserReport -State $existingState -AdvisoryRoot $targetWorktreePath -Operation "forked"
+            return
+        }
+        $snapshot = Read-DevBranchForkSnapshot -StagingPath (Get-DevBranchForkStagingPath -SafeDevBranchName $targetSafeName)
+        if ([string]$snapshot.sourceGitBranch -cne $sourceGitBranch -or [string]$snapshot.targetGitBranch -cne $targetGitBranch) {
+            throw "DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: source='$sourceGitBranch' target='$targetGitBranch'"
+        }
+    } else {
+        if (Test-Path -LiteralPath $targetWorktreePath -ErrorAction SilentlyContinue) {
+            throw "Development branch worktree path already exists: $targetWorktreePath"
+        }
+        Assert-DevBranchWorktreePathBudget -WorktreePath $targetWorktreePath -SafeDevBranchName $targetSafeName
+        Save-DevBranchCheckpoint -Operation "fork-dev-branch" -Message "chore: checkpoint before fork to $targetGitBranch" | Out-Null
+        $sourceCommit = Get-CurrentCommit
+        $sourceState = Read-DevBranchState -Name $sourceBranchName
+        $sourceVerification = Get-VerificationState -State $sourceState
+        $sourceEnvironmentFingerprint = Get-DevBranchForkEnvironmentFingerprint
+        $snapshot = New-DevBranchForkSnapshot `
+            -SourceState $sourceState `
+            -TargetBranchName $DevBranchName `
+            -TargetSafeName $targetSafeName `
+            -TargetGitBranch $targetGitBranch `
+            -TargetWorktreePath $targetWorktreePath `
+            -SourceCommit $sourceCommit `
+            -SourceVerification $sourceVerification `
+            -SourceEnvironmentFingerprint $sourceEnvironmentFingerprint
+
+        $worktreeParent = Split-Path -Parent $targetWorktreePath
+        if ($worktreeParent) { New-Item -ItemType Directory -Force -Path $worktreeParent | Out-Null }
+        Set-RunStage -Stage "fork.git-worktree" -Detail "Creating the target branch from the common source checkpoint."
+        Invoke-Git @("worktree", "add", "-b", $targetGitBranch, $targetWorktreePath, $sourceCommit)
+    }
+
+    Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
+    Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
+    Invoke-ForkDevBranchRuntimeAfterSnapshot `
+        -Snapshot $snapshot `
+        -MainProjectRoot $mainProjectRoot `
+        -WorktreePath $targetWorktreePath
+    $state = Read-DevBranchState -Name $DevBranchName
+    Set-RunDevBranchState -State $state
+    Write-DevBranchWorktreeOpenMessage -MainProjectPath $script:ProjectRoot -WorktreePath $targetWorktreePath -SourceContext $sourceGitBranch
+    Open-AgentWorktreeBestEffort -WorktreePath $targetWorktreePath
+    Write-DevBranchRunUserReport -State $state -AdvisoryRoot $targetWorktreePath -Operation "forked"
 }
 
 function Invoke-DevBranchRuntimeAfterGitPhase {
@@ -10959,6 +11824,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-sync-master"
         Write-ItlActiveClientCommandText "  /itl-refresh"
         Write-ItlActiveClientCommandText "  /itl-refresh-lite"
+        Write-ItlActiveClientCommandText "  /itl-fork-branch <name>"
         Write-ItlActiveClientCommandText "  /itl-reset-branch"
         Write-ItlActiveClientCommandText "  /itl-lock-objects"
         Write-ItlActiveClientCommandText "  /itl-result"

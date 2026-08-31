@@ -436,14 +436,15 @@
                 [string]$masterFiles[".agents/skills/$name/SKILL.md"] | Should -Match 'ITL_EXPLICIT_ROUTINE_CONTRACT: self-contained-v2'
             }
             @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-check/SKILL.md"
+            @($masterFiles.Keys) | Should -Not -Contain ".agents/skills/itl-fork-branch/SKILL.md"
 
             & git -C $tempRoot branch -M itldev/codex-surface
             $devFiles = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 24
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
+            @($devFiles.Keys).Count | Should -Be 26
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'

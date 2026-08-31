@@ -597,7 +597,7 @@ function Get-Agent1cLifecycleOperationLockScopes {
     param([string]$RequestedAction)
 
     $candidatePaths = @($script:ProjectRoot)
-    if ($RequestedAction -in @("refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
+    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
 

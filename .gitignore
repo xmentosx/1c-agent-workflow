@@ -25,6 +25,8 @@ temp/
 .agent-1c/runtime/
 .agent-1c/branch-dumps/
 .agent-1c/branch-archives/
+.agent-1c/fork-history/
+.agent-1c/fork-staging/
 .agent-1c/branch-seed/
 .agent-1c/config-dump/
 .agent-1c/extension-dump/

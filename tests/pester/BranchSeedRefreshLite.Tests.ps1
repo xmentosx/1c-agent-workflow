@@ -339,6 +339,7 @@ param([string]$Operation,[string]$ProjectRoot)
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "refresh-dev-branch-lite") | Should -Be @([IO.Path]::GetFullPath($branchRoot))
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "initialize-dev-branch-runtime") | Should -Be @([IO.Path]::GetFullPath($branchRoot))
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "refresh-dev-branch").Count | Should -Be 2
+                @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "fork-dev-branch").Count | Should -Be 2
                 @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "release-e2e-config-repository-lock-roundtrip").Count | Should -Be 2
             }
         } finally {

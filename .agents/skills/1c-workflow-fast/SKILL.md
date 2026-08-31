@@ -20,6 +20,7 @@ For a mapped routine, use at most one short sentence before the command and make
 - package update: `update-workflow`
 - new configuration branch: `new-dev-branch`
 - new extension branch: `new-extension-dev-branch`; collect `Empty|Cfe`, name, and optional CFE path
+- fork active branch: `fork-dev-branch`; collect target name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
 - explicitly requested base load without tests: `update-dev-branch-base`
