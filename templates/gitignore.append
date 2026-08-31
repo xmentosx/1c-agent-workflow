@@ -59,12 +59,14 @@ build/test-results/
 .agents/skills/itl-new-extension-branch/
 .agents/skills/itl-switch-client/
 .agents/skills/itl-refresh-all/
+.agents/skills/itl-repository-mode/
 .agents/skills/itl-reset-branch/
 .agents/skills/itl-lock-objects/
 .agents/skills/itl-update-workflow/
 .agents/skills/itl-check/
 .agents/skills/itl-refresh/
 .agents/skills/itl-refresh-lite/
+.agents/skills/itl-fork-branch/
 .agents/skills/itl-result/
 .agents/skills/itl-verify-fix/
 .kilo/commands/itl*.md

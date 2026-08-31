@@ -462,6 +462,36 @@
         }
     }
 
+    It "keeps every generated Codex skill ignored when the dev surface is materialized" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-codex-ignore-surface-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Destination (Join-Path $tempRoot ".gitignore")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"masterBranch":"master","aiRules":{"tools":["codex"]}}'
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore .agent-1c/project.json
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M itldev/codex-surface
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $expectedFiles = Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
+                Sync-ItlManagedSurfaceFiles -Client codex -ExpectedFiles $expectedFiles
+                [pscustomobject]@{
+                    hasForkSkill = Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-fork-branch\SKILL.md") -PathType Leaf
+                    status = @(& git -C $tempRoot status --porcelain)
+                }
+            }
+
+            $result.hasForkSkill | Should -BeTrue
+            $result.status | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "renders ITL command examples in the active client syntax" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-active-command-syntax-" + [guid]::NewGuid().ToString("N"))
         try {

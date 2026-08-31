@@ -2148,6 +2148,24 @@ function Assert-BaselineDumpCommitted {
     throw "Baseline configuration dump was not committed to HEAD: $dumpInfoRepoPath. Git status for $($ExportPath): $status. Check .gitignore and make sure '$normalizedExportPath' is tracked."
 }
 
+function Get-ItlGeneratedCodexSkillIgnorePaths {
+    param([string]$SourceRoot = $script:ProjectRoot)
+
+    $templateRoot = Join-Path $SourceRoot ".agents\skills\1c-workflow\kilo-command-templates"
+    if (-not (Test-Path -LiteralPath $templateRoot -PathType Container -ErrorAction SilentlyContinue)) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -LiteralPath $templateRoot -Recurse -File -Filter "itl*.md.template" -ErrorAction Stop |
+            ForEach-Object {
+                $skillName = $_.Name.Substring(0, $_.Name.Length - ".md.template".Length)
+                ".agents/skills/$skillName/"
+            } |
+            Sort-Object -Unique
+    )
+}
+
 function Ensure-GitIgnore {
     $gitignorePath = Join-Path $script:ProjectRoot ".gitignore"
     $fallbackRequired = @(
@@ -2192,22 +2210,6 @@ function Ensure-GitIgnore {
         "build/data-mcp-tools-loader/",
         "build/test-results/",
         ".codex/config.toml",
-        ".agents/skills/itl/",
-        ".agents/skills/itl-litemode/",
-        ".agents/skills/itl-status/",
-        ".agents/skills/itl-new-config-branch/",
-        ".agents/skills/itl-new-extension-branch/",
-        ".agents/skills/itl-switch-client/",
-        ".agents/skills/itl-refresh-all/",
-        ".agents/skills/itl-reset-branch/",
-        ".agents/skills/itl-lock-objects/",
-        ".agents/skills/itl-update-workflow/",
-        ".agents/skills/itl-check/",
-        ".agents/skills/itl-sync-master/",
-        ".agents/skills/itl-refresh/",
-        ".agents/skills/itl-refresh-lite/",
-        ".agents/skills/itl-result/",
-        ".agents/skills/itl-verify-fix/",
         ".kilo/commands/itl*.md",
         ".kilo/kilo.json",
         ".kilo/kilo.jsonc",
@@ -2228,6 +2230,7 @@ function Ensure-GitIgnore {
     } else {
         $required = $fallbackRequired
     }
+    $required = @($required + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath

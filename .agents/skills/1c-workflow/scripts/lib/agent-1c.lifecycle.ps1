@@ -1203,7 +1203,8 @@ function Ensure-DevBranchEnterpriseNormalized {
         }
         if ($null -ne $Updates) {
             foreach ($key in $passed.Keys) { $Updates[$key] = $passed[$key] }
-        } else {
+        }
+        if ($canPersistImmediately -or $null -eq $Updates) {
             Update-DevBranchState -State $State -Updates $passed
         }
     } catch {
@@ -6552,6 +6553,7 @@ function Get-PendingDevBranchMergeTransaction {
         allowedPaths = @(Get-StateValue -State $State -Name "pendingMergePaths" -Default @())
         conflictPaths = @(Get-StateValue -State $State -Name "pendingMergeConflictPaths" -Default @())
         mergeCommit = [string](Get-StateValue -State $State -Name "pendingMergeCommit" -Default "")
+        postMergeHead = [string](Get-StateValue -State $State -Name "pendingMergePostMergeHead" -Default "")
         result = [string](Get-StateValue -State $State -Name "pendingMergeResult" -Default "")
         legacy = $legacy
     }
@@ -6568,6 +6570,7 @@ function Set-PendingDevBranchMergeTransaction {
         [string[]]$AllowedPaths = @(),
         [string[]]$ConflictPaths = @(),
         [string]$MergeCommit = "",
+        [string]$PostMergeHead = "",
         [string]$Result = ""
     )
 
@@ -6581,6 +6584,7 @@ function Set-PendingDevBranchMergeTransaction {
         pendingMergePaths = @($AllowedPaths | Sort-Object -Unique)
         pendingMergeConflictPaths = @($ConflictPaths | Sort-Object -Unique)
         pendingMergeCommit = $MergeCommit
+        pendingMergePostMergeHead = $PostMergeHead
         pendingMergeResult = $Result
         pendingRefreshMasterCommit = $(if ($isRefresh) { $TargetCommit } else { "" })
         pendingRefreshOperation = $(if ($isRefresh) { $Operation } else { "" })
@@ -6597,6 +6601,7 @@ function Add-PendingDevBranchMergeClearUpdates {
         "pendingMergeTargetCommit",
         "pendingMergeStage",
         "pendingMergeCommit",
+        "pendingMergePostMergeHead",
         "pendingMergeResult",
         "pendingRefreshMasterCommit",
         "pendingRefreshOperation"
@@ -6760,7 +6765,118 @@ function Complete-DevBranchLifecycleMergeTransaction {
         -AllowedPaths $Transaction.allowedPaths `
         -ConflictPaths @() `
         -MergeCommit $head `
+        -PostMergeHead $head `
         -Result $result
+}
+
+function Assert-DevBranchLifecycleMergeRecordedResult {
+    param(
+        [object]$Transaction,
+        [string]$Operation
+    )
+
+    $mergeCommit = [string]$Transaction.mergeCommit
+    if ($mergeCommit -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $mergeCommit)) {
+        throw "LIFECYCLE_MERGE_COMMIT_INVALID operation='$Operation' commit='$mergeCommit'."
+    }
+    if ($Transaction.result -ceq "merge-commit") {
+        if (-not (Test-GitCommitHasExactMergeParents -Commit $mergeCommit -FirstParent $Transaction.branchCommit -SecondParent $Transaction.targetCommit)) {
+            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedMergeCommit='$mergeCommit'."
+        }
+        return
+    }
+    if ($Transaction.result -ceq "already-up-to-date") {
+        if ($mergeCommit -cne $Transaction.branchCommit -or -not (Test-GitCommitIsAncestor -Ancestor $Transaction.targetCommit -Descendant $mergeCommit)) {
+            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedNoOpCommit='$mergeCommit'."
+        }
+        return
+    }
+    throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedResult='$($Transaction.result)' recordedMergeCommit='$mergeCommit'."
+}
+
+function Test-DevBranchLifecycleHelperOwnedPostMergeHead {
+    param(
+        [object]$Transaction,
+        [string]$CandidateHead,
+        [switch]$LegacyCursorOnly
+    )
+
+    if ($Transaction.operation -notin @("refresh-dev-branch", "refresh-dev-branch-lite")) { return $false }
+    if ($CandidateHead -notmatch '^[a-f0-9]{40}$' -or -not (Test-GitCommitExists -Commit $CandidateHead)) { return $false }
+    $parents = @(Get-GitCommitParents -Commit $CandidateHead)
+    if ($parents.Count -ne 1 -or $parents[0] -cne $Transaction.mergeCommit) { return $false }
+
+    $subject = (Get-GitOutput @("show", "-s", "--format=%s", $CandidateHead)).Trim()
+    $paths = @(
+        Get-GitPathList -Arguments @("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", $CandidateHead, "--") |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+    $normalizedExportPath = ([string](Get-ExportPath)).Replace("\", "/").Trim("/")
+    $cursorPath = "$normalizedExportPath/ConfigDumpInfo.xml"
+    if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
+        return ($paths.Count -eq 1 -and $paths[0] -ceq $cursorPath)
+    }
+    if ($LegacyCursorOnly -or $subject -cne "chore: persist branch refresh state") { return $false }
+
+    $allowedPaths = @($cursorPath, ".kilo/kilo.json")
+    return ($paths.Count -ge 1 -and $paths.Count -le 2 -and
+        $paths -ccontains ".kilo/kilo.json" -and
+        @($paths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0)
+}
+
+function Resolve-DevBranchLifecyclePostMergeHead {
+    param(
+        [object]$State,
+        [object]$Transaction,
+        [string]$Operation,
+        [switch]$AllowLegacyCursorMigration
+    )
+
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $Transaction -Operation $Operation
+    $head = Get-CurrentCommit
+    $recordedPostMergeHead = [string]$Transaction.postMergeHead
+    if ($recordedPostMergeHead) {
+        if ($recordedPostMergeHead -cne $Transaction.mergeCommit -and
+            -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $Transaction -CandidateHead $recordedPostMergeHead)) {
+            throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($Transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
+        }
+        if ($head -cne $recordedPostMergeHead) {
+            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'."
+        }
+        return $head
+    }
+
+    if ($head -ceq $Transaction.mergeCommit) {
+        Update-DevBranchState -State $State -Updates @{ pendingMergePostMergeHead = $head }
+        return $head
+    }
+    if ($AllowLegacyCursorMigration -and
+        (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $Transaction -CandidateHead $head -LegacyCursorOnly)) {
+        Update-DevBranchState -State $State -Updates @{ pendingMergePostMergeHead = $head }
+        return $head
+    }
+    throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$($Transaction.mergeCommit)' actual='$head'."
+}
+
+function Set-DevBranchLifecyclePostMergeHeadCheckpoint {
+    param(
+        [object]$State,
+        [string]$Operation,
+        [string]$PostMergeHead = (Get-CurrentCommit)
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction -or $transaction.operation -cne $Operation -or $transaction.stage -cne "merged") {
+        throw "LIFECYCLE_MERGE_TRANSACTION_NOT_COMMITTED operation='$Operation' phase='post-merge-checkpoint'."
+    }
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $Operation
+    if ($PostMergeHead -cne $transaction.mergeCommit -and
+        -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $PostMergeHead)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($transaction.mergeCommit)' postMergeHead='$PostMergeHead'."
+    }
+    Update-DevBranchState -State $State -Updates @{ pendingMergePostMergeHead = $PostMergeHead }
 }
 
 function Invoke-NewDevBranchLifecycleMerge {
@@ -7015,13 +7131,12 @@ function Resume-DevBranchLifecycleMergeIfPresent {
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
     }
 
-    if ($transaction.stage -ceq "merged" -and $transaction.mergeCommit -ceq $head) {
-        if ($transaction.result -ceq "merge-commit" -and -not (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $transaction.branchCommit -SecondParent $transaction.targetCommit)) {
-            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedMergeCommit='$($transaction.mergeCommit)' head='$head'."
-        }
-        if ($transaction.result -ceq "already-up-to-date" -and ($head -cne $transaction.branchCommit -or -not (Test-GitCommitIsAncestor -Ancestor $transaction.targetCommit -Descendant $head))) {
-            throw "LIFECYCLE_MERGE_RESULT_MISMATCH operation='$Operation' recordedNoOpCommit='$($transaction.mergeCommit)' head='$head'."
-        }
+    if ($transaction.stage -ceq "merged") {
+        Resolve-DevBranchLifecyclePostMergeHead `
+            -State $State `
+            -Transaction $transaction `
+            -Operation $Operation `
+            -AllowLegacyCursorMigration | Out-Null
         Assert-CleanGit
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
     }
@@ -7062,12 +7177,13 @@ function Assert-DevBranchLifecycleMergePostMerge {
     if (Test-GitMergeInProgress) {
         throw "LIFECYCLE_MERGE_STILL_IN_PROGRESS operation='$Operation' phase='post-merge'."
     }
-    $head = Get-CurrentCommit
-    if ($head -cne $transaction.mergeCommit) {
-        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$($transaction.mergeCommit)' actual='$head'."
-    }
+    Resolve-DevBranchLifecyclePostMergeHead `
+        -State $State `
+        -Transaction $transaction `
+        -Operation $Operation `
+        -AllowLegacyCursorMigration | Out-Null
     Assert-CleanGit
-    return $transaction
+    return (Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName))
 }
 
 function Initialize-DevBranchRuntime {
@@ -9459,7 +9575,9 @@ function Complete-RefreshConfigDumpInfoPostcondition {
     param(
         [Parameter(Mandatory = $true)][object]$LoadResult,
         [string]$ExportPath = (Get-ExportPath),
-        [object]$TrackedKiloSnapshot = $null
+        [object]$TrackedKiloSnapshot = $null,
+        [object]$State = $null,
+        [string]$Operation = ""
     )
 
     $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
@@ -9490,6 +9608,12 @@ function Complete-RefreshConfigDumpInfoPostcondition {
     }
 
     $LoadResult.currentCommit = Get-CurrentCommit
+    if ($null -ne $State -and $Operation) {
+        Set-DevBranchLifecyclePostMergeHeadCheckpoint `
+            -State $State `
+            -Operation $Operation `
+            -PostMergeHead $LoadResult.currentCommit
+    }
     Assert-CleanGit
     if ($null -ne $TrackedKiloSnapshot) {
         $TrackedKiloSnapshot.completed = $true
@@ -10199,7 +10323,12 @@ function Invoke-RefreshDevBranchCore {
         $updatedState = Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $DevBranchName) -LoadResult $loadResult -Reason "refresh-dev-branch"
         Sync-KiloItlCommandSurface
         Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile" | Out-Null
-        Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath (Get-ExportPath) -TrackedKiloSnapshot $trackedKiloSnapshot
+        Complete-RefreshConfigDumpInfoPostcondition `
+            -LoadResult $loadResult `
+            -ExportPath (Get-ExportPath) `
+            -TrackedKiloSnapshot $trackedKiloSnapshot `
+            -State $state `
+            -Operation $OperationName
         Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation $OperationName | Out-Null
 
         $loadStateUpdates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
