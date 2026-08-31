@@ -51,12 +51,16 @@ New-Item -ItemType Directory -Force -Path $workerRoot | Out-Null
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 $catalog = Get-QualityContractCatalog -RepositoryRoot $RepositoryRoot
-$trackedPaths = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("ls-files", "-z"))
+$trackedPaths = @()
 $commonGitDir = Get-RepositoryCommonGitDirectory -RepositoryRoot $RepositoryRoot
 $cacheRoot = Join-Path $commonGitDir "itl\pester-shards\v1"; New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
 $script:pesterVanessaArchiveCandidates = @()
 $script:pesterExternalIdentityCache = @{}
 $script:pesterLegacyExternalIdentityCache = @{}
+$script:pesterTrackedIdentityCache = @{}
+$script:pesterIdentityInventoryMs = 0L
+$script:pesterCacheLookupMs = 0L
+$script:pesterLegacyDigestCount = 0
 $pesterExternalInputsByTest = @{}
 $pesterExternalInputsProperty = $catalog.PSObject.Properties["pesterExternalInputs"]
 if ($pesterExternalInputsProperty) {
@@ -223,23 +227,49 @@ function Get-LegacyExternalInputIdentity {
     return [string]$script:pesterLegacyExternalIdentityCache[$cacheKey]
 }
 
+function Initialize-PesterTrackedIdentityCache {
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $dirty = @{}
+        $inventoryPaths = New-Object System.Collections.Generic.List[string]
+        foreach ($entry in @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("ls-files", "-t", "-s", "-m", "-z", "--"))) {
+            $match = [regex]::Match([string]$entry, '^(?<tag>[A-Z?]) [0-7]{6} (?<object>[a-f0-9]{40,64}) 0\t(?<path>.*)$')
+            if (-not $match.Success) { continue }
+            $path = ([string]$match.Groups['path'].Value).Replace('\', '/')
+            if ([string]$match.Groups['tag'].Value -eq "C") {
+                $dirty[$path] = $true
+                continue
+            }
+            $inventoryPaths.Add($path) | Out-Null
+            $script:pesterTrackedIdentityCache[$path] = "git-blob:$([string]$match.Groups['object'].Value)"
+        }
+        foreach ($path in $dirty.Keys) { $script:pesterTrackedIdentityCache.Remove([string]$path) }
+        $script:trackedPaths = @($inventoryPaths | Sort-Object -Unique)
+    } finally {
+        $stopwatch.Stop()
+        $script:pesterIdentityInventoryMs = [int64]$stopwatch.ElapsedMilliseconds
+    }
+}
+
 function Get-ShardTrackedFileIdentity {
     param([Parameter(Mandatory = $true)][string]$RelativePath, [Parameter(Mandatory = $true)][string]$AbsolutePath)
+    $cacheKey = $RelativePath.Replace('\', '/')
+    if ($script:pesterTrackedIdentityCache.ContainsKey($cacheKey)) { return [string]$script:pesterTrackedIdentityCache[$cacheKey] }
+    # Hash dirty and untracked bytes exactly as Git will store them. This keeps a
+    # focused pre-commit proof reusable after the identical files are committed,
+    # while --path still applies repository attributes and clean filters.
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        & git -C $RepositoryRoot diff --quiet -- $RelativePath 2>$null
-        $diffExitCode = $LASTEXITCODE
-        $blob = @()
-        if ($diffExitCode -eq 0) { $blob = @(& git -C $RepositoryRoot rev-parse --verify (":" + $RelativePath) 2>$null) }
-        $blobExitCode = $LASTEXITCODE
+        $worktreeBlob = @(& git -C $RepositoryRoot hash-object --path $RelativePath -- $AbsolutePath 2>$null)
+        $worktreeBlobExitCode = $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousPreference }
-    if ($diffExitCode -eq 0) {
-        if ($blobExitCode -eq 0 -and $blob.Count -eq 1 -and $blob[0].Trim() -match '^[a-f0-9]{40,64}$') {
-            return "git-blob:$($blob[0].Trim())"
-        }
+    if ($worktreeBlobExitCode -eq 0 -and $worktreeBlob.Count -eq 1 -and $worktreeBlob[0].Trim() -match '^[a-f0-9]{40,64}$') {
+        $script:pesterTrackedIdentityCache[$cacheKey] = "git-blob:$($worktreeBlob[0].Trim())"
+        return [string]$script:pesterTrackedIdentityCache[$cacheKey]
     }
-    return "worktree-sha256:$(Get-PesterShardFileSha256 -Path $AbsolutePath)"
+    $script:pesterTrackedIdentityCache[$cacheKey] = "worktree-sha256:$(Get-PesterShardFileSha256 -Path $AbsolutePath)"
+    return [string]$script:pesterTrackedIdentityCache[$cacheKey]
 }
 
 function Get-ShardInputDigest {
@@ -377,6 +407,8 @@ $pendingSerial = New-Object System.Collections.Generic.Queue[object]
 $results = @()
 $failures = @()
 $index = 0
+Initialize-PesterTrackedIdentityCache
+$fingerprintPlanStopwatch = [Diagnostics.Stopwatch]::StartNew()
 foreach ($item in $items) {
     $index++
     $planPath = Join-Path $workerRoot ("worker-{0}.plan.json" -f $index)
@@ -387,34 +419,6 @@ foreach ($item in $items) {
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
     $digest = Get-ShardInputDigest -Paths @([string]$item.path)
     $legacyDigests = New-Object System.Collections.Generic.List[string]
-    $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs
-    if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
-    $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
-    $requiredExternalInputs = $(if ($pesterExternalInputsByTest.ContainsKey($relativeItemPath)) { @($pesterExternalInputsByTest[$relativeItemPath]) } else { @() })
-    if ("ITL_AI_RULES_SOURCE_PATH" -notin $requiredExternalInputs) {
-        $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
-            ITL_AI_RULES_SOURCE_PATH = "env:ITL_AI_RULES_SOURCE_PATH=<unset>"
-        }
-        if ($priorUnsetAiRulesDigest -and $priorUnsetAiRulesDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetAiRulesDigest)) { $legacyDigests.Add($priorUnsetAiRulesDigest) | Out-Null }
-    }
-    if ("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -notin $requiredExternalInputs) {
-        $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
-            ITL_AI_RULES_SOURCE_PATH = $(if ("ITL_AI_RULES_SOURCE_PATH" -in $requiredExternalInputs) { Get-ExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" } else { "env:ITL_AI_RULES_SOURCE_PATH=<unset>" })
-            ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = "env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=<unset>"
-        }
-        if ($priorUnsetExternalDigest -and $priorUnsetExternalDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetExternalDigest)) { $legacyDigests.Add($priorUnsetExternalDigest) | Out-Null }
-    }
-    if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
-        $legacyAiRulesIdentity = Get-LegacyExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" -Value ([Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE_PATH", "Process"))
-        foreach ($archiveCandidate in $script:pesterVanessaArchiveCandidates) {
-            $overrides = @{
-                ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
-                ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
-            }
-            $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs
-            if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
-        }
-    }
     if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
             $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -432,6 +436,55 @@ foreach ($item in $items) {
     }
     Remove-Item -LiteralPath $resultPath, $workerJunit, $stdoutPath, $stderrPath, $stdinPath -Force -ErrorAction SilentlyContinue
     [System.IO.File]::WriteAllText($stdinPath, "", [System.Text.UTF8Encoding]::new($false))
+
+    $lookupStopwatch = [Diagnostics.Stopwatch]::StartNew()
+    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
+    $lookupStopwatch.Stop()
+    $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
+    $reuseReason = "exact owner input fingerprint"
+    if (-not $cached) {
+        $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs
+        if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
+        $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
+        $requiredExternalInputs = $(if ($pesterExternalInputsByTest.ContainsKey($relativeItemPath)) { @($pesterExternalInputsByTest[$relativeItemPath]) } else { @() })
+        if ("ITL_AI_RULES_SOURCE_PATH" -notin $requiredExternalInputs) {
+            $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+                ITL_AI_RULES_SOURCE_PATH = "env:ITL_AI_RULES_SOURCE_PATH=<unset>"
+            }
+            if ($priorUnsetAiRulesDigest -and $priorUnsetAiRulesDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetAiRulesDigest)) { $legacyDigests.Add($priorUnsetAiRulesDigest) | Out-Null }
+        }
+        if ("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -notin $requiredExternalInputs) {
+            $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+                ITL_AI_RULES_SOURCE_PATH = $(if ("ITL_AI_RULES_SOURCE_PATH" -in $requiredExternalInputs) { Get-ExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" } else { "env:ITL_AI_RULES_SOURCE_PATH=<unset>" })
+                ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = "env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=<unset>"
+            }
+            if ($priorUnsetExternalDigest -and $priorUnsetExternalDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetExternalDigest)) { $legacyDigests.Add($priorUnsetExternalDigest) | Out-Null }
+        }
+        if ($script:pesterVanessaArchiveCandidates.Count -gt 0) {
+            $legacyAiRulesIdentity = Get-LegacyExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" -Value ([Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE_PATH", "Process"))
+            foreach ($archiveCandidate in $script:pesterVanessaArchiveCandidates) {
+                $overrides = @{
+                    ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
+                    ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
+                }
+                $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs
+                if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
+            }
+        }
+        $script:pesterLegacyDigestCount += $legacyDigests.Count
+        foreach ($legacyDigest in $legacyDigests) {
+            $lookupStopwatch.Restart()
+            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
+            $lookupStopwatch.Stop()
+            $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
+            if (-not $cached) { continue }
+            $cached | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
+            [IO.File]::WriteAllText($resultPath, (($cached | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
+            $reuseReason = "legacy external path normalized to exact content identity"
+            break
+        }
+    }
     $payload = [ordered]@{
         schemaVersion = 1
         worker = $index
@@ -442,19 +495,6 @@ foreach ($item in $items) {
         paths = @([string]$item.path)
     }
     [System.IO.File]::WriteAllText($planPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
-    $cached = Restore-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
-    $reuseReason = "exact owner input fingerprint"
-    if (-not $cached) {
-        foreach ($legacyDigest in $legacyDigests) {
-            $cached = Restore-ShardCache -Digest $legacyDigest -ResultPath $resultPath -JunitPath $workerJunit -Worker $index -TestPath ([string]$item.path)
-            if (-not $cached) { continue }
-            $cached | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
-            [IO.File]::WriteAllText($resultPath, (($cached | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            Save-ShardCache -Digest $digest -ResultPath $resultPath -JunitPath $workerJunit
-            $reuseReason = "legacy external path normalized to exact content identity"
-            break
-        }
-    }
     if ($cached) { $cached | Add-Member -NotePropertyName reuseReason -NotePropertyValue $reuseReason -Force }
     $entry = [pscustomobject]@{
         worker = $index; serial = [bool]$item.serial; process = $null; reused = [bool]$cached; digest = $digest
@@ -467,11 +507,30 @@ foreach ($item in $items) {
         if ([bool]$entry.serial) { $pendingSerial.Enqueue($entry) } else { $pendingParallel.Enqueue($entry) }
     }
 }
+$fingerprintPlanStopwatch.Stop()
 
 function Start-PesterFileEntry {
     param([Parameter(Mandatory = $true)][object]$Entry)
     $args = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (ConvertTo-NativeArgument $workerScript), "-PlanPath", (ConvertTo-NativeArgument $Entry.planPath), "-JunitPath", (ConvertTo-NativeArgument $Entry.junitPath), "-ResultPath", (ConvertTo-NativeArgument $Entry.resultPath))
-    $Entry.process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $Entry.stdinPath -RedirectStandardOutput $Entry.stdoutPath -RedirectStandardError $Entry.stderrPath -PassThru
+    $originalPowerShellModulePath = $env:PSModulePath
+    $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    try {
+        if ($resetModulePathForWindowsPowerShell) {
+            $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
+            $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
+                if ([string]::IsNullOrWhiteSpace($_)) { return $false }
+                try { return -not [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $coreModuleRoot, [StringComparison]::OrdinalIgnoreCase) }
+                catch { return $true }
+            })
+            $env:PSModulePath = $compatibleModuleRoots -join ';'
+        }
+        $Entry.process = Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -WorkingDirectory $RepositoryRoot -WindowStyle Hidden -RedirectStandardInput $Entry.stdinPath -RedirectStandardOutput $Entry.stdoutPath -RedirectStandardError $Entry.stderrPath -PassThru
+    } finally {
+        if ($resetModulePathForWindowsPowerShell) {
+            if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
+            else { $env:PSModulePath = $originalPowerShellModulePath }
+        }
+    }
     $null = $Entry.process.Handle
 }
 
@@ -502,6 +561,7 @@ function Complete-PesterFileEntry {
 $active = New-Object System.Collections.Generic.List[object]
 $stopScheduling = $false
 $nextHeartbeat = [DateTime]::UtcNow.AddSeconds(15)
+$workerSpanStopwatch = [Diagnostics.Stopwatch]::StartNew()
 while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count -gt 0)) {
     while (-not $stopScheduling -and $pendingParallel.Count -gt 0 -and $active.Count -lt $WorkerCount) {
         $next = $pendingParallel.Dequeue()
@@ -523,7 +583,6 @@ while ($active.Count -gt 0 -or (-not $stopScheduling -and $pendingParallel.Count
         [void]$active.Remove($entry)
     }
 }
-
 while (-not $stopScheduling -and $pendingSerial.Count -gt 0) {
     $entry = $pendingSerial.Dequeue()
     Start-PesterFileEntry -Entry $entry
@@ -539,6 +598,7 @@ while (-not $stopScheduling -and $pendingSerial.Count -gt 0) {
         $stopScheduling = $true
     }
 }
+$workerSpanStopwatch.Stop()
 
 $reportedPaths = @($results | ForEach-Object { @($_.paths) })
 $expectedPaths = @($testFiles | ForEach-Object { $_.FullName })
@@ -581,6 +641,11 @@ $summary = [ordered]@{
     workerCount = $results.Count
     executedWorkerCount = @($entries | Where-Object { -not $_.reused -and $_.process }).Count
     reusedWorkerCount = @($entries | Where-Object { $_.reused }).Count
+    fingerprintPlanMs = [int64]$fingerprintPlanStopwatch.ElapsedMilliseconds
+    cacheLookupMs = [int64]$script:pesterCacheLookupMs
+    workerSpanMs = [int64]$workerSpanStopwatch.ElapsedMilliseconds
+    identityInventoryMs = [int64]$script:pesterIdentityInventoryMs
+    legacyDigestCount = [int]$script:pesterLegacyDigestCount
     workers = @($results | Sort-Object worker)
     junitPath = $JunitPath
     passed = [int](($results | Measure-Object -Property passed -Sum).Sum)

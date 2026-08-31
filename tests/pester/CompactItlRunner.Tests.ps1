@@ -726,7 +726,7 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "returns a structured Vanessa test-contract failure without requiring the log tail" {
+    It "preserves a structured Vanessa diagnostic recovery action without requiring the log tail" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-test-contract-" + [guid]::NewGuid().ToString("N"))
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
@@ -734,15 +734,15 @@ exit 0
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
-$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.failed'; stageDetail='undefined step'; errorMessage='undefined step'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='/itl-verify-fix' }
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.failed'; stageDetail='undefined step'; errorMessage='undefined step'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='fix-and-repeat-original-check' }
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
 exit 1
 '@
             $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.errorCategory | Should -Be "unsupported-step"
-            $summary.requiredAction | Should -Be "/itl-verify-fix"
-            $summary.nextAction | Should -Be "/itl-verify-fix"
+            $summary.requiredAction | Should -Be "fix-and-repeat-original-check"
+            $summary.nextAction | Should -Be "fix-and-repeat-original-check"
             @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatus"
             @($summary.PSObject.Properties.Name) | Should -Not -Contain "authoringStatePath"
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }

@@ -9,6 +9,7 @@ Use this reference for ROCTUP branch data MCP, vibecoding1c MCP, branch-local Va
 - Vanessa UI MCP is separate branch-local runtime tooling for user-mode inspection, recording, and debugging. It is not the Vanessa Automation verification runner.
 - External MCP entries are user-provided or future integrations. ITL must preserve entries not marked as `managedBy = vibecoding1c-mcp` with `family = vibecoding1c`.
 - Final verification never uses MCP. Use `/itl-check` through Vanessa Automation `TESTMANAGER -> TESTCLIENT`.
+- A configured auxiliary contour may add `itl-roctup-aux-<id>` and `itl-vanessa-ui-aux-<id>`. These are separate compact facades with separate runtime ownership; the primary `itl-roctup-data` and `itl-vanessa-ui` entries are unchanged. See `auxiliary-contours.md`.
 
 Qualify each family against the current client surface independently. Unavailable or unexposed remote `vibecoding1c` tools do not make the pre-registered branch-local `itl-roctup-data` or `itl-vanessa-ui` facades unavailable. When a concrete task routes to either facade, inspect both direct tools and every client-supported deferred/lazy catalog before declaring it unavailable or falling back; in Codex search `ALL_TOOLS` for the hyphenated logical name and normalized underscore name. A deferred facade counts as exposed. Do not call either facade without the concrete data or runtime question required by its skill.
 

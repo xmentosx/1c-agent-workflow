@@ -9,6 +9,18 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+if ($env:OS -eq "Windows_NT" -and [string]$PSVersionTable.PSEdition -eq "Desktop") {
+    $documents = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
+    $userModuleRoot = [IO.Path]::GetFullPath((Join-Path $documents "WindowsPowerShell\Modules"))
+    $moduleRoots = @($env:PSModulePath -split ';' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if (-not @($moduleRoots | Where-Object {
+        try { [string]::Equals([IO.Path]::GetFullPath($_).TrimEnd('\'), $userModuleRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) }
+        catch { $false }
+    }).Count) {
+        $env:PSModulePath = (@($userModuleRoot) + $moduleRoots) -join ';'
+    }
+}
+
 $plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-worker-{0}-{1}" -f [int]$plan.worker, [guid]::NewGuid().ToString("N"))
 $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = Join-Path $fixtureRuntimeRoot "ondemand"

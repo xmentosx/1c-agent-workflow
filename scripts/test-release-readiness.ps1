@@ -297,70 +297,24 @@ function Test-VanessaArchiveContract {
 }
 
 function Test-PowerShellEncoding {
-    $baseCommit = Get-GitValue -Root $RepositoryRoot -Arguments @("merge-base", "HEAD", "origin/master")
-    $changed = @()
-    if ($baseCommit) { $changed = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("diff", "--name-only", "--diff-filter=ACMRT", "-z", "$baseCommit...HEAD", "--", "*.ps1")) }
-    if ($changed.Count -eq 0) { return @() }
-    $probePath = Join-Path $PSScriptRoot "release-e2e\test-powershell51-decoding.ps1"
-    $probeToken = [guid]::NewGuid().ToString("N")
-    $probeInputPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-ps51-decode-$probeToken.input.json")
-    $probeOutputPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-ps51-decode-$probeToken.output.json")
-    $probeStdoutPath = $probeOutputPath + ".stdout.log"
-    $probeStderrPath = $probeOutputPath + ".stderr.log"
-    $paths = @($changed | ForEach-Object { [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$_).Replace('/', '\'))) })
-    $decodedByPath = @{}
+    $reportPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-powershell-encoding-" + [guid]::NewGuid().ToString("N") + ".json")
     try {
-        [IO.File]::WriteAllText($probeInputPath, (ConvertTo-Json -InputObject @($paths)), [Text.UTF8Encoding]::new($false))
-        $parts = @(
-            "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-            "-File", (ConvertTo-NativeArgument $probePath),
-            "-InputPath", (ConvertTo-NativeArgument $probeInputPath),
-            "-OutputPath", (ConvertTo-NativeArgument $probeOutputPath)
-        )
-        $process = Start-Process -FilePath "powershell.exe" -ArgumentList ($parts -join " ") -WindowStyle Hidden `
-            -RedirectStandardOutput $probeStdoutPath -RedirectStandardError $probeStderrPath -Wait -PassThru
-        $null = $process.Handle
-        if ([int]$process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $probeOutputPath -PathType Leaf)) {
-            $stderr = if (Test-Path -LiteralPath $probeStderrPath -PathType Leaf) { Get-Content -LiteralPath $probeStderrPath -Raw } else { "" }
-            throw "Windows PowerShell 5.1 batch decode probe failed with exit code $($process.ExitCode): $($stderr.Trim())"
-        }
-        $decodedResults = Get-Content -LiteralPath $probeOutputPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        foreach ($result in $decodedResults) {
-            $decodedByPath[[IO.Path]::GetFullPath([string]$result.path)] = [string]$result.decodedBase64
-        }
-    } catch {
-        Add-ReadinessIssue -Code "RELEASE_POWERSHELL_ENCODING_INVALID" -Category "SOURCE_DEFECT" `
-            -Message "Windows PowerShell 5.1 batch decode preflight failed: $($_.Exception.Message)" `
-            -Recovery "Make powershell.exe 5.1 available and keep the decode preflight executable before release."
-        return @($changed)
-    } finally {
-        Remove-Item -LiteralPath $probeInputPath, $probeOutputPath, $probeStdoutPath, $probeStderrPath -Force -ErrorAction SilentlyContinue
-    }
-    foreach ($relativePath in @($changed)) {
-        $path = Join-Path $RepositoryRoot ([string]$relativePath).Replace('/', '\')
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-        try {
-            $bytes = [System.IO.File]::ReadAllBytes($path)
-            $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
-            $text = $strictUtf8.GetString($bytes)
-            if ($text.Length -gt 0 -and $text[0] -eq [char]0xFEFF) { $text = $text.Substring(1) }
-            if ($text.IndexOf([char]0xFFFD) -ge 0) { throw "replacement character U+FFFD is present" }
-            $tokens = $null
-            $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
-            if (@($errors).Count -gt 0) { throw "PowerShell AST errors: $(@($errors | ForEach-Object { $_.Message }) -join '; ')" }
-            $actualBase64 = [string]$decodedByPath[[IO.Path]::GetFullPath($path)]
-            $expectedBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($text))
-            if (-not $actualBase64 -or $actualBase64 -cne $expectedBase64) {
-                throw "Windows PowerShell 5.1 default decoding differs from strict UTF-8"
-            }
-        } catch {
-            Add-ReadinessIssue -Code "RELEASE_POWERSHELL_ENCODING_INVALID" -Category "SOURCE_DEFECT" `
-                -Message "Changed PowerShell file is not strict UTF-8/AST-clean and Windows PowerShell 5.1-safe: $relativePath; $($_.Exception.Message)" `
+        & (Join-Path $PSScriptRoot "test-powershell-encoding.ps1") -RepositoryRoot $RepositoryRoot -OutputPath $reportPath -ReportOnly | Out-Null
+        $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($issue in @($report.issues)) {
+            Add-ReadinessIssue -Code ([string]$issue.code) -Category "SOURCE_DEFECT" `
+                -Message ([string]$issue.message) `
                 -Recovery "Store non-ASCII Windows PowerShell source with a UTF-8 BOM, or keep the script ASCII-safe and pass Unicode through UTF-8 JSON/files, environment variables, or Base64."
         }
+        return @($report.changedPowerShellFiles)
+    } catch {
+        Add-ReadinessIssue -Code "RELEASE_POWERSHELL_ENCODING_INVALID" -Category "SOURCE_DEFECT" `
+            -Message "PowerShell encoding preflight failed: $($_.Exception.Message)" `
+            -Recovery "Make powershell.exe 5.1 available and keep the decode preflight executable before release."
+        return @()
+    } finally {
+        Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
     }
-    return @($changed)
 }
 
 function Test-ReleaseCheckpointPreflight {

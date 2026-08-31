@@ -129,12 +129,92 @@ function Get-DeliveryAiRulesRemoteState {
     }
 }
 
+function Remove-DeliveryPreparedAiRulesWorktree {
+    if (-not $script:DeliveryPreparedAiRulesWorktree) { return }
+    $prepared = $script:DeliveryPreparedAiRulesWorktree
+    $repository = $script:DeliveryPreparedAiRulesRepository
+    $script:DeliveryPreparedAiRulesWorktree = ""
+    $script:DeliveryPreparedAiRulesRepository = ""
+    if ($repository -and (Test-Path -LiteralPath $repository -PathType Container)) {
+        [void](Invoke-WorktreeGit -Root $repository -Arguments @("worktree", "remove", "--force", $prepared) -AllowFailure)
+        [void](Invoke-WorktreeGit -Root $repository -Arguments @("worktree", "prune") -AllowFailure)
+    }
+    if (Test-Path -LiteralPath $prepared) { Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+function Get-DeliveryAiRulesWorktreeRecords {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    $fields = @(Get-RepositoryGitPathList -RepositoryRoot $RepositoryRoot -Arguments @("worktree", "list", "--porcelain", "-z"))
+    $records = New-Object System.Collections.Generic.List[object]
+    $current = $null
+    foreach ($field in $fields) {
+        if ($field.StartsWith("worktree ", [StringComparison]::Ordinal)) {
+            if ($current) { $records.Add([pscustomobject]$current) | Out-Null }
+            $current = [ordered]@{ path = $field.Substring(9); head = "" }
+        } elseif ($current -and $field.StartsWith("HEAD ", [StringComparison]::Ordinal)) {
+            $current.head = $field.Substring(5).Trim().ToLowerInvariant()
+        }
+    }
+    if ($current) { $records.Add([pscustomobject]$current) | Out-Null }
+    return $records.ToArray()
+}
+
+function Test-DeliveryAiRulesQualificationFile {
+    param([string]$Path, [string]$Commit, [string]$Tree)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+    try { $qualification = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $false }
+    return [string]$qualification.kind -ceq "itl-ai-rules-full-qualification" -and
+        [string]$qualification.status -ceq "passed" -and [bool]$qualification.reusable -and
+        [string]$qualification.repository.commit -ceq $Commit -and
+        [string]$qualification.repository.tree -ceq $Tree -and [bool]$qualification.repository.worktreeClean
+}
+
+function Resolve-DeliveryAiRulesSource {
+    param([object]$Lock)
+    $requested = if ($script:DeliveryRequestedAiRulesSource) { [IO.Path]::GetFullPath($script:DeliveryRequestedAiRulesSource) } else { "" }
+    if (-not $requested -or -not (Test-Path -LiteralPath $requested -PathType Container)) {
+        throw "Owned ai_rules_1c publication requires explicit -AiRulesSource pointing to a checkout of the locked repository."
+    }
+    $expected = ([string]$Lock.commit).ToLowerInvariant()
+    $origin = (Invoke-WorktreeGit -Root $requested -Arguments @("remote", "get-url", "origin")).stdout.Trim()
+    if ((ConvertTo-DeliveryRepositoryIdentity -Url $origin) -cne (ConvertTo-DeliveryRepositoryIdentity -Url ([string]$Lock.repo))) {
+        throw "ai_rules_1c source origin does not match the canonical lock repository."
+    }
+    $treeResult = Invoke-WorktreeGit -Root $requested -Arguments @("rev-parse", "$expected^{tree}") -AllowFailure
+    $expectedTree = $treeResult.stdout.Trim().ToLowerInvariant()
+
+    foreach ($record in @(Get-DeliveryAiRulesWorktreeRecords -RepositoryRoot $requested)) {
+        if ([string]$record.head -cne $expected -or -not (Test-Path -LiteralPath ([string]$record.path) -PathType Container)) { continue }
+        $status = (Invoke-WorktreeGit -Root ([string]$record.path) -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout
+        if ($status) { continue }
+        $candidateQualification = Join-Path ([string]$record.path) "build\test-results\qualification\full.json"
+        if (-not $expectedTree -or -not (Test-DeliveryAiRulesQualificationFile -Path $candidateQualification -Commit $expected -Tree $expectedTree)) { continue }
+        $script:AiRulesSource = [IO.Path]::GetFullPath([string]$record.path)
+        return $script:AiRulesSource
+    }
+
+    $qualificationSource = Join-Path $requested "build\test-results\qualification\full.json"
+    if ($treeResult.exitCode -eq 0 -and $expectedTree -and (Test-DeliveryAiRulesQualificationFile -Path $qualificationSource -Commit $expected -Tree $expectedTree)) {
+        Remove-DeliveryPreparedAiRulesWorktree
+        $prepared = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-rules-exact-" + [guid]::NewGuid().ToString("N"))
+        $added = Invoke-WorktreeGit -Root $requested -Arguments @("worktree", "add", "--detach", $prepared, $expected) -AllowFailure
+        if ($added.exitCode -eq 0) {
+            $qualificationTarget = Join-Path $prepared "build\test-results\qualification\full.json"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $qualificationTarget) | Out-Null
+            Copy-Item -LiteralPath $qualificationSource -Destination $qualificationTarget
+            $script:DeliveryPreparedAiRulesWorktree = $prepared
+            $script:DeliveryPreparedAiRulesRepository = $requested
+            $script:AiRulesSource = $prepared
+            return $prepared
+        }
+        if (Test-Path -LiteralPath $prepared) { Remove-Item -LiteralPath $prepared -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    throw "No clean ai_rules_1c worktree or reusable Full proof is available for locked commit '$expected'. Prepare the exact controlled-fork release checkout before publication."
+}
+
 function Get-DeliveryLocalAiRulesSource {
     param([object]$Lock)
-    if ([string]::IsNullOrWhiteSpace($AiRulesSource) -or -not (Test-Path -LiteralPath $AiRulesSource -PathType Container)) {
-        throw "Owned ai_rules_1c publication requires explicit -AiRulesSource pointing to the clean locked release checkout."
-    }
-    $sourceRoot = [IO.Path]::GetFullPath($AiRulesSource)
+    $sourceRoot = Resolve-DeliveryAiRulesSource -Lock $Lock
     $origin = (Invoke-WorktreeGit -Root $sourceRoot -Arguments @("remote", "get-url", "origin")).stdout.Trim()
     if ((ConvertTo-DeliveryRepositoryIdentity -Url $origin) -cne (ConvertTo-DeliveryRepositoryIdentity -Url ([string]$Lock.repo))) {
         throw "ai_rules_1c source origin does not match the canonical lock repository."

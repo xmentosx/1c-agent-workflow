@@ -507,7 +507,9 @@
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
             $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'
             $runText | Should -Match '-ExpectedSessionCount 1'
-            $runText | Should -Match '(?s)-AdditionalSessionAdmissions.*?infoBasePath = \[string\]\$state\.devBranchInfoBasePath.*?requiredSessions = \[int\]\$testClientTopology\.requiredTestClientSlots.*?expectedChildRole = "test-client"'
+        $runText | Should -Match 'Get-VanessaTestClientAdmissionTargets -Topology \$testClientTopology -DefaultState \$state'
+        $runText | Should -Match '-AdditionalSessionAdmissions \$admissionTargets'
+        $runText | Should -Match '(?s)foreach \(\$target in \$admissionTargets\).*?Stop-OneCInfoBaseSessionProcesses.*?-InfoBaseKind \$target\.infoBaseKind.*?-InfoBasePath \$target\.infoBasePath'
             $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -622,7 +624,149 @@ Describe "Vanessa verification failure classification" {
             $result.status | Should -Be "failed"
             $result.failureCategory | Should -Be ""
             $result.reason | Should -Match 'Expected 2, got 3'
-            $VanessaText | Should -Match '(?s)failureCategory.*?-eq "runner".*?Set-RunFailureContext -Category "runner"'
+            $VanessaText | Should -Match 'function Get-VanessaVerificationFailureRoute'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "uses an unambiguous structured JUnit property as the primary failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-primary-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<testsuite name="suite" tests="1" failures="1" errors="0">'
+                    '  <properties>'
+                    '    <property name="ИмяСценария" value="Расчет плана"/>'
+                    '    <property name="ТекстОшибки" value="Первичная ошибка бизнес-проверки"/>'
+                    '    <property name="ТекстИсключенияПлатформыОчищенный" value="Резервная структурированная ошибка"/>'
+                    '  </properties>'
+                    '  <testcase name="Расчет плана">'
+                    '    <failure message="Ошибка при вызове метода контекста">Вторичная ошибка интерфейса</failure>'
+                    '  </testcase>'
+                    '</testsuite>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+            }
+
+            $result.reason | Should -Match 'Первичная ошибка бизнес-проверки'
+            $result.reason | Should -Not -Match 'Вторичная ошибка интерфейса'
+            $result.primaryErrorSource | Should -Be 'junit-property:ТекстОшибки'
+            @($result.secondaryDiagnostics) | Should -Contain 'Ошибка при вызове метода контекста Вторичная ошибка интерфейса'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not attribute suite properties when more than one testcase failed" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-ambiguous-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<testsuite name="suite" tests="2" failures="2" errors="0">'
+                    '  <properties><property name="ТекстОшибки" value="Неоднозначная общая ошибка"/></properties>'
+                    '  <testcase name="Первый"><failure>Ошибка первого сценария</failure></testcase>'
+                    '  <testcase name="Второй"><failure>Ошибка второго сценария</failure></testcase>'
+                    '</testsuite>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+            }
+
+            $result.reason | Should -Match 'Ошибка первого сценария'
+            $result.reason | Should -Not -Match 'Неоднозначная общая ошибка'
+            $result.primaryErrorSource | Should -Be 'junit-failure'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "falls back from a missing structured error text to the cleaned platform exception" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-cleaned-primary-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $xml = @(
+                    '<testsuite name="suite" tests="1" failures="1" errors="0">'
+                    '  <testcase name="Расчет плана"><failure>Вторичная ошибка JUnit</failure></testcase>'
+                    '  <properties>'
+                    '    <property name="ИмяСценария" value="Расчет плана"/>'
+                    '    <property name="ТекстИсключенияПлатформыОчищенный" value="Очищенное исключение платформы"/>'
+                    '  </properties>'
+                    '</testsuite>'
+                ) -join [Environment]::NewLine
+                [IO.File]::WriteAllText((Join-Path $tempRoot "junit.xml"), $xml, (Get-Utf8Encoding))
+                Get-VanessaVerificationStatus -RunDirectory $tempRoot -StatusPath (Join-Path $tempRoot "status.json")
+            }
+
+            $result.reason | Should -Match 'Очищенное исключение платформы'
+            $result.primaryErrorSource | Should -Be 'junit-property:ТекстИсключенияПлатформыОчищенный'
+            @($result.secondaryDiagnostics) | Should -Contain 'Вторичная ошибка JUnit'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps exact event-log duplicates in the primary category and routes diagnostic failures locally" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-event-duplicate-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+                $primary = 'Первичная ошибка бизнес-проверки'
+                $verification = [pscustomobject]@{
+                    status = 'failed'
+                    reason = $primary
+                    failureCategory = ''
+                    primaryErrorSignature = Get-VanessaDiagnosticSignature -Text $primary
+                }
+                $reportPath = Join-Path $tempRoot 'event-log-new-errors.json'
+                [IO.File]::WriteAllText($reportPath, (@{ errors = @(@{ comment = "  Первичная   ошибка бизнес-проверки  " }) } | ConvertTo-Json -Depth 5), (Get-Utf8Encoding))
+                $duplicateEvent = [pscustomobject]@{ status = 'failed'; reportPath = $reportPath }
+                $duplicate = Test-VanessaEventLogConfirmsPrimaryFailure -Verification $verification -EventLogVerification $duplicateEvent
+
+                [IO.File]::WriteAllText($reportPath, (@{ errors = @(@{ comment = $primary }, @{ comment = 'Независимая ошибка журнала' }) } | ConvertTo-Json -Depth 5), (Get-Utf8Encoding))
+                $independent = Test-VanessaEventLogConfirmsPrimaryFailure -Verification $verification -EventLogVerification $duplicateEvent
+
+                $VanessaFeaturePath = ''
+                $VanessaFilterTags = '@focused'
+                $diagnosticDuplicateRoute = Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification $duplicateEvent -EventLogConfirmsPrimaryFailure:$duplicate
+                $diagnosticIndependentRoute = Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification $duplicateEvent -EventLogConfirmsPrimaryFailure:$independent
+                $diagnosticEventOnlyRoute = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{ status = 'passed'; reason = 'JUnit passed.' }) -EventLogVerification $duplicateEvent
+                $diagnosticRunnerRoute = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{ status = 'failed'; reason = 'ITL_VANESSA_TAG_FILTER_COUNT_MISMATCH' }) -EventLogVerification ([pscustomobject]@{ status = 'passed' })
+                $testClientRunnerRoute = Get-VanessaVerificationFailureRoute -Verification ([pscustomobject]@{ status = 'failed'; reason = 'TestClient startup failed'; failureCategory = 'runner' }) -EventLogVerification ([pscustomobject]@{ status = 'passed' })
+                $VanessaFilterTags = ''
+                $fullRoute = Get-VanessaVerificationFailureRoute -Verification $verification -EventLogVerification ([pscustomobject]@{ status = 'passed' })
+                [pscustomobject]@{
+                    duplicate = $duplicate
+                    independent = $independent
+                    diagnosticDuplicateRoute = $diagnosticDuplicateRoute
+                    diagnosticIndependentRoute = $diagnosticIndependentRoute
+                    diagnosticEventOnlyRoute = $diagnosticEventOnlyRoute
+                    diagnosticRunnerRoute = $diagnosticRunnerRoute
+                    testClientRunnerRoute = $testClientRunnerRoute
+                    fullRoute = $fullRoute
+                }
+            }
+
+            $result.duplicate | Should -BeTrue
+            $result.independent | Should -BeFalse
+            $result.diagnosticDuplicateRoute.category | Should -Be 'product-assertion'
+            $result.diagnosticDuplicateRoute.requiredAction | Should -Be 'fix-and-repeat-original-check'
+            $result.diagnosticIndependentRoute.category | Should -Be 'event-log'
+            $result.diagnosticIndependentRoute.requiredAction | Should -Be 'fix-and-repeat-original-check'
+            $result.diagnosticEventOnlyRoute.category | Should -Be 'event-log'
+            $result.diagnosticEventOnlyRoute.requiredAction | Should -Be 'fix-and-repeat-original-check'
+            $result.diagnosticRunnerRoute.category | Should -Be 'runner'
+            $result.diagnosticRunnerRoute.requiredAction | Should -Be 'fix-and-repeat-original-check'
+            $result.testClientRunnerRoute.requiredAction | Should -Be 'inspect-testclient-startup-diagnostics-and-repeat-original-command'
+            $result.fullRoute.requiredAction | Should -Be '/itl-verify-fix'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

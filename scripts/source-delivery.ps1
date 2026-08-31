@@ -33,6 +33,9 @@ if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
 . (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
 $script:Remote = $Remote
+$script:DeliveryRequestedAiRulesSource = $AiRulesSource
+$script:DeliveryPreparedAiRulesWorktree = ""
+$script:DeliveryPreparedAiRulesRepository = ""
 $script:GateScript = if ($GateScript) { [System.IO.Path]::GetFullPath($GateScript) } else { Join-Path $script:Root "scripts\check.ps1" }
 $script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.Path]::GetFullPath($ComponentFinalizerScript) } else { "" }
 $script:CompatibilityPromoterScript = if ($CompatibilityPromoterScript) { [System.IO.Path]::GetFullPath($CompatibilityPromoterScript) } else { Join-Path $script:Root "scripts\promote-ai-rules-compatibility.ps1" }
@@ -106,5 +109,6 @@ try {
     }
     $result | ConvertTo-Json -Depth 8
 } finally {
+    Remove-DeliveryPreparedAiRulesWorktree
     Exit-DeliveryOperation
 }

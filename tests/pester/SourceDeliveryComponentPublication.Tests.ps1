@@ -13,6 +13,9 @@ Describe "Source develop queue and delivery" {
             $aggregate | Should -Not -Match ([regex]::Escape($external))
         }
         $DeliverySourceText | Should -Match 'Owned component publication requires exact-candidate Release qualification'
+        $DeliverySourceText | Should -Match 'Resolve-DeliveryAiRulesSource'
+        $DeliverySourceText | Should -Match 'worktree", "list", "--porcelain", "-z"'
+        $DeliverySourceText | Should -Match 'Remove-DeliveryPreparedAiRulesWorktree'
         $DeliverySourceText | Should -Match 'Get-DeliveryComponentFinalizerIdentity'
         $DeliverySourceText | Should -Match 'compatibilityStatus = \[string\]\$lock\.compatibilityStatus; installable = \$true'
     }
@@ -63,6 +66,28 @@ Describe "Source develop queue and delivery" {
             (Get-DeliveryAiRulesRemoteState -SourceRoot $root -Lock $lock).status | Should -Be 'partial'
             & git --git-dir=$remote update-ref -d "refs/tags/$tag"
             (Get-DeliveryAiRulesRemoteState -SourceRoot $root -Lock $lock).status | Should -Be 'missing'
+        }
+    }
+
+    It "selects a clean registered ai_rules worktree at the locked commit" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('ConvertTo-DeliveryRepositoryIdentity', 'Remove-DeliveryPreparedAiRulesWorktree', 'Get-DeliveryAiRulesWorktreeRecords', 'Test-DeliveryAiRulesQualificationFile', 'Resolve-DeliveryAiRulesSource')) { Invoke-Expression $definition.Extent.Text }
+            . (Join-Path $RepoRoot "scripts\git-path-list.ps1")
+            function Invoke-WorktreeGit {
+                param([string]$Root, [string[]]$Arguments, [switch]$AllowFailure)
+                $output = @(& git -C $Root @Arguments 2>&1 | ForEach-Object { [string]$_ })
+                return [pscustomobject]@{ exitCode = $LASTEXITCODE; stdout = ($output -join "`n") }
+            }
+            $root = Join-Path $TestDrive "rules stale путь"; $exactRoot = Join-Path $TestDrive "rules exact путь"
+            New-Item -ItemType Directory -Force -Path $root | Out-Null; & git -C $root init --quiet; & git -C $root config user.email tests@example.com; & git -C $root config user.name Tests
+            [IO.File]::WriteAllText((Join-Path $root 'README.md'), "exact`n", [Text.UTF8Encoding]::new($false)); [IO.File]::WriteAllText((Join-Path $root '.gitignore'), "build/`n", [Text.UTF8Encoding]::new($false)); & git -C $root add README.md .gitignore; & git -C $root commit --quiet -m exact; $expected = (& git -C $root rev-parse HEAD).Trim()
+            $tag = 'itl-main-deadbeef-r1'; & git -C $root branch "release/$tag" $expected; & git -C $root tag -a $tag $expected -m exact; & git -C $root worktree add --quiet --detach $exactRoot $expected
+            $expectedTree = (& git -C $exactRoot rev-parse 'HEAD^{tree}').Trim(); $qualificationPath = Join-Path $exactRoot 'build\test-results\qualification\full.json'; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $qualificationPath) | Out-Null
+            $qualification = [ordered]@{ kind='itl-ai-rules-full-qualification'; status='passed'; reusable=$true; repository=[ordered]@{commit=$expected;tree=$expectedTree;worktreeClean=$true} }; [IO.File]::WriteAllText($qualificationPath, ($qualification | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'README.md'), "stale`n", [Text.UTF8Encoding]::new($false)); & git -C $root add README.md; & git -C $root commit --quiet -m stale; & git -C $root remote add origin 'https://example.invalid/ai_rules_1c.git'
+            $script:DeliveryRequestedAiRulesSource = $root; $script:AiRulesSource = $root; $lock = [pscustomobject]@{ repo='https://example.invalid/ai_rules_1c.git'; commit=$expected; ref=$tag }
+            (Resolve-DeliveryAiRulesSource -Lock $lock) | Should -Be ([IO.Path]::GetFullPath($exactRoot))
+            $script:AiRulesSource | Should -Be ([IO.Path]::GetFullPath($exactRoot))
         }
     }
 

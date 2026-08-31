@@ -521,7 +521,25 @@ function Write-DeliveryRunRecord {
             if (-not $summary.PSObject.Properties["startedAt"] -or (ConvertTo-DeliveryUtcDateTime -Value $summary.startedAt) -lt $StartedAt.AddSeconds(-2)) { $summary = $null }
         } catch { $summary = $null }
     }
-    $record = [ordered]@{ schemaVersion = 1; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }) }
+    $releaseE2E = $null
+    $e2eReportProperty = if ($summary) { $summary.PSObject.Properties["e2eReportPath"] } else { $null }
+    if ($e2eReportProperty -and [string]$e2eReportProperty.Value -and (Test-Path -LiteralPath ([string]$e2eReportProperty.Value) -PathType Leaf)) {
+        try {
+            $e2e = Get-Content -LiteralPath ([string]$e2eReportProperty.Value) -Raw -Encoding UTF8 | ConvertFrom-Json
+            $e2eStages = @($e2e.stages.PSObject.Properties | ForEach-Object {
+                [pscustomobject]@{ name = $_.Name; execution = [string]$_.Value.execution; durationMs = [int64]$_.Value.currentRunDurationMs; proofDurationMs = [int64]$_.Value.proofDurationMs; reuseReason = [string]$_.Value.reuseReason }
+            })
+            $releaseE2E = [pscustomobject]@{
+                durationMs = [int64]$e2e.durationMs
+                executedStages = @($e2e.executedStages)
+                reusedStages = @($e2eStages | Where-Object execution -eq "reused" | ForEach-Object { [pscustomobject]@{ name=$_.name; reason=$_.reuseReason } })
+                invalidatedStages = @($e2e.invalidatedStages)
+                invalidationDetails = $(if ($e2e.PSObject.Properties["invalidationDetails"]) { @($e2e.invalidationDetails) } else { @() })
+                slowestStages = @($e2eStages | Where-Object execution -eq "executed" | Sort-Object durationMs -Descending | Select-Object -First 5)
+            }
+        } catch { $releaseE2E = $null }
+    }
+    $record = [ordered]@{ schemaVersion = 2; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
     [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
     return $target
@@ -530,7 +548,14 @@ function Write-DeliveryRunRecord {
 function Get-DeliveryRunHistory {
     param([int]$Limit = 3, [switch]$IncludeDetails)
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; if (-not (Test-Path -LiteralPath $runRoot)) { return [pscustomobject]@{ root = $runRoot; count = 0; totalDurationMs = 0; byMode = @(); lastRuns = @() } }
-    $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object { try { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch {} })
+    $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object {
+        try {
+            $record = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($record.PSObject.Properties["mode"] -and $record.PSObject.Properties["status"] -and
+                $record.PSObject.Properties["startedAt"] -and $record.PSObject.Properties["durationMs"] -and
+                $record.PSObject.Properties["tree"]) { $record }
+        } catch {}
+    })
     $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
     $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
         @($runs | Select-Object -First $Limit | ForEach-Object {
@@ -538,6 +563,20 @@ function Get-DeliveryRunHistory {
         })
     }
     return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = $lastRuns }
+}
+
+function Get-DeliveryQualificationTimingSummary {
+    param([Parameter(Mandatory = $true)][string]$Tree, [Parameter(Mandatory = $true)][datetime]$NotBefore, [datetime]$OperationStartedAt = $NotBefore)
+    $history = Get-DeliveryRunHistory -Limit 200 -IncludeDetails
+    $runs = @($history.lastRuns | Where-Object {
+        [string]$_.tree -ceq $Tree -and (ConvertTo-DeliveryUtcDateTime -Value $_.startedAt) -ge $NotBefore.AddSeconds(-2)
+    } | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt })
+    $finishedAt = [DateTime]::UtcNow
+    return [pscustomobject]@{
+        operationDurationMs = [int64]($finishedAt - $OperationStartedAt).TotalMilliseconds
+        gateDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum)
+        gates = @($runs | ForEach-Object { [pscustomobject]@{ mode=$_.mode; status=$_.status; durationMs=$_.durationMs; stages=$_.stages; releaseE2E=$(if ($_.PSObject.Properties["releaseE2E"]) { $_.releaseE2E } else { $null }) } })
+    }
 }
 
 function Get-DeliveryQualificationCachePath {

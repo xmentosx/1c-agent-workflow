@@ -576,6 +576,11 @@
         }
         $refreshBranch | Should -Match "states the successful outcome"
         $refreshBranch | Should -Match "/itl-check"
+        $refreshBranch | Should -Match "errorCategory=source-integrity"
+        $refreshBranch | Should -Match "never create the merge commit manually"
+        $refreshLite = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template")
+        $refreshLite | Should -Match "errorCategory=source-integrity"
+        $refreshLite | Should -Match "repeat this same command"
     }
 
     It "reports exact repository object lock conflicts without a console-log hop" {

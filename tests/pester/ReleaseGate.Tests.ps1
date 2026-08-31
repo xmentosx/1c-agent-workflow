@@ -51,19 +51,22 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'continuationBoundaryStage'
         $e2eText | Should -Match 'exact Targeted continuation after completed release'
         $e2eText | Should -Match '\$verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"'
+        $e2eText | Should -Match 'invalidationDetails'
         $e2eText | Should -Match 'if \(\(\$executedStages -contains "config-cadence"\) -or \$crossReleaseReuse -or -not \$verificationRefreshPassed\)'
-        $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "verification-refresh" -Status "running".*?Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @\(\s*"-ConfigLoadMode", "Full"'
+        $e2eText | Should -Match '(?s)Set-E2EStageStatus -Name "verification-refresh" -Status "running".*?Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @\(\s*"-ConfigLoadMode", "Auto"'
         $resultCleanupBlock = [regex]::Match($e2eText, '(?s)\$resultPassed = Test-E2EStagePassed -Name "result-cleanup".*?\n\s*\$sealedCapabilityPath =').Value
         $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "status" -TimeoutSeconds 120\s*\r?\n'
         $resultCleanupBlock | Should -Match 'Invoke-E2EHelper -Action "export-dev-branch-result" -TimeoutSeconds 7200\s*\| Out-Null'
         $resultCleanupBlock | Should -Not -Match 'VanessaFeaturePath'
         $e2eText | Should -Not -Match 'if \(\$crossReleaseReuse -and \$executedStages -notcontains "config-cadence"\)'
-        $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{ \$resultPassed = \$false'
+        $e2eText | Should -Match 'if \(\$checkpointWasResumed\) \{\s*\$resultPassed = \$false'
         $e2eText | Should -Match 'RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
+        $e2eText | Should -Match 'release-preflight-sync-master'
+        $e2eText | Should -Match 'Invoke-E2ESeedParallelProof -MainRoot .*? -PreflightMasterHead \$preflightSeedMasterHead'
         $e2eText | Should -Match 'Invoke-E2EHelper -Action "refresh-dev-branch"'
         $e2eText | Should -Match '\$generatedCommitRecords = @\(Get-E2EGeneratedCommitRecords -Value \$cache\["generatedCommits"\]\)'
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA'
@@ -197,16 +200,18 @@ Describe "Release gate scripts" {
         $check | Should -Match 'Resolve-DevelopE2EJourneyPlan -RepositoryRoot \$repoRoot -BaseRef \$BaseRef'
         $check | Should -Match '\$exactDevelopProof = Test-DevelopQualification -Commit \$commit -Tree \$tree -FullProof \$developFullProof'
         $check | Should -Match 'Add-ReusedStage -Name "develop-e2e" -Reason "exact route-aware Develop qualification"'
-        $check | Should -Match '(?s)if \(\$exactDevelopProof.*?\) \{.*?exact route-aware Develop qualification.*?\} else \{\s*\$developPlan = Resolve-DevelopE2EJourneyPlan'
+        $check | Should -Match '(?s)\$script:developPlan = Resolve-DevelopE2EJourneyPlan.*?failFastOrder.*?Ensure-DevelopE2ERoute.*?Invoke-GateStage -Name "pester"'
+        $check | Should -Match '(?s)if \(\$exactDevelopProof.*?\) \{.*?exact route-aware Develop qualification.*?\} else \{\s*\$qualificationRoot = \$developQualificationRoot'
         $check | Should -Not -Match '\$plannedJourneys = \$allJourneys'
         $check | Should -Match 'DEVELOP_E2E_CONTINUATION_REQUIRED: an unowned journey has no valid prior proof; refusing to widen the routed plan'
         $check | Should -Match '\$routeIdentitySha256 = if \(\$continued\) \{ \[string\]\$record\.identitySha256 \}'
         $check | Should -Match '\$baselineRouteIdentitySha256 = if \(\[string\]\$record\.execution -eq "continued"\) \{ \[string\]\$record\.identitySha256 \}'
         $check | Should -Match 'IdentitySha256 \$baselineRouteIdentitySha256 -StandStateSha256 \$developStandStateSha256'
         $check | Should -Match 'if \(-not \$BaseRef\) \{ throw "Develop E2E requires BaseRef'
-        $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
-        $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$journey -IdentitySha256 \$developIdentitySha256'
+        $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
+        $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
         $check | Should -Match 'schemaVersion = 4'
+        $check | Should -Match '\[int\]\$baseline\.schemaVersion -in @\(3, 4\)'
         $check | Should -Match 'execution = "continued"'
         $check | Should -Match 'ExpectedIdentitySha256'
         $check | Should -Match 'ExpectedStandStateSha256'
@@ -624,7 +629,7 @@ switch ($Action) {
         if (($releaseCheckCount -lt 3 -and $VanessaFilterTags -ne "@itl_release_flat") -or ($releaseCheckCount -eq 3 -and $VanessaFilterTags)) { throw "release E2E must leave only the final canonical recovery run unfiltered" }
         if ($releaseCheckCount -le 3 -and [System.IO.Path]::GetFileName($VanessaFeaturePath) -ne "ITLReleaseFourFlat.feature") { throw "release E2E capability checks must run the dedicated four-scenario feature file" }
         if ($releaseCheckCount -gt 3 -and $VanessaFeaturePath) { throw "release E2E verification refresh must be unfiltered" }
-        if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Full") { throw "release E2E verification refresh must establish a full configuration load" }
+if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E2E verification refresh must route unchanged payload through automatic load selection" }
         $listPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-partial-list.txt"
         Set-Content -LiteralPath $listPath -Encoding UTF8 -Value "Configuration.xml"
         $reportPath = Join-Path $ProjectRoot "build\test-results\vanessa\mock"

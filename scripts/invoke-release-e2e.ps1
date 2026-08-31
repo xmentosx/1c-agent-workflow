@@ -627,6 +627,7 @@ $checkpointWasResumed = $false
 $resumedStages = @()
 $executedStages = @()
 $invalidatedStages = @()
+$invalidationDetails = @()
 $crossReleaseReuse = $false
 $previousWorkflowCommit = ""
 $previousRunnerSha256 = ""
@@ -818,6 +819,7 @@ function Test-E2EStagePassed {
             Write-E2ECheckpoint
         } else {
             $script:invalidatedStages += $Name
+            $script:invalidationDetails += [ordered]@{ stage = $Name; reason = "stage fingerprint changed"; previousFingerprint = [string]$record.fingerprint; currentFingerprint = $expectedFingerprint }
             return $false
         }
     }
@@ -1024,7 +1026,7 @@ function Restore-E2ESeedMainBranch {
 }
 
 function Invoke-E2ESeedParallelProof {
-    param([string]$MainRoot)
+    param([string]$MainRoot, [string]$PreflightMasterHead = "")
 
     $masterBranch = "master"
     $projectConfigPath = Join-Path $MainRoot ".agent-1c\project.json"
@@ -1040,7 +1042,10 @@ function Invoke-E2ESeedParallelProof {
         throw "RELEASE_E2E_SEED_MAIN_NOT_CLEAN: $MainRoot"
     }
 
-    Invoke-E2EHelperAtRoot -Root $MainRoot -Action "sync-master" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-sync-master" | Out-Null
+    $masterBeforeSync = (& git -C $MainRoot rev-parse "refs/heads/$masterBranch").Trim()
+    if (-not $PreflightMasterHead -or $masterBeforeSync -cne $PreflightMasterHead) {
+        Invoke-E2EHelperAtRoot -Root $MainRoot -Action "sync-master" -TimeoutSeconds 7200 -LogPrefix "seed-parallel-sync-master" | Out-Null
+    }
     $masterAfterSync = (& git -C $MainRoot rev-parse "refs/heads/$masterBranch").Trim()
     & git -C $worktreePath merge-base --is-ancestor $masterAfterSync HEAD *> $null
     if ($LASTEXITCODE -ne 0) {
@@ -2034,7 +2039,20 @@ if ($checkpoint) {
     }
 }
 
+$preflightSeedMasterHead = ""
 if (-not $checkpoint) {
+    if (-not $seedParallelTestFixture) {
+        $preflightMainRoot = [string](Get-E2EState).value.mainWorktreePath
+        if (-not $preflightMainRoot -or -not (Test-Path -LiteralPath $preflightMainRoot -PathType Container)) {
+            throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $preflightMainRoot"
+        }
+        $preflightMainRoot = [IO.Path]::GetFullPath($preflightMainRoot)
+        Invoke-E2EHelperAtRoot -Root $preflightMainRoot -Action "sync-master" -TimeoutSeconds 7200 -LogPrefix "release-preflight-sync-master" | Out-Null
+        $preflightProjectConfig = Get-Content -LiteralPath (Join-Path $preflightMainRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $preflightMasterBranch = $(if ([string]$preflightProjectConfig.masterBranch) { [string]$preflightProjectConfig.masterBranch } else { "master" })
+        $preflightSeedMasterHead = (& git -C $preflightMainRoot rev-parse "refs/heads/$preflightMasterBranch").Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $preflightSeedMasterHead) { throw "RELEASE_E2E_SEED_MAIN_NOT_READABLE: $preflightMainRoot" }
+    }
     [void](Sync-E2EWorktreeFromMaster)
     $projectConfigSha256 = Get-E2EFileSha256 -Path (Join-Path $worktreePath ".agent-1c\project.json")
     New-Item -ItemType Directory -Force -Path $releaseRunRoot | Out-Null
@@ -2123,7 +2141,7 @@ try {
                 if (-not $mainRoot -or -not (Test-Path -LiteralPath $mainRoot -PathType Container)) {
                     throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $mainRoot"
                 }
-                $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot))
+                $seedParallelEvidence = Invoke-E2ESeedParallelProof -MainRoot ([IO.Path]::GetFullPath($mainRoot)) -PreflightMasterHead $preflightSeedMasterHead
             }
             # Persist the complete observed record before aggregate validation.
             # A late contract mismatch must be diagnosable without rerunning the
@@ -2572,7 +2590,7 @@ try {
         $executedStages += "verification-refresh"
         try {
             Invoke-E2EHelper -Action "check-dev-branch" -TimeoutSeconds 7200 -AdditionalArguments @(
-                "-ConfigLoadMode", "Full"
+                "-ConfigLoadMode", "Auto"
             ) | Out-Null
             $refreshState = (Get-E2EState).value
             if ([string]$refreshState.lastVerificationStatus -ne "passed" -or -not [string]$refreshState.lastVerifiedAt) {
@@ -2592,7 +2610,11 @@ try {
     }
 
     $resultPassed = Test-E2EStagePassed -Name "result-cleanup"
-    if ($checkpointWasResumed) { $resultPassed = $false; $invalidatedStages += "result-cleanup" }
+    if ($checkpointWasResumed) {
+        $resultPassed = $false
+        $invalidatedStages += "result-cleanup"
+        $invalidationDetails += [ordered]@{ stage = "result-cleanup"; reason = "resumed checkpoint requires fresh result and cleanup evidence" }
+    }
     if (-not $resultPassed) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
         Set-E2EStageStatus -Name "result-cleanup" -Status "running"
@@ -2728,6 +2750,7 @@ try {
         resumedStages = @($resumedStages)
         executedStages = @($executedStages)
         invalidatedStages = @($invalidatedStages | Sort-Object -Unique)
+        invalidationDetails = @($invalidationDetails)
         stages = $checkpoint["stages"]
         generatedCommits = $checkpoint["generatedCommits"]
         snapshots = $checkpoint["snapshots"]

@@ -122,8 +122,11 @@ Describe "Deterministic Release readiness" {
         $runner | Should -Match 'standContinuation\.scopes.*-contains "develop"'
         $runner | Should -Match 'Test-ManagedPackageAgreement -ExpectedInventory \$managedInventory'
         $encodingBody = [regex]::Match($runner, '(?s)function Test-PowerShellEncoding \{(?<body>.*?)\n\}').Groups['body'].Value
-        @([regex]::Matches($encodingBody, 'Start-Process -FilePath "powershell\.exe"')).Count | Should -Be 1
-        $encodingBody.IndexOf('Start-Process -FilePath "powershell.exe"') | Should -BeLessThan $encodingBody.IndexOf('foreach ($relativePath')
+        $encodingBody | Should -Match 'test-powershell-encoding\.ps1'
+        $encodingBody | Should -Match 'ReportOnly'
+        $encodingRunner = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $script:ReadinessRunnerPath) "test-powershell-encoding.ps1") -Raw -Encoding UTF8
+        @([regex]::Matches($encodingRunner, 'Start-Process -FilePath "powershell\.exe"')).Count | Should -Be 1
+        $encodingRunner.IndexOf('Start-Process -FilePath "powershell.exe"') | Should -BeLessThan $encodingRunner.IndexOf('foreach ($relativePath')
     }
 
     It "resolves the canonical immutable archive and writes a passed Full context" {
@@ -319,7 +322,7 @@ Describe "Deterministic Release readiness" {
     }
 
     It "uses the real Windows PowerShell 5.1 decoder and rejects UTF-8 without BOM mojibake" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-ps51-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl release readiness кодировка " + [guid]::NewGuid().ToString("N"))
         try {
             $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
             $badPath = Join-Path $fixture.root "scripts\utf8-without-bom.ps1"

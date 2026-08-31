@@ -633,6 +633,72 @@ function Get-ConfigSourceFingerprint {
     }
 }
 
+function Get-OneCConfigurationSourceValidatorPath {
+    $override = Get-Variable -Name OneCConfigurationSourceValidatorPathOverride -Scope Script -ErrorAction SilentlyContinue
+    $activeClient = ""
+    $validatorPath = if ($null -ne $override -and -not [string]::IsNullOrWhiteSpace([string]$override.Value)) {
+        [System.IO.Path]::GetFullPath([string]$override.Value)
+    } else {
+        $activeClient = Get-ItlActiveClient
+        $skillRoot = Get-AiRules1cInstalledSkillRoot -SkillName "1c-metadata-manage" -Client $activeClient
+        Join-Path $skillRoot "tools\1c-cf-manage\scripts\cf-validate.ps1"
+    }
+    if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
+        $source = if ($activeClient) { "active ai_rules_1c client '$activeClient'" } else { "the test or Release tool override" }
+        throw "ONEC_SOURCE_VALIDATOR_MISSING source='$source' path='$validatorPath'. Run pinned update-ai-rules from master, then repeat the same ITL command."
+    }
+    return $validatorPath
+}
+
+function Assert-OneCConfigurationSourceIntegrity {
+    param([string]$ExportPath = (Get-ExportPath))
+
+    $script:RunSourceIntegrityPaths = @()
+    try {
+        $validatorPath = Get-OneCConfigurationSourceValidatorPath
+    } catch {
+        Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
+        throw
+    }
+
+    $absoluteExportPath = Assert-ExportPathInsideProject -ExportPath $ExportPath
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    $configurationRepoPath = "$repoExportPath/Configuration.xml"
+    $reportPath = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-cf-validate-" -Extension ".txt"
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $validatorPath `
+            -ConfigPath $absoluteExportPath `
+            -MaxErrors 30 `
+            -OutFile $reportPath *> $null
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) {
+            return
+        }
+
+        $details = if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
+            (Read-Utf8Text -Path $reportPath).Trim() -replace "\r?\n", " | "
+        } else {
+            "cf-validate did not create its UTF-8 report"
+        }
+        if ($details.Length -gt 2000) {
+            $details = $details.Substring(0, 2000) + "..."
+        }
+        $script:RunSourceIntegrityPaths = @($configurationRepoPath)
+        Set-RunStage -Stage "source-integrity.failed" -Detail "Configuration source validation failed before a merge commit or Designer load."
+        Set-RunFailureContext `
+            -Category "source-integrity" `
+            -RequiredAction $(if (Test-GitMergeInProgress) {
+                "fix-listed-source-integrity-run-git-add-repeat-same-itl-command-no-manual-commit"
+            } else {
+                "fix-listed-source-integrity-then-repeat-same-itl-command"
+            })
+        throw "ONEC_SOURCE_INTEGRITY_FAILED path='$configurationRepoPath' validator='cf-validate' exitCode='$exitCode' details='$details'. Fix the listed source defect and repeat the same ITL command. If a merge is in progress, run git add for the fixed file and do not create the merge commit manually."
+    } finally {
+        Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-LegacyConfigSourceFingerprint {
     param([string]$Fingerprint)
 
@@ -767,6 +833,8 @@ function Invoke-ConfigLoadWithFallback {
         [string]$ListFilePath,
         [int]$FileCount,
         [string]$ExtensionName = "",
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [ValidateSet("Auto", "Partial", "Full")]
         [string]$Mode = "Auto",
         [switch]$ResetConfigDumpInfo
@@ -791,6 +859,7 @@ function Invoke-ConfigLoadWithFallback {
             Write-Host "Full config load requested explicitly. Changed file count: $FileCount"
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -User $User -Password $Password `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
             } catch {
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
@@ -812,7 +881,7 @@ function Invoke-ConfigLoadWithFallback {
         $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-partial", "-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")
         $script:LastNativeProcessStarted = $false
         try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -DesignerArgs $partialArgs | Out-Null
+            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs $partialArgs | Out-Null
             return [pscustomobject]@{
                 loadModeUsed = "partial"
                 partialLogPath = $script:LastLogPath
@@ -863,6 +932,7 @@ function Invoke-ConfigLoadWithFallback {
             Write-Warning "Partial load log: $partialLogPath"
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
+                    -User $User -Password $Password `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
                 return [pscustomobject]@{
                     loadModeUsed = "full-fallback"
@@ -888,7 +958,7 @@ function Invoke-ConfigLoadWithFallback {
                         lastLogPath = $fullLogPath
                     }
                 }
-                throw "Partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). The branch infobase may be in an intermediate state; the safe recovery is to recreate its copy."
+                throw "ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Partial: $($partialException.Exception.Message) (log: $partialLogPath). Full fallback: $($fullException.Exception.Message) (log: $fullLogPath). Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery."
             }
         }
     } finally {
@@ -1541,6 +1611,10 @@ function Load-ConfigFromFiles {
         Write-Warning "$message. Skipping partial Designer startup and running a full load."
         Set-RunStage -Stage "config-load.partial-preflight-fallback" -Detail "The partial $ContentKind inventory contains $($missingPartialFiles.Count) absent source file(s); Designer partial load was skipped."
         $Mode = "Full"
+    }
+
+    if ($ContentKind -eq "configuration") {
+        Assert-OneCConfigurationSourceIntegrity -ExportPath $changeSet.absoluteExportPath
     }
 
     $listFilePath = ""
@@ -5943,9 +6017,13 @@ function Commit-AuthoritativeExportPathIfChanged {
     }
     $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
 
-    Ensure-OneCSourceGitAttributes | Out-Null
+    $attributesChanged = Ensure-OneCSourceGitAttributes
     Invoke-Git @("add", "--", ".gitattributes")
-    $sourcePaths = @(Rebuild-OneCSourceGitIndex -SourcePaths @($repoExportPath, (Get-ExtensionsPath)))
+    $rebuildPaths = @($repoExportPath, (Get-ExtensionsPath))
+    if ($attributesChanged) {
+        $rebuildPaths += "src/configs"
+    }
+    $sourcePaths = @(Rebuild-OneCSourceGitIndex -SourcePaths $rebuildPaths)
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
     $commitPaths = @(".gitattributes") + $sourcePaths
@@ -6567,7 +6645,7 @@ function Complete-OneCSourceByteContractMergeTransition {
     $mergeBase = (Get-GitOutput @("merge-base", $BranchCommit, $TargetCommit)).Trim()
     $branchChangedSourcePaths = @(Get-GitPathList -Arguments @(
         "diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $mergeBase, $BranchCommit,
-        "--", (Get-ExportPath), (Get-ExtensionsPath)
+        "--", (Get-ExportPath), (Get-ExtensionsPath), "src/configs"
     ))
     Update-OneCSourceGitIndexFromWorktreePaths -RepoPaths @($branchChangedSourcePaths + $CursorPaths)
     Invoke-Git @("checkout-index", "--force", "--all")
@@ -6632,6 +6710,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
             -TargetCommit $MasterBranch `
             -CursorPaths $allDumpInfoPaths
     }
+    Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
     Invoke-Git @("commit", "--no-edit")
 }
 
@@ -6689,12 +6768,17 @@ function Invoke-NewDevBranchLifecycleMerge {
     try {
         Merge-MasterPreservingBranchConfigDumpInfo -MasterBranch $TargetCommit -BranchCommit $branchCommit
     } catch {
+        $mergeFailure = $_
         if (-not (Test-GitMergeInProgress)) {
-            throw
+            throw $mergeFailure
         }
         $stateAfterConflict = Read-DevBranchState -Name $DevBranchName
         $allowedPaths = @(Get-DevBranchMergeIndexPaths)
         $conflictPaths = @(Get-DevBranchMergeUnmergedPaths)
+        $sourceValidationFailure = $mergeFailure.Exception.Message -match '^ONEC_SOURCE_(INTEGRITY_FAILED|VALIDATOR_MISSING)'
+        if ($sourceValidationFailure -and $script:RunSourceIntegrityPaths.Count -gt 0) {
+            $conflictPaths = @($script:RunSourceIntegrityPaths)
+        }
         Set-PendingDevBranchMergeTransaction `
             -State $stateAfterConflict `
             -Operation $Operation `
@@ -6704,6 +6788,9 @@ function Invoke-NewDevBranchLifecycleMerge {
             -Stage "conflicts" `
             -AllowedPaths $allowedPaths `
             -ConflictPaths $conflictPaths
+        if ($sourceValidationFailure) {
+            throw $mergeFailure
+        }
         Stop-DevBranchLifecycleMergeForConflicts `
             -Operation $Operation `
             -Stage $ConflictStage `
@@ -6905,6 +6992,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
         }
 
+        Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
@@ -10123,16 +10211,22 @@ function Show-WorkflowStatus {
 function Invoke-DevBranchCheck {
     $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { "command" })
     $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+    Assert-ItlVerificationRepairScope -Trigger $trigger
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $checkExportPath)
+    $repairAttemptConsumed = $false
+    $repairVerificationPassed = $false
     try {
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "check-dev-branch preflight" | Out-Null
     Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
     $fullProofEligible = Test-ItlFullVerificationProofEligible -Trigger $trigger -ExplicitComponents $explicit
     if ($trigger -eq "repair") {
         Get-ItlMatchingVerificationRepairSession | Out-Null
-        if ($fullProofEligible) { Use-ItlVerificationRepairAttempt }
+        if ($fullProofEligible) {
+            Use-ItlVerificationRepairAttempt
+            $repairAttemptConsumed = $true
+        }
     }
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
@@ -10150,8 +10244,14 @@ function Invoke-DevBranchCheck {
         $evidenceKind = [string](Get-StateValue -State $verifiedState -Name "lastVerificationEvidenceKind" -Default "")
         if ($verification.status -eq "passed" -and $evidenceKind -eq "full") {
             Complete-ItlVerificationRepairSession
+            $repairVerificationPassed = $true
         }
     }
+    } catch {
+        if ($repairAttemptConsumed -and -not $repairVerificationPassed) {
+            Complete-ItlVerificationRepairFailure
+        }
+        throw
     } finally {
         try { Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot } finally { Remove-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot }
     }
@@ -10341,6 +10441,7 @@ function Close-DevBranch {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "close-dev-branch"
     Assert-DevBranchExtensionInitialized -State $state -Operation "close-dev-branch"
     Assert-SingleManagedExtensionArtifact -State $state
+    Stop-ItlOnDemandBackends -Strict
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "close-dev-branch"
     $state = Read-DevBranchState -Name $DevBranchName
     Sync-DevBranchContextToDotEnv -State $state

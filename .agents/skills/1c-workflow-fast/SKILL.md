@@ -9,7 +9,7 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 ## Purpose
 
-Map natural-language routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone; do not preload either router for them. Use the monitored compact runner for mutations and long checks, then parse its terminal JSON. Open full workflow references only for helper-directed recovery, missing setup, or explanation.
+Map routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for helper recovery, missing setup, or explanation.
 
 For a mapped routine, use at most one short sentence before the command and make the helper the first and only tool action. Do not separately read `.dev.env`, inspect Git, or repeat helper-owned preflight. Apply an explicit session Caveman override first; otherwise use `ITL response-style`/`responseStyle` emitted by the helper. Keep required progress heartbeats to one line with the current stage and material liveness state. A successful `userReport` remains verbatim in every style.
 
@@ -68,7 +68,7 @@ Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 - Follow `requiredAction` or `nextAction` exactly. Ask only for a value that the helper explicitly identifies as missing.
 - Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
-- Development completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
-- Use full `1c-workflow` for helper-directed recovery without an explicit wrapper, unusual topology, initialization, or detailed explanation.
+- `fix-and-repeat-original-check`: repeat its scope without repair. `repeat-original-diagnostic-without-repair-session`: keep the filter. `stop-repair-and-resume-original-task`: resume.
+- Completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.

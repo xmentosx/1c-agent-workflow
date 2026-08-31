@@ -24,7 +24,7 @@ Capability checks use only the minimum prerequisites needed to perform the opera
 
 ## 1C source byte-preservation policy
 
-Git is transport for platform-generated `src/cf/**` and `src/cfe/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for both trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.
+Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional auxiliary `src/configs/**` files, not their line-ending formatter. Installed projects carry a managed `.gitattributes` block with `-text` for these trees, so checkout, worktree creation, branch transfer, and result assembly preserve the bytes emitted by 1C even when global `core.autocrlf=true`.
 
 The contract is activated only by `init-project` or an authoritative `sync-master`. The same commit rebuilds the configuration and extension indexes from the physical source trees. When an existing development branch first merges such a master, the transition merge ignores end-of-line whitespace only for that merge and immediately rebuilds both source indexes under `-text`; later merges remain strict. Do not apply the attributes alone during `update-workflow`, normalize all repository files globally, or use content hashes to compensate for transport mutation.
 

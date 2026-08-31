@@ -10,6 +10,7 @@ testResults.xml
 logs/
 .tx/
 .agent-1c/dev-branches/
+.agent-1c/auxiliary-contours/
 .agent-1c/event-log-baselines/
 .agent-1c/event-log-cursors/
 .agent-1c/event-log-signature-cache/
@@ -22,6 +23,7 @@ logs/
 .agent-1c/runtime/
 .agent-1c/branch-dumps/
 .agent-1c/branch-archives/
+.agent-1c/auxiliary-archives/
 .agent-1c/config-dump/
 .agent-1c/extension-dump/
 .agent-1c/extension-init/

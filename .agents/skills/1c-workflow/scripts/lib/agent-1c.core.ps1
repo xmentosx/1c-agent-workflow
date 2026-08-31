@@ -357,7 +357,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -389,6 +389,12 @@ function Set-RunFailureContextFromMessage {
     }
 
     $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")
+    if ($Message -match '^(?i:ITL_CONFIG_LOAD_FAILED)\b' -and
+        $PSBoundParameters.ContainsKey("RequestedAction") -and
+        $RequestedAction -in $verificationActions) {
+        Set-RunFailureContext -Category "config-load-failed" -RequiredAction "/itl-verify-fix"
+        return
+    }
     if ($PSBoundParameters.ContainsKey("RequestedAction") -and $RequestedAction -notin $verificationActions) {
         Set-RunFailureContext -Category $category
         return
@@ -452,6 +458,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "help",
         "doctor",
         "status",
+        "status-auxiliary-contours",
         "context-benchmark",
         "list-dev-branches",
         "get-dev-workspace-plan",
@@ -2243,14 +2250,27 @@ function Get-OneCSourceGitAttributesManagedLines {
         "# BEGIN ITL MANAGED: preserve 1C source bytes",
         "src/cf/** -text",
         "src/cfe/** -text",
+        "src/configs/** -text",
+        "# END ITL MANAGED: preserve 1C source bytes"
+    )
+}
+
+function Get-LegacyOneCSourceGitAttributesManagedLines {
+    return @(
+        "# BEGIN ITL MANAGED: preserve 1C source bytes",
+        "src/cf/** -text",
+        "src/cfe/** -text",
         "# END ITL MANAGED: preserve 1C source bytes"
     )
 }
 
 function Test-OneCSourceGitAttributesContractText {
-    param([object]$Text)
+    param(
+        [object]$Text,
+        [string[]]$RequiredLines = @()
+    )
 
-    $required = @(Get-OneCSourceGitAttributesManagedLines)
+    $required = if (@($RequiredLines).Count -gt 0) { @($RequiredLines) } else { @(Get-OneCSourceGitAttributesManagedLines) }
     $textValue = if ($Text -is [System.Array]) { @($Text) -join "`n" } else { [string]$Text }
     $lines = @($textValue -split "`r?`n")
     $startIndexes = @(
@@ -2292,10 +2312,19 @@ function Ensure-OneCSourceGitAttributes {
         return $false
     }
 
+    $legacy = @(Get-LegacyOneCSourceGitAttributesManagedLines)
+    if (Test-OneCSourceGitAttributesContractText -Text $text -RequiredLines $legacy) {
+        $lines = @($text -split "`r?`n")
+        $legacyStart = [Array]::IndexOf([object[]]$lines, $legacy[0])
+        $updatedLines = @($lines | Select-Object -First $legacyStart) + $required
+        Write-Utf8TextAtomic -Path $path -Value (($updatedLines -join [Environment]::NewLine) + [Environment]::NewLine)
+        return $true
+    }
+
     $hasStart = $text.Contains($required[0])
     $hasEnd = $text.Contains($required[$required.Count - 1])
     if ($hasStart -or $hasEnd) {
-        throw "ITL_GIT_ATTRIBUTES_MANAGED_BLOCK_INVALID: the managed 1C source byte-preservation block in '$path' is incomplete or modified. Restore the four managed lines exactly before continuing."
+        throw "ITL_GIT_ATTRIBUTES_MANAGED_BLOCK_INVALID: the managed 1C source byte-preservation block in '$path' is incomplete or modified. Restore the $($required.Count) managed lines exactly before continuing."
     }
 
     $prefix = ""
@@ -2363,8 +2392,10 @@ function Test-OneCSourceRepoPath {
     $normalizedPath = ([string]$RepoPath).Replace("\", "/").TrimStart("/")
     $exportPrefix = ((Get-ExportPath).Replace("\", "/").Trim("/")) + "/"
     $extensionsPrefix = ((Get-ExtensionsPath).Replace("\", "/").Trim("/")) + "/"
+    $auxiliaryConfigurationsPrefix = "src/configs/"
     return ($normalizedPath.StartsWith($exportPrefix, [System.StringComparison]::Ordinal) -or
-        $normalizedPath.StartsWith($extensionsPrefix, [System.StringComparison]::Ordinal))
+        $normalizedPath.StartsWith($extensionsPrefix, [System.StringComparison]::Ordinal) -or
+        $normalizedPath.StartsWith($auxiliaryConfigurationsPrefix, [System.StringComparison]::Ordinal))
 }
 
 function Update-OneCSourceGitIndexFromWorktreePaths {

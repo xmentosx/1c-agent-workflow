@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -9,6 +9,26 @@ param(
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$DevBranchWorktreePath,
+    [string]$AuxiliaryContourName,
+    [string]$AuxiliaryDisplayName = "",
+    [ValidateSet("", "managed-file", "attached-readonly", "attached-disposable")]
+    [string]$AuxiliaryBaseMode = "",
+    [ValidateSet("", "load-only", "read-write")]
+    [string]$AuxiliarySourceMode = "",
+    [string]$AuxiliaryConfigurationPath = "",
+    [ValidateSet("", "file", "server")]
+    [string]$AuxiliaryInfoBaseKind = "",
+    [string]$AuxiliaryInfoBasePath = "",
+    [string]$AuxiliaryInfoBaseUser = "",
+    [ValidateSet("keep", "empty", "clipboard")]
+    [string]$AuxiliaryPasswordMode = "keep",
+    [switch]$AuxiliaryIncludePrimaryTests,
+    [string]$AuxiliaryTestsPath = "",
+    [string[]]$AuxiliaryExtension = @(),
+    [switch]$AuxiliaryMcpRoctup,
+    [switch]$AuxiliaryMcpVanessaUi,
+    [ValidateSet("", "primary", "contour", "all")]
+    [string]$AuxiliaryTestSet = "",
     [ValidateSet("configuration", "extension")]
     [string]$DevBranchKind = "configuration",
     [ValidateSet("", "opencode")]
@@ -98,6 +118,7 @@ param(
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
     [string]$InternalOnDemandCatalogSha256 = "",
+    [string]$InternalOnDemandAuxiliaryContour = "",
     [string]$InternalOnDemandReplacementInstanceId = "",
     [int]$InternalOnDemandExpectedPid = 0,
     [int]$InternalOnDemandExpectedPort = 0,
@@ -218,6 +239,24 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchInfoBasePath" -Value $DevBranchInfoBasePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchWorktreePath" -Value $DevBranchWorktreePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryContourName" -Value $AuxiliaryContourName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryDisplayName" -Value $AuxiliaryDisplayName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryBaseMode" -Value $AuxiliaryBaseMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliarySourceMode" -Value $AuxiliarySourceMode
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryConfigurationPath" -Value $AuxiliaryConfigurationPath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryInfoBaseKind" -Value $AuxiliaryInfoBaseKind
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryInfoBasePath" -Value $AuxiliaryInfoBasePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryInfoBaseUser" -Value $AuxiliaryInfoBaseUser
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryPasswordMode" -Value $(if ($AuxiliaryPasswordMode -ne "keep") { $AuxiliaryPasswordMode } else { $null })
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryIncludePrimaryTests" -Value $AuxiliaryIncludePrimaryTests
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryTestsPath" -Value $AuxiliaryTestsPath
+    if ($AuxiliaryExtension.Count -gt 0) {
+        $arguments.Add("-AuxiliaryExtension") | Out-Null
+        foreach ($extension in $AuxiliaryExtension) { $arguments.Add([string]$extension) | Out-Null }
+    }
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryMcpRoctup" -Value $AuxiliaryMcpRoctup
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryMcpVanessaUi" -Value $AuxiliaryMcpVanessaUi
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "AuxiliaryTestSet" -Value $AuxiliaryTestSet
     Add-Agent1cReexecArgument -Arguments $arguments -Name "InfoBaseUser" -Value $InfoBaseUser
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionName" -Value $ExtensionName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionInitMode" -Value $ExtensionInitMode
@@ -326,6 +365,7 @@ $script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
 $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
 $script:ActiveVanessaRunEvidence = $null
+$script:ActiveAuxiliaryVanessaContext = $null
 
 $script:Agent1cScriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Agent1cLibRoot = Join-Path $script:Agent1cScriptRoot "lib"
@@ -344,6 +384,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.ui-tools.ps1",
     "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
+    "agent-1c.auxiliary.ps1",
     "agent-1c.verification-modes.ps1",
     "agent-1c.legacy-bridges.ps1",
     "agent-1c.ai-rules-migration.ps1"
@@ -385,6 +426,7 @@ try {
             -Family $InternalOnDemandFamily `
             -InstanceId $InternalOnDemandInstanceId `
             -CatalogSha256 $InternalOnDemandCatalogSha256 `
+            -AuxiliaryContour $InternalOnDemandAuxiliaryContour `
             -ReplacementInstanceId $InternalOnDemandReplacementInstanceId `
             -ExpectedPid $InternalOnDemandExpectedPid `
             -ExpectedPort $InternalOnDemandExpectedPort
@@ -421,6 +463,13 @@ try {
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
         "deploy-and-test" { Invoke-ItlDeployAndTestBridge }
         "status" { Show-WorkflowStatus }
+        "configure-auxiliary-contour" { Configure-AuxiliaryContour }
+        "status-auxiliary-contours" { Show-AuxiliaryContoursStatus }
+        "update-auxiliary-contour" { Update-AuxiliaryContour }
+        "dump-auxiliary-contour" { Dump-AuxiliaryContour }
+        "check-auxiliary-contour" { Check-AuxiliaryContour }
+        "export-auxiliary-contour-result" { Export-AuxiliaryContourResult }
+        "reset-auxiliary-contour" { Reset-AuxiliaryContour }
         "cleanup-interrupted-vanessa-run" { Invoke-InterruptedDevBranchVanessaRunCleanup }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "start-vanessa-profile" { Start-DevBranchVanessaInteractiveProfile | Out-Null }
