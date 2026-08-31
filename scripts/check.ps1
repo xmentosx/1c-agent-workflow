@@ -1007,7 +1007,7 @@ try {
         }
         $baselineRepositoryMatches = $null -ne $baseline -and (([string]$baseline.repository.commit -eq $baseCommit -and [string]$baseline.repository.tree -eq $baseTree) -or
             ([string]$baseline.repository.commit -eq $commit -and [string]$baseline.repository.tree -eq $tree))
-        $baselineValid = $null -ne $baseline -and [int]$baseline.schemaVersion -eq 3 -and [string]$baseline.status -eq "passed" -and $baselineRepositoryMatches -and
+        $baselineValid = $null -ne $baseline -and [int]$baseline.schemaVersion -in @(3, 4) -and [string]$baseline.status -eq "passed" -and $baselineRepositoryMatches -and
             [string]$baseline.identitySha256 -match '^[a-f0-9]{64}$' -and $baseline.PSObject.Properties["journeys"]
         if ($baselineValid) {
             foreach ($journey in @($allJourneys | Where-Object { $_ -notin $plannedJourneys })) {

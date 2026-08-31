@@ -211,6 +211,7 @@ Describe "Release gate scripts" {
         $check | Should -Match 'Restore-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
         $check | Should -Match 'Save-DevelopE2EQualification .*?-Journey \$Journey -IdentitySha256 \$identitySha256'
         $check | Should -Match 'schemaVersion = 4'
+        $check | Should -Match '\[int\]\$baseline\.schemaVersion -in @\(3, 4\)'
         $check | Should -Match 'execution = "continued"'
         $check | Should -Match 'ExpectedIdentitySha256'
         $check | Should -Match 'ExpectedStandStateSha256'
