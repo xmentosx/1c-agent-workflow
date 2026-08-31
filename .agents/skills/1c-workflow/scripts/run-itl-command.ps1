@@ -123,23 +123,23 @@ function Resolve-ItlResponseStyle {
     }
 }
 
-function Resolve-UpdateWorkflowProjectRoot {
+function Resolve-MasterWorktreeRootFromDevBranch {
     param(
         [string]$InvocationRoot,
-        [string]$Action
+        [string]$Operation
     )
 
-    if ($Action -ne "update-workflow") { return $InvocationRoot }
-
+    if (-not (Test-Path -LiteralPath (Join-Path $InvocationRoot ".git") -ErrorAction SilentlyContinue)) { return "" }
     $branchOutput = @(& git -C $InvocationRoot branch --show-current 2>&1)
-    if ($LASTEXITCODE -ne 0) { return $InvocationRoot }
+    if ($LASTEXITCODE -ne 0) { return "" }
     $currentBranch = ([string]($branchOutput -join "")).Trim()
-    if ($currentBranch -notlike "itldev/*") { return $InvocationRoot }
+    if ($currentBranch -notlike "itldev/*") { return "" }
 
-    $worktreeOutput = @(& git -c core.quotepath=false -C $InvocationRoot worktree list --porcelain 2>&1)
+    $worktreeRaw = [string]::Concat(@(& git -c core.quotepath=false -C $InvocationRoot worktree list --porcelain -z 2>&1))
     if ($LASTEXITCODE -ne 0) {
-        throw "Cannot resolve the master worktree for update-workflow from development branch '$currentBranch'."
+        throw "Cannot resolve the master worktree for $Operation from development branch '$currentBranch'."
     }
+    $worktreeOutput = @($worktreeRaw.Split([char[]]@([char]0), [System.StringSplitOptions]::None))
 
     $masterWorktrees = [System.Collections.Generic.List[string]]::new()
     $currentPath = ""
@@ -162,15 +162,60 @@ function Resolve-UpdateWorkflowProjectRoot {
     }
 
     if ($masterWorktrees.Count -ne 1) {
-        throw "update-workflow from development branch '$currentBranch' requires exactly one checked-out master worktree; found $($masterWorktrees.Count)."
+        throw "$Operation from development branch '$currentBranch' requires exactly one checked-out master worktree; found $($masterWorktrees.Count)."
     }
     $masterRoot = Resolve-NormalizedPath -Path $masterWorktrees[0]
     if (-not (Test-Path -LiteralPath (Join-Path $masterRoot ".git") -ErrorAction SilentlyContinue)) {
         throw "Resolved master worktree is not an initialized Git worktree: $masterRoot"
     }
 
+    return $masterRoot
+}
+
+function Resolve-UpdateWorkflowProjectRoot {
+    param(
+        [string]$InvocationRoot,
+        [string]$Action
+    )
+
+    if ($Action -ne "update-workflow") { return $InvocationRoot }
+    $masterRoot = Resolve-MasterWorktreeRootFromDevBranch -InvocationRoot $InvocationRoot -Operation "update-workflow"
+    if (-not $masterRoot) { return $InvocationRoot }
+    $currentBranch = ((@(& git -C $InvocationRoot branch --show-current 2>&1) -join "")).Trim()
     [Console]::Error.WriteLine("ITL update-workflow target: branch=$currentBranch; masterWorktree=$masterRoot")
     return $masterRoot
+}
+
+function Assert-CleanTrackedMasterRefreshRuntime {
+    param([string]$MasterRoot)
+
+    $runtimePath = ".agents/skills/1c-workflow/scripts"
+    $statusOutput = @(& git -C $MasterRoot status --porcelain=v1 -z --untracked-files=all -- $runtimePath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "REFRESH_MASTER_RUNTIME_STATUS_FAILED: cannot verify the master workflow runtime at '$MasterRoot'."
+    }
+    if ([string]::Concat(@($statusOutput)) -ne "") {
+        throw "REFRESH_MASTER_RUNTIME_DIRTY: commit or discard changes below '$runtimePath' in the master worktree before refreshing a development branch. masterWorktree='$MasterRoot'"
+    }
+}
+
+function Resolve-RefreshMasterRunnerPath {
+    param(
+        [string]$InvocationRoot,
+        [string]$Action,
+        [string]$CurrentRunnerPath
+    )
+
+    if ($Action -notin @("refresh-dev-branch", "refresh-dev-branch-lite")) { return "" }
+    $masterRoot = Resolve-MasterWorktreeRootFromDevBranch -InvocationRoot $InvocationRoot -Operation $Action
+    if (-not $masterRoot) { return "" }
+    $mainRunnerPath = Join-Path $masterRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
+    if (-not (Test-Path -LiteralPath $mainRunnerPath -PathType Leaf)) {
+        throw "REFRESH_MASTER_RUNNER_MISSING: $mainRunnerPath"
+    }
+    if (Test-SamePath -First $mainRunnerPath -Second $CurrentRunnerPath) { return "" }
+    Assert-CleanTrackedMasterRefreshRuntime -MasterRoot $masterRoot
+    return $mainRunnerPath
 }
 
 function Set-ObjectValue {
@@ -395,6 +440,13 @@ if ($windowed -ne ($action -in $branchActions)) {
 }
 
 $invocationRoot = [System.IO.Path]::GetFullPath((Get-Location).Path)
+$refreshMasterRunnerPath = Resolve-RefreshMasterRunnerPath -InvocationRoot $invocationRoot -Action $action -CurrentRunnerPath $PSCommandPath
+if ($refreshMasterRunnerPath) {
+    [Console]::Error.WriteLine("ITL refresh runtime: delegating action=$action to masterRunner=$refreshMasterRunnerPath; projectRoot=$invocationRoot")
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $refreshMasterRunnerPath -- @($helperArgs)
+    $delegateExitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
+    exit $delegateExitCode
+}
 $responseStyle = Resolve-ItlResponseStyle -ProjectRoot $invocationRoot
 [Console]::Error.WriteLine("ITL response-style: mode=$($responseStyle.mode); level=$($responseStyle.level); active=$(([string]$responseStyle.active).ToLowerInvariant()); profile=$($responseStyle.profile); task=execution")
 $projectRoot = Resolve-UpdateWorkflowProjectRoot -InvocationRoot $invocationRoot -Action $action

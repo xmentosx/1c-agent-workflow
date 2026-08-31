@@ -489,8 +489,12 @@ function Restart-Agent1cIfWorkflowHelperChangedSince {
 function Restart-Agent1cAfterDevBranchMerge {
     param([string]$Operation)
 
-    Write-Host "Development branch merge completed for $Operation. Restarting helper in a fresh PowerShell process before loading config files."
-    Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-merge")
+    $branchHelperPath = Join-Path (Resolve-Agent1cFullPath -Path $script:ProjectRoot) ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+    if (-not (Test-Path -LiteralPath $branchHelperPath -PathType Leaf)) {
+        throw "DEV_BRANCH_POST_MERGE_HELPER_MISSING operation='$Operation' path='$branchHelperPath'"
+    }
+    Write-Host "Development branch merge completed for $Operation. Handing the post-merge phase to the helper from the updated development branch: $branchHelperPath"
+    Invoke-Agent1cFreshProcess -ScriptPath $branchHelperPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
 }
 
 function Write-ItlAdditionalHelperActions {
