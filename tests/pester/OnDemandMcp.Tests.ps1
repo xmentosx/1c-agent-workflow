@@ -625,6 +625,84 @@ Describe "ITL on-demand MCP facade" {
         $runtime.statuses | Should -Be @("starting", "process-started", "readiness")
     }
 
+    It "records the refreshed Vanessa installation proof on the first backend start" {
+        $result = & {
+            $script:firstRuntimeState = $null
+            $script:leaseIndex = 0
+            $staleState = [pscustomobject]@{
+                devBranchName = "demo"
+                devBranchInfoBasePath = "target-base"
+                infoBaseKind = "file"
+                unsafeActionProtectionConfirmed = $true
+                vanessaMcpClientMcpVersion = "stale-client"
+                vanessaMcpVaExtensionVersion = "stale-va"
+            }
+            $freshState = [pscustomobject]@{
+                devBranchName = "demo"
+                devBranchInfoBasePath = "target-base"
+                infoBaseKind = "file"
+                unsafeActionProtectionConfirmed = $true
+                vanessaMcpClientMcpVersion = "fresh-client"
+                vanessaMcpVaExtensionVersion = "fresh-va"
+                vanessaMcpSafeModeProof = [pscustomobject]@{
+                    clientMcpSafeMode = $false
+                    vaExtensionSafeMode = $false
+                }
+            }
+            function Read-CurrentDevBranchStateForRoctupMcp { return $staleState }
+            function Assert-DevBranchApplicationReady { param([object]$State); return $State }
+            function Read-ItlOnDemandRuntimeState { return $null }
+            function Get-ItlOnDemandPortFamily { return "vanessa-mcp" }
+            function Get-ItlOnDemandPortKey { return "vanessa-key" }
+            function New-ItlManagedPortLeaseToken { return "lease-token" }
+            function Resolve-ItlManagedPortLease {
+                $script:leaseIndex++
+                return [pscustomobject]@{ port = (48000 + $script:leaseIndex); leaseToken = "lease-token" }
+            }
+            function Ensure-VanessaMcpInstalled { return $freshState }
+            function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; user = "itl_vanessa_service"; password = "" } }
+            function Get-VanessaAutomationState {
+                return [pscustomobject]@{
+                    ready = $true
+                    version = "1.2.043.28"
+                    downstreamRevision = "itl-r8"
+                    archiveSha256 = ("a" * 64)
+                    epfSha256 = ("b" * 64)
+                    epfPath = "vanessa.epf"
+                }
+            }
+            function Get-VanessaMcpPortRange { return [pscustomobject]@{ start = 9876; end = 9975 } }
+            function Get-ItlOnDemandVanessaTestClientPortKey { return "test-client-key" }
+            function Get-ItlOnDemandVanessaTestClientPortRange { return [pscustomobject]@{ start = 48151; end = 48250 } }
+            function New-ItlOnDemandVanessaParamsFile { return "params.json" }
+            function Get-VanessaMcpUrl { param([int]$Port); return "http://127.0.0.1:$Port/mcp" }
+            function Get-ItlOnDemandMcpFamilyDefinition {
+                return [pscustomobject]@{ backendVersions = [pscustomobject]@{ vanessaAutomation = "1.2.043.28"; vanessaExt = "1.3.9.131" } }
+            }
+            function Write-ItlOnDemandRuntimeState {
+                param([object]$RuntimeState)
+                if ($null -eq $script:firstRuntimeState) { $script:firstRuntimeState = $RuntimeState }
+                return "runtime.json"
+            }
+            function Start-EnterpriseBackground { throw "stop-after-runtime-state" }
+            function Test-TcpPortOpen { return $false }
+            function Stop-ItlOnDemandBackendInstance { param([string]$Family, [string]$InstanceId, [switch]$StrictOwnership) }
+
+            $message = ""
+            try {
+                Start-ItlOnDemandBackendInstance -Family "vanessa-ui" -InstanceId ("c" * 32) -CatalogSha256 ("d" * 64) | Out-Null
+            } catch {
+                $message = $_.Exception.Message
+            }
+            [pscustomobject]@{ message = $message; state = $script:firstRuntimeState }
+        }
+
+        $result.message | Should -Match "stop-after-runtime-state"
+        $result.state.backendVersion | Should -Match "clientMcp=fresh-client;vaExtension=fresh-va"
+        $result.state.clientMcpSafeMode | Should -BeFalse
+        $result.state.vaExtensionSafeMode | Should -BeFalse
+    }
+
     It "retains startup state and leases when failed readiness cannot prove process exit and closed ports" {
         $result = & {
             $script:statuses = @()

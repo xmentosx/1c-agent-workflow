@@ -1053,13 +1053,13 @@ function Start-ItlOnDemandBackendInstance {
             $vanessaParamsPath = New-ItlOnDemandVanessaParamsFile -State $state -InstanceId $InstanceId -TestClientPort $testClientPort -VanessaVersion ([string]$vanessa.version) -User $targetUser -Password $targetPassword
             $url = Get-VanessaMcpUrl -Port $port
             $command = "runMcp;mcpPort=$port;VAParams=$vanessaParamsPath;QuietInstallVanessaExt;DisableFirstRunHelper;UseEditor=true;usevanessaeditor=true"
-            $clientVersion = [string](Get-StateValue -State $state -Name "vanessaMcpClientMcpVersion" -Default "")
-            $vaVersion = [string](Get-StateValue -State $state -Name "vanessaMcpVaExtensionVersion" -Default "")
+            $clientVersion = [string](Get-StateValue -State $serviceState -Name "vanessaMcpClientMcpVersion" -Default "")
+            $vaVersion = [string](Get-StateValue -State $serviceState -Name "vanessaMcpVaExtensionVersion" -Default "")
             $definition = Get-ItlOnDemandMcpFamilyDefinition -Family "vanessa-ui"
             $automationVersion = [string](Get-ConfigValueFromObject -Object $definition.backendVersions -Path "vanessaAutomation" -Default $vanessa.version)
             $extVersion = [string](Get-ConfigValueFromObject -Object $definition.backendVersions -Path "vanessaExt" -Default "")
             $version = "clientMcp=$clientVersion;vaExtension=$vaVersion;vanessaAutomation=$automationVersion;vanessaExt=$extVersion"
-            $vanessaSafeModeProof = Get-StateValue -State $state -Name "vanessaMcpSafeModeProof" -Default $null
+            $vanessaSafeModeProof = Get-StateValue -State $serviceState -Name "vanessaMcpSafeModeProof" -Default $null
         }
         $runtimeState = [pscustomobject][ordered]@{
             schemaVersion = 4; status = "starting"; family = $Family; instanceId = $InstanceId
