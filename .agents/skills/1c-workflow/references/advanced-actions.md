@@ -8,6 +8,8 @@ Run supported agent-facing executable actions from the project root through the 
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <compact-action>
 ```
 
+When bounded JSON sets `userReportOmitted=true`, the complete report remains available through the full absolute `userReportPath`. Read only that path: use the file contents directly for `userReportSource=file`, or only its `userReport` JSON property for `userReportSource=status-json`. Return the recovered report verbatim. Transport omission never changes the helper's semantic status and never authorizes repeating a completed mutation.
+
 Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics.
 
 Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, use `status`, `doctor`, or `help` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.

@@ -560,6 +560,7 @@
         $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
         $workflowSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\SKILL.md")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
+        $advancedActions = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md")
         $configBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $refreshBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template")
@@ -575,6 +576,15 @@
             $text | Should -Match "reorder or omit lines"
             $text | Should -Match "code fence"
             $text | Should -Match "console\.log"
+        }
+        foreach ($text in @($installText, $advancedActions)) {
+            $text | Should -Match "userReportOmitted=true"
+            $text | Should -Match 'full absolute `userReportPath`'
+            $text | Should -Match "userReportSource=status-json"
+        }
+        foreach ($text in @($workflowSkill, $fastSkill)) {
+            $text | Should -Match "userReportOmitted=true"
+            $text | Should -Match ([regex]::Escape(".agents/skills/1c-workflow/references/advanced-actions.md"))
         }
         $refreshBranch | Should -Match "states the successful outcome"
         $refreshBranch | Should -Match "/itl-check"

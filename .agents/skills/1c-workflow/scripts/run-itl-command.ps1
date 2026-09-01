@@ -53,6 +53,22 @@ function Write-JsonFileAtomic {
     Move-Item -LiteralPath $temporary -Destination $Path -Force
 }
 
+function Write-TextFileAtomic {
+    param([string]$Path, [string]$Value)
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        throw "Cannot write the user report because the target path is a directory: $Path"
+    }
+    $temporary = "$Path.tmp-$PID-$([guid]::NewGuid().ToString('N'))"
+    try {
+        [System.IO.File]::WriteAllText($temporary, $Value, $utf8)
+        Move-Item -LiteralPath $temporary -Destination $Path -Force
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Resolve-NormalizedPath {
     param([AllowNull()][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
@@ -731,18 +747,102 @@ foreach ($property in @($summary.Keys)) {
 }
 [System.IO.File]::WriteAllText($statusPath, (($status | ConvertTo-Json -Depth 8) + [Environment]::NewLine), $utf8)
 $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+$userReportOmitted = $false
+$userReportPath = ""
+$userReportSource = "inline"
 if ($summaryText.Length -gt 4000) {
     $summary.error = Limit-Text -Value $summary.error -Length 400
     $summary.stageDetail = Limit-Text -Value $summary.stageDetail -Length 300
-    if ([string]$summary.status -eq "succeeded" -and $summary.userReport) {
+    if ($summary.userReport) {
+        $userReportOmitted = $true
+        $userReportPath = Resolve-NormalizedPath -Path (Join-Path $runDirectory "user-report.md")
+        $userReportSource = "file"
+        try {
+            Write-TextFileAtomic -Path $userReportPath -Value $userReport
+        } catch {
+            # status.json already contains the complete report. Keep the helper's
+            # semantic result and expose that authoritative fallback instead of
+            # turning a completed operation into a transport failure.
+            $userReportPath = Resolve-NormalizedPath -Path $statusPath
+            $userReportSource = "status-json"
+        }
+        $summary.userReport = ""
+        $summary["userReportOmitted"] = $true
+        $summary["userReportPath"] = $userReportPath
+        $summary["userReportSource"] = $userReportSource
+        $summary["userReportLength"] = $userReport.Length
         $summary.artifacts = @(
-            @($resultPath, $resultManifestPath, $statusPath) |
+            @($resultPath, $resultManifestPath, $userReportPath, $statusPath) |
                 Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
                 Select-Object -Unique
         )
     }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
 }
-if ($summaryText.Length -gt 4000) { throw "Compact ITL summary exceeded 4000 characters." }
+if ($summaryText.Length -gt 4000) {
+    $summary = [ordered]@{
+        action = Limit-Text -Value $action -Length 120
+        status = Limit-Text -Value $status.status -Length 40
+        stage = Limit-Text -Value $status.stage -Length 160
+        confirmationRequired = $confirmationRequired
+        nextAction = Limit-Text -Value $nextAction -Length 400
+        error = Limit-Text -Value $errorText -Length 400
+        errorCategory = Limit-Text -Value $errorCategory -Length 120
+        requiredAction = Limit-Text -Value $requiredAction -Length 400
+        userReport = ""
+        userReportOmitted = $userReportOmitted
+        userReportPath = $userReportPath
+        userReportSource = $userReportSource
+        userReportLength = $userReport.Length
+        resultPath = $resultPath
+        resultManifestPath = $resultManifestPath
+        responseStyle = $responseStyle
+        logPath = $logPath
+        statusPath = $statusPath
+    }
+    $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+}
+if ($summaryText.Length -gt 4000) {
+    $summary = [ordered]@{
+        action = Limit-Text -Value $action -Length 80
+        status = Limit-Text -Value $status.status -Length 40
+        nextAction = Limit-Text -Value $nextAction -Length 240
+        error = Limit-Text -Value $errorText -Length 240
+        userReportOmitted = $userReportOmitted
+        userReportPath = $userReportPath
+        userReportSource = $userReportSource
+        userReportLength = $userReport.Length
+        statusPath = $statusPath
+    }
+    $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+}
+if ($summaryText.Length -gt 4000) {
+    $summary = if ($userReportOmitted) {
+        [ordered]@{
+            status = Limit-Text -Value $status.status -Length 40
+            userReportOmitted = $true
+            userReportPath = $userReportPath
+            userReportSource = $userReportSource
+            userReportLength = $userReport.Length
+        }
+    } else {
+        [ordered]@{
+            status = Limit-Text -Value $status.status -Length 40
+            statusPath = $statusPath
+        }
+    }
+    $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress
+}
+if ($userReportOmitted) {
+    try {
+        Set-ObjectValue -Object $status -Name "userReportOmitted" -Value $true
+        Set-ObjectValue -Object $status -Name "userReportPath" -Value $userReportPath
+        Set-ObjectValue -Object $status -Name "userReportSource" -Value $userReportSource
+        Set-ObjectValue -Object $status -Name "userReportLength" -Value $userReport.Length
+        Write-JsonFileAtomic -Path $statusPath -Value $status
+    } catch {
+        [Console]::Error.WriteLine("ITL compact summary warning: could not add user report artifact metadata to status.json: $($_.Exception.Message)")
+    }
+}
 Write-Output $summaryText
 [Environment]::Exit($exitCode)
