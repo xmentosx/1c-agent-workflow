@@ -1081,6 +1081,33 @@ local after
         }
     }
 
+    It "commits an updated tracked client surface after its generated directory becomes ignored" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-ignored-tracked-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".kilo") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"before"}'
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value ".kilo/"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add -f .kilo/kilo.json
+            & git -C $tempRoot add .gitignore
+            & git -C $tempRoot commit -m init *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"updated"}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-WorkflowUpdate -Source ([pscustomobject]@{ ref = "master"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" })
+            }
+
+            $result.created | Should -BeTrue
+            ((& git -C $tempRoot show "HEAD:.kilo/kilo.json") -join [Environment]::NewLine) | Should -Match '"custom":"updated"'
+            @(& git -C $tempRoot status --short) | Should -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
     It "does not create an update commit for a no-op" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-noop-" + [guid]::NewGuid().ToString("N"))
         try {

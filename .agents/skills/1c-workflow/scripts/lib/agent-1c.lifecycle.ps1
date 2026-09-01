@@ -3507,11 +3507,13 @@ function Commit-WorkflowUpdate {
     } else {
         "chore: update ITL workflow from local source"
     }
-    $unstagedManaged = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
+    $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    $stageCandidates = @($unstagedManaged + $managedUntracked | Select-Object -Unique)
-    if ($stageCandidates.Count -gt 0) {
-        Invoke-Git (@("add", "--all", "--") + $stageCandidates)
+    if ($unstagedManagedTracked.Count -gt 0) {
+        Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
+    }
+    if ($managedUntracked.Count -gt 0) {
+        Invoke-Git (@("add", "--") + $managedUntracked)
     }
     $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
     $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
