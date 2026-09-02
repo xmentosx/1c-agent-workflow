@@ -7276,6 +7276,73 @@ function Assert-DevBranchLifecycleMergeIdentity {
     }
 }
 
+function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
+    param(
+        [object]$State,
+        [string]$RecoveryOperation = "check-dev-branch"
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction -or
+        $transaction.operation -notin @("refresh-dev-branch", "refresh-dev-branch-lite") -or
+        $transaction.stage -cne "merged") {
+        return $false
+    }
+
+    $verification = Get-VerificationState -State $State
+    $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
+    $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
+    $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
+    if (-not $verification.isFreshPassed -or
+        $evidenceKind -cne "full" -or
+        $configLoadStatus -notin @("passed", "fallback-succeeded") -or
+        $normalizationStatus -cne "passed") {
+        return $false
+    }
+
+    $verifiedAt = [DateTimeOffset]::MinValue
+    $configBaseUpdatedAt = [DateTimeOffset]::MinValue
+    $configBaseUpdatedAtText = [string](Get-StateValue -State $State -Name "lastConfigBaseUpdateAt" -Default "")
+    if (-not [DateTimeOffset]::TryParse([string]$verification.verifiedAt, [ref]$verifiedAt) -or
+        -not [DateTimeOffset]::TryParse($configBaseUpdatedAtText, [ref]$configBaseUpdatedAt) -or
+        $verifiedAt -lt $configBaseUpdatedAt) {
+        return $false
+    }
+
+    Assert-DevBranchLifecycleMergeIdentity `
+        -State $State `
+        -Transaction $transaction `
+        -Operation $transaction.operation
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $transaction.operation
+
+    $recordedPostMergeHead = [string]$transaction.postMergeHead
+    if (-not $recordedPostMergeHead) {
+        return $false
+    }
+    if ($recordedPostMergeHead -cne $transaction.mergeCommit -and
+        -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $recordedPostMergeHead)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$($transaction.operation)' mergeCommit='$($transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
+    }
+
+    $head = Get-CurrentCommit
+    if ($head -cne $recordedPostMergeHead -and
+        -not (Test-GitCommitIsAncestor -Ancestor $recordedPostMergeHead -Descendant $head)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$($transaction.operation)' expectedAncestor='$recordedPostMergeHead' actual='$head'."
+    }
+
+    $updates = @{
+        lastRefreshAt = (Get-Date).ToString("o")
+        lastRefreshMasterCommit = $transaction.targetCommit
+        lastRefreshMode = $(if ($transaction.operation -ceq "refresh-dev-branch") { "full" } else { "lite" })
+        lastRefreshRecoveryOperation = $RecoveryOperation
+        lastRefreshRecoveredHead = $head
+    }
+    Add-PendingDevBranchMergeClearUpdates -Updates $updates
+    Update-DevBranchState -State $State -Updates $updates
+    Write-Host "Completed pending $($transaction.operation) after fresh full verification at descendant HEAD: $head"
+    return $true
+}
+
 function Resume-DevBranchLifecycleMergeIfPresent {
     param(
         [object]$State,
@@ -10546,6 +10613,8 @@ function Invoke-RefreshDevBranchCore {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
+        Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $state -RecoveryOperation "$OperationName preflight" | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
@@ -11504,6 +11573,8 @@ function Invoke-DevBranchCheck {
         -EventLogCursorPath $eventLogCursor.path `
         -EventLogBoundaryAt $eventLogCursor.capturedAt `
         -EventLogCursorScope "lifecycle-pending"
+    $verifiedState = Read-DevBranchState -Name $DevBranchName
+    Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
     if ($trigger -eq "repair" -and $fullProofEligible) {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
         $verification = Get-VerificationState -State $verifiedState
