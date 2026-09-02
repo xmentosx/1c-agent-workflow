@@ -5,6 +5,7 @@ testResults.xml
 *.cf
 *.cfe
 *.dt
+*.mdmp
 !.agents/skills/1c-workflow/assets/vanessa-service/service-infobase.dt
 *.log
 logs/

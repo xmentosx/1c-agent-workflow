@@ -2910,6 +2910,24 @@ exit 0
         }
     }
 
+    It "reconciles a verified failed-refresh recovery before another refresh or after check verification" {
+        $refreshMatch = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
+        $refreshMatch.Success | Should -BeTrue
+        $refreshBody = $refreshMatch.Groups["body"].Value
+        $refreshReconcileIndex = $refreshBody.IndexOf("Complete-PendingDevBranchRefreshAfterVerifiedRecovery")
+        $refreshResumeIndex = $refreshBody.IndexOf("Resume-DevBranchLifecycleMergeIfPresent")
+        $refreshReconcileIndex | Should -BeGreaterOrEqual 0
+        $refreshResumeIndex | Should -BeGreaterThan $refreshReconcileIndex
+
+        $checkMatch = [regex]::Match($HelperText, "(?s)function\s+Invoke-DevBranchCheck\s*\{(?<body>.*?)(?=`r?`nfunction\s+Check-DevBranch\s*\{)")
+        $checkMatch.Success | Should -BeTrue
+        $checkBody = $checkMatch.Groups["body"].Value
+        $verificationIndex = $checkBody.IndexOf("Invoke-ItlVerificationCycle")
+        $checkReconcileIndex = $checkBody.IndexOf("Complete-PendingDevBranchRefreshAfterVerifiedRecovery")
+        $verificationIndex | Should -BeGreaterOrEqual 0
+        $checkReconcileIndex | Should -BeGreaterThan $verificationIndex
+    }
+
     It "clears a pending merge transaction only after the operation-specific post-merge work succeeds" {
         $refreshMatch = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
         $refreshMatch.Success | Should -BeTrue
@@ -2936,9 +2954,11 @@ exit 0
         $body = $match.Groups["body"].Value
         $reconcileIndex = $body.IndexOf('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"')
         $reportIndex = $body.IndexOf('Write-DevBranchRunUserReport -State $updatedState')
+        $completeIndex = $body.IndexOf('Set-RunStage -Stage "$OperationName.complete"')
 
         $reconcileIndex | Should -BeGreaterOrEqual 0
         $reportIndex | Should -BeGreaterThan $reconcileIndex
+        $completeIndex | Should -BeGreaterThan $reportIndex
         $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
     }
 
@@ -3256,6 +3276,40 @@ exit 0
         $lockBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $lockBody.IndexOf('Get-ConfigRepositoryTransferPlan')
         $exportBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $exportBody.IndexOf('Get-VerificationState')
         $resumeBody | Should -Match '(?s)Repair-OneCSourceLineEndings.*?-StageChanges.*?Invoke-Git\s+@\("commit",\s*"--no-edit"\)'
+    }
+
+    It "adds the managed crash-dump ignore before checkpoint staging" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ checkpoint с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value "custom.local"
+            Set-Content -LiteralPath (Join-Path $tempRoot "user.txt") -Encoding UTF8 -Value "before"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore user.txt
+            & git -C $tempRoot commit -m init *> $null
+
+            Set-Content -LiteralPath (Join-Path $tempRoot "user.txt") -Encoding UTF8 -Value "after"
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot "1cv8c_test.mdmp"), [byte[]](1, 2, 3, 4))
+            $checkpoint = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Repair-OneCSourceLineEndings { return @() }
+                Save-DevBranchCheckpoint -Operation "refresh-dev-branch"
+            }
+
+            $checkpoint | Should -Match '^[a-f0-9]{40}$'
+            ((& git -C $tempRoot show "HEAD:user.txt") -join "`n").Trim() | Should -Be "after"
+            @(& git -C $tempRoot ls-tree -r --name-only HEAD -- "*.mdmp") | Should -BeNullOrEmpty
+            & git -C $tempRoot check-ignore --quiet -- "1cv8c_test.mdmp"
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8) | Should -Contain "*.mdmp"
+            @(& git -C $tempRoot status --short) | Should -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "does not continue when a later attributes rule overrides the managed byte contract" {
@@ -6470,6 +6524,93 @@ if (`$?) { exit 0 } else { exit 1 }
             } finally {
                 Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "completes a pending refresh on a corrective descendant only after fresh full verification" {
+        $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{
+                    safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
+                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                    pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
+                    lastVerificationStatus = "passed"; lastVerificationEvidenceKind = "full"
+                    lastVerifiedCommit = $Fixture.head; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
+                    configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
+                    enterpriseNormalizationStatus = "passed"
+                }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+
+                $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
+                [pscustomobject]@{
+                    completed = $completed
+                    pendingOperation = $script:MergeState.pendingMergeOperation
+                    refreshCommit = $script:MergeState.lastRefreshMasterCommit
+                    refreshMode = $script:MergeState.lastRefreshMode
+                    recoveryOperation = $script:MergeState.lastRefreshRecoveryOperation
+                    recoveredHead = $script:MergeState.lastRefreshRecoveredHead
+                    currentHead = Get-CurrentCommit
+                }
+            } $fixture
+
+            $result.completed | Should -BeTrue
+            $result.pendingOperation | Should -BeNullOrEmpty
+            $result.refreshCommit | Should -Be $fixture.targetCommit
+            $result.refreshMode | Should -Be "full"
+            $result.recoveryOperation | Should -Be "check-dev-branch"
+            $result.recoveredHead | Should -Be $fixture.head
+            $result.currentHead | Should -Be $fixture.head
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps a pending refresh when full verification is stale" {
+        $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{
+                    safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
+                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                    pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
+                    lastVerificationStatus = "passed"; lastVerificationEvidenceKind = "full"
+                    lastVerifiedCommit = $Fixture.cursorCommit; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
+                    configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
+                    enterpriseNormalizationStatus = "passed"
+                }
+                function Update-DevBranchState { throw "state must not change" }
+
+                $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
+                [pscustomobject]@{
+                    completed = $completed
+                    pendingOperation = $script:MergeState.pendingMergeOperation
+                }
+            } $fixture
+
+            $result.completed | Should -BeFalse
+            $result.pendingOperation | Should -Be "refresh-dev-branch"
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

@@ -3725,6 +3725,48 @@ function Get-WorkflowUpdateTrackedChangePaths {
     ) | Select-Object -Unique
 }
 
+function Refresh-WorkflowUpdateManagedIndexStat {
+    param([string[]]$ManagedPathSpecs)
+
+    $pathSpecs = @($ManagedPathSpecs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+    if ($pathSpecs.Count -eq 0) {
+        return
+    }
+
+    $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $pathSpecs })
+    if ($trackedManagedPaths.Count -gt 0) {
+        $pathspecPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "itl-workflow-index-refresh-" -Extension ".paths"
+        try {
+            [System.IO.File]::WriteAllText(
+                $pathspecPath,
+                (($trackedManagedPaths -join [string][char]0) + [string][char]0),
+                (New-Object System.Text.UTF8Encoding $false)
+            )
+            $treeBefore = (Get-GitOutput @("write-tree")).Trim()
+            Invoke-Git @("add", "--update", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
+            $treeAfter = (Get-GitOutput @("write-tree")).Trim()
+            if ($treeAfter -cne $treeBefore) {
+                Invoke-Git @("reset", "--quiet", "HEAD", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
+                throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
+            }
+        } finally {
+            if (Test-Path -LiteralPath $pathspecPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $pathspecPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    $statusArguments = @("-C", $script:ProjectRoot, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--") + $pathSpecs
+    $statusOutput = @(& git @statusArguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "update-workflow could not verify managed tracked status in a fresh Git process."
+    }
+    if ([string]::Concat(@($statusOutput)) -ne "") {
+        throw "update-workflow refreshed only equivalent managed index entries, but a fresh Git process still reports tracked changes."
+    }
+}
+
 function Commit-WorkflowUpdate {
     param(
         [object]$Source,
@@ -3781,6 +3823,8 @@ function Commit-WorkflowUpdate {
     }
     Invoke-Git @("commit", "--quiet", "-m", $message)
     Write-Host "Committed: $message"
+
+    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
 
     $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
     if ($remainingTracked.Count -gt 0) {
@@ -4335,6 +4379,7 @@ function Update-WorkflowPackage {
     $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "update-workflow" | Out-Null
     Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
+    Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed and verified clean."
 }
 
 function Update-UserRules {
@@ -7276,6 +7321,73 @@ function Assert-DevBranchLifecycleMergeIdentity {
     }
 }
 
+function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
+    param(
+        [object]$State,
+        [string]$RecoveryOperation = "check-dev-branch"
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction -or
+        $transaction.operation -notin @("refresh-dev-branch", "refresh-dev-branch-lite") -or
+        $transaction.stage -cne "merged") {
+        return $false
+    }
+
+    $verification = Get-VerificationState -State $State
+    $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
+    $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
+    $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
+    if (-not $verification.isFreshPassed -or
+        $evidenceKind -cne "full" -or
+        $configLoadStatus -notin @("passed", "fallback-succeeded") -or
+        $normalizationStatus -cne "passed") {
+        return $false
+    }
+
+    $verifiedAt = [DateTimeOffset]::MinValue
+    $configBaseUpdatedAt = [DateTimeOffset]::MinValue
+    $configBaseUpdatedAtText = [string](Get-StateValue -State $State -Name "lastConfigBaseUpdateAt" -Default "")
+    if (-not [DateTimeOffset]::TryParse([string]$verification.verifiedAt, [ref]$verifiedAt) -or
+        -not [DateTimeOffset]::TryParse($configBaseUpdatedAtText, [ref]$configBaseUpdatedAt) -or
+        $verifiedAt -lt $configBaseUpdatedAt) {
+        return $false
+    }
+
+    Assert-DevBranchLifecycleMergeIdentity `
+        -State $State `
+        -Transaction $transaction `
+        -Operation $transaction.operation
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $transaction.operation
+
+    $recordedPostMergeHead = [string]$transaction.postMergeHead
+    if (-not $recordedPostMergeHead) {
+        return $false
+    }
+    if ($recordedPostMergeHead -cne $transaction.mergeCommit -and
+        -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $recordedPostMergeHead)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$($transaction.operation)' mergeCommit='$($transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
+    }
+
+    $head = Get-CurrentCommit
+    if ($head -cne $recordedPostMergeHead -and
+        -not (Test-GitCommitIsAncestor -Ancestor $recordedPostMergeHead -Descendant $head)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$($transaction.operation)' expectedAncestor='$recordedPostMergeHead' actual='$head'."
+    }
+
+    $updates = @{
+        lastRefreshAt = (Get-Date).ToString("o")
+        lastRefreshMasterCommit = $transaction.targetCommit
+        lastRefreshMode = $(if ($transaction.operation -ceq "refresh-dev-branch") { "full" } else { "lite" })
+        lastRefreshRecoveryOperation = $RecoveryOperation
+        lastRefreshRecoveredHead = $head
+    }
+    Add-PendingDevBranchMergeClearUpdates -Updates $updates
+    Update-DevBranchState -State $State -Updates $updates
+    Write-Host "Completed pending $($transaction.operation) after fresh full verification at descendant HEAD: $head"
+    return $true
+}
+
 function Resume-DevBranchLifecycleMergeIfPresent {
     param(
         [object]$State,
@@ -10161,6 +10273,7 @@ function Save-DevBranchCheckpoint {
     )
 
     Assert-DevBranchCheckpointGitState -Operation $Operation
+    Ensure-GitIgnore
     Repair-OneCSourceLineEndings | Out-Null
     if (-not (Test-GitHasChanges)) {
         Write-Host "Development branch checkpoint: no changes."
@@ -10546,6 +10659,8 @@ function Invoke-RefreshDevBranchCore {
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
+        Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $state -RecoveryOperation "$OperationName preflight" | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
@@ -10619,6 +10734,7 @@ function Invoke-RefreshDevBranchCore {
             Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
         }
         Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+        Set-RunStage -Stage "$OperationName.complete" -Detail "Development branch refresh completed successfully."
     } catch {
         Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot
         throw
@@ -11504,6 +11620,8 @@ function Invoke-DevBranchCheck {
         -EventLogCursorPath $eventLogCursor.path `
         -EventLogBoundaryAt $eventLogCursor.capturedAt `
         -EventLogCursorScope "lifecycle-pending"
+    $verifiedState = Read-DevBranchState -Name $DevBranchName
+    Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $verifiedState -RecoveryOperation "check-dev-branch" | Out-Null
     if ($trigger -eq "repair" -and $fullProofEligible) {
         $verifiedState = Read-DevBranchState -Name $DevBranchName
         $verification = Get-VerificationState -State $verifiedState

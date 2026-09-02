@@ -2176,6 +2176,7 @@ function Ensure-GitIgnore {
         "*.cf",
         "*.cfe",
         "*.dt",
+        "*.mdmp",
         "*.log",
         "logs/",
         ".tx/",
@@ -2230,7 +2231,10 @@ function Ensure-GitIgnore {
     } else {
         $required = $fallbackRequired
     }
-    $required = @($required + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    # Keep crash dumps mandatory in code as well as in the template. A refreshed
+    # master helper can checkpoint an older branch before that branch receives
+    # the updated template through its master merge.
+    $required = @($required + @("*.mdmp") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath

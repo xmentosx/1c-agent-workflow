@@ -106,6 +106,8 @@ Goal: refresh the current development branch from fresh `master` and source stat
 7. Keep the stable facade config and let the next tool call create fresh backend instances after a real load.
 8. Re-check whether verification is fresh; stale or unknown verification must be handled before result export.
 
+If post-merge configuration loading fails after the merge transaction is committed, correct the reported source defect and run `/itl-check` as instructed. A fresh full verification that follows a successful configuration load and Enterprise normalization may complete the pending refresh on the recorded post-merge HEAD or its corrective descendant. Normal merge resume remains exact-HEAD only; stale, partial, unrelated-branch, non-descendant, or pre-load verification never clears the transaction. A later refresh preflight applies the same proof before deciding whether another pending operation conflicts.
+
 `refresh-dev-branch-lite` executes steps 1 and 3–8 against the exact current `master` SHA. It never updates or reads source and never touches the seed. From a clean managed `master`, `refresh-all-dev-branches` performs one `sync-master`, fixes that SHA, and runs lite refresh for every active ready branch with at most two workers; branch failures are isolated and aggregated.
 
 ## RESET_DEV_BRANCH / LOCK_CONFIG_REPOSITORY_OBJECTS
