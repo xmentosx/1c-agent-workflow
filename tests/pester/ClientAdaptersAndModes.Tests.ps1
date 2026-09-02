@@ -306,6 +306,9 @@
                     $adapted[$client][$fileName] | Should -Match 'first and only tool action'
                     $adapted[$client][$fileName] | Should -Match 'responseStyle'
                     $adapted[$client][$fileName] | Should -Match 'userReport` verbatim'
+                    $adapted[$client][$fileName] | Should -Match 'userReportOmitted=true'
+                    $adapted[$client][$fileName] | Should -Match 'full absolute `userReportPath`'
+                    $adapted[$client][$fileName] | Should -Match 'userReportSource=status-json'
                 }
             }
             $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'

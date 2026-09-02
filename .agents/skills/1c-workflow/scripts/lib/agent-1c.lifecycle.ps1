@@ -318,6 +318,262 @@ $stderr
     return @($text -split ([string][char]0) | Where-Object { $_ })
 }
 
+function Get-GitBlobBytesBatch {
+    param([string[]]$ObjectIds)
+
+    $uniqueObjectIds = @($ObjectIds | Where-Object { $_ } | Sort-Object -Unique)
+    $result = @{}
+    if ($uniqueObjectIds.Count -eq 0) {
+        return $result
+    }
+    foreach ($objectId in $uniqueObjectIds) {
+        if ($objectId -notmatch '^[a-f0-9]{40,64}$') {
+            throw "GIT_BLOB_OBJECT_ID_INVALID: $objectId"
+        }
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "git"
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @("-C", $script:ProjectRoot, "cat-file", "--batch")
+    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $started = $false
+    try {
+        if (-not $process.Start()) {
+            throw "Cannot start git cat-file --batch."
+        }
+        $started = $true
+        $request = [System.Text.Encoding]::ASCII.GetBytes(($uniqueObjectIds -join "`n") + "`n")
+        $process.StandardInput.BaseStream.Write($request, 0, $request.Length)
+        $process.StandardInput.BaseStream.Flush()
+        $process.StandardInput.Close()
+
+        $output = $process.StandardOutput.BaseStream
+        foreach ($objectId in $uniqueObjectIds) {
+            $headerBytes = [System.Collections.Generic.List[byte]]::new()
+            while ($true) {
+                $value = $output.ReadByte()
+                if ($value -lt 0) {
+                    throw "Unexpected end of git cat-file output while reading '$objectId'."
+                }
+                if ($value -eq 10) { break }
+                $headerBytes.Add([byte]$value)
+            }
+            $header = [System.Text.Encoding]::ASCII.GetString($headerBytes.ToArray())
+            if ($header -notmatch '^(?<actual>[a-f0-9]{40,64}) blob (?<size>[0-9]+)$' -or $Matches["actual"] -cne $objectId) {
+                throw "Unexpected git cat-file header for '$objectId': $header"
+            }
+            $size = [int64]$Matches["size"]
+            if ($size -gt [int]::MaxValue) {
+                throw "Git blob is too large to inspect for line endings: object='$objectId' size='$size'."
+            }
+            $bytes = New-Object byte[] ([int]$size)
+            $offset = 0
+            while ($offset -lt $bytes.Length) {
+                $read = $output.Read($bytes, $offset, $bytes.Length - $offset)
+                if ($read -le 0) {
+                    throw "Unexpected end of git cat-file blob '$objectId' at byte $offset of $size."
+                }
+                $offset += $read
+            }
+            if ($output.ReadByte() -ne 10) {
+                throw "Git cat-file blob '$objectId' was not followed by the expected delimiter."
+            }
+            $result[$objectId] = $bytes
+        }
+
+        $process.WaitForExit()
+        $stderr = $process.StandardError.ReadToEnd()
+        if ($process.ExitCode -ne 0) {
+            throw "git cat-file --batch failed with exit code $($process.ExitCode): $stderr"
+        }
+    } finally {
+        if ($started -and -not $process.HasExited) {
+            try { $process.Kill() } catch {}
+        }
+        $process.Dispose()
+    }
+    return $result
+}
+
+function Get-OneCSourceLineEndingStyle {
+    param([byte[]]$Bytes)
+
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return "none" }
+    $lineFeeds = 0
+    $carriageReturnLineFeeds = 0
+    $loneCarriageReturns = 0
+    for ($index = 0; $index -lt $Bytes.Length; $index++) {
+        if ($Bytes[$index] -eq 0) { return "binary" }
+        if ($Bytes[$index] -eq 10) {
+            $lineFeeds++
+            if ($index -gt 0 -and $Bytes[$index - 1] -eq 13) {
+                $carriageReturnLineFeeds++
+            }
+        } elseif ($Bytes[$index] -eq 13 -and ($index + 1 -ge $Bytes.Length -or $Bytes[$index + 1] -ne 10)) {
+            $loneCarriageReturns++
+        }
+    }
+    if ($lineFeeds -eq 0) { return $(if ($loneCarriageReturns -eq 0) { "none" } else { "mixed" }) }
+    if ($loneCarriageReturns -eq 0 -and $carriageReturnLineFeeds -eq $lineFeeds) { return "crlf" }
+    if ($loneCarriageReturns -eq 0 -and $carriageReturnLineFeeds -eq 0) { return "lf" }
+    return "mixed"
+}
+
+function Convert-OneCSourceLineEndings {
+    param(
+        [byte[]]$Bytes,
+        [ValidateSet("crlf", "lf")][string]$Style
+    )
+
+    $carriageReturnLineFeeds = 0
+    $bareLineFeeds = 0
+    for ($index = 0; $index -lt $Bytes.Length; $index++) {
+        if ($Bytes[$index] -ne 10) { continue }
+        if ($index -gt 0 -and $Bytes[$index - 1] -eq 13) {
+            $carriageReturnLineFeeds++
+        } else {
+            $bareLineFeeds++
+        }
+    }
+
+    $targetLength = if ($Style -eq "crlf") {
+        $Bytes.Length + $bareLineFeeds
+    } else {
+        $Bytes.Length - $carriageReturnLineFeeds
+    }
+    $result = New-Object byte[] $targetLength
+    $targetIndex = 0
+    for ($index = 0; $index -lt $Bytes.Length; $index++) {
+        $value = $Bytes[$index]
+        if ($Style -eq "crlf" -and $value -eq 10 -and ($index -eq 0 -or $Bytes[$index - 1] -ne 13)) {
+            $result[$targetIndex] = 13
+            $targetIndex++
+        }
+        if ($Style -eq "lf" -and $value -eq 13 -and $index + 1 -lt $Bytes.Length -and $Bytes[$index + 1] -eq 10) {
+            continue
+        }
+        $result[$targetIndex] = $value
+        $targetIndex++
+    }
+    return ,$result
+}
+
+function Repair-OneCSourceLineEndings {
+    param(
+        [string[]]$SourcePaths = @((Get-ExportPath), (Get-ExtensionsPath), "src/configs"),
+        [string]$ReferenceCommit = "",
+        [string[]]$CandidatePaths = @(),
+        [switch]$StageChanges
+    )
+
+    try {
+        if (-not $ReferenceCommit) {
+            $ReferenceCommit = Get-GitCommitOrEmpty (Get-MasterBranch)
+        }
+        if ($ReferenceCommit -notmatch '^[a-f0-9]{40,64}$' -or -not (Test-GitCommitExists -Commit $ReferenceCommit)) {
+            return @()
+        }
+    } catch {
+        return @()
+    }
+
+    $normalizedSourcePaths = @(
+        $SourcePaths |
+            Where-Object { $_ } |
+            ForEach-Object { ([string]$_).Replace("\", "/").Trim("/") } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+    if ($normalizedSourcePaths.Count -eq 0) { return @() }
+
+    $paths = if (@($CandidatePaths).Count -gt 0) {
+        @($CandidatePaths)
+    } else {
+        @(
+            @(Get-GitPathList -Arguments (@("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", $ReferenceCommit, "--") + $normalizedSourcePaths))
+            @(Get-GitPathList -Arguments (@("ls-files", "-z", "--others", "--exclude-standard", "--") + $normalizedSourcePaths))
+        )
+    }
+    $paths = @(
+        $paths |
+            ForEach-Object { ([string]$_).Replace("\", "/").TrimStart("/") } |
+            Where-Object {
+                $repoPath = $_
+                $extension = [System.IO.Path]::GetExtension($repoPath)
+                $leaf = [System.IO.Path]::GetFileName($repoPath)
+                $underSource = @($normalizedSourcePaths | Where-Object {
+                    $repoPath -ceq $_ -or $repoPath.StartsWith($_ + "/", [System.StringComparison]::Ordinal)
+                }).Count -gt 0
+                $underSource -and $leaf -ine "ConfigDumpInfo.xml" -and $extension -in @(".bsl", ".xml")
+            } |
+            Sort-Object -Unique
+    )
+    if ($paths.Count -eq 0) { return @() }
+
+    $objectIdByPath = @{}
+    $pathBatchSize = 64
+    for ($offset = 0; $offset -lt $paths.Count; $offset += $pathBatchSize) {
+        $lastIndex = [Math]::Min($offset + $pathBatchSize - 1, $paths.Count - 1)
+        $pathBatch = @($paths[$offset..$lastIndex])
+        foreach ($entry in @(Get-GitPathList -Arguments (@("ls-tree", "-z", $ReferenceCommit, "--") + $pathBatch))) {
+            if ($entry -match "^[0-9]{6} blob (?<objectId>[a-f0-9]{40,64})`t(?<path>.*)$") {
+                $repoPath = [string]$Matches["path"]
+                if ($paths -ccontains $repoPath) {
+                    $objectIdByPath[$repoPath] = [string]$Matches["objectId"]
+                }
+            }
+        }
+    }
+    if ($objectIdByPath.Count -eq 0) { return @() }
+    $blobBytesByObjectId = Get-GitBlobBytesBatch -ObjectIds @($objectIdByPath.Values)
+
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $repaired = [System.Collections.Generic.List[string]]::new()
+    foreach ($repoPath in $paths) {
+        if (-not $objectIdByPath.ContainsKey($repoPath)) { continue }
+        $absolutePath = Resolve-Agent1cFullPath -Path (Join-Path $projectRoot ($repoPath.Replace("/", "\")))
+        if (-not $absolutePath.StartsWith($projectRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $absolutePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            continue
+        }
+        $objectId = [string]$objectIdByPath[$repoPath]
+        if (-not $blobBytesByObjectId.ContainsKey($objectId)) { continue }
+        $referenceBytes = [byte[]]$blobBytesByObjectId[$objectId]
+        $referenceStyle = Get-OneCSourceLineEndingStyle -Bytes $referenceBytes
+        if ($referenceStyle -notin @("crlf", "lf")) { continue }
+
+        $currentBytes = [System.IO.File]::ReadAllBytes($absolutePath)
+        $currentStyle = Get-OneCSourceLineEndingStyle -Bytes $currentBytes
+        if ($currentStyle -in @("binary", "none") -or $currentStyle -eq $referenceStyle) { continue }
+        $normalizedBytes = Convert-OneCSourceLineEndings -Bytes $currentBytes -Style $referenceStyle
+        $temporaryPath = "$absolutePath.itl-eol-$PID-$([guid]::NewGuid().ToString('N')).tmp"
+        try {
+            [System.IO.File]::WriteAllBytes($temporaryPath, $normalizedBytes)
+            Move-Item -LiteralPath $temporaryPath -Destination $absolutePath -Force
+        } finally {
+            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        }
+        $repaired.Add($repoPath) | Out-Null
+    }
+
+    if ($repaired.Count -gt 0) {
+        if ($StageChanges) {
+            Invoke-Git (@("add", "--") + @($repaired))
+        }
+        $shortReference = $ReferenceCommit.Substring(0, [Math]::Min(9, $ReferenceCommit.Length))
+        Write-Host "Normalized line endings in $($repaired.Count) changed 1C source file(s) to match reference commit $shortReference."
+    }
+    return @($repaired)
+}
+
 function Test-GitPathHasChangesSince {
     param(
         [string]$BaseCommit,
@@ -3507,11 +3763,13 @@ function Commit-WorkflowUpdate {
     } else {
         "chore: update ITL workflow from local source"
     }
-    $unstagedManaged = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
+    $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    $stageCandidates = @($unstagedManaged + $managedUntracked | Select-Object -Unique)
-    if ($stageCandidates.Count -gt 0) {
-        Invoke-Git (@("add", "--all", "--") + $stageCandidates)
+    if ($unstagedManagedTracked.Count -gt 0) {
+        Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
+    }
+    if ($managedUntracked.Count -gt 0) {
+        Invoke-Git (@("add", "--") + $managedUntracked)
     }
     $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
     $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
@@ -7110,6 +7368,12 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             throw "LIFECYCLE_MERGE_UNEXPECTED_STAGED_FILES operation='$Operation' files='$($unexpectedStagedPaths -join ', ')'. The workflow will not include unrelated staged changes in its merge commit."
         }
 
+        Repair-OneCSourceLineEndings `
+            -ReferenceCommit $transaction.targetCommit `
+            -CandidatePaths $stagedPaths `
+            -StageChanges | Out-Null
+        $stagedPaths = @(Get-DevBranchMergeIndexPaths)
+
         if ($sourceByteContractTransition) {
             Complete-OneCSourceByteContractMergeTransition `
                 -BranchCommit $transaction.branchCommit `
@@ -9427,6 +9691,7 @@ function Update-DevBranchBase {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "update-dev-branch-base"
     Assert-DevBranchExtensionInitialized -State $state -Operation "update-dev-branch-base"
     Assert-SingleManagedExtensionArtifact -State $state
+    Repair-OneCSourceLineEndings | Out-Null
     Sync-DevBranchContextToDotEnv -State $state
     $state = Ensure-DevBranchEventLogBaseline -State $state
     Ensure-DevBranchEventLogPendingCursor -State $state -Reason "update-dev-branch-base" | Out-Null
@@ -9736,6 +10001,7 @@ function Lock-ConfigRepositoryObjects {
         throw "LOCK_CONFIG_REPOSITORY_NOT_CONFIGURED: SOURCE_USES_REPOSITORY=false."
     }
 
+    Repair-OneCSourceLineEndings | Out-Null
     $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
     $unresolved = @($plan.unresolvedPaths)
     if ($unresolved.Count -gt 0) {
@@ -9895,6 +10161,7 @@ function Save-DevBranchCheckpoint {
     )
 
     Assert-DevBranchCheckpointGitState -Operation $Operation
+    Repair-OneCSourceLineEndings | Out-Null
     if (-not (Test-GitHasChanges)) {
         Write-Host "Development branch checkpoint: no changes."
         return ""
@@ -11339,6 +11606,7 @@ function Export-DevBranchResult {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "export-dev-branch-result"
     Assert-DevBranchExtensionInitialized -State $state -Operation "export-dev-branch-result"
     Assert-SingleManagedExtensionArtifact -State $state
+    Repair-OneCSourceLineEndings | Out-Null
     Sync-DevBranchContextToDotEnv -State $state
     $initialVerification = Get-VerificationState -State $state
     $operationFingerprint = [string]$initialVerification.currentFingerprint

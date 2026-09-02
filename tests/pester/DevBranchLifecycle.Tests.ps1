@@ -3176,6 +3176,88 @@ exit 0
         }
     }
 
+    It "repairs mixed line endings only for changed 1C files with a homogeneous reference" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ EOL с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf\Каталог с пробелом") | Out-Null
+            & git -C $tempRoot init --quiet
+            & git -C $tempRoot config user.email "itl-tests@example.invalid"
+            & git -C $tempRoot config user.name "ITL Tests"
+            & git -C $tempRoot config core.autocrlf true
+
+            $crlfPath = "src/cf/Каталог с пробелом/CRLF модуль.bsl"
+            $lfPath = "src/cf/Каталог с пробелом/LF описание.xml"
+            $mixedPath = "src/cf/Каталог с пробелом/Смешанный эталон.xml"
+            $binaryPath = "src/cf/Каталог с пробелом/Двоичный.xml"
+            $newPath = "src/cf/Каталог с пробелом/Новый модуль.bsl"
+            $utf8 = [System.Text.UTF8Encoding]::new($false)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ".gitattributes"), $utf8.GetBytes("src/cf/** -text`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($crlfPath.Replace("/", "\"))), $utf8.GetBytes("Строка1`r`nСтрока2`r`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($lfPath.Replace("/", "\"))), $utf8.GetBytes("<root>`n  <value>base</value>`n</root>`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($mixedPath.Replace("/", "\"))), $utf8.GetBytes("<root>`r`n  <value>base</value>`n</root>`r`n"))
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($binaryPath.Replace("/", "\"))), [byte[]](0, 13, 10, 255, 10, 0))
+            & git -C $tempRoot add --all
+            & git -C $tempRoot commit --quiet -m "homogeneous and ambiguous references"
+            & git -C $tempRoot branch -M master
+            $masterCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet -b "itldev/eol"
+
+            $changedCrlfBytes = $utf8.GetBytes("Строка1`r`nИзменение ветки`nСтрока3`r`n")
+            $expectedCrlfBytes = $utf8.GetBytes("Строка1`r`nИзменение ветки`r`nСтрока3`r`n")
+            $changedLfBytes = $utf8.GetBytes("<root>`n  <value>edit</value>`r`n</root>`n")
+            $expectedLfBytes = $utf8.GetBytes("<root>`n  <value>edit</value>`n</root>`n")
+            $changedMixedBytes = $utf8.GetBytes("<root>`r`n  <value>edit</value>`n</root>`r`n")
+            $changedBinaryBytes = [byte[]](0, 13, 10, 254, 10, 0)
+            $newBytes = $utf8.GetBytes("Новая1`nНовая2`n")
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($crlfPath.Replace("/", "\"))), $changedCrlfBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($lfPath.Replace("/", "\"))), $changedLfBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($mixedPath.Replace("/", "\"))), $changedMixedBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($binaryPath.Replace("/", "\"))), $changedBinaryBytes)
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot ($newPath.Replace("/", "\"))), $newBytes)
+
+            $repaired = @(& {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Repair-OneCSourceLineEndings -SourcePaths @("src/cf") -ReferenceCommit $masterCommit
+            })
+
+            $repaired | Should -HaveCount 2
+            $repaired | Should -Contain $crlfPath
+            $repaired | Should -Contain $lfPath
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $tempRoot ($crlfPath.Replace("/", "\"))))) | Should -Be ([Convert]::ToBase64String($expectedCrlfBytes))
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $tempRoot ($lfPath.Replace("/", "\"))))) | Should -Be ([Convert]::ToBase64String($expectedLfBytes))
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $tempRoot ($mixedPath.Replace("/", "\"))))) | Should -Be ([Convert]::ToBase64String($changedMixedBytes))
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $tempRoot ($binaryPath.Replace("/", "\"))))) | Should -Be ([Convert]::ToBase64String($changedBinaryBytes))
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes((Join-Path $tempRoot ($newPath.Replace("/", "\"))))) | Should -Be ([Convert]::ToBase64String($newBytes))
+
+            $secondPass = @(& {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Repair-OneCSourceLineEndings -SourcePaths @("src/cf") -ReferenceCommit $masterCommit
+            })
+            $secondPass | Should -HaveCount 0
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                try { & git -C $tempRoot fsmonitor--daemon stop *> $null } catch {}
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "runs the narrow line-ending repair before lifecycle commits loads and transfer planning" {
+        $checkpointBody = [regex]::Match($HelperText, '(?s)function Save-DevBranchCheckpoint\s*\{.*?(?=\r?\nfunction )').Value
+        $updateBody = [regex]::Match($HelperText, '(?s)function Update-DevBranchBase\s*\{.*?(?=\r?\nfunction )').Value
+        $lockBody = [regex]::Match($HelperText, '(?s)function Lock-ConfigRepositoryObjects\s*\{.*?(?=\r?\nfunction )').Value
+        $exportBody = [regex]::Match($HelperText, '(?s)function Export-DevBranchResult\s*\{.*?(?=\r?\nfunction )').Value
+        $resumeBody = [regex]::Match($HelperText, '(?s)function Resume-DevBranchLifecycleMergeIfPresent\s*\{.*?(?=\r?\nfunction )').Value
+        $repairBody = [regex]::Match($HelperText, '(?s)function Repair-OneCSourceLineEndings\s*\{.*?(?=\r?\nfunction )').Value
+
+        $repairBody | Should -Not -Match 'ls-tree.*?"-r"'
+        $checkpointBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $checkpointBody.IndexOf('Test-GitHasChanges')
+        $updateBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $updateBody.IndexOf('Sync-DevBranchContextToDotEnv')
+        $lockBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $lockBody.IndexOf('Get-ConfigRepositoryTransferPlan')
+        $exportBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $exportBody.IndexOf('Get-VerificationState')
+        $resumeBody | Should -Match '(?s)Repair-OneCSourceLineEndings.*?-StageChanges.*?Invoke-Git\s+@\("commit",\s*"--no-edit"\)'
+    }
+
     It "does not continue when a later attributes rule overrides the managed byte contract" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-attributes-override-" + [guid]::NewGuid().ToString("N"))
         try {

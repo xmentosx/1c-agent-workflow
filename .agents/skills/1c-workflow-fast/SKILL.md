@@ -11,7 +11,7 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 Map routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for helper recovery, missing setup, or explanation.
 
-For a mapped routine, use at most one short sentence before the command and make the helper the first and only tool action. Do not separately read `.dev.env`, inspect Git, or repeat helper-owned preflight. Apply an explicit session Caveman override first; otherwise use `ITL response-style`/`responseStyle` emitted by the helper. Keep required progress heartbeats to one line with the current stage and material liveness state. A successful `userReport` remains verbatim in every style.
+For a mapped routine, make the helper the first and only tool action after at most one short sentence; do not pre-read `.dev.env`, inspect Git, or repeat its preflight. Apply an explicit session Caveman override; otherwise use the helper's `ITL response-style`/`responseStyle`. Keep heartbeats to one line with changed stage or liveness. A successful `userReport` remains verbatim in every style. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
 
 ## Intent Map
 

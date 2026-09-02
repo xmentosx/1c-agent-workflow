@@ -79,6 +79,108 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "preserves semantic success and exposes an absolute report file for every long-report action" {
+        foreach ($action in @("export-dev-branch-result", "lock-config-repository-objects", "update-workflow", "refresh-all-dev-branches")) {
+            $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl long report путь с пробелом " + $action + "-" + [guid]::NewGuid().ToString("N"))
+            try {
+                $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+                New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+                Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+                Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$reportLines = [System.Collections.Generic.List[string]]::new()
+$reportLines.Add("## Полный результат операции")
+foreach ($index in 1..91) {
+    $reportLines.Add("- Объект метаданных с длинным кириллическим именем номер ${index}: успешно обработан без сокращения")
+}
+$report = $reportLines -join [Environment]::NewLine
+$runRoot = Split-Path -Parent $RunStatusPath
+[IO.File]::WriteAllText((Join-Path $runRoot "side-effect.marker"), $Action, [Text.UTF8Encoding]::new($false))
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport=$report }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
+exit 0
+'@
+                Push-Location $tempRoot
+                try {
+                    $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", $action)
+                } finally {
+                    Pop-Location
+                }
+
+                $text = $processResult.stdout -join "`n"
+                $summary = $text | ConvertFrom-Json
+                $runDiagnostic = if ($summary.logPath -and (Test-Path -LiteralPath $summary.logPath -PathType Leaf)) {
+                    Get-Content -LiteralPath $summary.logPath -Raw -Encoding UTF8
+                } else {
+                    ($processResult.stderr + $processResult.stdout) -join [Environment]::NewLine
+                }
+                $processResult.exitCode | Should -Be 0 -Because $runDiagnostic
+                $text.Length | Should -BeLessOrEqual 4000
+                $summary.status | Should -Be "succeeded"
+                $summary.userReport | Should -BeExactly ""
+                $summary.userReportOmitted | Should -BeTrue
+                $summary.userReportSource | Should -Be "file"
+                [IO.Path]::IsPathRooted([string]$summary.userReportPath) | Should -BeTrue
+                [string]$summary.userReportPath | Should -BeExactly ([IO.Path]::GetFullPath([string]$summary.userReportPath))
+                [string]$summary.userReportPath | Should -Match 'user-report\.md$'
+                Test-Path -LiteralPath $summary.userReportPath -PathType Leaf | Should -BeTrue
+                @($summary.artifacts) | Should -Contain $summary.userReportPath
+
+                $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $status.userReport.Length | Should -BeGreaterOrEqual 5205
+                @($status.userReport -split "`r?`n").Count | Should -Be 92
+                Get-Content -LiteralPath $summary.userReportPath -Raw -Encoding UTF8 | Should -BeExactly $status.userReport
+                [int]$summary.userReportLength | Should -Be $status.userReport.Length
+                $status.userReportPath | Should -BeExactly $summary.userReportPath
+                $status.userReportSource | Should -Be "file"
+                Get-Content -LiteralPath (Join-Path (Split-Path -Parent $summary.statusPath) "side-effect.marker") -Raw -Encoding UTF8 | Should -BeExactly $action
+                ($processResult.stderr -join "`n") | Should -Not -Match "Compact ITL summary exceeded"
+            } finally {
+                if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    }
+
+    It "falls back to the absolute status path without changing success when the report file cannot be written" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl report fallback путь с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$runRoot = Split-Path -Parent $RunStatusPath
+New-Item -ItemType Directory -Force -Path (Join-Path $runRoot "user-report.md") | Out-Null
+$report = "## Результат" + [Environment]::NewLine + ("Полный кириллический отчёт без сокращения. " * 180)
+$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport=$report }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
+exit 0
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "lock-config-repository-objects")
+            } finally {
+                Pop-Location
+            }
+
+            $processResult.exitCode | Should -Be 0 -Because (($processResult.stderr + $processResult.stdout) -join [Environment]::NewLine)
+            $text = $processResult.stdout -join "`n"
+            $text.Length | Should -BeLessOrEqual 4000
+            $summary = $text | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $summary.userReportOmitted | Should -BeTrue
+            $summary.userReportSource | Should -Be "status-json"
+            [IO.Path]::IsPathRooted([string]$summary.userReportPath) | Should -BeTrue
+            $summary.userReportPath | Should -BeExactly $summary.statusPath
+            $status = Get-Content -LiteralPath $summary.userReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $status.userReport.Length | Should -BeGreaterThan 5205
+            $status.userReportPath | Should -BeExactly $summary.userReportPath
+            $status.userReportSource | Should -Be "status-json"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
     It "does not leak a handled native probe exit code from a successful helper" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-native-probe-" + [guid]::NewGuid().ToString("N"))
         try {
