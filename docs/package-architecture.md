@@ -28,6 +28,8 @@ Git is transport for platform-generated `src/cf/**`, `src/cfe/**`, and optional 
 
 The contract is activated only by `init-project` or an authoritative `sync-master`. The same commit rebuilds the configuration and extension indexes from the physical source trees. When an existing development branch first merges such a master, the transition merge ignores end-of-line whitespace only for that merge and immediately rebuilds both source indexes under `-text`; later merges remain strict. Do not apply the attributes alone during `update-workflow`, normalize all repository files globally, or use content hashes to compensate for transport mutation.
 
+Before a workflow-owned checkpoint, configuration load, repository transfer plan, or completion of a merge, ITL inspects only the changed `.bsl` and `.xml` paths already reported by Git. If the corresponding local `master` blob uses one homogeneous line-ending style, ITL restores that style automatically without changing file content. New files, binary data, `ConfigDumpInfo.xml`, and references with mixed or ambiguous line endings are skipped; this repair does not block the operation or request user action.
+
 Managed source-only maintenance references:
 
 - `local-quality-gate.md` — local Fast/Full checks;
