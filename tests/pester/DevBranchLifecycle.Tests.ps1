@@ -2954,9 +2954,11 @@ exit 0
         $body = $match.Groups["body"].Value
         $reconcileIndex = $body.IndexOf('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"')
         $reportIndex = $body.IndexOf('Write-DevBranchRunUserReport -State $updatedState')
+        $completeIndex = $body.IndexOf('Set-RunStage -Stage "$OperationName.complete"')
 
         $reconcileIndex | Should -BeGreaterOrEqual 0
         $reportIndex | Should -BeGreaterThan $reconcileIndex
+        $completeIndex | Should -BeGreaterThan $reportIndex
         $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
     }
 
@@ -3274,6 +3276,40 @@ exit 0
         $lockBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $lockBody.IndexOf('Get-ConfigRepositoryTransferPlan')
         $exportBody.IndexOf('Repair-OneCSourceLineEndings') | Should -BeLessThan $exportBody.IndexOf('Get-VerificationState')
         $resumeBody | Should -Match '(?s)Repair-OneCSourceLineEndings.*?-StageChanges.*?Invoke-Git\s+@\("commit",\s*"--no-edit"\)'
+    }
+
+    It "adds the managed crash-dump ignore before checkpoint staging" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ checkpoint с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8 -Value "custom.local"
+            Set-Content -LiteralPath (Join-Path $tempRoot "user.txt") -Encoding UTF8 -Value "before"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add .gitignore user.txt
+            & git -C $tempRoot commit -m init *> $null
+
+            Set-Content -LiteralPath (Join-Path $tempRoot "user.txt") -Encoding UTF8 -Value "after"
+            [System.IO.File]::WriteAllBytes((Join-Path $tempRoot "1cv8c_test.mdmp"), [byte[]](1, 2, 3, 4))
+            $checkpoint = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Repair-OneCSourceLineEndings { return @() }
+                Save-DevBranchCheckpoint -Operation "refresh-dev-branch"
+            }
+
+            $checkpoint | Should -Match '^[a-f0-9]{40}$'
+            ((& git -C $tempRoot show "HEAD:user.txt") -join "`n").Trim() | Should -Be "after"
+            @(& git -C $tempRoot ls-tree -r --name-only HEAD -- "*.mdmp") | Should -BeNullOrEmpty
+            & git -C $tempRoot check-ignore --quiet -- "1cv8c_test.mdmp"
+            $LASTEXITCODE | Should -Be 0
+            (Get-Content -LiteralPath (Join-Path $tempRoot ".gitignore") -Encoding UTF8) | Should -Contain "*.mdmp"
+            @(& git -C $tempRoot status --short) | Should -BeNullOrEmpty
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     It "does not continue when a later attributes rule overrides the managed byte contract" {

@@ -3725,6 +3725,48 @@ function Get-WorkflowUpdateTrackedChangePaths {
     ) | Select-Object -Unique
 }
 
+function Refresh-WorkflowUpdateManagedIndexStat {
+    param([string[]]$ManagedPathSpecs)
+
+    $pathSpecs = @($ManagedPathSpecs | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+    if ($pathSpecs.Count -eq 0) {
+        return
+    }
+
+    $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $pathSpecs })
+    if ($trackedManagedPaths.Count -gt 0) {
+        $pathspecPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "itl-workflow-index-refresh-" -Extension ".paths"
+        try {
+            [System.IO.File]::WriteAllText(
+                $pathspecPath,
+                (($trackedManagedPaths -join [string][char]0) + [string][char]0),
+                (New-Object System.Text.UTF8Encoding $false)
+            )
+            $treeBefore = (Get-GitOutput @("write-tree")).Trim()
+            Invoke-Git @("add", "--update", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
+            $treeAfter = (Get-GitOutput @("write-tree")).Trim()
+            if ($treeAfter -cne $treeBefore) {
+                Invoke-Git @("reset", "--quiet", "HEAD", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
+                throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
+            }
+        } finally {
+            if (Test-Path -LiteralPath $pathspecPath -PathType Leaf -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $pathspecPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    $statusArguments = @("-C", $script:ProjectRoot, "status", "--porcelain=v1", "-z", "--untracked-files=no", "--") + $pathSpecs
+    $statusOutput = @(& git @statusArguments 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+        throw "update-workflow could not verify managed tracked status in a fresh Git process."
+    }
+    if ([string]::Concat(@($statusOutput)) -ne "") {
+        throw "update-workflow refreshed only equivalent managed index entries, but a fresh Git process still reports tracked changes."
+    }
+}
+
 function Commit-WorkflowUpdate {
     param(
         [object]$Source,
@@ -3781,6 +3823,8 @@ function Commit-WorkflowUpdate {
     }
     Invoke-Git @("commit", "--quiet", "-m", $message)
     Write-Host "Committed: $message"
+
+    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
 
     $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
     if ($remainingTracked.Count -gt 0) {
@@ -4335,6 +4379,7 @@ function Update-WorkflowPackage {
     $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "update-workflow" | Out-Null
     Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
+    Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed and verified clean."
 }
 
 function Update-UserRules {
@@ -10228,6 +10273,7 @@ function Save-DevBranchCheckpoint {
     )
 
     Assert-DevBranchCheckpointGitState -Operation $Operation
+    Ensure-GitIgnore
     Repair-OneCSourceLineEndings | Out-Null
     if (-not (Test-GitHasChanges)) {
         Write-Host "Development branch checkpoint: no changes."
@@ -10688,6 +10734,7 @@ function Invoke-RefreshDevBranchCore {
             Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
         }
         Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+        Set-RunStage -Stage "$OperationName.complete" -Detail "Development branch refresh completed successfully."
     } catch {
         Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot
         throw

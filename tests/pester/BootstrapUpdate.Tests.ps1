@@ -584,6 +584,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lifecycleText.IndexOf('Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.copy"')
         $lifecycleText.IndexOf("Install-ItlUiTools -BestEffort") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf("Sync-ItlClientSurface") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
+        $lifecycleText.IndexOf('Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.complete"')
         $HelperText | Should -Match "function Write-PostInitClientReloadHandoff"
         $HelperText | Should -Match ([regex]::Escape("В окне Kilo Code"))
         $HelperText | Should -Match ([regex]::Escape("выполните /reload"))
@@ -1105,6 +1106,83 @@ local after
             @(& git -C $tempRoot status --short) | Should -BeNullOrEmpty
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "refreshes equivalent managed index stat entries without changing the committed tree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ update с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            $managedPath = Join-Path $tempRoot "AGENT-INSTALL.md"
+            [System.IO.File]::WriteAllText($managedPath, "before`n", [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf true
+            & git -C $tempRoot add AGENT-INSTALL.md
+            & git -C $tempRoot commit -m init *> $null
+
+            $gitDir = ((& git -C $tempRoot rev-parse --git-dir) -join "").Trim()
+            if (-not [System.IO.Path]::IsPathRooted($gitDir)) { $gitDir = Join-Path $tempRoot $gitDir }
+            $hookPath = Join-Path $gitDir "hooks\post-commit"
+            [System.IO.File]::WriteAllText(
+                $hookPath,
+                "#!/bin/sh`nprintf 'updated\r\n' > AGENT-INSTALL.md`n",
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            [System.IO.File]::WriteAllText($managedPath, "updated`n", [System.Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Commit-WorkflowUpdate -Source ([pscustomobject]@{ ref = "develop"; commit = "1234567890abcdef1234567890abcdef12345678"; source = "path" })
+            }
+
+            $result.created | Should -BeTrue
+            $headTree = ((& git -C $tempRoot rev-parse "HEAD^{tree}") -join "").Trim()
+            $indexTree = ((& git -C $tempRoot write-tree) -join "").Trim()
+            $indexTree | Should -Be $headTree
+            [System.IO.File]::ReadAllText($managedPath) | Should -Be "updated`r`n"
+            $previousFreshStatusRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_FRESH_STATUS_ROOT", "Process")
+            try {
+                [Environment]::SetEnvironmentVariable("ITL_TEST_FRESH_STATUS_ROOT", $tempRoot, "Process")
+                $freshStatus = @(& powershell.exe -NoProfile -Command '& git -C $env:ITL_TEST_FRESH_STATUS_ROOT status --porcelain=v1 --untracked-files=no')
+                $LASTEXITCODE | Should -Be 0
+                $freshStatus | Should -BeNullOrEmpty
+            } finally {
+                [Environment]::SetEnvironmentVariable("ITL_TEST_FRESH_STATUS_ROOT", $previousFreshStatusRoot, "Process")
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
+        }
+    }
+
+    It "rejects a real managed change while restoring the committed index tree" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-update-real-change-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "before"
+            & git -C $tempRoot init -b master *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot add AGENT-INSTALL.md
+            & git -C $tempRoot commit -m init *> $null
+            Set-Content -LiteralPath (Join-Path $tempRoot "AGENT-INSTALL.md") -Encoding UTF8 -Value "real change"
+
+            {
+                & {
+                    . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs @("AGENT-INSTALL.md")
+                }
+            } | Should -Throw "*real managed-file change after commit*"
+
+            ((& git -C $tempRoot write-tree) -join "").Trim() | Should -Be (((& git -C $tempRoot rev-parse "HEAD^{tree}") -join "").Trim())
+            @(& git -C $tempRoot status --short --untracked-files=no) | Should -Be @(" M AGENT-INSTALL.md")
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force
+            }
         }
     }
 
