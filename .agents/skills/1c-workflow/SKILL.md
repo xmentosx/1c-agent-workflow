@@ -15,6 +15,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching 
 - `references/mcp.md`: ROCTUP data MCP, vibecoding1c MCP, branch Vanessa UI MCP, External MCP, legacy Data MCP.
 - `references/branch-lifecycle.md`: branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
+- `references/yaxunit-tests.md`: author algorithmic unit tests, boundary partitions, and dangerous invariants with YAxUnit.
 - `references/dev-branch-development.md`: unclear development mode, the complete branch-development menu, or pending extension setup inside an existing `itldev/*` branch.
 - `references/dev-branch-quick-fix.md`: an already classified direct quick-fix inside `itldev/*`.
 - `references/dev-branch-direct.md`: an already classified direct full-cycle change inside `itldev/*`.
@@ -56,7 +57,7 @@ Ask setup questions only when the helper cannot collect them. Store secrets only
 
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
-Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation verification through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 

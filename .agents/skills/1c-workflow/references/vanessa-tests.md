@@ -16,9 +16,10 @@ or long regressions only when explicitly requested.
    When a concrete pattern is needed, open only the matching recipe in
    `vanessa-recipes.md`; its companion files are under
    `assets/vanessa-authoring-examples`.
-4. For OpenSpec, write 2-3 scenarios: the main path and one meaningful
-   boundary or negative case. A fourth needs justification. A quick-fix starts
-   with one focused regression and adds another only for a separate boundary.
+4. For OpenSpec, write 1-2 representative integration/UI scenarios. Put
+   algorithmic boundary and negative cases in parameterized YAxUnit tests. A
+   quick-fix starts with one focused regression and adds another only for a
+   separate integration/UI boundary.
 5. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
 
 ## Development And Verification

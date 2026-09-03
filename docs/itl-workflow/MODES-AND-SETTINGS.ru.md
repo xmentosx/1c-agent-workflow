@@ -9,13 +9,14 @@
 ```text
 стандартная разработка
   ├─ статические проверки: VERIFICATION_DEPTH=standard
+  ├─ YAxUnit: ITL_YAXUNIT_TESTING=auto
   ├─ Vanessa: ITL_VANESSA_TESTING=auto
   ├─ журнал регистрации: ITL_CHECK_EVENT_LOG=auto
   ├─ зависимости: DEPENDENCY_MODE=fresh
   └─ непроверенный результат: VERIFICATION_POLICY=warn
 ```
 
-Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `CAVEMAN_LEVEL=full`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `CAVEMAN_LEVEL=full`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_YAXUNIT_TESTING=auto`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
@@ -35,6 +36,7 @@ ITL не включает и не выключает Browser Automation и не 
 |---|---|---|---|---|
 | Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `standard` | проект |
 | Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
+| ITL YAxUnit | `/itl-litemode`, `ITL_YAXUNIT_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | Обновление source из хранилища 1С | `/itl-repository-mode`, `SOURCE_REPOSITORY_UPDATE_MODE` | `workflow`, `external` | `workflow` | основной `master` |

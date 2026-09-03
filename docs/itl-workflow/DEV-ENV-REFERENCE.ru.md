@@ -89,6 +89,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
+| `ITL_YAXUNIT_TESTING` | Запуск YAxUnit для локальных алгоритмических тестов | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
@@ -124,6 +125,8 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `VANESSA_AUTOMATION_ROOT` | Каталог установки VA | default `.agent-1c/tools/va`; прежний managed-путь `.agent-1c/tools/vanessa-automation` автоматически заменяется коротким | helper/user |
+| `YAXUNIT_INSTALL_ROOT`, `YAXUNIT_TESTS_PATH`, `YAXUNIT_REPORTS_PATH` | CFE YAxUnit, исходники тестового расширения и JUnit-отчёты | defaults `.agent-1c/tools/yaxunit`, `tests/yaxunit`, `build/test-results/yaxunit` | helper/user |
+| `YAXUNIT_TESTS_EXTENSION_NAME`, `YAXUNIT_TEST_TIMEOUT_SECONDS` | Имя тестового расширения и timeout прогона | defaults `tests`, `1800`; имя движка фиксировано как `YAXUNIT` | helper/user |
 | `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` | Локальный exact ZIP для maintainer-квалификации до публикации pinned artifact | пусто; путь к квалифицированному ZIP, SHA-256 всегда проверяется по lock | maintainer |
 | `VANESSA_AUTOMATION_EPF` | Путь к EPF | определяется helper | helper |
 | `VANESSA_AUTOMATION_VERSION` | Установленная версия | определяется helper | helper |

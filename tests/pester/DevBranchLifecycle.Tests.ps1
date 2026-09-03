@@ -4931,6 +4931,9 @@ exit 0
                     param([object]$Answers)
                 }
 
+                function Ensure-YAxUnitForInit {
+                }
+
                 function Update-BaseFromRepository {
                     return $false
                 }

@@ -34,6 +34,14 @@ var designerVAExtensionSafeModeCommands = []string{
 	"common shutdown",
 }
 
+var designerYAxUnitUnsafeModeCommands = []string{
+	"common connect-ib",
+	"config extensions properties set --extension YAXUNIT --safe-mode no --unsafe-action-protection no",
+	"config extensions properties get --extension YAXUNIT",
+	"common disconnect-ib",
+	"common shutdown",
+}
+
 type designerAgentRequest struct {
 	Host                  string   `json:"host"`
 	Port                  int      `json:"port"`
@@ -91,7 +99,7 @@ func validateDesignerAgentRequest(request *designerAgentRequest) error {
 		return fmt.Errorf("ITL_DESIGNER_AGENT_HOST_KEY_MISSING")
 	}
 	validCommands := false
-	for _, allowedCommands := range [][]string{designerSafeModeCommands, designerVAExtensionSafeModeCommands} {
+	for _, allowedCommands := range [][]string{designerSafeModeCommands, designerVAExtensionSafeModeCommands, designerYAxUnitUnsafeModeCommands} {
 		if len(request.Commands) != len(allowedCommands) {
 			continue
 		}
@@ -108,7 +116,7 @@ func validateDesignerAgentRequest(request *designerAgentRequest) error {
 		}
 	}
 	if !validCommands {
-		return fmt.Errorf("ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected one fixed per-extension Vanessa safe-mode command sequence")
+		return fmt.Errorf("ITL_DESIGNER_AGENT_COMMANDS_INVALID: expected one fixed per-extension runtime-property command sequence")
 	}
 	if request.ConnectTimeoutSeconds == 0 {
 		request.ConnectTimeoutSeconds = 30
@@ -242,7 +250,7 @@ func designerMessageRejectsCommand(message designerAgentMessage) bool {
 func designerCommandAcceptsTerminalType(command, messageType string) bool {
 	expectedType := "success"
 	switch command {
-	case "config extensions properties get --extension client_mcp", "config extensions properties get --extension VAExtension":
+	case "config extensions properties get --extension client_mcp", "config extensions properties get --extension VAExtension", "config extensions properties get --extension YAXUNIT":
 		expectedType = "extension-properties"
 	}
 	return strings.EqualFold(messageType, expectedType)
