@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "facadeVersion": "0.4.8",
-  "minimumFacadeVersion": "0.4.8",
+  "facadeVersion": "0.4.9",
+  "minimumFacadeVersion": "0.4.9",
   "families": {
     "roctup": {
       "serverName": "itl-roctup-data",

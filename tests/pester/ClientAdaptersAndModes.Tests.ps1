@@ -636,15 +636,20 @@
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                foreach ($mode in @("auto", "manual", "off")) {
-                    [Environment]::SetEnvironmentVariable("ITL_VANESSA_TESTING", $mode, "Process")
-                    foreach ($trigger in @("implicit", "command", "repair")) {
-                        $decision = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger $trigger
-                        $expected = $mode -eq "auto" -or ($mode -eq "manual" -and $trigger -in @("command", "repair"))
-                        $decision.run | Should -Be $expected
+                foreach ($componentCase in @(
+                    @{ component = "yaxunit"; key = "ITL_YAXUNIT_TESTING" },
+                    @{ component = "vanessa"; key = "ITL_VANESSA_TESTING" }
+                )) {
+                    foreach ($mode in @("auto", "manual", "off")) {
+                        [Environment]::SetEnvironmentVariable($componentCase.key, $mode, "Process")
+                        foreach ($trigger in @("implicit", "command", "repair")) {
+                            $decision = Get-ItlVerificationExecutionDecision -Component $componentCase.component -Trigger $trigger
+                            $expected = $mode -eq "auto" -or ($mode -eq "manual" -and $trigger -in @("command", "repair"))
+                            $decision.run | Should -Be $expected
+                        }
+                        $explicit = Get-ItlVerificationExecutionDecision -Component $componentCase.component -Trigger explicit -ExplicitComponents $componentCase.component
+                        $explicit.run | Should -BeTrue
                     }
-                    $explicit = Get-ItlVerificationExecutionDecision -Component vanessa -Trigger explicit -ExplicitComponents vanessa
-                    $explicit.run | Should -BeTrue
                 }
                 [Environment]::SetEnvironmentVariable("ITL_VANESSA_TESTING", "broken", "Process")
                 $invalid = Get-ItlVerificationMode -Component vanessa
@@ -653,19 +658,21 @@
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_VANESSA_TESTING", $null, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_YAXUNIT_TESTING", $null, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "changes only the two ITL keys through itl-litemode" {
+    It "changes only the three ITL verification keys through itl-litemode" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-lite-mode-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "CUSTOM_KEEP=yes`nITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=auto`n"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "CUSTOM_KEEP=yes`nITL_YAXUNIT_TESTING=off`nITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=auto`n"
             & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Set-ItlLiteMode -Mode standard *> $null }
             $text = Get-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Raw -Encoding UTF8
             $text | Should -Match '(?m)^CUSTOM_KEEP=yes\r?$'
+            $text | Should -Match '(?m)^ITL_YAXUNIT_TESTING=auto\r?$'
             $text | Should -Match '(?m)^ITL_VANESSA_TESTING=auto\r?$'
             $text | Should -Match '(?m)^ITL_CHECK_EVENT_LOG=manual\r?$'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }

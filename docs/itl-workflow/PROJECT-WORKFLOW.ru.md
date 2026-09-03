@@ -62,6 +62,7 @@ https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTAL
 | `src/cfe/<Имя>` | Файлы расширений | отслеживается |
 | `src/configs/<Контур>/cf` | Файлы дополнительной конфигурации | отслеживается, если контур объявлен |
 | `tests/features` | Vanessa-сценарии | отслеживается |
+| `tests/yaxunit` | Исходники отдельного расширения с YAxUnit-тестами | отслеживается |
 | `.agent-1c/project.json` | Несекретные настройки проекта | отслеживается |
 | `.agent-1c/dependency-lock.json` | Зафиксированные версии и источники зависимостей | отслеживается |
 | `.dev.env` | Локальные параметры и секреты | игнорируется |
@@ -70,6 +71,7 @@ https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTAL
 | `.agent-1c/dev-branches` | Локальное состояние веток | игнорируется |
 | `build/result` | Выгруженные `CF`/`CFE` и манифесты | игнорируется |
 | `build/test-results/vanessa` | Отчеты Vanessa Automation | игнорируется |
+| `build/test-results/yaxunit` | JUnit-отчеты YAxUnit | игнорируется |
 
 Для `src/cf/**`, `src/cfe/**` и `src/configs/**` workflow добавляет в `.gitattributes` правила `-text`. Это не перевод в CRLF или LF: Git перестаёт преобразовывать переносы строк и хранит ровно те байты, которые выгрузила платформа 1С. Остальные файлы проекта под это правило не попадают.
 

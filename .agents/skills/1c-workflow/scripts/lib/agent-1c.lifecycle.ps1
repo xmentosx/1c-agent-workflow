@@ -8322,6 +8322,7 @@ function New-DevBranchForkHistorySnapshot {
     $evidenceFieldNames = @(
         "lastVerifiedReportPath", "lastVerificationLogPath",
         "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+        "lastYAxUnitReportPath", "lastYAxUnitLogPath",
         "lastVanessaReportPath", "lastVanessaLogPath",
         "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
     )
@@ -8872,6 +8873,7 @@ function Initialize-ForkedDevBranchRuntime {
         foreach ($fieldName in @(
             "lastVerifiedReportPath", "lastVerificationLogPath",
             "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+            "lastYAxUnitReportPath", "lastYAxUnitLogPath",
             "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
             "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
         )) {
@@ -10956,7 +10958,7 @@ function Prepare-ReleaseE2EOnDemandDependencies {
         throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: $templatePath"
     }
     $template = Read-Utf8Text -Path $templatePath | ConvertFrom-Json
-    foreach ($dependencyName in @("vanessaAutomation", "itlOndemandMcp")) {
+    foreach ($dependencyName in @("vanessaAutomation", "yaxunit", "itlOndemandMcp")) {
         $entry = Get-ConfigValueFromObject -Object $template -Path "dependencies.$dependencyName" -Default $null
         if ($null -eq $entry) {
             throw "RELEASE_E2E_WORKFLOW_PIN_MISSING: templates/dependency-lock.json has no $dependencyName entry."
@@ -10966,6 +10968,35 @@ function Prepare-ReleaseE2EOnDemandDependencies {
 
     Install-VanessaAutomation
     Install-ItlOnDemandMcp | Out-Null
+    $yaxunitCfePath = Install-YAxUnit
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Release E2E YAxUnit runtime-property proof"
+    $extensionName = Get-YAxUnitExtensionName
+    Invoke-Designer `
+        -InfoBasePath ([string]$state.devBranchInfoBasePath) `
+        -InfoBaseKind ([string]$state.infoBaseKind) `
+        -DesignerArgs @("/LoadCfg", $yaxunitCfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
+    $yaxunitLock = Get-YAxUnitPinnedEntry
+    $proof = Set-VanessaMcpExtensionUnsafeMode `
+        -State $state `
+        -InfoBaseKind ([string]$state.infoBaseKind) `
+        -InfoBasePath ([string]$state.devBranchInfoBasePath) `
+        -ExtensionName $extensionName `
+        -Artifact ([pscustomobject]@{ sha256 = ([string]$yaxunitLock.sha256).ToLowerInvariant() }) `
+        -User ([string](Get-EnvValue -Name "IB_USER" -Default "")) `
+        -Password ([string](Get-EnvValue -Name "IB_PASSWORD" -Default "")) `
+        -Scope "release-yaxunit" `
+        -ReconcileYAxUnitProtections
+    $evidencePath = Resolve-ProjectPath "build/test-results/release-e2e/yaxunit-runtime-properties.json"
+    Write-Utf8Text -Path $evidencePath -Value (([ordered]@{
+        schemaVersion = 1
+        status = "passed"
+        checkedAt = [DateTime]::UtcNow.ToString("o")
+        extensionName = $extensionName
+        safeMode = [bool]$proof.safeMode
+        unsafeActionProtection = [bool]$proof.unsafeActionProtection
+        artifactSha256 = [string]$proof.artifactSha256
+    } | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+    Write-Host "Release E2E YAxUnit runtime-property proof passed: $evidencePath"
 }
 
 function Invoke-ReleaseE2EConfigRoundtrip {
@@ -11521,6 +11552,7 @@ function Show-WorkflowStatus {
                     Write-Host "    Worktree: $worktreePath"
                 }
                 Write-DevBranchInitializationStatusLines -State $state -Indent "    "
+                Write-YAxUnitStatusLines -State $state -Indent "    "
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-DataMcpStatusLines -State $state -Indent "    "
             }
@@ -11556,6 +11588,7 @@ function Show-WorkflowStatus {
         Write-Host "Publication URL: $publicationUrl"
     }
     Write-DataMcpStatusLines -State $state
+    Write-YAxUnitStatusLines -State $state
     Write-VanessaTestStatusLines -State $state
     Write-Vibecoding1cMcpStatusLines
     Write-Host "Last config base update: $(Get-StateValue -State $state -Name 'lastConfigBaseUpdateAt' -Default '<never>')"

@@ -26,6 +26,7 @@ detect-apache
 configure-web-publication
 publish-dev-branch
 install-vanessa-automation
+install-yaxunit
 install-agent-browser
 install-windows-mcp
 install-ui-tools

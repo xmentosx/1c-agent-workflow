@@ -1552,7 +1552,7 @@ function Show-ItlDoctor {
     $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "WARN" }); name = "openspec"; detail = $openSpecDetail })
     $devEnvPath = Join-Path $script:ProjectRoot ".dev.env"
     $checks.Add([pscustomobject]@{ status = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "OK" } else { "FAIL" }); name = "dev-env"; detail = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "present; values inspected without mutation" } else { "missing" }) })
-    foreach ($component in @("vanessa", "event-log")) {
+    foreach ($component in @("yaxunit", "vanessa", "event-log")) {
         $mode = Get-ItlVerificationMode -Component $component
         $checks.Add([pscustomobject]@{ status = $(if ($mode.valid) { "OK" } else { "WARN" }); name = $mode.key; detail = "raw=$(if ($mode.raw) { $mode.raw } else { '<missing>' }); effective=$($mode.effective)$(if (-not $mode.valid) { '; safe default auto' } else { '' })" })
     }

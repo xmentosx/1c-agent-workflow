@@ -4,7 +4,7 @@ Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, ev
 
 ## Normal Gate
 
-Use targeted/static checks while implementing. Use `/itl-check` or helper action `check-dev-branch` as the only executable gate: before completion after the last verification-relevant edit, and earlier only at a milestone whose runtime result decides whether implementation can continue. The final run must be unfiltered. It ensures the copied branch infobase matches current configuration/extension sources, skips Designer/Enterprise when the fingerprint is already current, evaluates `ITL_VANESSA_TESTING` and `ITL_CHECK_EVENT_LOG`, and runs permitted components. Vanessa uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
+Use targeted/static checks while implementing. Use `/itl-check` or helper action `check-dev-branch` as the only executable gate: before completion after the last verification-relevant edit, and earlier only at a milestone whose runtime result decides whether implementation can continue. The final run must be unfiltered. It ensures the copied branch infobase matches current configuration/extension sources, skips Designer/Enterprise when the fingerprint is already current, evaluates `ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, and `ITL_CHECK_EVENT_LOG`, and runs permitted components. YAxUnit runs the hierarchical test extension first; Vanessa then uses packet `StartFeaturePlayer` in a real `TESTMANAGER -> TESTCLIENT` topology.
 
 Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns abrupt helper-exit detection, exact Vanessa-run cleanup, and terminal lifecycle/status recovery. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.
 
@@ -34,7 +34,7 @@ Before TestManager starts, the helper expands profile placeholders from scenario
 
 For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 2-3 scenarios by default and require an explicit short justification for a fourth. Choose the cheapest reliable check type:
 
-- `unit-like`: local calculation, condition, filling, or applied logic.
+- local calculation, parsing, condition, filling, or applied logic belongs in YAxUnit; keep a Vanessa `unit-like` block only when the contract itself depends on TestClient/extension runtime context;
 - `integration`: object/register/document/exchange interaction.
 - `UI`: forms, commands, or visible user behavior.
 

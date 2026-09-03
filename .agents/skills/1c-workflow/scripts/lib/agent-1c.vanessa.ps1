@@ -4111,6 +4111,8 @@ function Get-VerificationFingerprintScopePaths {
         (Get-ExportPath),
         (Get-ExtensionsPath),
         (Get-VanessaFeaturesPath),
+        (Get-YAxUnitTestsPath),
+        ".agent-1c/dependency-lock.json",
         "tests/verification-suites.shared.json",
         "tests/verification-suites.branch.json"
     )
@@ -6791,7 +6793,8 @@ function Invoke-VanessaDesignerAgentClient {
 function Test-VanessaDesignerAgentSafeModeResult {
     param(
         [object]$Result,
-        [string]$ExtensionName
+        [string]$ExtensionName,
+        [switch]$RequireYAxUnitProtectionsDisabled
     )
 
     if ($null -eq $Result -or -not [bool](Get-StateValue -State $Result -Name "success" -Default $false)) {
@@ -6803,7 +6806,14 @@ function Test-VanessaDesignerAgentSafeModeResult {
         return $false
     }
     $serialized = $matches[0].messages | ConvertTo-Json -Compress -Depth 20
-    return ($serialized -match '(?i)"safe(?:-)?mode"\s*:\s*(?:false|"no")')
+    if ($serialized -notmatch '(?i)"safe(?:-)?mode"\s*:\s*(?:false|"no")') {
+        return $false
+    }
+    if ($RequireYAxUnitProtectionsDisabled -and
+        $serialized -notmatch '(?i)"unsafe(?:-)?action(?:-)?protection"\s*:\s*(?:false|"no")') {
+        return $false
+    }
+    return $true
 }
 
 function Stop-VanessaDesignerAgentOwnedProcess {
@@ -6959,7 +6969,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
         [object]$Artifact,
         [string]$User = "",
         [string]$Password = "",
-        [string]$Scope = "extension"
+        [string]$Scope = "extension",
+        [switch]$ReconcileYAxUnitProtections
     )
 
     $platformPath = Get-PlatformPath
@@ -7010,9 +7021,13 @@ function Set-VanessaMcpExtensionUnsafeMode {
         }
 
         $clientPath = Get-ItlOnDemandMcpExecutablePath
+        $propertyCommand = "config extensions properties set --extension $ExtensionName --safe-mode no"
+        if ($ReconcileYAxUnitProtections) {
+            $propertyCommand += " --unsafe-action-protection no"
+        }
         $commands = @(
             "common connect-ib",
-            "config extensions properties set --extension $ExtensionName --safe-mode no",
+            $propertyCommand,
             "config extensions properties get --extension $ExtensionName",
             "common disconnect-ib",
             "common shutdown"
@@ -7028,8 +7043,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
             commandTimeoutSeconds = 120
         }
         $result = Invoke-VanessaDesignerAgentClient -ExecutablePath $clientPath -Request $request
-        if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $ExtensionName)) {
-            throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$ExtensionName' was not proven with safe mode disabled in '$InfoBasePath'."
+        if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $ExtensionName -RequireYAxUnitProtectionsDisabled:$ReconcileYAxUnitProtections)) {
+            throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$ExtensionName' runtime properties were not proven in '$InfoBasePath'."
         }
         if (-not (Wait-ItlOnDemandProcessExit -ProcessId $process.Id -TimeoutSeconds 30)) {
             throw "ITL_DESIGNER_AGENT_SHUTDOWN_FAILED: Designer Agent PID $($process.Id) did not exit after common shutdown."
@@ -7043,6 +7058,7 @@ function Set-VanessaMcpExtensionUnsafeMode {
             platformVersion = $platformVersion
             artifactSha256 = [string]$Artifact.sha256
             safeMode = $false
+            unsafeActionProtection = $(if ($ReconcileYAxUnitProtections) { $false } else { $null })
         }
     } finally {
         if ($null -ne $process -and $null -ne (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
