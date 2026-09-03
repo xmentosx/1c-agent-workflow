@@ -34,7 +34,9 @@
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |
 | `SOURCE_SERVER_NAME` | Сервер исходной базы | строка | init/user |
 | `SOURCE_INFOBASE_NAME` | Имя серверной исходной базы | строка | init/user |
-| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | `0` отключает source baseline; положительная глубина задаёт lookback для server-provider, а файловый source всегда использует только последний `.lgp` | целое `>=0`, default `7` | user |
+| `SOURCE_EVENT_LOG_BASELINE_ENABLED` | Включает вспомогательный baseline журнала source для обоих видов баз | bool, default `true` | user |
+| `SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS` | Глубина source baseline только для server-provider | целое `>=1`, default `7` | user |
+| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | Deprecated fallback: `0` выключает baseline при отсутствии нового флага, положительное число используется только как server lookback; для file source игнорируется | deprecated | user |
 | `SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES` | Максимум байт из хвоста последнего `.lgp` для холодного старта source baseline; дальше читается только append-delta, `0` начинает с EOF | целое `>=0`, default `1048576` | user |
 | `BASE_CONFIGURATION_VERSION` | Локальный override семейства конфигурации | `PM4`/`PM5`; пусто = project.json | user |
 | `IB_USER` | Пользователь копии базы | пусто = без имени | user/secret |

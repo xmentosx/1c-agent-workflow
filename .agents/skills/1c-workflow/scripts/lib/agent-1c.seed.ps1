@@ -202,11 +202,44 @@ function Get-BranchSeedServerProviderCapabilities {
     }
 }
 
-function Get-SourceEventLogLookbackDays {
-    $raw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "7")
+function Get-SourceEventLogBaselineEnabled {
+    $raw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_BASELINE_ENABLED" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        try {
+            return (ConvertTo-YesNoBool -Value $raw -Default $true)
+        } catch {
+            Write-Host "[WARN] Invalid SOURCE_EVENT_LOG_BASELINE_ENABLED '$raw'; using the safe default true."
+            return $true
+        }
+    }
+
+    $legacyRaw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "")
+    $legacyValue = 0
+    if (-not [string]::IsNullOrWhiteSpace($legacyRaw) -and
+        [int]::TryParse($legacyRaw.Trim(), [ref]$legacyValue) -and
+        $legacyValue -eq 0) {
+        Write-Host "[WARN] SOURCE_EVENT_LOG_LOOKBACK_DAYS=0 is deprecated as a disable switch; use SOURCE_EVENT_LOG_BASELINE_ENABLED=false."
+        return $false
+    }
+    return $true
+}
+
+function Get-SourceServerEventLogLookbackDays {
+    $settingName = "SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS"
+    $raw = [string](Get-EnvValue -Name $settingName -Default "")
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        $legacyRaw = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "")
+        if (-not [string]::IsNullOrWhiteSpace($legacyRaw)) {
+            Write-Host "[WARN] SOURCE_EVENT_LOG_LOOKBACK_DAYS is deprecated; use SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS for a server source."
+            $settingName = "SOURCE_EVENT_LOG_LOOKBACK_DAYS"
+            $raw = $legacyRaw
+        } else {
+            $raw = "7"
+        }
+    }
     $value = 0
-    if (-not [int]::TryParse($raw.Trim(), [ref]$value) -or $value -lt 0) {
-        Write-Host "[WARN] Invalid SOURCE_EVENT_LOG_LOOKBACK_DAYS '$raw'; using the safe default 7. Use zero or a positive integer."
+    if (-not [int]::TryParse($raw.Trim(), [ref]$value) -or $value -lt 1) {
+        Write-Host "[WARN] Invalid $settingName '$raw'; using the safe default 7. Use a positive integer."
         return 7
     }
     return $value
@@ -224,7 +257,7 @@ function Get-SourceEventLogBootstrapTailBytes {
 
 function New-EmptySourceEventLogSeedBaseline {
     param(
-        [int]$LookbackDays,
+        [AllowNull()][object]$LookbackDays = $null,
         [string]$WindowStart,
         [string]$CacheStatus,
         [string]$FailureEvidence = "",
@@ -260,16 +293,15 @@ function New-EmptySourceEventLogSeedBaseline {
 }
 
 function Get-SourceEventLogSeedBaseline {
-    $lookbackDays = Get-SourceEventLogLookbackDays
-    $windowStart = if ($lookbackDays -gt 0) { (Get-Date).AddDays(-$lookbackDays) } else { $null }
-    $windowStartText = if ($null -ne $windowStart) { $windowStart.ToString("o") } else { "" }
-    if ($lookbackDays -eq 0) {
-        Write-Host "Source event log baseline is disabled by SOURCE_EVENT_LOG_LOOKBACK_DAYS=0."
-        return (New-EmptySourceEventLogSeedBaseline -LookbackDays 0 -WindowStart "" -CacheStatus "disabled" -Reader "disabled")
+    $kind = Get-InfoBaseKind
+    if (-not (Get-SourceEventLogBaselineEnabled)) {
+        Write-Host "Source event log baseline is disabled by configuration."
+        return (New-EmptySourceEventLogSeedBaseline -WindowStart "" -CacheStatus "disabled" -Reader "disabled")
     }
 
-    $kind = Get-InfoBaseKind
     if ($kind -ne "file") {
+        $lookbackDays = Get-SourceServerEventLogLookbackDays
+        $windowStartText = (Get-Date).AddDays(-$lookbackDays).ToString("o")
         try {
             $provider = Get-BranchSeedServerProviderCapabilities
             if (@($provider.capabilities) -notcontains "event-log-baseline-lookback") {
@@ -320,6 +352,11 @@ function Get-SourceEventLogSeedBaseline {
         }
     }
 
+    $legacyLookback = [string](Get-EnvValue -Name "SOURCE_EVENT_LOG_LOOKBACK_DAYS" -Default "")
+    if (-not [string]::IsNullOrWhiteSpace($legacyLookback)) {
+        Write-Host "[WARN] SOURCE_EVENT_LOG_LOOKBACK_DAYS is deprecated and ignored for a file source; use SOURCE_EVENT_LOG_BASELINE_ENABLED and SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES."
+    }
+
     $sourceState = [pscustomobject]@{
         infoBaseKind = "file"
         devBranchInfoBasePath = Get-SourceInfoBasePath
@@ -335,7 +372,7 @@ function Get-SourceEventLogSeedBaseline {
         $message = $_.Exception.Message
         $status = if ($message -match "1Cv8\.lgf was not found") { "empty-source-log" } else { "unavailable" }
         Write-Host "[WARN] Source event log baseline could not be read; seed creation will continue without source signatures. $message"
-        return (New-EmptySourceEventLogSeedBaseline -LookbackDays $lookbackDays -WindowStart "" -CacheStatus $status -FailureEvidence $message -Scope "latest-segment")
+        return (New-EmptySourceEventLogSeedBaseline -WindowStart "" -CacheStatus $status -FailureEvidence $message -Scope "latest-segment")
     }
     $signatures = @($readResult.signatures)
     $failedSegmentCount = [int](Get-StateValue -State $readResult -Name "failedSegmentCount" -Default 0)
@@ -346,7 +383,7 @@ function Get-SourceEventLogSeedBaseline {
         reader = $readResult.reader
         scope = "latest-segment"
         logDirectory = $readResult.logDirectory
-        lookbackDays = $lookbackDays
+        lookbackDays = $null
         windowStart = ""
         errorCount = $readResult.errorCount
         signatureCount = $signatures.Count

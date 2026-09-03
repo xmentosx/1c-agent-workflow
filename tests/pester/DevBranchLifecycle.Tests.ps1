@@ -3718,7 +3718,9 @@ exit 0
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS=1800"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_EVENT_LOG_READER=auto"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BASELINE_ENABLED=true"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Not -Match "(?m)^SOURCE_EVENT_LOG_LOOKBACK_DAYS="
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES=1048576"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "TESTMANAGER -> TESTCLIENT"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
@@ -4311,36 +4313,57 @@ exit 0
         }
     }
 
-    It "disables source event-log reading when lookback is zero" {
+    It "disables source event-log reading through the dedicated switch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-disabled-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "false", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return (Join-Path $tempRoot "missing-source") }
-                function Read-DevBranchEventLogBaselineWithCache { throw "reader must not be called" }
+                function Read-SourceLatestEventLogBaselineWithCache { throw "reader must not be called" }
                 $baseline = Get-SourceEventLogSeedBaseline
                 $baseline.reader | Should -Be "disabled"
-                $baseline.lookbackDays | Should -Be 0
+                $baseline.lookbackDays | Should -BeNullOrEmpty
                 $baseline.signatureCount | Should -Be 0
                 $baseline.cache.status | Should -Be "disabled"
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
+    It "keeps legacy zero lookback as a deprecated disable fallback" {
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
+            & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-SourceEventLogBaselineEnabled 6>$null | Should -BeFalse
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+        }
+    }
+
     It "routes a file source baseline through the latest-segment reader" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-route-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         $oldTailBytes = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "Process")
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "7", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "true", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "2048", "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
@@ -4369,6 +4392,7 @@ exit 0
                 $baseline = Get-SourceEventLogSeedBaseline
                 @($baseline.signatures) | Should -Be @("latest-signature")
                 $baseline.scope | Should -Be "latest-segment"
+                $baseline.lookbackDays | Should -BeNullOrEmpty
                 $baseline.windowStart | Should -BeNullOrEmpty
                 $baseline.cache.path | Should -Be "2048"
                 $baseline.cache.scanMode | Should -Be "unchanged"
@@ -4376,24 +4400,31 @@ exit 0
                 $baseline.cache.coverage | Should -Be "tail"
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", $oldTailBytes, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "accepts source event-log lookback longer than seven days" {
+    It "accepts server source event-log lookback longer than seven days" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
-        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldLegacyLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Get-SourceEventLogLookbackDays | Should -Be 365
+                Get-SourceServerEventLogLookbackDays | Should -Be 365
+                [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+                [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "90", "Process")
+                Get-SourceServerEventLogLookbackDays 6>$null | Should -Be 90
             }
         } finally {
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLegacyLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

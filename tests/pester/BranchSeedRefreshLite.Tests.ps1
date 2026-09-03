@@ -284,7 +284,7 @@ exit 1
                 @($contract.capabilities) | Should -Contain "event-log-baseline"
                 function Get-InfoBaseKind { return "server" }
                 function Get-SourceInfoBasePath { return "server\base" }
-                function Get-SourceEventLogLookbackDays { return 7 }
+                function Get-SourceServerEventLogLookbackDays { return 7 }
                 $baseline = Get-SourceEventLogSeedBaseline
                 @($baseline.signatures) | Should -Be @("server error", "ошибка сервера")
                 $baseline.cache.status | Should -Be "hit"
