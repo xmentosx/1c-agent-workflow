@@ -16,6 +16,26 @@ Before implementation, identify the changed decision points and risky invariants
 
 Use equivalence partitions rather than many copies of the happy path. Parameterized YAxUnit cases are preferred for boundary tables. Every test name should state the contract and expected outcome. A regression must fail on the old defect and retain the original reproducer's path and preconditions.
 
+## Optimization contract
+
+Treat an optimization as a risky algorithm change even when its intended business result is unchanged. Before replacing the implementation, lock the current functional contract with characterization cases across representative equivalence partitions. Preserve the resulting expected values in the tests; do not retain or copy a second production algorithm merely to compare implementations.
+
+In addition to the boundary matrix, an optimization must prove:
+
+- the same values, ordering, rounding, errors, and permitted mutations for representative inputs;
+- repeatability for the same input and cache or intermediate-state invalidation when a dependency, calendar, setting, or other relevant input changes;
+- isolation between independent plans, objects, tenants, sessions, or calculation contexts;
+- no partial or stale state after an error or cancellation, and a safe full-calculation fallback when readiness cannot be proven;
+- one small representative performance regression that finishes quickly. Prefer a work-count invariant or a generous stable ceiling over a strict wall-clock comparison.
+
+Correctness failures cannot be waived by a speed improvement. Large data sets, cold/warm timing comparisons, memory profiling, and precise benchmarks are explicit benchmark evidence; keep them outside the ordinary `/itl-check` and never make them part of its default test registration.
+
+## Test groups and cadence
+
+Organize the hierarchical test extension by the owning production subsystem, object, and algorithm. Within each owner, keep fast functional/boundary cases, retained defect regressions, and optimization invariants as recognizable groups. Parameter rows are cases within one contract, not separate execution groups.
+
+Run all default fast groups together in one normal YAxUnit session. Do not start a separate 1C process per group: platform and extension startup commonly dominate unit-test time. Keep heavy benchmarks outside the default `ИсполняемыеСценарии` registration and run them only through an explicit project benchmark harness. Add owner-aware selective execution only after measurements show that the complete fast suite is a material bottleneck; any later selection must preserve a final unfiltered fast run.
+
 ## Test seam
 
 Put tests in the hierarchical test extension configured by `yaxunit.testsPath` (default `tests/yaxunit`). Register them from exported `ИсполняемыеСценарии`. Prefer testing a deterministic server/common-module function. If important logic is buried in a form or long procedure, extract the narrow pure calculation or decision into a suitable common module without changing its public behavior. Do not expose broad production APIs solely for tests and do not copy the algorithm into the test.

@@ -54,12 +54,31 @@ Describe "YAxUnit verification" {
     It "makes boundary-focused unit coverage an installed agent rule" {
         $rules = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\USER-RULES.append.md") -Raw -Encoding UTF8
         $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\yaxunit-tests.md") -Raw -Encoding UTF8
-        $rules | Should -Match 'Before changing non-trivial algorithms'
-        $rules | Should -Match 'empty/minimum, below/at/above boundary'
+        $rules | Should -Match 'For algorithms, recovery, or optimization'
+        $rules | Should -Match 'boundary matrix, optimization invariants, test grouping, and benchmark cadence'
         $rules | Should -Match 'complex changes may need both'
         $reference | Should -Match 'immediately below, at, and immediately above every changed boundary'
         $reference | Should -Match 'corrupt data, select the wrong objects, silently lose rows, or report false success'
         $reference | Should -Match 'Parameterized YAxUnit cases are preferred'
+    }
+
+    It "requires correctness-first optimization coverage and bounded test groups" {
+        $reference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\yaxunit-tests.md") -Raw -Encoding UTF8
+        $guide = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\itl-workflow\FEATURE-DEVELOPMENT.ru.md") -Raw -Encoding UTF8
+        $decode = { param([string]$Value) [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value)) }
+
+        $reference | Should -Match 'lock the current functional contract with characterization cases'
+        $reference | Should -Match 'cache or intermediate-state invalidation'
+        $reference | Should -Match 'isolation between independent plans, objects, tenants, sessions, or calculation contexts'
+        $reference | Should -Match 'no partial or stale state after an error or cancellation'
+        $reference | Should -Match 'one small representative performance regression that finishes quickly'
+        $reference | Should -Match 'Correctness failures cannot be waived by a speed improvement'
+        $reference | Should -Match 'Run all default fast groups together in one normal YAxUnit session'
+        $reference | Should -Match 'Keep heavy benchmarks outside the default .* registration'
+        $reference | Should -Match 'owner-aware selective execution only after measurements'
+        $guide | Should -Match ([regex]::Escape((& $decode '0YHQvdCw0YfQsNC70LAg0YTQuNC60YHQuNGA0YPQtdGCINC10LPQviDRgtC10LrRg9GJ0LjQuSDRhNGD0L3QutGG0LjQvtC90LDQu9GM0L3Ri9C5INC60L7QvdGC0YDQsNC60YI=')))
+        $guide | Should -Match ([regex]::Escape((& $decode '0LPRgNGD0L/Qv9C40YDRg9GO0YLRgdGPINCyINGC0LXRgdGC0L7QstC+0Lwg0YDQsNGB0YjQuNGA0LXQvdC40Lgg0L/QviDQv9GA0LjQutC70LDQtNC90L7QuSDQv9C+0LTRgdC40YHRgtC10LzQtSwg0L7QsdGK0LXQutGC0YMg0Lgg0LDQu9Cz0L7RgNC40YLQvNGD')))
+        $guide | Should -Match ([regex]::Escape((& $decode '0L7RgtC00LXQu9GM0L3Ri9C5INC/0YDQvtGG0LXRgdGBIDHQoSDQvdCwINC60LDQttC00YPRjiDQs9GA0YPQv9C/0YMg0L3QtSDQt9Cw0L/Rg9GB0LrQsNC10YLRgdGP')))
     }
 
     It "loads a separate test extension and requests the official command-line runner" {
