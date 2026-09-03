@@ -3718,7 +3718,10 @@ exit 0
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS=1800"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_EVENT_LOG_READER=auto"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BASELINE_ENABLED=true"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Not -Match "(?m)^SOURCE_EVENT_LOG_LOOKBACK_DAYS="
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES=1048576"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "TESTMANAGER -> TESTCLIENT"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
     }
@@ -4169,41 +4172,259 @@ exit 0
         }
     }
 
-    It "disables source event-log reading when lookback is zero" {
+    It "uses only a bounded tail of the latest source segment and then reads append delta" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-latest-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            Set-Content -LiteralPath (Join-Path $logDir "20260701.lgp") -Encoding UTF8 -Value "{broken previous segment"
+            $latestSegment = Join-Path $logDir "20260708.lgp"
+            $records = @(
+                1..30 | ForEach-Object { '{2026070810' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                '{20260708120000,E,"_$PerformError$_","Catalog.Items","Item 1","Latest error"}'
+            )
+            Set-Content -LiteralPath $latestSegment -Encoding UTF8 -Value $records
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $tailBytes = [int64]300
+                $first = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $first.segmentCount | Should -Be 1
+                $first.cacheStatus | Should -Be "rebuilt"
+                $first.scanMode | Should -Be "tail"
+                $first.coverage | Should -Be "tail"
+                $first.scannedBytes | Should -BeGreaterThan 0
+                $first.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $first.errorCount | Should -Be 1
+                $first.signatureCount | Should -Be 1
+                $cache = Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json
+                $cache.schemaVersion | Should -Be 3
+                $cache.scope | Should -Be "latest-segment"
+                @($cache.segments).Count | Should -Be 1
+                $cache.segments[0].name | Should -Be "20260708.lgp"
+
+                $cache.schemaVersion = 2
+                $cache.PSObject.Properties.Remove("scope")
+                $cache.segments[0].PSObject.Properties.Remove("coverage")
+                $cache.segments[0].PSObject.Properties.Remove("coverageStartOffset")
+                Write-Utf8Text -Path $first.cachePath -Value (($cache | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+                $migrated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $migrated.cacheStatus | Should -Be "migrated"
+                $migrated.scanMode | Should -Be "unchanged"
+                $migrated.scannedBytes | Should -Be 0
+                (Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json).schemaVersion | Should -Be 3
+
+                $hit = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $hit.cacheStatus | Should -Be "hit"
+                $hit.scanMode | Should -Be "unchanged"
+                $hit.scannedBytes | Should -Be 0
+                $hit.signatureCount | Should -Be 1
+
+                $beforeAppendLength = (Get-Item -LiteralPath $latestSegment).Length
+                Add-Content -LiteralPath $latestSegment -Encoding UTF8 -Value '{20260708120500,E,"_$PerformError$_","Catalog.Items","Item 2","Appended error"}'
+                (Get-Item -LiteralPath $latestSegment).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(2)
+                $updated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $updated.cacheStatus | Should -Be "updated"
+                $updated.scanMode | Should -Be "append"
+                $updated.scannedBytes | Should -Be ((Get-Item -LiteralPath $latestSegment).Length - $beforeAppendLength)
+                $updated.errorCount | Should -Be 2
+                $updated.signatureCount | Should -Be 2
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "never falls back to a full source segment scan on cold start cache damage or rotation" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-tail-fallback-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $firstSegment = Join-Path $logDir "20260708.lgp"
+            Set-Content -LiteralPath $firstSegment -Encoding UTF8 -Value @(
+                1..40 | ForEach-Object { '{2026070810' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                '{20260708120000,E,"_$PerformError$_","Catalog.Items","Item 1","First tail error"}'
+            )
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $tailBytes = [int64]256
+                $cold = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $cold.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $cold.signatures.Count | Should -Be 1
+                $firstSignature = [string]$cold.signatures[0]
+
+                Set-Content -LiteralPath $cold.cachePath -Encoding UTF8 -Value "{broken"
+                $damaged = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes 6>$null
+                $damaged.cacheStatus | Should -Be "rebuilt"
+                $damaged.scannedBytes | Should -BeLessOrEqual $tailBytes
+
+                $cachedBeforeReplacement = Get-Item -LiteralPath $firstSegment
+                $preservedLastWrite = $cachedBeforeReplacement.LastWriteTimeUtc
+                $replacementBytes = [System.IO.File]::ReadAllBytes($firstSegment)
+                for ($byteIndex = 0; $byteIndex -lt $replacementBytes.Length; $byteIndex++) {
+                    if ($replacementBytes[$byteIndex] -eq 0x46) {
+                        $replacementBytes[$byteIndex] = 0x58
+                        break
+                    }
+                }
+                [System.IO.File]::WriteAllBytes($firstSegment, $replacementBytes)
+                (Get-Item -LiteralPath $firstSegment).LastWriteTimeUtc = $preservedLastWrite
+                $replaced = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $replaced.cacheStatus | Should -Be "rebuilt"
+                $replaced.scanMode | Should -Be "tail"
+                $replaced.scannedBytes | Should -BeLessOrEqual $tailBytes
+
+                Set-Content -LiteralPath $firstSegment -Encoding UTF8 -Value "{broken previous segment"
+                $nextSegment = Join-Path $logDir "20260715.lgp"
+                Set-Content -LiteralPath $nextSegment -Encoding UTF8 -Value @(
+                    1..40 | ForEach-Object { '{2026071510' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                    '{20260715120000,E,"_$PerformError$_","Catalog.Items","Item 2","Rotated tail error"}'
+                )
+                $rotated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $rotated.scanMode | Should -Be "tail"
+                $rotated.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $rotated.signatureCount | Should -Be 1
+                @($rotated.signatures) | Should -Not -Contain $firstSignature
+
+                Remove-Item -LiteralPath $rotated.cachePath -Force
+                $empty = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes 0
+                $empty.scanMode | Should -Be "empty-bootstrap"
+                $empty.coverage | Should -Be "empty"
+                $empty.scannedBytes | Should -Be 0
+                $empty.signatureCount | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "disables source event-log reading through the dedicated switch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-disabled-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "false", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return (Join-Path $tempRoot "missing-source") }
-                function Read-DevBranchEventLogBaselineWithCache { throw "reader must not be called" }
+                function Read-SourceLatestEventLogBaselineWithCache { throw "reader must not be called" }
                 $baseline = Get-SourceEventLogSeedBaseline
                 $baseline.reader | Should -Be "disabled"
-                $baseline.lookbackDays | Should -Be 0
+                $baseline.lookbackDays | Should -BeNullOrEmpty
                 $baseline.signatureCount | Should -Be 0
                 $baseline.cache.status | Should -Be "disabled"
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "accepts source event-log lookback longer than seven days" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+    It "keeps legacy zero lookback as a deprecated disable fallback" {
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
             & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Get-SourceEventLogLookbackDays | Should -Be 365
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-SourceEventLogBaselineEnabled 6>$null | Should -BeFalse
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+        }
+    }
+
+    It "routes a file source baseline through the latest-segment reader" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-route-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldTailBytes = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "true", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "2048", "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return (Join-Path $tempRoot "source") }
+                function Get-MainWorktreePath { return $tempRoot }
+                function Read-DevBranchEventLogBaselineWithCache { throw "legacy source reader must not be called" }
+                function Read-SourceLatestEventLogBaselineWithCache {
+                    param([object]$State,[int64]$BootstrapTailBytes,[switch]$BestEffort)
+                    return [pscustomobject]@{
+                        reader = "direct-stream"
+                        logDirectory = "latest-log"
+                        signatures = @("latest-signature")
+                        errorCount = 1
+                        durationMs = 2
+                        cacheStatus = "hit"
+                        cachePath = [string]$BootstrapTailBytes
+                        sourceKey = "source"
+                        segmentCount = 1
+                        scanMode = "unchanged"
+                        scannedBytes = 0
+                        coverage = "tail"
+                        failedSegmentCount = 0
+                    }
+                }
+                $baseline = Get-SourceEventLogSeedBaseline
+                @($baseline.signatures) | Should -Be @("latest-signature")
+                $baseline.scope | Should -Be "latest-segment"
+                $baseline.lookbackDays | Should -BeNullOrEmpty
+                $baseline.windowStart | Should -BeNullOrEmpty
+                $baseline.cache.path | Should -Be "2048"
+                $baseline.cache.scanMode | Should -Be "unchanged"
+                $baseline.cache.scannedBytes | Should -Be 0
+                $baseline.cache.coverage | Should -Be "tail"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", $oldTailBytes, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts server source event-log lookback longer than seven days" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldLegacyLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-SourceServerEventLogLookbackDays | Should -Be 365
+                [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+                [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "90", "Process")
+                Get-SourceServerEventLogLookbackDays 6>$null | Should -Be 90
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLegacyLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
