@@ -272,6 +272,7 @@ async function startProxy(args, expected) {
   let readinessInFlight = null;
   const listenPort = Number(args['listen-port'] || 8080);
   const readinessTimeoutMs = Number(args['readiness-timeout-ms'] || 30000);
+  const upstreamTimeoutMs = Number(args['upstream-timeout-ms'] || 300000);
   const ensureReady = async (force = false) => {
     if (!force && qualified) return { upstreamUrl: upstream.toString(), toolCount: expected.toolCount };
     if (readinessInFlight) return readinessInFlight;
@@ -352,7 +353,7 @@ async function startProxy(args, expected) {
       }
       writeProxyError(outgoing, 502, 'MCP_UPSTREAM_FAILED', error);
     });
-    upstreamRequest.setTimeout(readinessTimeoutMs, () => upstreamRequest.destroy(new Error(`HTTP request timed out after ${readinessTimeoutMs} ms.`)));
+    upstreamRequest.setTimeout(upstreamTimeoutMs, () => upstreamRequest.destroy(new Error(`HTTP request timed out after ${upstreamTimeoutMs} ms.`)));
     if (body.length) upstreamRequest.write(body);
     upstreamRequest.end();
   };

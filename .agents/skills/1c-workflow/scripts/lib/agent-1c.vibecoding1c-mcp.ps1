@@ -3765,6 +3765,7 @@ function Write-Vibecoding1cMcpCodexConfig {
     foreach ($endpoint in @(Select-Vibecoding1cMcpClientConfigEndpoints -Endpoints $Endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpEndpointClientName -Endpoint $_ } })) {
         $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
+        $toolTimeoutSeconds = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "toolTimeoutSeconds" -Default 300) -Default 300
         if (-not $name -or -not $url) {
             continue
         }
@@ -3772,7 +3773,7 @@ function Write-Vibecoding1cMcpCodexConfig {
         [void]$lines.Add("url = $(ConvertTo-Vibecoding1cMcpTomlString $url)")
         [void]$lines.Add("enabled = true")
         [void]$lines.Add("startup_timeout_sec = 20")
-        [void]$lines.Add("tool_timeout_sec = 120")
+        [void]$lines.Add("tool_timeout_sec = $toolTimeoutSeconds")
         [void]$lines.Add("")
     }
 
@@ -3806,6 +3807,7 @@ function Write-Vibecoding1cMcpKiloConfig {
     foreach ($endpoint in @(Select-Vibecoding1cMcpClientConfigEndpoints -Endpoints $Endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpEndpointClientName -Endpoint $_ } })) {
         $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $endpoint
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")
+        $toolTimeoutSeconds = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "toolTimeoutSeconds" -Default 300) -Default 300
         if (-not $name -or -not $url) {
             continue
         }
@@ -3814,7 +3816,7 @@ function Write-Vibecoding1cMcpKiloConfig {
             type = "remote"
             url = $url
             enabled = $true
-            timeout = 120000
+            timeout = ($toolTimeoutSeconds * 1000)
             managedBy = "vibecoding1c-mcp"
             family = "vibecoding1c"
             logicalId = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "id" -Default "")
@@ -3839,7 +3841,8 @@ function Write-Vibecoding1cMcpClientConfig {
     $endpoints = @($endpointSet.allEndpoints | ForEach-Object {
         $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "url" -Default "")
-        if ($name -and $url) { [pscustomobject]@{ name = $name; url = $url } }
+        $toolTimeoutSeconds = ConvertTo-IntOrDefault -Value (Get-Vibecoding1cMcpObjectValue -Object $_ -Name "toolTimeoutSeconds" -Default 300) -Default 300
+        if ($name -and $url) { [pscustomobject]@{ name = $name; url = $url; toolTimeoutSeconds = $toolTimeoutSeconds } }
     })
     $path = Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "vibecoding1c" -Client $client
     Write-Host "$client project MCP config: $path"

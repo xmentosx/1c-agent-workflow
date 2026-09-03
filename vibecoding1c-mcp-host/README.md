@@ -68,6 +68,9 @@ The first normal MCP request performs the same single-flight readiness check aut
 clients do not need to know or call `/ready`. Upstream redirects are consumed inside the proxy
 and are never returned to a remote client. After a transport failure only `initialize` and
 `tools/list` may be retried once after requalification; `tools/call` is never replayed.
+Readiness probes retain their bounded 30-second timeout, while ordinary forwarded requests use
+an independent 300-second upstream timeout so valid long-running searches and reviews are not
+mistaken for an unavailable server. Generated client configs use the same 300-second tool limit.
 
 The locally owned BookStack and Mantis HTTP MCP servers run in stateless mode. Restarting or
 recreating either container therefore does not invalidate an already connected client's

@@ -1821,8 +1821,10 @@ managedBy = "external-mcp"
             $kilo = Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot ".kilo\kilo.json") | ConvertFrom-Json
             $kilo.mcp.'1C-docs-mcp'.url | Should -Be "http://ready/docs"
             $kilo.mcp.'1C-docs-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1C-docs-mcp'.timeout | Should -Be 300000
             $kilo.mcp.'1c-code-metadata-mcp'.url | Should -Be "http://ready/code"
             $kilo.mcp.'1c-code-metadata-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
+            $kilo.mcp.'1c-code-metadata-mcp'.timeout | Should -Be 300000
             $kilo.mcp.'custom-tool'.managedBy | Should -Be "external-mcp"
             $kilo.mcp.'ROCTUP MCP'.managedBy | Should -Be "ondemand-facade"
             $kilo.mcp.'Vanessa UI MCP'.managedBy | Should -Be "ondemand-facade"
@@ -2544,6 +2546,7 @@ url = "http://localhost:9999/mcp"
             $codexText | Should -Match ([regex]::Escape('[mcp_servers."1c-data-mcp"]'))
             $codexText | Should -Match "http://127.0.0.1:18100/mcp"
             $codexText | Should -Match "http://localhost/current/hs/mcp"
+            @([regex]::Matches($codexText, "tool_timeout_sec = 300")).Count | Should -Be 3
             $codexText | Should -Not -Match "http://127.0.0.1:18101/mcp"
             $codexText | Should -Not -Match "http://127.0.0.1:18102/mcp"
             @([regex]::Matches($codexText, [regex]::Escape("# >>> vibecoding1c-mcp project"))).Count | Should -Be 1
@@ -2561,7 +2564,9 @@ url = "http://localhost:9999/mcp"
             $kilo.mcp.'1c-code-metadata-mcp'.family | Should -Be "vibecoding1c"
             $kilo.mcp.'1c-code-metadata-mcp'.logicalId | Should -Be "code"
             $kilo.mcp.'1c-code-metadata-mcp'.registryName | Should -Be "itl-trade-code"
+            $kilo.mcp.'1c-code-metadata-mcp'.timeout | Should -Be 300000
             $kilo.mcp.'1c-data-mcp'.url | Should -Be "http://localhost/current/hs/mcp"
+            $kilo.mcp.'1c-data-mcp'.timeout | Should -Be 300000
             $kilo.mcp.'1c-data-mcp'.managedBy | Should -Be "vibecoding1c-mcp"
             $kilo.mcp.'1c-data-mcp'.logicalId | Should -Be "data"
         } finally {
