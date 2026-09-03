@@ -2432,6 +2432,50 @@ function Get-OneCEventLogSegmentProof {
     }
 }
 
+function Test-OneCEventLogCapturedLastWriteMatches {
+    param(
+        [System.IO.FileInfo]$File,
+        [object]$CapturedLastWriteTimeUtc
+    )
+
+    if ($null -eq $CapturedLastWriteTimeUtc) { return $false }
+    $capturedUtc = $null
+    if ($CapturedLastWriteTimeUtc -is [datetime]) {
+        $capturedUtc = ([datetime]$CapturedLastWriteTimeUtc).ToUniversalTime()
+    } else {
+        $parsed = [System.DateTimeOffset]::MinValue
+        if (-not [System.DateTimeOffset]::TryParse(
+            [string]$CapturedLastWriteTimeUtc,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$parsed
+        )) {
+            return $false
+        }
+        $capturedUtc = $parsed.UtcDateTime
+    }
+    return [int64]$File.LastWriteTimeUtc.Ticks -eq [int64]$capturedUtc.Ticks
+}
+
+function Test-OneCEventLogCachedSnapshotIdentity {
+    param(
+        [System.IO.FileInfo]$File,
+        [object]$Cached
+    )
+
+    if ([int64](Get-StateValue -State $Cached -Name "length" -Default -1) -ne [int64]$File.Length) { return $false }
+    if (-not (Test-OneCEventLogCapturedLastWriteMatches -File $File -CapturedLastWriteTimeUtc (Get-StateValue -State $Cached -Name "lastWriteTimeUtc" -Default $null))) { return $false }
+    if ([int64](Get-StateValue -State $Cached -Name "creationTimeUtcTicks" -Default -1) -ne [int64]$File.CreationTimeUtc.Ticks) { return $false }
+
+    $prefixLength = [int](Get-StateValue -State $Cached -Name "prefixLength" -Default -1)
+    $boundaryStart = [int64](Get-StateValue -State $Cached -Name "boundaryStart" -Default -1)
+    $boundaryLength = [int](Get-StateValue -State $Cached -Name "boundaryLength" -Default -1)
+    if ($prefixLength -lt 0 -or $boundaryStart -lt 0 -or $boundaryLength -lt 0 -or ($boundaryStart + $boundaryLength) -gt [int64]$File.Length) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset 0 -Length $prefixLength) -ne [string](Get-StateValue -State $Cached -Name "prefixSha256" -Default "")) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset $boundaryStart -Length $boundaryLength) -ne [string](Get-StateValue -State $Cached -Name "boundarySha256" -Default "")) { return $false }
+    return $true
+}
+
 function Test-OneCEventLogAppendOnlyChange {
     param(
         [System.IO.FileInfo]$File,
@@ -2474,6 +2518,243 @@ function Test-OneCEventLogSegmentMayOverlapBaselineWindow {
     }
 
     return $File.LastWriteTime -ge $StartTime
+}
+
+function Get-OneCEventLogBoundedTailStartOffset {
+    param(
+        [string]$Path,
+        [int64]$MaxBytes
+    )
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    $length = [int64]$file.Length
+    if ($length -le 0 -or $MaxBytes -le 0) { return $length }
+    if ($length -le $MaxBytes) { return [int64]0 }
+
+    $windowStart = [Math]::Max([int64]0, $length - $MaxBytes)
+    $chunkSize = 65536
+    $stream = New-Object System.IO.FileStream($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $position = $windowStart
+        $previousByte = -1
+        if ($position -gt 0) {
+            [void]$stream.Seek($position - 1, [System.IO.SeekOrigin]::Begin)
+            $previousByte = $stream.ReadByte()
+        }
+        while ($position -lt $length) {
+            $primaryLength = [int][Math]::Min([int64]$chunkSize, $length - $position)
+            $readLength = [int][Math]::Min([int64]($chunkSize + 16), $length - $position)
+            $buffer = New-Object byte[] $readLength
+            [void]$stream.Seek($position, [System.IO.SeekOrigin]::Begin)
+            $read = $stream.Read($buffer, 0, $buffer.Length)
+            if ($read -ne $readLength) {
+                throw "EVENT_LOG_SEGMENT_RANGE_CHANGED: path=$($file.FullName); offset=$position; expected=$readLength; actual=$read"
+            }
+
+            for ($index = 0; $index -lt $primaryLength -and $index -le ($read - 16); $index++) {
+                $byteBefore = $(if ($index -eq 0) { $previousByte } else { $buffer[$index - 1] })
+                if (($position + $index) -gt 0 -and $byteBefore -ne 0x0A) { continue }
+                if ($buffer[$index] -ne 0x7B -or $buffer[$index + 15] -ne 0x2C) { continue }
+                $isTimestamp = $true
+                for ($digit = 1; $digit -le 14; $digit++) {
+                    if ($buffer[$index + $digit] -lt 0x30 -or $buffer[$index + $digit] -gt 0x39) {
+                        $isTimestamp = $false
+                        break
+                    }
+                }
+                if ($isTimestamp) { return [int64]($position + $index) }
+            }
+            $previousByte = $buffer[$primaryLength - 1]
+            $position += $primaryLength
+        }
+    } finally { $stream.Dispose() }
+    return $length
+}
+
+function Read-SourceLatestEventLogBaselineWithCache {
+    param(
+        [object]$State,
+        [int64]$BootstrapTailBytes = 1048576,
+        [switch]$BestEffort
+    )
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $sourceKey = Get-DevBranchEventLogSourceKey -State $State
+    $cacheRoot = Get-DevBranchEventLogSignatureCacheRoot -State $State
+    $cachePath = Join-Path $cacheRoot ($sourceKey + ".json")
+    $latest = @(
+        Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            Select-Object -Last 1
+    )
+    if ($latest.Count -eq 0) {
+        $stopwatch.Stop()
+        return [pscustomobject]@{
+            reader = "direct-stream"
+            cacheStatus = "empty-source-log"
+            cachePath = $cachePath
+            sourceKey = $sourceKey
+            segmentCount = 0
+            errorCount = 0
+            signatureCount = 0
+            signatures = @()
+            logDirectory = $logDirectory
+            durationMs = [int64]$stopwatch.ElapsedMilliseconds
+            scannedBytes = [int64]0
+            scanMode = "empty"
+            coverage = "empty"
+            failedSegmentCount = 0
+            failures = @()
+        }
+    }
+
+    $file = Get-Item -LiteralPath $latest[0].FullName -ErrorAction Stop
+    $cached = $null
+    $cacheSchema = 0
+    if (Test-Path -LiteralPath $cachePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $candidate = Read-Utf8Text -Path $cachePath | ConvertFrom-Json
+            $cacheSchema = [int](Get-StateValue -State $candidate -Name "schemaVersion" -Default 0)
+            if ($cacheSchema -notin @(2, 3) -or
+                [string](Get-StateValue -State $candidate -Name "sourceKey" -Default "") -ne $sourceKey) {
+                throw "incompatible cache schema or source key"
+            }
+            $cached = @($candidate.segments | Where-Object { [string]$_.name -eq $file.Name } | Select-Object -Last 1)
+            if ($cached.Count -gt 0) { $cached = $cached[0] } else { $cached = $null }
+        } catch {
+            Write-Host "[WARN] Source event log cursor cache is damaged or incompatible; using only the bounded tail of the latest segment: $cachePath"
+            $cached = $null
+            $cacheSchema = 0
+        }
+    }
+
+    $snapshotLength = [int64]$file.Length
+    $lastWrite = $file.LastWriteTimeUtc.ToString("o")
+    $events = @()
+    $signatures = @()
+    $errorCount = 0
+    $startOffset = $snapshotLength
+    $coverageStartOffset = [int64]-1
+    $scanMode = "tail"
+    $coverage = "empty"
+    $cacheStatus = "rebuilt"
+    $failures = @()
+
+    try {
+        $unchanged = $null -ne $cached -and (Test-OneCEventLogCachedSnapshotIdentity -File $file -Cached $cached)
+        if ($unchanged) {
+            $signatures = @($cached.signatures | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default $signatures.Count)
+            $startOffset = $snapshotLength
+            $coverageStartOffset = [int64](Get-StateValue -State $cached -Name "coverageStartOffset" -Default -1)
+            $scanMode = "unchanged"
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+            $cacheStatus = $(if ($cacheSchema -eq 3) { "hit" } else { "migrated" })
+        } elseif ($null -ne $cached -and (Test-OneCEventLogAppendOnlyChange -File $file -Cached $cached)) {
+            $startOffset = [int64]$cached.length
+            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                path = $file.FullName
+                startOffset = $startOffset
+                endOffset = $snapshotLength
+            }))
+            $signatures = @(
+                @($cached.signatures) + @($events | ForEach-Object { $_.signature }) |
+                    Where-Object { $_ } |
+                    Sort-Object -Unique
+            )
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default 0) + $events.Count
+            $coverageStartOffset = [int64](Get-StateValue -State $cached -Name "coverageStartOffset" -Default -1)
+            $scanMode = "append"
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+            $cacheStatus = "updated"
+        } else {
+            $startOffset = Get-OneCEventLogBoundedTailStartOffset -Path $file.FullName -MaxBytes $BootstrapTailBytes
+            if ($startOffset -lt $snapshotLength) {
+                $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                    path = $file.FullName
+                    startOffset = $startOffset
+                    endOffset = $snapshotLength
+                }))
+            }
+            $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = $events.Count
+            $coverageStartOffset = $startOffset
+            $scanMode = $(if ($startOffset -ge $snapshotLength) { "empty-bootstrap" } else { "tail" })
+            $coverage = $(if ($startOffset -eq 0) { "full-small-segment" } elseif ($startOffset -ge $snapshotLength) { "empty" } else { "tail" })
+            $cacheStatus = "rebuilt"
+        }
+
+        $proofFile = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
+        $proof = Get-OneCEventLogSegmentProof -File $proofFile -EndOffset $snapshotLength
+        if (-not [bool]$proof.completeBoundary) {
+            throw "EVENT_LOG_SEGMENT_UNSAFE_BOUNDARY: latest source segment does not end at a complete record boundary: $($file.FullName)"
+        }
+        $segment = [ordered]@{
+            name = $file.Name
+            length = $snapshotLength
+            lastWriteTimeUtc = $lastWrite
+            errorCount = $errorCount
+            signatureCount = $signatures.Count
+            signatures = @($signatures)
+            scanMode = $scanMode
+            coverage = $coverage
+            coverageStartOffset = $coverageStartOffset
+            creationTimeUtcTicks = $proof.creationTimeUtcTicks
+            prefixLength = $proof.prefixLength
+            prefixSha256 = $proof.prefixSha256
+            boundaryStart = $proof.boundaryStart
+            boundaryLength = $proof.boundaryLength
+            boundarySha256 = $proof.boundarySha256
+            completeBoundary = $proof.completeBoundary
+        }
+        New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+        $cachePayload = [ordered]@{
+            schemaVersion = 3
+            sourceKey = $sourceKey
+            reader = "direct-stream"
+            scope = "latest-segment"
+            bootstrapTailBytes = $BootstrapTailBytes
+            updatedAt = (Get-Date).ToString("o")
+            segments = @($segment)
+        }
+        Write-Utf8Text -Path $cachePath -Value (($cachePayload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    } catch {
+        if (-not $BestEffort) { throw }
+        $failure = [ordered]@{ segment = $file.FullName; error = $_.Exception.Message }
+        $failures += $failure
+        Write-Host "[WARN] Latest source event log tail was skipped; seed baseline remains usable: $($file.FullName). $($_.Exception.Message)"
+        if ($null -ne $cached) {
+            $signatures = @($cached.signatures | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default $signatures.Count)
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+        } else {
+            $signatures = @()
+            $errorCount = 0
+            $coverage = "empty"
+        }
+        $scanMode = "failed-tail"
+        $cacheStatus = "degraded"
+    }
+
+    $stopwatch.Stop()
+    return [pscustomobject]@{
+        reader = "direct-stream"
+        cacheStatus = $cacheStatus
+        cachePath = $cachePath
+        sourceKey = $sourceKey
+        segmentCount = 1
+        errorCount = $errorCount
+        signatureCount = $signatures.Count
+        signatures = @($signatures)
+        logDirectory = $logDirectory
+        durationMs = [int64]$stopwatch.ElapsedMilliseconds
+        scannedBytes = [int64]($snapshotLength - $startOffset)
+        scanMode = $scanMode
+        coverage = $coverage
+        failedSegmentCount = $failures.Count
+        failures = @($failures)
+    }
 }
 
 function Read-DevBranchEventLogBaselineWithCache {
@@ -2540,7 +2821,9 @@ function Read-DevBranchEventLogBaselineWithCache {
             $snapshot = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
             $snapshotLength = [int64]$snapshot.Length
             $lastWrite = $snapshot.LastWriteTimeUtc.ToString("o")
-            $unchanged = $null -ne $cached -and [int64]$cached.length -eq $snapshotLength -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
+            $unchanged = $null -ne $cached -and
+                [int64]$cached.length -eq $snapshotLength -and
+                (Test-OneCEventLogCapturedLastWriteMatches -File $snapshot -CapturedLastWriteTimeUtc $cached.lastWriteTimeUtc)
             if ($unchanged) {
                 $segments += $cached
                 continue
