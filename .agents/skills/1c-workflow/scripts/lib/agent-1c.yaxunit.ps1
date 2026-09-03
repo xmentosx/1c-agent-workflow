@@ -62,6 +62,11 @@ function Install-YAxUnit {
     return $targetPath
 }
 
+function Ensure-YAxUnitForInit {
+    Write-Host "YAxUnit is required for algorithmic unit tests; installing the workflow-pinned build automatically."
+    return (Install-YAxUnit)
+}
+
 function Test-YAxUnitSuitePresent {
     $path = Resolve-ProjectPath (Get-YAxUnitTestsPath)
     if (-not (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue)) {

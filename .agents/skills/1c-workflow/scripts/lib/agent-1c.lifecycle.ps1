@@ -4333,6 +4333,7 @@ function Update-WorkflowPackage {
     Update-AgentGuidanceBridge
     Update-UserRules
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
+    Install-YAxUnit | Out-Null
     Update-RoctupMcp
     Sync-VanessaAutomationDependencyLock | Out-Null
     Install-VanessaAutomation

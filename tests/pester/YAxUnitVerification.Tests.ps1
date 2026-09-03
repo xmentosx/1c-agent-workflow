@@ -30,6 +30,16 @@ Describe "YAxUnit verification" {
         $entry.upstreamCommit | Should -Match '^[a-f0-9]{40}$'
     }
 
+    It "installs the pinned CFE during project initialization and workflow update" {
+        $core = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1") -Raw -Encoding UTF8
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $init = [regex]::Match($core, '(?s)function Complete-InitProjectSettingsPreparation \{(?<body>.*?)\n\}').Groups['body'].Value
+        $update = [regex]::Match($lifecycle, '(?s)function Update-WorkflowPackage \{(?<body>.*?)(?=\nfunction )').Groups['body'].Value
+
+        $init | Should -Match 'Ensure-YAxUnitForInit'
+        $update | Should -Match 'Sync-WorkflowManagedDependencyLockEntries \| Out-Null\s+Install-YAxUnit \| Out-Null'
+    }
+
     It "runs YAxUnit before Vanessa and includes unit-test inputs in freshness" {
         $modes = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.verification-modes.ps1") -Raw -Encoding UTF8
         $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8

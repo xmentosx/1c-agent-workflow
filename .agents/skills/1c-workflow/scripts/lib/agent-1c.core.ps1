@@ -4364,6 +4364,7 @@ function Complete-InitProjectSettingsPreparation {
 
     Ensure-WebPublicationForInit -Answers $preparedAnswers
     Ensure-VanessaAutomationForInit -Answers $preparedAnswers
+    Ensure-YAxUnitForInit | Out-Null
     Read-ProjectConfig
 }
 

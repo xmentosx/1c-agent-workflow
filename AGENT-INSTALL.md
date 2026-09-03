@@ -248,6 +248,7 @@ Default checks come from `.agent-1c/tools.json`:
 - Git: `git --version`, offer `winget install --id Git.Git -e`.
 - 1C platform: check `PLATFORM_PATH` or `platformPath`; when missing/invalid, search installed versions in existing standard `1cv8` folders and offer the discovered `...\bin\1cv8.exe` paths before asking for manual input. Missing `Program Files`/`Program Files (x86)` `1cv8` folders are not errors.
 - Vanessa Automation: check `VANESSA_AUTOMATION_EPF` or `.agent-1c/tools/va`; if missing, diagnostic output can mention `install-vanessa-automation`, while normal init installs it automatically.
+- YAxUnit: the workflow-pinned CFE is installed automatically under `.agent-1c/tools/yaxunit` during normal initialization and `update-workflow`; `/itl-check` loads it into the copied development infobase only when unit-test sources exist.
 - Web publication: check `webinst`/publication settings only when automatic web publication is enabled/requested. Prefer `WEB_PUBLISH_BY_DEFAULT` and `WEB_PUBLISH_AUTO` from local `.dev.env`; fall back to `project.web.publishByDefault`/`project.web.publishAuto` only for compatibility. If `WEBINST_PATH` is empty, use `webinst.exe` found next to the selected `1cv8.exe`. Detect an existing Apache/httpd contour from `APACHE_HTTPD_CONF_PATH`, Windows services, `httpd.exe` in `PATH`, or standard folders such as `C:\Apache24`; ITL workflow does not install or configure the web server.
 
 When the workflow helper is available, the agent may list installed 1C versions with:

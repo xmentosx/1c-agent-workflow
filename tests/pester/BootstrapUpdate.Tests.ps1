@@ -846,8 +846,10 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             New-Item -ItemType Directory -Force -Path $artifactFixtureRoot | Out-Null
             $clientMcpFixture = Join-Path $artifactFixtureRoot "client_mcp.cfe"
             $vaExtensionFixture = Join-Path $artifactFixtureRoot "VAExtension.1.29.cfe"
+            $yaxunitFixture = Join-Path $artifactFixtureRoot "YAxUnit-25.12.cfe"
             [System.IO.File]::WriteAllBytes($clientMcpFixture, [byte[]](1, 2, 3, 4, 5))
             [System.IO.File]::WriteAllBytes($vaExtensionFixture, [byte[]](6, 7, 8, 9, 10))
+            [System.IO.File]::WriteAllBytes($yaxunitFixture, [byte[]](11, 12, 13, 14, 15))
             $sourceRoot = Join-Path $tempRoot "workflow-source"
             & git clone --quiet --shared $RepoRoot $sourceRoot
             $LASTEXITCODE | Should -Be 0
@@ -869,6 +871,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $sourceLock.dependencies.vanessaMcp.clientMcp.sha256 = (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             $sourceLock.dependencies.vanessaMcp.vaExtension.url = $vaExtensionFixture
             $sourceLock.dependencies.vanessaMcp.vaExtension.sha256 = (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sourceLock.dependencies.yaxunit.url = $yaxunitFixture
+            $sourceLock.dependencies.yaxunit.sha256 = (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
             & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json
             & git -C $sourceRoot commit --quiet -m "test: use current local dependency candidates"
@@ -1025,8 +1029,10 @@ local after
             $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
             $installedClientMcp = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\client_mcp.cfe"
             $installedVaExtension = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe"
+            $installedYAxUnit = Join-Path $projectRoot ".agent-1c\tools\yaxunit\YAxUnit-25.12.cfe"
             (Get-FileHash -LiteralPath $installedClientMcp -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             (Get-FileHash -LiteralPath $installedVaExtension -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            (Get-FileHash -LiteralPath $installedYAxUnit -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
 
             $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "USER-RULES.md")
             $userRulesText | Should -Match "ITL-WORKFLOW-USER-RULES:START"
@@ -1741,6 +1747,7 @@ exit 0
                 function Update-AgentGuidanceBridge { $script:postCalls++ }
                 function Update-UserRules { $script:postCalls++ }
                 function Sync-WorkflowManagedDependencyLockEntries { $script:postCalls++; $script:dependencySyncOrder = $script:postCalls }
+                function Install-YAxUnit { $script:postCalls++; $script:yaxunitInstallOrder = $script:postCalls }
                 function Update-RoctupMcp { $script:postCalls++; $script:roctupOrder = $script:postCalls }
                 function Sync-VanessaAutomationDependencyLock { $script:postCalls++; $script:vanessaSyncOrder = $script:postCalls }
                 function Install-VanessaAutomation { $script:postCalls++; $script:vanessaInstallOrder = $script:postCalls }
@@ -1766,6 +1773,7 @@ exit 0
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
                     dependencySyncOrder = $script:dependencySyncOrder
+                    yaxunitInstallOrder = $script:yaxunitInstallOrder
                     roctupOrder = $script:roctupOrder
                     vanessaSyncOrder = $script:vanessaSyncOrder
                     vanessaInstallOrder = $script:vanessaInstallOrder
@@ -1779,7 +1787,8 @@ exit 0
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
-            $result.dependencySyncOrder | Should -BeLessThan $result.roctupOrder
+            $result.dependencySyncOrder | Should -BeLessThan $result.yaxunitInstallOrder
+            $result.yaxunitInstallOrder | Should -BeLessThan $result.roctupOrder
             $result.roctupOrder | Should -BeLessThan $result.vanessaSyncOrder
             $result.vanessaSyncOrder | Should -BeLessThan $result.vanessaInstallOrder
             $result.vanessaInstallOrder | Should -BeLessThan $result.vanessaArtifactsOrder
