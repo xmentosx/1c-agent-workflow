@@ -638,7 +638,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $vanessaGuideText | Should -Match "Agent reference"
         $vanessaGuideText | Should -Match "Context Economy"
         $vanessaGuideText | Should -Match "Do Not"
-        $vanessaGuideText | Should -Match "2-3"
+        $vanessaGuideText | Should -Match "1-2"
+        $vanessaGuideText | Should -Match "parameterized YAxUnit"
         $vanessaGuideText | Should -Match "smoke"
         $vanessaGuideText | Should -Match "tests/features"
         $featureMarker = -join ([char[]](0x0424, 0x0443, 0x043D, 0x043A, 0x0446, 0x0438, 0x043E, 0x043D, 0x0430, 0x043B, 0x003A))

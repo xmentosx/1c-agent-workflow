@@ -899,8 +899,8 @@
         $text | Should -Match 'последней verification-relevant правки.*unfiltered `/itl-check`'
         $text | Should -Not -Match 'Для каждого среза.*выполняет `/itl-check`'
         $text | Should -Not -Match 'после каждого значимого среза.*обязательно.*`/itl-check`'
-        $text | Should -Match "2-3 Vanessa"
-        $text | Should -Match "четвертая проверка.*обоснован"
+        $text | Should -Match "1-2 Vanessa"
+        $text | Should -Not -Match "четвертая проверка.*обоснован"
         $text | Should -Match "git branch --show-current.*не каталог"
         $text | Should -Match "exportPath.*extensionsPath"
         $text | Should -Match "master.*branch-safety blocker"
@@ -938,7 +938,8 @@
         $openSpecText | Should -Match "planningMode=OpenSpec"
         $openSpecText | Should -Match "executionPath=quick-fix\|full-cycle"
         $openSpecText | Should -Match "OpenSpec.*hybrid cadence"
-        $openSpecText | Should -Match "2-3 Vanessa"
+        $openSpecText | Should -Match "1-2 Vanessa"
+        $openSpecText | Should -Match "YAxUnit"
         $openSpecText | Should -Match "test-report.md"
     }
 
