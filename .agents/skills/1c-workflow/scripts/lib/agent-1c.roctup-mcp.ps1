@@ -297,18 +297,17 @@ function Install-RoctupMcpArtifact {
     $existingEpf = Find-RoctupMcpEpf
     if ($existingEpf -and -not $ForceDownload) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $existingEpf).Hash.ToLowerInvariant()
-        if ($hash -cne $expected) {
-            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash. Artifact: $existingEpf"
+        if ($hash -ceq $expected) {
+            Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $existingEpf -Version ([string]$asset.version) -Sha256 $hash
+            return [pscustomobject]@{
+                path = $existingEpf
+                version = [string]$asset.version
+                assetName = Split-Path -Leaf $existingEpf
+                sha256 = $hash
+                source = "existing artifact"
+            }
         }
-
-        Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $existingEpf -Version ([string]$asset.version) -Sha256 $hash
-        return [pscustomobject]@{
-            path = $existingEpf
-            version = [string]$asset.version
-            assetName = Split-Path -Leaf $existingEpf
-            sha256 = $hash
-            source = "existing artifact"
-        }
+        Write-Warning "ROCTUP MCP cached artifact SHA256 mismatch; reacquiring the pinned artifact. Expected $expected, got $hash. Artifact: $existingEpf"
     }
 
     if (-not $ForceDownload) {

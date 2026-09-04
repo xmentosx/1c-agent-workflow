@@ -82,6 +82,36 @@ Describe "Immutable workflow artifact cache isolation" {
         (Test-Path -LiteralPath $legacyEpf -PathType Leaf) | Should -BeTrue
     }
 
+    It "replaces a corrupt shared ROCTUP artifact from the pinned source" {
+        $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
+        $projectRoot = Join-Path $TestDrive "Repair project $nonAsciiWord with space"
+        $cacheRoot = Join-Path $TestDrive "Repair cache $nonAsciiWord with space"
+        New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c"), $cacheRoot | Out-Null
+        Copy-Item -LiteralPath (Join-Path $script:RepoRoot "templates\project.json") -Destination (Join-Path $projectRoot ".agent-1c\project.json")
+        $lock = Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $sourceEpf = Join-Path $TestDrive "Pinned source $nonAsciiWord.epf"
+        [System.IO.File]::WriteAllText($sourceEpf, "exact pinned ROCTUP artifact", [System.Text.UTF8Encoding]::new($false))
+        $expectedSha256 = (Get-FileHash -LiteralPath $sourceEpf -Algorithm SHA256).Hash.ToLowerInvariant()
+        $lock.dependencies.roctupMcpToolkit.sha256 = $expectedSha256
+        $lock.dependencies.roctupMcpToolkit.url = ([System.Uri]$sourceEpf).AbsoluteUri
+        [System.IO.File]::WriteAllText((Join-Path $projectRoot ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+        [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $cacheRoot, "Process")
+
+        $result = & {
+            . $script:HelperPath -ProjectRoot $projectRoot -Action help *> $null
+            function Install-RoctupMcpSkillsBestEffort {}
+            $corruptPath = Join-Path (Get-RoctupMcpInstallRoot) (Get-RoctupMcpAssetName)
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $corruptPath) | Out-Null
+            [System.IO.File]::WriteAllText($corruptPath, "corrupt cached bytes", [System.Text.UTF8Encoding]::new($false))
+            $artifact = Install-RoctupMcpArtifact
+            [pscustomobject]@{ artifact = $artifact; corruptPath = $corruptPath }
+        }
+
+        $result.artifact.path | Should -Be $result.corruptPath
+        (Get-FileHash -LiteralPath $result.artifact.path -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $expectedSha256
+        [System.IO.File]::ReadAllText($result.artifact.path, [System.Text.Encoding]::UTF8) | Should -Be "exact pinned ROCTUP artifact"
+    }
+
     It "does not reuse stale bindings from another version in the shared cache" {
         $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
         $projectRoot = Join-Path $TestDrive "Updated branch $nonAsciiWord with space"
