@@ -28,6 +28,7 @@
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "base-cursor"
             Set-Content -LiteralPath (Join-Path $tempRoot "conflict.txt") -Encoding UTF8 -Value "base"
             Set-Content -LiteralPath (Join-Path $tempRoot "unrelated.txt") -Encoding UTF8 -Value "base-unrelated"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\Related.bsl") -Encoding UTF8 -Value "base-related"
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "base" *> $null
             & git -C $tempRoot branch -M master
@@ -171,6 +172,149 @@ exit 0
                 targetCommit = $targetCommit
                 configurationPath = $configurationPath
                 validatorPath = $validatorPath
+            }
+        }
+
+        function New-LifecycleMergeBslDuplicateFixture {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl BSL Дубликат " + [guid]::NewGuid().ToString("N"))
+            $configRoot = Join-Path $tempRoot "src\cf"
+            $moduleRoot = Join-Path $configRoot "CommonModules\ОбщийМодуль\Ext"
+            $validatorRoot = Join-Path $tempRoot "tools с пробелом"
+            New-Item -ItemType Directory -Force -Path $configRoot, $moduleRoot, $validatorRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $configRoot "Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            Set-Content -LiteralPath (Join-Path $configRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            $modulePath = Join-Path $moduleRoot "Module.bsl"
+            $baseModule = @"
+Процедура Начало()
+КонецПроцедуры
+
+Процедура Середина()
+КонецПроцедуры
+
+Процедура Конец()
+КонецПроцедуры
+"@
+            [System.IO.File]::WriteAllText($modulePath, $baseModule, [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            $method = "Процедура ОбщийМетод()`r`nКонецПроцедуры`r`n`r`n"
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            [System.IO.File]::WriteAllText($modulePath, $baseModule.Replace("Процедура Середина()", $method + "Процедура Середина()"), [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch method" *> $null
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & git -C $tempRoot checkout --quiet master
+            [System.IO.File]::WriteAllText($modulePath, $baseModule.Replace("Процедура Конец()", $method + "Процедура Конец()"), [System.Text.UTF8Encoding]::new($false))
+            $targetOnlyFormRoot = Join-Path $configRoot "CommonForms\ТолькоMaster\Ext"
+            New-Item -ItemType Directory -Force -Path $targetOnlyFormRoot | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $targetOnlyFormRoot "Form.xml"), "<Form />", [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master method" *> $null
+            $targetCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet itldev/test
+
+            $validatorPath = Join-Path $validatorRoot "cf-validate.ps1"
+            [System.IO.File]::WriteAllText($validatorPath, @'
+param([string]$ConfigPath, [int]$MaxErrors, [string]$OutFile)
+[System.IO.File]::WriteAllText($OutFile, "=== Validation OK ===", [System.Text.UTF8Encoding]::new($true))
+exit 0
+'@, [System.Text.UTF8Encoding]::new($false))
+            Add-Content -LiteralPath (Join-Path $tempRoot ".git\info\exclude") -Encoding UTF8 -Value "tools с пробелом/"
+
+            return [pscustomobject]@{
+                root = $tempRoot
+                branchCommit = $branchCommit
+                targetCommit = $targetCommit
+                modulePath = $modulePath
+                moduleRepoPath = "src/cf/CommonModules/ОбщийМодуль/Ext/Module.bsl"
+                validatorPath = $validatorPath
+            }
+        }
+
+        function New-LifecycleMergeFormIntegrityFixture {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl Форма с пробелом " + [guid]::NewGuid().ToString("N"))
+            $configRoot = Join-Path $tempRoot "src\cf"
+            $formRoot = Join-Path $configRoot "CommonForms\ОбщаяФорма\Ext"
+            $validatorRoot = Join-Path $tempRoot "tools с пробелом"
+            New-Item -ItemType Directory -Force -Path $configRoot, $formRoot, $validatorRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $configRoot "Configuration.xml") -Encoding UTF8 -Value "<Configuration />"
+            Set-Content -LiteralPath (Join-Path $configRoot "ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            $formPath = Join-Path $formRoot "Form.xml"
+            $baseForm = @"
+<Form>
+  <Items>
+    <Item name="One" />
+    <Item name="Two" />
+    <Item name="Three" />
+    <Item name="Four" />
+    <Item name="Five" />
+    <Item name="Six" />
+    <Item name="Seven" />
+    <Item name="Eight" />
+    <Item name="Nine" />
+    <Item name="Ten" />
+  </Items>
+</Form>
+"@
+            [System.IO.File]::WriteAllText($formPath, $baseForm, [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            $sharedItem = '    <Item name="Shared" />'
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            [System.IO.File]::WriteAllText($formPath, $baseForm.Replace('    <Item name="Two" />', "$sharedItem`r`n    <Item name=""Two"" />"), [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch form move" *> $null
+            $branchCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+
+            & git -C $tempRoot checkout --quiet master
+            [System.IO.File]::WriteAllText($formPath, $baseForm.Replace('    <Item name="Nine" />', "$sharedItem`r`n    <Item name=""Nine"" />"), [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master form move" *> $null
+            $targetCommit = (& git -C $tempRoot rev-parse HEAD).Trim()
+            & git -C $tempRoot checkout --quiet itldev/test
+
+            $configurationValidatorPath = Join-Path $validatorRoot "cf-validate.ps1"
+            [System.IO.File]::WriteAllText($configurationValidatorPath, @'
+param([string]$ConfigPath, [int]$MaxErrors, [string]$OutFile)
+[System.IO.File]::WriteAllText($OutFile, "=== Validation OK ===", [System.Text.UTF8Encoding]::new($true))
+exit 0
+'@, [System.Text.UTF8Encoding]::new($false))
+            $formValidatorPath = Join-Path $validatorRoot "form-validate.ps1"
+            [System.IO.File]::WriteAllText($formValidatorPath, @'
+param([string]$FormPath, [int]$MaxErrors)
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$source = [System.IO.File]::ReadAllText($FormPath, [System.Text.Encoding]::UTF8)
+$count = [regex]::Matches($source, '<Item name="Shared"').Count
+if ($count -gt 1) {
+    Write-Output "[ERROR] Duplicate form item Shared"
+    exit 1
+}
+Write-Output "=== Validation OK ==="
+exit 0
+'@, [System.Text.UTF8Encoding]::new($false))
+            Add-Content -LiteralPath (Join-Path $tempRoot ".git\info\exclude") -Encoding UTF8 -Value "tools с пробелом/"
+
+            return [pscustomobject]@{
+                root = $tempRoot
+                branchCommit = $branchCommit
+                targetCommit = $targetCommit
+                formPath = $formPath
+                formRepoPath = "src/cf/CommonForms/ОбщаяФорма/Ext/Form.xml"
+                configurationValidatorPath = $configurationValidatorPath
+                formValidatorPath = $formValidatorPath
             }
         }
 
@@ -880,12 +1024,18 @@ exit 0
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:ValidationCalls = 0
+            $script:ValidationRelativePaths = @()
             $script:DrainCalls = 0
             $script:DesignerCalls = 0
             function Get-CurrentCommit { "head" }
             function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "changed"; fileCount = 1; absoluteExportPath = "C:\project\src\cf" } }
             function Get-ConfigLoadChangeSet { [pscustomobject]@{ files = @("Configuration.xml"); missingFiles = @(); baseCommit = "base"; currentCommit = "head"; absoluteExportPath = "C:\project\src\cf" } }
-            function Assert-OneCConfigurationSourceIntegrity { $script:ValidationCalls++; throw "ONEC_SOURCE_INTEGRITY_FAILED fixture" }
+            function Assert-OneCConfigurationSourceIntegrity {
+                param([string]$ExportPath, [string[]]$AdditionalRelativePaths)
+                $script:ValidationCalls++
+                $script:ValidationRelativePaths = @($AdditionalRelativePaths)
+                throw "ONEC_SOURCE_INTEGRITY_FAILED fixture"
+            }
             function Stop-DevBranchRuntimeBeforeInfobaseMutation { $script:DrainCalls++ }
             function Invoke-Designer { $script:DesignerCalls++ }
             $message = ""
@@ -897,6 +1047,7 @@ exit 0
             [pscustomobject]@{
                 message = $message
                 validationCalls = $script:ValidationCalls
+                validationRelativePaths = $script:ValidationRelativePaths
                 drainCalls = $script:DrainCalls
                 designerCalls = $script:DesignerCalls
             }
@@ -904,6 +1055,7 @@ exit 0
 
         $result.message | Should -Be "ONEC_SOURCE_INTEGRITY_FAILED fixture"
         $result.validationCalls | Should -Be 1
+        $result.validationRelativePaths | Should -Be @("Configuration.xml")
         $result.drainCalls | Should -Be 0
         $result.designerCalls | Should -Be 0
     }
@@ -2962,15 +3114,23 @@ exit 0
         $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
     }
 
-    It "synchronizes the pinned Vanessa runtime before refreshing a branch infobase" {
+    It "synchronizes all pinned branch runtimes before refreshing a branch infobase" {
         $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
         $match.Success | Should -BeTrue
         $body = $match.Groups["body"].Value
+        $lockSyncIndex = $body.IndexOf("Sync-WorkflowManagedDependencyLockEntries")
         $installIndex = $body.IndexOf("Install-VanessaAutomation")
+        $roctupIndex = $body.IndexOf("Install-RoctupMcpArtifact")
+        $vanessaMcpIndex = $body.IndexOf("Install-VanessaMcpArtifacts")
+        $facadeIndex = $body.IndexOf("Install-ItlOnDemandMcp")
         $loadIndex = $body.IndexOf("Load-ConfigFromFiles")
 
-        $installIndex | Should -BeGreaterOrEqual 0
-        $loadIndex | Should -BeGreaterThan $installIndex
+        $lockSyncIndex | Should -BeGreaterOrEqual 0
+        $installIndex | Should -BeGreaterThan $lockSyncIndex
+        $roctupIndex | Should -BeGreaterThan $installIndex
+        $vanessaMcpIndex | Should -BeGreaterThan $roctupIndex
+        $facadeIndex | Should -BeGreaterThan $vanessaMcpIndex
+        $loadIndex | Should -BeGreaterThan $facadeIndex
     }
 
     It "routes branch master synchronization through the main worktree helper first" {
@@ -3718,7 +3878,10 @@ exit 0
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_TEST_TIMEOUT_SECONDS=1800"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "VANESSA_EVENT_LOG_READER=auto"
-        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BASELINE_ENABLED=true"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS=7"
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Not -Match "(?m)^SOURCE_EVENT_LOG_LOOKBACK_DAYS="
+        (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")) | Should -Match "SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES=1048576"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "TESTMANAGER -> TESTCLIENT"
         (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\workflow.md")) | Should -Match "VANESSA_TEST_FOREIGN_WAIT_MODE=warn"
     }
@@ -4169,41 +4332,259 @@ exit 0
         }
     }
 
-    It "disables source event-log reading when lookback is zero" {
+    It "uses only a bounded tail of the latest source segment and then reads append delta" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-latest-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            Set-Content -LiteralPath (Join-Path $logDir "20260701.lgp") -Encoding UTF8 -Value "{broken previous segment"
+            $latestSegment = Join-Path $logDir "20260708.lgp"
+            $records = @(
+                1..30 | ForEach-Object { '{2026070810' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                '{20260708120000,E,"_$PerformError$_","Catalog.Items","Item 1","Latest error"}'
+            )
+            Set-Content -LiteralPath $latestSegment -Encoding UTF8 -Value $records
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $tailBytes = [int64]300
+                $first = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $first.segmentCount | Should -Be 1
+                $first.cacheStatus | Should -Be "rebuilt"
+                $first.scanMode | Should -Be "tail"
+                $first.coverage | Should -Be "tail"
+                $first.scannedBytes | Should -BeGreaterThan 0
+                $first.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $first.errorCount | Should -Be 1
+                $first.signatureCount | Should -Be 1
+                $cache = Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json
+                $cache.schemaVersion | Should -Be 3
+                $cache.scope | Should -Be "latest-segment"
+                @($cache.segments).Count | Should -Be 1
+                $cache.segments[0].name | Should -Be "20260708.lgp"
+
+                $cache.schemaVersion = 2
+                $cache.PSObject.Properties.Remove("scope")
+                $cache.segments[0].PSObject.Properties.Remove("coverage")
+                $cache.segments[0].PSObject.Properties.Remove("coverageStartOffset")
+                Write-Utf8Text -Path $first.cachePath -Value (($cache | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+                $migrated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $migrated.cacheStatus | Should -Be "migrated"
+                $migrated.scanMode | Should -Be "unchanged"
+                $migrated.scannedBytes | Should -Be 0
+                (Read-Utf8Text -Path $first.cachePath | ConvertFrom-Json).schemaVersion | Should -Be 3
+
+                $hit = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $hit.cacheStatus | Should -Be "hit"
+                $hit.scanMode | Should -Be "unchanged"
+                $hit.scannedBytes | Should -Be 0
+                $hit.signatureCount | Should -Be 1
+
+                $beforeAppendLength = (Get-Item -LiteralPath $latestSegment).Length
+                Add-Content -LiteralPath $latestSegment -Encoding UTF8 -Value '{20260708120500,E,"_$PerformError$_","Catalog.Items","Item 2","Appended error"}'
+                (Get-Item -LiteralPath $latestSegment).LastWriteTimeUtc = (Get-Date).ToUniversalTime().AddSeconds(2)
+                $updated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $updated.cacheStatus | Should -Be "updated"
+                $updated.scanMode | Should -Be "append"
+                $updated.scannedBytes | Should -Be ((Get-Item -LiteralPath $latestSegment).Length - $beforeAppendLength)
+                $updated.errorCount | Should -Be 2
+                $updated.signatureCount | Should -Be 2
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "never falls back to a full source segment scan on cold start cache damage or rotation" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-tail-fallback-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            $firstSegment = Join-Path $logDir "20260708.lgp"
+            Set-Content -LiteralPath $firstSegment -Encoding UTF8 -Value @(
+                1..40 | ForEach-Object { '{2026070810' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                '{20260708120000,E,"_$PerformError$_","Catalog.Items","Item 1","First tail error"}'
+            )
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    mainWorktreePath = $tempRoot
+                }
+                $tailBytes = [int64]256
+                $cold = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $cold.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $cold.signatures.Count | Should -Be 1
+                $firstSignature = [string]$cold.signatures[0]
+
+                Set-Content -LiteralPath $cold.cachePath -Encoding UTF8 -Value "{broken"
+                $damaged = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes 6>$null
+                $damaged.cacheStatus | Should -Be "rebuilt"
+                $damaged.scannedBytes | Should -BeLessOrEqual $tailBytes
+
+                $cachedBeforeReplacement = Get-Item -LiteralPath $firstSegment
+                $preservedLastWrite = $cachedBeforeReplacement.LastWriteTimeUtc
+                $replacementBytes = [System.IO.File]::ReadAllBytes($firstSegment)
+                for ($byteIndex = 0; $byteIndex -lt $replacementBytes.Length; $byteIndex++) {
+                    if ($replacementBytes[$byteIndex] -eq 0x46) {
+                        $replacementBytes[$byteIndex] = 0x58
+                        break
+                    }
+                }
+                [System.IO.File]::WriteAllBytes($firstSegment, $replacementBytes)
+                (Get-Item -LiteralPath $firstSegment).LastWriteTimeUtc = $preservedLastWrite
+                $replaced = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $replaced.cacheStatus | Should -Be "rebuilt"
+                $replaced.scanMode | Should -Be "tail"
+                $replaced.scannedBytes | Should -BeLessOrEqual $tailBytes
+
+                Set-Content -LiteralPath $firstSegment -Encoding UTF8 -Value "{broken previous segment"
+                $nextSegment = Join-Path $logDir "20260715.lgp"
+                Set-Content -LiteralPath $nextSegment -Encoding UTF8 -Value @(
+                    1..40 | ForEach-Object { '{2026071510' + $_.ToString('0000') + ',I,"_$Session$_","","","Routine"}' }
+                    '{20260715120000,E,"_$PerformError$_","Catalog.Items","Item 2","Rotated tail error"}'
+                )
+                $rotated = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes $tailBytes
+                $rotated.scanMode | Should -Be "tail"
+                $rotated.scannedBytes | Should -BeLessOrEqual $tailBytes
+                $rotated.signatureCount | Should -Be 1
+                @($rotated.signatures) | Should -Not -Contain $firstSignature
+
+                Remove-Item -LiteralPath $rotated.cachePath -Force
+                $empty = Read-SourceLatestEventLogBaselineWithCache -State $state -BootstrapTailBytes 0
+                $empty.scanMode | Should -Be "empty-bootstrap"
+                $empty.coverage | Should -Be "empty"
+                $empty.scannedBytes | Should -Be 0
+                $empty.signatureCount | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "disables source event-log reading through the dedicated switch" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-disabled-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "false", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
             & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 function Get-InfoBaseKind { return "file" }
                 function Get-SourceInfoBasePath { return (Join-Path $tempRoot "missing-source") }
-                function Read-DevBranchEventLogBaselineWithCache { throw "reader must not be called" }
+                function Read-SourceLatestEventLogBaselineWithCache { throw "reader must not be called" }
                 $baseline = Get-SourceEventLogSeedBaseline
                 $baseline.reader | Should -Be "disabled"
-                $baseline.lookbackDays | Should -Be 0
+                $baseline.lookbackDays | Should -BeNullOrEmpty
                 $baseline.signatureCount | Should -Be 0
                 $baseline.cache.status | Should -Be "disabled"
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
-    It "accepts source event-log lookback longer than seven days" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+    It "keeps legacy zero lookback as a deprecated disable fallback" {
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
         $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
         try {
-            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
-            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "0", "Process")
             & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                Get-SourceEventLogLookbackDays | Should -Be 365
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                Get-SourceEventLogBaselineEnabled 6>$null | Should -BeFalse
             }
         } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
             [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+        }
+    }
+
+    It "routes a file source baseline through the latest-segment reader" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-route-test-" + [guid]::NewGuid().ToString("N"))
+        $oldEnabled = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "Process")
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldTailBytes = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", "true", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", "2048", "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return (Join-Path $tempRoot "source") }
+                function Get-MainWorktreePath { return $tempRoot }
+                function Read-DevBranchEventLogBaselineWithCache { throw "legacy source reader must not be called" }
+                function Read-SourceLatestEventLogBaselineWithCache {
+                    param([object]$State,[int64]$BootstrapTailBytes,[switch]$BestEffort)
+                    return [pscustomobject]@{
+                        reader = "direct-stream"
+                        logDirectory = "latest-log"
+                        signatures = @("latest-signature")
+                        errorCount = 1
+                        durationMs = 2
+                        cacheStatus = "hit"
+                        cachePath = [string]$BootstrapTailBytes
+                        sourceKey = "source"
+                        segmentCount = 1
+                        scanMode = "unchanged"
+                        scannedBytes = 0
+                        coverage = "tail"
+                        failedSegmentCount = 0
+                    }
+                }
+                $baseline = Get-SourceEventLogSeedBaseline
+                @($baseline.signatures) | Should -Be @("latest-signature")
+                $baseline.scope | Should -Be "latest-segment"
+                $baseline.lookbackDays | Should -BeNullOrEmpty
+                $baseline.windowStart | Should -BeNullOrEmpty
+                $baseline.cache.path | Should -Be "2048"
+                $baseline.cache.scanMode | Should -Be "unchanged"
+                $baseline.cache.scannedBytes | Should -Be 0
+                $baseline.cache.coverage | Should -Be "tail"
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BASELINE_ENABLED", $oldEnabled, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES", $oldTailBytes, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts server source event-log lookback longer than seven days" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-source-long-window-test-" + [guid]::NewGuid().ToString("N"))
+        $oldLookback = [Environment]::GetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        $oldLegacyLookback = [Environment]::GetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", "365", "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Get-SourceServerEventLogLookbackDays | Should -Be 365
+                [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $null, "Process")
+                [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", "90", "Process")
+                Get-SourceServerEventLogLookbackDays 6>$null | Should -Be 90
+            }
+        } finally {
+            [Environment]::SetEnvironmentVariable("SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS", $oldLookback, "Process")
+            [Environment]::SetEnvironmentVariable("SOURCE_EVENT_LOG_LOOKBACK_DAYS", $oldLegacyLookback, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -4931,6 +5312,9 @@ exit 0
                     param([object]$Answers)
                 }
 
+                function Ensure-YAxUnitForInit {
+                }
+
                 function Update-BaseFromRepository {
                     return $false
                 }
@@ -5523,6 +5907,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 mainWorktreePath = "C:\fixture\main"
                 worktreePath = "C:\fixture\refresh-report"
                 devBranchInfoBasePath = "C:\fixture\ib-refresh"
+                lastRefreshRepairPaths = @("src/cf/CommonModules/Связанный/Ext/Module.bsl")
                 roctupMcpStatus = "stopped"
                 vanessaMcpStatus = "stopped"
                 password = "PASSWORD_SHOULD_NOT_LEAK"
@@ -5544,6 +5929,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $report | Should -Match "Тип: конфигурация"
         $report | Should -Match "Ветка: itldev/refresh-report"
         $report | Should -Match "Коммит ветки: 0123456789abcdef"
+        $report | Should -Match ([regex]::Escape("Семантическое согласование: src/cf/CommonModules/Связанный/Ext/Module.bsl"))
         $report | Should -Match "Обновление конфигурации базы: выполнено"
         $report | Should -Match "Режим загрузки: частичная загрузка"
         $report | Should -Match "Enterprise-автообновление: выполнено"
@@ -5906,6 +6292,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $configBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $forkBranchTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-fork-branch.md.template")
+        $syncBranchesTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-sync-branches.md.template")
         $fastSkill = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md")
 
         foreach ($text in @($configBranchTemplate, $extensionBranchTemplate)) {
@@ -5920,6 +6307,8 @@ if (`$?) { exit 0 } else { exit 1 }
         $extensionBranchTemplate | Should -Match "-OfferOpenAgent"
         $forkBranchTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action fork-dev-branch"))
         $forkBranchTemplate | Should -Not -Match ([regex]::Escape("run-itl-command.ps1 -Windowed"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action sync-dev-branches -PeerDevBranchName"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("never transfers specs, tests, documentation"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
         $fastSkill | Should -Not -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action"))
@@ -6037,7 +6426,7 @@ if (`$?) { exit 0 } else { exit 1 }
                 $result.message | Should -Match "run git add"
                 $result.message | Should -Match "Do not create the merge commit manually"
                 $result.category | Should -Be "merge-conflict"
-                $result.requiredAction | Should -Be "resolve-conflicts-run-git-add-repeat-same-itl-command-no-manual-commit"
+                $result.requiredAction | Should -Be "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
                 $result.runStage | Should -Be $case.stage
                 $result.pendingOperation | Should -Be $case.operation
                 $result.pendingBranch | Should -Be "itldev/test"
@@ -6052,6 +6441,71 @@ if (`$?) { exit 0 } else { exit 1 }
                 Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    It "limits merge UUID integrity to both changed sides plus Configuration.xml" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl UUID дельта " + [guid]::NewGuid().ToString("N"))
+        $configRoot = Join-Path $tempRoot "src\cf"
+        try {
+            New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Configuration.xml"), '<MetaDataObject><Configuration uuid="10ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Unchanged.xml"), '<MetaDataObject><Catalog uuid="20ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Branch.xml"), '<MetaDataObject><Catalog uuid="30ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+
+            & git -C $tempRoot checkout --quiet master
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Master.xml"), '<MetaDataObject><Catalog uuid="40ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master" *> $null
+            & git -C $tempRoot checkout --quiet itldev/test
+            & git -C $tempRoot merge --no-ff --no-commit master *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $paths = & {
+                param($Root)
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                $script:CapturedUuidPaths = @()
+                function Get-OneCConfigurationSourceValidatorPath { return "configuration-validator" }
+                function Get-OneCSourceIntegrityValidatorPath { return "uuid-validator" }
+                function Invoke-OneCSourceIntegrityValidator {
+                    param([string]$Validator, [string]$ScriptPath, [string[]]$Arguments, [switch]$SupportsOutFile)
+                    if ($Validator -ceq "uuid") {
+                        $listIndex = [Array]::IndexOf($Arguments, "-IncludePathList")
+                        $script:CapturedUuidPaths = @(Get-Content -LiteralPath $Arguments[$listIndex + 1] -Encoding UTF8)
+                    }
+                    return [pscustomobject]@{ exitCode = 0; details = "ok" }
+                }
+                Assert-OneCConfigurationSourceIntegrity -ExportPath "src/cf"
+                return @($script:CapturedUuidPaths)
+            } $tempRoot
+
+            $paths | Should -Be @("Branch.xml", "Configuration.xml", "Master.xml")
+            $paths | Should -Not -Contain "Unchanged.xml"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "syncs managed ignored validators from main before resumed merge source validation" {
+        $source = $HelperText
+        $resumeStart = $source.IndexOf("function Resume-DevBranchLifecycleMergeIfPresent", [System.StringComparison]::Ordinal)
+        $resumeEnd = $source.IndexOf("function ", $resumeStart + 10, [System.StringComparison]::Ordinal)
+        $resumeSource = $source.Substring($resumeStart, $resumeEnd - $resumeStart)
+        $syncIndex = $resumeSource.IndexOf("Sync-AiRules1cManagedIgnoredFilesFromMain -State `$State", [System.StringComparison]::Ordinal)
+        $validationIndex = $resumeSource.IndexOf("Assert-OneCConfigurationSourceIntegrity", [System.StringComparison]::Ordinal)
+
+        $syncIndex | Should -BeGreaterThan -1
+        $validationIndex | Should -BeGreaterThan $syncIndex
     }
 
     It "blocks a clean Git merge with duplicate root metadata and commits it after the agent fixes, stages, and retries" {
@@ -6132,7 +6586,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.firstMessage | Should -Match "^ONEC_SOURCE_INTEGRITY_FAILED"
             $result.firstMessage | Should -Match "Duplicate: Constant.Shared"
             $result.category | Should -Be "source-integrity"
-            $result.requiredAction | Should -Be "fix-listed-source-integrity-run-git-add-repeat-same-itl-command-no-manual-commit"
+            $result.requiredAction | Should -Be "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
             $result.failureStage | Should -Be "source-integrity.failed"
             $result.pendingStageBeforeFix | Should -Be "conflicts"
             $result.conflictsBeforeFix | Should -Be @("src/cf/Configuration.xml")
@@ -6144,6 +6598,183 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.mergeInProgress | Should -BeFalse
             $result.pendingStage | Should -Be "merged"
             $result.status | Should -BeNullOrEmpty
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "blocks a clean merge-created duplicate BSL method and resumes after agent repair" {
+        $fixture = New-LifecycleMergeBslDuplicateFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.validatorPath
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:FailureCategory = ""
+                $script:RequiredAction = ""
+                $script:FailureStage = ""
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage { param([string]$Stage, [string]$Detail); $script:FailureStage = $Stage }
+                function Set-RunFailureContext { param([string]$Category, [string]$RequiredAction); $script:FailureCategory = $Category; $script:RequiredAction = $RequiredAction }
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+
+                $firstMessage = ""
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {
+                    $firstMessage = $_.Exception.Message
+                }
+                $reportPath = $script:RunSourceIntegrityReportPath
+                $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $conflictsBeforeFix = @($script:MergeState.pendingMergeConflictPaths)
+                $source = [System.IO.File]::ReadAllText($Fixture.modulePath, [System.Text.Encoding]::UTF8)
+                $pattern = '(?ms)Процедура ОбщийМетод\(\)\r?\nКонецПроцедуры\r?\n\r?\n'
+                $source = [regex]::Replace($source, $pattern, "", 1)
+                [System.IO.File]::WriteAllText($Fixture.modulePath, $source, [System.Text.UTF8Encoding]::new($false))
+                Invoke-Git @("add", "--", $Fixture.moduleRepoPath)
+
+                $retryMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $retryMessage = $_.Exception.Message
+                }
+                $head = Get-CurrentCommit
+                [pscustomobject]@{
+                    firstMessage = $firstMessage
+                    retryMessage = $retryMessage
+                    category = $script:FailureCategory
+                    requiredAction = $script:RequiredAction
+                    failureStage = $script:FailureStage
+                    reportPath = $reportPath
+                    issue = @($report.issues)[0]
+                    conflictPaths = $conflictsBeforeFix
+                    parents = @(Get-GitCommitParents -Commit $head)
+                    restartCount = $script:RestartCount
+                    mergeInProgress = Test-GitMergeInProgress
+                }
+            } $fixture
+
+            $result.firstMessage | Should -Match "^ONEC_SOURCE_INTEGRITY_FAILED"
+            $result.firstMessage | Should -Match "ОбщийМетод"
+            $result.category | Should -Be "source-integrity"
+            $result.requiredAction | Should -Be "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
+            $result.failureStage | Should -Be "source-integrity.failed"
+            $result.reportPath | Should -Exist
+            $result.issue.validator | Should -Be "bsl-merge-duplicates"
+            $result.issue.code | Should -Be "merge-created-duplicate-declaration"
+            $result.issue.path | Should -Be $fixture.moduleRepoPath
+            $result.issue.baseCount | Should -Be 0
+            $result.issue.branchCount | Should -Be 1
+            $result.issue.targetCount | Should -Be 1
+            $result.issue.mergedCount | Should -Be 2
+            $result.conflictPaths | Should -Be $fixture.moduleRepoPath
+            $result.retryMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+            $result.mergeInProgress | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "routes a clean merge-created form defect to the specialized form validator and resumes after repair" {
+        $fixture = New-LifecycleMergeFormIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.configurationValidatorPath
+                $script:OneCSourceIntegrityValidatorPathOverrides = @{ form = $Fixture.formValidatorPath }
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:FailureCategory = ""
+                $script:RequiredAction = ""
+                $script:FailureStage = ""
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage { param([string]$Stage, [string]$Detail); $script:FailureStage = $Stage }
+                function Set-RunFailureContext { param([string]$Category, [string]$RequiredAction); $script:FailureCategory = $Category; $script:RequiredAction = $RequiredAction }
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+
+                $firstMessage = ""
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {
+                    $firstMessage = $_.Exception.Message
+                }
+                $reportPath = $script:RunSourceIntegrityReportPath
+                $report = Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $categoryBeforeFix = $script:FailureCategory
+                $requiredActionBeforeFix = $script:RequiredAction
+                $stageBeforeFix = $script:FailureStage
+                $conflictsBeforeFix = @($script:MergeState.pendingMergeConflictPaths)
+                $source = [System.IO.File]::ReadAllText($Fixture.formPath, [System.Text.Encoding]::UTF8)
+                $duplicate = '    <Item name="Shared" />'
+                $lastDuplicate = $source.LastIndexOf($duplicate, [System.StringComparison]::Ordinal)
+                $source = $source.Remove($lastDuplicate, $duplicate.Length + 2)
+                [System.IO.File]::WriteAllText($Fixture.formPath, $source, [System.Text.UTF8Encoding]::new($false))
+                Invoke-Git @("add", "--", $Fixture.formRepoPath)
+
+                $retryMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $retryMessage = $_.Exception.Message
+                }
+                $head = Get-CurrentCommit
+                [pscustomobject]@{
+                    firstMessage = $firstMessage
+                    retryMessage = $retryMessage
+                    category = $categoryBeforeFix
+                    requiredAction = $requiredActionBeforeFix
+                    failureStage = $stageBeforeFix
+                    reportPath = $reportPath
+                    issue = @($report.issues)[0]
+                    conflictPaths = $conflictsBeforeFix
+                    parents = @(Get-GitCommitParents -Commit $head)
+                    restartCount = $script:RestartCount
+                    mergeInProgress = Test-GitMergeInProgress
+                }
+            } $fixture
+
+            $result.firstMessage | Should -Match "^ONEC_SOURCE_INTEGRITY_FAILED"
+            $result.firstMessage | Should -Match "Duplicate form item Shared"
+            $result.category | Should -Be "source-integrity"
+            $result.requiredAction | Should -Be "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
+            $result.failureStage | Should -Be "source-integrity.failed"
+            $result.reportPath | Should -Exist
+            $result.issue.validator | Should -Be "form"
+            $result.issue.code | Should -Be "specialized-validation-failed"
+            $result.issue.path | Should -Be $fixture.formRepoPath
+            $result.conflictPaths | Should -Be $fixture.formRepoPath
+            $result.retryMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+            $result.mergeInProgress | Should -BeFalse
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -6288,6 +6919,67 @@ if (`$?) { exit 0 } else { exit 1 }
             } finally {
                 Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "accepts and records a related 1C source repair outside the original conflict set" {
+        $fixture = New-LifecycleMergeConflictFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                $script:RestartCount = 0
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage {}
+                function Set-RunFailureContext {}
+                function Assert-OneCConfigurationSourceIntegrity {}
+                function Restart-Agent1cAfterDevBranchMerge { $script:RestartCount++; throw "RESTART_AFTER_MERGE" }
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {}
+
+                Set-Content -LiteralPath (Join-Path $Fixture.root "conflict.txt") -Encoding UTF8 -Value "resolved"
+                Set-Content -LiteralPath (Join-Path $Fixture.root "src\cf\Related.bsl") -Encoding UTF8 -Value "semantically adapted related method"
+                Invoke-Git @("add", "--", "conflict.txt", "src/cf/Related.bsl")
+                $resumeMessage = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $resumeMessage = $_.Exception.Message
+                }
+                $head = Get-CurrentCommit
+                [pscustomobject]@{
+                    resumeMessage = $resumeMessage
+                    repairPaths = @($script:MergeState.pendingMergeRepairPaths)
+                    allowedPaths = @($script:MergeState.pendingMergePaths)
+                    changedPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", $Fixture.branchCommit, $head))
+                    parents = @(Get-GitCommitParents -Commit $head)
+                    restartCount = $script:RestartCount
+                    mergeInProgress = Test-GitMergeInProgress
+                }
+            } $fixture
+
+            $result.resumeMessage | Should -Be "RESTART_AFTER_MERGE"
+            $result.repairPaths | Should -Be @("src/cf/Related.bsl")
+            $result.allowedPaths | Should -Contain "src/cf/Related.bsl"
+            $result.changedPaths | Should -Contain "src/cf/Related.bsl"
+            $result.parents | Should -Be @($fixture.branchCommit, $fixture.targetCommit)
+            $result.restartCount | Should -Be 1
+            $result.mergeInProgress | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -7000,7 +7692,11 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-CleanGit {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40) } }
             function Sync-DevBranchContextToDotEnv {}
+            function Sync-WorkflowManagedDependencyLockEntries {}
             function Install-VanessaAutomation {}
+            function Get-RoctupMcpEnabled { return $false }
+            function Install-VanessaMcpArtifacts {}
+            function Install-ItlOnDemandMcp {}
             function Invoke-DevBranchDefaultMcpSetup { param([object]$State) return $State }
             function Load-ConfigFromFiles { throw "simulated load failure after ConfigDumpInfo rollback" }
             function Complete-RefreshConfigDumpInfoPostcondition { $script:PostconditionCalls++ }
@@ -7213,7 +7909,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $kiloConfig.permission.bash | Should -Be "ask"
             $kiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
             $branchKiloCommands = @(Get-ChildItem -LiteralPath (Join-Path $worktreePath ".kilo\commands") -File -Filter "itl*.md" | Select-Object -ExpandProperty Name | Sort-Object)
-            $branchKiloCommands | Should -Be @(@("itl.md", "itl-check.md", "itl-fork-branch.md", "itl-litemode.md", "itl-lock-objects.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-reset-branch.md", "itl-result.md", "itl-status.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md") | Sort-Object)
+            $branchKiloCommands | Should -Be @(@("itl.md", "itl-check.md", "itl-fork-branch.md", "itl-litemode.md", "itl-lock-objects.md", "itl-refresh.md", "itl-refresh-lite.md", "itl-reset-branch.md", "itl-result.md", "itl-status.md", "itl-sync-branches.md", "itl-sync-master.md", "itl-update-workflow.md", "itl-verify-fix.md") | Sort-Object)
             $branchKiloCommands | Should -Not -Contain "itl-new-config-branch.md"
             $branchKiloCommands | Should -Not -Contain "itl-new-extension-branch.md"
             $launcherText = Get-Content -Encoding UTF8 -Raw (Join-Path $env:APPDATA "1C\1CEStart\ibases.v8i")

@@ -148,17 +148,17 @@
         $lockTemplate.mode | Should -Be "fresh"
         $project = $projectTemplate | ConvertFrom-Json
         $project.aiRules.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $project.aiRules.ref | Should -Be "itl-main-410951e7-r32"
+        $project.aiRules.ref | Should -Be "itl-main-410951e7-r33"
         @($project.aiRules.tools).Count | Should -Be 0
         $lockTemplate.dependencies.aiRules1c.repo | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
-        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r32"
+        $lockTemplate.dependencies.aiRules1c.ref | Should -Be "itl-main-410951e7-r33"
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
-        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 32
+        $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 33
         $lockTemplate.dependencies.aiRules1c.compatibilityStatus | Should -BeIn @("pending", "passed")
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
@@ -188,7 +188,7 @@
         $lockTemplate.dependencies.opencodePlugin.compatibilityCheckedAt | Should -Not -BeNullOrEmpty
         $lockTemplate.dependencies.roctupMcpToolkit.assetName | Should -Be "MCP_Toolkit.epf"
         $lockTemplate.dependencies.roctupMcpToolkit.sha256 | Should -Be "74bd1d228aa36fda688b34277ede6030ea3b54350c112a680cdce63adb8ac675"
-        $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.8"
+        $lockTemplate.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.9"
         $lockTemplate.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
         $lockTemplate.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29.cfe"
         $lockTemplate.dependencies.vanessaAutomation.compatibilityVersion | Should -Be "1.2.043.28"

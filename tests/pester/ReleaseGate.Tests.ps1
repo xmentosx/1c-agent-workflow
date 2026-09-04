@@ -148,7 +148,7 @@ Describe "Release gate scripts" {
                 [ref]$errors
             )
             @($errors) | Should -BeNullOrEmpty
-            foreach ($functionName in @("Add-FreshVanessaFeature", "Set-DevelopStandVanessaFeature")) {
+            foreach ($functionName in @("Add-FreshVanessaFeature", "Add-FreshVerificationCatalog", "Set-DevelopStandVanessaFeature")) {
                 $functionAst = $runnerAst.Find({
                     param($node)
                     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -161,6 +161,13 @@ Describe "Release gate scripts" {
             $firstHead = (& git -C $tempRoot rev-parse HEAD).Trim()
             & git -C $tempRoot ls-files --error-unmatch -- tests/features/ITLDevelopJourney.feature *> $null
             $LASTEXITCODE | Should -Be 0
+            & git -C $tempRoot ls-files --error-unmatch -- tests/verification-suites.branch.json *> $null
+            $LASTEXITCODE | Should -Be 0
+            $catalog = Get-Content -LiteralPath (Join-Path $tempRoot "tests\verification-suites.branch.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($catalog.suites).Count | Should -Be 1
+            $catalog.suites[0].purpose | Should -Be "acceptance"
+            @($catalog.suites[0].featurePaths) | Should -Be @("tests/features/*.feature")
+            @($catalog.suites[0].ownerPaths) | Should -Be @("src/cf/Configuration.xml")
             (& git -C $tempRoot log -1 --pretty=%s).Trim() | Should -Be "test: seed develop E2E Vanessa fixture"
             @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
 
@@ -788,6 +795,11 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             @($failureSummary.executedStages) | Should -Contain "config-roundtrip"
             $targetMarkerStep = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0Jgg0Y8g0LLRi9C/0L7Qu9C90Y/RjiDQutC+0LQg0LLRgdGC0YDQvtC10L3QvdC+0LPQviDRj9C30YvQutCwINC90LAg0YHQtdGA0LLQtdGA0LUgKNCg0LDRgdGI0LjRgNC10L3QuNC1KQ=='))
             [IO.File]::ReadAllText((Join-Path $worktreeRoot "tests\features\workflow-release-e2e.feature"), [Text.Encoding]::UTF8) | Should -Match ([regex]::Escape($targetMarkerStep))
+            $releaseCatalog = Get-Content -LiteralPath (Join-Path $worktreeRoot "tests\verification-suites.branch.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($releaseCatalog.suites).Count | Should -Be 1
+            $releaseCatalog.suites[0].purpose | Should -Be "acceptance"
+            @($releaseCatalog.suites[0].featurePaths) | Should -Be @("tests/features/*.feature")
+            @($releaseCatalog.suites[0].ownerPaths) | Should -Be @("src/cf/Configuration.xml")
 
             $staleResultRoot = Join-Path $worktreeRoot "build\result"
             $staleSnapshotRoot = Join-Path $worktreeRoot ".agent-1c\snapshots"

@@ -15,6 +15,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching 
 - `references/mcp.md`: ROCTUP data MCP, vibecoding1c MCP, branch Vanessa UI MCP, External MCP, legacy Data MCP.
 - `references/branch-lifecycle.md`: branches, worktrees, extension helpers, context activation, refresh, list/switch, advanced close.
 - `references/verification-result.md`: `/itl-check`, Vanessa Automation, event-log baseline, result export, `verificationPolicy`.
+- `references/yaxunit-tests.md`: author algorithmic unit tests, boundary partitions, and dangerous invariants with YAxUnit.
 - `references/dev-branch-development.md`: unclear development mode, the complete branch-development menu, or pending extension setup inside an existing `itldev/*` branch.
 - `references/dev-branch-quick-fix.md`: an already classified direct quick-fix inside `itldev/*`.
 - `references/dev-branch-direct.md`: an already classified direct full-cycle change inside `itldev/*`.
@@ -48,7 +49,7 @@ Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second li
 
 If monitored bootstrap is interrupted, repeat the same command with `timeout_ms >= 3900000`; the launcher owns orphan detection and resume. Do not delete Git locks, continue init manually, or edit run status.
 
-After any successful compact-runner action with a non-empty `userReport`, the final response must be exactly that Russian Markdown. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, use a code fence, summarize, substitute `requiredAction`, read `console.log`, or lose settings, evidence, MCP/Browser, advice, and actions. New worktree windows need no reload. On `userReportOmitted=true`, follow report recovery in `.agents/skills/1c-workflow/references/advanced-actions.md`; omission never changes the helper result.
+After any successful compact-runner action with a non-empty `userReport`, the final response must be exactly that Russian Markdown. Exception: on `classify-tests-after-refresh:*`, follow its `advanced-actions.md` continuation before finalizing; never ask the developer or run 1C. Do not translate it, convert it to a table, rename or merge fields, reorder or omit lines, use a code fence, summarize, substitute `requiredAction`, read `console.log`, or lose settings, evidence, MCP/Browser, advice, and actions. New worktree windows need no reload. On `userReportOmitted=true`, follow report recovery in `.agents/skills/1c-workflow/references/advanced-actions.md`; omission never changes the helper result.
 
 With default `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=manual-confirm`, create branches through `scripts/run-agent-1c-window.ps1`: a valid source confirmation makes the run question-free, otherwise the copied base is confirmed immediately after repository unbind. Direct helper calls require that source confirmation or explicit automation with `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip`.
 
@@ -56,7 +57,7 @@ Ask setup questions only when the helper cannot collect them. Store secrets only
 
 Use sibling Git worktrees, leave the main folder on `master`, and load only the copied branch infobase. Stop on unexpected dirty Git state before lifecycle changes.
 
-Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs Vanessa Automation verification through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
+Use `/itl-check` or `check-dev-branch` for the final executable gate. It runs configured YAxUnit unit tests, Vanessa Automation through `TESTMANAGER -> TESTCLIENT`, reads JUnit, and checks the event-log baseline. Never replace it with MCP, a headless EPF, or `/deploy-and-test`.
 
 ROCTUP MCP is the preferred branch-local data channel in `itldev/*` and needs no web publication. Use Vanessa UI MCP only when static analysis cannot answer the UI question; `/itl-check` remains the separate verification runner. vibecoding1c MCP is helper-managed; External MCP is unmanaged. Never paste keys into chat or tracked files.
 

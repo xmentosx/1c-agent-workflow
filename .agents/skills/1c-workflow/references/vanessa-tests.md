@@ -16,10 +16,16 @@ or long regressions only when explicitly requested.
    When a concrete pattern is needed, open only the matching recipe in
    `vanessa-recipes.md`; its companion files are under
    `assets/vanessa-authoring-examples`.
-4. For OpenSpec, write 2-3 scenarios: the main path and one meaningful
-   boundary or negative case. A fourth needs justification. A quick-fix starts
-   with one focused regression and adds another only for a separate boundary.
-5. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
+4. For OpenSpec, write 1-2 representative integration/UI scenarios. Put
+   algorithmic boundary and negative cases in parameterized YAxUnit tests. A
+   quick-fix starts with one focused regression and adds another only for a
+   separate integration/UI boundary.
+5. In the same edit, classify every added or changed feature in
+   `tests/verification-suites.branch.json` (or the genuinely shared catalog),
+   including its `acceptance|explicit` purpose and production `ownerPaths`.
+   Read `verification-suite-selection.md` for the schema. Do not postpone this
+   until refresh or verification.
+6. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
 
 ## Development And Verification
 
@@ -28,7 +34,8 @@ No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-
 ### Branch-local suite selection
 
 For acceptance/explicit catalogs and proof reuse, read
-`verification-suite-selection.md` only when classifying tests or diagnosing selection.
+`verification-suite-selection.md` whenever a feature is added or changed, when
+refresh requests classification, or when diagnosing selection.
 
 ## Context Economy
 

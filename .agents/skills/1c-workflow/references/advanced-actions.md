@@ -19,6 +19,7 @@ Common internal actions:
 ```text
 init-project
 validate
+validate-test-classification
 check-tools
 list-platforms
 detect-web-publication
@@ -26,6 +27,7 @@ detect-apache
 configure-web-publication
 publish-dev-branch
 install-vanessa-automation
+install-yaxunit
 install-agent-browser
 install-windows-mcp
 install-ui-tools
@@ -61,6 +63,7 @@ initialize-dev-branch-runtime
 new-dev-branch
 new-extension-dev-branch
 fork-dev-branch
+sync-dev-branches
 configure-dev-branch-unsafe-action-protection
 init-dev-branch-extension
 set-dev-branch-extension
@@ -112,6 +115,25 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 
 `cleanup-interrupted-vanessa-run` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
 
+`validate-test-classification` is the short static continuation after refresh or
+catalog edits. It inventories Vanessa feature files and YAxUnit `Module.bsl`
+sources, validates exact assignment, owners, cadence, and benchmark registration,
+and writes only ignored inventory state. It never starts Designer, Enterprise,
+Vanessa, or YAxUnit.
+
+When a successful refresh returns `classify-tests-after-refresh:*`, do not
+finalize and do not ask the developer to classify. In the same task, read
+`.agent-1c/verification-selection/inventory.json` and
+`verification-suite-selection.md`, inspect the named tests and production
+owners, update that branch's Vanessa/YAxUnit catalogs, then run the compact
+helper with `-Action validate-test-classification`. Do not run `/itl-check`
+unless separately requested. Report the successful refresh together with the
+completed classification instead of returning the original report alone. For
+refresh-all, repeat this bounded continuation in every listed branch worktree.
+`classify-tests-and-repeat-original-itl-command` follows the same repair and
+static validation, then repeats the original command; its preflight stopped
+before 1C.
+
 `Run-DevBranchTests` is a private phase of `check-dev-branch`, not a helper action. Automated performance profiling repeats canonical `check-dev-branch` with `VanessaFeaturePath` and/or `VanessaFilterTags`; filtered runs remain diagnostic-only and do not create full proof. When configuration sources are unchanged, the fingerprint preflight skips Designer, but canonical ownership, cleanup, event-log, and evidence preflight still add overhead. Finish with an unfiltered canonical check.
 
 Manual profiling uses a separate interactive lifecycle:
@@ -134,7 +156,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ag
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
-ROCTUP and Vanessa dependencies are cached by init/update. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use, stop on idle/client exit, and appear in general `status`/`doctor` diagnostics.
+ROCTUP and Vanessa dependencies are cached by init/update/refresh in immutable user-local version/SHA directories. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use, stop on idle/client exit, and appear in general `status`/`doctor` diagnostics.
 
 `context-benchmark` is a Kilo-only read-only diagnostic exposed through natural-language requests such as "measure context" or "замерь контекст"; it has no slash command. `-BenchmarkMode run` requires an explicit `-BenchmarkModel provider/model` and `-ConfirmTokenSpend`, then creates one fixed no-tool `OK` request through the Kilo CLI. `analyze` reads one real IDE session by `-BenchmarkSessionId`; `compare` accepts session ids or saved summaries through `-BenchmarkBaseline` and `-BenchmarkCandidate`. Summaries under ignored `.agent-1c/diagnostics/context-benchmark/` contain counters and provenance only, never transcript text, tool arguments, URLs, or secrets.
 
@@ -160,6 +182,6 @@ Maintenance/recovery: update base without tests, update workflow/rules, close/li
 
 `update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` are the implementations behind the four upstream-visible bridges. They reconcile state, prove the branch infobase, refuse source/master execution, and retain rollback evidence for dumps.
 
-`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It can be invoked from `master` or an active `itldev/*` worktree. The compact runner resolves the checked-out `master` worktree before starting the mutating helper, so the clean-state check, managed copies, and local updater commit still apply only to `master`; the invoking development branch is neither switched nor modified. The pre-copy phase copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, the active client's generated command surface for `master`, and final checks. Generated client surfaces stay local and ignored. After success, refresh every affected development branch through `/itl-refresh` or `/itl-refresh-lite`. For Kilo, `status` and `doctor` report the installed `1c-workflow-fast` contract/SHA; the actually cached skill is not observable through a Kilo API. If behavior still follows an older route, perform `/reload` before diagnosing a workflow source defect. ITL never inspects or deletes Kilo's internal cache/hidden worktrees. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run.
+`update-workflow` refreshes the installed ITL workflow package in an already initialized project. It can be invoked from `master` or an active `itldev/*` worktree. The compact runner resolves the checked-out `master` worktree before starting the mutating helper, so the clean-state check, managed copies, immutable dependency-cache population, and local updater commit still apply only to `master`; the invoking development branch is neither switched nor modified. The pre-copy phase copies only managed workflow files (never root `AGENTS.md`), records `workflowPackage`, then always starts the installed helper in a fresh PowerShell process with internal `post-copy`; only that new process updates rules, MCP, the active client's generated command surface for `master`, and final checks. Generated client surfaces stay local and ignored. After success, refresh every affected development branch through `/itl-refresh` or `/itl-refresh-lite`, or all active ready branches through `/itl-refresh-all`; refresh validates/fills missing cache entries and rewrites branch bindings before loading 1C. For Kilo, `status` and `doctor` report the installed `1c-workflow-fast` contract/SHA; the actually cached skill is not observable through a Kilo API. If behavior still follows an older route, perform `/reload` before diagnosing a workflow source defect. ITL never inspects or deletes Kilo's internal cache/hidden worktrees. Projects whose old updater predates this re-exec contract need a one-time double run: the first installs it, the second guarantees all post-copy work runs on it. Later updates need one run.
 
 For normal developer work, prefer the short `/itl-*` commands documented in the README and developer guide.

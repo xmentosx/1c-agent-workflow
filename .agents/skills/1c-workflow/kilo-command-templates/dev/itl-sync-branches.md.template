@@ -1,0 +1,16 @@
+---
+description: Объединить исходники 1С двух веток без переноса спеков и прочих файлов
+agent: code
+---
+
+Use this command only from an active ready `itldev/*` worktree. Treat any text after `/itl-sync-branches` as the other development branch name. If it is missing, ask for one short value.
+
+Run the monitored helper directly from the current project directory with `timeout_ms >= 3900000` when supported:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action sync-dev-branches -PeerDevBranchName "<other-dev-branch-name>"
+```
+
+The helper checkpoints both branches, combines only `src/cf/**` for configuration branches or the same `src/cfe/<extension>/**` for extension branches, preserves each branch's own `ConfigDumpInfo.xml`, and loads the combined result into both branch infobases. It never transfers specs, tests, documentation, workflow files, or any other repository paths. The branches receive independent source-only commits, so neither branch becomes a Git ancestor of the other.
+
+If source conflicts are reported, resolve only the listed 1C source files, run `git add`, and repeat the same command from the same branch. Do not create the synchronization commit manually. On success with a non-empty `userReport`, return it exactly as Russian Markdown. On failure, follow `requiredAction`; read only the last 80 lines of `logPath` for an unclassified runner failure.

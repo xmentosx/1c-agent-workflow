@@ -291,6 +291,13 @@ async function runIntegration() {
           request.socket.destroy();
           return;
         }
+        if (body.params && body.params.name === 'slow') {
+          setTimeout(() => {
+            response.writeHead(200, { 'content-type': 'application/json' });
+            response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'slow-forwarded' }] } }));
+          }, 500);
+          return;
+        }
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'forwarded' }] } }));
         return;
@@ -304,7 +311,8 @@ async function runIntegration() {
     'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
     'listen-port': '0',
     'server-id': 'fixture',
-    'readiness-timeout-ms': '2000',
+    'readiness-timeout-ms': '200',
+    'upstream-timeout-ms': '2000',
   }, originalContract);
   const proxyPort = proxyServer.address().port;
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
@@ -350,6 +358,13 @@ async function runIntegration() {
       sessionId: clientSession,
       proxyMarker: 'tools-list-proxy',
     }]);
+
+    const slowToolCall = await fetch(`${proxyUrl}/mcp`, {
+      method: 'POST', headers: sessionHeaders,
+      body: JSON.stringify({ jsonrpc: '2.0', id: 14, method: 'tools/call', params: { name: 'slow', arguments: {} } }),
+    });
+    assert.strictEqual(slowToolCall.status, 200, 'tools/call must use the forwarding timeout rather than the readiness timeout');
+    assert.strictEqual((await slowToolCall.json()).result.content[0].text, 'slow-forwarded');
 
     const retriedList = await fetch(`${proxyUrl}/mcp`, {
       method: 'POST', headers: sessionHeaders,

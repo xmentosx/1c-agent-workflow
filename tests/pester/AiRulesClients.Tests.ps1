@@ -451,6 +451,49 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         }
     }
 
+    It "uses an explicit clean local controlled-fork checkout before its pending tag is remote" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-local-source-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $sourceRoot = Join-Path $tempRoot "source"
+        $cacheRoot = Join-Path $tempRoot "cache"
+        $savedTemp = $env:TEMP
+        $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c"), $sourceRoot, $cacheRoot | Out-Null
+            & git -C $sourceRoot init *> $null
+            & git -C $sourceRoot config user.email "test@example.invalid"
+            & git -C $sourceRoot config user.name "ITL Test"
+            Set-Content -LiteralPath (Join-Path $sourceRoot "README.md") -Encoding ASCII -Value "pending controlled fork"
+            & git -C $sourceRoot add .
+            & git -C $sourceRoot commit -m "candidate" *> $null
+            & git -C $sourceRoot tag -a "itl-main-test-r1" -m "candidate"
+            & git -C $sourceRoot remote add origin "https://github.com/xmentosx/itl_ai_rules_1c.git"
+            $tagCommit = (& git -C $sourceRoot rev-parse "itl-main-test-r1^{commit}").Trim()
+
+            $config = [ordered]@{
+                dependencyMode = "fresh"
+                aiRules = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-test-r1"; tools = @("kilocode") }
+            }
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value ($config | ConvertTo-Json -Depth 6)
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+            $env:TEMP = $cacheRoot
+            $env:ITL_AI_RULES_SOURCE_PATH = $sourceRoot
+
+            $result = & {
+                . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+                Sync-AiRules1cCheckout
+            }
+
+            $result.ref | Should -Be "itl-main-test-r1"
+            $result.commit | Should -Be $tagCommit
+            (& git -C $result.root remote get-url origin).Trim() | Should -Be "https://github.com/xmentosx/itl_ai_rules_1c.git"
+        } finally {
+            $env:TEMP = $savedTemp
+            $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rejects controlled fork main when aiRules.ref is absent" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-fork-main-" + [guid]::NewGuid().ToString("N"))
         try {

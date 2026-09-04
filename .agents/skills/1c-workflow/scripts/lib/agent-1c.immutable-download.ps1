@@ -94,12 +94,17 @@ function Publish-ItlImmutableStagedFile {
     if ($existingSha -ceq $expected) { return [pscustomobject]@{ path = $DestinationPath; sha256 = $expected; published = $false } }
 
     if ($existingSha) {
-        try { [IO.File]::Replace($StagedPath, $DestinationPath, $null, $true) } catch {
+        $backupPath = Join-Path (Split-Path -Parent $DestinationPath) ("." + (Split-Path -Leaf $DestinationPath) + "." + [guid]::NewGuid().ToString("N") + ".backup")
+        try {
+            [IO.File]::Replace($StagedPath, $DestinationPath, $backupPath)
+        } catch {
             if ((Get-ItlImmutableFileSha256 -Path $DestinationPath) -ceq $expected) {
                 Remove-Item -LiteralPath $StagedPath -Force -ErrorAction SilentlyContinue
                 return [pscustomobject]@{ path = $DestinationPath; sha256 = $expected; published = $false }
             }
             throw
+        } finally {
+            Remove-Item -LiteralPath $backupPath -Force -ErrorAction SilentlyContinue
         }
     } else {
         try { [IO.File]::Move($StagedPath, $DestinationPath) } catch {

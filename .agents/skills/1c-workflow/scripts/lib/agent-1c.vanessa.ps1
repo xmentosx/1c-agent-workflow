@@ -1,12 +1,24 @@
 ﻿function Get-VanessaInstallRoot {
-    $legacyRelative = ".agent-1c/tools/vanessa-automation"
     $currentRelative = ".agent-1c/tools/va"
     $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default $currentRelative
     $resolved = Resolve-ProjectPath ([string]$value)
-    if ([string]::Equals($resolved, (Resolve-ProjectPath $legacyRelative), [System.StringComparison]::OrdinalIgnoreCase)) {
-        return (Resolve-ProjectPath $currentRelative)
+    if (-not (Test-ItlPathUnderManagedProjectTools -Path $resolved)) {
+        return $resolved
     }
-    return $resolved
+
+    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default (Get-ConfigValueFromObject -Object $entry -Path "version" -Default ""))
+    $downstreamRevision = [string](Get-ConfigValueFromObject -Object $entry -Path "downstreamRevision" -Default "")
+    $epfSha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "epfSha256" -Default "")
+    if (-not $version -or -not $downstreamRevision -or -not $epfSha256) {
+        throw "Vanessa Automation cache identity requires compatibilityVersion/version, downstreamRevision, and epfSha256 in .agent-1c/dependency-lock.json."
+    }
+    return (Get-ItlSharedArtifactDirectory -Family "vanessa-automation" -Version "$version-$downstreamRevision" -Sha256 $epfSha256)
+}
+
+function Get-VanessaConfiguredFeaturesPath {
+    $value = Get-Setting -EnvName "VANESSA_FEATURES_PATH" -ConfigName "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features")
+    return [string]$value
 }
 
 function Get-VanessaFeaturesPath {
@@ -17,8 +29,7 @@ function Get-VanessaFeaturesPath {
         return $VanessaFeaturePath
     }
 
-    $value = Get-Setting -EnvName "VANESSA_FEATURES_PATH" -ConfigName "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features")
-    return [string]$value
+    return (Get-VanessaConfiguredFeaturesPath)
 }
 
 function Get-VanessaReportsPath {
@@ -58,22 +69,38 @@ function Find-VanessaAutomationEpf {
     return ""
 }
 
-function Get-VanessaAutomationEpfPath {
+function Get-VanessaAutomationConfiguredEpfPath {
+    param([switch]$IncludeManagedProjectTools)
+
     $configured = Get-Setting -EnvName "VANESSA_AUTOMATION_EPF" -ConfigName "vanessaAutomation.epfPath"
     if ($configured) {
         $path = [Environment]::ExpandEnvironmentVariables(([string]$configured).Trim())
         if (-not [System.IO.Path]::IsPathRooted($path)) {
             $path = Resolve-ProjectPath $path
         }
-        $legacyRoot = Resolve-ProjectPath ".agent-1c/tools/vanessa-automation"
         $resolvedPath = Resolve-Agent1cFullPath -Path $path
-        $isLegacyManagedPath = $resolvedPath.StartsWith(($legacyRoot.TrimEnd("\", "/") + "\"), [System.StringComparison]::OrdinalIgnoreCase)
-        if (-not $isLegacyManagedPath -and (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $isWorkflowManaged = (Test-ItlPathUnderManagedProjectTools -Path $resolvedPath) -or (Test-ItlPathUnderSharedArtifactCache -Path $resolvedPath)
+        if (($IncludeManagedProjectTools -or -not $isWorkflowManaged) -and
+            (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue)) {
             return $resolvedPath
         }
     }
 
-    return Find-VanessaAutomationEpf -Root (Get-VanessaInstallRoot)
+    return ""
+}
+
+function Get-VanessaAutomationEpfPath {
+    $cached = Find-VanessaAutomationEpf -Root (Get-VanessaInstallRoot)
+    if ($cached) {
+        return $cached
+    }
+
+    $configured = Get-VanessaAutomationConfiguredEpfPath
+    if ($configured) {
+        return $configured
+    }
+
+    return ""
 }
 
 function Get-VanessaAutomationState {
@@ -380,6 +407,18 @@ function Install-VanessaAutomation {
     }
 
     $installRoot = Get-VanessaInstallRoot
+    $legacyEpf = Get-VanessaAutomationConfiguredEpfPath -IncludeManagedProjectTools
+    if ($legacyEpf -and (Test-ItlPathUnderManagedProjectTools -Path $legacyEpf)) {
+        $legacyHash = (Get-FileHash -LiteralPath $legacyEpf -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($legacyHash -ceq ([string]$downloadInfo.expectedEpfSha256).ToLowerInvariant()) {
+            $cachedEpf = Join-Path $installRoot "vanessa.epf"
+            [void](Invoke-ItlImmutableFileAcquire -Source $legacyEpf -DestinationPath $cachedEpf -ExpectedSha256 $legacyHash -Label "Vanessa Automation EPF")
+            Save-VanessaAutomationSettingsToDotEnv -EpfPath $cachedEpf -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
+            Write-Host "Vanessa Automation EPF imported into the immutable cache: $cachedEpf"
+            return
+        }
+    }
+
     Write-Host "Vanessa Automation install root: $installRoot"
     Write-Host "Vanessa Automation download metadata source: $($downloadInfo.source)"
     $archivePath = Save-VanessaAutomationArchive -DownloadInfo $downloadInfo
@@ -2432,6 +2471,50 @@ function Get-OneCEventLogSegmentProof {
     }
 }
 
+function Test-OneCEventLogCapturedLastWriteMatches {
+    param(
+        [System.IO.FileInfo]$File,
+        [object]$CapturedLastWriteTimeUtc
+    )
+
+    if ($null -eq $CapturedLastWriteTimeUtc) { return $false }
+    $capturedUtc = $null
+    if ($CapturedLastWriteTimeUtc -is [datetime]) {
+        $capturedUtc = ([datetime]$CapturedLastWriteTimeUtc).ToUniversalTime()
+    } else {
+        $parsed = [System.DateTimeOffset]::MinValue
+        if (-not [System.DateTimeOffset]::TryParse(
+            [string]$CapturedLastWriteTimeUtc,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [System.Globalization.DateTimeStyles]::AssumeUniversal,
+            [ref]$parsed
+        )) {
+            return $false
+        }
+        $capturedUtc = $parsed.UtcDateTime
+    }
+    return [int64]$File.LastWriteTimeUtc.Ticks -eq [int64]$capturedUtc.Ticks
+}
+
+function Test-OneCEventLogCachedSnapshotIdentity {
+    param(
+        [System.IO.FileInfo]$File,
+        [object]$Cached
+    )
+
+    if ([int64](Get-StateValue -State $Cached -Name "length" -Default -1) -ne [int64]$File.Length) { return $false }
+    if (-not (Test-OneCEventLogCapturedLastWriteMatches -File $File -CapturedLastWriteTimeUtc (Get-StateValue -State $Cached -Name "lastWriteTimeUtc" -Default $null))) { return $false }
+    if ([int64](Get-StateValue -State $Cached -Name "creationTimeUtcTicks" -Default -1) -ne [int64]$File.CreationTimeUtc.Ticks) { return $false }
+
+    $prefixLength = [int](Get-StateValue -State $Cached -Name "prefixLength" -Default -1)
+    $boundaryStart = [int64](Get-StateValue -State $Cached -Name "boundaryStart" -Default -1)
+    $boundaryLength = [int](Get-StateValue -State $Cached -Name "boundaryLength" -Default -1)
+    if ($prefixLength -lt 0 -or $boundaryStart -lt 0 -or $boundaryLength -lt 0 -or ($boundaryStart + $boundaryLength) -gt [int64]$File.Length) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset 0 -Length $prefixLength) -ne [string](Get-StateValue -State $Cached -Name "prefixSha256" -Default "")) { return $false }
+    if ((Get-OneCEventLogFileRangeSha256 -Path $File.FullName -Offset $boundaryStart -Length $boundaryLength) -ne [string](Get-StateValue -State $Cached -Name "boundarySha256" -Default "")) { return $false }
+    return $true
+}
+
 function Test-OneCEventLogAppendOnlyChange {
     param(
         [System.IO.FileInfo]$File,
@@ -2474,6 +2557,243 @@ function Test-OneCEventLogSegmentMayOverlapBaselineWindow {
     }
 
     return $File.LastWriteTime -ge $StartTime
+}
+
+function Get-OneCEventLogBoundedTailStartOffset {
+    param(
+        [string]$Path,
+        [int64]$MaxBytes
+    )
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    $length = [int64]$file.Length
+    if ($length -le 0 -or $MaxBytes -le 0) { return $length }
+    if ($length -le $MaxBytes) { return [int64]0 }
+
+    $windowStart = [Math]::Max([int64]0, $length - $MaxBytes)
+    $chunkSize = 65536
+    $stream = New-Object System.IO.FileStream($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $position = $windowStart
+        $previousByte = -1
+        if ($position -gt 0) {
+            [void]$stream.Seek($position - 1, [System.IO.SeekOrigin]::Begin)
+            $previousByte = $stream.ReadByte()
+        }
+        while ($position -lt $length) {
+            $primaryLength = [int][Math]::Min([int64]$chunkSize, $length - $position)
+            $readLength = [int][Math]::Min([int64]($chunkSize + 16), $length - $position)
+            $buffer = New-Object byte[] $readLength
+            [void]$stream.Seek($position, [System.IO.SeekOrigin]::Begin)
+            $read = $stream.Read($buffer, 0, $buffer.Length)
+            if ($read -ne $readLength) {
+                throw "EVENT_LOG_SEGMENT_RANGE_CHANGED: path=$($file.FullName); offset=$position; expected=$readLength; actual=$read"
+            }
+
+            for ($index = 0; $index -lt $primaryLength -and $index -le ($read - 16); $index++) {
+                $byteBefore = $(if ($index -eq 0) { $previousByte } else { $buffer[$index - 1] })
+                if (($position + $index) -gt 0 -and $byteBefore -ne 0x0A) { continue }
+                if ($buffer[$index] -ne 0x7B -or $buffer[$index + 15] -ne 0x2C) { continue }
+                $isTimestamp = $true
+                for ($digit = 1; $digit -le 14; $digit++) {
+                    if ($buffer[$index + $digit] -lt 0x30 -or $buffer[$index + $digit] -gt 0x39) {
+                        $isTimestamp = $false
+                        break
+                    }
+                }
+                if ($isTimestamp) { return [int64]($position + $index) }
+            }
+            $previousByte = $buffer[$primaryLength - 1]
+            $position += $primaryLength
+        }
+    } finally { $stream.Dispose() }
+    return $length
+}
+
+function Read-SourceLatestEventLogBaselineWithCache {
+    param(
+        [object]$State,
+        [int64]$BootstrapTailBytes = 1048576,
+        [switch]$BestEffort
+    )
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $logDirectory = Get-DevBranchEventLogDirectory -State $State
+    $sourceKey = Get-DevBranchEventLogSourceKey -State $State
+    $cacheRoot = Get-DevBranchEventLogSignatureCacheRoot -State $State
+    $cachePath = Join-Path $cacheRoot ($sourceKey + ".json")
+    $latest = @(
+        Get-ChildItem -LiteralPath $logDirectory -File -Filter "*.lgp" -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            Select-Object -Last 1
+    )
+    if ($latest.Count -eq 0) {
+        $stopwatch.Stop()
+        return [pscustomobject]@{
+            reader = "direct-stream"
+            cacheStatus = "empty-source-log"
+            cachePath = $cachePath
+            sourceKey = $sourceKey
+            segmentCount = 0
+            errorCount = 0
+            signatureCount = 0
+            signatures = @()
+            logDirectory = $logDirectory
+            durationMs = [int64]$stopwatch.ElapsedMilliseconds
+            scannedBytes = [int64]0
+            scanMode = "empty"
+            coverage = "empty"
+            failedSegmentCount = 0
+            failures = @()
+        }
+    }
+
+    $file = Get-Item -LiteralPath $latest[0].FullName -ErrorAction Stop
+    $cached = $null
+    $cacheSchema = 0
+    if (Test-Path -LiteralPath $cachePath -PathType Leaf -ErrorAction SilentlyContinue) {
+        try {
+            $candidate = Read-Utf8Text -Path $cachePath | ConvertFrom-Json
+            $cacheSchema = [int](Get-StateValue -State $candidate -Name "schemaVersion" -Default 0)
+            if ($cacheSchema -notin @(2, 3) -or
+                [string](Get-StateValue -State $candidate -Name "sourceKey" -Default "") -ne $sourceKey) {
+                throw "incompatible cache schema or source key"
+            }
+            $cached = @($candidate.segments | Where-Object { [string]$_.name -eq $file.Name } | Select-Object -Last 1)
+            if ($cached.Count -gt 0) { $cached = $cached[0] } else { $cached = $null }
+        } catch {
+            Write-Host "[WARN] Source event log cursor cache is damaged or incompatible; using only the bounded tail of the latest segment: $cachePath"
+            $cached = $null
+            $cacheSchema = 0
+        }
+    }
+
+    $snapshotLength = [int64]$file.Length
+    $lastWrite = $file.LastWriteTimeUtc.ToString("o")
+    $events = @()
+    $signatures = @()
+    $errorCount = 0
+    $startOffset = $snapshotLength
+    $coverageStartOffset = [int64]-1
+    $scanMode = "tail"
+    $coverage = "empty"
+    $cacheStatus = "rebuilt"
+    $failures = @()
+
+    try {
+        $unchanged = $null -ne $cached -and (Test-OneCEventLogCachedSnapshotIdentity -File $file -Cached $cached)
+        if ($unchanged) {
+            $signatures = @($cached.signatures | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default $signatures.Count)
+            $startOffset = $snapshotLength
+            $coverageStartOffset = [int64](Get-StateValue -State $cached -Name "coverageStartOffset" -Default -1)
+            $scanMode = "unchanged"
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+            $cacheStatus = $(if ($cacheSchema -eq 3) { "hit" } else { "migrated" })
+        } elseif ($null -ne $cached -and (Test-OneCEventLogAppendOnlyChange -File $file -Cached $cached)) {
+            $startOffset = [int64]$cached.length
+            $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                path = $file.FullName
+                startOffset = $startOffset
+                endOffset = $snapshotLength
+            }))
+            $signatures = @(
+                @($cached.signatures) + @($events | ForEach-Object { $_.signature }) |
+                    Where-Object { $_ } |
+                    Sort-Object -Unique
+            )
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default 0) + $events.Count
+            $coverageStartOffset = [int64](Get-StateValue -State $cached -Name "coverageStartOffset" -Default -1)
+            $scanMode = "append"
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+            $cacheStatus = "updated"
+        } else {
+            $startOffset = Get-OneCEventLogBoundedTailStartOffset -Path $file.FullName -MaxBytes $BootstrapTailBytes
+            if ($startOffset -lt $snapshotLength) {
+                $events = @(Read-OneCEventLogDirect -State $State -Levels @("Error") -SegmentSelections @([pscustomobject]@{
+                    path = $file.FullName
+                    startOffset = $startOffset
+                    endOffset = $snapshotLength
+                }))
+            }
+            $signatures = @($events | ForEach-Object { $_.signature } | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = $events.Count
+            $coverageStartOffset = $startOffset
+            $scanMode = $(if ($startOffset -ge $snapshotLength) { "empty-bootstrap" } else { "tail" })
+            $coverage = $(if ($startOffset -eq 0) { "full-small-segment" } elseif ($startOffset -ge $snapshotLength) { "empty" } else { "tail" })
+            $cacheStatus = "rebuilt"
+        }
+
+        $proofFile = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
+        $proof = Get-OneCEventLogSegmentProof -File $proofFile -EndOffset $snapshotLength
+        if (-not [bool]$proof.completeBoundary) {
+            throw "EVENT_LOG_SEGMENT_UNSAFE_BOUNDARY: latest source segment does not end at a complete record boundary: $($file.FullName)"
+        }
+        $segment = [ordered]@{
+            name = $file.Name
+            length = $snapshotLength
+            lastWriteTimeUtc = $lastWrite
+            errorCount = $errorCount
+            signatureCount = $signatures.Count
+            signatures = @($signatures)
+            scanMode = $scanMode
+            coverage = $coverage
+            coverageStartOffset = $coverageStartOffset
+            creationTimeUtcTicks = $proof.creationTimeUtcTicks
+            prefixLength = $proof.prefixLength
+            prefixSha256 = $proof.prefixSha256
+            boundaryStart = $proof.boundaryStart
+            boundaryLength = $proof.boundaryLength
+            boundarySha256 = $proof.boundarySha256
+            completeBoundary = $proof.completeBoundary
+        }
+        New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+        $cachePayload = [ordered]@{
+            schemaVersion = 3
+            sourceKey = $sourceKey
+            reader = "direct-stream"
+            scope = "latest-segment"
+            bootstrapTailBytes = $BootstrapTailBytes
+            updatedAt = (Get-Date).ToString("o")
+            segments = @($segment)
+        }
+        Write-Utf8Text -Path $cachePath -Value (($cachePayload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    } catch {
+        if (-not $BestEffort) { throw }
+        $failure = [ordered]@{ segment = $file.FullName; error = $_.Exception.Message }
+        $failures += $failure
+        Write-Host "[WARN] Latest source event log tail was skipped; seed baseline remains usable: $($file.FullName). $($_.Exception.Message)"
+        if ($null -ne $cached) {
+            $signatures = @($cached.signatures | Where-Object { $_ } | Sort-Object -Unique)
+            $errorCount = [int](Get-StateValue -State $cached -Name "errorCount" -Default $signatures.Count)
+            $coverage = [string](Get-StateValue -State $cached -Name "coverage" -Default "inherited")
+        } else {
+            $signatures = @()
+            $errorCount = 0
+            $coverage = "empty"
+        }
+        $scanMode = "failed-tail"
+        $cacheStatus = "degraded"
+    }
+
+    $stopwatch.Stop()
+    return [pscustomobject]@{
+        reader = "direct-stream"
+        cacheStatus = $cacheStatus
+        cachePath = $cachePath
+        sourceKey = $sourceKey
+        segmentCount = 1
+        errorCount = $errorCount
+        signatureCount = $signatures.Count
+        signatures = @($signatures)
+        logDirectory = $logDirectory
+        durationMs = [int64]$stopwatch.ElapsedMilliseconds
+        scannedBytes = [int64]($snapshotLength - $startOffset)
+        scanMode = $scanMode
+        coverage = $coverage
+        failedSegmentCount = $failures.Count
+        failures = @($failures)
+    }
 }
 
 function Read-DevBranchEventLogBaselineWithCache {
@@ -2540,7 +2860,9 @@ function Read-DevBranchEventLogBaselineWithCache {
             $snapshot = Get-Item -LiteralPath $file.FullName -ErrorAction Stop
             $snapshotLength = [int64]$snapshot.Length
             $lastWrite = $snapshot.LastWriteTimeUtc.ToString("o")
-            $unchanged = $null -ne $cached -and [int64]$cached.length -eq $snapshotLength -and [string]$cached.lastWriteTimeUtc -eq $lastWrite
+            $unchanged = $null -ne $cached -and
+                [int64]$cached.length -eq $snapshotLength -and
+                (Test-OneCEventLogCapturedLastWriteMatches -File $snapshot -CapturedLastWriteTimeUtc $cached.lastWriteTimeUtc)
             if ($unchanged) {
                 $segments += $cached
                 continue
@@ -4111,8 +4433,12 @@ function Get-VerificationFingerprintScopePaths {
         (Get-ExportPath),
         (Get-ExtensionsPath),
         (Get-VanessaFeaturesPath),
+        (Get-YAxUnitTestsPath),
+        ".agent-1c/dependency-lock.json",
         "tests/verification-suites.shared.json",
-        "tests/verification-suites.branch.json"
+        "tests/verification-suites.branch.json",
+        "tests/yaxunit-suites.shared.json",
+        "tests/yaxunit-suites.branch.json"
     )
 }
 
@@ -6377,6 +6703,9 @@ function Resolve-VanessaMcpArtifactPath {
     }
 
     $path = [Environment]::ExpandEnvironmentVariables((ConvertFrom-FileUri -Value $Value).Trim())
+    if ([regex]::Matches($path, '[A-Za-z]:[\\/]').Count -gt 1) {
+        throw "Vanessa UI MCP artifact path contains concatenated absolute paths."
+    }
     if (-not [System.IO.Path]::IsPathRooted($path)) {
         $path = Resolve-ProjectPath $path
     }
@@ -6390,8 +6719,33 @@ function Get-VanessaMcpArtifactLockEntry {
     return Get-ConfigValueFromObject -Object $lock -Path ([string]$Definition.lockKey) -Default $null
 }
 
+function Get-VanessaMcpManagedArtifactPath {
+    param(
+        [object]$Definition,
+        [string]$Version = "",
+        [string]$Sha256 = "",
+        [string]$AssetName = ""
+    )
+
+    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    if (-not $Version) { $Version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "") }
+    if (-not $Sha256) { $Sha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "") }
+    if (-not $AssetName) { $AssetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default "") }
+
+    $configuredRoot = Get-VanessaMcpInstallRoot
+    if (-not (Test-ItlPathUnderManagedProjectTools -Path $configuredRoot)) {
+        return (Join-Path $configuredRoot (ConvertTo-ItlArtifactCacheSegment -Value $AssetName -Name "assetName"))
+    }
+    return (Get-ItlSharedArtifactPath -Family "vanessa-mcp-$($Definition.lockKey)" -Version $Version -Sha256 $Sha256 -AssetName $AssetName)
+}
+
 function Find-VanessaMcpCachedArtifactPath {
     param([object]$Definition)
+
+    $managedPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition
+    if (Test-Path -LiteralPath $managedPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        return (Resolve-Agent1cFullPath -Path $managedPath)
+    }
 
     $pathEnvName = [string]$Definition.pathEnvName
     $configuredValue = Get-EnvValue -Name $pathEnvName -Default ""
@@ -6401,23 +6755,10 @@ function Find-VanessaMcpCachedArtifactPath {
     } catch {
         Write-Warning "ITL_VANESSA_MCP_ARTIFACT_PATH_INVALID: ignoring the invalid cached artifact path from $pathEnvName; artifact resolution will continue from the managed install root."
     }
-    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
+    if ($configured -and -not (Test-ItlPathUnderManagedProjectTools -Path $configured) -and
+        -not (Test-ItlPathUnderSharedArtifactCache -Path $configured) -and
+        (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
         return $configured
-    }
-
-    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
-    $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default "")
-    $installRoot = Get-VanessaMcpInstallRoot
-    if ($assetName) {
-        $candidate = Join-Path $installRoot $assetName
-        if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) {
-            return (Resolve-Agent1cFullPath -Path $candidate)
-        }
-    }
-
-    $candidates = @(Get-ChildItem -LiteralPath $installRoot -File -Filter ([string]$Definition.assetNameLike) -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-    if ($candidates.Count -gt 0) {
-        return $candidates[0].FullName
     }
 
     return ""
@@ -6434,14 +6775,10 @@ function Get-VanessaMcpCachedArtifactInfo {
     }
 
     $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
-    $expectedSha256 = [string](Get-EnvValue -Name ([string]$Definition.sha256EnvName) -Default "")
-    if (-not $expectedSha256) {
-        $expectedSha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "")
-    }
-    $version = [string](Get-EnvValue -Name ([string]$Definition.versionEnvName) -Default "")
-    if (-not $version) {
-        $version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "")
-    }
+    $expectedSha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "")
+    if (-not $expectedSha256) { $expectedSha256 = [string](Get-EnvValue -Name ([string]$Definition.sha256EnvName) -Default "") }
+    $version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "")
+    if (-not $version) { $version = [string](Get-EnvValue -Name ([string]$Definition.versionEnvName) -Default "") }
     $source = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "source" -Default "existing cached artifact")
     $url = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "url" -Default "")
     $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default (Split-Path -Leaf $Path))
@@ -6522,14 +6859,12 @@ function Save-VanessaMcpArtifact {
         [object]$AssetInfo
     )
 
-    $installRoot = Get-VanessaMcpInstallRoot
-    New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
-    $targetPath = Join-Path $installRoot ([string]$AssetInfo.name)
     $source = [string]$AssetInfo.url
     $expected = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
     if ($expected -notmatch '^[a-f0-9]{64}$') {
         throw "Vanessa UI MCP artifact has an invalid expected SHA256 for $($Definition.lockKey): '$expected'."
     }
+    $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$AssetInfo.version) -Sha256 $expected -AssetName ([string]$AssetInfo.name)
 
     Write-Host "Vanessa UI MCP artifact source: $source"
     [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
@@ -6600,13 +6935,29 @@ function Install-VanessaMcpArtifact {
         [switch]$ForceDownload
     )
 
+    $asset = Get-VanessaMcpReleaseAssetInfo -Definition $Definition
     $cachedPath = Find-VanessaMcpCachedArtifactPath -Definition $Definition
     if ($cachedPath -and -not $ForceDownload) {
         return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $cachedPath
     }
 
+    if (-not $ForceDownload) {
+        $configuredValue = Get-EnvValue -Name ([string]$Definition.pathEnvName) -Default ""
+        $legacyPath = ""
+        try { $legacyPath = Resolve-VanessaMcpArtifactPath -Value $configuredValue } catch { }
+        if ($legacyPath -and (Test-ItlPathUnderManagedProjectTools -Path $legacyPath) -and
+            (Test-Path -LiteralPath $legacyPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            $legacyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $legacyPath).Hash.ToLowerInvariant()
+            $expected = ([string]$asset.expectedSha256).ToLowerInvariant()
+            if ($legacyHash -ceq $expected) {
+                $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$asset.version) -Sha256 $expected -AssetName ([string]$asset.name)
+                [void](Invoke-ItlImmutableFileAcquire -Source $legacyPath -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
+                return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $targetPath
+            }
+        }
+    }
+
     try {
-        $asset = Get-VanessaMcpReleaseAssetInfo -Definition $Definition
         $artifact = Save-VanessaMcpArtifact -Definition $Definition -AssetInfo $asset
         Update-VanessaMcpArtifactLockEntry -Artifact $artifact
         return $artifact
@@ -6791,7 +7142,8 @@ function Invoke-VanessaDesignerAgentClient {
 function Test-VanessaDesignerAgentSafeModeResult {
     param(
         [object]$Result,
-        [string]$ExtensionName
+        [string]$ExtensionName,
+        [switch]$RequireYAxUnitProtectionsDisabled
     )
 
     if ($null -eq $Result -or -not [bool](Get-StateValue -State $Result -Name "success" -Default $false)) {
@@ -6803,7 +7155,14 @@ function Test-VanessaDesignerAgentSafeModeResult {
         return $false
     }
     $serialized = $matches[0].messages | ConvertTo-Json -Compress -Depth 20
-    return ($serialized -match '(?i)"safe(?:-)?mode"\s*:\s*(?:false|"no")')
+    if ($serialized -notmatch '(?i)"safe(?:-)?mode"\s*:\s*(?:false|"no")') {
+        return $false
+    }
+    if ($RequireYAxUnitProtectionsDisabled -and
+        $serialized -notmatch '(?i)"unsafe(?:-)?action(?:-)?protection"\s*:\s*(?:false|"no")') {
+        return $false
+    }
+    return $true
 }
 
 function Stop-VanessaDesignerAgentOwnedProcess {
@@ -6959,7 +7318,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
         [object]$Artifact,
         [string]$User = "",
         [string]$Password = "",
-        [string]$Scope = "extension"
+        [string]$Scope = "extension",
+        [switch]$ReconcileYAxUnitProtections
     )
 
     $platformPath = Get-PlatformPath
@@ -7010,9 +7370,13 @@ function Set-VanessaMcpExtensionUnsafeMode {
         }
 
         $clientPath = Get-ItlOnDemandMcpExecutablePath
+        $propertyCommand = "config extensions properties set --extension $ExtensionName --safe-mode no"
+        if ($ReconcileYAxUnitProtections) {
+            $propertyCommand += " --unsafe-action-protection no"
+        }
         $commands = @(
             "common connect-ib",
-            "config extensions properties set --extension $ExtensionName --safe-mode no",
+            $propertyCommand,
             "config extensions properties get --extension $ExtensionName",
             "common disconnect-ib",
             "common shutdown"
@@ -7028,8 +7392,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
             commandTimeoutSeconds = 120
         }
         $result = Invoke-VanessaDesignerAgentClient -ExecutablePath $clientPath -Request $request
-        if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $ExtensionName)) {
-            throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$ExtensionName' was not proven with safe mode disabled in '$InfoBasePath'."
+        if (-not (Test-VanessaDesignerAgentSafeModeResult -Result $result -ExtensionName $ExtensionName -RequireYAxUnitProtectionsDisabled:$ReconcileYAxUnitProtections)) {
+            throw "ITL_DESIGNER_AGENT_SAFE_MODE_VERIFY_FAILED: extension '$ExtensionName' runtime properties were not proven in '$InfoBasePath'."
         }
         if (-not (Wait-ItlOnDemandProcessExit -ProcessId $process.Id -TimeoutSeconds 30)) {
             throw "ITL_DESIGNER_AGENT_SHUTDOWN_FAILED: Designer Agent PID $($process.Id) did not exit after common shutdown."
@@ -7043,6 +7407,7 @@ function Set-VanessaMcpExtensionUnsafeMode {
             platformVersion = $platformVersion
             artifactSha256 = [string]$Artifact.sha256
             safeMode = $false
+            unsafeActionProtection = $(if ($ReconcileYAxUnitProtections) { $false } else { $null })
         }
     } finally {
         if ($null -ne $process -and $null -ne (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {

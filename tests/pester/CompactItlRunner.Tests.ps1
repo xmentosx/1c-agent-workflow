@@ -79,6 +79,38 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "exposes the source integrity report in a failed compact summary and artifacts" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl source report путь с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$reportPath = Join-Path $ProjectRoot 'source integrity отчёт.json'
+[IO.File]::WriteAllText($reportPath,'{"schemaVersion":1}',(New-Object Text.UTF8Encoding $false))
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='source-integrity.failed'; stageDetail='invalid merged source'; errorMessage='ONEC_SOURCE_INTEGRITY_FAILED'; errorCategory='source-integrity'; requiredAction='agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'; exitCode=1; lastLogPath=''; sourceIntegrityReportPath=$reportPath }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 1
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            } finally {
+                Pop-Location
+            }
+            $processResult.exitCode | Should -Be 1
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "source-integrity.failed"
+            $summary.errorCategory | Should -Be "source-integrity"
+            $summary.sourceIntegrityReportPath | Should -Be (Join-Path $tempRoot "source integrity отчёт.json")
+            @($summary.artifacts) | Should -Contain $summary.sourceIntegrityReportPath
+            $summary.requiredAction | Should -Be "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "preserves semantic success and exposes an absolute report file for every long-report action" {
         foreach ($action in @("export-dev-branch-result", "lock-config-repository-objects", "update-workflow", "refresh-all-dev-branches")) {
             $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl long report путь с пробелом " + $action + "-" + [guid]::NewGuid().ToString("N"))

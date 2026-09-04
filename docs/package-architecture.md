@@ -18,6 +18,14 @@ The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec worksp
 
 A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.
 
+Test classification is an executable-verification prerequisite, not a runtime
+diagnostic. A normal check stops before launching 1C when Vanessa or YAxUnit
+tests cannot be mapped to their declared cadence and production owners; silently
+substituting the complete test inventory would misrepresent the intended
+verification scope and consume an unbounded runner budget. Refresh only
+inventories this contract and returns agent-owned continuation work, because the
+helper cannot infer semantic ownership safely.
+
 Keep integrity checks with their owning component. ITL may duplicate one only after a reproduced cross-boundary failure proves that the owner's check cannot protect the ITL operation.
 
 Capability checks use only the minimum prerequisites needed to perform the operation. File identity, update safety, and exact-result verification are separate contracts; integrity does not participate in capability detection unless exact identity is itself required for execution.

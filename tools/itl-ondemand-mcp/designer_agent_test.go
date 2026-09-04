@@ -71,6 +71,13 @@ func TestDesignerAgentSafeModeRejectsAnyOtherCommandOrHost(t *testing.T) {
 	if err := validateDesignerAgentRequest(request); err != nil {
 		t.Fatalf("VAExtension fixed command sequence was rejected: %v", err)
 	}
+	request.Commands = append([]string(nil), designerYAxUnitUnsafeModeCommands...)
+	if err := validateDesignerAgentRequest(request); err != nil {
+		t.Fatalf("YAxUnit fixed runtime-property command sequence was rejected: %v", err)
+	}
+	if !strings.Contains(request.Commands[1], "--safe-mode no --unsafe-action-protection no") {
+		t.Fatalf("YAxUnit command does not disable both required protections: %q", request.Commands[1])
+	}
 	request.Commands = append([]string(nil), designerSafeModeCommands...)
 	request.Commands[1] = "config extensions properties set --all-extensions --safe-mode no"
 	if err := validateDesignerAgentRequest(request); err == nil || !strings.Contains(err.Error(), "COMMANDS_INVALID") {

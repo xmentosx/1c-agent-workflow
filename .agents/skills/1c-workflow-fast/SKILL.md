@@ -9,9 +9,9 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 ## Purpose
 
-Map routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for helper recovery, missing setup, or explanation.
+Map routine requests to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for recovery, missing setup, or explanation.
 
-For a mapped routine, make the helper the first and only tool action after at most one short sentence; do not pre-read `.dev.env`, inspect Git, or repeat its preflight. Apply an explicit session Caveman override; otherwise use the helper's `ITL response-style`/`responseStyle`. Keep heartbeats to one line with changed stage or liveness. A successful `userReport` remains verbatim in every style. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
+For a mapped routine, make the helper the first and only tool action after one sentence; do not pre-read `.dev.env`, inspect Git, or repeat preflight. Honor explicit Caveman, otherwise the helper's response style. Send one-line heartbeats only on stage/liveness changes. A successful `userReport` remains verbatim. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
 
 ## Intent Map
 
@@ -21,6 +21,7 @@ For a mapped routine, make the helper the first and only tool action after at mo
 - new configuration branch: `new-dev-branch`
 - new extension branch: `new-extension-dev-branch`; collect `Empty|Cfe`, name, and optional CFE path
 - fork branch: `fork-dev-branch`; target name
+- branch source exchange: `sync-dev-branches`; peer name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
 - explicitly requested base load without tests: `update-dev-branch-base`
@@ -52,6 +53,9 @@ For CFE, use `Cfe` plus `-ExtensionSourcePath`. Unknown extension values may be 
 
 On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown, including for refresh. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
 
+`classify-tests-after-refresh:*`: follow `advanced-actions.md` in the same task;
+do not ask the developer to classify.
+
 Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 
 When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
@@ -66,10 +70,10 @@ Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 - `status=failed` means failed. Never relabel it as skipped; never call it ready, verified, or done.
 - For `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`; retry the original once.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
-- Follow `requiredAction` or `nextAction` exactly. Ask only for a value that the helper explicitly identifies as missing.
+- Follow `requiredAction` or `nextAction` exactly; classification uses `advanced-actions.md`. Ask only for an explicitly missing value.
 - Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
 - `fix-and-repeat-original-check`: repeat its scope without repair. `repeat-original-diagnostic-without-repair-session`: keep the filter. `stop-repair-and-resume-original-task`: resume.
 - Completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
 
-For first-time project bootstrap, follow `AGENT-INSTALL.md`. This fast skill is optimized for regular branch operations after installation.
+For first-time project bootstrap, follow `AGENT-INSTALL.md`.

@@ -67,32 +67,45 @@ function ConvertTo-DevelopProcessArgument {
     return '"' + $escaped + '"'
 }
 
-function Test-DevelopTransientNetworkFailure {
-    param([string[]]$Output)
-    $text = @($Output | ForEach-Object { [string]$_ }) -join "`n"
-    return $text -match '(?i)(could not resolve host|failed to connect|could not connect|connection (was )?timed out|network is unreachable|temporary failure in name resolution|remote end hung up|http (500|502|503|504))'
+function ConvertTo-DevelopRepositoryIdentity {
+    param([string]$Value)
+    $identity = $Value.Trim().Replace('\', '/').TrimEnd('/')
+    if ($identity.EndsWith('.git', [StringComparison]::OrdinalIgnoreCase)) { $identity = $identity.Substring(0, $identity.Length - 4) }
+    $identity = $identity -replace '^git@github\.com:', 'https://github.com/'
+    $identity = $identity -replace '^ssh://git@github\.com/', 'https://github.com/'
+    return $identity.ToLowerInvariant()
 }
 
-function Assert-DevelopAiRulesRemoteReachable {
-    param([string]$StandRoot, [int]$MaxAttempts = 3)
+function Assert-DevelopAiRulesSourceAvailable {
+    param([string]$StandRoot, [string]$SourceRoot)
     $configPath = Join-Path $StandRoot ".agent-1c\project.json"
     $config = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $repo = [string]$config.aiRules.repo; $ref = [string]$config.aiRules.ref
     if (-not $repo -or -not $ref) { throw "Develop E2E stand must configure an immutable ai_rules_1c repository and ref before live journeys." }
-    $remoteRef = "refs/tags/$ref"
-    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
-        $previousPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = "Continue"
-            $output = @(& git ls-remote --exit-code $repo $remoteRef 2>&1)
-            $exitCode = $LASTEXITCODE
-        } finally { $ErrorActionPreference = $previousPreference }
-        if ($exitCode -eq 0 -and @($output | Where-Object { [string]$_ -match '^[a-f0-9]{40}\s+refs/tags/' }).Count -gt 0) { return }
-        $transient = Test-DevelopTransientNetworkFailure -Output @($output)
-        if (-not $transient -or $attempt -ge $MaxAttempts) { throw "Develop E2E cannot read immutable ai_rules_1c ref '$remoteRef' from '$repo': $(@($output | ForEach-Object { [string]$_ }) -join '; ')" }
-        $delaySeconds = [int][Math]::Pow(2, $attempt)
-        Write-Warning "Develop E2E ai_rules_1c remote preflight attempt $attempt/$MaxAttempts hit a transient network failure; retrying in $delaySeconds seconds."
-        Start-Sleep -Seconds $delaySeconds
+    $lockPath = Join-Path $StandRoot ".agent-1c\dependency-lock.json"
+    $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $locked = $lock.dependencies.aiRules1c
+    $lockedRef = [string]$locked.ref; $lockedCommit = [string]$locked.commit
+    if ($lockedRef -cne $ref -or $lockedCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "Develop E2E stand ai_rules_1c config/lock mismatch: configRef='$ref' lockRef='$lockedRef' lockCommit='$lockedCommit'."
+    }
+
+    $sourceOrigin = (& git -C $SourceRoot remote get-url origin).Trim()
+    if ($LASTEXITCODE -ne 0 -or (ConvertTo-DevelopRepositoryIdentity -Value $sourceOrigin) -cne (ConvertTo-DevelopRepositoryIdentity -Value $repo)) {
+        throw "Develop E2E ai_rules_1c source origin does not match the configured repository: source='$sourceOrigin' configured='$repo'."
+    }
+    $sourceStatus = @(& git -C $SourceRoot -c core.quotepath=false status --porcelain=v1 -z --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or (@($sourceStatus) -join '').Length -gt 0) {
+        throw "Develop E2E ai_rules_1c source must be a clean Git checkout: $SourceRoot"
+    }
+    $tagRef = "refs/tags/$ref"
+    $tagType = (& git -C $SourceRoot cat-file -t $tagRef).Trim()
+    if ($LASTEXITCODE -ne 0 -or $tagType -cne 'tag') {
+        throw "Develop E2E ai_rules_1c source must contain the annotated tag '$tagRef': $SourceRoot"
+    }
+    $tagCommit = (& git -C $SourceRoot rev-parse "$tagRef^{commit}").Trim()
+    if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $lockedCommit) {
+        throw "Develop E2E ai_rules_1c tag/lock mismatch for '$tagRef': tag='$tagCommit' lock='$lockedCommit'."
     }
 }
 
@@ -328,18 +341,39 @@ function Add-FreshVanessaFeature {
     [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($base64))
 }
 
+function Add-FreshVerificationCatalog {
+    param([string]$Root)
+    $path = Join-Path $Root "tests\verification-suites.branch.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $catalog = @'
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "id": "itl-develop-journey",
+      "purpose": "acceptance",
+      "featurePaths": ["tests/features/*.feature"],
+      "ownerPaths": ["src/cf/Configuration.xml"]
+    }
+  ]
+}
+'@
+    [IO.File]::WriteAllText($path, $catalog.Trim() + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+}
+
 function Set-DevelopStandVanessaFeature {
     param([string]$Root)
     $path = Join-Path $Root "tests\features\ITLDevelopJourney.feature"
     Add-FreshVanessaFeature -Root $Root
-    $relativePath = "tests/features/ITLDevelopJourney.feature"
-    & git -C $Root add -- $relativePath
+    Add-FreshVerificationCatalog -Root $Root
+    $relativePaths = @("tests/features/ITLDevelopJourney.feature", "tests/verification-suites.branch.json")
+    & git -C $Root add -- $relativePaths
     if ($LASTEXITCODE -ne 0) { throw "Unable to stage the Develop E2E Vanessa fixture: $path" }
-    & git -C $Root diff --cached --quiet -- $relativePath
+    & git -C $Root diff --cached --quiet -- $relativePaths
     $diffExitCode = $LASTEXITCODE
     if ($diffExitCode -eq 0) { return }
     if ($diffExitCode -ne 1) { throw "Unable to inspect the staged Develop E2E Vanessa fixture: $path" }
-    & git -C $Root commit -m "test: seed develop E2E Vanessa fixture" -- $relativePath | Out-Null
+    & git -C $Root commit -m "test: seed develop E2E Vanessa fixture" -- $relativePaths | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the Develop E2E Vanessa fixture: $path" }
 }
 
@@ -359,7 +393,7 @@ $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
 try {
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
-    Assert-DevelopAiRulesRemoteReachable -StandRoot $ProjectRoot
+    Assert-DevelopAiRulesSourceAvailable -StandRoot $ProjectRoot -SourceRoot $AiRulesSource
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
     if ($requestedJourneys -contains "upgrade") {
         $activeJourney = "upgrade"
@@ -438,7 +472,8 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "commit-golden-change" -Operation {
             Set-FreshConfigurationComment -Root $freshBranchRoot
             Add-FreshVanessaFeature -Root $freshBranchRoot
-            & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature
+            Add-FreshVerificationCatalog -Root $freshBranchRoot
+            & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature tests/verification-suites.branch.json
             & git -C $freshBranchRoot commit -m "test: add develop golden change" | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
         })

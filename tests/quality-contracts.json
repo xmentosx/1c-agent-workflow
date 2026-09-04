@@ -62,10 +62,10 @@
     ],
     "routes": {
       "upgrade": {
-        "contracts": ["immutable-download", "bootstrap-update", "lifecycle", "branch-refresh-result", "vanessa-verification", "clients-rules"]
+        "contracts": ["immutable-download", "bootstrap-update", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "clients-rules"]
       },
       "fresh": {
-        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "vanessa-verification", "mcp-hosts"]
+        "contracts": ["immutable-download", "bootstrap-update", "dependency-lock", "lifecycle", "branch-refresh-result", "yaxunit-verification", "vanessa-verification", "mcp-hosts"]
       }
     }
   },
@@ -207,7 +207,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "auxiliary-contours",
@@ -225,7 +225,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/RoctupPortLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
-      "tests": ["tests/pester/RoctupPortLifecycle.Tests.ps1"]
+      "tests": ["tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "branch-refresh-result",
@@ -237,13 +237,22 @@
       "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/ExtensionInitialization.Tests.ps1"]
     },
     {
+      "id": "yaxunit-verification",
+      "owner": "YAxUnit installation and unit verification",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/YAxUnitVerification.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/references/yaxunit-tests.md"],
+      "tests": ["tests/pester/YAxUnitVerification.Tests.ps1"]
+    },
+    {
       "id": "vanessa-verification",
       "owner": "Vanessa authoring runtime and verification",
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/1c-workflow/references/verification-suite-selection.md", ".agents/skills/1c-workflow/references/vanessa-authoring.md", ".agents/skills/1c-workflow/references/vanessa-recipes.md", ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "third-party/vanessa-automation/*"],
-      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
+      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "mcp-hosts",
@@ -293,10 +302,10 @@
   ],
   "lifecycleActions": {
     "journey": [
-      "check-dev-branch", "close-dev-branch", "export-dev-branch-result", "fork-dev-branch", "init-dev-branch-extension", "init-project", "lock-config-repository-objects", "new-dev-branch", "new-extension-dev-branch", "refresh-all-dev-branches", "refresh-dev-branch", "refresh-dev-branch-lite", "reset-dev-branch", "status", "sync-master", "update-workflow"
+      "check-dev-branch", "close-dev-branch", "export-dev-branch-result", "fork-dev-branch", "init-dev-branch-extension", "init-project", "lock-config-repository-objects", "new-dev-branch", "new-extension-dev-branch", "refresh-all-dev-branches", "refresh-dev-branch", "refresh-dev-branch-lite", "reset-dev-branch", "status", "sync-dev-branches", "sync-master", "update-workflow"
     ],
     "boundary": [
-      "activate-dev-branch-context", "adopt-dev-worktree", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "cleanup-interrupted-vanessa-run", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update1cbase", "validate", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config"
+      "activate-dev-branch-context", "adopt-dev-worktree", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "cleanup-interrupted-vanessa-run", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "install-yaxunit", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update1cbase", "validate", "validate-test-classification", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config"
     ]
   }
 }

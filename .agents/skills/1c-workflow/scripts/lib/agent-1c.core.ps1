@@ -333,6 +333,7 @@ function Write-RunStatus {
         userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
         resultPath = $(if ($script:RunResultPath) { [string]$script:RunResultPath } else { "" })
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
+        sourceIntegrityReportPath = $(if ($script:RunSourceIntegrityReportPath) { [string]$script:RunSourceIntegrityReportPath } else { "" })
         activeVanessaRun = $script:ActiveVanessaRunEvidence
     }
 
@@ -597,6 +598,17 @@ function Get-Agent1cLifecycleOperationLockScopes {
     param([string]$RequestedAction)
 
     $candidatePaths = @($script:ProjectRoot)
+    if ($RequestedAction -eq "sync-dev-branches") {
+        if (-not $PeerDevBranchName) {
+            throw "sync-dev-branches requires -PeerDevBranchName."
+        }
+        $peerName = [string]$PeerDevBranchName
+        if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+            $peerName = $peerName.Substring("itldev/".Length)
+        }
+        $peerState = Read-DevBranchState -Name $peerName
+        $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
+    }
     if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
@@ -1393,6 +1405,103 @@ function Resolve-ProjectPath {
         return (Resolve-Agent1cFullPath -Path $Path)
     }
     return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
+}
+
+function Get-ItlSharedArtifactCacheRoot {
+    $override = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT")
+    if (-not [string]::IsNullOrWhiteSpace($override)) {
+        return (Resolve-Agent1cFullPath -Path ([Environment]::ExpandEnvironmentVariables($override.Trim())))
+    }
+
+    $localAppData = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if ([string]::IsNullOrWhiteSpace($localAppData)) {
+        throw "LOCALAPPDATA is required for the ITL immutable artifact cache."
+    }
+    return (Join-Path $localAppData "ITL\artifacts")
+}
+
+function ConvertTo-ItlArtifactCacheSegment {
+    param(
+        [Parameter(Mandatory = $true)][string]$Value,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $segment = $Value.Trim()
+    if ([string]::IsNullOrWhiteSpace($segment) -or $segment -in @(".", "..") -or
+        $segment.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0 -or
+        $segment.Contains("\") -or $segment.Contains("/")) {
+        throw "ITL_ARTIFACT_CACHE_SEGMENT_INVALID: $Name='$Value'."
+    }
+    return $segment
+}
+
+function Get-ItlSharedArtifactDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Family,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$Sha256
+    )
+
+    $familySegment = ConvertTo-ItlArtifactCacheSegment -Value $Family -Name "family"
+    $versionSegment = ConvertTo-ItlArtifactCacheSegment -Value $Version -Name "version"
+    $hash = $Sha256.Trim().ToLowerInvariant()
+    if ($hash -notmatch '^[a-f0-9]{64}$') {
+        throw "ITL_ARTIFACT_CACHE_SHA256_INVALID: family='$Family' version='$Version' sha256='$Sha256'."
+    }
+    return (Join-Path (Join-Path (Join-Path (Get-ItlSharedArtifactCacheRoot) $familySegment) $versionSegment) $hash)
+}
+
+function Get-ItlSharedArtifactPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Family,
+        [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$Sha256,
+        [Parameter(Mandatory = $true)][string]$AssetName
+    )
+
+    $assetSegment = ConvertTo-ItlArtifactCacheSegment -Value $AssetName -Name "assetName"
+    return (Join-Path (Get-ItlSharedArtifactDirectory -Family $Family -Version $Version -Sha256 $Sha256) $assetSegment)
+}
+
+function Test-ItlPathUnderSharedArtifactCache {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try {
+        $resolvedPath = Resolve-Agent1cFullPath -Path $Path
+        $cacheRoot = (Resolve-Agent1cFullPath -Path (Get-ItlSharedArtifactCacheRoot)).TrimEnd("\", "/")
+    } catch {
+        return $false
+    }
+    return [string]::Equals($resolvedPath, $cacheRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $resolvedPath.StartsWith(($cacheRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-ItlPathUnderManagedProjectTools {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    try { $resolvedPath = Resolve-Agent1cFullPath -Path $Path } catch { return $false }
+
+    $projectRoots = [System.Collections.Generic.List[string]]::new()
+    if ($script:ProjectRoot) { $projectRoots.Add((Resolve-Agent1cFullPath -Path $script:ProjectRoot)) }
+    if ($script:ProjectRoot -and (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
+        try {
+            $mainRoot = Get-MainWorktreePath
+            if ($mainRoot) { $projectRoots.Add((Resolve-Agent1cFullPath -Path $mainRoot)) }
+        } catch {
+        }
+    }
+
+    foreach ($projectRoot in @($projectRoots | Select-Object -Unique)) {
+        $toolsRoot = (Resolve-Agent1cFullPath -Path (Join-Path $projectRoot ".agent-1c\tools")).TrimEnd("\", "/")
+        if ([string]::Equals($resolvedPath, $toolsRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+            $resolvedPath.StartsWith(($toolsRoot + [System.IO.Path]::DirectorySeparatorChar), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    if ($resolvedPath -match '[\\/]\.agent-1c[\\/]tools(?:[\\/]|$)') { return $true }
+    return $false
 }
 
 function Get-Agent1cProjectRootPathBudget {
@@ -4364,6 +4473,7 @@ function Complete-InitProjectSettingsPreparation {
 
     Ensure-WebPublicationForInit -Answers $preparedAnswers
     Ensure-VanessaAutomationForInit -Answers $preparedAnswers
+    Ensure-YAxUnitForInit | Out-Null
     Read-ProjectConfig
 }
 

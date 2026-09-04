@@ -14,6 +14,8 @@
 
 Для защиты от `MAX_PATH=260` абсолютный путь начального корня проекта ограничен 35 символами, а путь нового worktree `<родитель>\<проект>-<ветка>` — 50 символами. Допустимая длина имени ветки вычисляется только как остаток от 50 после родительского пути, имени папки проекта, разделителя и дефиса; содержимое исходников не анализируется. Временные транзакции выгрузки конфигурации, расширения и установки Vanessa используют игнорируемую папку `.tx` внутри проекта.
 
+Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хранятся вне worktree в immutable-кэше `%LOCALAPPDATA%\ITL\artifacts\<family>\<version>\<sha256>`. `ITL_ARTIFACT_CACHE_ROOT` переопределяет его корень только для maintainer/test сценариев; обычному проекту этот параметр не нужен. `itl-update-workflow` заполняет кэш новых pin-версий, а `itl-refresh`, `itl-refresh-lite` и `itl-refresh-all` проверяют/дозаполняют его и переписывают helper-owned bindings ветки до загрузки 1С.
+
 ## Платформа, исходная база и хранилище
 
 | Ключ | Назначение | Значения/default | Владелец |
@@ -34,7 +36,10 @@
 | `SOURCE_INFOBASE_PATH` | Путь к файловой исходной базе | путь | init/user |
 | `SOURCE_SERVER_NAME` | Сервер исходной базы | строка | init/user |
 | `SOURCE_INFOBASE_NAME` | Имя серверной исходной базы | строка | init/user |
-| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | Глубина исходного журнала для baseline сигнатур; `0` полностью отключает его чтение | целое `>=0`, default `7` | user |
+| `SOURCE_EVENT_LOG_BASELINE_ENABLED` | Включает вспомогательный baseline журнала source для обоих видов баз | bool, default `true` | user |
+| `SOURCE_SERVER_EVENT_LOG_LOOKBACK_DAYS` | Глубина source baseline только для server-provider | целое `>=1`, default `7` | user |
+| `SOURCE_EVENT_LOG_LOOKBACK_DAYS` | Deprecated fallback: `0` выключает baseline при отсутствии нового флага, положительное число используется только как server lookback; для file source игнорируется | deprecated | user |
+| `SOURCE_EVENT_LOG_BOOTSTRAP_TAIL_BYTES` | Максимум байт из хвоста последнего `.lgp` для холодного старта source baseline; дальше читается только append-delta, `0` начинает с EOF | целое `>=0`, default `1048576` | user |
 | `BASE_CONFIGURATION_VERSION` | Локальный override семейства конфигурации | `PM4`/`PM5`; пусто = project.json | user |
 | `IB_USER` | Пользователь копии базы | пусто = без имени | user/secret |
 | `IB_PASSWORD` | Пароль копии базы | пусто = без пароля | user/secret |
@@ -89,6 +94,7 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
+| `ITL_YAXUNIT_TESTING` | Запуск YAxUnit для локальных алгоритмических тестов | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VANESSA_TESTING` | Запуск Vanessa Automation | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_CHECK_EVENT_LOG` | Проверка журнала регистрации | `auto`/`manual`/`off`, default `auto` | user/`/itl-litemode` |
 | `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` | Максимум полных прогонов в одной repair-сессии `/itl-verify-fix`; значение фиксируется при старте сессии | целое `1..100`, default `5` | user |
@@ -123,9 +129,11 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
-| `VANESSA_AUTOMATION_ROOT` | Каталог установки VA | default `.agent-1c/tools/va`; прежний managed-путь `.agent-1c/tools/vanessa-automation` автоматически заменяется коротким | helper/user |
+| `VANESSA_AUTOMATION_ROOT` | Явный пользовательский каталог VA; managed default адресуется через immutable-кэш | default `.agent-1c/tools/va` как логический managed marker | helper/user |
+| `YAXUNIT_INSTALL_ROOT`, `YAXUNIT_TESTS_PATH`, `YAXUNIT_REPORTS_PATH` | CFE YAxUnit, исходники тестового расширения и JUnit-отчёты | defaults `.agent-1c/tools/yaxunit`, `tests/yaxunit`, `build/test-results/yaxunit` | helper/user |
+| `YAXUNIT_TESTS_EXTENSION_NAME`, `YAXUNIT_TEST_TIMEOUT_SECONDS` | Имя тестового расширения и timeout прогона | defaults `tests`, `1800`; имя движка фиксировано как `YAXUNIT` | helper/user |
 | `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` | Локальный exact ZIP для maintainer-квалификации до публикации pinned artifact | пусто; путь к квалифицированному ZIP, SHA-256 всегда проверяется по lock | maintainer |
-| `VANESSA_AUTOMATION_EPF` | Путь к EPF | определяется helper | helper |
+| `VANESSA_AUTOMATION_EPF` | Точный путь к EPF в immutable user-local cache (или явный пользовательский путь) | определяется helper | helper |
 | `VANESSA_AUTOMATION_VERSION` | Установленная версия | определяется helper | helper |
 | `VANESSA_FEATURES_PATH` | Каталог feature-файлов | default `tests/features` | user |
 | `VANESSA_REPORTS_PATH` | Каталог отчетов | default `build/test-results/vanessa` | user |
@@ -147,11 +155,11 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | Ключ | Назначение | Значения/default | Владелец |
 |---|---|---|---|
 | `VANESSA_MCP_AUTO_START` | Автозапуск | default `false` | user |
-| `VANESSA_MCP_INSTALL_ROOT` | Каталог установки | default `.agent-1c/tools/vanessa-mcp` | helper/user |
-| `VANESSA_MCP_CLIENT_CFE_PATH` | Путь к client CFE | определяется helper | helper |
+| `VANESSA_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/vanessa-mcp` как логический managed marker | helper/user |
+| `VANESSA_MCP_CLIENT_CFE_PATH` | Точный путь к client CFE в immutable user-local cache | определяется helper | helper |
 | `VANESSA_MCP_CLIENT_CFE_VERSION` | Версия client CFE | определяется helper | helper |
 | `VANESSA_MCP_CLIENT_CFE_SHA256` | SHA256 client CFE | определяется helper | helper |
-| `VANESSA_MCP_VA_EXTENSION_CFE_PATH` | Путь к VA extension CFE | определяется helper | helper |
+| `VANESSA_MCP_VA_EXTENSION_CFE_PATH` | Точный путь к VA extension CFE в immutable user-local cache | определяется helper | helper |
 | `VANESSA_MCP_VA_EXTENSION_CFE_VERSION` | Версия VA extension | определяется helper | helper |
 | `VANESSA_MCP_VA_EXTENSION_CFE_SHA256` | SHA256 VA extension | определяется helper | helper |
 | `VANESSA_MCP_PORT_RANGE` | Диапазон портов | default `9874..9973` | user |
@@ -166,9 +174,9 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `ROCTUP_MCP_ENABLED` | Доступность integration | default `true` | user |
 | `ROCTUP_MCP_AUTO_START` | Автозапуск | default `false` | user |
 | `ROCTUP_MCP_REQUIRED` | Блокировать без MCP | default `false` | user |
-| `ROCTUP_MCP_INSTALL_ROOT` | Каталог установки | default `.agent-1c/tools/roctup-mcp-toolkit` | helper/user |
+| `ROCTUP_MCP_INSTALL_ROOT` | Явный пользовательский каталог; managed default адресуется через immutable-кэш | default `.agent-1c/tools/roctup-mcp-toolkit` как логический managed marker | helper/user |
 | `ROCTUP_MCP_PORT_RANGE` | Диапазон портов | default `6003..6102` | user |
-| `ROCTUP_MCP_TOOLKIT_EPF` | Путь к toolkit EPF | определяется helper | helper |
+| `ROCTUP_MCP_TOOLKIT_EPF` | Точный путь к toolkit EPF в immutable user-local cache (или явный пользовательский путь) | определяется helper | helper |
 | `ROCTUP_MCP_VERSION` | Установленная версия | определяется helper | helper |
 | `ROCTUP_MCP_SHA256` | SHA256 toolkit | определяется helper | helper |
 | `ROCTUP_MCP_PORT` | Порт текущей ветки | назначается helper | helper |

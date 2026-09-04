@@ -31,8 +31,9 @@ Rules:
 4. Use ROCTUP only for a concrete data exploration operation; do not call its private Streamable HTTP URL directly.
 5. Pass known inner names directly to `call_tool` with only intended arguments; use `resolve_tool` only for an unknown name or schema. Start with filtered `get_metadata`, then bounded `execute_query`. Do not invoke `execute_code` or `restart_1c_session` without explicit user request. `close_1c_session` may release the current managed dev-branch session during lifecycle recovery without separate confirmation; source and other-branch infobases remain protected.
 6. `ITL_INFOBASE_APPLICATION_NOT_READY` means the source snapshot is not proven in the dev infobase. Run `update-dev-branch-base` once, then repeat the original MCP call once; never make the MCP broker perform the lifecycle mutation itself.
-7. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from ignored `.agent-1c/tools/roctup-mcp-toolkit/skills`.
+7. Do not load full ROCTUP references eagerly. Cached upstream ROCTUP skills are read only on demand from the version/SHA-scoped immutable artifact directory.
 8. `fresh` selects the newest ROCTUP version present in the workflow compatibility manifest, never an unverified upstream latest. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH` and stops the backend.
+9. General `status`/`doctor` reports a facade/lock mismatch as a warning so unrelated lifecycle diagnostics remain available. Facade installation and dependent MCP calls still fail closed until normal branch refresh reconciles the branch-local workflow and lock.
 
 ## vibecoding1c MCP
 

@@ -34,7 +34,7 @@
   "serverBaseCopyScript": "",
   "aiRules": {
     "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-    "ref": "itl-main-410951e7-r32",
+    "ref": "itl-main-410951e7-r33",
     "tools": []
   },
   "vibecoding1cMcp": {
@@ -59,6 +59,12 @@
     "featuresPath": "tests/features",
     "reportsPath": "build/test-results/vanessa",
     "testClientManifestPath": ""
+  },
+  "yaxunit": {
+    "installRoot": ".agent-1c/tools/yaxunit",
+    "testsExtensionName": "tests",
+    "testsPath": "tests/yaxunit",
+    "reportsPath": "build/test-results/yaxunit"
   },
   "roctupMcpToolkit": {
     "installRoot": ".agent-1c/tools/roctup-mcp-toolkit",

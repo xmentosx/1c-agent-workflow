@@ -444,6 +444,7 @@ function Save-E2EConfigDumpInfoCursorCommit {
 function New-E2EVanessaFixtureCommit {
     $featurePath = Join-Path $worktreePath "tests\features\ITLReleaseFourFlat.feature"
     $markerFeaturePath = Join-Path $worktreePath "tests\features\workflow-release-e2e.feature"
+    $catalogPath = Join-Path $worktreePath "tests\verification-suites.branch.json"
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $featurePath) | Out-Null
     # Keep the PowerShell 5.1 script source ASCII-safe; otherwise Cyrillic literals in a
     # UTF-8-without-BOM .ps1 are decoded through the active ANSI code page before writing.
@@ -463,7 +464,21 @@ function New-E2EVanessaFixtureCommit {
         $markerFeatureText = $markerFeatureText.Replace($oldMarkerStep, $targetMarkerStep)
         [IO.File]::WriteAllText($markerFeaturePath, $markerFeatureText, [Text.UTF8Encoding]::new($false))
     }
-    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature tests/features/workflow-release-e2e.feature | Out-Null
+    $catalog = @'
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "id": "itl-release-e2e",
+      "purpose": "acceptance",
+      "featurePaths": ["tests/features/*.feature"],
+      "ownerPaths": ["src/cf/Configuration.xml"]
+    }
+  ]
+}
+'@
+    [IO.File]::WriteAllText($catalogPath, $catalog.Trim() + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature tests/features/workflow-release-e2e.feature tests/verification-suites.branch.json | Out-Null
     & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
     $commit = (& git -C $worktreePath rev-parse HEAD).Trim()

@@ -1,7 +1,11 @@
 function Get-ItlVerificationMode {
-    param([ValidateSet("vanessa", "event-log")][string]$Component)
+    param([ValidateSet("yaxunit", "vanessa", "event-log")][string]$Component)
 
-    $key = $(if ($Component -eq "vanessa") { "ITL_VANESSA_TESTING" } else { "ITL_CHECK_EVENT_LOG" })
+    $key = switch ($Component) {
+        "yaxunit" { "ITL_YAXUNIT_TESTING" }
+        "vanessa" { "ITL_VANESSA_TESTING" }
+        default { "ITL_CHECK_EVENT_LOG" }
+    }
     $raw = [string](Get-EnvValue -Name $key -Default "")
     $normalized = $raw.Trim().ToLowerInvariant()
     $valid = [string]::IsNullOrWhiteSpace($normalized) -or $normalized -in @("auto", "manual", "off")
@@ -17,7 +21,7 @@ function Get-ItlVerificationMode {
 
 function Get-ItlVerificationExecutionDecision {
     param(
-        [ValidateSet("vanessa", "event-log")][string]$Component,
+        [ValidateSet("yaxunit", "vanessa", "event-log")][string]$Component,
         [ValidateSet("implicit", "command", "repair", "explicit")][string]$Trigger,
         [string[]]$ExplicitComponents = @()
     )
@@ -50,7 +54,7 @@ function Get-ItlVerificationExecutionDecision {
 }
 
 function Write-ItlVerificationModeStatus {
-    foreach ($component in @("vanessa", "event-log")) {
+    foreach ($component in @("yaxunit", "vanessa", "event-log")) {
         $mode = Get-ItlVerificationMode -Component $component
         $suffix = $(if ($mode.valid) { "" } else { " (invalid '$($mode.raw)'; effective safe default auto)" })
         Write-Host "$($mode.key)=$($mode.effective)$suffix"
@@ -66,9 +70,9 @@ function Set-ItlLiteMode {
         return
     }
     $values = switch ($normalized) {
-        { $_ -in @("lite", "on") } { @{ ITL_VANESSA_TESTING = "off"; ITL_CHECK_EVENT_LOG = "off" }; break }
-        "standard" { @{ ITL_VANESSA_TESTING = "auto"; ITL_CHECK_EVENT_LOG = "manual" }; break }
-        { $_ -in @("full", "off") } { @{ ITL_VANESSA_TESTING = "auto"; ITL_CHECK_EVENT_LOG = "auto" }; break }
+        { $_ -in @("lite", "on") } { @{ ITL_YAXUNIT_TESTING = "off"; ITL_VANESSA_TESTING = "off"; ITL_CHECK_EVENT_LOG = "off" }; break }
+        "standard" { @{ ITL_YAXUNIT_TESTING = "auto"; ITL_VANESSA_TESTING = "auto"; ITL_CHECK_EVENT_LOG = "manual" }; break }
+        { $_ -in @("full", "off") } { @{ ITL_YAXUNIT_TESTING = "auto"; ITL_VANESSA_TESTING = "auto"; ITL_CHECK_EVENT_LOG = "auto" }; break }
         default { throw "itl-litemode supports: lite|on|standard|full|off|status." }
     }
     Set-DotEnvValues -Values $values
@@ -250,6 +254,7 @@ function Test-ItlFullVerificationProofEligible {
 
     if (Test-ItlDiagnosticVerificationScope) { return $false }
     $decisions = @(
+        Get-ItlVerificationExecutionDecision -Component "yaxunit" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
         Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
         Get-ItlVerificationExecutionDecision -Component "event-log" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
     )
@@ -307,22 +312,38 @@ function Invoke-ItlVerificationCycle {
     )
 
     $state = Read-DevBranchState -Name $DevBranchName
+    $yaxunit = Get-ItlVerificationExecutionDecision -Component "yaxunit" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
     $vanessa = Get-ItlVerificationExecutionDecision -Component "vanessa" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
     $eventLog = Get-ItlVerificationExecutionDecision -Component "event-log" -Trigger $Trigger -ExplicitComponents $ExplicitComponents
-    $decisions = @($vanessa, $eventLog)
+    $decisions = @($yaxunit, $vanessa, $eventLog)
     foreach ($decision in $decisions) { Write-Host "Verification component $($decision.component): $(if ($decision.run) { 'RUN' } else { 'SKIP' }) ($($decision.reason))" }
 
-    if ($vanessa.run) {
-        $script:ItlSkipEventLogForVerification = -not $eventLog.run
-        $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
-        $selectionPlan = $null
-        if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext) {
+    $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    $selectionPlan = $null
+    if (-not $script:ActiveAuxiliaryVanessaContext -and ($vanessa.run -or $yaxunit.run)) {
+        Assert-VerificationClassificationReady -Reason "check-dev-branch preflight" -RequireVanessa:$vanessa.run -RequireYAxUnit:$yaxunit.run | Out-Null
+    }
+    if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
+        if ($vanessa.run) {
             $featuresPath = Get-VanessaFeaturesPath
             $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
             if ($applicationFeatureFiles.Count -gt 0) {
-                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$yaxunit.run
+                if ($selectionPlan.mode -eq "classification-required") {
+                    Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
+                    throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($selectionPlan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
+                }
             }
         }
+    }
+
+    if ($yaxunit.run) {
+        Invoke-YAxUnitVerification -State $state | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
+    }
+
+    if ($vanessa.run) {
+        $script:ItlSkipEventLogForVerification = -not $eventLog.run
         if ($null -ne $selectionPlan -and $selectionPlan.mode -eq "reuse") {
             Assert-DevelopmentBranchWorktreeContext -State $state -Operation "check-dev-branch"
             Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"

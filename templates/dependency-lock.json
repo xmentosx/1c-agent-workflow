@@ -10,25 +10,25 @@
       "updatedAt": ""
     },
     "itlOndemandMcp": {
-      "version": "0.4.8",
-      "releaseTag": "itl-ondemand-mcp-v0.4.8",
+      "version": "0.4.9",
+      "releaseTag": "itl-ondemand-mcp-v0.4.9",
       "assetName": "itl-ondemand-mcp-windows-amd64.exe",
-      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.8/itl-ondemand-mcp-windows-amd64.exe",
-      "sha256": "05c391c7ea34bb027d380cd9d7a9debf37090cf624cb711a3afa8568b4e4317c",
+      "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.9/itl-ondemand-mcp-windows-amd64.exe",
+      "sha256": "71eb64ee7a900a43fb23842f9d4cec21502e0d4b92eddc2847bb9769396ec21b",
       "os": "windows",
       "arch": "amd64",
       "source": "workflow release asset"
     },
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
-      "ref": "itl-main-410951e7-r32",
-      "commit": "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b",
+      "ref": "itl-main-410951e7-r33",
+      "commit": "9309bfbbc9f8d844a21bce55178c2e0d72eaf965",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
-      "downstreamRevision": 32,
+      "downstreamRevision": 33,
       "compatibilityStatus": "passed",
-      "compatibilityCheckedAt": "2026-08-24T21:13:47Z"
+      "compatibilityCheckedAt": "2026-09-04T15:36:42Z"
     },
     "agentBrowser": {
       "version": "0.33.1",
@@ -94,6 +94,15 @@
       "patchSha256": "b12426595cd0fa603698d9682d48bcb00b403ffce747ffdf02e00fd9f7ad5943",
       "upstreamCommit": "f3a01778a14d29b38204685deea0131274d438ff",
       "source": "workflow-pinned"
+    },
+    "yaxunit": {
+      "version": "25.12",
+      "releaseTag": "25.12",
+      "assetName": "YAxUnit-25.12.cfe",
+      "url": "https://github.com/bia-technologies/yaxunit/releases/download/25.12/YAxUnit-25.12.cfe",
+      "sha256": "805a2277c997a3c24be0b0d080696479e91e4a15ed7e27aaf3991a7346522d70",
+      "upstreamCommit": "15f7ae557d17b59bd80daad503efd8a3114690e5",
+      "source": "upstream release asset"
     },
     "vanessaMcp": {
       "clientMcp": {

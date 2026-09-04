@@ -1,18 +1,14 @@
 function Get-ItlOnDemandMcpWorkflowRoot {
-    $mainHelperPath = ""
-    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue) {
-        $mainWorktreePath = Get-MainWorktreePath
-        $mainWorkflowRoot = Join-Path $mainWorktreePath ".agents\skills\1c-workflow"
-        $mainHelperPath = Join-Path $mainWorkflowRoot "scripts\agent-1c.ps1"
-        if (Test-Path -LiteralPath $mainHelperPath -PathType Leaf) {
-            return (Resolve-Agent1cFullPath -Path $mainWorkflowRoot)
-        }
+    $projectWorkflowRoot = Join-Path $script:ProjectRoot ".agents\skills\1c-workflow"
+    $projectHelperPath = Join-Path $projectWorkflowRoot "scripts\agent-1c.ps1"
+    if (Test-Path -LiteralPath $projectHelperPath -PathType Leaf) {
+        return (Resolve-Agent1cFullPath -Path $projectWorkflowRoot)
     }
 
     $currentWorkflowRoot = Split-Path -Parent $script:Agent1cScriptRoot
     $currentHelperPath = Join-Path $currentWorkflowRoot "scripts\agent-1c.ps1"
     if (-not (Test-Path -LiteralPath $currentHelperPath -PathType Leaf)) {
-        throw "ITL on-demand MCP workflow helper was not found in the main or current worktree. Main: $(if ($mainHelperPath) { $mainHelperPath } else { '<not available before Git initialization>' }). Current: $currentHelperPath"
+        throw "ITL on-demand MCP workflow helper was not found in the project or current package. Project: $projectHelperPath. Current: $currentHelperPath"
     }
     return (Resolve-Agent1cFullPath -Path $currentWorkflowRoot)
 }
@@ -1327,7 +1323,13 @@ function Invoke-ItlOnDemandStaleCleanupForStatus {
 
 function Write-ItlOnDemandMcpStatusLines {
     param([string]$Indent = "")
-    $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
+    try {
+        $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
+    } catch {
+        Write-Host "${Indent}ITL on-demand MCP facade: warning"
+        Write-Host "${Indent}ITL on-demand MCP diagnostic: $($_.Exception.Message)"
+        return
+    }
     $installed = Test-Path -LiteralPath $executable -PathType Leaf
     Write-Host "${Indent}ITL on-demand MCP facade: $(if ($installed) { 'ready' } else { 'missing' })"
     Write-Host "${Indent}ITL on-demand MCP executable: $executable"

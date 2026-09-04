@@ -207,6 +207,21 @@ Describe "Immutable asset download retry policy" {
         Assert-MockCalled Get-FileHash -Times 0
     }
 
+    It "atomically replaces a stale cache file on Windows PowerShell" {
+        $directory = Join-Path $TestDrive (([char]0x041A).ToString() + " cache with spaces")
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+        $source = Join-Path $directory "source.bin"
+        $destination = Join-Path $directory "destination.bin"
+        [IO.File]::WriteAllBytes($source, $script:Payload)
+        [IO.File]::WriteAllText($destination, "stale payload", [Text.UTF8Encoding]::new($false))
+
+        $result = Invoke-ItlImmutableFileAcquire -Source $source -DestinationPath $destination -ExpectedSha256 $script:PayloadSha256
+
+        $result.published | Should -BeTrue
+        (Get-ItlImmutableFileSha256 -Path $destination) | Should -Be $script:PayloadSha256
+        @(Get-ChildItem -LiteralPath $directory -Filter "*.backup" -Force) | Should -BeNullOrEmpty
+    }
+
     It "accepts concurrent same-SHA publishers without exposing a partial target" {
         $source = Join-Path $TestDrive "race-source.bin"
         $destination = Join-Path $TestDrive "race-target.bin"
@@ -283,15 +298,15 @@ Describe "Immutable asset download retry policy" {
         $script:RequestCount | Should -Be 1
     }
 
-    It "routes only pinned artifact and post-gate verification GETs through the policy" {
+    It "routes every pinned artifact, cache migration, and post-gate verification GET through the policy" {
         $vanessa = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
         $roctup = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1") -Raw -Encoding UTF8
         $readiness = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\test-release-readiness.ps1") -Raw -Encoding UTF8
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
 
-        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
-        @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 1
+        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 4
+        @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
         $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
         $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
         $delivery | Should -Match 'Get-DeliveryRemoteAssetState.*-AvailabilityAttempts 12'

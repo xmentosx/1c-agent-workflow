@@ -848,7 +848,7 @@ function Get-ItlRoutineCommandNames {
     return @(
         "itl.md", "itl-status.md", "itl-sync-master.md", "itl-new-config-branch.md",
         "itl-new-extension-branch.md", "itl-check.md", "itl-refresh.md",
-        "itl-refresh-lite.md", "itl-refresh-all.md", "itl-fork-branch.md", "itl-reset-branch.md", "itl-lock-objects.md",
+        "itl-refresh-lite.md", "itl-refresh-all.md", "itl-fork-branch.md", "itl-sync-branches.md", "itl-reset-branch.md", "itl-lock-objects.md",
         "itl-result.md", "itl-update-workflow.md", "itl-litemode.md", "itl-repository-mode.md", "itl-switch-client.md"
     )
 }
@@ -884,7 +884,7 @@ function Get-ItlRoutineLongCommandNames {
     return @(
         "itl-new-config-branch.md", "itl-new-extension-branch.md",
         "itl-check.md", "itl-sync-master.md", "itl-refresh.md", "itl-refresh-lite.md",
-        "itl-refresh-all.md", "itl-fork-branch.md", "itl-reset-branch.md", "itl-lock-objects.md", "itl-result.md",
+        "itl-refresh-all.md", "itl-fork-branch.md", "itl-sync-branches.md", "itl-reset-branch.md", "itl-lock-objects.md", "itl-result.md",
         "itl-update-workflow.md", "itl-switch-client.md"
     )
 }
@@ -1552,7 +1552,7 @@ function Show-ItlDoctor {
     $checks.Add([pscustomobject]@{ status = $(if ($openSpec.isAvailable) { "OK" } else { "WARN" }); name = "openspec"; detail = $openSpecDetail })
     $devEnvPath = Join-Path $script:ProjectRoot ".dev.env"
     $checks.Add([pscustomobject]@{ status = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "OK" } else { "FAIL" }); name = "dev-env"; detail = $(if (Test-Path -LiteralPath $devEnvPath -PathType Leaf) { "present; values inspected without mutation" } else { "missing" }) })
-    foreach ($component in @("vanessa", "event-log")) {
+    foreach ($component in @("yaxunit", "vanessa", "event-log")) {
         $mode = Get-ItlVerificationMode -Component $component
         $checks.Add([pscustomobject]@{ status = $(if ($mode.valid) { "OK" } else { "WARN" }); name = $mode.key; detail = "raw=$(if ($mode.raw) { $mode.raw } else { '<missing>' }); effective=$($mode.effective)$(if (-not $mode.valid) { '; safe default auto' } else { '' })" })
     }
