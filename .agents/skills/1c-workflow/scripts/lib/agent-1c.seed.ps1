@@ -598,8 +598,13 @@ function Ensure-BranchSeed {
         [ValidateSet("EnsureCompatible", "Rebuild")]
         [string]$Policy,
         [string]$ConfigurationFingerprint,
-        [int]$ConfigurationFileCount = 0
+        [int]$ConfigurationFileCount = 0,
+        [switch]$TrustProvidedConfigurationFingerprint
     )
+
+    if ($TrustProvidedConfigurationFingerprint -and -not $ConfigurationFingerprint) {
+        throw "BRANCH_SEED_TRUSTED_FINGERPRINT_MISSING: a source-authoritative fingerprint is required when the seed validation dump is skipped."
+    }
 
     if ($Policy -eq "EnsureCompatible") {
         $existing = Read-BranchSeedManifest -AllowMissing
@@ -611,10 +616,12 @@ function Ensure-BranchSeed {
             return $existing
         }
     }
+    # Full refresh has just dumped the source base. The copied seed is the
+    # same point-in-time base by contract, so repeating that dump is waste.
     return (New-BranchSeed `
         -ConfigurationFingerprint $ConfigurationFingerprint `
         -ConfigurationFileCount $ConfigurationFileCount `
-        -DumpConfigurationFromSeed:((Get-InfoBaseKind) -eq "file"))
+        -DumpConfigurationFromSeed:((Get-InfoBaseKind) -eq "file" -and -not $TrustProvidedConfigurationFingerprint))
 }
 
 function Restore-DevBranchFromSeed {

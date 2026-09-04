@@ -9,7 +9,7 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 ## Purpose
 
-Map routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for helper recovery, missing setup, or explanation.
+Map routine requests to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for recovery, missing setup, or explanation.
 
 For a mapped routine, make the helper the first and only tool action after one sentence; do not pre-read `.dev.env`, inspect Git, or repeat preflight. Honor explicit Caveman, otherwise the helper's response style. Send one-line heartbeats only on stage/liveness changes. A successful `userReport` remains verbatim. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
 
@@ -21,6 +21,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 - new configuration branch: `new-dev-branch`
 - new extension branch: `new-extension-dev-branch`; collect `Empty|Cfe`, name, and optional CFE path
 - fork branch: `fork-dev-branch`; target name
+- branch source exchange: `sync-dev-branches`; peer name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
 - explicitly requested base load without tests: `update-dev-branch-base`

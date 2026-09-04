@@ -446,8 +446,8 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 26
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
+            @($devFiles.Keys).Count | Should -Be 28
+            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
@@ -484,11 +484,13 @@
                 Sync-ItlManagedSurfaceFiles -Client codex -ExpectedFiles $expectedFiles
                 [pscustomobject]@{
                     hasForkSkill = Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-fork-branch\SKILL.md") -PathType Leaf
+                    hasSyncSkill = Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-sync-branches\SKILL.md") -PathType Leaf
                     status = @(& git -C $tempRoot status --porcelain)
                 }
             }
 
             $result.hasForkSkill | Should -BeTrue
+            $result.hasSyncSkill | Should -BeTrue
             $result.status | Should -BeNullOrEmpty
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

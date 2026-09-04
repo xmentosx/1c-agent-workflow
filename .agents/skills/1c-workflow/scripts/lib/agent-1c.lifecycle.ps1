@@ -910,12 +910,298 @@ function Get-OneCConfigurationSourceValidatorPath {
     return $validatorPath
 }
 
+function Get-OneCSourceIntegrityValidatorPath {
+    param(
+        [ValidateSet("form", "metadata", "skd", "subsystem", "interface", "role", "xdto", "mxl", "uuid")]
+        [string]$Validator
+    )
+
+    $overrides = Get-Variable -Name OneCSourceIntegrityValidatorPathOverrides -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $overrides -and $null -ne $overrides.Value -and $overrides.Value.ContainsKey($Validator)) {
+        $validatorPath = [System.IO.Path]::GetFullPath([string]$overrides.Value[$Validator])
+    } else {
+        $activeClient = Get-ItlActiveClient
+        $skillRoot = Get-AiRules1cInstalledSkillRoot -SkillName "1c-metadata-manage" -Client $activeClient
+        $relativePaths = @{
+            form = "tools\1c-form-validate\scripts\form-validate.ps1"
+            metadata = "tools\1c-meta-validate\scripts\meta-validate.ps1"
+            skd = "tools\1c-skd-validate\scripts\skd-validate.ps1"
+            subsystem = "tools\1c-subsystem-manage\scripts\subsystem-validate.ps1"
+            interface = "tools\1c-interface-manage\scripts\interface-validate.ps1"
+            role = "tools\1c-role-validate\scripts\role-validate.ps1"
+            xdto = "tools\1c-xdto-manage\scripts\xdto-validate.ps1"
+            mxl = "tools\1c-mxl-validate\scripts\mxl-validate.ps1"
+            uuid = "tools\1c-uuid-check\scripts\uuid-check.ps1"
+        }
+        $validatorPath = Join-Path $skillRoot $relativePaths[$Validator]
+    }
+    if (-not (Test-Path -LiteralPath $validatorPath -PathType Leaf)) {
+        throw "ONEC_SOURCE_VALIDATOR_MISSING validator='$Validator' path='$validatorPath'. Run pinned update-ai-rules from master, then repeat the same ITL command."
+    }
+    return $validatorPath
+}
+
+function Invoke-OneCSourceIntegrityValidator {
+    param(
+        [string]$Validator,
+        [string]$ScriptPath,
+        [string[]]$Arguments,
+        [switch]$SupportsOutFile
+    )
+
+    $reportPath = ""
+    $effectiveArguments = @($Arguments)
+    if ($SupportsOutFile) {
+        $reportPath = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-$Validator-" -Extension ".txt"
+        $effectiveArguments += @("-OutFile", $reportPath)
+    }
+    $nativeArguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $ScriptPath) + $effectiveArguments
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "powershell.exe"
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments $nativeArguments
+    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = Get-Utf8Encoding
+    $startInfo.StandardErrorEncoding = Get-Utf8Encoding
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        try {
+            $started = $process.Start()
+        } catch {
+            throw "ONEC_SOURCE_VALIDATOR_START_FAILED validator='$Validator' path='$ScriptPath' detail='$($_.Exception.Message)'."
+        }
+        if (-not $started) {
+            throw "ONEC_SOURCE_VALIDATOR_START_FAILED validator='$Validator' path='$ScriptPath'."
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(120000)) {
+            try { $process.Kill() } catch {}
+            throw "ONEC_SOURCE_VALIDATOR_TIMEOUT validator='$Validator' path='$ScriptPath' timeoutSeconds='120'."
+        }
+        $stdout = $stdoutTask.GetAwaiter().GetResult().Trim()
+        $stderr = $stderrTask.GetAwaiter().GetResult().Trim()
+        $details = @(@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) -join " | "
+        if ($reportPath -and (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+            $fileDetails = (Read-Utf8Text -Path $reportPath).Trim() -replace "\r?\n", " | "
+            $details = @(@($fileDetails, $details) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }) -join " | "
+        }
+        if ($process.ExitCode -ne 0 -and -not $details) {
+            $details = "$Validator exited with code $($process.ExitCode) without diagnostic output."
+        }
+        return [pscustomobject]@{
+            exitCode = [int]$process.ExitCode
+            details = $details
+        }
+    } finally {
+        $process.Dispose()
+        if ($reportPath) {
+            Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Get-OneCSourceIntegrityCandidatePaths {
+    param(
+        [string]$ExportPath,
+        [string[]]$AdditionalPaths = @(),
+        [string[]]$AdditionalRelativePaths = @()
+    )
+
+    $absoluteExportPath = Assert-ExportPathInsideProject -ExportPath $ExportPath
+    $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
+    $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
+    $normalizedAdditionalPaths = @(
+        @($AdditionalPaths) + @(
+            $AdditionalRelativePaths |
+                Where-Object { $_ -and -not ([string]$_).StartsWith("<") } |
+                ForEach-Object { "$repoExportPath/$(([string]$_).Replace('\', '/').TrimStart('/'))" }
+        )
+    )
+    $paths = if (Test-GitMergeInProgress) {
+        $branchCommit = Get-CurrentCommit
+        $targetCommit = Get-GitMergeHeadCommit
+        $mergeBase = (Get-GitOutput @("merge-base", $branchCommit, $targetCommit)).Trim()
+        $branchPaths = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", $mergeBase, $branchCommit))
+        $branchPathSet = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+        foreach ($branchPath in $branchPaths) {
+            [void]$branchPathSet.Add(([string]$branchPath).Replace("\", "/"))
+        }
+        $overlapPaths = @(
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", $mergeBase, $targetCommit) |
+                ForEach-Object { ([string]$_).Replace("\", "/") } |
+                Where-Object { $branchPathSet.Contains($_) }
+        )
+        @($overlapPaths + $normalizedAdditionalPaths)
+    } else {
+        @((Get-VerificationWorkingTreeChangePaths -PathSpec @($repoExportPath)) + $normalizedAdditionalPaths)
+    }
+    $prefix = $repoExportPath + "/"
+    return @(
+        $paths |
+            ForEach-Object { ([string]$_).Replace("\", "/").TrimStart("/") } |
+            Where-Object {
+                $_.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+                [System.IO.Path]::GetFileName($_) -ine "ConfigDumpInfo.xml" -and
+                [System.IO.Path]::GetExtension($_) -in @(".bsl", ".xml") -and
+                (Test-Path -LiteralPath (Join-Path $projectRoot ($_.Replace("/", "\"))) -PathType Leaf)
+            } |
+            Sort-Object -Unique
+    )
+}
+
+function Get-OneCBslDeclarationRecords {
+    param([AllowEmptyString()][string]$Text)
+
+    $records = [System.Collections.Generic.List[object]]::new()
+    $lineNumber = 0
+    foreach ($line in @($Text -split "\r?\n")) {
+        $lineNumber++
+        if ($line -match '^[\t ]*(?i:(?:(?:Асинх|Async)[\t ]+)?(?:Процедура|Функция|Procedure|Function))[\t ]+(?<name>[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*)[\t ]*\(') {
+            $records.Add([pscustomobject]@{ name = [string]$Matches["name"]; line = $lineNumber }) | Out-Null
+        }
+    }
+    return @($records)
+}
+
+function Get-GitBlobTextAtCommit {
+    param(
+        [string]$Commit,
+        [string]$RepoPath
+    )
+
+    if (-not $Commit) { return "" }
+    $entries = @(Get-GitPathList -Arguments @("ls-tree", "-z", $Commit, "--", $RepoPath))
+    $entry = @($entries | Where-Object { $_ -match "^[0-9]{6} blob (?<objectId>[a-f0-9]{40,64})`t" } | Select-Object -First 1)
+    if ($entry.Count -eq 0) { return "" }
+    [void]($entry[0] -match "^[0-9]{6} blob (?<objectId>[a-f0-9]{40,64})`t")
+    $objectId = [string]$Matches["objectId"]
+    $bytesByObject = Get-GitBlobBytesBatch -ObjectIds @($objectId)
+    if (-not $bytesByObject.ContainsKey($objectId)) { return "" }
+    return [System.Text.Encoding]::UTF8.GetString([byte[]]$bytesByObject[$objectId]).TrimStart([char]0xFEFF)
+}
+
+function Get-OneCBslDeclarationCount {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [string]$Name
+    )
+
+    return @(
+        Get-OneCBslDeclarationRecords -Text $Text |
+            Where-Object { $_.name -ieq $Name }
+    ).Count
+}
+
+function Get-OneCMergeCreatedBslDuplicateIssues {
+    param([string[]]$RepoPaths)
+
+    if (-not (Test-GitMergeInProgress)) { return @() }
+    $branchCommit = Get-CurrentCommit
+    $targetCommit = Get-GitMergeHeadCommit
+    $mergeBase = (Get-GitOutput @("merge-base", $branchCommit, $targetCommit)).Trim()
+    $issues = [System.Collections.Generic.List[object]]::new()
+    foreach ($repoPath in @($RepoPaths | Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".bsl" })) {
+        $absolutePath = Join-Path $script:ProjectRoot ($repoPath.Replace("/", "\"))
+        $mergedText = Read-Utf8Text -Path $absolutePath
+        $mergedRecords = @(Get-OneCBslDeclarationRecords -Text $mergedText)
+        foreach ($group in @($mergedRecords | Group-Object { $_.name.ToLowerInvariant() } | Where-Object Count -gt 1)) {
+            $name = [string]$group.Group[0].name
+            $baseCount = Get-OneCBslDeclarationCount -Text (Get-GitBlobTextAtCommit -Commit $mergeBase -RepoPath $repoPath) -Name $name
+            $branchCount = Get-OneCBslDeclarationCount -Text (Get-GitBlobTextAtCommit -Commit $branchCommit -RepoPath $repoPath) -Name $name
+            $targetCount = Get-OneCBslDeclarationCount -Text (Get-GitBlobTextAtCommit -Commit $targetCommit -RepoPath $repoPath) -Name $name
+            if ($group.Count -le [Math]::Max($branchCount, $targetCount)) { continue }
+            $issues.Add([pscustomobject]@{
+                validator = "bsl-merge-duplicates"
+                code = "merge-created-duplicate-declaration"
+                path = $repoPath
+                symbol = $name
+                lines = @($group.Group | ForEach-Object line)
+                baseCount = $baseCount
+                branchCount = $branchCount
+                targetCount = $targetCount
+                mergedCount = $group.Count
+                detail = "Merge created $($group.Count) declarations of '$name'; base=$baseCount branch=$branchCount target=$targetCount."
+            }) | Out-Null
+        }
+    }
+    return @($issues)
+}
+
+function Get-OneCXmlValidationKind {
+    param([string]$AbsolutePath)
+
+    $document = [System.Xml.XmlDocument]::new()
+    $document.PreserveWhitespace = $true
+    try {
+        $document.Load($AbsolutePath)
+    } catch {
+        return [pscustomobject]@{ validator = "xml"; error = $_.Exception.Message; hasUuid = $false }
+    }
+    $rootName = [string]$document.DocumentElement.LocalName
+    $validator = switch ($rootName) {
+        "Form" { "form"; break }
+        "DataCompositionSchema" { "skd"; break }
+        "SpreadsheetDocument" { "mxl"; break }
+        "CommandInterface" { "interface"; break }
+        "Rights" { "role"; break }
+        "MetaDataObject" {
+            $objectNode = @($document.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element } | Select-Object -First 1)
+            if ($objectNode.Count -eq 0) { "metadata"; break }
+            switch ([string]$objectNode[0].LocalName) {
+                "Subsystem" { "subsystem"; break }
+                "XDTOPackage" { "xdto"; break }
+                default { "metadata"; break }
+            }
+            break
+        }
+        default { ""; break }
+    }
+    return [pscustomobject]@{
+        validator = $validator
+        error = ""
+        hasUuid = $document.OuterXml -match '(?i)\buuid\s*='
+    }
+}
+
+function Write-OneCSourceIntegrityReport {
+    param(
+        [string]$ExportPath,
+        [object[]]$Issues
+    )
+
+    $reportPath = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-source-integrity-" -Extension ".json"
+    $branchCommit = if (Test-GitMergeInProgress) { Get-CurrentCommit } else { "" }
+    $targetCommit = if (Test-GitMergeInProgress) { Get-GitMergeHeadCommit } else { "" }
+    $mergeBase = if ($branchCommit -and $targetCommit) { (Get-GitOutput @("merge-base", $branchCommit, $targetCommit)).Trim() } else { "" }
+    $payload = [ordered]@{
+        schemaVersion = 1
+        kind = "source-integrity"
+        exportPath = $ExportPath
+        branchCommit = $branchCommit
+        targetCommit = $targetCommit
+        mergeBase = $mergeBase
+        issues = @($Issues)
+    }
+    Write-Utf8TextAtomic -Path $reportPath -Value (($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    return $reportPath
+}
+
 function Assert-OneCConfigurationSourceIntegrity {
-    param([string]$ExportPath = (Get-ExportPath))
+    param(
+        [string]$ExportPath = (Get-ExportPath),
+        [string[]]$AdditionalPaths = @(),
+        [string[]]$AdditionalRelativePaths = @()
+    )
 
     $script:RunSourceIntegrityPaths = @()
+    $script:RunSourceIntegrityReportPath = ""
     try {
-        $validatorPath = Get-OneCConfigurationSourceValidatorPath
+        $configurationValidatorPath = Get-OneCConfigurationSourceValidatorPath
     } catch {
         Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
         throw
@@ -925,37 +1211,131 @@ function Assert-OneCConfigurationSourceIntegrity {
     $projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).TrimEnd("\", "/")
     $repoExportPath = $absoluteExportPath.Substring($projectRoot.Length).TrimStart("\", "/").Replace("\", "/")
     $configurationRepoPath = "$repoExportPath/Configuration.xml"
-    $reportPath = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-cf-validate-" -Extension ".txt"
+    $issues = [System.Collections.Generic.List[object]]::new()
     try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $validatorPath `
-            -ConfigPath $absoluteExportPath `
-            -MaxErrors 30 `
-            -OutFile $reportPath *> $null
-        $exitCode = $LASTEXITCODE
-        if ($exitCode -eq 0) {
-            return
+        $configurationResult = Invoke-OneCSourceIntegrityValidator `
+            -Validator "configuration" `
+            -ScriptPath $configurationValidatorPath `
+            -Arguments @("-ConfigPath", $absoluteExportPath, "-MaxErrors", "30") `
+            -SupportsOutFile
+        if ($configurationResult.exitCode -ne 0) {
+            $issues.Add([pscustomobject]@{
+                validator = "cf-validate"
+                code = "configuration-root-invalid"
+                path = $configurationRepoPath
+                symbol = ""
+                lines = @()
+                detail = [string]$configurationResult.details
+            }) | Out-Null
         }
 
-        $details = if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
-            (Read-Utf8Text -Path $reportPath).Trim() -replace "\r?\n", " | "
-        } else {
-            "cf-validate did not create its UTF-8 report"
+        $candidatePaths = @(
+            Get-OneCSourceIntegrityCandidatePaths `
+                -ExportPath $ExportPath `
+                -AdditionalPaths $AdditionalPaths `
+                -AdditionalRelativePaths $AdditionalRelativePaths
+        )
+        foreach ($bslIssue in @(Get-OneCMergeCreatedBslDuplicateIssues -RepoPaths $candidatePaths)) {
+            $issues.Add($bslIssue) | Out-Null
         }
-        if ($details.Length -gt 2000) {
-            $details = $details.Substring(0, 2000) + "..."
+
+        $runUuidCheck = $false
+        foreach ($repoPath in @($candidatePaths | Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".xml" })) {
+            if ($repoPath -ceq $configurationRepoPath) { continue }
+            $absolutePath = Join-Path $projectRoot ($repoPath.Replace("/", "\"))
+            $kind = Get-OneCXmlValidationKind -AbsolutePath $absolutePath
+            if ($kind.error) {
+                $issues.Add([pscustomobject]@{
+                    validator = "xml"
+                    code = "xml-parse-failed"
+                    path = $repoPath
+                    symbol = ""
+                    lines = @()
+                    detail = [string]$kind.error
+                }) | Out-Null
+                continue
+            }
+            if ($kind.hasUuid) { $runUuidCheck = $true }
+            if (-not $kind.validator) { continue }
+            try {
+                $validatorPath = Get-OneCSourceIntegrityValidatorPath -Validator $kind.validator
+            } catch {
+                $script:RunSourceIntegrityPaths = @($repoPath)
+                Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
+                throw
+            }
+            $validatorArguments = switch ($kind.validator) {
+                "form" { @("-FormPath", $absolutePath, "-MaxErrors", "30"); break }
+                "metadata" { @("-ObjectPath", $absolutePath, "-MaxErrors", "30"); break }
+                "skd" { @("-TemplatePath", $absolutePath, "-MaxErrors", "30"); break }
+                "subsystem" { @("-SubsystemPath", $absolutePath, "-MaxErrors", "30"); break }
+                "interface" { @("-CIPath", $absolutePath, "-MaxErrors", "30"); break }
+                "role" { @("-RightsPath", $absolutePath, "-MaxErrors", "30"); break }
+                "xdto" { @("-PackagePath", $absolutePath, "-ConfigDir", $absoluteExportPath, "-MaxErrors", "30"); break }
+                "mxl" { @("-TemplatePath", $absolutePath, "-MaxErrors", "30"); break }
+            }
+            $supportsOutFile = $kind.validator -notin @("form", "mxl")
+            $result = Invoke-OneCSourceIntegrityValidator `
+                -Validator $kind.validator `
+                -ScriptPath $validatorPath `
+                -Arguments $validatorArguments `
+                -SupportsOutFile:$supportsOutFile
+            if ($result.exitCode -ne 0) {
+                $issues.Add([pscustomobject]@{
+                    validator = $kind.validator
+                    code = "specialized-validation-failed"
+                    path = $repoPath
+                    symbol = ""
+                    lines = @()
+                    detail = [string]$result.details
+                }) | Out-Null
+            }
         }
-        $script:RunSourceIntegrityPaths = @($configurationRepoPath)
-        Set-RunStage -Stage "source-integrity.failed" -Detail "Configuration source validation failed before a merge commit or Designer load."
+
+        if ($runUuidCheck) {
+            try {
+                $uuidValidatorPath = Get-OneCSourceIntegrityValidatorPath -Validator "uuid"
+            } catch {
+                $script:RunSourceIntegrityPaths = @($candidatePaths | Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".xml" })
+                Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
+                throw
+            }
+            $uuidResult = Invoke-OneCSourceIntegrityValidator `
+                -Validator "uuid" `
+                -ScriptPath $uuidValidatorPath `
+                -Arguments @("-ConfigPath", $absoluteExportPath, "-MaxReported", "50") `
+                -SupportsOutFile
+            if ($uuidResult.exitCode -ne 0) {
+                $issues.Add([pscustomobject]@{
+                    validator = "uuid"
+                    code = "uuid-integrity-failed"
+                    path = $repoExportPath
+                    symbol = ""
+                    lines = @()
+                    detail = [string]$uuidResult.details
+                }) | Out-Null
+            }
+        }
+
+        if ($issues.Count -eq 0) { return }
+        $script:RunSourceIntegrityPaths = @($issues | ForEach-Object path | Where-Object { $_ } | Sort-Object -Unique)
+        $script:RunSourceIntegrityReportPath = Write-OneCSourceIntegrityReport -ExportPath $repoExportPath -Issues @($issues)
+        $details = @($issues | ForEach-Object { "$($_.validator):$($_.path):$($_.detail)" }) -join " | "
+        if ($details.Length -gt 2000) { $details = $details.Substring(0, 2000) + "..." }
+        Set-RunStage -Stage "source-integrity.failed" -Detail "Configuration source validation found $($issues.Count) issue(s) before a merge commit or Designer load. Report: $($script:RunSourceIntegrityReportPath)"
         Set-RunFailureContext `
             -Category "source-integrity" `
             -RequiredAction $(if (Test-GitMergeInProgress) {
-                "fix-listed-source-integrity-run-git-add-repeat-same-itl-command-no-manual-commit"
+                "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
             } else {
-                "fix-listed-source-integrity-then-repeat-same-itl-command"
+                "agent-progressive-semantic-repair-then-repeat-same-itl-command"
             })
-        throw "ONEC_SOURCE_INTEGRITY_FAILED path='$configurationRepoPath' validator='cf-validate' exitCode='$exitCode' details='$details'. Fix the listed source defect and repeat the same ITL command. If a merge is in progress, run git add for the fixed file and do not create the merge commit manually."
-    } finally {
-        Remove-Item -LiteralPath $reportPath -Force -ErrorAction SilentlyContinue
+        throw "ONEC_SOURCE_INTEGRITY_FAILED paths='$($script:RunSourceIntegrityPaths -join ', ')' report='$($script:RunSourceIntegrityReportPath)' details='$details'. Use the minimum sufficient semantic context, preserve both compatible intents, stage the repair, and repeat the same ITL command. Do not create the merge commit manually."
+    } catch {
+        if ($_.Exception.Message -match '^ONEC_SOURCE_(VALIDATOR_MISSING|VALIDATOR_START_FAILED|VALIDATOR_TIMEOUT)') {
+            Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
+        }
+        throw
     }
 }
 
@@ -1802,6 +2182,7 @@ function Load-ConfigFromFiles {
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
     $currentCommit = Get-CurrentCommit
     $changeSet = $null
+    $sourceIntegrityRelativePaths = @()
     $loadProofInvalidated = (-not $previousFingerprint -and $configLoadStatus -and $configLoadStatus -notin @("passed", "fallback-succeeded"))
 
     if ($Mode -ne "Full" -and $previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
@@ -1833,6 +2214,7 @@ function Load-ConfigFromFiles {
 
     if ($null -eq $changeSet) {
         $changeSet = Get-ConfigLoadChangeSet -State $State -ExportPath $ExportPath -ContentKind $ContentKind -CurrentSource $source
+        $sourceIntegrityRelativePaths = @($changeSet.files)
     }
     $restoreInvalidated = ([string](Get-StateValue -State $State -Name "loadReason" -Default "")) -eq "release-e2e-restore-invalidated"
     if ($restoreInvalidated) {
@@ -1875,7 +2257,9 @@ function Load-ConfigFromFiles {
     }
 
     if ($ContentKind -eq "configuration") {
-        Assert-OneCConfigurationSourceIntegrity -ExportPath $changeSet.absoluteExportPath
+        Assert-OneCConfigurationSourceIntegrity `
+            -ExportPath $changeSet.absoluteExportPath `
+            -AdditionalRelativePaths $sourceIntegrityRelativePaths
     }
 
     $listFilePath = ""
@@ -4095,6 +4479,11 @@ function Assert-DevelopmentBranchWorktreeContext {
             $archivePath = [string](Get-StateValue -State $State -Name "resetArchivePath" -Default "")
             throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Archive: $archivePath"
         }
+        $pendingBranchSyncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+        if ($pendingBranchSyncId -and $Operation -ne "sync-dev-branches") {
+            $primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
+            throw "DEV_BRANCH_SOURCE_SYNC_IN_PROGRESS: repeat /itl-sync-branches from '$primaryBranch' to finish the interrupted source-only synchronization."
+        }
     }
 }
 
@@ -5118,6 +5507,10 @@ function Write-DevBranchRunUserReport {
         Add-RunUserReportLine -Lines $lines -Label "Режим" -Value $(if ($refreshMode -eq "lite") { "облегчённый, без исходной базы и seed" } else { "полный, с синхронизацией master" })
         Add-RunUserReportLine -Lines $lines -Label "Использованный коммит master" -Value (Get-StateValue -State $State -Name "lastRefreshMasterCommit" -Default "")
         Add-RunUserReportLine -Lines $lines -Label "Коммит ветки" -Value (Get-StateValue -State $LoadResult -Name "currentCommit" -Default (Get-StateValue -State $State -Name "lastConfigBaseUpdatedCommit" -Default ""))
+        $repairPaths = @(Get-StateValue -State $State -Name "lastRefreshRepairPaths" -Default @())
+        if ($repairPaths.Count -gt 0) {
+            Add-RunUserReportLine -Lines $lines -Label "Семантическое согласование" -Value ($repairPaths -join ", ")
+        }
         $configurationUpdate = if ($null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name "loaded" -Default $false)) { "выполнено" } else { "не требовалось" }
         Add-RunUserReportLine -Lines $lines -Label "Обновление конфигурации базы" -Value $configurationUpdate
         $loadMode = [string](Get-StateValue -State $LoadResult -Name "loadModeUsed" -Default "")
@@ -6686,7 +7079,8 @@ function Sync-Master {
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
             -ConfigurationFingerprint $configSource.fingerprint `
-            -ConfigurationFileCount $configSource.fileCount
+            -ConfigurationFileCount $configSource.fileCount `
+            -TrustProvidedConfigurationFingerprint
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
@@ -6865,6 +7259,7 @@ function Get-PendingDevBranchMergeTransaction {
         stage = [string](Get-StateValue -State $State -Name "pendingMergeStage" -Default $(if ($legacy) { "legacy" } else { "" }))
         allowedPaths = @(Get-StateValue -State $State -Name "pendingMergePaths" -Default @())
         conflictPaths = @(Get-StateValue -State $State -Name "pendingMergeConflictPaths" -Default @())
+        repairPaths = @(Get-StateValue -State $State -Name "pendingMergeRepairPaths" -Default @())
         mergeCommit = [string](Get-StateValue -State $State -Name "pendingMergeCommit" -Default "")
         postMergeHead = [string](Get-StateValue -State $State -Name "pendingMergePostMergeHead" -Default "")
         result = [string](Get-StateValue -State $State -Name "pendingMergeResult" -Default "")
@@ -6882,6 +7277,7 @@ function Set-PendingDevBranchMergeTransaction {
         [string]$Stage,
         [string[]]$AllowedPaths = @(),
         [string[]]$ConflictPaths = @(),
+        [string[]]$RepairPaths = @(),
         [string]$MergeCommit = "",
         [string]$PostMergeHead = "",
         [string]$Result = ""
@@ -6896,6 +7292,7 @@ function Set-PendingDevBranchMergeTransaction {
         pendingMergeStage = $Stage
         pendingMergePaths = @($AllowedPaths | Sort-Object -Unique)
         pendingMergeConflictPaths = @($ConflictPaths | Sort-Object -Unique)
+        pendingMergeRepairPaths = @($RepairPaths | Sort-Object -Unique)
         pendingMergeCommit = $MergeCommit
         pendingMergePostMergeHead = $PostMergeHead
         pendingMergeResult = $Result
@@ -6923,6 +7320,7 @@ function Add-PendingDevBranchMergeClearUpdates {
     }
     $Updates["pendingMergePaths"] = @()
     $Updates["pendingMergeConflictPaths"] = @()
+    $Updates["pendingMergeRepairPaths"] = @()
 }
 
 function Stop-DevBranchLifecycleMergeForConflicts {
@@ -6934,12 +7332,12 @@ function Stop-DevBranchLifecycleMergeForConflicts {
     )
 
     $paths = @($ConflictPaths | Where-Object { $_ } | Sort-Object -Unique)
-    Set-RunStage -Stage $Stage -Detail "$Reason; resolve the listed files, run git add, and repeat $Operation."
+    Set-RunStage -Stage $Stage -Detail "$Reason; use the minimum sufficient semantic context, preserve compatible intent from both sides, run git add, and repeat $Operation."
     Set-RunFailureContext `
         -Category "merge-conflict" `
-        -RequiredAction "resolve-conflicts-run-git-add-repeat-same-itl-command-no-manual-commit"
+        -RequiredAction "agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit"
     $pathText = if ($paths.Count -gt 0) { $paths -join ", " } else { "<none>" }
-    throw "LIFECYCLE_MERGE_CONFLICT operation='$Operation' reason='$Reason' files='$pathText'. Resolve the listed conflicts, run git add for the resolved files, and repeat the same ITL command. Do not create the merge commit manually; the workflow will run git commit --no-edit after validation."
+    throw "LIFECYCLE_MERGE_CONFLICT operation='$Operation' reason='$Reason' files='$pathText'. Start with the conflicting semantic unit, preserve both compatible intents, widen only when evidence requires it, run git add for the repair, and repeat the same ITL command. Ask the user only when authoritative evidence leaves incompatible outcomes. Do not create the merge commit manually; the workflow will run git commit --no-edit after validation."
 }
 
 function Restore-BranchConfigDumpInfoFromCommit {
@@ -7077,6 +7475,7 @@ function Complete-DevBranchLifecycleMergeTransaction {
         -Stage "merged" `
         -AllowedPaths $Transaction.allowedPaths `
         -ConflictPaths @() `
+        -RepairPaths $Transaction.repairPaths `
         -MergeCommit $head `
         -PostMergeHead $head `
         -Result $result
@@ -7220,7 +7619,7 @@ function Invoke-NewDevBranchLifecycleMerge {
         $stateAfterConflict = Read-DevBranchState -Name $DevBranchName
         $allowedPaths = @(Get-DevBranchMergeIndexPaths)
         $conflictPaths = @(Get-DevBranchMergeUnmergedPaths)
-        $sourceValidationFailure = $mergeFailure.Exception.Message -match '^ONEC_SOURCE_(INTEGRITY_FAILED|VALIDATOR_MISSING)'
+        $sourceValidationFailure = $mergeFailure.Exception.Message -match '^ONEC_SOURCE_(INTEGRITY_FAILED|VALIDATOR_(MISSING|START_FAILED|TIMEOUT))'
         if ($sourceValidationFailure -and $script:RunSourceIntegrityPaths.Count -gt 0) {
             $conflictPaths = @($script:RunSourceIntegrityPaths)
         }
@@ -7445,7 +7844,8 @@ function Resume-DevBranchLifecycleMergeIfPresent {
                 -TargetCommit $transaction.targetCommit `
                 -Stage "conflicts" `
                 -AllowedPaths $allowedPaths `
-                -ConflictPaths $unmergedPaths
+                -ConflictPaths $unmergedPaths `
+                -RepairPaths $transaction.repairPaths
             Stop-DevBranchLifecycleMergeForConflicts `
                 -Operation $Operation `
                 -Stage $ConflictStage `
@@ -7481,6 +7881,23 @@ function Resume-DevBranchLifecycleMergeIfPresent {
 
         $stagedPaths = @(Get-DevBranchMergeIndexPaths)
         $unexpectedStagedPaths = @($stagedPaths | Where-Object { @($transaction.allowedPaths) -cnotcontains $_ })
+        $newRepairPaths = @($unexpectedStagedPaths | Where-Object { Test-OneCSourceRepoPath -RepoPath $_ })
+        if ($newRepairPaths.Count -gt 0) {
+            $allowedPaths = @($transaction.allowedPaths + $newRepairPaths | Sort-Object -Unique)
+            $repairPaths = @($transaction.repairPaths + $newRepairPaths | Sort-Object -Unique)
+            Set-PendingDevBranchMergeTransaction `
+                -State $State `
+                -Operation $Operation `
+                -Branch $transaction.branch `
+                -BranchCommit $transaction.branchCommit `
+                -TargetCommit $transaction.targetCommit `
+                -Stage "conflicts" `
+                -AllowedPaths $allowedPaths `
+                -ConflictPaths $transaction.conflictPaths `
+                -RepairPaths $repairPaths
+            $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
+            $unexpectedStagedPaths = @($unexpectedStagedPaths | Where-Object { $newRepairPaths -cnotcontains $_ })
+        }
         if ($unexpectedStagedPaths.Count -gt 0) {
             Set-RunFailureContext -Category "runner" -RequiredAction "remove-unrelated-staged-changes-then-repeat-same-itl-command"
             throw "LIFECYCLE_MERGE_UNEXPECTED_STAGED_FILES operation='$Operation' files='$($unexpectedStagedPaths -join ', ')'. The workflow will not include unrelated staged changes in its merge commit."
@@ -7506,11 +7923,12 @@ function Resume-DevBranchLifecycleMergeIfPresent {
                 -TargetCommit $transaction.targetCommit `
                 -Stage "conflicts" `
                 -AllowedPaths $stagedPaths `
-                -ConflictPaths @()
+                -ConflictPaths @() `
+                -RepairPaths $transaction.repairPaths
             $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
         }
 
-        Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
+        Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath) -AdditionalPaths $transaction.repairPaths
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
@@ -9838,6 +10256,305 @@ function Update-DevBranchBase {
     }
 }
 
+function Get-DevBranchSourceSyncExportPath {
+    param([object]$State)
+
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        return ((Get-DevBranchExtensionExportPath -State $State) -replace "\\", "/").Trim("/")
+    }
+    return ((Get-ExportPath) -replace "\\", "/").Trim("/")
+}
+
+function Assert-DevBranchSourceSyncCompatibility {
+    param([object]$PrimaryState, [object]$PeerState)
+
+    $primaryKind = Get-DevBranchKind -State $PrimaryState
+    $peerKind = Get-DevBranchKind -State $PeerState
+    if ($primaryKind -cne $peerKind) {
+        throw "DEV_BRANCH_SOURCE_SYNC_KIND_MISMATCH: '$($PrimaryState.devBranch)' is '$primaryKind', '$($PeerState.devBranch)' is '$peerKind'."
+    }
+    Assert-DevBranchExtensionInitialized -State $PrimaryState -Operation "sync-dev-branches"
+    Assert-DevBranchExtensionInitialized -State $PeerState -Operation "sync-dev-branches"
+    $primaryPath = Get-DevBranchSourceSyncExportPath -State $PrimaryState
+    $peerPath = Get-DevBranchSourceSyncExportPath -State $PeerState
+    if ($primaryPath -cne $peerPath) {
+        throw "DEV_BRANCH_SOURCE_SYNC_PATH_MISMATCH: source roots differ: '$primaryPath' and '$peerPath'."
+    }
+    return $primaryPath
+}
+
+function Get-PendingBranchSourceSync {
+    param([object]$State)
+
+    $syncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+    if (-not $syncId) { return $null }
+    return [pscustomobject]@{
+        syncId = $syncId
+        primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
+        peerBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPeerBranch" -Default "")
+        primaryHead = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryHead" -Default "")
+        peerHead = [string](Get-StateValue -State $State -Name "pendingBranchSyncPeerHead" -Default "")
+        exportPath = [string](Get-StateValue -State $State -Name "pendingBranchSyncExportPath" -Default "")
+        conflictPaths = @(Get-StateValue -State $State -Name "pendingBranchSyncConflictPaths" -Default @())
+    }
+}
+
+function Set-PendingBranchSourceSync {
+    param([object]$State, [object]$Transaction)
+
+    Update-DevBranchState -State $State -Updates @{
+        pendingBranchSyncId = [string]$Transaction.syncId
+        pendingBranchSyncPrimaryBranch = [string]$Transaction.primaryBranch
+        pendingBranchSyncPeerBranch = [string]$Transaction.peerBranch
+        pendingBranchSyncPrimaryHead = [string]$Transaction.primaryHead
+        pendingBranchSyncPeerHead = [string]$Transaction.peerHead
+        pendingBranchSyncExportPath = [string]$Transaction.exportPath
+        pendingBranchSyncConflictPaths = @($Transaction.conflictPaths)
+    }
+}
+
+function Clear-PendingBranchSourceSync {
+    param([object]$State)
+
+    Update-DevBranchState -State $State -Updates @{
+        pendingBranchSyncId = ""
+        pendingBranchSyncPrimaryBranch = ""
+        pendingBranchSyncPeerBranch = ""
+        pendingBranchSyncPrimaryHead = ""
+        pendingBranchSyncPeerHead = ""
+        pendingBranchSyncExportPath = ""
+        pendingBranchSyncConflictPaths = @()
+    }
+}
+
+function Test-RepoPathUnderRoot {
+    param([string]$RepoPath, [string]$Root)
+
+    $normalizedPath = ($RepoPath -replace "\\", "/").Trim("/")
+    $normalizedRoot = ($Root -replace "\\", "/").Trim("/")
+    return ($normalizedPath -ceq $normalizedRoot -or $normalizedPath.StartsWith(($normalizedRoot + "/"), [StringComparison]::Ordinal))
+}
+
+function Get-BranchSourceSyncChangedPaths {
+    return @(
+        @(
+            Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--")
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--")
+            Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--")
+        ) |
+            ForEach-Object { ([string]$_).Replace("\\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Invoke-BranchSourceMergeTree {
+    param([string]$PrimaryHead, [string]$PeerHead)
+
+    $stderrPath = New-TimestampedFilePath -Directory ([IO.Path]::GetTempPath()) -Prefix "agent-1c-source-sync-" -Extension ".log"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $rawOutput = @(& git -C $script:ProjectRoot -c core.quotepath=false merge-tree --write-tree --name-only -z $PrimaryHead $PeerHead 2> $stderrPath)
+        $exitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { [IO.File]::ReadAllText($stderrPath, (Get-Utf8Encoding)) } else { "" }
+        if ($exitCode -notin @(0, 1)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_MERGE_TREE_FAILED: exit=$exitCode; $stderr"
+        }
+        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) -split "`0", -1)
+        $tree = if ($tokens.Count -gt 0) { ([string]$tokens[0]).Trim() } else { "" }
+        if ($tree -notmatch '^[a-f0-9]{40,64}$') {
+            throw "DEV_BRANCH_SOURCE_SYNC_TREE_MISSING: merge-tree did not return a tree object. $stderr"
+        }
+        $conflicts = [System.Collections.Generic.List[string]]::new()
+        for ($index = 1; $index -lt $tokens.Count; $index++) {
+            $path = [string]$tokens[$index]
+            if (-not $path) { break }
+            $conflicts.Add($path.Replace("\\", "/")) | Out-Null
+        }
+        return [pscustomobject]@{ tree = $tree; conflictPaths = @($conflicts | Sort-Object -Unique) }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Restore-BranchSourceSyncCursor {
+    param([string]$Head, [string]$ExportPath)
+    Restore-BranchConfigDumpInfoFromCommit -Commit $Head -RepoPaths @("$ExportPath/ConfigDumpInfo.xml")
+}
+
+function Assert-BranchSourceSyncChangesScoped {
+    param([string]$ExportPath)
+
+    $changedPaths = @(Get-BranchSourceSyncChangedPaths)
+    $unexpected = @($changedPaths | Where-Object { -not (Test-RepoPathUnderRoot -RepoPath $_ -Root $ExportPath) })
+    if ($unexpected.Count -gt 0) {
+        throw "DEV_BRANCH_SOURCE_SYNC_UNEXPECTED_PATHS: synchronization may change only '$ExportPath': $($unexpected -join ', ')"
+    }
+    return $changedPaths
+}
+
+function Complete-PrimaryBranchSourceSyncCommit {
+    param([object]$State, [string]$PeerBranch, [string]$ExportPath)
+
+    $unstaged = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
+    $untracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--"))
+    if ($unstaged.Count -gt 0 -or $untracked.Count -gt 0) {
+        $remaining = @($unstaged + $untracked | Sort-Object -Unique)
+        Set-RunFailureContext -Category "merge-conflict" -RequiredAction "resolve-source-conflicts-run-git-add-repeat-itl-sync-branches"
+        throw "DEV_BRANCH_SOURCE_SYNC_RESOLUTION_NOT_STAGED: resolve the source conflicts, run git add, and repeat /itl-sync-branches. Remaining: $($remaining -join ', ')"
+    }
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+    Commit-IfChanged -Message "sync: combine 1C sources with $PeerBranch" -PathSpec @($ExportPath) | Out-Null
+    Assert-CleanGit
+    return (Get-CurrentCommit)
+}
+
+function Copy-BranchSourceSyncResult {
+    param([string]$SourceCommit, [string]$TargetHead, [string]$SourceBranch, [string]$ExportPath)
+
+    Assert-CleanGit
+    Invoke-Git @("rm", "-r", "-f", "--ignore-unmatch", "--", $ExportPath)
+    Invoke-Git @("checkout", $SourceCommit, "--", $ExportPath)
+    Restore-BranchSourceSyncCursor -Head $TargetHead -ExportPath $ExportPath
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+    Commit-IfChanged -Message "sync: copy combined 1C sources from $SourceBranch" -PathSpec @($ExportPath) | Out-Null
+    Assert-CleanGit
+    return (Get-CurrentCommit)
+}
+
+function Invoke-BranchSourceSyncLoad {
+    param([object]$State, [string]$ExportPath, [string]$OtherBranch)
+
+    $stateName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
+    Sync-DevBranchContextToDotEnv -State $State
+    $State = Ensure-DevBranchEventLogBaseline -State $State
+    Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
+    $State = Read-DevBranchState -Name $stateName
+    $contentKind = Get-DevBranchKind -State $State
+    $extensionName = if ($contentKind -eq "extension") { Require-DevBranchExtensionName -State $State } else { "" }
+    $loadResult = Load-ConfigFromFiles `
+        -InfoBasePath $State.devBranchInfoBasePath `
+        -InfoBaseKind $State.infoBaseKind `
+        -State $State `
+        -ExportPath $ExportPath `
+        -ContentKind $contentKind `
+        -ExtensionName $extensionName `
+        -Mode $ConfigLoadMode
+    $updates = @{}
+    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $State -LoadResult $loadResult -Updates $updates
+    Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
+    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
+    foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
+        $updates[$entry.Key] = $entry.Value
+    }
+    $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
+    $updates["lastBranchSourceSyncPeer"] = $OtherBranch
+    Add-VerificationStaleIfNeeded -State $State -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
+    Update-DevBranchState -State $State -Updates $updates
+    return $loadResult
+}
+
+function Sync-DevBranches {
+    $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
+    if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+        $peerName = $peerName.Substring("itldev/".Length)
+    }
+    $primaryState = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $primaryState -Operation "sync-dev-branches"
+    $primaryName = [string](Get-StateValue -State $primaryState -Name "devBranchName" -Default "")
+    if ($peerName -ieq $primaryName) { throw "DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch." }
+    $peerState = Read-DevBranchState -Name $peerName
+    $exportPath = Assert-DevBranchSourceSyncCompatibility -PrimaryState $primaryState -PeerState $peerState
+    $pending = Get-PendingBranchSourceSync -State $primaryState
+
+    if ($null -ne $pending) {
+        if ($pending.primaryBranch -cne [string]$primaryState.devBranch -or $pending.peerBranch -cne [string]$peerState.devBranch) {
+            throw "DEV_BRANCH_SOURCE_SYNC_IDENTITY_MISMATCH: repeat the command from '$($pending.primaryBranch)' with '$($pending.peerBranch)'."
+        }
+        $peerPending = Get-PendingBranchSourceSync -State $peerState
+        if ($null -eq $peerPending -or $peerPending.syncId -cne $pending.syncId) {
+            throw "DEV_BRANCH_SOURCE_SYNC_STATE_MISMATCH: peer transaction state is missing or differs."
+        }
+        if ((Get-CurrentCommit) -cne $pending.primaryHead) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PRIMARY_MOVED: expected '$($pending.primaryHead)', current '$(Get-CurrentCommit)'."
+        }
+        $actualPeerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+        if ($actualPeerHead -cne $pending.peerHead) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PEER_MOVED: expected '$($pending.peerHead)', current '$actualPeerHead'."
+        }
+        $primaryCommit = Complete-PrimaryBranchSourceSyncCommit -State $primaryState -PeerBranch $peerState.devBranch -ExportPath $exportPath
+        Clear-PendingBranchSourceSync -State (Read-DevBranchState -Name $primaryName)
+        Clear-PendingBranchSourceSync -State $peerState
+    } else {
+        $peerPending = Get-PendingBranchSourceSync -State $peerState
+        if ($null -ne $peerPending) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PEER_BUSY: finish synchronization from '$($peerPending.primaryBranch)' first."
+        }
+        Save-DevBranchCheckpoint -Operation "sync-dev-branches" -Message "chore: checkpoint before source sync with $($peerState.devBranch)" | Out-Null
+        Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+            Save-DevBranchCheckpoint -Operation "sync-dev-branches" -Message "chore: checkpoint before source sync with $($primaryState.devBranch)" | Out-Null
+        }
+        $primaryState = Read-DevBranchState -Name $primaryName
+        $peerState = Read-DevBranchState -Name $peerName
+        $primaryHead = Get-CurrentCommit
+        $peerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+        $merge = Invoke-BranchSourceMergeTree -PrimaryHead $primaryHead -PeerHead $peerHead
+        Invoke-Git @("checkout", $merge.tree, "--", $exportPath)
+        Restore-BranchSourceSyncCursor -Head $primaryHead -ExportPath $exportPath
+        $sourceConflicts = @($merge.conflictPaths | Where-Object {
+            (Test-RepoPathUnderRoot -RepoPath $_ -Root $exportPath) -and $_ -cne "$exportPath/ConfigDumpInfo.xml"
+        })
+        Assert-BranchSourceSyncChangesScoped -ExportPath $exportPath | Out-Null
+        if ($sourceConflicts.Count -gt 0) {
+            Invoke-Git (@("reset", "--quiet", "HEAD", "--") + $sourceConflicts)
+            $transaction = [pscustomobject]@{
+                syncId = [guid]::NewGuid().ToString("N")
+                primaryBranch = [string]$primaryState.devBranch
+                peerBranch = [string]$peerState.devBranch
+                primaryHead = $primaryHead
+                peerHead = $peerHead
+                exportPath = $exportPath
+                conflictPaths = $sourceConflicts
+            }
+            Set-PendingBranchSourceSync -State $primaryState -Transaction $transaction
+            Set-PendingBranchSourceSync -State $peerState -Transaction $transaction
+            Set-RunFailureContext -Category "merge-conflict" -RequiredAction "resolve-source-conflicts-run-git-add-repeat-itl-sync-branches"
+            throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT: resolve only the 1C source conflicts, run git add, and repeat /itl-sync-branches. Files: $($sourceConflicts -join ', ')"
+        }
+        $primaryCommit = Complete-PrimaryBranchSourceSyncCommit -State $primaryState -PeerBranch $peerState.devBranch -ExportPath $exportPath
+    }
+
+    $peerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+    $peerCommit = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+        Copy-BranchSourceSyncResult -SourceCommit $primaryCommit -TargetHead $peerHead -SourceBranch $primaryState.devBranch -ExportPath $exportPath
+    }
+    $primarySource = Get-ConfigSourceFingerprint -ExportPath $exportPath
+    $peerSource = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-ConfigSourceFingerprint -ExportPath $exportPath }
+    if ([string]$primarySource.fingerprint -cne [string]$peerSource.fingerprint) {
+        throw "DEV_BRANCH_SOURCE_SYNC_FINGERPRINT_MISMATCH: synchronized source roots differ after commit."
+    }
+
+    Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $primaryName) -ExportPath $exportPath -OtherBranch $peerState.devBranch | Out-Null
+    Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $peerName) -ExportPath $exportPath -OtherBranch $primaryState.devBranch | Out-Null
+    }
+    $report = [System.Collections.Generic.List[string]]::new()
+    $report.Add("## Синхронизация исходников веток")
+    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
+    Add-RunUserReportLine -Lines $report -Label "Первая ветка" -Value "$($primaryState.devBranch) @ $primaryCommit"
+    Add-RunUserReportLine -Lines $report -Label "Вторая ветка" -Value "$($peerState.devBranch) @ $peerCommit"
+    Add-RunUserReportLine -Lines $report -Label "Общий fingerprint" -Value ([string]$primarySource.fingerprint)
+    Add-RunUserReportLine -Lines $report -Label "Синхронизировано" -Value $exportPath
+    Add-RunUserReportLine -Lines $report -Label "Не переносилось" -Value "спеки, тесты, документация и остальные файлы репозитория"
+    Add-RunUserReportLine -Lines $report -Label "Базы веток" -Value "обновлены из общего результата"
+    Write-AndSetRunUserReport -Lines $report
+    Set-RunStage -Stage "sync-dev-branches.complete" -Detail "1C sources are identical in both development branches."
+}
+
 function Get-RefreshManagedKiloMcpNames {
     param([object]$Config)
 
@@ -10737,6 +11454,7 @@ function Invoke-RefreshDevBranchCore {
         $updates["verificationClassificationIssues"] = @($verificationClassificationInventory.classificationIssues)
         $updates["verificationClassificationInventoryPath"] = Get-VerificationClassificationInventoryPath
         $updates["verificationClassificationCheckedAt"] = (Get-Date).ToString("o")
+        $updates["lastRefreshRepairPaths"] = @($mergeTransaction.repairPaths)
         Add-PendingDevBranchMergeClearUpdates -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
@@ -10881,7 +11599,7 @@ function Refresh-AllDevBranches {
                 status = $(if ($succeeded) { "succeeded" } else { "failed" })
                 detail = $detail
                 userReport = $(if ($null -ne $summary) { [string]$summary.userReport } else { "" })
-                requiredAction = $(if ($null -ne $summary) { [string]$summary.requiredAction } else { "" })
+                requiredAction = $(if ($null -ne $summary) { [string](Get-StateValue -State $summary -Name "requiredAction" -Default "") } else { "" })
             }) | Out-Null
             [void]$running.Remove($entry)
         }
@@ -12399,6 +13117,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-refresh"
         Write-ItlActiveClientCommandText "  /itl-refresh-lite"
         Write-ItlActiveClientCommandText "  /itl-fork-branch <name>"
+        Write-ItlActiveClientCommandText "  /itl-sync-branches <name>"
         Write-ItlActiveClientCommandText "  /itl-reset-branch"
         Write-ItlActiveClientCommandText "  /itl-lock-objects"
         Write-ItlActiveClientCommandText "  /itl-result"
