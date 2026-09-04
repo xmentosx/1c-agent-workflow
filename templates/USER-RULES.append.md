@@ -16,7 +16,7 @@ Use sibling `itldev/*` worktrees and only the state-proven copied branch infobas
 
 Pending extension branches ask Empty/CFE, name, and optional path, then initialize internally there. Never give PowerShell; blocked actions return `EXTENSION_INIT_REQUIRED`.
 
-`ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, `ITL_CHECK_EVENT_LOG`: `auto|manual|off` (`auto`). For algorithms, recovery, or optimization, `yaxunit-tests.md` is mandatory, including its boundary matrix, optimization invariants, test grouping, and benchmark cadence. Integration/UI needs Vanessa; complex changes may need both. Reuse only tests proving the change.
+`ITL_YAXUNIT_TESTING`, `ITL_VANESSA_TESTING`, `ITL_CHECK_EVENT_LOG`: `auto|manual|off` (`auto`). For algorithms, recovery, or optimization, `yaxunit-tests.md` is mandatory, including its boundary matrix, optimization invariants, test grouping, and benchmark cadence. Integration/UI needs Vanessa; complex changes may need both. Classify changed tests with owners; gaps block `/itl-check` before 1C.
 
 Quick-fix is no exception; `verify_xml`/static are prechecks. Use targeted/static checks while implementing; run executable milestones only to decide continuation. Run fresh unfiltered `/itl-check` after the last relevant edit. Missing/invalid YAxUnit JUnit, zero tests, failures, or errors fail verification. Otherwise report `pending verification`. `off` runs only when the user explicitly requests that named component.
 

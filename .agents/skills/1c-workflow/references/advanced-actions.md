@@ -19,6 +19,7 @@ Common internal actions:
 ```text
 init-project
 validate
+validate-test-classification
 check-tools
 list-platforms
 detect-web-publication
@@ -112,6 +113,25 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `stop-dev-branch-test-clients` stops only the Vanessa `TESTMANAGER` in the current worktree's service infobase and `TESTCLIENT` processes in its development infobase, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
 `cleanup-interrupted-vanessa-run` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
+
+`validate-test-classification` is the short static continuation after refresh or
+catalog edits. It inventories Vanessa feature files and YAxUnit `Module.bsl`
+sources, validates exact assignment, owners, cadence, and benchmark registration,
+and writes only ignored inventory state. It never starts Designer, Enterprise,
+Vanessa, or YAxUnit.
+
+When a successful refresh returns `classify-tests-after-refresh:*`, do not
+finalize and do not ask the developer to classify. In the same task, read
+`.agent-1c/verification-selection/inventory.json` and
+`verification-suite-selection.md`, inspect the named tests and production
+owners, update that branch's Vanessa/YAxUnit catalogs, then run the compact
+helper with `-Action validate-test-classification`. Do not run `/itl-check`
+unless separately requested. Report the successful refresh together with the
+completed classification instead of returning the original report alone. For
+refresh-all, repeat this bounded continuation in every listed branch worktree.
+`classify-tests-and-repeat-original-itl-command` follows the same repair and
+static validation, then repeats the original command; its preflight stopped
+before 1C.
 
 `Run-DevBranchTests` is a private phase of `check-dev-branch`, not a helper action. Automated performance profiling repeats canonical `check-dev-branch` with `VanessaFeaturePath` and/or `VanessaFilterTags`; filtered runs remain diagnostic-only and do not create full proof. When configuration sources are unchanged, the fingerprint preflight skips Designer, but canonical ownership, cleanup, event-log, and evidence preflight still add overhead. Finish with an unfiltered canonical check.
 

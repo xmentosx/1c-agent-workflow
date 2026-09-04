@@ -4397,7 +4397,9 @@ function Get-VerificationFingerprintScopePaths {
         (Get-YAxUnitTestsPath),
         ".agent-1c/dependency-lock.json",
         "tests/verification-suites.shared.json",
-        "tests/verification-suites.branch.json"
+        "tests/verification-suites.branch.json",
+        "tests/yaxunit-suites.shared.json",
+        "tests/yaxunit-suites.branch.json"
     )
 }
 

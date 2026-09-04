@@ -25,6 +25,189 @@ function Get-YAxUnitTestsExtensionName {
     return [string](Get-Setting -EnvName "YAXUNIT_TESTS_EXTENSION_NAME" -ConfigName "yaxunit.testsExtensionName" -Default "tests")
 }
 
+function Get-YAxUnitSuiteCatalogPaths {
+    return @(
+        (Resolve-ProjectPath "tests/yaxunit-suites.shared.json"),
+        (Resolve-ProjectPath "tests/yaxunit-suites.branch.json")
+    )
+}
+
+function Get-YAxUnitCatalogValue {
+    param(
+        [AllowNull()][object]$Value,
+        [string]$Name,
+        [AllowNull()][object]$Default = $null
+    )
+
+    if ($null -eq $Value) { return $Default }
+    $property = $Value.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $Default }
+    return $property.Value
+}
+
+function Get-YAxUnitModuleFiles {
+    $root = Resolve-ProjectPath (Get-YAxUnitTestsPath)
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter "Module.bsl" | Select-Object -ExpandProperty FullName | Sort-Object -Unique)
+}
+
+function Get-YAxUnitModuleNameFromPath {
+    param([string]$Path)
+
+    $normalized = ($Path -replace "\\", "/").TrimStart("/")
+    $match = [regex]::Match($normalized, '(?i)(?:^|/)CommonModules/([^/]+)/Ext/Module\.bsl$')
+    if (-not $match.Success) { return "" }
+    return $match.Groups[1].Value
+}
+
+function Read-YAxUnitSuiteCatalog {
+    param([string[]]$ModuleFiles = @())
+
+    $catalogPaths = @(Get-YAxUnitSuiteCatalogPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    if ($catalogPaths.Count -eq 0) {
+        $issues = @()
+        $assignments = @()
+        if (@($ModuleFiles).Count -gt 0) {
+            $assignments = @($ModuleFiles | ForEach-Object {
+                [pscustomobject]@{ path = Get-VerificationRepoRelativePath -Path $_; groupId = "__unclassified__"; purpose = ""; fullPath = $_ }
+            })
+            $issues = @("YAxUnit test modules exist, but tests/yaxunit-suites.shared.json or tests/yaxunit-suites.branch.json is missing.") +
+                @($assignments | ForEach-Object { "Unclassified YAxUnit module: $($_.path)" })
+        }
+        return [pscustomobject]@{
+            available = $false
+            valid = $true
+            classificationComplete = ($issues.Count -eq 0)
+            issues = $issues
+            groups = @()
+            assignments = $assignments
+            registrationPaths = @()
+            catalogPaths = @()
+        }
+    }
+
+    $groupIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $groups = New-Object System.Collections.Generic.List[object]
+    $registrationPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    try {
+        foreach ($catalogPath in $catalogPaths) {
+            $catalog = (Read-Utf8Text -Path $catalogPath) | ConvertFrom-Json
+            if ([int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0) -ne 1) {
+                throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1."
+            }
+            foreach ($registrationPath in @(Get-YAxUnitCatalogValue -Value $catalog -Name "registrationPaths" -Default @())) {
+                $normalizedRegistrationPath = ([string]$registrationPath -replace "\\", "/").TrimStart("/")
+                $testsRoot = ((Get-YAxUnitTestsPath) -replace "\\", "/").Trim("/")
+                if (-not $normalizedRegistrationPath -or [IO.Path]::IsPathRooted([string]$registrationPath) -or $normalizedRegistrationPath -match '(^|/)\.\.(/|$)' -or -not $normalizedRegistrationPath.StartsWith("$testsRoot/", [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "YAXUNIT_REGISTRATION_PATH_INVALID: '$registrationPath' must be inside '$testsRoot'."
+                }
+                [void]$registrationPaths.Add($normalizedRegistrationPath)
+            }
+            foreach ($group in @(Get-YAxUnitCatalogValue -Value $catalog -Name "groups" -Default @())) {
+                $id = [string](Get-YAxUnitCatalogValue -Value $group -Name "id" -Default "")
+                $purpose = [string](Get-YAxUnitCatalogValue -Value $group -Name "purpose" -Default "")
+                if ($id -notmatch '^[a-z0-9][a-z0-9._-]*$') {
+                    throw "YAXUNIT_SUITE_ID_INVALID: '$id' in '$catalogPath'."
+                }
+                if (-not $groupIds.Add($id)) {
+                    throw "YAXUNIT_SUITE_ID_DUPLICATE: '$id'. Shared and branch catalogs are additive; ids must be unique."
+                }
+                if ($purpose -notin @("default-fast", "explicit-benchmark")) {
+                    throw "YAXUNIT_SUITE_PURPOSE_INVALID: group '$id' must use purpose='default-fast' or purpose='explicit-benchmark'."
+                }
+                $modulePatterns = @(Get-YAxUnitCatalogValue -Value $group -Name "modulePaths" -Default @() | ForEach-Object { ([string]$_ -replace "\\", "/").TrimStart("/") } | Where-Object { $_ })
+                if ($modulePatterns.Count -eq 0) {
+                    throw "YAXUNIT_SUITE_MODULES_MISSING: group '$id' has no modulePaths."
+                }
+                $ownerPatterns = @(Get-YAxUnitCatalogValue -Value $group -Name "ownerPaths" -Default @() | ForEach-Object { ([string]$_ -replace "\\", "/").TrimStart("/") } | Where-Object { $_ })
+                if ($ownerPatterns.Count -eq 0) {
+                    throw "YAXUNIT_SUITE_OWNERS_MISSING: group '$id' has no ownerPaths."
+                }
+                $groups.Add([pscustomobject][ordered]@{
+                    id = $id
+                    purpose = $purpose
+                    modulePaths = $modulePatterns
+                    ownerPaths = $ownerPatterns
+                    source = Get-VerificationRepoRelativePath -Path $catalogPath
+                })
+            }
+        }
+
+        $assignments = New-Object System.Collections.Generic.List[object]
+        $issues = New-Object System.Collections.Generic.List[string]
+        foreach ($moduleFile in @($ModuleFiles)) {
+            $repoPath = Get-VerificationRepoRelativePath -Path $moduleFile
+            if ($registrationPaths.Contains($repoPath)) {
+                $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = "__registration__"; purpose = "default-fast"; fullPath = $moduleFile })
+                continue
+            }
+            $matches = @($groups | Where-Object {
+                $candidate = $_
+                @($candidate.modulePaths | Where-Object { Test-VerificationRepoPathPattern -Path $repoPath -Pattern $_ }).Count -gt 0
+            })
+            if ($matches.Count -gt 1) {
+                throw "YAXUNIT_SUITE_MODULE_AMBIGUOUS: '$repoPath' matches groups '$(@($matches.id) -join ', ')'."
+            }
+            if ($matches.Count -eq 0) {
+                $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = "__unclassified__"; purpose = ""; fullPath = $moduleFile })
+                $issues.Add("Unclassified YAxUnit module: $repoPath")
+            } else {
+                $assignments.Add([pscustomobject]@{ path = $repoPath; groupId = [string]$matches[0].id; purpose = [string]$matches[0].purpose; fullPath = $moduleFile })
+            }
+        }
+        foreach ($group in @($groups.ToArray())) {
+            if (@($assignments.ToArray() | Where-Object groupId -eq $group.id).Count -eq 0) {
+                throw "YAXUNIT_SUITE_EMPTY: group '$($group.id)' does not match any current Module.bsl."
+            }
+        }
+
+        $explicitAssignments = @($assignments.ToArray() | Where-Object purpose -eq "explicit-benchmark")
+        if ($explicitAssignments.Count -gt 0 -and $registrationPaths.Count -eq 0) {
+            $issues.Add("Explicit benchmark groups require registrationPaths so ordinary YAxUnit registration can be checked.")
+        }
+        foreach ($registrationRepoPath in @($registrationPaths)) {
+            $registrationFullPath = Resolve-ProjectPath $registrationRepoPath
+            if (-not (Test-Path -LiteralPath $registrationFullPath -PathType Leaf)) {
+                $issues.Add("YAxUnit registration path does not exist: $registrationRepoPath")
+                continue
+            }
+            $registrationText = Read-Utf8Text -Path $registrationFullPath
+            foreach ($assignment in $explicitAssignments) {
+                $moduleName = Get-YAxUnitModuleNameFromPath -Path ([string]$assignment.path)
+                if (-not $moduleName) {
+                    $issues.Add("Explicit benchmark module must use CommonModules/<name>/Ext/Module.bsl: $($assignment.path)")
+                    continue
+                }
+                if ($moduleName -and $registrationText.IndexOf($moduleName, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                    $issues.Add("Explicit benchmark module '$moduleName' is referenced by ordinary registration '$registrationRepoPath'.")
+                }
+            }
+        }
+
+        return [pscustomobject]@{
+            available = $true
+            valid = $true
+            classificationComplete = ($issues.Count -eq 0)
+            issues = @($issues.ToArray())
+            groups = @($groups.ToArray())
+            assignments = @($assignments.ToArray())
+            registrationPaths = @($registrationPaths)
+            catalogPaths = @($catalogPaths)
+        }
+    } catch {
+        return [pscustomobject]@{
+            available = $true
+            valid = $false
+            classificationComplete = $false
+            issues = @($_.Exception.Message)
+            groups = @()
+            assignments = @()
+            registrationPaths = @($registrationPaths)
+            catalogPaths = @($catalogPaths)
+        }
+    }
+}
+
 function Get-YAxUnitPinnedEntry {
     $entry = Get-DependencyLockEntry -Name "yaxunit"
     if ($null -eq $entry) {

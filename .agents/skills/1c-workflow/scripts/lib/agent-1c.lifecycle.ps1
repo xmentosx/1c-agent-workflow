@@ -5130,6 +5130,11 @@ function Write-DevBranchRunUserReport {
         Add-RunUserReportLine -Lines $lines -Label "Режим загрузки" -Value $loadModeDisplay
         $enterpriseUpdate = if ($null -ne $LoadResult -and [bool](Get-StateValue -State $LoadResult -Name "enterpriseInvoked" -Default $false)) { "выполнено" } else { "не требовалось" }
         Add-RunUserReportLine -Lines $lines -Label "Enterprise-автообновление" -Value $enterpriseUpdate
+        $classificationStatus = [string](Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "unknown")
+        Add-RunUserReportLine -Lines $lines -Label "Классификация тестов" -Value $(if ($classificationStatus -eq "ready") { "готова" } elseif ($classificationStatus -eq "required") { "требуется до завершения задачи refresh" } else { "не определена" })
+        if ($classificationStatus -eq "required") {
+            Add-RunUserReportLine -Lines $lines -Label "Инвентаризация тестов" -Value (Get-StateValue -State $State -Name "verificationClassificationInventoryPath" -Default "")
+        }
     } else {
         Add-RunUserReportLine -Lines $lines -Label "База в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherInfoBaseName" -Default "")
         Add-RunUserReportLine -Lines $lines -Label "Папка в launcher 1С" -Value (Get-StateValue -State $State -Name "launcherFolder" -Default "")
@@ -10699,7 +10704,7 @@ function Invoke-RefreshDevBranchCore {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-    Update-VerificationSuiteInventory -Reason "$OperationName post-merge" | Out-Null
+    $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
     Install-VanessaAutomation
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
@@ -10719,6 +10724,7 @@ function Invoke-RefreshDevBranchCore {
             -State $state `
             -Operation $OperationName
         Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation $OperationName | Out-Null
+        Set-VerificationClassificationRequiredAction -Inventory $verificationClassificationInventory
 
         $loadStateUpdates = New-LoadStateUpdates -LoadResult $loadResult -ContentKind "configuration"
         foreach ($entry in $loadStateUpdates.GetEnumerator()) {
@@ -10727,6 +10733,10 @@ function Invoke-RefreshDevBranchCore {
         $updates["lastRefreshAt"] = (Get-Date).ToString("o")
         $updates["lastRefreshMasterCommit"] = $targetMasterCommit
         $updates["lastRefreshMode"] = $(if ($SynchronizeMaster) { "full" } else { "lite" })
+        $updates["verificationClassificationStatus"] = $(if ($verificationClassificationInventory.classificationComplete) { "ready" } else { "required" })
+        $updates["verificationClassificationIssues"] = @($verificationClassificationInventory.classificationIssues)
+        $updates["verificationClassificationInventoryPath"] = Get-VerificationClassificationInventoryPath
+        $updates["verificationClassificationCheckedAt"] = (Get-Date).ToString("o")
         Add-PendingDevBranchMergeClearUpdates -Updates $updates
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
@@ -10828,7 +10838,7 @@ function Refresh-AllDevBranches {
     $inventory = Get-ActiveReadyDevBranchTargets
     $results = [System.Collections.Generic.List[object]]::new()
     foreach ($error in @($inventory.errors)) {
-        $results.Add([pscustomobject]@{ branch = "<state>"; status = "failed"; detail = [string]$error; userReport = "" }) | Out-Null
+        $results.Add([pscustomobject]@{ branch = "<state>"; worktreePath = ""; status = "failed"; detail = [string]$error; userReport = ""; requiredAction = "" }) | Out-Null
     }
 
     $runRoot = if ($RunStatusPath) { Split-Path -Parent (Resolve-RunFilePath -Path $RunStatusPath) } else { Join-Path $script:ProjectRoot ".agent-1c\runs" }
@@ -10844,7 +10854,7 @@ function Refresh-AllDevBranches {
             try {
                 $running.Add((Start-RefreshAllBranchProcess -Target $target -MasterCommit $masterCommit -OutputRoot $outputRoot)) | Out-Null
             } catch {
-                $results.Add([pscustomobject]@{ branch = [string]$target.branch; status = "failed"; detail = $_.Exception.Message; userReport = "" }) | Out-Null
+                $results.Add([pscustomobject]@{ branch = [string]$target.branch; worktreePath = [string]$target.worktreePath; status = "failed"; detail = $_.Exception.Message; userReport = ""; requiredAction = "" }) | Out-Null
             }
         }
         Set-RunStage -Stage "refresh-all.branches" -Detail ("master={0}; running={1}; pending={2}; complete={3}" -f $masterCommit, $running.Count, $pending.Count, $results.Count)
@@ -10867,9 +10877,11 @@ function Refresh-AllDevBranches {
             $detail = if ($null -ne $summary -and $summary.error) { [string]$summary.error } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
             $results.Add([pscustomobject]@{
                 branch = [string]$entry.target.branch
+                worktreePath = [string]$entry.target.worktreePath
                 status = $(if ($succeeded) { "succeeded" } else { "failed" })
                 detail = $detail
                 userReport = $(if ($null -ne $summary) { [string]$summary.userReport } else { "" })
+                requiredAction = $(if ($null -ne $summary) { [string]$summary.requiredAction } else { "" })
             }) | Out-Null
             [void]$running.Remove($entry)
         }
@@ -10888,7 +10900,14 @@ function Refresh-AllDevBranches {
         foreach ($result in @($results | Sort-Object branch)) {
             $suffix = if ($result.detail) { ": $($result.detail)" } else { "" }
             $report.Add("- $($result.branch): $($result.status)$suffix")
+            if ([string]$result.requiredAction -match '^classify-tests-after-refresh:') {
+                $report.Add("  - Классификация тестов: требуется в $($result.worktreePath)")
+            }
         }
+    }
+    $classificationTargets = @($results | Where-Object { [string]$_.requiredAction -match '^classify-tests-after-refresh:' })
+    if ($classificationTargets.Count -gt 0) {
+        $script:RunRequiredAction = "classify-tests-after-refresh: update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
     }
     Write-AndSetRunUserReport -Lines $report
     $failed = @($results | Where-Object status -ne "succeeded")
@@ -11553,6 +11572,7 @@ function Show-WorkflowStatus {
                     Write-Host "    Worktree: $worktreePath"
                 }
                 Write-DevBranchInitializationStatusLines -State $state -Indent "    "
+                Write-VerificationClassificationStatusLines -State $state -Indent "    "
                 Write-YAxUnitStatusLines -State $state -Indent "    "
                 Write-VanessaTestStatusLines -State $state -Indent "    "
                 Write-DataMcpStatusLines -State $state -Indent "    "
@@ -11589,6 +11609,7 @@ function Show-WorkflowStatus {
         Write-Host "Publication URL: $publicationUrl"
     }
     Write-DataMcpStatusLines -State $state
+    Write-VerificationClassificationStatusLines -State $state
     Write-YAxUnitStatusLines -State $state
     Write-VanessaTestStatusLines -State $state
     Write-Vibecoding1cMcpStatusLines

@@ -7,7 +7,7 @@ Describe "Branch-first verification suite selection" {
         $HelperPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
     }
 
-    It "keeps legacy full selection when no catalog exists" {
+    It "requires classification instead of running every feature when no catalog exists" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-legacy-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "tests\features") | Out-Null
@@ -22,11 +22,16 @@ Describe "Branch-first verification suite selection" {
                 function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
                 . $ModulePath
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
-                New-VerificationSelectionPlan -ApplicationFeatureFiles @($first, $second)
+                [pscustomobject]@{
+                    catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($first, $second)
+                    plan = New-VerificationSelectionPlan -ApplicationFeatureFiles @($first, $second)
+                }
             }
-            $result.mode | Should -Be "full"
-            @($result.selectedFeatureFiles).Count | Should -Be 2
-            $result.catalogAvailable | Should -BeFalse
+            $result.plan.mode | Should -Be "classification-required"
+            @($result.plan.selectedFeatureFiles).Count | Should -Be 0
+            $result.plan.catalogAvailable | Should -BeFalse
+            @($result.catalog.assignments).Count | Should -Be 2
+            @($result.catalog.assignments | Where-Object suiteId -eq '__unclassified__').Count | Should -Be 2
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -65,6 +70,9 @@ Describe "Branch-first verification suite selection" {
                 . $ModulePath
                 function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
                 function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
+                function Get-YAxUnitTestsPath { "tests/yaxunit" }
+                function Get-YAxUnitSuiteCatalogPaths { @((Resolve-ProjectPath "tests/yaxunit-suites.shared.json"), (Resolve-ProjectPath "tests/yaxunit-suites.branch.json")) }
+                function Get-VanessaFeaturesPath { "tests/features" }
 
                 $initial = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling)
                 Complete-VerificationSelectionProof -Plan $initial
@@ -78,6 +86,9 @@ Describe "Branch-first verification suite selection" {
                 $script:ChangedPaths = @("tools/profiling/measure.ps1")
                 $explicitOnly = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling)
                 [IO.File]::WriteAllText($newProcessing, "Функционал: new", [Text.UTF8Encoding]::new($false))
+                $script:CurrentTree = "5555555555555555555555555555555555555555"
+                $script:ChangedPaths = @("tests/features/NewProcessing.feature")
+                $unclassifiedNewTest = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling, $newProcessing)
                 [IO.File]::WriteAllText($catalogPath, @'
 {
   "schemaVersion": 1,
@@ -89,11 +100,11 @@ Describe "Branch-first verification suite selection" {
   ]
 }
 '@, [Text.UTF8Encoding]::new($false))
-                $script:CurrentTree = "5555555555555555555555555555555555555555"
+                $script:CurrentTree = "6666666666666666666666666666666666666666"
                 $script:ChangedPaths = @("tests/verification-suites.branch.json", "tests/features/NewProcessing.feature", "src/cf/NewProcessing/Processing.xml")
                 $newSuiteFirstFailure = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling, $newProcessing)
                 $newSuiteRetry = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling, $newProcessing)
-                [pscustomobject]@{ initial = $initial; incremental = $incremental; unknown = $unknown; explicitOnly = $explicitOnly; newSuiteFirstFailure = $newSuiteFirstFailure; newSuiteRetry = $newSuiteRetry }
+                [pscustomobject]@{ initial = $initial; incremental = $incremental; unknown = $unknown; explicitOnly = $explicitOnly; unclassifiedNewTest = $unclassifiedNewTest; newSuiteFirstFailure = $newSuiteFirstFailure; newSuiteRetry = $newSuiteRetry }
             }
 
             $result.initial.mode | Should -Be "full"
@@ -103,10 +114,12 @@ Describe "Branch-first verification suite selection" {
             $result.incremental.mode | Should -Be "incremental"
             @($result.incremental.selectedSuiteIds) | Should -Be @("orders")
             @($result.incremental.selectedFeatureFiles) | Should -Be @($orders)
-            $result.unknown.mode | Should -Be "full"
+            $result.unknown.mode | Should -Be "classification-required"
             $result.unknown.reason | Should -Match "no suite owner"
             $result.explicitOnly.mode | Should -Be "reuse"
             @($result.explicitOnly.selectedFeatureFiles).Count | Should -Be 0
+            $result.unclassifiedNewTest.mode | Should -Be "classification-required"
+            @($result.unclassifiedNewTest.selectedFeatureFiles).Count | Should -Be 0
             $result.newSuiteFirstFailure.mode | Should -Be "incremental"
             @($result.newSuiteFirstFailure.selectedSuiteIds) | Should -Be @("new-processing")
             @($result.newSuiteFirstFailure.selectedFeatureFiles) | Should -Be @($newProcessing)
@@ -117,13 +130,13 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
-    It "falls back to all files for an ambiguous catalog" {
+    It "requires classification without selecting files for an ambiguous catalog" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-invalid-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "tests\features") | Out-Null
             $feature = Join-Path $tempRoot "tests\features\Shared.feature"
             [IO.File]::WriteAllText($feature, "Функционал: shared", [Text.UTF8Encoding]::new($false))
-            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), '{"schemaVersion":1,"suites":[{"id":"one","purpose":"acceptance","featurePaths":["tests/features/*.feature"]},{"id":"two","purpose":"acceptance","featurePaths":["tests/features/Shared.feature"]}]}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), '{"schemaVersion":1,"suites":[{"id":"one","purpose":"acceptance","featurePaths":["tests/features/*.feature"],"ownerPaths":["src/cf/One/**"]},{"id":"two","purpose":"acceptance","featurePaths":["tests/features/Shared.feature"],"ownerPaths":["src/cf/Two/**"]}]}', [Text.UTF8Encoding]::new($false))
             $result = & {
                 $script:ProjectRoot = $tempRoot
                 function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
@@ -133,8 +146,8 @@ Describe "Branch-first verification suite selection" {
                 function Get-VerificationSelectionEffectiveTree { "1111111111111111111111111111111111111111" }
                 New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
             }
-            $result.mode | Should -Be "full"
-            @($result.selectedFeatureFiles) | Should -Be @($feature)
+            $result.mode | Should -Be "classification-required"
+            @($result.selectedFeatureFiles).Count | Should -Be 0
             $result.reason | Should -Match "ambiguous|AMBIGUOUS"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -147,10 +160,12 @@ Describe "Branch-first verification suite selection" {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "tests\features") | Out-Null
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf\Orders") | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "docs") | Out-Null
             [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}', [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $tempRoot ".gitignore"), ".agent-1c/verification-selection/`n", [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $tempRoot "tests\features\Orders.feature"), "Функционал: Orders", [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $tempRoot "src\cf\Orders\Order.xml"), "before", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot "docs\guide.md"), "before", [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), '{"schemaVersion":1,"suites":[{"id":"orders","purpose":"acceptance","featurePaths":["tests/features/Orders.feature"],"ownerPaths":["src/cf/Orders/**"]}]}', [Text.UTF8Encoding]::new($false))
             & git -C $tempRoot init *> $null
             & git -C $tempRoot config user.email "tests@example.invalid"
@@ -163,14 +178,17 @@ Describe "Branch-first verification suite selection" {
                 $files = @(Get-VanessaApplicationFeatureFiles -FeaturePath "tests/features")
                 $initial = New-VerificationSelectionPlan -ApplicationFeatureFiles $files
                 Complete-VerificationSelectionProof -Plan $initial
+                [IO.File]::WriteAllText((Join-Path $tempRoot "docs\guide.md"), "after", [Text.UTF8Encoding]::new($false))
+                $unrelated = New-VerificationSelectionPlan -ApplicationFeatureFiles $files
                 [IO.File]::WriteAllText((Join-Path $tempRoot "src\cf\Orders\Order.xml"), "after", [Text.UTF8Encoding]::new($false))
                 $incremental = New-VerificationSelectionPlan -ApplicationFeatureFiles $files
-                [pscustomobject]@{ initial = $initial; incremental = $incremental }
+                [pscustomobject]@{ initial = $initial; unrelated = $unrelated; incremental = $incremental }
             }
 
             $result.initial.currentTree | Should -Match '^[a-f0-9]{40}$'
             $result.incremental.currentTree | Should -Match '^[a-f0-9]{40}$'
             $result.incremental.currentTree | Should -Not -Be $result.initial.currentTree
+            $result.unrelated.mode | Should -Be "reuse"
             $result.incremental.mode | Should -Be "incremental"
             @($result.incremental.selectedSuiteIds) | Should -Be @("orders")
         } finally {
@@ -194,6 +212,7 @@ Describe "Branch-first verification suite selection" {
             function Get-VanessaFeaturesPath { "tests/features" }
             function Get-VanessaApplicationFeatureFiles { @("tests/features/Explicit.feature") }
             function New-VerificationSelectionPlan { [pscustomobject]@{ mode = "reuse"; reason = "explicit only"; selectedFeatureFiles = @(); selectedSuiteIds = @(); acceptanceSuiteIds = @("acceptance"); catalogFingerprint = "catalog"; currentTree = "1111111111111111111111111111111111111111"; catalogAvailable = $true } }
+            function Assert-VerificationClassificationReady {}
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
             function Assert-DevBranchApplicationReady { param([object]$State) $State }
@@ -212,5 +231,40 @@ Describe "Branch-first verification suite selection" {
         $result.eventLogCalls | Should -Be 1
         $result.proofCalls | Should -Be 1
         $result.reuseUpdateCount | Should -Be 1
+    }
+
+    It "runs classification preflight before either executable test contour" {
+        $modes = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.verification-modes.ps1") -Raw -Encoding UTF8
+        $cycle = [regex]::Match($modes, '(?s)function Invoke-ItlVerificationCycle \{(?<body>.*?)\n\}').Groups['body'].Value
+        $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeGreaterThan -1
+        $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Invoke-YAxUnitVerification')
+        $cycle.IndexOf('Assert-VerificationClassificationReady') | Should -BeLessThan $cycle.IndexOf('Run-DevBranchTests')
+        $cycle | Should -Match 'classification-required'
+    }
+
+    It "exposes a static classification validator that never starts 1C" {
+        $helper = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
+        $selection = Get-Content -LiteralPath $ModulePath -Raw -Encoding UTF8
+        $validator = [regex]::Match($selection, '(?s)function Test-VerificationClassification \{(?<body>.*?)\n\}').Groups['body'].Value
+
+        $helper | Should -Match '"validate-test-classification" \{ Test-VerificationClassification \}'
+        $validator | Should -Match 'Assert-VerificationClassificationReady'
+        $validator | Should -Not -Match 'Invoke-(Designer|Enterprise)|Run-DevBranchTests|Invoke-YAxUnitVerification'
+    }
+
+    It "makes refresh return agent-owned classification continuation instead of silent full fallback" {
+        $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
+        $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
+        $refreshTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template") -Raw -Encoding UTF8
+
+        $refresh = [regex]::Match($lifecycle, '(?s)function Invoke-RefreshDevBranchCore \{(?<body>.*?)(?=\nfunction Refresh-DevBranch)').Groups['body'].Value
+        $refresh | Should -Match 'Update-VerificationSuiteInventory'
+        $refresh | Should -Match 'Set-VerificationClassificationRequiredAction'
+        $refresh.IndexOf('Set-VerificationClassificationRequiredAction') | Should -BeLessThan $refresh.IndexOf('Write-DevBranchRunUserReport')
+        foreach ($contract in @($fastSkill, $refreshTemplate)) {
+            $contract | Should -Match 'classify-tests-after-refresh:'
+            $contract | Should -Match 'same task|same agent task|same task'
+            $contract | Should -Match '(?is)do not ask the developer to\s+classify'
+        }
     }
 }

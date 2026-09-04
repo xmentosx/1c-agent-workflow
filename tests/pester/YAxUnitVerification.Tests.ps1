@@ -73,8 +73,8 @@ Describe "YAxUnit verification" {
         $reference | Should -Match 'no partial or stale state after an error or cancellation'
         $reference | Should -Match 'one small representative performance regression that finishes quickly'
         $reference | Should -Match 'Correctness failures cannot be waived by a speed improvement'
-        $reference | Should -Match 'Run all default fast groups together in one normal YAxUnit session'
-        $reference | Should -Match 'Keep heavy benchmarks outside the default .* registration'
+        $reference | Should -Match 'Run all .*default-fast.* groups together in one normal YAxUnit session'
+        $reference | Should -Match 'Keep .*explicit-benchmark.* modules outside the default .* registration'
         $reference | Should -Match 'owner-aware selective execution only after measurements'
         $guide | Should -Match ([regex]::Escape((& $decode '0YHQvdCw0YfQsNC70LAg0YTQuNC60YHQuNGA0YPQtdGCINC10LPQviDRgtC10LrRg9GJ0LjQuSDRhNGD0L3QutGG0LjQvtC90LDQu9GM0L3Ri9C5INC60L7QvdGC0YDQsNC60YI=')))
         $guide | Should -Match ([regex]::Escape((& $decode '0LPRgNGD0L/Qv9C40YDRg9GO0YLRgdGPINCyINGC0LXRgdGC0L7QstC+0Lwg0YDQsNGB0YjQuNGA0LXQvdC40Lgg0L/QviDQv9GA0LjQutC70LDQtNC90L7QuSDQv9C+0LTRgdC40YHRgtC10LzQtSwg0L7QsdGK0LXQutGC0YMg0Lgg0LDQu9Cz0L7RgNC40YLQvNGD')))
@@ -141,5 +141,58 @@ Describe "YAxUnit verification" {
     It "rejects a unit-test source outside the project fingerprint" {
         function Get-Setting { return "../foreign-tests" }
         { Get-YAxUnitTestsPath } | Should -Throw '*ITL_YAXUNIT_TEST_SOURCE_OUTSIDE_PROJECT*'
+    }
+
+    It "requires every YAxUnit module to have one owner-classified cadence" {
+        $tempRoot = Join-Path $TestDrive "classification"
+        $moduleRoot = Join-Path $tempRoot "tests\yaxunit\CommonModules\PlanCalculation\Ext"
+        New-Item -ItemType Directory -Force -Path $moduleRoot | Out-Null
+        $modulePathValue = Join-Path $moduleRoot "Module.bsl"
+        [IO.File]::WriteAllText($modulePathValue, "Procedure Test() Export`nEndProcedure", [Text.UTF8Encoding]::new($false))
+
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Get-Setting { param([string]$Default) return $Default }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Get-VerificationRepoRelativePath { param([string]$Path) $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\'); $full = [IO.Path]::GetFullPath($Path); ($full.Substring($root.Length + 1) -replace '\\', '/') }
+            function Test-VerificationRepoPathPattern { param([string]$Path, [string]$Pattern) [Management.Automation.WildcardPattern]::new($Pattern, [Management.Automation.WildcardOptions]::IgnoreCase).IsMatch($Path) }
+
+            $missing = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\yaxunit-suites.branch.json"), '{"schemaVersion":1,"groups":[{"id":"plan","purpose":"default-fast","modulePaths":["tests/yaxunit/CommonModules/PlanCalculation/Ext/Module.bsl"],"ownerPaths":["src/cf/CommonModules/PlanCalculation/**"]}]}', [Text.UTF8Encoding]::new($false))
+            $classified = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+            [pscustomobject]@{ missing = $missing; classified = $classified }
+        }
+
+        $result.missing.classificationComplete | Should -BeFalse
+        $result.missing.issues[0] | Should -Match 'catalog|missing'
+        @($result.missing.assignments).Count | Should -Be 1
+        $result.missing.assignments[0].groupId | Should -Be '__unclassified__'
+        $result.classified.classificationComplete | Should -BeTrue
+        $result.classified.assignments[0].groupId | Should -Be 'plan'
+    }
+
+    It "rejects an explicit benchmark referenced by ordinary registration" {
+        $tempRoot = Join-Path $TestDrive "benchmark"
+        $registrationRoot = Join-Path $tempRoot "tests\yaxunit\CommonModules\ScenarioRegistration\Ext"
+        $benchmarkRoot = Join-Path $tempRoot "tests\yaxunit\CommonModules\PlanCalculationBenchmark\Ext"
+        New-Item -ItemType Directory -Force -Path $registrationRoot, $benchmarkRoot | Out-Null
+        [IO.File]::WriteAllText((Join-Path $registrationRoot "Module.bsl"), "PlanCalculationBenchmark.AddTests();", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $benchmarkRoot "Module.bsl"), "Procedure AddTests() Export`nEndProcedure", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $tempRoot "tests\yaxunit-suites.branch.json"), '{"schemaVersion":1,"registrationPaths":["tests/yaxunit/CommonModules/ScenarioRegistration/Ext/Module.bsl"],"groups":[{"id":"benchmark","purpose":"explicit-benchmark","modulePaths":["tests/yaxunit/CommonModules/PlanCalculationBenchmark/Ext/Module.bsl"],"ownerPaths":["src/cf/CommonModules/PlanCalculation/**"]}]}', [Text.UTF8Encoding]::new($false))
+
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Get-Setting { param([string]$Default) return $Default }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Get-VerificationRepoRelativePath { param([string]$Path) $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\'); $full = [IO.Path]::GetFullPath($Path); ($full.Substring($root.Length + 1) -replace '\\', '/') }
+            function Test-VerificationRepoPathPattern { param([string]$Path, [string]$Pattern) [Management.Automation.WildcardPattern]::new($Pattern, [Management.Automation.WildcardOptions]::IgnoreCase).IsMatch($Path) }
+            Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+        }
+
+        $result.classificationComplete | Should -BeFalse
+        @($result.assignments | Where-Object groupId -eq '__registration__').Count | Should -Be 1
+        @($result.issues) -join "`n" | Should -Match 'referenced by ordinary registration'
     }
 }

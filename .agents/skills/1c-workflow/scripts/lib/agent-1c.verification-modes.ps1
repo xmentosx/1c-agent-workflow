@@ -318,6 +318,25 @@ function Invoke-ItlVerificationCycle {
     $decisions = @($yaxunit, $vanessa, $eventLog)
     foreach ($decision in $decisions) { Write-Host "Verification component $($decision.component): $(if ($decision.run) { 'RUN' } else { 'SKIP' }) ($($decision.reason))" }
 
+    $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
+    $selectionPlan = $null
+    if (-not $script:ActiveAuxiliaryVanessaContext -and ($vanessa.run -or $yaxunit.run)) {
+        Assert-VerificationClassificationReady -Reason "check-dev-branch preflight" -RequireVanessa:$vanessa.run -RequireYAxUnit:$yaxunit.run | Out-Null
+    }
+    if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
+        if ($vanessa.run) {
+            $featuresPath = Get-VanessaFeaturesPath
+            $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
+            if ($applicationFeatureFiles.Count -gt 0) {
+                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+                if ($selectionPlan.mode -eq "classification-required") {
+                    Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
+                    throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($selectionPlan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"
+                }
+            }
+        }
+    }
+
     if ($yaxunit.run) {
         Invoke-YAxUnitVerification -State $state | Out-Null
         $state = Read-DevBranchState -Name $DevBranchName
@@ -325,15 +344,6 @@ function Invoke-ItlVerificationCycle {
 
     if ($vanessa.run) {
         $script:ItlSkipEventLogForVerification = -not $eventLog.run
-        $recordFullProof = Test-ItlFullVerificationProofEligible -Trigger $Trigger -ExplicitComponents $ExplicitComponents
-        $selectionPlan = $null
-        if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext) {
-            $featuresPath = Get-VanessaFeaturesPath
-            $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
-            if ($applicationFeatureFiles.Count -gt 0) {
-                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
-            }
-        }
         if ($null -ne $selectionPlan -and $selectionPlan.mode -eq "reuse") {
             Assert-DevelopmentBranchWorktreeContext -State $state -Operation "check-dev-branch"
             Assert-DevBranchExtensionInitialized -State $state -Operation "check-dev-branch"

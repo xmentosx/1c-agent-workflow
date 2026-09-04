@@ -66,12 +66,23 @@ function Read-VerificationSuiteCatalog {
 
     $catalogPaths = @(Get-VerificationSuiteCatalogPaths | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
     if ($catalogPaths.Count -eq 0) {
+        $issues = @()
+        $assignments = @()
+        if (@($ApplicationFeatureFiles).Count -gt 0) {
+            $assignments = @($ApplicationFeatureFiles | ForEach-Object {
+                [pscustomobject]@{ path = Get-VerificationRepoRelativePath -Path $_; suiteId = "__unclassified__"; purpose = ""; fullPath = $_ }
+            })
+            $issues = @("Vanessa feature files exist, but tests/verification-suites.shared.json or tests/verification-suites.branch.json is missing.") +
+                @($assignments | ForEach-Object { "Unclassified Vanessa feature: $($_.path)" })
+        }
         return [pscustomobject]@{
             available = $false
             valid = $true
-            fallbackReason = "No verification suite catalog is present; legacy full acceptance selection is used."
+            classificationComplete = ($issues.Count -eq 0)
+            issues = $issues
+            fallbackReason = $(if ($issues.Count -gt 0) { $issues[0] } else { "No Vanessa application feature files require classification." })
             suites = @()
-            assignments = @()
+            assignments = $assignments
             suiteFingerprints = @()
             fingerprint = "legacy"
             catalogPaths = @()
@@ -106,6 +117,9 @@ function Read-VerificationSuiteCatalog {
                     throw "VERIFICATION_SUITE_FEATURES_MISSING: suite '$id' has no featurePaths."
                 }
                 $ownerPatterns = @(Get-VerificationCatalogValue -Value $suite -Name "ownerPaths" -Default @() | ForEach-Object { ([string]$_ -replace "\\", "/").TrimStart("/") } | Where-Object { $_ })
+                if ($ownerPatterns.Count -eq 0) {
+                    throw "VERIFICATION_SUITE_OWNERS_MISSING: suite '$id' has no ownerPaths."
+                }
                 $suites.Add([pscustomobject][ordered]@{
                     id = $id
                     purpose = $purpose
@@ -138,6 +152,7 @@ function Read-VerificationSuiteCatalog {
                 throw "VERIFICATION_SUITE_EMPTY: suite '$($suite.id)' does not match any current application feature file."
             }
         }
+        $issues = @($assignments.ToArray() | Where-Object suiteId -eq "__unclassified__" | ForEach-Object { "Unclassified Vanessa feature: $($_.path)" })
         foreach ($assignment in @($assignments | Sort-Object path)) {
             $fingerprintParts.Add("$($assignment.path)=$($assignment.suiteId):$($assignment.purpose)")
         }
@@ -157,6 +172,8 @@ function Read-VerificationSuiteCatalog {
         return [pscustomobject]@{
             available = $true
             valid = $true
+            classificationComplete = ($issues.Count -eq 0)
+            issues = $issues
             fallbackReason = ""
             suites = @($suites.ToArray())
             assignments = @($assignments.ToArray())
@@ -168,6 +185,8 @@ function Read-VerificationSuiteCatalog {
         return [pscustomobject]@{
             available = $true
             valid = $false
+            classificationComplete = $false
+            issues = @($_.Exception.Message)
             fallbackReason = $_.Exception.Message
             suites = @()
             assignments = @()
@@ -179,7 +198,7 @@ function Read-VerificationSuiteCatalog {
 }
 
 function Get-VerificationSelectionEffectiveTree {
-    $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec @("."))
+    $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec @(Get-VerificationFingerprintScopePaths))
     $treeish = New-VerificationEffectiveTree -ChangedPaths $changedPaths
     $tree = ([string](Get-GitOutput @("rev-parse", "$treeish^{tree}"))).Trim()
     if ($tree -notmatch '^[a-f0-9]{40}$') {
@@ -205,7 +224,11 @@ function Get-VerificationSelectionChangedPaths {
     }
     & git -C $script:ProjectRoot cat-file -e "$BaseTree^{tree}" 2>$null
     if ($LASTEXITCODE -ne 0) { throw "VERIFICATION_SELECTION_BASE_TREE_MISSING: $BaseTree" }
-    return @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", $BaseTree, $CurrentTree, "--"))
+    $scopePaths = @(Get-VerificationFingerprintScopePaths | ForEach-Object { ([string]$_ -replace "\\", "/").Trim("/") } | Where-Object { $_ })
+    return @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--no-renames", $BaseTree, $CurrentTree, "--") | Where-Object {
+        $candidate = ([string]$_ -replace "\\", "/").TrimStart("/")
+        @($scopePaths | Where-Object { $candidate -eq $_ -or $candidate.StartsWith("$_/", [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+    })
 }
 
 function New-VerificationSelectionPlan {
@@ -237,17 +260,40 @@ function New-VerificationSelectionPlan {
         }
     }
 
-    if (-not $catalog.available) { return (& $newFullPlan $catalog.fallbackReason) }
-    if (-not $catalog.valid) { return (& $newFullPlan "Catalog is invalid; safe full acceptance fallback: $($catalog.fallbackReason)") }
+    $newClassificationRequiredPlan = {
+        param([string]$Reason)
+        [pscustomobject]@{
+            mode = "classification-required"
+            reason = $Reason
+            selectedFeatureFiles = @()
+            selectedSuiteIds = @()
+            acceptanceSuiteIds = @()
+            acceptanceSuites = @()
+            catalogFingerprint = [string]$catalog.fingerprint
+            currentTree = $currentTree
+            catalogAvailable = [bool]($catalog.available -and $catalog.valid)
+        }
+    }
+
+    if (-not $catalog.available) { return (& $newClassificationRequiredPlan $catalog.fallbackReason) }
+    if (-not $catalog.valid) { return (& $newClassificationRequiredPlan "Catalog is invalid: $($catalog.fallbackReason)") }
+    if (-not $catalog.classificationComplete) { return (& $newClassificationRequiredPlan (@($catalog.issues) -join "; ")) }
 
     $acceptanceAssignments = @($catalog.assignments | Where-Object purpose -eq "acceptance")
     $acceptanceSuiteIds = @($acceptanceAssignments | Select-Object -ExpandProperty suiteId -Unique)
     $acceptanceSuites = @($catalog.suiteFingerprints | Where-Object purpose -eq "acceptance")
     if ($acceptanceAssignments.Count -eq 0) {
-        return (& $newFullPlan "Catalog has no acceptance features; legacy full selection is retained.")
-    }
-    if ($acceptanceSuiteIds -contains "__unclassified__") {
-        return (& $newFullPlan "Unclassified acceptance features exist; safe full acceptance fallback is required.")
+        return [pscustomobject]@{
+            mode = "reuse"
+            reason = "The complete catalog contains only explicit suites; ordinary Vanessa execution is not applicable."
+            selectedFeatureFiles = @()
+            selectedSuiteIds = @()
+            acceptanceSuiteIds = @()
+            acceptanceSuites = @()
+            catalogFingerprint = [string]$catalog.fingerprint
+            currentTree = $currentTree
+            catalogAvailable = $true
+        }
     }
     if (-not $currentTree) { return (& $newFullPlan "Effective Git tree could not be created.") }
 
@@ -270,7 +316,17 @@ function New-VerificationSelectionPlan {
         return (& $newFullPlan $_.Exception.Message)
     }
     if ($changedPaths.Count -eq 0) {
-        return (& $newFullPlan "No effective tree changes were found; full selection is retained for an explicitly requested check.")
+        return [pscustomobject]@{
+            mode = "reuse"
+            reason = "No verification-relevant changes were found; complete acceptance proof is reusable."
+            selectedFeatureFiles = @()
+            selectedSuiteIds = @()
+            acceptanceSuiteIds = $acceptanceSuiteIds
+            acceptanceSuites = $acceptanceSuites
+            catalogFingerprint = [string]$catalog.fingerprint
+            currentTree = $currentTree
+            catalogAvailable = $true
+        }
     }
 
     $selectedIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
@@ -282,20 +338,30 @@ function New-VerificationSelectionPlan {
     }
     foreach ($suite in @($catalog.suites | Where-Object { $_.purpose -eq "acceptance" -and $_.always })) { [void]$selectedIds.Add([string]$suite.id) }
     $catalogRepoPaths = @($catalog.catalogPaths | ForEach-Object { Get-VerificationRepoRelativePath -Path $_ })
+    $yaxunitRoot = ((Get-YAxUnitTestsPath) -replace "\\", "/").Trim("/")
+    $yaxunitCatalogRepoPaths = @(Get-YAxUnitSuiteCatalogPaths | ForEach-Object { Get-VerificationRepoRelativePath -Path $_ })
+    $featureRoot = ((Get-VanessaFeaturesPath) -replace "\\", "/").Trim("/")
     foreach ($changedPathValue in $changedPaths) {
         $changedPath = ([string]$changedPathValue -replace "\\", "/").TrimStart("/")
         if ($changedPath -in $catalogRepoPaths) { continue }
+        if ($changedPath -in $yaxunitCatalogRepoPaths -or ($yaxunitRoot -and $changedPath.StartsWith("$yaxunitRoot/", [System.StringComparison]::OrdinalIgnoreCase))) { continue }
         $featureAssignment = @($catalog.assignments | Where-Object path -eq $changedPath)
         if ($featureAssignment.Count -eq 1) {
             if ($featureAssignment[0].purpose -eq "acceptance") { [void]$selectedIds.Add([string]$featureAssignment[0].suiteId) }
             continue
+        }
+        if ($featureRoot -and $changedPath.StartsWith("$featureRoot/", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return (& $newFullPlan "Shared Vanessa support changed at '$changedPath'; the complete acceptance set is required.")
+        }
+        if ($changedPath -eq ".agent-1c/dependency-lock.json") {
+            return (& $newFullPlan "The pinned verification runtime changed; the complete acceptance set is required.")
         }
         $ownerMatches = @($catalog.suites | Where-Object {
             $suite = $_
             @($suite.ownerPaths | Where-Object { Test-VerificationRepoPathPattern -Path $changedPath -Pattern $_ }).Count -gt 0
         })
         if ($ownerMatches.Count -eq 0) {
-            return (& $newFullPlan "Changed path '$changedPath' has no suite owner; safe full acceptance fallback is required.")
+            return (& $newClassificationRequiredPlan "Changed verification-relevant path '$changedPath' has no suite owner.")
         }
         foreach ($suite in $ownerMatches) {
             if ($suite.purpose -eq "acceptance") { [void]$selectedIds.Add([string]$suite.id) }
@@ -356,38 +422,133 @@ function Update-VerificationSuiteInventory {
     $started = Get-Date
     try {
         $featurePath = Get-VanessaFeaturesPath
-        $applicationFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featurePath)
+        $featureRoot = Resolve-ProjectPath $featurePath
+        $applicationFiles = @(if (Test-Path -LiteralPath $featureRoot -PathType Container) {
+            Get-VanessaApplicationFeatureFiles -FeaturePath $featurePath
+        })
         $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $applicationFiles
+        $yaxunitModules = @(Get-YAxUnitModuleFiles)
+        $yaxunitCatalog = Read-YAxUnitSuiteCatalog -ModuleFiles $yaxunitModules
+        $issues = @(@($catalog.issues) + @($yaxunitCatalog.issues))
         $value = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             generatedAt = (Get-Date).ToString("o")
             reason = $Reason
             durationMs = [int64]((Get-Date) - $started).TotalMilliseconds
+            classificationComplete = [bool]($catalog.classificationComplete -and $yaxunitCatalog.classificationComplete)
+            classificationIssues = $issues
+            vanessaClassificationComplete = [bool]$catalog.classificationComplete
             catalogAvailable = [bool]$catalog.available
             catalogValid = [bool]$catalog.valid
             fallbackReason = [string]$catalog.fallbackReason
             featureCount = $applicationFiles.Count
             suites = @($catalog.suites | ForEach-Object { [ordered]@{ id = $_.id; purpose = $_.purpose; always = $_.always } })
             assignments = @($catalog.assignments | ForEach-Object { [ordered]@{ path = $_.path; suiteId = $_.suiteId; purpose = $_.purpose } })
+            yaxunit = [ordered]@{
+                suitePresent = [bool](Test-YAxUnitSuitePresent)
+                catalogAvailable = [bool]$yaxunitCatalog.available
+                catalogValid = [bool]$yaxunitCatalog.valid
+                classificationComplete = [bool]$yaxunitCatalog.classificationComplete
+                moduleCount = $yaxunitModules.Count
+                groups = @($yaxunitCatalog.groups | ForEach-Object { [ordered]@{ id = $_.id; purpose = $_.purpose } })
+                assignments = @($yaxunitCatalog.assignments | ForEach-Object { [ordered]@{ path = $_.path; groupId = $_.groupId; purpose = $_.purpose } })
+                registrationPaths = @($yaxunitCatalog.registrationPaths)
+            }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
-        Write-Host "Verification suite inventory: $($applicationFiles.Count) feature file(s), catalog=$(if ($catalog.available) { if ($catalog.valid) { 'valid' } else { 'invalid/full-fallback' } } else { 'absent/legacy-full' }), duration=$($value.durationMs) ms."
+        Write-Host "Test classification inventory: Vanessa=$($applicationFiles.Count) feature file(s), YAxUnit=$($yaxunitModules.Count) module(s), status=$(if ($value.classificationComplete) { 'ready' } else { 'classification-required' }), duration=$($value.durationMs) ms."
         return [pscustomobject]$value
     } catch {
         $value = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             generatedAt = (Get-Date).ToString("o")
             reason = $Reason
             durationMs = [int64]((Get-Date) - $started).TotalMilliseconds
+            classificationComplete = $false
+            classificationIssues = @($_.Exception.Message)
+            vanessaClassificationComplete = $false
             catalogAvailable = $false
             catalogValid = $false
             fallbackReason = $_.Exception.Message
             featureCount = 0
             suites = @()
             assignments = @()
+            yaxunit = [ordered]@{ suitePresent = $false; catalogAvailable = $false; catalogValid = $false; classificationComplete = $false; moduleCount = 0; groups = @(); assignments = @(); registrationPaths = @() }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
-        Write-Host "[WARN] Verification suite inventory failed; normal checks will use safe full selection. $($_.Exception.Message)"
+        Write-Host "[WARN] Test classification inventory failed. Normal verification will stop before starting 1C. $($_.Exception.Message)"
         return [pscustomobject]$value
+    }
+}
+
+function Get-VerificationClassificationInventoryPath {
+    return (Join-Path (Get-VerificationSelectionStateRoot) "inventory.json")
+}
+
+function Set-VerificationClassificationRequiredAction {
+    param([object]$Inventory)
+
+    if ($null -eq $Inventory -or [bool]$Inventory.classificationComplete) { return }
+    $existing = [string]$script:RunRequiredAction
+    $action = "classify-tests-after-refresh: read .agents/skills/1c-workflow/references/verification-suite-selection.md and the inventory at $(Get-VerificationClassificationInventoryPath); update the branch test catalogs in this same agent task before reporting refresh complete"
+    if ($existing -and $existing -notmatch '^classify-tests-after-refresh:') {
+        $action += "; then also follow: $existing"
+    }
+    $script:RunRequiredAction = $action
+}
+
+function Assert-VerificationClassificationReady {
+    param(
+        [string]$Reason = "verification preflight",
+        [switch]$RequireVanessa,
+        [switch]$RequireYAxUnit
+    )
+
+    $inventory = Update-VerificationSuiteInventory -Reason $Reason
+    $ready = (-not $RequireVanessa -or [bool]$inventory.vanessaClassificationComplete) -and
+        (-not $RequireYAxUnit -or [bool]$inventory.yaxunit.classificationComplete)
+    if (-not $ready) {
+        try {
+            $state = Read-DevBranchState -Name $DevBranchName
+            Update-DevBranchState -State $state -Updates @{
+                verificationClassificationStatus = "required"
+                verificationClassificationIssues = @($inventory.classificationIssues)
+                verificationClassificationInventoryPath = Get-VerificationClassificationInventoryPath
+                verificationClassificationCheckedAt = (Get-Date).ToString("o")
+            }
+        } catch {
+            Write-Host "[WARN] Test classification state could not be persisted: $($_.Exception.Message)"
+        }
+        Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
+        $detail = @($inventory.classificationIssues) -join "; "
+        throw "ITL_TEST_CLASSIFICATION_REQUIRED: $detail Inventory: $(Get-VerificationClassificationInventoryPath)"
+    }
+    return $inventory
+}
+
+function Test-VerificationClassification {
+    Set-RunStage -Stage "verification.classification" -Detail "Validating Vanessa and YAxUnit test classification without starting 1C."
+    $inventory = Assert-VerificationClassificationReady -Reason "explicit classification validation" -RequireVanessa -RequireYAxUnit
+    $state = Read-DevBranchState -Name $DevBranchName
+    Update-DevBranchState -State $state -Updates @{
+        verificationClassificationStatus = "ready"
+        verificationClassificationIssues = @()
+        verificationClassificationInventoryPath = Get-VerificationClassificationInventoryPath
+        verificationClassificationCheckedAt = (Get-Date).ToString("o")
+    }
+    Write-Host "Test classification is complete: Vanessa=$($inventory.featureCount) feature file(s); YAxUnit=$($inventory.yaxunit.moduleCount) module(s)."
+    Write-Host "Inventory: $(Get-VerificationClassificationInventoryPath)"
+    return $inventory
+}
+
+function Write-VerificationClassificationStatusLines {
+    param([object]$State, [string]$Indent = "")
+
+    $status = [string](Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "unknown")
+    Write-Host "${Indent}Test classification: $status"
+    $inventoryPath = [string](Get-StateValue -State $State -Name "verificationClassificationInventoryPath" -Default "")
+    if ($inventoryPath) { Write-Host "${Indent}Test classification inventory: $inventoryPath" }
+    foreach ($issue in @(Get-StateValue -State $State -Name "verificationClassificationIssues" -Default @())) {
+        Write-Host "${Indent}Test classification issue: $issue"
     }
 }

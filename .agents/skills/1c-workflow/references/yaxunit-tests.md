@@ -32,9 +32,9 @@ Correctness failures cannot be waived by a speed improvement. Large data sets, c
 
 ## Test groups and cadence
 
-Organize the hierarchical test extension by the owning production subsystem, object, and algorithm. Within each owner, keep fast functional/boundary cases, retained defect regressions, and optimization invariants as recognizable groups. Parameter rows are cases within one contract, not separate execution groups.
+Organize the hierarchical test extension by the owning production subsystem, object, and algorithm. Within each owner, keep fast functional/boundary cases, retained defect regressions, and optimization invariants as recognizable groups. Parameter rows are cases within one contract, not separate execution groups. Every new or changed exported `Module.bsl` must be classified immediately in the YAxUnit catalog described by `verification-suite-selection.md`; do not leave classification for refresh or the final check.
 
-Run all default fast groups together in one normal YAxUnit session. Do not start a separate 1C process per group: platform and extension startup commonly dominate unit-test time. Keep heavy benchmarks outside the default `ИсполняемыеСценарии` registration and run them only through an explicit project benchmark harness. Add owner-aware selective execution only after measurements show that the complete fast suite is a material bottleneck; any later selection must preserve a final unfiltered fast run.
+Run all `purpose=default-fast` groups together in one normal YAxUnit session. Do not start a separate 1C process per group: platform and extension startup commonly dominate unit-test time. Keep `purpose=explicit-benchmark` modules outside the default `ИсполняемыеСценарии` registration and run them only through an explicit project benchmark harness. The machine preflight requires complete module/owner assignments and rejects an explicit benchmark module referenced by ordinary registration. Add owner-aware selective execution only after measurements show that the complete fast suite is a material bottleneck; any later selection must preserve a final unfiltered fast run.
 
 ## Test seam
 
@@ -44,6 +44,6 @@ Use Vanessa instead of YAxUnit when the assertion depends on a form, command vis
 
 ## Execution contract
 
-`/itl-check` loads the workflow-pinned YAxUnit CFE and the separate test extension, disables safe mode and unsafe-action protection only for the fixed `YAXUNIT` extension through the local Designer Agent allowlist, then runs `1C:Enterprise /C RunUnitTests=<config.json>`. The authoritative result is JUnit under `build/test-results/yaxunit`; a missing report, zero executed tests, failures, or errors fails verification. The exit-code file is supplemental and a disagreement is reported.
+Before any normal executable verification starts, `/itl-check` validates both test catalogs. Missing, invalid, ambiguous, or incomplete classification stops before Designer or Enterprise. It then loads the workflow-pinned YAxUnit CFE and the separate test extension, disables safe mode and unsafe-action protection only for the fixed `YAXUNIT` extension through the local Designer Agent allowlist, and runs `1C:Enterprise /C RunUnitTests=<config.json>`. The authoritative result is JUnit under `build/test-results/yaxunit`; a missing report, zero executed tests, failures, or errors fails verification. The exit-code file is supplemental and a disagreement is reported.
 
 Do not commit the downloaded CFE, generated JSON, logs, or reports. Do not call a locally installed unpinned YAxUnit build. `ITL_YAXUNIT_TESTING=off` may skip execution, but skipped executable verification is partial evidence and must never be reported as verified or done.

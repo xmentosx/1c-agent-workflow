@@ -62,7 +62,9 @@ https://raw.githubusercontent.com/xmentosx/1c-agent-workflow/master/AGENT-INSTAL
 | `src/cfe/<Имя>` | Файлы расширений | отслеживается |
 | `src/configs/<Контур>/cf` | Файлы дополнительной конфигурации | отслеживается, если контур объявлен |
 | `tests/features` | Vanessa-сценарии | отслеживается |
+| `tests/verification-suites.*.json` | Классификация Vanessa-сценариев и владельцев | отслеживается при наличии сценариев |
 | `tests/yaxunit` | Исходники отдельного расширения с YAxUnit-тестами | отслеживается |
+| `tests/yaxunit-suites.*.json` | Классификация быстрых и benchmark-групп YAxUnit | отслеживается при наличии тестового расширения |
 | `.agent-1c/project.json` | Несекретные настройки проекта | отслеживается |
 | `.agent-1c/dependency-lock.json` | Зафиксированные версии и источники зависимостей | отслеживается |
 | `.dev.env` | Локальные параметры и секреты | игнорируется |
