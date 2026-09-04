@@ -2857,7 +2857,13 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             continue
         }
         $branchPath = [IO.Path]::GetFullPath((Join-Path $branchRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
-        if (-not $branchPath.StartsWith($branchPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $branchPath -PathType Leaf)) {
+        if (-not $branchPath.StartsWith($branchPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
+        if ((Test-Path -LiteralPath $branchPath -PathType Leaf) -and
+            (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected)) {
             continue
         }
 
@@ -2875,7 +2881,6 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
         if (-not $mainEntries.ContainsKey($target)) {
             throw "AI_RULES_MANAGED_IGNORED_SOURCE_ENTRY_MISSING: $target"
         }
-        $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
         $mainExpected = [string](Get-ConfigValueFromObject -Object $mainEntries[$target] -Path "installedHash" -Default "")
         if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or $mainExpected -ne $expected) {
             throw "AI_RULES_MANAGED_IGNORED_HASH_CONTRACT_MISMATCH: $target"
@@ -2894,7 +2899,7 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             throw "AI_RULES_MANAGED_IGNORED_COPY_VERIFY_FAILED: $target"
         }
         $copied++
-        Write-Host "Restored ignored ai_rules_1c managed file from main worktree: $target"
+        Write-Host "Synchronized ignored ai_rules_1c managed file from main worktree: $target"
     }
     return $copied
 }

@@ -8416,7 +8416,7 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "restores only clean ignored ai_rules managed files from the main worktree" {
+    It "restores missing or stale clean ignored ai_rules managed files from the main worktree" {
         $mainRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-main-" + [guid]::NewGuid().ToString("N"))
         $branchRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-branch-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -8444,6 +8444,14 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             $result | Should -Be 1
             $branchRuntimePath = Join-Path $branchRoot ".kilo\skills\runtime\package.json"
+            [IO.File]::ReadAllBytes($branchRuntimePath) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
+
+            [IO.File]::WriteAllText($branchRuntimePath, "{`"stale`":true}`n", (New-Object Text.UTF8Encoding $false))
+            $staleResult = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State ([pscustomobject]@{ mainWorktreePath = $mainRoot })
+            }
+            $staleResult | Should -Be 1
             [IO.File]::ReadAllBytes($branchRuntimePath) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
 
             Remove-Item -LiteralPath $branchRuntimePath -Force
