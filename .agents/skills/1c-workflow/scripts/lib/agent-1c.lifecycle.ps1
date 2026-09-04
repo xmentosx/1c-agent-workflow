@@ -11421,8 +11421,15 @@ function Invoke-RefreshDevBranchCore {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
+    Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
+    Set-RunStage -Stage "refresh.dependencies" -Detail "Binding the branch to its workflow-pinned immutable dependency cache."
     Install-VanessaAutomation
+    if (Get-RoctupMcpEnabled) {
+        Install-RoctupMcpArtifact | Out-Null
+    }
+    Install-VanessaMcpArtifacts | Out-Null
+    Install-ItlOnDemandMcp | Out-Null
     Set-RunStage -Stage "refresh.load" -Detail "Updating the branch infobase after the merge."
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
     $trackedKiloSnapshot = New-RefreshTrackedKiloConfigSnapshot

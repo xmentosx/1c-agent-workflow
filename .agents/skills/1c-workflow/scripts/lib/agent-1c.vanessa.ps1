@@ -1,12 +1,19 @@
 ﻿function Get-VanessaInstallRoot {
-    $legacyRelative = ".agent-1c/tools/vanessa-automation"
     $currentRelative = ".agent-1c/tools/va"
     $value = Get-Setting -EnvName "VANESSA_AUTOMATION_ROOT" -ConfigName "vanessaAutomation.installRoot" -Default $currentRelative
     $resolved = Resolve-ProjectPath ([string]$value)
-    if ([string]::Equals($resolved, (Resolve-ProjectPath $legacyRelative), [System.StringComparison]::OrdinalIgnoreCase)) {
-        return (Resolve-ProjectPath $currentRelative)
+    if (-not (Test-ItlPathUnderManagedProjectTools -Path $resolved)) {
+        return $resolved
     }
-    return $resolved
+
+    $entry = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $version = [string](Get-ConfigValueFromObject -Object $entry -Path "compatibilityVersion" -Default (Get-ConfigValueFromObject -Object $entry -Path "version" -Default ""))
+    $downstreamRevision = [string](Get-ConfigValueFromObject -Object $entry -Path "downstreamRevision" -Default "")
+    $epfSha256 = [string](Get-ConfigValueFromObject -Object $entry -Path "epfSha256" -Default "")
+    if (-not $version -or -not $downstreamRevision -or -not $epfSha256) {
+        throw "Vanessa Automation cache identity requires compatibilityVersion/version, downstreamRevision, and epfSha256 in .agent-1c/dependency-lock.json."
+    }
+    return (Get-ItlSharedArtifactDirectory -Family "vanessa-automation" -Version "$version-$downstreamRevision" -Sha256 $epfSha256)
 }
 
 function Get-VanessaFeaturesPath {
@@ -58,22 +65,38 @@ function Find-VanessaAutomationEpf {
     return ""
 }
 
-function Get-VanessaAutomationEpfPath {
+function Get-VanessaAutomationConfiguredEpfPath {
+    param([switch]$IncludeManagedProjectTools)
+
     $configured = Get-Setting -EnvName "VANESSA_AUTOMATION_EPF" -ConfigName "vanessaAutomation.epfPath"
     if ($configured) {
         $path = [Environment]::ExpandEnvironmentVariables(([string]$configured).Trim())
         if (-not [System.IO.Path]::IsPathRooted($path)) {
             $path = Resolve-ProjectPath $path
         }
-        $legacyRoot = Resolve-ProjectPath ".agent-1c/tools/vanessa-automation"
         $resolvedPath = Resolve-Agent1cFullPath -Path $path
-        $isLegacyManagedPath = $resolvedPath.StartsWith(($legacyRoot.TrimEnd("\", "/") + "\"), [System.StringComparison]::OrdinalIgnoreCase)
-        if (-not $isLegacyManagedPath -and (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        $isWorkflowManaged = (Test-ItlPathUnderManagedProjectTools -Path $resolvedPath) -or (Test-ItlPathUnderSharedArtifactCache -Path $resolvedPath)
+        if (($IncludeManagedProjectTools -or -not $isWorkflowManaged) -and
+            (Test-Path -LiteralPath $resolvedPath -PathType Leaf -ErrorAction SilentlyContinue)) {
             return $resolvedPath
         }
     }
 
-    return Find-VanessaAutomationEpf -Root (Get-VanessaInstallRoot)
+    return ""
+}
+
+function Get-VanessaAutomationEpfPath {
+    $cached = Find-VanessaAutomationEpf -Root (Get-VanessaInstallRoot)
+    if ($cached) {
+        return $cached
+    }
+
+    $configured = Get-VanessaAutomationConfiguredEpfPath
+    if ($configured) {
+        return $configured
+    }
+
+    return ""
 }
 
 function Get-VanessaAutomationState {
@@ -380,6 +403,18 @@ function Install-VanessaAutomation {
     }
 
     $installRoot = Get-VanessaInstallRoot
+    $legacyEpf = Get-VanessaAutomationConfiguredEpfPath -IncludeManagedProjectTools
+    if ($legacyEpf -and (Test-ItlPathUnderManagedProjectTools -Path $legacyEpf)) {
+        $legacyHash = (Get-FileHash -LiteralPath $legacyEpf -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($legacyHash -ceq ([string]$downloadInfo.expectedEpfSha256).ToLowerInvariant()) {
+            $cachedEpf = Join-Path $installRoot "vanessa.epf"
+            [void](Invoke-ItlImmutableFileAcquire -Source $legacyEpf -DestinationPath $cachedEpf -ExpectedSha256 $legacyHash -Label "Vanessa Automation EPF")
+            Save-VanessaAutomationSettingsToDotEnv -EpfPath $cachedEpf -Version $downloadInfo.compatibilityVersion -DownstreamRevision $downloadInfo.downstreamRevision
+            Write-Host "Vanessa Automation EPF imported into the immutable cache: $cachedEpf"
+            return
+        }
+    }
+
     Write-Host "Vanessa Automation install root: $installRoot"
     Write-Host "Vanessa Automation download metadata source: $($downloadInfo.source)"
     $archivePath = Save-VanessaAutomationArchive -DownloadInfo $downloadInfo
@@ -6664,6 +6699,9 @@ function Resolve-VanessaMcpArtifactPath {
     }
 
     $path = [Environment]::ExpandEnvironmentVariables((ConvertFrom-FileUri -Value $Value).Trim())
+    if ([regex]::Matches($path, '[A-Za-z]:[\\/]').Count -gt 1) {
+        throw "Vanessa UI MCP artifact path contains concatenated absolute paths."
+    }
     if (-not [System.IO.Path]::IsPathRooted($path)) {
         $path = Resolve-ProjectPath $path
     }
@@ -6677,8 +6715,33 @@ function Get-VanessaMcpArtifactLockEntry {
     return Get-ConfigValueFromObject -Object $lock -Path ([string]$Definition.lockKey) -Default $null
 }
 
+function Get-VanessaMcpManagedArtifactPath {
+    param(
+        [object]$Definition,
+        [string]$Version = "",
+        [string]$Sha256 = "",
+        [string]$AssetName = ""
+    )
+
+    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    if (-not $Version) { $Version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "") }
+    if (-not $Sha256) { $Sha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "") }
+    if (-not $AssetName) { $AssetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default "") }
+
+    $configuredRoot = Get-VanessaMcpInstallRoot
+    if (-not (Test-ItlPathUnderManagedProjectTools -Path $configuredRoot)) {
+        return (Join-Path $configuredRoot (ConvertTo-ItlArtifactCacheSegment -Value $AssetName -Name "assetName"))
+    }
+    return (Get-ItlSharedArtifactPath -Family "vanessa-mcp-$($Definition.lockKey)" -Version $Version -Sha256 $Sha256 -AssetName $AssetName)
+}
+
 function Find-VanessaMcpCachedArtifactPath {
     param([object]$Definition)
+
+    $managedPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition
+    if (Test-Path -LiteralPath $managedPath -PathType Leaf -ErrorAction SilentlyContinue) {
+        return (Resolve-Agent1cFullPath -Path $managedPath)
+    }
 
     $pathEnvName = [string]$Definition.pathEnvName
     $configuredValue = Get-EnvValue -Name $pathEnvName -Default ""
@@ -6688,23 +6751,10 @@ function Find-VanessaMcpCachedArtifactPath {
     } catch {
         Write-Warning "ITL_VANESSA_MCP_ARTIFACT_PATH_INVALID: ignoring the invalid cached artifact path from $pathEnvName; artifact resolution will continue from the managed install root."
     }
-    if ($configured -and (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
+    if ($configured -and -not (Test-ItlPathUnderManagedProjectTools -Path $configured) -and
+        -not (Test-ItlPathUnderSharedArtifactCache -Path $configured) -and
+        (Test-Path -LiteralPath $configured -PathType Leaf -ErrorAction SilentlyContinue)) {
         return $configured
-    }
-
-    $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
-    $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default "")
-    $installRoot = Get-VanessaMcpInstallRoot
-    if ($assetName) {
-        $candidate = Join-Path $installRoot $assetName
-        if (Test-Path -LiteralPath $candidate -PathType Leaf -ErrorAction SilentlyContinue) {
-            return (Resolve-Agent1cFullPath -Path $candidate)
-        }
-    }
-
-    $candidates = @(Get-ChildItem -LiteralPath $installRoot -File -Filter ([string]$Definition.assetNameLike) -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-    if ($candidates.Count -gt 0) {
-        return $candidates[0].FullName
     }
 
     return ""
@@ -6721,14 +6771,10 @@ function Get-VanessaMcpCachedArtifactInfo {
     }
 
     $lockEntry = Get-VanessaMcpArtifactLockEntry -Definition $Definition
-    $expectedSha256 = [string](Get-EnvValue -Name ([string]$Definition.sha256EnvName) -Default "")
-    if (-not $expectedSha256) {
-        $expectedSha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "")
-    }
-    $version = [string](Get-EnvValue -Name ([string]$Definition.versionEnvName) -Default "")
-    if (-not $version) {
-        $version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "")
-    }
+    $expectedSha256 = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "sha256" -Default "")
+    if (-not $expectedSha256) { $expectedSha256 = [string](Get-EnvValue -Name ([string]$Definition.sha256EnvName) -Default "") }
+    $version = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "version" -Default "")
+    if (-not $version) { $version = [string](Get-EnvValue -Name ([string]$Definition.versionEnvName) -Default "") }
     $source = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "source" -Default "existing cached artifact")
     $url = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "url" -Default "")
     $assetName = [string](Get-ConfigValueFromObject -Object $lockEntry -Path "assetName" -Default (Split-Path -Leaf $Path))
@@ -6809,14 +6855,12 @@ function Save-VanessaMcpArtifact {
         [object]$AssetInfo
     )
 
-    $installRoot = Get-VanessaMcpInstallRoot
-    New-Item -ItemType Directory -Force -Path $installRoot | Out-Null
-    $targetPath = Join-Path $installRoot ([string]$AssetInfo.name)
     $source = [string]$AssetInfo.url
     $expected = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
     if ($expected -notmatch '^[a-f0-9]{64}$') {
         throw "Vanessa UI MCP artifact has an invalid expected SHA256 for $($Definition.lockKey): '$expected'."
     }
+    $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$AssetInfo.version) -Sha256 $expected -AssetName ([string]$AssetInfo.name)
 
     Write-Host "Vanessa UI MCP artifact source: $source"
     [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
@@ -6887,13 +6931,29 @@ function Install-VanessaMcpArtifact {
         [switch]$ForceDownload
     )
 
+    $asset = Get-VanessaMcpReleaseAssetInfo -Definition $Definition
     $cachedPath = Find-VanessaMcpCachedArtifactPath -Definition $Definition
     if ($cachedPath -and -not $ForceDownload) {
         return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $cachedPath
     }
 
+    if (-not $ForceDownload) {
+        $configuredValue = Get-EnvValue -Name ([string]$Definition.pathEnvName) -Default ""
+        $legacyPath = ""
+        try { $legacyPath = Resolve-VanessaMcpArtifactPath -Value $configuredValue } catch { }
+        if ($legacyPath -and (Test-ItlPathUnderManagedProjectTools -Path $legacyPath) -and
+            (Test-Path -LiteralPath $legacyPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+            $legacyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $legacyPath).Hash.ToLowerInvariant()
+            $expected = ([string]$asset.expectedSha256).ToLowerInvariant()
+            if ($legacyHash -ceq $expected) {
+                $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$asset.version) -Sha256 $expected -AssetName ([string]$asset.name)
+                [void](Invoke-ItlImmutableFileAcquire -Source $legacyPath -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
+                return Get-VanessaMcpCachedArtifactInfo -Definition $Definition -Path $targetPath
+            }
+        }
+    }
+
     try {
-        $asset = Get-VanessaMcpReleaseAssetInfo -Definition $Definition
         $artifact = Save-VanessaMcpArtifact -Definition $Definition -AssetInfo $asset
         Update-VanessaMcpArtifactLockEntry -Artifact $artifact
         return $artifact

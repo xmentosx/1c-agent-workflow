@@ -823,6 +823,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousRef = $env:ITL_WORKFLOW_REF
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
         $previousOnDemandSourceBuild = $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
+        $previousArtifactCacheRoot = $env:ITL_ARTIFACT_CACHE_ROOT
+        $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
             Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r8\vanessa-automation-single.1.2.043.28-itl-r8.zip"
         } else {
@@ -954,6 +956,7 @@ local after
             $env:ITL_WORKFLOW_REF = ""
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $qualifiedVanessaSourceBuild
             $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$qualifiedOnDemandSourceBuild.path
+            $env:ITL_ARTIFACT_CACHE_ROOT = $artifactCacheRoot
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
             $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
             $LASTEXITCODE | Should -Be 0 -Because $diagnostic
@@ -1028,9 +1031,11 @@ local after
             $lock.dependencies.workflowPackage.commit | Should -Be $sourceCommit
             $lock.dependencies.workflowPackage.ref | Should -Be "master"
             $lock.dependencies.workflowPackage.updatedAt | Should -Not -BeNullOrEmpty
-            $installedClientMcp = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\client_mcp.cfe"
-            $installedVaExtension = Join-Path $projectRoot ".agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe"
+            $installedClientMcp = ((@($preservedDevEnv -split '\r?\n' | Where-Object { $_ -like 'VANESSA_MCP_CLIENT_CFE_PATH=*' })[0]) -replace '^[^=]+=', '')
+            $installedVaExtension = ((@($preservedDevEnv -split '\r?\n' | Where-Object { $_ -like 'VANESSA_MCP_VA_EXTENSION_CFE_PATH=*' })[0]) -replace '^[^=]+=', '')
             $installedYAxUnit = Join-Path $projectRoot ".agent-1c\tools\yaxunit\YAxUnit-25.12.cfe"
+            $installedClientMcp | Should -Match ("^" + [regex]::Escape([System.IO.Path]::GetFullPath($artifactCacheRoot)))
+            $installedVaExtension | Should -Match ("^" + [regex]::Escape([System.IO.Path]::GetFullPath($artifactCacheRoot)))
             (Get-FileHash -LiteralPath $installedClientMcp -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             (Get-FileHash -LiteralPath $installedVaExtension -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             (Get-FileHash -LiteralPath $installedYAxUnit -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -1052,6 +1057,7 @@ local after
             $env:ITL_WORKFLOW_REF = $previousRef
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousVanessaSourceBuild
             $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = $previousOnDemandSourceBuild
+            $env:ITL_ARTIFACT_CACHE_ROOT = $previousArtifactCacheRoot
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }

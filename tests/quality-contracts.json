@@ -207,7 +207,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "auxiliary-contours",
@@ -225,7 +225,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/RoctupPortLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1"],
-      "tests": ["tests/pester/RoctupPortLifecycle.Tests.ps1"]
+      "tests": ["tests/pester/RoctupPortLifecycle.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "branch-refresh-result",
@@ -252,7 +252,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/1c-workflow/references/verification-suite-selection.md", ".agents/skills/1c-workflow/references/vanessa-authoring.md", ".agents/skills/1c-workflow/references/vanessa-recipes.md", ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "third-party/vanessa-automation/*"],
-      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
+      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "mcp-hosts",

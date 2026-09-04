@@ -44,7 +44,15 @@ function Get-RoctupMcpRequired {
 
 function Get-RoctupMcpInstallRoot {
     $value = Get-Setting -EnvName "ROCTUP_MCP_INSTALL_ROOT" -ConfigName "roctupMcpToolkit.installRoot" -Default ".agent-1c/tools/roctup-mcp-toolkit"
-    return (Resolve-ProjectPath ([string]$value))
+    $resolved = Resolve-ProjectPath ([string]$value)
+    if (-not (Test-ItlPathUnderManagedProjectTools -Path $resolved)) {
+        return $resolved
+    }
+
+    $lock = Get-DependencyLockEntry -Name "roctupMcpToolkit"
+    $version = [string](Get-ConfigValueFromObject -Object $lock -Path "version" -Default "")
+    $sha256 = [string](Get-ConfigValueFromObject -Object $lock -Path "sha256" -Default "")
+    return (Get-ItlSharedArtifactDirectory -Family "roctup-mcp-toolkit" -Version $version -Sha256 $sha256)
 }
 
 function Get-RoctupMcpConfiguredEpfPath {
@@ -64,14 +72,14 @@ function Get-RoctupMcpConfiguredEpfPath {
 }
 
 function Get-RoctupMcpAssetName {
-    $isLinux = $false
+    $runningOnLinux = $false
     try {
-        $isLinux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
+        $runningOnLinux = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Linux)
     } catch {
-        $isLinux = $false
+        $runningOnLinux = $false
     }
 
-    if ($isLinux) {
+    if ($runningOnLinux) {
         return "MCP_Toolkit_linux.epf"
     }
     if (-not [Environment]::Is64BitOperatingSystem) {
@@ -81,17 +89,18 @@ function Get-RoctupMcpAssetName {
 }
 
 function Find-RoctupMcpEpf {
-    $configured = Get-RoctupMcpConfiguredEpfPath
-    if ($configured) {
-        return $configured
-    }
-
     $installRoot = Get-RoctupMcpInstallRoot
     foreach ($assetName in @((Get-RoctupMcpAssetName), "MCP_Toolkit.epf", "MCP_Toolkit_x86.epf", "MCP_Toolkit_linux.epf")) {
         $path = Join-Path $installRoot $assetName
         if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
             return [System.IO.Path]::GetFullPath($path)
         }
+    }
+
+    $configured = Get-RoctupMcpConfiguredEpfPath
+    if ($configured -and -not (Test-ItlPathUnderManagedProjectTools -Path $configured) -and
+        -not (Test-ItlPathUnderSharedArtifactCache -Path $configured)) {
+        return $configured
     }
     return ""
 }
@@ -283,32 +292,46 @@ function Save-RoctupMcpInstallSettingsToDotEnv {
 function Install-RoctupMcpArtifact {
     param([switch]$ForceDownload)
 
+    $asset = Get-RoctupMcpReleaseAssetInfo
+    $expected = ([string]$asset.expectedSha256).ToLowerInvariant()
     $existingEpf = Find-RoctupMcpEpf
     if ($existingEpf -and -not $ForceDownload) {
         $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $existingEpf).Hash.ToLowerInvariant()
-        if ((Get-DependencyMode) -eq "locked") {
-            $locked = Get-DependencyLockEntry -Name "roctupMcpToolkit"
-            $expected = [string](Get-ConfigValueFromObject -Object $locked -Path "sha256" -Default "")
-            if (-not $expected) {
-                throw "Dependency mode is locked, but roctupMcpToolkit.sha256 is empty in .agent-1c/dependency-lock.json."
-            }
-            if ($hash -ne $expected.ToLowerInvariant()) {
-                throw "ROCTUP MCP artifact SHA256 mismatch in locked dependency mode. Expected $expected, got $hash. Artifact: $existingEpf"
-            }
+        if ($hash -cne $expected) {
+            throw "ROCTUP MCP artifact SHA256 mismatch. Expected $expected, got $hash. Artifact: $existingEpf"
         }
 
-        $version = [string](Get-Setting -EnvName "ROCTUP_MCP_VERSION" -ConfigName "roctupMcpToolkit.version" -Default "")
-        Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $existingEpf -Version $version -Sha256 $hash
+        Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $existingEpf -Version ([string]$asset.version) -Sha256 $hash
         return [pscustomobject]@{
             path = $existingEpf
-            version = $version
+            version = [string]$asset.version
             assetName = Split-Path -Leaf $existingEpf
             sha256 = $hash
             source = "existing artifact"
         }
     }
 
-    $asset = Get-RoctupMcpReleaseAssetInfo
+    if (-not $ForceDownload) {
+        $legacyEpf = Get-RoctupMcpConfiguredEpfPath
+        if ($legacyEpf -and (Test-ItlPathUnderManagedProjectTools -Path $legacyEpf)) {
+            $legacyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $legacyEpf).Hash.ToLowerInvariant()
+            if ($legacyHash -ceq $expected) {
+                $targetPath = Get-ItlSharedArtifactPath -Family "roctup-mcp-toolkit" -Version ([string]$asset.version) -Sha256 $expected -AssetName ([string]$asset.name)
+                [void](Invoke-ItlImmutableFileAcquire -Source $legacyEpf -DestinationPath $targetPath -ExpectedSha256 $expected -Label "ROCTUP MCP artifact")
+                $artifact = [pscustomobject]@{
+                    path = $targetPath
+                    version = [string]$asset.version
+                    assetName = [string]$asset.name
+                    sha256 = $expected
+                    source = "managed legacy artifact"
+                }
+                Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $artifact.path -Version $artifact.version -Sha256 $artifact.sha256
+                Install-RoctupMcpSkillsBestEffort -Version $artifact.version -InstallRoot (Get-RoctupMcpInstallRoot)
+                return $artifact
+            }
+        }
+    }
+
     $artifact = Save-RoctupMcpArtifact -AssetInfo $asset
     Save-RoctupMcpInstallSettingsToDotEnv -EpfPath $artifact.path -Version $artifact.version -Sha256 $artifact.sha256
     Install-RoctupMcpSkillsBestEffort -Version $artifact.version -InstallRoot (Get-RoctupMcpInstallRoot)

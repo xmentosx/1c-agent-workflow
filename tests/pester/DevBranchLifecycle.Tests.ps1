@@ -3114,15 +3114,23 @@ exit 0
         $body | Should -Match ([regex]::Escape("-Operation refreshed -LoadResult `$loadResult"))
     }
 
-    It "synchronizes the pinned Vanessa runtime before refreshing a branch infobase" {
+    It "synchronizes all pinned branch runtimes before refreshing a branch infobase" {
         $match = [regex]::Match($HelperText, "(?s)function\s+Invoke-RefreshDevBranchCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+Refresh-DevBranch\s*\{)")
         $match.Success | Should -BeTrue
         $body = $match.Groups["body"].Value
+        $lockSyncIndex = $body.IndexOf("Sync-WorkflowManagedDependencyLockEntries")
         $installIndex = $body.IndexOf("Install-VanessaAutomation")
+        $roctupIndex = $body.IndexOf("Install-RoctupMcpArtifact")
+        $vanessaMcpIndex = $body.IndexOf("Install-VanessaMcpArtifacts")
+        $facadeIndex = $body.IndexOf("Install-ItlOnDemandMcp")
         $loadIndex = $body.IndexOf("Load-ConfigFromFiles")
 
-        $installIndex | Should -BeGreaterOrEqual 0
-        $loadIndex | Should -BeGreaterThan $installIndex
+        $lockSyncIndex | Should -BeGreaterOrEqual 0
+        $installIndex | Should -BeGreaterThan $lockSyncIndex
+        $roctupIndex | Should -BeGreaterThan $installIndex
+        $vanessaMcpIndex | Should -BeGreaterThan $roctupIndex
+        $facadeIndex | Should -BeGreaterThan $vanessaMcpIndex
+        $loadIndex | Should -BeGreaterThan $facadeIndex
     }
 
     It "routes branch master synchronization through the main worktree helper first" {
@@ -7619,7 +7627,11 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-CleanGit {}
             function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40) } }
             function Sync-DevBranchContextToDotEnv {}
+            function Sync-WorkflowManagedDependencyLockEntries {}
             function Install-VanessaAutomation {}
+            function Get-RoctupMcpEnabled { return $false }
+            function Install-VanessaMcpArtifacts {}
+            function Install-ItlOnDemandMcp {}
             function Invoke-DevBranchDefaultMcpSetup { param([object]$State) return $State }
             function Load-ConfigFromFiles { throw "simulated load failure after ConfigDumpInfo rollback" }
             function Complete-RefreshConfigDumpInfoPostcondition { $script:PostconditionCalls++ }

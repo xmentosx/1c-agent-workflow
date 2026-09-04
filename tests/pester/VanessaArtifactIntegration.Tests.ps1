@@ -6,6 +6,8 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $script:SourceHelperPath = $context.HelperPath
         $script:SavedSourceBuild = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
         $script:SavedArchiveOverride = [Environment]::GetEnvironmentVariable("VANESSA_AUTOMATION_ARCHIVE_URL", "Process")
+        $script:SavedArtifactCacheRoot = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", "Process")
+        $script:NonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
         $script:SavedVanessaEnvironment = @{}
         foreach ($name in @("VANESSA_AUTOMATION_ROOT", "VANESSA_AUTOMATION_EPF", "VANESSA_AUTOMATION_VERSION", "VANESSA_AUTOMATION_DOWNSTREAM_REVISION", "VANESSA_FEATURES_PATH", "VANESSA_REPORTS_PATH")) {
             $script:SavedVanessaEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
@@ -41,9 +43,14 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         }
     }
 
+    BeforeEach {
+        [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", (Join-Path $TestDrive "Shared cache $script:NonAsciiWord with space"), "Process")
+    }
+
     AfterEach {
         [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:SavedSourceBuild, "Process")
         [Environment]::SetEnvironmentVariable("VANESSA_AUTOMATION_ARCHIVE_URL", $script:SavedArchiveOverride, "Process")
+        [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $script:SavedArtifactCacheRoot, "Process")
         foreach ($name in @($script:SavedVanessaEnvironment.Keys)) {
             [Environment]::SetEnvironmentVariable($name, $script:SavedVanessaEnvironment[$name], "Process")
         }
@@ -102,9 +109,12 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $result.epfSha256 | Should -Be $script:FixtureEpfSha256
         (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
         (Get-Content -LiteralPath (Join-Path $testProjectPath ".dev.env") -Raw -Encoding UTF8) | Should -Match "VANESSA_AUTOMATION_DOWNSTREAM_REVISION=itl-r8"
-        (Test-Path -LiteralPath (Join-Path $testProjectPath ".agent-1c\tools\va\metadata\fixture.txt")) | Should -BeFalse
-        (Get-Content -LiteralPath (Join-Path $testProjectPath ".agent-1c\tools\va\LICENSE") -Raw -Encoding UTF8) | Should -Be "license fixture"
-        (Get-Content -LiteralPath (Join-Path $testProjectPath ".agent-1c\tools\va\vanessa.epf") -Raw -Encoding UTF8) | Should -Be "qualified patched EPF fixture"
+        $installedRoot = Split-Path -Parent $result.epfPath
+        $installedRoot | Should -Match ([regex]::Escape($script:NonAsciiWord))
+        $installedRoot | Should -Not -Match ([regex]::Escape($testProjectPath))
+        (Test-Path -LiteralPath (Join-Path $installedRoot "metadata\fixture.txt")) | Should -BeFalse
+        (Get-Content -LiteralPath (Join-Path $installedRoot "LICENSE") -Raw -Encoding UTF8) | Should -Be "license fixture"
+        (Get-Content -LiteralPath $result.epfPath -Raw -Encoding UTF8) | Should -Be "qualified patched EPF fixture"
         (Test-Path -LiteralPath (Join-Path $testProjectPath ".tx")) | Should -BeFalse
     }
 
@@ -130,6 +140,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
 
     It "rejects archive and EPF mismatches without replacing an existing owned install" {
         $rollbackProjectPath = Join-Path $TestDrive "rollback-project"
+        [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", (Join-Path $TestDrive "Isolated error cache $script:NonAsciiWord"), "Process")
         $helperPath = New-VanessaArtifactTestProject -Root $rollbackProjectPath
         $installRoot = Join-Path $rollbackProjectPath ".agent-1c\tools\va"
         New-Item -ItemType Directory -Force -Path $installRoot | Out-Null

@@ -16,7 +16,7 @@ Describe "ITL on-demand MCP facade" {
         Remove-Item -LiteralPath $ModuleFixtureRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    It "pins compatible catalogs and uses main-worktree endpoint assets" {
+    It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $manifest.facadeVersion | Should -Be "0.4.9"
         $manifest.minimumFacadeVersion | Should -Be "0.4.9"
@@ -72,6 +72,12 @@ Describe "ITL on-demand MCP facade" {
             & git -C $mainRoot branch -M master
             & git -C $mainRoot worktree add --quiet -b itldev/test $branchRoot master *> $null
 
+            $mainCompatibilityPath = Join-Path $mainRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
+            $mainCompatibility = Get-Content -LiteralPath $mainCompatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $mainCompatibility.facadeVersion = "99.0.0"
+            $mainCompatibility.minimumFacadeVersion = "99.0.0"
+            Set-Content -LiteralPath $mainCompatibilityPath -Encoding UTF8 -Value ($mainCompatibility | ConvertTo-Json -Depth 20)
+
             $executable = Join-Path $tempRoot "itl-ondemand-mcp.exe"
             Set-Content -LiteralPath $executable -Encoding ASCII -Value "fixture"
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $executable, "Process")
@@ -81,12 +87,13 @@ Describe "ITL on-demand MCP facade" {
             }
 
             @($endpoints).Count | Should -Be 2
-            $expectedHelper = [System.IO.Path]::GetFullPath((Join-Path $workflowRoot "scripts\agent-1c.ps1")); $expectedCatalogRoot = [System.IO.Path]::GetFullPath((Join-Path $workflowRoot "assets\ondemand-mcp\catalogs"))
+            $branchWorkflowRoot = Join-Path $branchRoot ".agents\skills\1c-workflow"
+            $expectedHelper = [System.IO.Path]::GetFullPath((Join-Path $branchWorkflowRoot "scripts\agent-1c.ps1")); $expectedCatalogRoot = [System.IO.Path]::GetFullPath((Join-Path $branchWorkflowRoot "assets\ondemand-mcp\catalogs"))
             foreach ($endpoint in @($endpoints)) {
                 $helperIndex = [Array]::IndexOf([object[]]$endpoint.args, "--helper"); $catalogIndex = [Array]::IndexOf([object[]]$endpoint.args, "--catalog")
                 $endpoint.args[$helperIndex + 1] | Should -Be $expectedHelper
                 [string]$endpoint.args[$catalogIndex + 1] | Should -Match ("^" + [regex]::Escape($expectedCatalogRoot))
-                $endpoint.args[$helperIndex + 1] | Should -Not -Match ([regex]::Escape($branchRoot))
+                $endpoint.args[$helperIndex + 1] | Should -Not -Match ([regex]::Escape($mainRoot))
             }
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldExecutable, "Process")
@@ -227,6 +234,16 @@ Describe "ITL on-demand MCP facade" {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "reports a facade contract mismatch as a status warning without throwing" {
+        $output = & {
+            function Get-ItlOnDemandMcpExecutablePath { throw "ITL_ONDEMAND_FACADE_LOCK_MISMATCH: compatibility='0.4.9' dependencyLock='0.4.8'." }
+            Write-ItlOnDemandMcpStatusLines
+        } 6>&1 | Out-String
+
+        $output | Should -Match "ITL on-demand MCP facade: warning"
+        $output | Should -Match "ITL_ONDEMAND_FACADE_LOCK_MISMATCH"
     }
 
     It "installs from the cached release asset when the workflow is an installed copy without Git metadata" {

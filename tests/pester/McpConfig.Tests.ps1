@@ -1353,8 +1353,10 @@ enabled = true
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-cache-test-" + [guid]::NewGuid().ToString("N"))
         $masterRoot = Join-Path $tempRoot "master"
         $branchRoot = Join-Path $tempRoot "branch"
+        $oldArtifactCacheRoot = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", "Process")
 
         try {
+            [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", (Join-Path $tempRoot "Общий кэш с пробелом"), "Process")
             New-Item -ItemType Directory -Force -Path (Join-Path $masterRoot ".agent-1c"), (Join-Path $branchRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
@@ -1379,6 +1381,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
             $masterExtension = @($masterArtifacts | Where-Object { $_.key -eq "vaExtension" })[0]
             $masterClient.path | Should -Not -BeNullOrEmpty
             $masterExtension.path | Should -Not -BeNullOrEmpty
+            $masterClient.path | Should -Match ([regex]::Escape("Общий кэш с пробелом"))
+            $masterClient.path | Should -Not -Match ([regex]::Escape($masterRoot))
             (Test-Path -LiteralPath $masterClient.path -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath $masterExtension.path -PathType Leaf) | Should -Be $true
 
@@ -1413,6 +1417,7 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
                 }
             } | Should -Throw "*SHA256 mismatch*"
         } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $oldArtifactCacheRoot, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -1428,7 +1433,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
             "VANESSA_MCP_CLIENT_CFE_SHA256",
             "VANESSA_MCP_VA_EXTENSION_CFE_PATH",
             "VANESSA_MCP_VA_EXTENSION_CFE_VERSION",
-            "VANESSA_MCP_VA_EXTENSION_CFE_SHA256"
+            "VANESSA_MCP_VA_EXTENSION_CFE_SHA256",
+            "ITL_ARTIFACT_CACHE_ROOT"
         )
         $previousEnvironment = @{}
         foreach ($name in $environmentNames) {
@@ -1436,6 +1442,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
         }
 
         try {
+            $artifactCacheRoot = Join-Path $tempRoot "Общий кэш с пробелом"
+            [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $artifactCacheRoot, "Process")
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
             $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
@@ -1483,7 +1491,8 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
             $extensionArtifact = @($result.artifacts | Where-Object { $_.key -eq "vaExtension" })[0]
             (Test-Path -LiteralPath $clientArtifact.path -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath $extensionArtifact.path -PathType Leaf) | Should -Be $true
-            $extensionArtifact.path | Should -Be ([System.IO.Path]::GetFullPath((Join-Path $tempRoot ".agent-1c\tools\vanessa-mcp\VAExtension.1.29.cfe")))
+            $extensionArtifact.path | Should -Match ("^" + [regex]::Escape([System.IO.Path]::GetFullPath($artifactCacheRoot)))
+            $extensionArtifact.path | Should -Not -Match ([regex]::Escape((Join-Path $tempRoot ".agent-1c\tools")))
             ($result.warnings -join [Environment]::NewLine) | Should -Match "ITL_VANESSA_MCP_ARTIFACT_PATH_INVALID"
             ($result.warnings -join [Environment]::NewLine) | Should -Match "VANESSA_MCP_VA_EXTENSION_CFE_PATH"
             ($result.warnings -join [Environment]::NewLine) | Should -Not -Match ([regex]::Escape($invalidExtensionPath))
