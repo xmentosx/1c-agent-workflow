@@ -377,7 +377,7 @@
         $expected = @{
             common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
             master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-repository-mode.md.template", "itl-switch-client.md.template")
-            dev = @("itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-reset-branch.md.template", "itl-result.md.template", "itl-verify-fix.md.template")
+            dev = @("itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-reset-branch.md.template", "itl-result.md.template", "itl-sync-branches.md.template", "itl-verify-fix.md.template")
         }
 
         foreach ($setName in $expected.Keys) {
@@ -495,6 +495,7 @@
             "/itl-refresh",
             "/itl-refresh-lite",
             "/itl-fork-branch <name>",
+            "/itl-sync-branches <name>",
             "/itl-refresh-all",
             "/itl-reset-branch",
             "/itl-lock-objects",
@@ -1076,6 +1077,7 @@
             Get-ItlGeneratedCodexSkillIgnorePaths -SourceRoot $RepoRoot
         }
         $generatedCodexSkillPaths | Should -Contain ".agents/skills/itl-fork-branch/"
+        $generatedCodexSkillPaths | Should -Contain ".agents/skills/itl-sync-branches/"
         foreach ($requiredPath in $generatedCodexSkillPaths) {
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".gitignore")) | Should -Match ([regex]::Escape($requiredPath))
             (Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\gitignore.append")) | Should -Match ([regex]::Escape($requiredPath))

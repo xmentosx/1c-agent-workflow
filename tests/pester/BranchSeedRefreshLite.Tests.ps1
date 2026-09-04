@@ -224,6 +224,35 @@
         }
     }
 
+    It "trusts the already dumped source fingerprint during refresh but still validates an explicit seed rebuild" {
+        & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Read-BranchSeedManifest { return $null }
+            function Test-BranchSeedArtifactReady { return $false }
+            function Get-InfoBaseKind { return "file" }
+            function New-BranchSeed {
+                param([string]$ConfigurationFingerprint, [int]$ConfigurationFileCount, [switch]$DumpConfigurationFromSeed)
+                return [pscustomobject]@{
+                    fingerprint = $ConfigurationFingerprint
+                    fileCount = $ConfigurationFileCount
+                    dumpedFromSeed = [bool]$DumpConfigurationFromSeed
+                }
+            }
+
+            $refreshSeed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "source-fingerprint" -ConfigurationFileCount 17 -TrustProvidedConfigurationFingerprint
+            $explicitSeed = Ensure-BranchSeed -Policy Rebuild -ConfigurationFingerprint "" -ConfigurationFileCount 0
+
+            $refreshSeed.fingerprint | Should -Be "source-fingerprint"
+            $refreshSeed.fileCount | Should -Be 17
+            $refreshSeed.dumpedFromSeed | Should -BeFalse
+            $explicitSeed.dumpedFromSeed | Should -BeTrue
+
+            $lifecycleText = Read-Utf8Text -Path (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
+            $syncBody = [regex]::Match($lifecycleText, '(?s)function Sync-Master\s*\{.*?(?=\r?\nfunction )').Value
+            $syncBody | Should -Match '(?s)Dump-ConfigToFiles.*?Ensure-BranchSeed.*?-TrustProvidedConfigurationFingerprint'
+        }
+    }
+
     It "waits for active seed readers before writer replacement and has no source-copy fallback" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-lease-" + [guid]::NewGuid().ToString("N"))
         try {

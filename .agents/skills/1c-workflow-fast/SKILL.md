@@ -9,7 +9,7 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 ## Purpose
 
-Map routine requests in an installed ITL project to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for helper recovery, missing setup, or explanation.
+Map routine installed-project requests to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for recovery, missing setup, or explanation.
 
 For a mapped routine, make the helper the first and only tool action after at most one short sentence; do not pre-read `.dev.env`, inspect Git, or repeat its preflight. Apply an explicit session Caveman override; otherwise use the helper's `ITL response-style`/`responseStyle`. Keep heartbeats to one line with changed stage or liveness. A successful `userReport` remains verbatim in every style. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
 
@@ -21,6 +21,7 @@ For a mapped routine, make the helper the first and only tool action after at mo
 - new configuration branch: `new-dev-branch`
 - new extension branch: `new-extension-dev-branch`; collect `Empty|Cfe`, name, and optional CFE path
 - fork branch: `fork-dev-branch`; target name
+- branch source exchange: `sync-dev-branches`; peer name
 - resume pending extension setup internally: `init-dev-branch-extension`
 - post-change check: `check-dev-branch`
 - explicitly requested base load without tests: `update-dev-branch-base`
@@ -52,7 +53,7 @@ For CFE, use `Cfe` plus `-ExtensionSourcePath`. Unknown extension values may be 
 
 On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown, including for refresh. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
 
-Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
+Current-branch actions infer `itldev/<name>`. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 
 When the user requests an executable milestone or completion check, run `check-dev-branch` directly; do not pre-run base update or `/deploy-and-test`. Do not add `VanessaFeaturePath` or `VanessaFilterTags` to a final run. Its stderr heartbeat reports stage, elapsed time, liveness, no-progress time, timeout remaining, owned PIDs, CPU/log deltas, and working set. Never kill 1C manually: the helper warns at `stalled-suspected`, applies its bounded stall timeout, and cleans up exact tracked processes. Liveness never replaces or weakens the independent Designer memory guard or overall hard timeout.
 

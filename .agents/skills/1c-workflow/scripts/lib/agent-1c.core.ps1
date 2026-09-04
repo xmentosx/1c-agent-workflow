@@ -598,6 +598,17 @@ function Get-Agent1cLifecycleOperationLockScopes {
     param([string]$RequestedAction)
 
     $candidatePaths = @($script:ProjectRoot)
+    if ($RequestedAction -eq "sync-dev-branches") {
+        if (-not $PeerDevBranchName) {
+            throw "sync-dev-branches requires -PeerDevBranchName."
+        }
+        $peerName = [string]$PeerDevBranchName
+        if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+            $peerName = $peerName.Substring("itldev/".Length)
+        }
+        $peerState = Read-DevBranchState -Name $peerName
+        $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
+    }
     if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }

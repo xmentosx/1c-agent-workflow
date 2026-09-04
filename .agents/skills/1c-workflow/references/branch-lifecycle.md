@@ -53,6 +53,12 @@ Source `1Cv8Log`, its signature boundary, branch state, and referenced verificat
 
 If branch creation used `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP=skip` before protection was actually disabled, recover from the branch worktree through the monitored `configure-dev-branch-unsafe-action-protection` helper action. It reopens the normal visible Designer confirmation flow and can record an empty-password local user through `-InfoBaseUser`; do not recreate the branch or mark protection confirmed without the developer's explicit UI action and confirmation.
 
+## SYNC_DEV_BRANCHES
+
+Run `sync-dev-branches -PeerDevBranchName <name>` from either ready development worktree when two branches must exchange their current 1C implementation before either result reaches `master`. Both branch worktrees are locked and checkpointed first. Configuration branches synchronize only their configured `src/cf/**` root; extension branches must target the same extension and synchronize only its `src/cfe/<extension>/**` root. Each branch retains its own `ConfigDumpInfo.xml`. OpenSpec, feature files, tests, documentation, workflow files, and every other repository path remain branch-local.
+
+The helper computes a three-way combined source tree without merging either branch into the other's Git history, creates an independent source-only commit in each branch, proves equal cursor-independent fingerprints, and loads the result into both branch infobases. Verification becomes stale in both branches. The resulting common implementation may therefore be checked and exported entirely from either branch. For a source conflict, resolve only the listed source files in the initiating worktree, run `git add`, and repeat the same command there; the helper owns both commits and propagation to the peer.
+
 For extension branches, ask in chat for Empty or CFE, the extension name, and the CFE path when applicable before launching branch creation. Branch copy and extension initialization remain separate transactional phases, but `new-extension-dev-branch` orchestrates both in one user scenario. If the values are unknown, only the second phase is deferred and persisted as pending.
 
 ## Extension Helpers

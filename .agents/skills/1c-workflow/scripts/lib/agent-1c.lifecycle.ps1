@@ -4479,6 +4479,11 @@ function Assert-DevelopmentBranchWorktreeContext {
             $archivePath = [string](Get-StateValue -State $State -Name "resetArchivePath" -Default "")
             throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Archive: $archivePath"
         }
+        $pendingBranchSyncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+        if ($pendingBranchSyncId -and $Operation -ne "sync-dev-branches") {
+            $primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
+            throw "DEV_BRANCH_SOURCE_SYNC_IN_PROGRESS: repeat /itl-sync-branches from '$primaryBranch' to finish the interrupted source-only synchronization."
+        }
     }
 }
 
@@ -7069,7 +7074,8 @@ function Sync-Master {
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
             -ConfigurationFingerprint $configSource.fingerprint `
-            -ConfigurationFileCount $configSource.fileCount
+            -ConfigurationFileCount $configSource.fileCount `
+            -TrustProvidedConfigurationFingerprint
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
@@ -10245,6 +10251,305 @@ function Update-DevBranchBase {
     }
 }
 
+function Get-DevBranchSourceSyncExportPath {
+    param([object]$State)
+
+    if ((Get-DevBranchKind -State $State) -eq "extension") {
+        return ((Get-DevBranchExtensionExportPath -State $State) -replace "\\", "/").Trim("/")
+    }
+    return ((Get-ExportPath) -replace "\\", "/").Trim("/")
+}
+
+function Assert-DevBranchSourceSyncCompatibility {
+    param([object]$PrimaryState, [object]$PeerState)
+
+    $primaryKind = Get-DevBranchKind -State $PrimaryState
+    $peerKind = Get-DevBranchKind -State $PeerState
+    if ($primaryKind -cne $peerKind) {
+        throw "DEV_BRANCH_SOURCE_SYNC_KIND_MISMATCH: '$($PrimaryState.devBranch)' is '$primaryKind', '$($PeerState.devBranch)' is '$peerKind'."
+    }
+    Assert-DevBranchExtensionInitialized -State $PrimaryState -Operation "sync-dev-branches"
+    Assert-DevBranchExtensionInitialized -State $PeerState -Operation "sync-dev-branches"
+    $primaryPath = Get-DevBranchSourceSyncExportPath -State $PrimaryState
+    $peerPath = Get-DevBranchSourceSyncExportPath -State $PeerState
+    if ($primaryPath -cne $peerPath) {
+        throw "DEV_BRANCH_SOURCE_SYNC_PATH_MISMATCH: source roots differ: '$primaryPath' and '$peerPath'."
+    }
+    return $primaryPath
+}
+
+function Get-PendingBranchSourceSync {
+    param([object]$State)
+
+    $syncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+    if (-not $syncId) { return $null }
+    return [pscustomobject]@{
+        syncId = $syncId
+        primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
+        peerBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPeerBranch" -Default "")
+        primaryHead = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryHead" -Default "")
+        peerHead = [string](Get-StateValue -State $State -Name "pendingBranchSyncPeerHead" -Default "")
+        exportPath = [string](Get-StateValue -State $State -Name "pendingBranchSyncExportPath" -Default "")
+        conflictPaths = @(Get-StateValue -State $State -Name "pendingBranchSyncConflictPaths" -Default @())
+    }
+}
+
+function Set-PendingBranchSourceSync {
+    param([object]$State, [object]$Transaction)
+
+    Update-DevBranchState -State $State -Updates @{
+        pendingBranchSyncId = [string]$Transaction.syncId
+        pendingBranchSyncPrimaryBranch = [string]$Transaction.primaryBranch
+        pendingBranchSyncPeerBranch = [string]$Transaction.peerBranch
+        pendingBranchSyncPrimaryHead = [string]$Transaction.primaryHead
+        pendingBranchSyncPeerHead = [string]$Transaction.peerHead
+        pendingBranchSyncExportPath = [string]$Transaction.exportPath
+        pendingBranchSyncConflictPaths = @($Transaction.conflictPaths)
+    }
+}
+
+function Clear-PendingBranchSourceSync {
+    param([object]$State)
+
+    Update-DevBranchState -State $State -Updates @{
+        pendingBranchSyncId = ""
+        pendingBranchSyncPrimaryBranch = ""
+        pendingBranchSyncPeerBranch = ""
+        pendingBranchSyncPrimaryHead = ""
+        pendingBranchSyncPeerHead = ""
+        pendingBranchSyncExportPath = ""
+        pendingBranchSyncConflictPaths = @()
+    }
+}
+
+function Test-RepoPathUnderRoot {
+    param([string]$RepoPath, [string]$Root)
+
+    $normalizedPath = ($RepoPath -replace "\\", "/").Trim("/")
+    $normalizedRoot = ($Root -replace "\\", "/").Trim("/")
+    return ($normalizedPath -ceq $normalizedRoot -or $normalizedPath.StartsWith(($normalizedRoot + "/"), [StringComparison]::Ordinal))
+}
+
+function Get-BranchSourceSyncChangedPaths {
+    return @(
+        @(
+            Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--")
+            Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--")
+            Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--")
+        ) |
+            ForEach-Object { ([string]$_).Replace("\\", "/").Trim() } |
+            Where-Object { $_ } |
+            Sort-Object -Unique
+    )
+}
+
+function Invoke-BranchSourceMergeTree {
+    param([string]$PrimaryHead, [string]$PeerHead)
+
+    $stderrPath = New-TimestampedFilePath -Directory ([IO.Path]::GetTempPath()) -Prefix "agent-1c-source-sync-" -Extension ".log"
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        $rawOutput = @(& git -C $script:ProjectRoot -c core.quotepath=false merge-tree --write-tree --name-only -z $PrimaryHead $PeerHead 2> $stderrPath)
+        $exitCode = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
+        $stderr = if (Test-Path -LiteralPath $stderrPath -PathType Leaf) { [IO.File]::ReadAllText($stderrPath, (Get-Utf8Encoding)) } else { "" }
+        if ($exitCode -notin @(0, 1)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_MERGE_TREE_FAILED: exit=$exitCode; $stderr"
+        }
+        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) -split "`0", -1)
+        $tree = if ($tokens.Count -gt 0) { ([string]$tokens[0]).Trim() } else { "" }
+        if ($tree -notmatch '^[a-f0-9]{40,64}$') {
+            throw "DEV_BRANCH_SOURCE_SYNC_TREE_MISSING: merge-tree did not return a tree object. $stderr"
+        }
+        $conflicts = [System.Collections.Generic.List[string]]::new()
+        for ($index = 1; $index -lt $tokens.Count; $index++) {
+            $path = [string]$tokens[$index]
+            if (-not $path) { break }
+            $conflicts.Add($path.Replace("\\", "/")) | Out-Null
+        }
+        return [pscustomobject]@{ tree = $tree; conflictPaths = @($conflicts | Sort-Object -Unique) }
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Remove-Item -LiteralPath $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Restore-BranchSourceSyncCursor {
+    param([string]$Head, [string]$ExportPath)
+    Restore-BranchConfigDumpInfoFromCommit -Commit $Head -RepoPaths @("$ExportPath/ConfigDumpInfo.xml")
+}
+
+function Assert-BranchSourceSyncChangesScoped {
+    param([string]$ExportPath)
+
+    $changedPaths = @(Get-BranchSourceSyncChangedPaths)
+    $unexpected = @($changedPaths | Where-Object { -not (Test-RepoPathUnderRoot -RepoPath $_ -Root $ExportPath) })
+    if ($unexpected.Count -gt 0) {
+        throw "DEV_BRANCH_SOURCE_SYNC_UNEXPECTED_PATHS: synchronization may change only '$ExportPath': $($unexpected -join ', ')"
+    }
+    return $changedPaths
+}
+
+function Complete-PrimaryBranchSourceSyncCommit {
+    param([object]$State, [string]$PeerBranch, [string]$ExportPath)
+
+    $unstaged = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
+    $untracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard", "--"))
+    if ($unstaged.Count -gt 0 -or $untracked.Count -gt 0) {
+        $remaining = @($unstaged + $untracked | Sort-Object -Unique)
+        Set-RunFailureContext -Category "merge-conflict" -RequiredAction "resolve-source-conflicts-run-git-add-repeat-itl-sync-branches"
+        throw "DEV_BRANCH_SOURCE_SYNC_RESOLUTION_NOT_STAGED: resolve the source conflicts, run git add, and repeat /itl-sync-branches. Remaining: $($remaining -join ', ')"
+    }
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+    Commit-IfChanged -Message "sync: combine 1C sources with $PeerBranch" -PathSpec @($ExportPath) | Out-Null
+    Assert-CleanGit
+    return (Get-CurrentCommit)
+}
+
+function Copy-BranchSourceSyncResult {
+    param([string]$SourceCommit, [string]$TargetHead, [string]$SourceBranch, [string]$ExportPath)
+
+    Assert-CleanGit
+    Invoke-Git @("rm", "-r", "-f", "--ignore-unmatch", "--", $ExportPath)
+    Invoke-Git @("checkout", $SourceCommit, "--", $ExportPath)
+    Restore-BranchSourceSyncCursor -Head $TargetHead -ExportPath $ExportPath
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+    Commit-IfChanged -Message "sync: copy combined 1C sources from $SourceBranch" -PathSpec @($ExportPath) | Out-Null
+    Assert-CleanGit
+    return (Get-CurrentCommit)
+}
+
+function Invoke-BranchSourceSyncLoad {
+    param([object]$State, [string]$ExportPath, [string]$OtherBranch)
+
+    $stateName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
+    Sync-DevBranchContextToDotEnv -State $State
+    $State = Ensure-DevBranchEventLogBaseline -State $State
+    Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
+    $State = Read-DevBranchState -Name $stateName
+    $contentKind = Get-DevBranchKind -State $State
+    $extensionName = if ($contentKind -eq "extension") { Require-DevBranchExtensionName -State $State } else { "" }
+    $loadResult = Load-ConfigFromFiles `
+        -InfoBasePath $State.devBranchInfoBasePath `
+        -InfoBaseKind $State.infoBaseKind `
+        -State $State `
+        -ExportPath $ExportPath `
+        -ContentKind $contentKind `
+        -ExtensionName $extensionName `
+        -Mode $ConfigLoadMode
+    $updates = @{}
+    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $State -LoadResult $loadResult -Updates $updates
+    Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
+    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
+    foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
+        $updates[$entry.Key] = $entry.Value
+    }
+    $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
+    $updates["lastBranchSourceSyncPeer"] = $OtherBranch
+    Add-VerificationStaleIfNeeded -State $State -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
+    Update-DevBranchState -State $State -Updates $updates
+    return $loadResult
+}
+
+function Sync-DevBranches {
+    $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
+    if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+        $peerName = $peerName.Substring("itldev/".Length)
+    }
+    $primaryState = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $primaryState -Operation "sync-dev-branches"
+    $primaryName = [string](Get-StateValue -State $primaryState -Name "devBranchName" -Default "")
+    if ($peerName -ieq $primaryName) { throw "DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch." }
+    $peerState = Read-DevBranchState -Name $peerName
+    $exportPath = Assert-DevBranchSourceSyncCompatibility -PrimaryState $primaryState -PeerState $peerState
+    $pending = Get-PendingBranchSourceSync -State $primaryState
+
+    if ($null -ne $pending) {
+        if ($pending.primaryBranch -cne [string]$primaryState.devBranch -or $pending.peerBranch -cne [string]$peerState.devBranch) {
+            throw "DEV_BRANCH_SOURCE_SYNC_IDENTITY_MISMATCH: repeat the command from '$($pending.primaryBranch)' with '$($pending.peerBranch)'."
+        }
+        $peerPending = Get-PendingBranchSourceSync -State $peerState
+        if ($null -eq $peerPending -or $peerPending.syncId -cne $pending.syncId) {
+            throw "DEV_BRANCH_SOURCE_SYNC_STATE_MISMATCH: peer transaction state is missing or differs."
+        }
+        if ((Get-CurrentCommit) -cne $pending.primaryHead) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PRIMARY_MOVED: expected '$($pending.primaryHead)', current '$(Get-CurrentCommit)'."
+        }
+        $actualPeerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+        if ($actualPeerHead -cne $pending.peerHead) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PEER_MOVED: expected '$($pending.peerHead)', current '$actualPeerHead'."
+        }
+        $primaryCommit = Complete-PrimaryBranchSourceSyncCommit -State $primaryState -PeerBranch $peerState.devBranch -ExportPath $exportPath
+        Clear-PendingBranchSourceSync -State (Read-DevBranchState -Name $primaryName)
+        Clear-PendingBranchSourceSync -State $peerState
+    } else {
+        $peerPending = Get-PendingBranchSourceSync -State $peerState
+        if ($null -ne $peerPending) {
+            throw "DEV_BRANCH_SOURCE_SYNC_PEER_BUSY: finish synchronization from '$($peerPending.primaryBranch)' first."
+        }
+        Save-DevBranchCheckpoint -Operation "sync-dev-branches" -Message "chore: checkpoint before source sync with $($peerState.devBranch)" | Out-Null
+        Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+            Save-DevBranchCheckpoint -Operation "sync-dev-branches" -Message "chore: checkpoint before source sync with $($primaryState.devBranch)" | Out-Null
+        }
+        $primaryState = Read-DevBranchState -Name $primaryName
+        $peerState = Read-DevBranchState -Name $peerName
+        $primaryHead = Get-CurrentCommit
+        $peerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+        $merge = Invoke-BranchSourceMergeTree -PrimaryHead $primaryHead -PeerHead $peerHead
+        Invoke-Git @("checkout", $merge.tree, "--", $exportPath)
+        Restore-BranchSourceSyncCursor -Head $primaryHead -ExportPath $exportPath
+        $sourceConflicts = @($merge.conflictPaths | Where-Object {
+            (Test-RepoPathUnderRoot -RepoPath $_ -Root $exportPath) -and $_ -cne "$exportPath/ConfigDumpInfo.xml"
+        })
+        Assert-BranchSourceSyncChangesScoped -ExportPath $exportPath | Out-Null
+        if ($sourceConflicts.Count -gt 0) {
+            Invoke-Git (@("reset", "--quiet", "HEAD", "--") + $sourceConflicts)
+            $transaction = [pscustomobject]@{
+                syncId = [guid]::NewGuid().ToString("N")
+                primaryBranch = [string]$primaryState.devBranch
+                peerBranch = [string]$peerState.devBranch
+                primaryHead = $primaryHead
+                peerHead = $peerHead
+                exportPath = $exportPath
+                conflictPaths = $sourceConflicts
+            }
+            Set-PendingBranchSourceSync -State $primaryState -Transaction $transaction
+            Set-PendingBranchSourceSync -State $peerState -Transaction $transaction
+            Set-RunFailureContext -Category "merge-conflict" -RequiredAction "resolve-source-conflicts-run-git-add-repeat-itl-sync-branches"
+            throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT: resolve only the 1C source conflicts, run git add, and repeat /itl-sync-branches. Files: $($sourceConflicts -join ', ')"
+        }
+        $primaryCommit = Complete-PrimaryBranchSourceSyncCommit -State $primaryState -PeerBranch $peerState.devBranch -ExportPath $exportPath
+    }
+
+    $peerHead = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-CurrentCommit }
+    $peerCommit = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+        Copy-BranchSourceSyncResult -SourceCommit $primaryCommit -TargetHead $peerHead -SourceBranch $primaryState.devBranch -ExportPath $exportPath
+    }
+    $primarySource = Get-ConfigSourceFingerprint -ExportPath $exportPath
+    $peerSource = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock { Get-ConfigSourceFingerprint -ExportPath $exportPath }
+    if ([string]$primarySource.fingerprint -cne [string]$peerSource.fingerprint) {
+        throw "DEV_BRANCH_SOURCE_SYNC_FINGERPRINT_MISMATCH: synchronized source roots differ after commit."
+    }
+
+    Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $primaryName) -ExportPath $exportPath -OtherBranch $peerState.devBranch | Out-Null
+    Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $peerName) -ExportPath $exportPath -OtherBranch $primaryState.devBranch | Out-Null
+    }
+    $report = [System.Collections.Generic.List[string]]::new()
+    $report.Add("## Синхронизация исходников веток")
+    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
+    Add-RunUserReportLine -Lines $report -Label "Первая ветка" -Value "$($primaryState.devBranch) @ $primaryCommit"
+    Add-RunUserReportLine -Lines $report -Label "Вторая ветка" -Value "$($peerState.devBranch) @ $peerCommit"
+    Add-RunUserReportLine -Lines $report -Label "Общий fingerprint" -Value ([string]$primarySource.fingerprint)
+    Add-RunUserReportLine -Lines $report -Label "Синхронизировано" -Value $exportPath
+    Add-RunUserReportLine -Lines $report -Label "Не переносилось" -Value "спеки, тесты, документация и остальные файлы репозитория"
+    Add-RunUserReportLine -Lines $report -Label "Базы веток" -Value "обновлены из общего результата"
+    Write-AndSetRunUserReport -Lines $report
+    Set-RunStage -Stage "sync-dev-branches.complete" -Detail "1C sources are identical in both development branches."
+}
+
 function Get-RefreshManagedKiloMcpNames {
     param([object]$Config)
 
@@ -12791,6 +13096,7 @@ function Show-Help {
         Write-ItlActiveClientCommandText "  /itl-refresh"
         Write-ItlActiveClientCommandText "  /itl-refresh-lite"
         Write-ItlActiveClientCommandText "  /itl-fork-branch <name>"
+        Write-ItlActiveClientCommandText "  /itl-sync-branches <name>"
         Write-ItlActiveClientCommandText "  /itl-reset-branch"
         Write-ItlActiveClientCommandText "  /itl-lock-objects"
         Write-ItlActiveClientCommandText "  /itl-result"
