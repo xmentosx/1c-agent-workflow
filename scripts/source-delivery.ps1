@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("RegisterChange", "Status", "PublishDevelop", "PromoteRelease", "ReleaseMaster")]
+    [ValidateSet("RegisterChange", "Status", "Plan", "Cleanup", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster")]
     [string]$Action,
     [string]$RepositoryRoot = "",
     [string]$Remote = "origin",
@@ -19,6 +19,8 @@ param(
     [string]$StatusDetail = "Summary",
     [ValidateSet("Auto", "Restart")]
     [string]$ReleaseResumeMode = "Auto",
+    [string]$ResumePlan = "",
+    [string]$ApproveLongPlan = "",
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
 )
@@ -27,88 +29,48 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
-. (Join-Path $PSScriptRoot "git-path-list.ps1")
-. (Join-Path $PSScriptRoot "release-qualification.ps1")
+$candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
+$localSupervisor = Join-Path $PSScriptRoot "source-delivery-supervisor.ps1"
+if (-not (Test-Path -LiteralPath $localSupervisor -PathType Leaf)) { throw "Delivery supervisor is missing: $localSupervisor" }
 
-$script:Root = [System.IO.Path]::GetFullPath($RepositoryRoot)
-. (Join-Path (Split-Path -Parent $PSScriptRoot) ".agents\skills\1c-workflow\scripts\lib\agent-1c.immutable-download.ps1")
-$script:Remote = $Remote
-$script:DeliveryRequestedAiRulesSource = $AiRulesSource
-$script:DeliveryPreparedAiRulesWorktree = ""
-$script:DeliveryPreparedAiRulesRepository = ""
-$script:GateScript = if ($GateScript) { [System.IO.Path]::GetFullPath($GateScript) } else { Join-Path $script:Root "scripts\check.ps1" }
-$script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.Path]::GetFullPath($ComponentFinalizerScript) } else { "" }
-$script:CompatibilityPromoterScript = if ($CompatibilityPromoterScript) { [System.IO.Path]::GetFullPath($CompatibilityPromoterScript) } else { Join-Path $script:Root "scripts\promote-ai-rules-compatibility.ps1" }
-$script:QueueRoot = "refs/itl/develop-queue"
-
-function Invoke-DeliveryGit {
-    param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][string]$StandardInput = $null)
-    return Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure -StandardInput $StandardInput
-}
-
-function Get-GitValue {
-    param([string[]]$Arguments)
-    return (Invoke-DeliveryGit -Arguments $Arguments).stdout.Trim()
-}
-
-function Assert-CleanDeliveryWorktree {
-    $status = (Invoke-DeliveryGit -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout
-    if ($status) { throw "Source delivery requires a clean worktree. Commit or move unrelated changes first." }
-}
-
-function Invoke-WorktreeGit {
-    param([string]$Root, [string[]]$Arguments, [switch]$AllowFailure)
-    return Invoke-RepositoryGit -RepositoryRoot $Root -Arguments $Arguments -AllowFailure:$AllowFailure
-}
-
-function Get-DeliveryCommonGitDirectory {
-    $value = Get-GitValue -Arguments @("rev-parse", "--path-format=absolute", "--git-common-dir")
-    if ([IO.Path]::IsPathRooted($value)) { return [IO.Path]::GetFullPath($value) }
-    return [IO.Path]::GetFullPath((Join-Path $script:Root $value))
-}
-
-. (Join-Path $PSScriptRoot "source-delivery-process.ps1")
-. (Join-Path $PSScriptRoot "source-delivery-queue.ps1")
-. (Join-Path $PSScriptRoot "source-delivery-component.ps1")
-. (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
-. (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
-
-[void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
-if ($RequireRelease -and $Action -ne "PublishDevelop") {
-    throw "-RequireRelease is valid only with -Action PublishDevelop."
-}
-if ($RetryBlockedStage -and $Action -ne "PublishDevelop") {
-    throw "-RetryBlockedStage is valid only with -Action PublishDevelop."
-}
-if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
-$script:ActiveOperation = $null
+$supervisorRoot = ""
+$supervisorPath = $localSupervisor
+$supervisorCommit = ""
+$bootstrapSupervisor = $true
 try {
-    if ($Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { [void](Enter-DeliveryOperation -Action $Action) }
-    $result = switch ($Action) {
-        "RegisterChange" { Register-SourceChange }
-        "Status" {
-            $history = Get-DeliveryRunHistory -Limit $(if ($StatusDetail -eq "Summary") { 3 } else { 20 }) -IncludeDetails:($StatusDetail -eq "Full")
-            $attempt = Read-DevelopPublicationAttempt
-            [pscustomobject]@{
-                status = "ok"
-                queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
-                activeOperation = (Get-DeliveryOperationStatus)
-                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
-                runHistory = $history
-            }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $remoteMaster = @(& git -C $candidateRoot rev-parse "refs/remotes/$Remote/master" 2>$null)
+    $remoteMasterExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($remoteMasterExitCode -eq 0 -and $remoteMaster.Count -eq 1 -and $remoteMaster[0] -match '^[a-f0-9]{40}$') {
+        $supervisorCommit = [string]$remoteMaster[0]
+        $ErrorActionPreference = "Continue"
+        & git -C $candidateRoot cat-file -e "$supervisorCommit`:scripts/source-delivery-supervisor.ps1" 2>$null
+        $supervisorExists = $LASTEXITCODE -eq 0
+        $ErrorActionPreference = $previousErrorActionPreference
+        if ($supervisorExists) {
+            $supervisorRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-source-supervisor-" + [guid]::NewGuid().ToString("N"))
+            & git -C $candidateRoot worktree add --quiet --detach $supervisorRoot $supervisorCommit
+            if ($LASTEXITCODE -ne 0) { throw "Unable to create the stable delivery supervisor worktree at '$supervisorRoot'." }
+            $supervisorPath = Join-Path $supervisorRoot "scripts\source-delivery-supervisor.ps1"
+            $bootstrapSupervisor = $false
         }
-        "PublishDevelop" { Publish-AccumulatedDevelop }
-        "PromoteRelease" { Promote-AccumulatedDevelopToMaster }
-        "ReleaseMaster" { Release-DevelopToMaster }
     }
-    if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1") -and
-        $Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster") -and
-        $result -and [string]$result.status -in @("published", "released")) {
-        $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot
-        $result | Add-Member -NotePropertyName cleanup -NotePropertyValue $cleanup -Force
+    if (-not $supervisorCommit) {
+        $ErrorActionPreference = "Continue"
+        $supervisorCommit = @(& git -C $candidateRoot rev-parse HEAD 2>$null) | Select-Object -First 1
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    $result | ConvertTo-Json -Depth 8
+    $arguments = @{}
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) { $arguments[$entry.Key] = $entry.Value }
+    $arguments["RepositoryRoot"] = $candidateRoot
+    $arguments["SupervisorCommit"] = $supervisorCommit
+    $arguments["BootstrapSupervisor"] = $bootstrapSupervisor
+    & $supervisorPath @arguments
 } finally {
-    Remove-DeliveryPreparedAiRulesWorktree
-    Exit-DeliveryOperation
+    if ($supervisorRoot -and (Test-Path -LiteralPath $supervisorRoot -PathType Container)) {
+        & git -C $candidateRoot worktree remove --force -- $supervisorRoot 2>$null
+        if ($LASTEXITCODE -ne 0) { Write-Warning "Stable delivery supervisor worktree could not be removed: $supervisorRoot" }
+    }
 }

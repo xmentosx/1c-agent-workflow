@@ -80,7 +80,7 @@ function Get-DeliveryFileIdentity {
     if (-not $Path) { return "none" }
     $resolved = [IO.Path]::GetFullPath($Path)
     if (-not (Test-Path -LiteralPath $resolved -PathType Leaf)) { return "$resolved|missing" }
-    return "$resolved|$((Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant())"
+    return "$resolved|$(Get-DeliveryFileSha256 -Path $resolved)"
 }
 
 function Get-DevelopPublicationEnvironmentIdentity {
@@ -412,8 +412,9 @@ function Register-DevelopPublicationStageFailure {
     if ($existing) {
         $existing.count = [int]$existing.count + 1
         $existing.lastFailedAt = [DateTime]::UtcNow.ToString("o")
+        if (-not $existing.PSObject.Properties["failureClass"]) { $existing | Add-Member -NotePropertyName failureClass -NotePropertyValue (Get-DeliveryFailureClass -Message $Message -Stage $Stage) }
     } else {
-        $failures += [pscustomobject]@{ stage = $Stage; signature = $signature; count = 1; lastFailedAt = [DateTime]::UtcNow.ToString("o"); message = $Message }
+        $failures += [pscustomobject]@{ stage = $Stage; failureClass = (Get-DeliveryFailureClass -Message $Message -Stage $Stage); signature = $signature; count = 1; lastFailedAt = [DateTime]::UtcNow.ToString("o"); message = $Message }
     }
     $Attempt.failures = $failures
     Write-DevelopPublicationAttempt -Attempt $Attempt
@@ -541,6 +542,8 @@ function Publish-AccumulatedDevelop {
 
     $worktree = $null
     $deliverySucceeded = $false
+    $deliveryPlan = $null
+    $candidateResourceId = ""
     try {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "publish-develop"
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
@@ -587,9 +590,20 @@ function Publish-AccumulatedDevelop {
             $attempt.tree = $candidateTree
             Write-DevelopPublicationAttempt -Attempt $attempt
         }
+        $customGate = [bool]$script:DeliveryCustomGateBoundary
+        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$RequireRelease -AllowCustomGateFixture:$customGate
+        $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
+        $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidate }) -State "active"
+        Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
+        $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
+        $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
+        Write-DevelopPublicationAttempt -Attempt $attempt
         [void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)
         $developEnvironmentIdentity = Get-DevelopPublicationEnvironmentIdentity
         $exactDevelopQualificationRestored = Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree
+        if (-not $exactDevelopQualificationRestored) {
+            $exactDevelopQualificationRestored = Restore-DeliveryPlanQualification -Plan $deliveryPlan -CandidateRoot $worktree.path
+        }
         if (-not $exactDevelopQualificationRestored) {
             $priorQualificationRestored = Restore-PriorDevelopPublicationQualification -CandidateRoot $worktree.path -PriorAttempt $priorAttempt -Candidate $candidate -Tree $candidateTree
             if (-not $priorQualificationRestored) {
@@ -615,13 +629,16 @@ function Publish-AccumulatedDevelop {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
             try {
-                Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore
+                Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteBefore -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop")
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+                Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"
+                [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop")
                 $attempt | Add-Member -NotePropertyName developEnvironmentIdentity -NotePropertyValue (Get-DevelopPublicationEnvironmentIdentity) -Force
                 Write-DevelopPublicationAttempt -Attempt $attempt
                 Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "develop-qualified"
             } catch {
+                [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop" -Failed)
                 Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop" -Message $_.Exception.Message
                 throw
             }
@@ -630,11 +647,14 @@ function Publish-AccumulatedDevelop {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Release"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Release"
             try {
-                Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+                Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Release")
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+                Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release"
+                [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release")
                 Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "release-qualified"
             } catch {
+                [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release" -Failed)
                 Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release" -Message $_.Exception.Message
                 throw
             }
@@ -685,14 +705,34 @@ function Publish-AccumulatedDevelop {
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $false
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
+            planId = [string]$deliveryPlan.planId; planPath = $deliveryPlanPath
             qualificationStartedAt = [string]$attempt.startedAt
             qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -OperationStartedAt $operationStartedAt
         }
     } finally {
-        $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
-        if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
-        elseif ($worktree) { Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged." }
+        if (-not $deliverySucceeded -and $deliveryPlan -and $worktree) {
+            foreach ($mode in @("Develop", "Release")) {
+                try { [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode $mode -Failed) }
+                catch { Write-Warning "Could not journal failed $mode resources: $($_.Exception.Message)" }
+            }
+        }
+        $customGate = [bool]$script:DeliveryCustomGateBoundary
+        if ($deliverySucceeded -or $customGate) {
+            Remove-DeliveryWorktree -Worktree $worktree
+            if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "removed") }
+        } elseif ($worktree) {
+            if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "retained") }
+            Write-Warning "Develop candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). The queue is unchanged."
+        }
     }
+}
+
+function Get-DeliveryFileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
+    finally { $algorithm.Dispose(); $stream.Dispose() }
 }
 
 function Publish-ReleaseVersion {
@@ -849,6 +889,8 @@ function Release-DevelopToMaster {
 
     $worktree = $null
     $deliverySucceeded = $false
+    $deliveryPlan = $null
+    $candidateResourceId = ""
     try {
         $worktree = New-DeliveryWorktree -StartPoint "$script:Remote/develop" -Purpose "release-master"
         $masterAncestor = Invoke-WorktreeGit -Root $worktree.path -Arguments @("merge-base", "--is-ancestor", "$script:Remote/master", "HEAD") -AllowFailure
@@ -861,8 +903,14 @@ function Release-DevelopToMaster {
         }
         $candidateBeforeGate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        $customGate = [bool]$script:DeliveryCustomGateBoundary
+        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteMaster -CandidateCommit $candidateBeforeGate -CandidateTree $candidateTree -RequireRelease -AllowCustomGateFixture:$customGate
+        $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
+        $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidateBeforeGate }) -State "active"
+        Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
         $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
         [void](Restore-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
+        [void](Restore-DeliveryPlanQualification -Plan $deliveryPlan -CandidateRoot $worktree.path)
         $qualificationReused = $false
         if ($ReusePrequalifiedGates -and $candidateBeforeGate -ceq $PrequalifiedCommit -and $candidateTree -ceq $PrequalifiedTree -and
             (Test-ExactPassedDeliveryRun -Mode "Develop" -Candidate $candidateBeforeGate -Tree $candidateTree -NotBefore $PrequalifiedNotBefore) -and
@@ -870,9 +918,13 @@ function Release-DevelopToMaster {
             $qualificationReused = $true
             Write-Verbose "Release train reuses exact-candidate Develop and Release qualification; no runtime gate is repeated."
         } else {
-            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop
+            Invoke-SourceGate -Mode "Develop" -WorkingRoot $worktree.path -TargetBaseRef $remoteDevelop -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Develop")
             [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
-            Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path
+            Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop"
+            [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop")
+            Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Release")
+            Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release"
+            [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release")
         }
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         foreach ($oldHead in @($remoteDevelop, $remoteMaster)) {
@@ -905,12 +957,24 @@ function Release-DevelopToMaster {
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $true
             aiRulesCompatibility = [string]$installability.aiRulesStatus
             qualificationReused = $qualificationReused
+            planId = [string]$deliveryPlan.planId; planPath = $deliveryPlanPath
             qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore $(if ($PrequalifiedNotBefore -gt [DateTime]::MinValue) { $PrequalifiedNotBefore } else { $operationStartedAt }) -OperationStartedAt $operationStartedAt
         }
     } finally {
+        if (-not $deliverySucceeded -and $deliveryPlan -and $worktree) {
+            foreach ($mode in @("Develop", "Release")) {
+                try { [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode $mode -Failed) }
+                catch { Write-Warning "Could not journal failed $mode resources: $($_.Exception.Message)" }
+            }
+        }
         $customGate = $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
-        if ($deliverySucceeded -or $customGate) { Remove-DeliveryWorktree -Worktree $worktree }
-        elseif ($worktree) { Write-Warning "Release candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). No force push was attempted." }
+        if ($deliverySucceeded -or $customGate) {
+            Remove-DeliveryWorktree -Worktree $worktree
+            if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "removed") }
+        } elseif ($worktree) {
+            if ($candidateResourceId) { [void](Set-DeliveryResourceState -ResourceId $candidateResourceId -State "retained") }
+            Write-Warning "Release candidate was preserved for diagnosis and retry: $($worktree.path) (branch $($worktree.branch)). No force push was attempted."
+        }
     }
 }
 

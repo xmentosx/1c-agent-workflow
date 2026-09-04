@@ -55,8 +55,7 @@ function Resolve-DevelopE2EJourneyPlan {
     $reason = ""
 
     if ($unknownPaths.Count -gt 0) {
-        foreach ($name in @($Catalog.developJourneys.names)) { $journeys.Add([string]$name) | Out-Null }
-        $reason = "unknown-paths-fail-closed"
+        throw "QUALITY_OWNER_MISSING: $($unknownPaths -join ', ')"
     } elseif ($matchedFullPaths.Count -gt 0) {
         foreach ($name in @($Catalog.developJourneys.names)) { $journeys.Add([string]$name) | Out-Null }
         $reason = "develop-orchestration-full-path"

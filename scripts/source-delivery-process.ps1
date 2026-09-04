@@ -407,7 +407,7 @@ function Close-DeliveryProcessJob {
 }
 
 function Invoke-SourceGate {
-    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "")
+    param([string]$Mode, [string]$WorkingRoot, [string]$TargetBaseRef = "", [int]$HardBudgetSeconds = 0)
     $gate = if ($script:GateScript -eq (Join-Path $script:Root "scripts\check.ps1")) { Join-Path $WorkingRoot "scripts\check.ps1" } else { $script:GateScript }
     if (-not (Test-Path -LiteralPath $gate -PathType Leaf)) { throw "Source gate was not found: $gate" }
     $arguments = @("-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $gate, "-Mode", $Mode)
@@ -433,7 +433,7 @@ function Invoke-SourceGate {
         $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
-        $hardSeconds = Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:($gate -ne $authoritativeGate)
+        $hardSeconds = if ($HardBudgetSeconds -gt 0) { $HardBudgetSeconds } else { Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:($gate -ne $authoritativeGate) }
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L
@@ -511,6 +511,17 @@ function Get-DeliveryOperationStatus {
     }
 }
 
+function Get-DeliveryFailureClass {
+    param([string]$Message, [string]$Stage = "")
+    $value = "$Stage $Message"
+    if ($value -match '(?i)cleanup|housekeeping|remove stale|could not be removed') { return "cleanup" }
+    if ($value -match '(?i)QUALITY_OWNER_MISSING|quality contract|test contract|assertion contract') { return "test-contract" }
+    if ($value -match '(?i)parameter|argument|ValidateSet|requires an explicit|is valid only|invocation') { return "invocation" }
+    if ($value -match '(?i)timeout|timed out|no.progress|port.+(?:busy|occupied)|environment|unavailable|access.+denied') { return "environment" }
+    if ($value -match '(?i)DELIVERY_PLAN|supervisor|queue|checkpoint|operation.+lock|publication stage') { return "supervisor" }
+    return "product"
+}
+
 function Write-DeliveryRunRecord {
     param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode)
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -539,7 +550,7 @@ function Write-DeliveryRunRecord {
             }
         } catch { $releaseE2E = $null }
     }
-    $record = [ordered]@{ schemaVersion = 2; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
+    $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
     [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
     return $target
@@ -559,7 +570,7 @@ function Get-DeliveryRunHistory {
     $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
     $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
         @($runs | Select-Object -First $Limit | ForEach-Object {
-            [pscustomobject]@{ mode=$_.mode; status=$_.status; startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
+            [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
         })
     }
     return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = $lastRuns }

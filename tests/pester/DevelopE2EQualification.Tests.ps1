@@ -106,12 +106,9 @@ Describe "Develop E2E journey qualification router" {
         @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 
-    It "fails closed for unknown and orchestration paths but skips direct tests" {
+    It "blocks unknown ownership, fails closed for orchestration paths, and skips direct tests" {
         $unknownPath = "new-owner/unknown $(Get-NonAsciiFixtureSegment).ps1"
-        $unknown = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($unknownPath)
-        $unknown.reason | Should -Be 'unknown-paths-fail-closed'
-        @($unknown.journeys) | Should -Be @('upgrade','fresh')
-        @($unknown.unknownPaths) | Should -Be @($unknownPath)
+        { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($unknownPath) } | Should -Throw '*QUALITY_OWNER_MISSING*'
 
         $orchestration = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/invoke-develop-e2e.ps1')
         $orchestration.reason | Should -Be 'develop-orchestration-full-path'

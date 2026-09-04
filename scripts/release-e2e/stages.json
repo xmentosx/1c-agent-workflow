@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "stages": [
+    {
+      "id": "seed-parallel",
+      "version": 5,
+      "budgetSeconds": 1200,
+      "dependsOn": [],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.seed.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/run-itl-command.ps1",
+        "scripts/release-e2e/seed-parallel.ps1"
+      ]
+    },
+    {
+      "id": "server-reset",
+      "version": 1,
+      "budgetSeconds": 900,
+      "dependsOn": [],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/run-itl-command.ps1",
+        "scripts/release-e2e/server-reset.ps1"
+      ]
+    },
+    {
+      "id": "config-cadence",
+      "version": 3,
+      "budgetSeconds": 1200,
+      "dependsOn": [],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+        "scripts/release-e2e/config-cadence.ps1"
+      ]
+    },
+    {
+      "id": "config-roundtrip",
+      "version": 2,
+      "budgetSeconds": 600,
+      "dependsOn": ["config-cadence"],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        "scripts/release-e2e/config-roundtrip.ps1"
+      ]
+    },
+    {
+      "id": "extension-smoke",
+      "version": 2,
+      "budgetSeconds": 900,
+      "dependsOn": ["config-cadence"],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        "scripts/release-e2e/extension-smoke.ps1"
+      ]
+    },
+    {
+      "id": "ondemand-mcp",
+      "version": 3,
+      "budgetSeconds": 900,
+      "dependsOn": [],
+      "paths": [
+        "scripts/Build-ItlOnDemandMcp.ps1",
+        "tools/itl-ondemand-mcp/**/*.go",
+        "tools/itl-ondemand-mcp/go.mod",
+        ".agents/skills/1c-workflow/assets/ondemand-mcp/**/*",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1",
+        "templates/dependency-lock.json",
+        "scripts/release-e2e/ondemand-mcp.ps1"
+      ]
+    },
+    {
+      "id": "verification-refresh",
+      "version": 2,
+      "budgetSeconds": 600,
+      "alwaysExecute": true,
+      "dependsOn": ["config-cadence"],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+        "scripts/release-e2e/result-cleanup.ps1"
+      ]
+    },
+    {
+      "id": "result-cleanup",
+      "version": 2,
+      "budgetSeconds": 300,
+      "alwaysExecute": true,
+      "dependsOn": ["config-cadence"],
+      "paths": [
+        ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1",
+        "scripts/release-e2e/result-cleanup.ps1"
+      ]
+    }
+  ]
+}

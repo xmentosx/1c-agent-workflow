@@ -20,6 +20,9 @@
     ],
     "deliveryPostGate": [
       "scripts/source-delivery.ps1",
+      "scripts/source-delivery-supervisor.ps1",
+      "scripts/source-delivery-plan.ps1",
+      "scripts/source-delivery-resources.ps1",
       "scripts/source-delivery-process.ps1",
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
@@ -57,8 +60,7 @@
     "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
-      "scripts/git-path-list.ps1",
-      "scripts/quality-contracts.ps1"
+      "scripts/git-path-list.ps1"
     ],
     "routes": {
       "upgrade": {
@@ -101,7 +103,7 @@
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
-      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
+      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/git-path-list.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
       "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
@@ -110,8 +112,26 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
-      "paths": ["scripts/source-delivery.ps1"],
+      "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1"],
       "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-plan",
+      "owner": "selective immutable delivery plans and stage evidence",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryPlan.Tests.ps1",
+      "paths": ["scripts/source-delivery-plan.ps1", "scripts/release-e2e/stages.json"],
+      "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-resources",
+      "owner": "delivery resource ledger retention and cleanup debt",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
+      "paths": ["scripts/source-delivery-resources.ps1"],
+      "tests": ["tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/pester/SourceDeliveryCleanup.Tests.ps1"]
     },
     {
       "id": "source-delivery-candidate",

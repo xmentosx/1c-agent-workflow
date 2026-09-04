@@ -37,7 +37,8 @@ Describe "Local quality gate contract" {
         $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
         $text | Should -Match '\[ValidateSet\("Targeted", "Smoke", "Fast", "Full", "Develop", "Release"\)\]'; $text | Should -Match '\[string\]\$Mode = "Smoke"'
         $text | Should -Match 'Fast is deprecated and now aliases Smoke'; $text | Should -Match 'resolve-targeted-tests\.ps1'; $text | Should -Match 'smokeTests'
-        $text | Should -Match 'TimeoutSeconds 5400'; $text | Should -Match 'TimeoutSeconds 7200'; $text | Should -Not -Match 'TimeoutSeconds 14400'
+        $text | Should -Match '\$journeyHardSeconds = if \(\$Journey -eq "upgrade"\) \{ 1200 \} else \{ 2100 \}'
+        $text | Should -Match 'TimeoutSeconds \$journeyHardSeconds'; $text | Should -Match 'TimeoutSeconds 7200'; $text | Should -Not -Match 'TimeoutSeconds 14400'
         $text | Should -Match 'targetBudgetSeconds'; $text | Should -Match 'slowestStages'; $text | Should -Match 'ProgressPaths \(Join-Path \$outputRoot "pester-shards"\)'
         $text | Should -Match 'LastWriteTimeUtc\.Ticks'; $text | Should -Match '-ProgressPaths \$releaseProgressPaths -LogName "release-e2e"'
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1"); $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
@@ -93,6 +94,9 @@ Describe "Local quality gate contract" {
         @($componentOnly.tests) | Should -Be @("tests/pester/ImmutableDownloadRetry.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1")
         $postGatePaths = @(
             "scripts/source-delivery.ps1",
+            "scripts/source-delivery-supervisor.ps1",
+            "scripts/source-delivery-plan.ps1",
+            "scripts/source-delivery-resources.ps1",
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",
             "scripts/source-delivery-candidate.ps1",
@@ -148,7 +152,7 @@ Get-PesterShardFileSha256 -Path `$Path
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
         $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
-        $delivery = @("source-delivery.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+        $delivery = @("source-delivery.ps1", "source-delivery-supervisor.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1", "source-delivery-resources.ps1", "source-delivery-cleanup.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
         $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'itl-workflow-full-qualification'
         $check | Should -Match 'itl-workflow-develop-qualification'

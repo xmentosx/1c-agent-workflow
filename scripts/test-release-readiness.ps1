@@ -58,7 +58,10 @@ function Get-GitValue {
 function Get-FileSha256 {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stream = [IO.File]::OpenRead($Path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
+    finally { $sha.Dispose(); $stream.Dispose() }
 }
 
 function ConvertTo-NativeArgument {

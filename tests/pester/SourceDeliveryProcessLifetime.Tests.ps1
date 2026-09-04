@@ -1,6 +1,17 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+It "classifies failures without widening the selected route" {
+        $definition = Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryFailureClass') | Select-Object -First 1
+        $definition | Should -Not -BeNullOrEmpty; Invoke-Expression $definition.Extent.Text
+        (Get-DeliveryFailureClass -Message 'cleanup resource could not be removed') | Should -Be 'cleanup'
+        (Get-DeliveryFailureClass -Message 'QUALITY_OWNER_MISSING') | Should -Be 'test-contract'
+        (Get-DeliveryFailureClass -Message 'invalid parameter invocation') | Should -Be 'invocation'
+        (Get-DeliveryFailureClass -Message 'port 1545 is occupied') | Should -Be 'environment'
+        (Get-DeliveryFailureClass -Message 'DELIVERY_PLAN identity mismatch') | Should -Be 'supervisor'
+        (Get-DeliveryFailureClass -Message 'behavior assertion failed') | Should -Be 'product'
+    }
+
 It "keeps the delivery wrapper budget above the authoritative child gate budget" {
         $definition = Get-DeliveryFunctionDefinitions -Names @('Get-SourceGateHardBudgetSeconds') | Select-Object -First 1
         $definition | Should -Not -BeNullOrEmpty

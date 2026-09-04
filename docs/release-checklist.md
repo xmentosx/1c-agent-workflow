@@ -84,13 +84,17 @@ installable development channel, including owned component publication, but
 does not move stable `master`; only `PromoteRelease` or the explicit command below may report
 `masterReleased=true`.
 
-Every successful development publication or master release performs a
+Every publication first retries accumulated cleanup debt and then performs a
 best-effort post-success cleanup of exact ITL-generated candidate worktrees,
 stale source-delivery test fixtures, disposable fresh/release-seed projects and
 closed seed archives, stale 1C launcher registrations, and managed launcher
 backups in both current and legacy timestamp formats. Configured reusable stands,
 active paths, incomplete-branch state, and manually named backups are preserved;
-cleanup warnings do not rewrite a verified publication as failed.
+cleanup warnings do not rewrite a verified publication as failed. They produce
+`completed-with-cleanup-warnings`, remain in `.git/itl/resources/v1/ledger.json`,
+and are retried by the next publication/release or explicit `-Action Cleanup`.
+Only the newest two failed plans are retained, never beyond seven days; configured
+reusable stands and active plan resources are never removed.
 
 When that remote development commit is ready for the stable channel, run:
 

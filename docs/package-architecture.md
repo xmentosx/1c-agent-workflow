@@ -9,6 +9,10 @@ This source-only document describes the package layout for maintainers. It is no
 - `templates` contains tracked project defaults, ignored-file additions, dependency locks, and project guidance overlays.
 - `install-agent-1c-workflow.ps1` installs the managed package and starts monitored initialization.
 - `scripts/check.ps1` and `scripts/test-ai-rules-compatibility.ps1` own source-repository qualification.
+- `scripts/source-delivery.ps1` bootstraps the stable supervisor from
+  `origin/master`; `source-delivery-supervisor.ps1` owns publication authority,
+  while `source-delivery-plan.ps1` and `source-delivery-resources.ps1` own the
+  immutable selective plan/evidence and common-Git resource ledger.
 
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
