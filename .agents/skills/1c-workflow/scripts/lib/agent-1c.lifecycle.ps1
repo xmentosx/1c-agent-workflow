@@ -276,14 +276,17 @@ function ConvertTo-ConfigLoadRelativePath {
     return ($relative -replace "/", [System.IO.Path]::DirectorySeparatorChar)
 }
 
-function Get-GitPathList {
-    param([string[]]$Arguments)
+function Get-GitPathListAt {
+    param(
+        [string]$Root,
+        [string[]]$Arguments
+    )
 
     $stderrPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "agent-1c-git-stderr-" -Extension ".log"
     $previousErrorActionPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = "Continue"
-        $output = & git -C $script:ProjectRoot -c core.quotepath=false @Arguments 2> $stderrPath
+        $output = & git -C $Root -c core.quotepath=false @Arguments 2> $stderrPath
         $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 1 }
         $stderr = ""
         if (Test-Path -LiteralPath $stderrPath -PathType Leaf -ErrorAction SilentlyContinue) {
@@ -294,11 +297,11 @@ function Get-GitPathList {
             $phase = if ($LifecyclePhase) { $LifecyclePhase } else { "<none>" }
             throw @"
 Git path collection failed.
-ProjectRoot: $script:ProjectRoot
+ProjectRoot: $Root
 CurrentDirectory: $((Get-Location).Path)
 LifecyclePhase: $phase
 ExitCode: $exitCode
-Command: git -C "$script:ProjectRoot" -c core.quotepath=false $($Arguments -join ' ')
+Command: git -C "$Root" -c core.quotepath=false $($Arguments -join ' ')
 Stderr:
 $stderr
 "@
@@ -316,6 +319,12 @@ $stderr
     }
 
     return @($text -split ([string][char]0) | Where-Object { $_ })
+}
+
+function Get-GitPathList {
+    param([string[]]$Arguments)
+
+    return @(Get-GitPathListAt -Root $script:ProjectRoot -Arguments $Arguments)
 }
 
 function Get-GitBlobBytesBatch {
@@ -3268,22 +3277,49 @@ function Sync-AiRules1cCheckout {
         throw "The controlled ai_rules_1c fork requires an immutable configured tag in aiRules.ref; fork main is not allowed."
     }
 
+    $checkoutRepo = $repo
+    $sourceOverride = [Environment]::GetEnvironmentVariable("ITL_AI_RULES_SOURCE_PATH")
+    if (-not [string]::IsNullOrWhiteSpace($sourceOverride)) {
+        $sourceRoot = Resolve-Agent1cFullPath -Path ([Environment]::ExpandEnvironmentVariables($sourceOverride.Trim()))
+        if (-not (Test-Path -LiteralPath $sourceRoot -PathType Container -ErrorAction SilentlyContinue) -or
+            -not (Test-Path -LiteralPath (Join-Path $sourceRoot ".git") -ErrorAction SilentlyContinue)) {
+            throw "ITL_AI_RULES_SOURCE_PATH is not a Git checkout: $sourceRoot"
+        }
+        $sourceOrigin = (Get-GitOutputAt -Root $sourceRoot -Arguments @("remote", "get-url", "origin")).Trim()
+        if ((Get-AiRules1cRepositoryIdentity -Repo $sourceOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
+            throw "ITL_AI_RULES_SOURCE_PATH origin does not match configured ai_rules_1c repo: source='$sourceOrigin' configured='$repo'."
+        }
+        if (@(Get-GitPathListAt -Root $sourceRoot -Arguments @("status", "--porcelain=v1", "-z", "--untracked-files=all")).Count -gt 0) {
+            throw "ITL_AI_RULES_SOURCE_PATH must be a clean controlled-fork checkout: $sourceRoot"
+        }
+        $checkoutRepo = $sourceRoot
+    }
+
     $tempRoot = Get-Agent1cTempRoot
     $rulesDir = Resolve-Agent1cFullPath -Path (Join-Path $tempRoot "ai_rules_1c")
 
     if (Test-Path -LiteralPath $rulesDir) {
         try {
             $currentOrigin = (Get-GitOutputAt -Root $rulesDir -Arguments @("remote", "get-url", "origin")).Trim()
-            if ((Get-AiRules1cRepositoryIdentity -Repo $currentOrigin) -ne (Get-AiRules1cRepositoryIdentity -Repo $repo)) {
-                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
+            if ($currentOrigin -ne $checkoutRepo) {
+                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $checkoutRepo)
             }
-            Invoke-AiRules1cFetchWithRetry -Root $rulesDir
+            try {
+                Invoke-AiRules1cFetchWithRetry -Root $rulesDir
+            } finally {
+                if ($checkoutRepo -ne $repo) {
+                    Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
+                }
+            }
         } catch {
             throw "Failed to update ai_rules_1c in $rulesDir"
         }
     } else {
         try {
-            Invoke-GitAt -Root $tempRoot -Arguments @("clone", $repo, $rulesDir)
+            Invoke-GitAt -Root $tempRoot -Arguments @("clone", $checkoutRepo, $rulesDir)
+            if ($checkoutRepo -ne $repo) {
+                Invoke-GitAt -Root $rulesDir -Arguments @("remote", "set-url", "origin", $repo)
+            }
         } catch {
             throw "Failed to clone ai_rules_1c from $repo"
         }
