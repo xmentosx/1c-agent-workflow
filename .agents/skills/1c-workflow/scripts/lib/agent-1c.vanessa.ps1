@@ -16,6 +16,11 @@
     return (Get-ItlSharedArtifactDirectory -Family "vanessa-automation" -Version "$version-$downstreamRevision" -Sha256 $epfSha256)
 }
 
+function Get-VanessaConfiguredFeaturesPath {
+    $value = Get-Setting -EnvName "VANESSA_FEATURES_PATH" -ConfigName "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features")
+    return [string]$value
+}
+
 function Get-VanessaFeaturesPath {
     if ($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.featuresPath) {
         return [string]$script:ActiveAuxiliaryVanessaContext.featuresPath
@@ -24,8 +29,7 @@ function Get-VanessaFeaturesPath {
         return $VanessaFeaturePath
     }
 
-    $value = Get-Setting -EnvName "VANESSA_FEATURES_PATH" -ConfigName "vanessaAutomation.featuresPath" -Default (Get-ConfigValue -Path "testsPath" -Default "tests/features")
-    return [string]$value
+    return (Get-VanessaConfiguredFeaturesPath)
 }
 
 function Get-VanessaReportsPath {

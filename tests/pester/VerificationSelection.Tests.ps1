@@ -169,6 +169,44 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "classifies the configured Vanessa inventory when a single feature is selected" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-single-feature-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "tests\features") | Out-Null
+            $feature = Join-Path $tempRoot "tests\features\Selected.feature"
+            $otherFeature = Join-Path $tempRoot "tests\features\Other.feature"
+            [IO.File]::WriteAllText($feature, "Функционал: selected", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($otherFeature, "Функционал: other", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), '{"schemaVersion":1,"suites":[{"id":"selected","purpose":"acceptance","featurePaths":["tests/features/Selected.feature"],"ownerPaths":["src/cf/Configuration.xml"]},{"id":"other","purpose":"acceptance","featurePaths":["tests/features/Other.feature"],"ownerPaths":["src/cf/Other/**"]}]}', [Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                $script:ProjectRoot = $tempRoot
+                function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+                function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+                function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+                function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
+                . $ModulePath
+                function Get-VerificationSelectionStateRoot { Join-Path $script:ProjectRoot ".agent-1c\verification-selection" }
+                $script:ActiveAuxiliaryVanessaContext = $null
+                function Get-VanessaFeaturesPath { $feature }
+                function Get-VanessaConfiguredFeaturesPath { "tests/features" }
+                function Get-VanessaApplicationFeatureFiles { param([string]$FeaturePath) @(Get-ChildItem -LiteralPath (Resolve-ProjectPath $FeaturePath) -File -Filter "*.feature" | ForEach-Object FullName) }
+                function Get-YAxUnitModuleFiles { @() }
+                function Read-YAxUnitSuiteCatalog { [pscustomobject]@{ classificationComplete = $true; issues = @(); available = $false; valid = $true; groups = @(); assignments = @(); registrationPaths = @() } }
+                function Test-YAxUnitSuitePresent { $false }
+                Update-VerificationSuiteInventory -Reason "single feature regression"
+            }
+
+            $result.classificationComplete | Should -BeTrue
+            $result.featureCount | Should -Be 2
+            @($result.assignments).Count | Should -Be 2
+            @($result.assignments.path) | Should -Contain "tests/features/Selected.feature"
+            @($result.assignments.path) | Should -Contain "tests/features/Other.feature"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "advances from an exact clean Git tree to an owner-selected dirty tree" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-git-" + [guid]::NewGuid().ToString("N"))
         try {

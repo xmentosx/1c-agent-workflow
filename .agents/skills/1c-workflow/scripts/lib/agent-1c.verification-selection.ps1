@@ -440,7 +440,11 @@ function Update-VerificationSuiteInventory {
     New-Item -ItemType Directory -Force -Path $root | Out-Null
     $started = Get-Date
     try {
-        $featurePath = Get-VanessaFeaturesPath
+        $featurePath = if ($script:ActiveAuxiliaryVanessaContext) {
+            Get-VanessaFeaturesPath
+        } else {
+            Get-VanessaConfiguredFeaturesPath
+        }
         $featureRoot = Resolve-ProjectPath $featurePath
         $applicationFiles = @(if (Test-Path -LiteralPath $featureRoot -PathType Container) {
             Get-VanessaApplicationFeatureFiles -FeaturePath $featurePath
