@@ -328,18 +328,39 @@ function Add-FreshVanessaFeature {
     [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($base64))
 }
 
+function Add-FreshVerificationCatalog {
+    param([string]$Root)
+    $path = Join-Path $Root "tests\verification-suites.branch.json"
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $catalog = @'
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "id": "itl-develop-journey",
+      "purpose": "acceptance",
+      "featurePaths": ["tests/features/*.feature"],
+      "ownerPaths": ["src/cf/Configuration.xml"]
+    }
+  ]
+}
+'@
+    [IO.File]::WriteAllText($path, $catalog.Trim() + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+}
+
 function Set-DevelopStandVanessaFeature {
     param([string]$Root)
     $path = Join-Path $Root "tests\features\ITLDevelopJourney.feature"
     Add-FreshVanessaFeature -Root $Root
-    $relativePath = "tests/features/ITLDevelopJourney.feature"
-    & git -C $Root add -- $relativePath
+    Add-FreshVerificationCatalog -Root $Root
+    $relativePaths = @("tests/features/ITLDevelopJourney.feature", "tests/verification-suites.branch.json")
+    & git -C $Root add -- $relativePaths
     if ($LASTEXITCODE -ne 0) { throw "Unable to stage the Develop E2E Vanessa fixture: $path" }
-    & git -C $Root diff --cached --quiet -- $relativePath
+    & git -C $Root diff --cached --quiet -- $relativePaths
     $diffExitCode = $LASTEXITCODE
     if ($diffExitCode -eq 0) { return }
     if ($diffExitCode -ne 1) { throw "Unable to inspect the staged Develop E2E Vanessa fixture: $path" }
-    & git -C $Root commit -m "test: seed develop E2E Vanessa fixture" -- $relativePath | Out-Null
+    & git -C $Root commit -m "test: seed develop E2E Vanessa fixture" -- $relativePaths | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Unable to commit the Develop E2E Vanessa fixture: $path" }
 }
 
@@ -438,7 +459,8 @@ try {
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "commit-golden-change" -Operation {
             Set-FreshConfigurationComment -Root $freshBranchRoot
             Add-FreshVanessaFeature -Root $freshBranchRoot
-            & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature
+            Add-FreshVerificationCatalog -Root $freshBranchRoot
+            & git -C $freshBranchRoot add -- src/cf/Configuration.xml tests/features/ITLDevelopJourney.feature tests/verification-suites.branch.json
             & git -C $freshBranchRoot commit -m "test: add develop golden change" | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "Unable to commit the fresh develop journey change." }
         })
