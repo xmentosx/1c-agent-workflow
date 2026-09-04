@@ -328,7 +328,7 @@ function Invoke-ItlVerificationCycle {
             $featuresPath = Get-VanessaFeaturesPath
             $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
             if ($applicationFeatureFiles.Count -gt 0) {
-                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+                $selectionPlan = New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -YAxUnitVerificationPlanned:$yaxunit.run
                 if ($selectionPlan.mode -eq "classification-required") {
                     Set-RunFailureContext -Category "missing-suite" -RequiredAction "classify-tests-and-repeat-original-itl-command"
                     throw "ITL_TEST_CLASSIFICATION_REQUIRED: $($selectionPlan.reason) Inventory: $(Get-VerificationClassificationInventoryPath)"

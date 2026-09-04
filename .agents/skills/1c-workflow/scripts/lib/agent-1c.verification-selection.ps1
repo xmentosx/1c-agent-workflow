@@ -232,7 +232,10 @@ function Get-VerificationSelectionChangedPaths {
 }
 
 function New-VerificationSelectionPlan {
-    param([string[]]$ApplicationFeatureFiles)
+    param(
+        [string[]]$ApplicationFeatureFiles,
+        [switch]$YAxUnitVerificationPlanned
+    )
 
     $allFiles = @($ApplicationFeatureFiles | Sort-Object -Unique)
     $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $allFiles
@@ -329,6 +332,14 @@ function New-VerificationSelectionPlan {
         }
     }
 
+    $yaxunitCatalog = $null
+    if ($YAxUnitVerificationPlanned) {
+        $yaxunitCatalog = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+        if (-not [bool]$yaxunitCatalog.classificationComplete) {
+            return (& $newClassificationRequiredPlan ("YAxUnit classification is incomplete: " + (@($yaxunitCatalog.issues) -join "; ")))
+        }
+    }
+
     $selectedIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($suiteProof in $acceptanceSuites) {
         $prior = @($provedSuites | Where-Object { [string](Get-VerificationCatalogValue -Value $_ -Name "id" -Default "") -eq [string]$suiteProof.id })
@@ -361,6 +372,14 @@ function New-VerificationSelectionPlan {
             @($suite.ownerPaths | Where-Object { Test-VerificationRepoPathPattern -Path $changedPath -Pattern $_ }).Count -gt 0
         })
         if ($ownerMatches.Count -eq 0) {
+            $yaxunitOwnerMatches = @(if ($YAxUnitVerificationPlanned -and $null -ne $yaxunitCatalog) {
+                $yaxunitCatalog.groups | Where-Object {
+                    $group = $_
+                    $group.purpose -eq "default-fast" -and
+                        @($group.ownerPaths | Where-Object { Test-VerificationRepoPathPattern -Path $changedPath -Pattern $_ }).Count -gt 0
+                }
+            })
+            if ($yaxunitOwnerMatches.Count -gt 0) { continue }
             return (& $newClassificationRequiredPlan "Changed verification-relevant path '$changedPath' has no suite owner.")
         }
         foreach ($suite in $ownerMatches) {
@@ -372,7 +391,7 @@ function New-VerificationSelectionPlan {
     if ($selectedFiles.Count -eq 0) {
         return [pscustomobject]@{
             mode = "reuse"
-            reason = "Changed paths belong only to explicit suites; complete acceptance proof is reusable."
+            reason = "Changed paths are covered by planned YAxUnit or explicit Vanessa suites; complete acceptance proof is reusable."
             selectedFeatureFiles = @()
             selectedSuiteIds = @()
             acceptanceSuiteIds = $acceptanceSuiteIds

@@ -63,7 +63,10 @@ the only selected suite on every failed fix-and-retry iteration instead of
 restarting the previously proved acceptance set.
 
 Changes outside the verification fingerprint do not force Vanessa. YAxUnit-only
-changes are handled by the YAxUnit contour and do not select Vanessa. A shared
+test changes are handled by the YAxUnit contour and do not select Vanessa. When
+ordinary YAxUnit execution is planned, a changed production path owned by a
+`default-fast` YAxUnit group also reuses Vanessa proof unless a Vanessa suite
+owns the same path. Disabling or skipping YAxUnit disables that exemption. A shared
 Vanessa library or pinned verification runtime change still requires the complete
 acceptance set because it can affect every suite.
 

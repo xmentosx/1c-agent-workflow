@@ -72,6 +72,14 @@ Describe "Branch-first verification suite selection" {
                 function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
                 function Get-YAxUnitTestsPath { "tests/yaxunit" }
                 function Get-YAxUnitSuiteCatalogPaths { @((Resolve-ProjectPath "tests/yaxunit-suites.shared.json"), (Resolve-ProjectPath "tests/yaxunit-suites.branch.json")) }
+                function Get-YAxUnitModuleFiles { @("tests/yaxunit/CommonModules/CalculationTests/Ext/Module.bsl") }
+                function Read-YAxUnitSuiteCatalog {
+                    [pscustomobject]@{
+                        classificationComplete = $true
+                        issues = @()
+                        groups = @([pscustomobject]@{ id = "calculation"; purpose = "default-fast"; ownerPaths = @("src/cf/Calculations/**") })
+                    }
+                }
                 function Get-VanessaFeaturesPath { "tests/features" }
 
                 $initial = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling)
@@ -85,6 +93,10 @@ Describe "Branch-first verification suite selection" {
                 $script:CurrentTree = "4444444444444444444444444444444444444444"
                 $script:ChangedPaths = @("tools/profiling/measure.ps1")
                 $explicitOnly = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling)
+                $script:CurrentTree = "4444444444444444444444444444444444444445"
+                $script:ChangedPaths = @("src/cf/Calculations/CommonModules/Calculation/Ext/Module.bsl")
+                $yaxUnitOnly = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling) -YAxUnitVerificationPlanned
+                $yaxUnitSkipped = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling)
                 [IO.File]::WriteAllText($newProcessing, "Функционал: new", [Text.UTF8Encoding]::new($false))
                 $script:CurrentTree = "5555555555555555555555555555555555555555"
                 $script:ChangedPaths = @("tests/features/NewProcessing.feature")
@@ -104,7 +116,7 @@ Describe "Branch-first verification suite selection" {
                 $script:ChangedPaths = @("tests/verification-suites.branch.json", "tests/features/NewProcessing.feature", "src/cf/NewProcessing/Processing.xml")
                 $newSuiteFirstFailure = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling, $newProcessing)
                 $newSuiteRetry = New-VerificationSelectionPlan -ApplicationFeatureFiles @($orders, $reports, $profiling, $newProcessing)
-                [pscustomobject]@{ initial = $initial; incremental = $incremental; unknown = $unknown; explicitOnly = $explicitOnly; unclassifiedNewTest = $unclassifiedNewTest; newSuiteFirstFailure = $newSuiteFirstFailure; newSuiteRetry = $newSuiteRetry }
+                [pscustomobject]@{ initial = $initial; incremental = $incremental; unknown = $unknown; explicitOnly = $explicitOnly; yaxUnitOnly = $yaxUnitOnly; yaxUnitSkipped = $yaxUnitSkipped; unclassifiedNewTest = $unclassifiedNewTest; newSuiteFirstFailure = $newSuiteFirstFailure; newSuiteRetry = $newSuiteRetry }
             }
 
             $result.initial.mode | Should -Be "full"
@@ -118,6 +130,9 @@ Describe "Branch-first verification suite selection" {
             $result.unknown.reason | Should -Match "no suite owner"
             $result.explicitOnly.mode | Should -Be "reuse"
             @($result.explicitOnly.selectedFeatureFiles).Count | Should -Be 0
+            $result.yaxUnitOnly.mode | Should -Be "reuse"
+            $result.yaxUnitOnly.reason | Should -Match "YAxUnit"
+            $result.yaxUnitSkipped.mode | Should -Be "classification-required"
             $result.unclassifiedNewTest.mode | Should -Be "classification-required"
             @($result.unclassifiedNewTest.selectedFeatureFiles).Count | Should -Be 0
             $result.newSuiteFirstFailure.mode | Should -Be "incremental"
