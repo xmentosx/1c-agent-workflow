@@ -345,6 +345,7 @@ $script:RunExtensionInitializationStatus = ""
 $script:RunUserReport = ""
 $script:RunResultPath = ""
 $script:RunResultManifestPath = ""
+$script:RunSourceIntegrityReportPath = ""
 $script:ProjectRoot = Resolve-Agent1cFullPath -Path $ProjectRoot
 $script:ConfigPath = Resolve-Agent1cFullPath -Path $ConfigPath
 $script:Config = $null

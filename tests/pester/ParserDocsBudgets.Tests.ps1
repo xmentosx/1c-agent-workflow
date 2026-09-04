@@ -589,9 +589,17 @@
         $refreshBranch | Should -Match "states the successful outcome"
         $refreshBranch | Should -Match "/itl-check"
         $refreshBranch | Should -Match "errorCategory=source-integrity"
+        $refreshBranch | Should -Match "errorCategory=merge-conflict"
+        $refreshBranch | Should -Match "progressive semantic repair"
+        $refreshBranch | Should -Match "repairPaths"
+        $refreshBranch | Should -Match "Ask the user only when authoritative evidence still leaves incompatible business outcomes"
         $refreshBranch | Should -Match "never create the merge commit manually"
         $refreshLite = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh-lite.md.template")
         $refreshLite | Should -Match "errorCategory=source-integrity"
+        $refreshLite | Should -Match "errorCategory=merge-conflict"
+        $refreshLite | Should -Match "progressive semantic repair"
+        $refreshLite | Should -Match "repairPaths"
+        $refreshLite | Should -Match "Ask the user only when evidence leaves incompatible business outcomes"
         $refreshLite | Should -Match "repeat this same command"
     }
 

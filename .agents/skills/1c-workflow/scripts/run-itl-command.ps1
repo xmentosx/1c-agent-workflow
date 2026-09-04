@@ -690,6 +690,7 @@ $extensionInitializationStatus = [string](Get-ObjectValue -Object $status -Name 
 $userReport = [string](Get-ObjectValue -Object $status -Name "userReport" -Default "")
 $resultPath = [string](Get-ObjectValue -Object $status -Name "resultPath" -Default "")
 $resultManifestPath = [string](Get-ObjectValue -Object $status -Name "resultManifestPath" -Default "")
+$sourceIntegrityReportPath = [string](Get-ObjectValue -Object $status -Name "sourceIntegrityReportPath" -Default "")
 $logTail = ""
 if ($exitCode -ne 0 -and (Test-Path -LiteralPath $logPath -PathType Leaf)) {
     $logTail = ((Get-Content -LiteralPath $logPath -Tail 80 -Encoding UTF8 -ErrorAction SilentlyContinue) -join [Environment]::NewLine)
@@ -709,7 +710,7 @@ $nextAction = if ($exitCode -eq 0 -and $requiredAction) {
     "Read only the last 80 lines of console.log and address the reported failure."
 }
 $artifacts = [System.Collections.Generic.List[string]]::new()
-foreach ($candidate in @($resultPath, $resultManifestPath, (Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $logPath, $statusPath)) {
+foreach ($candidate in @($resultPath, $resultManifestPath, $sourceIntegrityReportPath, (Get-ObjectValue -Object $status -Name "lastLogPath" -Default ""), $logPath, $statusPath)) {
     if ($candidate -and -not $artifacts.Contains([string]$candidate)) { $artifacts.Add([string]$candidate) }
 }
 
@@ -730,6 +731,7 @@ $summary = [ordered]@{
     userReport = $userReport
     resultPath = $resultPath
     resultManifestPath = $resultManifestPath
+    sourceIntegrityReportPath = $sourceIntegrityReportPath
     responseStyle = $responseStyle
     liveness = [string](Get-ObjectValue -Object $status -Name "liveness" -Default "")
     noProgressSeconds = [int](Get-ObjectValue -Object $status -Name "noProgressSeconds" -Default 0)
@@ -796,6 +798,7 @@ if ($summaryText.Length -gt 4000) {
         userReportLength = $userReport.Length
         resultPath = $resultPath
         resultManifestPath = $resultManifestPath
+        sourceIntegrityReportPath = $sourceIntegrityReportPath
         responseStyle = $responseStyle
         logPath = $logPath
         statusPath = $statusPath
@@ -812,6 +815,7 @@ if ($summaryText.Length -gt 4000) {
         userReportPath = $userReportPath
         userReportSource = $userReportSource
         userReportLength = $userReport.Length
+        sourceIntegrityReportPath = $sourceIntegrityReportPath
         statusPath = $statusPath
     }
     $summaryText = $summary | ConvertTo-Json -Depth 8 -Compress

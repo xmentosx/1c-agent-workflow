@@ -333,6 +333,7 @@ function Write-RunStatus {
         userReport = $(if ($script:RunUserReport) { [string]$script:RunUserReport } else { "" })
         resultPath = $(if ($script:RunResultPath) { [string]$script:RunResultPath } else { "" })
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
+        sourceIntegrityReportPath = $(if ($script:RunSourceIntegrityReportPath) { [string]$script:RunSourceIntegrityReportPath } else { "" })
         activeVanessaRun = $script:ActiveVanessaRunEvidence
     }
 
