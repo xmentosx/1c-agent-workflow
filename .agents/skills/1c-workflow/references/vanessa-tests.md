@@ -20,22 +20,22 @@ or long regressions only when explicitly requested.
    algorithmic boundary and negative cases in parameterized YAxUnit tests. A
    quick-fix starts with one focused regression and adds another only for a
    separate integration/UI boundary.
-5. In the same edit, classify every added or changed feature in
-   `tests/verification-suites.branch.json` (or the genuinely shared catalog),
-   including its `acceptance|explicit` purpose and production `ownerPaths`.
-   Read `verification-suite-selection.md` for the schema. Do not postpone this
-   until refresh or verification.
-6. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
+5. Keep one selectable file per behavior, cadence, and narrow owner set.
+   Acceptance suites have at most eight scenarios; keep explicit diagnostics
+   and measurements separate.
+6. In the same edit, classify each added or changed feature with its
+   `acceptance|explicit` purpose and production `ownerPaths`; follow
+   `verification-suite-selection.md`.
+7. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
 
 ## Development And Verification
 
-No separate authoring pass. Use `itl-vanessa-ui` only when needed; see `vanessa-authoring.md`. MCP is diagnostic and never replaces `/itl-check`.
+Use `itl-vanessa-ui` only when needed; see `vanessa-authoring.md`.
 
 ### Branch-local suite selection
 
-For acceptance/explicit catalogs and proof reuse, read
-`verification-suite-selection.md` whenever a feature is added or changed, when
-refresh requests classification, or when diagnosing selection.
+Read `verification-suite-selection.md` for catalogs, proof reuse, refresh
+classification, or selection diagnosis.
 
 ## Context Economy
 
@@ -96,6 +96,7 @@ Rules:
 - Store `.feature` files as strict UTF-8. One leading UTF-8 BOM is accepted for compatibility with existing Windows text writers; invalid UTF-8, NUL, and C0/C1 controls other than TAB/CR/LF fail the preflight at a zero-based byte offset. This byte check does not infer Gherkin semantics; the existing parser/application-scenario preflight remains their owner.
 - Name scenarios by checked behavior, not by internal task number.
 - Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
+- Keep each acceptance suite at eight scenarios or fewer. Split when owner or cadence differs; preserve behavior on file moves.
 - Add the Vanessa-canonical, case-sensitive `@ExportScenarios` only to library feature files that are actually reused.
 - Do not add tags for large smoke/E2E suites to feature-focused checks.
 

@@ -500,8 +500,10 @@ function Get-VanessaFeatureScenarioDefinitions {
         $inBackground = $false
         $inExamples = $false
         $exampleHeaders = @()
+        $lineNumber = 0
 
         foreach ($line in @(Get-Content -LiteralPath $featureFile -Encoding UTF8)) {
+            $lineNumber++
             if ($line -match '^\s*@') {
                 foreach ($token in @([regex]::Matches($line, '@(?<tag>[^\s@]+)'))) {
                     $pendingTags.Add([string]$token.Groups['tag'].Value)
@@ -530,6 +532,7 @@ function Get-VanessaFeatureScenarioDefinitions {
                 $kind = [string]$scenarioMatch.Groups['kind'].Value
                 $current = [pscustomobject][ordered]@{
                     source = $featureFile
+                    sourceLine = $lineNumber
                     name = ([string]$scenarioMatch.Groups['name'].Value).Trim()
                     isOutline = ($kind -match '(?i)Структура|шаблон|Outline|Template')
                     tags = @($featureTags + @($pendingTags.ToArray()))

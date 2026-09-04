@@ -11,7 +11,8 @@ appear in `master`. A project that really has shared acceptance tests may also
 commit `tests/verification-suites.shared.json`. The catalogs are additive, and
 suite ids must be unique across them.
 
-Schema 1 classifies feature files and the product paths that own their result:
+Schema 1 classifies separately selectable feature files and the product paths
+that own their result:
 
 ```json
 {
@@ -39,13 +40,26 @@ Schema 1 classifies feature files and the product paths that own their result:
 started deliberately and excluded from normal acceptance. Reserve `always=true`
 for a genuinely cheap invariant, not as a substitute for owner classification.
 
+The file boundary is an execution boundary, not a place to accumulate every
+scenario for a subsystem. One acceptance suite may contain at most eight flat
+scenarios across all of its matched files. Its files must describe one coherent
+behavior, cadence, and narrow owner set. Diagnostic and A/B tags (`@diag_*`,
+`@ab_*`) and tags containing `profiling`, `benchmark`, or `measurement` are
+explicit cadence and cannot remain in an acceptance file. New work must create
+or choose the narrow file first; never append a scenario to a convenient large
+feature and classify the whole file.
+
 After refresh, the helper inventories current branch files into ignored local
 state under `.agent-1c/verification-selection/inventory.json`. This deterministic
 file and catalog analysis does not run Vanessa or infer semantics. If tests exist
-and a catalog is absent, invalid, ambiguous, missing owners, or leaves a feature
-unclassified, refresh succeeds with `requiredAction=classify-tests-after-refresh`.
-The agent must read the inventory, update the branch catalogs, and validate the
-assignments in the same task with the compact helper action
+and a catalog is absent, invalid, ambiguous, missing owners, leaves a feature
+unclassified, exceeds the acceptance scope, or mixes ordinary and explicit
+cadence, refresh succeeds with `requiredAction=classify-tests-after-refresh`.
+The inventory lists every scenario with its file, source line, tags, current
+suite, cadence hint, and behavior fingerprint. The agent must read those
+scenarios and their production owners, preserve the scenario bodies, split
+oversized or mixed files into coherent separately selectable files, update the
+branch catalogs, and validate the assignments in the same task with the compact helper action
 `validate-test-classification`, which never starts 1C, before reporting refresh
 complete. A normal
 `/itl-check` enforces the same contract before starting Designer or Enterprise.
@@ -69,6 +83,12 @@ ordinary YAxUnit execution is planned, a changed production path owned by a
 owns the same path. Disabling or skipping YAxUnit disables that exemption. A shared
 Vanessa library or pinned verification runtime change still requires the complete
 acceptance set because it can affect every suite.
+
+Refresh records an ignored post-merge scenario baseline when splitting is
+required. `validate-test-classification` compares the behavior fingerprints
+after migration and rejects a lost or rewritten scenario. Moving an intact
+scenario and adding or changing cadence tags is allowed; changing its name,
+steps, or examples is separate development work, not classification.
 
 The selector copies only chosen application feature files plus the complete
 `Libraries` directory into the run directory; tracked sources are not edited.

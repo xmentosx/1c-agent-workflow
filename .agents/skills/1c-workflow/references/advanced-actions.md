@@ -125,11 +125,21 @@ When a successful refresh returns `classify-tests-after-refresh:*`, do not
 finalize and do not ask the developer to classify. In the same task, read
 `.agent-1c/verification-selection/inventory.json` and
 `verification-suite-selection.md`, inspect the named tests and production
-owners, update that branch's Vanessa/YAxUnit catalogs, then run the compact
-helper with `-Action validate-test-classification`. Do not run `/itl-check`
-unless separately requested. Report the successful refresh together with the
-completed classification instead of returning the original report alone. For
-refresh-all, repeat this bounded continuation in every listed branch worktree.
+owners, and update that branch's tests and Vanessa/YAxUnit catalogs. For
+`VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD` or
+`VERIFICATION_SUITE_MIXED_CADENCE`, move intact scenario blocks and required
+shared setup into coherent separately selectable feature files, keep each
+acceptance suite at eight scenarios or fewer, give every suite narrow production
+owners, and put diagnostics, A/B checks, profiling, benchmarks, and measurement
+launchers in `purpose=explicit` files. Do not merely rename the original file,
+create one catch-all suite, relabel real acceptance as explicit, delete scenarios,
+weaken assertions, or ask the developer to perform the migration. Then run the
+compact helper with `-Action validate-test-classification`; its post-refresh
+baseline rejects changed or lost scenario behavior and it does not start 1C. Do
+not run `/itl-check` unless separately requested. Report the successful refresh
+together with the completed classification instead of returning the original
+report alone. For refresh-all, repeat this bounded continuation in every listed
+branch worktree.
 `classify-tests-and-repeat-original-itl-command` follows the same repair and
 static validation, then repeats the original command; its preflight stopped
 before 1C.

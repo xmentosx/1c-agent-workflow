@@ -11704,7 +11704,7 @@ function Refresh-AllDevBranches {
     }
     $classificationTargets = @($results | Where-Object { [string]$_.requiredAction -match '^classify-tests-after-refresh:' })
     if ($classificationTargets.Count -gt 0) {
-        $script:RunRequiredAction = "classify-tests-after-refresh: update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
+        $script:RunRequiredAction = "classify-tests-after-refresh: split oversized or mixed feature files and update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
     }
     Write-AndSetRunUserReport -Lines $report
     $failed = @($results | Where-Object status -ne "succeeded")

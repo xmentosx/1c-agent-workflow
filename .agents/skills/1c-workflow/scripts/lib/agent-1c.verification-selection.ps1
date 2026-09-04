@@ -2,6 +2,10 @@ function Get-VerificationSelectionStateRoot {
     return (Resolve-ProjectPath ".agent-1c/verification-selection")
 }
 
+function Get-VerificationScenarioMigrationBaselinePath {
+    return (Join-Path (Get-VerificationSelectionStateRoot) "scenario-migration-baseline.json")
+}
+
 function Get-VerificationCatalogValue {
     param(
         [AllowNull()][object]$Value,
@@ -61,6 +65,93 @@ function Get-VerificationSelectionSha256 {
     }
 }
 
+function Get-VerificationAcceptanceScenarioLimit {
+    return 8
+}
+
+function Get-VerificationScenarioCadenceHint {
+    param([string[]]$Tags)
+
+    foreach ($tagValue in @($Tags)) {
+        $tag = ([string]$tagValue).TrimStart("@").ToLowerInvariant()
+        if ($tag -match '^(ab_|diag_)' -or $tag -match '(benchmark|profiling|measurement)') {
+            return "explicit"
+        }
+    }
+    return "acceptance"
+}
+
+function Get-VerificationScenarioFingerprint {
+    param([object]$Scenario)
+
+    $exampleRows = if ($null -ne $Scenario.exampleRows -and $null -ne $Scenario.exampleRows.PSObject.Methods["ToArray"]) { @($Scenario.exampleRows.ToArray()) } else { @($Scenario.exampleRows) }
+    $steps = if ($null -ne $Scenario.steps -and $null -ne $Scenario.steps.PSObject.Methods["ToArray"]) { @($Scenario.steps.ToArray()) } else { @($Scenario.steps) }
+    $exampleParts = @()
+    foreach ($row in $exampleRows) {
+        $exampleParts += (@($row.PSObject.Properties | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join "`t")
+    }
+    $parts = @(
+        "name=$([string]$Scenario.name)",
+        "outline=$([bool]$Scenario.isOutline)",
+        "steps=$($steps -join "`n")",
+        "examples=$($exampleParts -join "`n")"
+    )
+    return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
+}
+
+function Get-VerificationScenarioAnalysis {
+    param(
+        [string[]]$ApplicationFeatureFiles,
+        [object[]]$Assignments
+    )
+
+    if (-not (Get-Command Get-VanessaFeatureScenarioDefinitions -ErrorAction SilentlyContinue)) {
+        return [pscustomobject]@{ scenarios = @(); issues = @(); migrationRequired = $false }
+    }
+
+    $assignmentByPath = @{}
+    foreach ($assignment in @($Assignments)) { $assignmentByPath[[string]$assignment.path] = $assignment }
+    $scenarios = New-Object System.Collections.Generic.List[object]
+    foreach ($scenario in @(Get-VanessaFeatureScenarioDefinitions -FeatureFiles $ApplicationFeatureFiles)) {
+        $path = Get-VerificationRepoRelativePath -Path ([string]$scenario.source)
+        $assignment = if ($assignmentByPath.ContainsKey($path)) { $assignmentByPath[$path] } else { $null }
+        $tags = @($scenario.tags | ForEach-Object { "@" + ([string]$_).TrimStart("@") })
+        $scenarios.Add([pscustomobject][ordered]@{
+            path = $path
+            line = [int](Get-VerificationCatalogValue -Value $scenario -Name "sourceLine" -Default 0)
+            name = [string]$scenario.name
+            tags = $tags
+            suiteId = $(if ($null -ne $assignment) { [string]$assignment.suiteId } else { "__unclassified__" })
+            purpose = $(if ($null -ne $assignment) { [string]$assignment.purpose } else { "" })
+            cadenceHint = Get-VerificationScenarioCadenceHint -Tags $tags
+            fingerprint = Get-VerificationScenarioFingerprint -Scenario $scenario
+        })
+    }
+
+    $issues = New-Object System.Collections.Generic.List[string]
+    $acceptanceLimit = Get-VerificationAcceptanceScenarioLimit
+    $scopeGroups = @($scenarios.ToArray() | Where-Object { -not $_.purpose -or $_.purpose -eq "acceptance" } | Group-Object {
+        if ($_.suiteId -eq "__unclassified__") { "$($_.suiteId):$($_.path)" } else { $_.suiteId }
+    })
+    foreach ($group in $scopeGroups) {
+        if ($group.Count -le $acceptanceLimit) { continue }
+        $paths = @($group.Group.path | Sort-Object -Unique)
+        $suiteLabel = if ($group.Group[0].suiteId -eq "__unclassified__") { "unclassified feature" } else { "acceptance suite '$($group.Group[0].suiteId)'" }
+        $issues.Add("VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD: $suiteLabel contains $($group.Count) scenarios across '$($paths -join "', '")'; maximum is $acceptanceLimit. The agent must preserve scenario behavior, split coherent owners/cadences into separately selectable feature files and suites, and move diagnostics, A/B checks, profiling, benchmarks, and measurement launchers to purpose='explicit'.")
+    }
+
+    foreach ($group in @($scenarios.ToArray() | Where-Object { $_.purpose -eq "acceptance" -and $_.cadenceHint -eq "explicit" } | Group-Object path)) {
+        $names = @($group.Group | Select-Object -First 3 | ForEach-Object { "'$($_.name)'" })
+        $issues.Add("VERIFICATION_SUITE_MIXED_CADENCE: acceptance feature '$($group.Name)' contains $($group.Count) diagnostic/A-B/profiling/benchmark/measurement scenario(s), including $($names -join ', '). The agent must move them unchanged to separately selectable purpose='explicit' feature files and suites.")
+    }
+
+    return [pscustomobject]@{
+        scenarios = @($scenarios.ToArray())
+        issues = @($issues.ToArray())
+        migrationRequired = ($issues.Count -gt 0)
+    }
+}
+
 function Read-VerificationSuiteCatalog {
     param([string[]]$ApplicationFeatureFiles)
 
@@ -75,6 +166,8 @@ function Read-VerificationSuiteCatalog {
             $issues = @("Vanessa feature files exist, but tests/verification-suites.shared.json or tests/verification-suites.branch.json is missing.") +
                 @($assignments | ForEach-Object { "Unclassified Vanessa feature: $($_.path)" })
         }
+        $scenarioAnalysis = Get-VerificationScenarioAnalysis -ApplicationFeatureFiles $ApplicationFeatureFiles -Assignments $assignments
+        $issues = @($issues + @($scenarioAnalysis.issues))
         return [pscustomobject]@{
             available = $false
             valid = $true
@@ -83,6 +176,8 @@ function Read-VerificationSuiteCatalog {
             fallbackReason = $(if ($issues.Count -gt 0) { $issues[0] } else { "No Vanessa application feature files require classification." })
             suites = @()
             assignments = $assignments
+            scenarios = @($scenarioAnalysis.scenarios)
+            migrationRequired = [bool]$scenarioAnalysis.migrationRequired
             suiteFingerprints = @()
             fingerprint = "legacy"
             catalogPaths = @()
@@ -153,6 +248,8 @@ function Read-VerificationSuiteCatalog {
             }
         }
         $issues = @($assignments.ToArray() | Where-Object suiteId -eq "__unclassified__" | ForEach-Object { "Unclassified Vanessa feature: $($_.path)" })
+        $scenarioAnalysis = Get-VerificationScenarioAnalysis -ApplicationFeatureFiles $ApplicationFeatureFiles -Assignments @($assignments.ToArray())
+        $issues = @($issues + @($scenarioAnalysis.issues))
         foreach ($assignment in @($assignments | Sort-Object path)) {
             $fingerprintParts.Add("$($assignment.path)=$($assignment.suiteId):$($assignment.purpose)")
         }
@@ -165,7 +262,8 @@ function Read-VerificationSuiteCatalog {
                 "always=$([bool]$suite.always)",
                 "features=$(@($suite.featurePaths | Sort-Object) -join ',')",
                 "owners=$(@($suite.ownerPaths | Sort-Object) -join ',')",
-                "assigned=$($assignedPaths -join ',')"
+                "assigned=$($assignedPaths -join ',')",
+                "scenarios=$(@($scenarioAnalysis.scenarios | Where-Object suiteId -eq $suite.id | Select-Object -ExpandProperty fingerprint | Sort-Object) -join ',')"
             )
             [pscustomobject]@{ id = [string]$suite.id; purpose = [string]$suite.purpose; fingerprint = Get-VerificationSelectionSha256 -Text ($semanticParts -join "`n") }
         })
@@ -177,6 +275,8 @@ function Read-VerificationSuiteCatalog {
             fallbackReason = ""
             suites = @($suites.ToArray())
             assignments = @($assignments.ToArray())
+            scenarios = @($scenarioAnalysis.scenarios)
+            migrationRequired = [bool]$scenarioAnalysis.migrationRequired
             suiteFingerprints = $suiteFingerprints
             fingerprint = Get-VerificationSelectionSha256 -Text ($fingerprintParts -join "`n")
             catalogPaths = @($catalogPaths)
@@ -190,6 +290,8 @@ function Read-VerificationSuiteCatalog {
             fallbackReason = $_.Exception.Message
             suites = @()
             assignments = @()
+            scenarios = @()
+            migrationRequired = $false
             suiteFingerprints = @()
             fingerprint = "invalid"
             catalogPaths = @($catalogPaths)
@@ -465,8 +567,12 @@ function Update-VerificationSuiteInventory {
             catalogValid = [bool]$catalog.valid
             fallbackReason = [string]$catalog.fallbackReason
             featureCount = $applicationFiles.Count
+            scenarioCount = @($catalog.scenarios).Count
+            acceptanceScenarioLimit = Get-VerificationAcceptanceScenarioLimit
             suites = @($catalog.suites | ForEach-Object { [ordered]@{ id = $_.id; purpose = $_.purpose; always = $_.always } })
             assignments = @($catalog.assignments | ForEach-Object { [ordered]@{ path = $_.path; suiteId = $_.suiteId; purpose = $_.purpose } })
+            scenarios = @($catalog.scenarios | ForEach-Object { [ordered]@{ path = $_.path; line = $_.line; name = $_.name; tags = @($_.tags); suiteId = $_.suiteId; purpose = $_.purpose; cadenceHint = $_.cadenceHint; fingerprint = $_.fingerprint } })
+            scenarioMigrationRequired = [bool]$catalog.migrationRequired
             yaxunit = [ordered]@{
                 suitePresent = [bool](Test-YAxUnitSuitePresent)
                 catalogAvailable = [bool]$yaxunitCatalog.available
@@ -479,6 +585,20 @@ function Update-VerificationSuiteInventory {
             }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+        if ($Reason -match '(?i)refresh|post-merge') {
+            $baselinePath = Get-VerificationScenarioMigrationBaselinePath
+            if ($value.scenarioMigrationRequired) {
+                $baseline = [ordered]@{
+                    schemaVersion = 1
+                    createdAt = (Get-Date).ToString("o")
+                    reason = $Reason
+                    scenarios = @($catalog.scenarios | ForEach-Object { [ordered]@{ name = $_.name; fingerprint = $_.fingerprint } })
+                }
+                Write-Utf8TextAtomic -Path $baselinePath -Value (($baseline | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+            } elseif (Test-Path -LiteralPath $baselinePath -PathType Leaf) {
+                Remove-Item -LiteralPath $baselinePath -Force
+            }
+        }
         Write-Host "Test classification inventory: Vanessa=$($applicationFiles.Count) feature file(s), YAxUnit=$($yaxunitModules.Count) module(s), status=$(if ($value.classificationComplete) { 'ready' } else { 'classification-required' }), duration=$($value.durationMs) ms."
         return [pscustomobject]$value
     } catch {
@@ -494,14 +614,37 @@ function Update-VerificationSuiteInventory {
             catalogValid = $false
             fallbackReason = $_.Exception.Message
             featureCount = 0
+            scenarioCount = 0
+            acceptanceScenarioLimit = Get-VerificationAcceptanceScenarioLimit
             suites = @()
             assignments = @()
+            scenarios = @()
+            scenarioMigrationRequired = $false
             yaxunit = [ordered]@{ suitePresent = $false; catalogAvailable = $false; catalogValid = $false; classificationComplete = $false; moduleCount = 0; groups = @(); assignments = @(); registrationPaths = @() }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
         Write-Host "[WARN] Test classification inventory failed. Normal verification will stop before starting 1C. $($_.Exception.Message)"
         return [pscustomobject]$value
     }
+}
+
+function Assert-VerificationScenarioMigrationPreserved {
+    param([object]$Inventory)
+
+    $baselinePath = Get-VerificationScenarioMigrationBaselinePath
+    if (-not (Test-Path -LiteralPath $baselinePath -PathType Leaf)) { return }
+    $baseline = Read-Utf8Text -Path $baselinePath | ConvertFrom-Json
+    if ([int](Get-VerificationCatalogValue -Value $baseline -Name "schemaVersion" -Default 0) -ne 1) {
+        throw "VERIFICATION_SUITE_MIGRATION_BASELINE_INVALID: $baselinePath"
+    }
+    $before = @($baseline.scenarios | ForEach-Object { [string]$_.fingerprint } | Sort-Object)
+    $after = @($Inventory.scenarios | ForEach-Object { [string]$_.fingerprint } | Sort-Object)
+    $difference = @(Compare-Object -ReferenceObject $before -DifferenceObject $after)
+    if ($difference.Count -gt 0) {
+        Set-RunFailureContext -Category "missing-suite" -RequiredAction "restore-scenario-behavior-and-complete-test-classification"
+        throw "VERIFICATION_SUITE_MIGRATION_CHANGED_SCENARIOS: classification migration must only move intact scenarios and cadence tags; scenario behavior differs from the post-refresh baseline at '$baselinePath'."
+    }
+    Remove-Item -LiteralPath $baselinePath -Force
 }
 
 function Get-VerificationClassificationInventoryPath {
@@ -513,7 +656,7 @@ function Set-VerificationClassificationRequiredAction {
 
     if ($null -eq $Inventory -or [bool]$Inventory.classificationComplete) { return }
     $existing = [string]$script:RunRequiredAction
-    $action = "classify-tests-after-refresh: read .agents/skills/1c-workflow/references/verification-suite-selection.md and the inventory at $(Get-VerificationClassificationInventoryPath); update the branch test catalogs in this same agent task before reporting refresh complete"
+    $action = "classify-tests-after-refresh: read .agents/skills/1c-workflow/references/verification-suite-selection.md and the scenario inventory at $(Get-VerificationClassificationInventoryPath); in this same agent task split oversized or mixed feature files while preserving scenario behavior, update the branch test catalogs, and validate classification before reporting refresh complete"
     if ($existing -and $existing -notmatch '^classify-tests-after-refresh:') {
         $action += "; then also follow: $existing"
     }
@@ -552,6 +695,7 @@ function Assert-VerificationClassificationReady {
 function Test-VerificationClassification {
     Set-RunStage -Stage "verification.classification" -Detail "Validating Vanessa and YAxUnit test classification without starting 1C."
     $inventory = Assert-VerificationClassificationReady -Reason "explicit classification validation" -RequireVanessa -RequireYAxUnit
+    Assert-VerificationScenarioMigrationPreserved -Inventory $inventory
     $state = Read-DevBranchState -Name $DevBranchName
     Update-DevBranchState -State $state -Updates @{
         verificationClassificationStatus = "ready"
