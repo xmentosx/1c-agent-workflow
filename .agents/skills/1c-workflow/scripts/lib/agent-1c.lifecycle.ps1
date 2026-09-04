@@ -1009,7 +1009,8 @@ function Get-OneCSourceIntegrityCandidatePaths {
     param(
         [string]$ExportPath,
         [string[]]$AdditionalPaths = @(),
-        [string[]]$AdditionalRelativePaths = @()
+        [string[]]$AdditionalRelativePaths = @(),
+        [switch]$IncludeAllMergeChanges
     )
 
     $absoluteExportPath = Assert-ExportPathInsideProject -ExportPath $ExportPath
@@ -1031,12 +1032,16 @@ function Get-OneCSourceIntegrityCandidatePaths {
         foreach ($branchPath in $branchPaths) {
             [void]$branchPathSet.Add(([string]$branchPath).Replace("\", "/"))
         }
-        $overlapPaths = @(
+        $targetPaths = @(
             Get-GitPathList -Arguments @("diff", "--name-only", "-z", $mergeBase, $targetCommit) |
-                ForEach-Object { ([string]$_).Replace("\", "/") } |
-                Where-Object { $branchPathSet.Contains($_) }
+                ForEach-Object { ([string]$_).Replace("\", "/") }
         )
-        @($overlapPaths + $normalizedAdditionalPaths)
+        if ($IncludeAllMergeChanges) {
+            @($branchPaths + $targetPaths + $normalizedAdditionalPaths)
+        } else {
+            $overlapPaths = @($targetPaths | Where-Object { $branchPathSet.Contains($_) })
+            @($overlapPaths + $normalizedAdditionalPaths)
+        }
     } else {
         @((Get-VerificationWorkingTreeChangePaths -PathSpec @($repoExportPath)) + $normalizedAdditionalPaths)
     }
@@ -1235,11 +1240,26 @@ function Assert-OneCConfigurationSourceIntegrity {
                 -AdditionalPaths $AdditionalPaths `
                 -AdditionalRelativePaths $AdditionalRelativePaths
         )
+        $uuidCandidatePaths = @(
+            Get-OneCSourceIntegrityCandidatePaths `
+                -ExportPath $ExportPath `
+                -AdditionalPaths @($AdditionalPaths + $configurationRepoPath) `
+                -AdditionalRelativePaths $AdditionalRelativePaths `
+                -IncludeAllMergeChanges |
+                Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".xml" }
+        )
         foreach ($bslIssue in @(Get-OneCMergeCreatedBslDuplicateIssues -RepoPaths $candidatePaths)) {
             $issues.Add($bslIssue) | Out-Null
         }
 
         $runUuidCheck = $false
+        foreach ($uuidRepoPath in $uuidCandidatePaths) {
+            $uuidKind = Get-OneCXmlValidationKind -AbsolutePath (Join-Path $projectRoot ($uuidRepoPath.Replace("/", "\")))
+            if (-not $uuidKind.error -and $uuidKind.hasUuid) {
+                $runUuidCheck = $true
+                break
+            }
+        }
         foreach ($repoPath in @($candidatePaths | Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".xml" })) {
             if ($repoPath -ceq $configurationRepoPath) { continue }
             $absolutePath = Join-Path $projectRoot ($repoPath.Replace("/", "\"))
@@ -1255,7 +1275,6 @@ function Assert-OneCConfigurationSourceIntegrity {
                 }) | Out-Null
                 continue
             }
-            if ($kind.hasUuid) { $runUuidCheck = $true }
             if (-not $kind.validator) { continue }
             try {
                 $validatorPath = Get-OneCSourceIntegrityValidatorPath -Validator $kind.validator
@@ -1296,15 +1315,26 @@ function Assert-OneCConfigurationSourceIntegrity {
             try {
                 $uuidValidatorPath = Get-OneCSourceIntegrityValidatorPath -Validator "uuid"
             } catch {
-                $script:RunSourceIntegrityPaths = @($candidatePaths | Where-Object { [System.IO.Path]::GetExtension($_) -ieq ".xml" })
+                $script:RunSourceIntegrityPaths = @($uuidCandidatePaths)
                 Set-RunFailureContext -Category "runner" -RequiredAction "run-pinned-update-ai-rules-from-master-then-repeat-same-itl-command"
                 throw
             }
-            $uuidResult = Invoke-OneCSourceIntegrityValidator `
-                -Validator "uuid" `
-                -ScriptPath $uuidValidatorPath `
-                -Arguments @("-ConfigPath", $absoluteExportPath, "-MaxReported", "50") `
-                -SupportsOutFile
+            $uuidPathList = New-TimestampedFilePath -Directory (Get-Agent1cTempRoot) -Prefix "itl-source-integrity-uuid-paths-" -Extension ".txt"
+            $uuidRelativePaths = @(
+                $uuidCandidatePaths |
+                    ForEach-Object { $_.Substring($repoExportPath.Length).TrimStart("/", "\") } |
+                    Sort-Object -Unique
+            )
+            Write-Utf8TextAtomic -Path $uuidPathList -Value (($uuidRelativePaths -join [Environment]::NewLine) + [Environment]::NewLine)
+            try {
+                $uuidResult = Invoke-OneCSourceIntegrityValidator `
+                    -Validator "uuid" `
+                    -ScriptPath $uuidValidatorPath `
+                    -Arguments @("-ConfigPath", $absoluteExportPath, "-IncludePathList", $uuidPathList, "-MaxReported", "50") `
+                    -SupportsOutFile
+            } finally {
+                Remove-Item -LiteralPath $uuidPathList -Force -ErrorAction SilentlyContinue
+            }
             if ($uuidResult.exitCode -ne 0) {
                 $issues.Add([pscustomobject]@{
                     validator = "uuid"
@@ -7928,6 +7958,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
             $transaction = Get-PendingDevBranchMergeTransaction -State (Read-DevBranchState -Name $DevBranchName)
         }
 
+        Sync-AiRules1cManagedIgnoredFilesFromMain -State $State | Out-Null
         Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath) -AdditionalPaths $transaction.repairPaths
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName

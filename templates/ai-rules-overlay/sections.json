@@ -857,6 +857,15 @@
                               "resultSha256":  "1a0d4ac2fbeb720cf67d2b48b1f72c8b3a6d726c352d84f6e3480238e46c942a"
                           },
                           {
+                              "path":  "content/skills/1c-metadata-manage/docs/uuid-check.md",
+                              "requirementId":  "ITL-METADATA-VALIDATOR-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-METADATA-VALIDATOR-001 for r33 by distinguishing generated identity definitions from references and documenting explicit lifecycle delta scans.",
+                              "upstreamSha256":  "db4619d43cec090b20d9fd5f9db115c90a9f86e07cd2985e186bedadba2a2e03",
+                              "baselineSha256":  "db4619d43cec090b20d9fd5f9db115c90a9f86e07cd2985e186bedadba2a2e03",
+                              "resultSha256":  "cb4ebf069e5d78f80d0c41fff18a146694a8e67536eb2bc7d0a86342d6448301"
+                          },
+                          {
                               "path":  "content/skills/1c-metadata-manage/SKILL.md",
                               "requirementId":  "ITL-METADATA-001",
                               "disposition":  "carry-forward",
@@ -981,6 +990,24 @@
                               "upstreamSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1",
                               "baselineSha256":  "f5cd3caed89354eb2edb5e8c84b3221637d2330fa68fca016eb830c3e23326a1",
                               "resultSha256":  "837aecca93a0c1e5efce3cd3573a6754a85e933baaf365705bcb2358450a82f7"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1",
+                              "requirementId":  "ITL-METADATA-VALIDATOR-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-METADATA-VALIDATOR-001 for r33 by treating exported Form descriptors as structurally valid metadata roots.",
+                              "upstreamSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb",
+                              "baselineSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb",
+                              "resultSha256":  "dd9780dbd54636d2430ac4a61950888894db12e4bd5c9c7afef72109d7ade4d0"
+                          },
+                          {
+                              "path":  "content/skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1",
+                              "requirementId":  "ITL-METADATA-VALIDATOR-001",
+                              "disposition":  "resolved",
+                              "reason":  "Resolve ITL-METADATA-VALIDATOR-001 for r33 by checking generated identities only under metadata InternalInfo and supporting an explicit lifecycle path list.",
+                              "upstreamSha256":  "207430556e6e302e5f45b7f89232cedba8b2268935713aa1cdeb260fd3233538",
+                              "baselineSha256":  "207430556e6e302e5f45b7f89232cedba8b2268935713aa1cdeb260fd3233538",
+                              "resultSha256":  "7a783226646aba047ffbd29e712a6c1f83364e42b7fbd3b2cb6fd5b9a261caa6"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
@@ -1710,6 +1737,15 @@
                               "upstreamSha256":  "f3de41fd44c79558797e88cb447803f30ad71fc7f4d13e2fa4fb399e98ab68db",
                               "baselineSha256":  "f3de41fd44c79558797e88cb447803f30ad71fc7f4d13e2fa4fb399e98ab68db",
                               "resultSha256":  "266850994c6323da09278956e8e1bdd72efe77e1b5c7d3fb80c3082f86a2af7c"
+                          },
+                          {
+                              "path":  "tests/MetadataIntegrityValidators.Tests.ps1",
+                              "requirementId":  "ITL-METADATA-VALIDATOR-001",
+                              "disposition":  "downstream-only",
+                              "reason":  "Add the focused r33 regressions for metadata identity definitions, references, explicit lifecycle deltas, duplicate uuid attributes, and Form descriptors.",
+                              "upstreamSha256":  "\u003cabsent\u003e",
+                              "baselineSha256":  "\u003cabsent\u003e",
+                              "resultSha256":  "6a72b1f45859f9be2d07202340fc7270e0ed669a890fbe951400ba5f055c3130"
                           },
                           {
                               "path":  "tests/ValidatorExecutionPolicy.Tests.ps1",

@@ -6443,6 +6443,71 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "limits merge UUID integrity to both changed sides plus Configuration.xml" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl UUID дельта " + [guid]::NewGuid().ToString("N"))
+        $configRoot = Join-Path $tempRoot "src\cf"
+        try {
+            New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Configuration.xml"), '<MetaDataObject><Configuration uuid="10ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Unchanged.xml"), '<MetaDataObject><Catalog uuid="20ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            & git -C $tempRoot branch -M master
+
+            & git -C $tempRoot checkout --quiet -b itldev/test
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Branch.xml"), '<MetaDataObject><Catalog uuid="30ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+
+            & git -C $tempRoot checkout --quiet master
+            [System.IO.File]::WriteAllText((Join-Path $configRoot "Master.xml"), '<MetaDataObject><Catalog uuid="40ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [System.Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "master" *> $null
+            & git -C $tempRoot checkout --quiet itldev/test
+            & git -C $tempRoot merge --no-ff --no-commit master *> $null
+            $LASTEXITCODE | Should -Be 0
+
+            $paths = & {
+                param($Root)
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                $script:CapturedUuidPaths = @()
+                function Get-OneCConfigurationSourceValidatorPath { return "configuration-validator" }
+                function Get-OneCSourceIntegrityValidatorPath { return "uuid-validator" }
+                function Invoke-OneCSourceIntegrityValidator {
+                    param([string]$Validator, [string]$ScriptPath, [string[]]$Arguments, [switch]$SupportsOutFile)
+                    if ($Validator -ceq "uuid") {
+                        $listIndex = [Array]::IndexOf($Arguments, "-IncludePathList")
+                        $script:CapturedUuidPaths = @(Get-Content -LiteralPath $Arguments[$listIndex + 1] -Encoding UTF8)
+                    }
+                    return [pscustomobject]@{ exitCode = 0; details = "ok" }
+                }
+                Assert-OneCConfigurationSourceIntegrity -ExportPath "src/cf"
+                return @($script:CapturedUuidPaths)
+            } $tempRoot
+
+            $paths | Should -Be @("Branch.xml", "Configuration.xml", "Master.xml")
+            $paths | Should -Not -Contain "Unchanged.xml"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "syncs managed ignored validators from main before resumed merge source validation" {
+        $source = $HelperText
+        $resumeStart = $source.IndexOf("function Resume-DevBranchLifecycleMergeIfPresent", [System.StringComparison]::Ordinal)
+        $resumeEnd = $source.IndexOf("function ", $resumeStart + 10, [System.StringComparison]::Ordinal)
+        $resumeSource = $source.Substring($resumeStart, $resumeEnd - $resumeStart)
+        $syncIndex = $resumeSource.IndexOf("Sync-AiRules1cManagedIgnoredFilesFromMain -State `$State", [System.StringComparison]::Ordinal)
+        $validationIndex = $resumeSource.IndexOf("Assert-OneCConfigurationSourceIntegrity", [System.StringComparison]::Ordinal)
+
+        $syncIndex | Should -BeGreaterThan -1
+        $validationIndex | Should -BeGreaterThan $syncIndex
+    }
+
     It "blocks a clean Git merge with duplicate root metadata and commits it after the agent fixes, stages, and retries" {
         $fixture = New-LifecycleMergeSourceIntegrityFixture
         try {
