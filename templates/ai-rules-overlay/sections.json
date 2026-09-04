@@ -1745,7 +1745,7 @@
                               "reason":  "Add the focused r33 regressions for metadata identity definitions, references, explicit lifecycle deltas, duplicate uuid attributes, and Form descriptors.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "6a72b1f45859f9be2d07202340fc7270e0ed669a890fbe951400ba5f055c3130"
+                              "resultSha256":  "27d5a7010677ca1d259d76e09e064c8d7b15a5d52176c0fc6c114d0ec5be3962"
                           },
                           {
                               "path":  "tests/ValidatorExecutionPolicy.Tests.ps1",

@@ -4,7 +4,7 @@
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
     $script:TargetAiRulesRef = "itl-main-410951e7-r33"
-    $script:TargetAiRulesCommit = "67ca1878d46668ce9df16819c71f230c6269c1a3"
+    $script:TargetAiRulesCommit = "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"
     $script:TargetAiRulesRevision = 33
 
     function New-AiRulesMigrationFixture {
