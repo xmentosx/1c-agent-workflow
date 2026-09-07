@@ -3440,8 +3440,25 @@ function Wait-HostMcpIndexCompletion {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $successfulPolls = 0
     $lastText = ""
+    $lastProbeError = ""
     while ((Get-Date) -lt $deadline) {
-        $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool
+        try {
+            $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
+            $lastProbeError = ""
+        } catch {
+            $lastProbeError = $_.Exception.Message
+            $successfulPolls = 0
+            Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
+            if ((Get-Date) -ge $deadline) { break }
+            Start-Sleep -Seconds $PollSeconds
+            try {
+                $Connection = Open-HostMcpConnection -Url ([string]$Connection.url) -TimeoutSec 60
+            } catch {
+                $lastProbeError = $_.Exception.Message
+                Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+            }
+            continue
+        }
         $lastText = Get-HostMcpToolResultText -Result $result
         $state = Get-HostMcpIndexState -Text $lastText
         Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
@@ -3456,7 +3473,7 @@ function Wait-HostMcpIndexCompletion {
         }
         Start-Sleep -Seconds $PollSeconds
     }
-    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText"
+    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
 }
 
 function Get-TrackedProjectServerForConfig {

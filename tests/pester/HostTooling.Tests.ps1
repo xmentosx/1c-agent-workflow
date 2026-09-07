@@ -2596,6 +2596,43 @@ services:
         }
     }
 
+    It "reconnects after a transient index status timeout until stable completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-index-status-reconnect-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:IndexStatusCalls = 0
+                $script:IndexReconnectCalls = 0
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name, [object]$Arguments = $null, [int]$TimeoutSec = 120)
+                    $script:IndexStatusCalls++
+                    $TimeoutSec | Should -Be 300
+                    if ($script:IndexStatusCalls -eq 1) { throw "fixture atomic write timeout" }
+                    return [pscustomobject]@{ content = @([pscustomobject]@{ type = "text"; text = '{"status":"completed"}' }) }
+                }
+                function Open-HostMcpConnection {
+                    param([string]$Url, [int]$TimeoutSec = 60)
+                    $script:IndexReconnectCalls++
+                    return [pscustomobject]@{ url = $Url; headers = @{}; nextId = 2 }
+                }
+                function Start-Sleep { param([int]$Seconds) }
+
+                $connection = [pscustomobject]@{ url = "http://127.0.0.1:18100/mcp"; headers = @{}; nextId = 2 }
+                { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId "trade" -TimeoutMinutes 1 -PollSeconds 5 } | Should -Not -Throw
+                $script:IndexStatusCalls | Should -Be 3
+                $script:IndexReconnectCalls | Should -Be 1
+                Remove-Variable -Scope Script -Name IndexStatusCalls, IndexReconnectCalls -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "reindexes only embedding-dependent standalone servers with stable port indexes" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vibecoding1c-mcp-host-reindex-test-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
