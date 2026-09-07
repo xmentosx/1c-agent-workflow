@@ -2387,6 +2387,67 @@ exit 0
         $result.checkpointCalled | Should -BeFalse
     }
 
+    It "validates the reset seed only after acquiring its reader lease for <Kind>" -ForEach @(
+        @{ Kind = 'file' }, @{ Kind = 'server' }
+    ) {
+        $tempRoot = Join-Path $TestDrive ("seed смена " + $Kind)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $script:seedVersion = 'expected'
+            $script:restoreTouched = $false
+            function Get-InfoBaseKind { $Kind }
+            function Open-BranchSeedLease {
+                $script:seedVersion = 'replacement'
+                [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+            }
+            function Assert-BranchSeedReady {
+                param($ExpectedConfigurationFingerprint)
+                if ($script:seedVersion -ne $ExpectedConfigurationFingerprint) { throw 'BRANCH_SEED_INCOMPATIBLE' }
+                [pscustomobject]@{ configurationFingerprint = $script:seedVersion }
+            }
+            function Resolve-Agent1cFullPath { $script:restoreTouched = $true; throw 'RESTORE_TOUCHED' }
+            function Get-BranchSeedServerProviderCapabilities { $script:restoreTouched = $true; throw 'RESTORE_TOUCHED' }
+            { Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchInfoBasePath = $tempRoot }) -ExpectedConfigurationFingerprint expected } | Should -Throw '*BRANCH_SEED_INCOMPATIBLE*'
+            $script:restoreTouched | Should -BeFalse
+            $writer = [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'Open', 'ReadWrite', 'None')
+            $writer.Dispose()
+        }
+    }
+
+    It "keeps the captured server reset seed leased through provider restore" {
+        $tempRoot = Join-Path $TestDrive 'серверный seed restore'
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $providerPath = Join-Path $tempRoot 'restore provider.ps1'
+        Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
+param($Operation, $ProjectRoot, $DevBranchName, $SeedArtifactPath, $DevBranchInfoBasePath)
+$ErrorActionPreference = 'Stop'
+if ($Operation -ne 'restore-seed' -or $DevBranchName -ne 'server') { throw 'Wrong provider contract' }
+try {
+    $writer = [IO.File]::Open((Join-Path $ProjectRoot 'seed.lease'), 'Open', 'ReadWrite', 'None')
+    $writer.Dispose()
+    throw 'Seed lease missing during server restore'
+} catch [IO.IOException] {}
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'provider-result.txt'), [IO.File]::ReadAllText($SeedArtifactPath))
+'@
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            function Get-InfoBaseKind { 'server' }
+            function Get-BranchSeedServerProviderCapabilities { [pscustomobject]@{ path = $providerPath } }
+            function Assert-BranchSeedReady { throw 'CAPTURED_SEED_MUST_NOT_BE_REREAD' }
+            $artifact = Join-Path $tempRoot 'исходная база.dt'
+            Write-Utf8Text -Path $artifact -Value 'captured seed'
+            $seed = [pscustomobject]@{ configurationFingerprint = 'expected'; artifactPath = $artifact }
+            $reader = [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+            try {
+                $result = Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchName = 'server'; devBranchInfoBasePath = 'server\base' }) -ExpectedConfigurationFingerprint expected -Seed $seed -ExistingLease $reader
+                $result.configurationFingerprint | Should -Be 'expected'
+                (Read-Utf8Text -Path (Join-Path $tempRoot 'provider-result.txt')) | Should -Be 'captured seed'
+                $reader.CanRead | Should -BeTrue
+            } finally { $reader.Dispose() }
+        }
+    }
+
     It "restores the reset seed and unbinds repository-backed branch copies before initialization" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

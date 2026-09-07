@@ -11253,12 +11253,21 @@ function Set-DevBranchTreeToMasterCommit {
 function Restore-ExistingDevBranchFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint,
+        [object]$Seed = $null,
+        [System.IDisposable]$ExistingLease = $null
     )
 
-    $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint
-    $lease = Open-BranchSeedLease -Mode read
+    if ($null -ne $Seed -and $null -eq $ExistingLease) {
+        throw "RESET_DEV_BRANCH_SEED_LEASE_REQUIRED: a captured seed requires its active reader lease."
+    }
+    $ownsLease = $null -eq $ExistingLease
+    $lease = if ($ownsLease) { Open-BranchSeedLease -Mode read } else { $ExistingLease }
     try {
+        if ($null -eq $Seed) { $Seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint }
+        if ([string]$Seed.configurationFingerprint -cne $ExpectedConfigurationFingerprint) {
+            throw "BRANCH_SEED_INCOMPATIBLE: captured seed does not match the reset master fingerprint."
+        }
         if ((Get-InfoBaseKind) -eq "file") {
             $infoBasePath = Resolve-Agent1cFullPath -Path ([string]$State.devBranchInfoBasePath)
             New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
@@ -11287,7 +11296,7 @@ function Restore-ExistingDevBranchFromSeed {
             if ($LASTEXITCODE -ne 0) { throw "Server seed restore provider failed with exit code $LASTEXITCODE." }
         }
     } finally {
-        $lease.Dispose()
+        if ($ownsLease) { $lease.Dispose() }
     }
     return $seed
 }
@@ -11295,12 +11304,15 @@ function Restore-ExistingDevBranchFromSeed {
 function Restore-ExistingDevBranchRuntimeFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint,
+        [object]$CapturedSeed = $null,
+        [System.IDisposable]$ExistingLease = $null
     )
 
     $seed = Restore-ExistingDevBranchFromSeed `
         -State $State `
-        -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint
+        -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint `
+        -Seed $CapturedSeed -ExistingLease $ExistingLease
     $repositoryUnbound = $false
     if (Get-SourceUsesRepository) {
         Set-RunStage -Stage "reset.repository-unbind" -Detail "Unbinding the restored development copy from the source configuration repository."
@@ -11353,95 +11365,121 @@ function Reset-DevBranch {
         }
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation "reset-dev-branch" -ConflictStage "reset.merge-conflicts") { return }
         Save-DevBranchCheckpoint -Operation "reset-dev-branch" -Message "chore: checkpoint before branch reset" | Out-Null
-        $masterSource = Get-DevBranchResetMasterSource
-        Assert-BranchSeedReady -ExpectedConfigurationFingerprint ([string]$masterSource.fingerprint) | Out-Null
-        $oldHead = Get-CurrentCommit
-        $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
-        Update-DevBranchState -State $state -Updates @{
-            resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
-            resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
-            resetMasterFingerprint = [string]$masterSource.fingerprint
-            resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
-            resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
-        }
-        $state = Read-DevBranchState -Name $DevBranchName
     }
 
-    $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
-    if (-not (Test-GitCommitExists $masterCommit)) {
-        throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
-    }
-    $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
-    if ($phase -eq "archive-pending") {
-        $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
-        Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
-        $state = Read-DevBranchState -Name $DevBranchName
-        $phase = "archive-complete"
-    }
-    if ($phase -eq "archive-complete") {
-        Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
-        $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
-        if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
-            Assert-CleanGit
-            $newHead = Get-CurrentCommit
-        } else {
-            $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+    Set-RunStage -Stage "reset.source" -Detail "Capturing local master and its compatible seed under shared source protection."
+    $inputs = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
+        $masterSource = if ($resetStatus -ne "resetting") { Get-DevBranchResetMasterSource } else { $null }
+        $expected = if ($null -ne $masterSource) { [string]$masterSource.fingerprint } else { [string]$state.resetMasterFingerprint }
+        $lease = Open-BranchSeedLease -Mode read
+        try {
+            $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $expected
+            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; lease = $lease }
+        } catch {
+            $lease.Dispose()
+            throw
         }
-        Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
-        $state = Read-DevBranchState -Name $DevBranchName
-        $phase = "git-reset-complete"
     }
-    if ($phase -in @("git-reset-complete", "runtime-initializing")) {
-        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
-        Set-RunStage -Stage "reset.infobase" -Detail "Restoring the development infobase from the exact compatible branch seed."
-        $runtimeRestore = Restore-ExistingDevBranchRuntimeFromSeed -State $state -ExpectedConfigurationFingerprint ([string]$state.resetMasterFingerprint)
-        $seed = $runtimeRestore.seed
-        $now = (Get-Date).ToString("o")
-        $clear = @{
-            initializationStatus = "ready"; initializationError = ""; resetStatus = "resetting"; resetPhase = "runtime-initializing"
-            repositoryUnbound = [bool]$runtimeRestore.repositoryUnbound
-            lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
-            lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
-            loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
-            lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
-            lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
-            lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
-            lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
-            pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
-            branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
-            branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
-            branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
-            enterpriseNormalizationStatus = "pending"; enterpriseNormalizationReason = "branch-reset"; enterpriseNormalizationError = ""
+    $seedLease = $inputs.lease
+    try {
+        if ($resetStatus -ne "resetting") {
+            $masterSource = $inputs.masterSource
+            $oldHead = Get-CurrentCommit
+            $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
+            Update-DevBranchState -State $state -Updates @{
+                resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
+                resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
+                resetMasterFingerprint = [string]$masterSource.fingerprint
+                resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
+                resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
+            }
+            $state = Read-DevBranchState -Name $DevBranchName
         }
-        Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
-        Update-DevBranchState -State $state -Updates $clear
-        $state = Read-DevBranchState -Name $DevBranchName
-        $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
-        Ensure-DevBranchEventLogPendingCursor -State $state -Reason "branch-reset" | Out-Null
-        Ensure-DevBranchEnterpriseNormalized -State (Read-DevBranchState -Name $DevBranchName) -Reason "branch-reset" | Out-Null
-        $state = Read-DevBranchState -Name $DevBranchName
-        Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-        $state = Invoke-DevBranchDefaultMcpSetup -State $state
-        Sync-KiloItlCommandSurface
-        Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
-        Sync-DevBranchContextToDotEnv -State $state
-        $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
-        Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
-        Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
-    }
 
-    $completed = Read-DevBranchState -Name $DevBranchName
-    $report = [System.Collections.Generic.List[string]]::new()
-    $report.Add("## Ветка сброшена для новой доработки")
-    Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
-    Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
-    Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
-    Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
-    Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
-    Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
-    $report.Add("")
-    $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
-    Write-AndSetRunUserReport -Lines $report
+        $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
+        if (-not (Test-GitCommitExists $masterCommit)) {
+            throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
+        }
+        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
+        if ($phase -eq "archive-pending") {
+            $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
+            Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
+            $state = Read-DevBranchState -Name $DevBranchName
+            $phase = "archive-complete"
+        }
+        if ($phase -eq "archive-complete") {
+            Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
+            $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+            if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
+                Assert-CleanGit
+                $newHead = Get-CurrentCommit
+            } else {
+                $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+            }
+            Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
+            $state = Read-DevBranchState -Name $DevBranchName
+            $phase = "git-reset-complete"
+        }
+        if ($phase -in @("git-reset-complete", "runtime-initializing")) {
+            Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
+            Set-RunStage -Stage "reset.infobase" -Detail "Restoring the development infobase from the exact compatible branch seed."
+            $runtimeRestore = Restore-ExistingDevBranchRuntimeFromSeed -State $state -ExpectedConfigurationFingerprint ([string]$state.resetMasterFingerprint) -CapturedSeed $inputs.seed -ExistingLease $seedLease
+            $seed = $runtimeRestore.seed
+            $now = (Get-Date).ToString("o")
+            $clear = @{
+                initializationStatus = "ready"; initializationError = ""; resetStatus = "resetting"; resetPhase = "runtime-initializing"
+                repositoryUnbound = [bool]$runtimeRestore.repositoryUnbound
+                lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
+                lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
+                loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
+                lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
+                lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
+                lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
+                lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
+                pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
+                branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
+                branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
+                branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
+                enterpriseNormalizationStatus = "pending"; enterpriseNormalizationReason = "branch-reset"; enterpriseNormalizationError = ""
+            }
+            Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
+            Update-DevBranchState -State $state -Updates $clear
+            $state = Read-DevBranchState -Name $DevBranchName
+            $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
+            # No shared seed paths are read after installing the event-log baseline.
+            # Release before re-entering main: a seed writer may already own main.
+            $seedLease.Dispose()
+            $seedLease = $null
+            Ensure-DevBranchEventLogPendingCursor -State $state -Reason "branch-reset" | Out-Null
+            Ensure-DevBranchEnterpriseNormalized -State (Read-DevBranchState -Name $DevBranchName) -Reason "branch-reset" | Out-Null
+            $state = Read-DevBranchState -Name $DevBranchName
+            Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
+            }
+            $state = Invoke-DevBranchDefaultMcpSetup -State $state
+            Sync-KiloItlCommandSurface
+            Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
+            Sync-DevBranchContextToDotEnv -State $state
+            $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
+            Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
+            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+        }
+
+        $completed = Read-DevBranchState -Name $DevBranchName
+        $report = [System.Collections.Generic.List[string]]::new()
+        $report.Add("## Ветка сброшена для новой доработки")
+        Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
+        Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
+        Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
+        Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
+        Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
+        Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
+        $report.Add("")
+        $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
+        Write-AndSetRunUserReport -Lines $report
+    } finally {
+        if ($null -ne $seedLease) { $seedLease.Dispose() }
+    }
 }
 
 function Invoke-RefreshDevBranchCore {

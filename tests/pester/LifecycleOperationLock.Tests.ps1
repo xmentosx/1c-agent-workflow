@@ -1,4 +1,4 @@
-Describe "1C workflow lifecycle operation lock" {
+﻿Describe "1C workflow lifecycle operation lock" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -144,6 +144,205 @@ Describe "1C workflow lifecycle operation lock" {
             Remove-Item -LiteralPath $branchTwo -Recurse -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $mainRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "shares reset source reads across processes while excluding writers and the same branch" {
+        $tempRoot = Join-Path $TestDrive "parallel reset общий"
+        $mainRoot = Join-Path $tempRoot "main база"
+        $branchOne = Join-Path $tempRoot "ветка one"
+        $branchTwo = Join-Path $tempRoot "ветка two"
+        Initialize-LifecycleLockTestRepository -Path $mainRoot
+        & git -C $mainRoot worktree add --quiet -b itldev/one $branchOne *> $null
+        & git -C $mainRoot worktree add --quiet -b itldev/two $branchTwo master *> $null
+        $worker = Join-Path $tempRoot "read source.ps1"
+        Set-Content -LiteralPath $worker -Encoding UTF8 -Value @'
+param([string]$HelperPath, [string]$Root)
+. $HelperPath -ProjectRoot $Root -Action help *> $null
+Enter-Agent1cLifecycleOperation -RequestedAction "reset-dev-branch"
+try {
+    Invoke-Agent1cMainWorktreeReadScope -TimeoutSeconds 1 -ScriptBlock { "READ_OK" }
+    Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
+} finally { Exit-Agent1cLifecycleOperation }
+'@
+        & {
+            . $HelperPath -ProjectRoot $branchOne -Action help *> $null
+            Enter-Agent1cLifecycleOperation -RequestedAction "reset-dev-branch"
+            try {
+                @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction "reset-dev-branch") | Should -Be @($branchOne)
+                Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
+                    $other = Invoke-TestPowerShellFile -FilePath $worker -Arguments @("-HelperPath", $HelperPath, "-Root", $branchTwo)
+                    $other.exitCode | Should -Be 0 -Because $other.combinedText
+                    $other.combinedText | Should -Match "READ_OK"
+                    $same = Invoke-TestPowerShellFile -FilePath $worker -Arguments @("-HelperPath", $HelperPath, "-Root", $branchOne)
+                    $same.exitCode | Should -Be 1
+                    $same.combinedText | Should -Match "LIFECYCLE_OPERATION_CONFLICT"
+                    $writer = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $mainRoot, "-Action", "sync-master")
+                    $writer.exitCode | Should -Be 1
+                    $writer.combinedText | Should -Match "LIFECYCLE_OPERATION_CONFLICT.*activeAction='reset-dev-branch'"
+                }
+                (Test-Agent1cLifecycleLockHeld -WorktreePath $mainRoot) | Should -BeFalse
+                (Test-Agent1cLifecycleLockHeld -WorktreePath $branchOne) | Should -BeTrue
+                { Invoke-Agent1cMainWorktreeReadScope -ScriptBlock { throw "READ_FAILED" } } | Should -Throw "*READ_FAILED*"
+                (Test-Agent1cLifecycleLockHeld -WorktreePath $mainRoot) | Should -BeFalse
+                @(Get-ChildItem -LiteralPath (Join-Path $mainRoot ".agent-1c/locks/lifecycle-readers") -Filter "*.json").Count | Should -Be 0
+                # A writer also excludes readers (the sharing contract is symmetric).
+                $writerLock = [IO.File]::Open((Get-Agent1cLifecycleLockPath -WorktreePath $mainRoot), 'Open', 'ReadWrite', 'Read')
+                try {
+                    { Invoke-Agent1cMainWorktreeReadScope -TimeoutSeconds 0 -ScriptBlock { throw "MUST_NOT_ENTER" } } | Should -Throw "*LIFECYCLE_OPERATION_CONFLICT*"
+                } finally { $writerLock.Dispose() }
+            } finally {
+                Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
+                Exit-Agent1cLifecycleOperation
+            }
+        }
+    }
+
+    It "runs reset through <Scenario> with real worktree archives and seed leases" -ForEach @(
+        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }
+    ) {
+        $tempRoot = Join-Path $TestDrive ("сброс " + $Scenario)
+        $mainRoot = Join-Path $tempRoot "main база"
+        $branchOne = Join-Path $tempRoot "ветка one"
+        $branchTwo = Join-Path $tempRoot "ветка two"
+        $sourceRoot = Join-Path $tempRoot "source база"
+        Initialize-LifecycleLockTestRepository -Path $mainRoot
+        Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/'
+        & git -C $mainRoot add .gitignore
+        & git -C $mainRoot commit --quiet -m 'ignore runtime'
+        $masterCommit = (& git -C $mainRoot rev-parse HEAD).Trim()
+        foreach ($entry in @(@{ name = 'one'; root = $branchOne }, @{ name = 'two'; root = $branchTwo })) {
+            & git -C $mainRoot worktree add --quiet -b ('itldev/' + $entry.name) $entry.root master *> $null
+            Set-Content -LiteralPath (Join-Path $entry.root 'изменение ветки.txt') -Encoding UTF8 -Value $entry.name
+            & git -C $entry.root add .
+            & git -C $entry.root commit --quiet -m 'branch work'
+        }
+        New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3, 4))
+        New-TestBranchSeedFixture -ProjectRoot $mainRoot -SourceInfoBasePath $sourceRoot
+        $worker = Join-Path $tempRoot 'reset worker.ps1'
+        Set-Content -LiteralPath $worker -Encoding UTF8 -Value @'
+param([string]$HelperPath, [string]$SupportPath, [string]$Root, [string]$SourceRoot,
+    [string]$OtherRoot = "", [string]$InterruptPhase = "")
+Import-Module Microsoft.PowerShell.Utility
+. $SupportPath
+. $HelperPath -ProjectRoot $Root -Action help *> $null
+$fixtureStatePath = Join-Path $Root ".agent-1c/reset-fixture.json"
+if (-not (Test-Path -LiteralPath $fixtureStatePath)) {
+    $name = (Get-CurrentBranch).Substring(7)
+    Write-Utf8Text -Path $fixtureStatePath -Value (([ordered]@{
+        devBranchName = $name; safeDevBranchName = $name; devBranch = "itldev/$name"
+        devBranchKind = "configuration"; initializationStatus = "ready"; infoBaseKind = "file"
+        devBranchInfoBasePath = Join-Path $Root ".agent-1c/тестовая база"
+    }) | ConvertTo-Json)
+}
+function Read-DevBranchState { Read-Utf8Text -Path $fixtureStatePath | ConvertFrom-Json }
+function Update-DevBranchState {
+    param($State, [hashtable]$Updates)
+    $record = ConvertTo-Agent1cHashtable -Object $State
+    foreach ($key in $Updates.Keys) { $record[$key] = $Updates[$key] }
+    Write-Utf8Text -Path $fixtureStatePath -Value ($record | ConvertTo-Json -Depth 10)
+}
+function Get-SourceInfoBasePath { $SourceRoot }
+function Get-InfoBaseKind { "file" }
+function Get-SourceUsesRepository { $false }
+function Assert-DevelopmentBranchWorktreeContext {}
+function Assert-MasterWorktreeContext {}
+function Resume-DevBranchLifecycleMergeIfPresent { $false }
+function Save-DevBranchCheckpoint { Assert-CleanGit }
+function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "test-fixture"; treeObjectId = "config-tree" } }
+function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+function Invoke-Designer {
+    param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
+    if ($DesignerArgs[0] -ne "/DumpIB") { throw "UNEXPECTED_DESIGNER" }
+    Write-Utf8Text -Path $DesignerArgs[1] -Value "archived original infobase"
+    Add-Content -LiteralPath (Join-Path $Root ".agent-1c/dumps.txt") -Value "dump"
+}
+function Initialize-DevBranchEventLogBaseline {
+    param($State, $SeedBaselinePath)
+    try { $writer = Open-BranchSeedLease -Mode write -TimeoutSeconds 1; $writer.Dispose(); throw "SEED_NOT_PROTECTED" }
+    catch { if ($_.Exception.Message -notmatch "BRANCH_SEED_LEASE_TIMEOUT") { throw } }
+    Copy-Item -LiteralPath $SeedBaselinePath -Destination (Join-Path $Root ".agent-1c/installed-baseline.json")
+    $State
+}
+function Ensure-DevBranchEventLogPendingCursor {}
+function Ensure-DevBranchEnterpriseNormalized {}
+function Sync-AiRules1cManagedIgnoredFilesFromMain {
+    if (-not (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath))) { throw "MAIN_READ_NOT_PROTECTED" }
+    # Acquiring the writer here also detects a retained seed lease / lock-order cycle.
+    if ((Read-DevBranchState).devBranchName -ne "two") {
+        $writer = Open-BranchSeedLease -Mode write -TimeoutSeconds 1
+        $writer.Dispose()
+    }
+    Remove-Item -LiteralPath (Get-BranchSeedPaths).rebuildMarkerPath -Force -ErrorAction SilentlyContinue
+}
+function Invoke-DevBranchDefaultMcpSetup { param($State) $State }
+function Sync-KiloItlCommandSurface {}
+function Invoke-AiRules1cManagedMcpConfigReconcile {}
+function Sync-DevBranchContextToDotEnv {}
+function Write-AndSetRunUserReport {}
+function Set-RunStage {
+    param($Stage, $Detail)
+    Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
+    if ($Stage -eq "reset.archive-dt") {
+        if (Test-Agent1cLifecycleLockHeld -WorktreePath (Get-MainWorktreePath)) { throw "MAIN_LOCK_RETAINED_DURING_ARCHIVE" }
+        if ($OtherRoot) {
+            $nested = Invoke-TestPowerShellFile -FilePath $PSCommandPath -Arguments @(
+                "-HelperPath", $HelperPath, "-SupportPath", $SupportPath, "-Root", $OtherRoot, "-SourceRoot", $SourceRoot)
+            if ($nested.exitCode -ne 0) { throw "PARALLEL_RESET_FAILED: $($nested.combinedText)" }
+        }
+    }
+    if ($InterruptPhase -and $Stage -eq $InterruptPhase) { throw "RESET_INTERRUPTED" }
+    if ($Stage -eq "reset.infobase") {
+        # A real seed writer publishes intent before waiting for existing readers.
+        Write-Utf8Text -Path (Get-BranchSeedPaths).rebuildMarkerPath -Value "{}"
+    }
+}
+Enter-Agent1cLifecycleOperation -RequestedAction "reset-dev-branch"
+try {
+    Reset-DevBranch
+    Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
+} catch {
+    Complete-Agent1cLifecycleOperation -Status failed -ExitCode 1 -ErrorMessage $_.Exception.Message
+    throw
+} finally { Exit-Agent1cLifecycleOperation }
+'@
+        $arguments = @('-HelperPath', $HelperPath, '-SupportPath', (Join-Path $PSScriptRoot 'TestSupport.ps1'),
+            '-Root', $branchOne, '-SourceRoot', $sourceRoot)
+        if ($Scenario -eq 'parallel branches') {
+            $run = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-OtherRoot', $branchTwo))
+            $run.exitCode | Should -Be 0 -Because $run.combinedText
+            $other = Get-Content -LiteralPath (Join-Path $branchTwo '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $other.resetStatus | Should -Be 'complete'
+        } else {
+            $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
+            $failed.exitCode | Should -Be 1
+            $failed.combinedText | Should -Match 'RESET_INTERRUPTED'
+            $saved = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $saved.resetPhase | Should -Be 'git-reset-complete'
+            # Resume must retain the recorded master and archive even after master moves.
+            Set-Content -LiteralPath (Join-Path $mainRoot 'new-master.txt') -Value 'later master'
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit --quiet -m 'later master'
+            $manifestPath = (Get-ChildItem -LiteralPath (Join-Path $mainRoot '.agent-1c/branch-seed') -Recurse -Filter manifest.json).FullName
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.configurationFingerprint = 'incompatible'
+            $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            $incompatible = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $incompatible.exitCode | Should -Be 1
+            $incompatible.combinedText | Should -Match 'BRANCH_SEED_INCOMPATIBLE'
+            $manifest.configurationFingerprint = 'test-fixture'
+            $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
+        }
+        $state = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $state.resetStatus | Should -Be 'complete'
+        $state.resetMasterCommit | Should -Be $masterCommit
+        (& git -C $branchOne rev-parse 'HEAD^{tree}').Trim() | Should -Be (& git -C $mainRoot rev-parse "$masterCommit`^{tree}").Trim()
+        @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
+        [IO.File]::ReadAllBytes((Join-Path $state.devBranchInfoBasePath '1Cv8.1CD')) | Should -Be @([byte]1, [byte]2, [byte]3, [byte]4)
+        Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/изменение ветки.txt') | Should -BeTrue
+        if ($Scenario -eq 'interruption and resume') { $state.resetArchivePath | Should -Be $saved.resetArchivePath }
     }
 
     It "locks branch and master in canonical order for refresh and exposes the same owner from master" {

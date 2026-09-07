@@ -609,7 +609,7 @@ function Get-Agent1cLifecycleOperationLockScopes {
         $peerState = Read-DevBranchState -Name $peerName
         $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
     }
-    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
+    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
 
@@ -664,6 +664,15 @@ function Get-Agent1cLifecycleConflictRecord {
 
     $statePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $WorktreePath
     $record = Read-Agent1cLifecycleOperationRecord -Path $statePath
+    $readersPath = Join-Path (Split-Path -Parent $statePath) "lifecycle-readers"
+    foreach ($readerFile in @(Get-ChildItem -LiteralPath $readersPath -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+        $reader = Read-Agent1cLifecycleOperationRecord -Path $readerFile.FullName
+        if ($null -ne $reader -and (Test-Agent1cProcessAlive -ProcessId ([int]$reader["ownerPid"]))) {
+            $record = $reader
+            $statePath = $readerFile.FullName
+            break
+        }
+    }
     if ($null -ne $record -and $record.Contains("ownerStatePath") -and -not [string]::IsNullOrWhiteSpace([string]$record["ownerStatePath"])) {
         $ownerStatePath = Resolve-Agent1cFullPath -Path ([string]$record["ownerStatePath"])
         $ownerRecord = Read-Agent1cLifecycleOperationRecord -Path $ownerStatePath
@@ -672,6 +681,47 @@ function Get-Agent1cLifecycleConflictRecord {
         }
     }
     return [pscustomobject]@{ record = $record; statePath = $statePath }
+}
+
+function Invoke-Agent1cMainWorktreeReadScope {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [int]$TimeoutSeconds = 600
+    )
+
+    Assert-Agent1cLifecycleContinuationOwner
+    $mainRoot = Get-MainWorktreePath
+    $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $mainRoot
+    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $mainRoot
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+    $reader = $null
+    $readerPath = ""
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    try {
+        while ($null -eq $reader) {
+            try {
+                # Readers share ReadWrite access with one another. A lifecycle
+                # writer shares only Read, so neither can enter over the other.
+                $reader = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate,
+                    [IO.FileAccess]::ReadWrite, [IO.FileShare]::ReadWrite)
+            } catch [IO.IOException] {
+                if ((Get-Date) -ge $deadline) {
+                    throw (New-Agent1cLifecycleConflictMessage -RequestedAction "reset-dev-branch" -WorktreePath $mainRoot)
+                }
+                Start-Sleep -Milliseconds 200
+            }
+        }
+        $readerPath = Join-Path (Split-Path -Parent $lockPath) ("lifecycle-readers/{0}.json" -f [guid]::NewGuid().ToString("N"))
+        Write-Agent1cLifecycleOperationRecord -Path $readerPath -Record ([ordered]@{
+            schemaVersion = 1; status = "running"; action = "reset-dev-branch"
+            operationId = $script:LifecycleOperationId; ownerPid = $PID
+            ownerStatePath = $script:LifecycleOperationStatePath; worktreePath = $mainRoot
+        })
+        & $ScriptBlock
+    } finally {
+        if ($readerPath) { Remove-Item -LiteralPath $readerPath -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $reader) { $reader.Dispose() }
+    }
 }
 
 function New-Agent1cLifecycleConflictMessage {
