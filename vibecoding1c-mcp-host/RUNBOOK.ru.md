@@ -584,6 +584,16 @@ CPU embedding mode всегда передает `RESET_CACHE=false`: общий
 
 В CPU embedding mode Graph server использует локальную `EMBEDDING_MODEL`. Совместимые OpenAI-переменные направляются на fail-closed loopback endpoint, поэтому значения OpenRouter/OpenAI из distribution defaults не вызывают внешних запросов. Если Graph должен реально вызывать LLM для chat-функций, задайте `CHAT_API_KEY`, `CHAT_API_BASE` и `CHAT_MODEL` в `host.config.json` secrets.
 
+Generated compose для Graph сначала инициализирует обязательный chat-клиент образа, затем до создания `VectorIndexer` очищает только embedding credentials. Поэтому канонический id локальной модели имеет вид `offline:<embedding.model>`, а placeholder chat-клиента не ошибочно трактуется как OpenAI embedding provider.
+
+Если существующая база уже содержит локальные E5-векторы, но `SystemMeta.embedding_model_id` остался в legacy-виде `openai:*`, выполните точечную миграцию перед очисткой restart-loop state и перезапуском Graph:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action graph-cpu-migrate-model -ConfigPath .\host.config.json -ConfigId trade
+```
+
+Операция требует один явный `ConfigId`, проверяет известную размерность E5, фактическую размерность всех заполненных векторов и ONLINE vector indexes и меняет только `SystemMeta.embedding_model_id`. `RESET_DATABASE` не включается, векторы не пересчитываются. При неожиданной модели, размерности или структуре операция завершается без изменения данных.
+
 Config-specific vector stores из `PATH_BASES` изолируются как `<stateRoot>/bases/<configId>/<serverId>/...`, чтобы несколько `code` containers не делили один zvec lock.
 
 Опубликовать текущее состояние в GitLab registry repo:
