@@ -11685,6 +11685,11 @@ function Refresh-AllDevBranches {
     Set-RunStage -Stage "refresh-all.master" -Detail "Synchronizing master once before refreshing active branches."
     Sync-Master -NoDelegate -SeedPolicy "Rebuild"
     $masterCommit = Get-CurrentCommit
+    Enter-Agent1cMainReadPhase
+    $currentMasterCommit = Get-CurrentCommit
+    if ($currentMasterCommit -cne $masterCommit) {
+        throw "REFRESH_MASTER_COMMIT_CHANGED: expected=$masterCommit actual=$currentMasterCommit"
+    }
     $inventory = Get-ActiveReadyDevBranchTargets
     $results = [System.Collections.Generic.List[object]]::new()
     foreach ($error in @($inventory.errors)) {

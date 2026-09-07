@@ -287,11 +287,11 @@
     }
 
     It "requires server provider schema v2 restore and baseline capabilities" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-server-provider-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl server provider путь " + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $providerPath = Join-Path $tempRoot "provider.ps1"
-            Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
+            [IO.File]::WriteAllText($providerPath, @'
 param([string]$Operation,[string]$ProjectRoot,[string]$SourceInfoBasePath,[int]$EventLogLookbackDays)
 if ($Operation -eq "capabilities") {
     [pscustomobject]@{ schemaVersion = 2; capabilities = @("restore-seed","event-log-baseline","event-log-baseline-lookback") } | ConvertTo-Json -Compress
@@ -302,7 +302,7 @@ if ($Operation -eq "event-log-baseline") {
     exit 0
 }
 exit 1
-'@
+'@, [Text.UTF8Encoding]::new($true))
             & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 function Get-ConfigValue { return $providerPath }
@@ -315,7 +315,9 @@ exit 1
                 function Get-SourceInfoBasePath { return "server\base" }
                 function Get-SourceServerEventLogLookbackDays { return 7 }
                 $baseline = Get-SourceEventLogSeedBaseline
-                @($baseline.signatures) | Should -Be @("server error", "ошибка сервера")
+                # The provider contract is a set; its normalized order follows
+                # Sort-Object's host culture. Preserve exact Unicode membership.
+                @($baseline.signatures | Sort-Object) | Should -Be @(@("server error", "ошибка сервера") | Sort-Object)
                 $baseline.cache.status | Should -Be "hit"
                 $baseline.lookbackDays | Should -Be 7
                 $baseline.windowStart | Should -Be "bounded"
@@ -542,7 +544,9 @@ param([string]$Operation,[string]$ProjectRoot)
                 }
                 function Set-RunStage {}
                 $failure = ""
+                Enter-Agent1cLifecycleOperation -RequestedAction 'refresh-all-dev-branches'
                 try { Refresh-AllDevBranches 6>$null } catch { $failure = $_.Exception.Message }
+                finally { Exit-Agent1cLifecycleOperation }
                 foreach ($entry in @($script:Processes)) { try { $entry.process.Dispose() } catch {} }
                 [pscustomobject]@{ syncCalls = $script:SyncCalls; started = @($script:Started); maxObserved = $script:MaxObserved; failure = $failure; report = $script:RunUserReport }
             }

@@ -367,6 +367,7 @@ $script:LifecycleOperationId = ""
 $script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
 $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
+$script:LifecycleWaitCancelled = $false
 $script:ActiveVanessaRunEvidence = $null
 $script:ActiveAuxiliaryVanessaContext = $null
 $script:ActiveVerificationSelectionPlan = $null
@@ -403,8 +404,6 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
     . $modulePath
 }
 
-Initialize-GitIndexLockTracking
-
 try {
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
@@ -416,7 +415,9 @@ try {
             Copy-Item -LiteralPath $sourceDotEnv -Destination $targetDotEnv
         }
     }
-    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
+    $lifecycleEnvPath = Join-Path $script:ProjectRoot ".dev.env"
+    $lifecycleEnvBefore = if (Test-Path -LiteralPath $lifecycleEnvPath) { Read-Utf8Text -Path $lifecycleEnvPath } else { $null }
+    Import-DotEnv -Path $lifecycleEnvPath
     Read-ProjectConfig
     $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
     Enter-Agent1cLifecycleOperation `
@@ -424,6 +425,13 @@ try {
         -RequestedOperationId $OperationId `
         -RequestedOwnerPid $OperationOwnerPid `
         -Continuation:$OperationContinuation
+    $lifecycleEnvAfter = if (Test-Path -LiteralPath $lifecycleEnvPath) { Read-Utf8Text -Path $lifecycleEnvPath } else { $null }
+    if ($lifecycleEnvBefore -cne $lifecycleEnvAfter) {
+        throw "LIFECYCLE_INPUT_CHANGED .dev.env changed during lock acquisition. Repeat the same helper to resolve the current target."
+    }
+    # All action preconditions run after admission with current configuration.
+    Read-ProjectConfig
+    Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
     if ($InternalOnDemandOperation) {
@@ -527,7 +535,8 @@ try {
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
-    if ($Action -eq "init-project" -and $script:InitCancelledByDeveloper) {
+    if (($Action -eq "init-project" -and $script:InitCancelledByDeveloper) -or $script:LifecycleWaitCancelled) {
+        $script:RunLiveness = "cancelled"
         try {
             Complete-Agent1cLifecycleOperation -Status "cancelled" -ExitCode 2 -ErrorMessage $errorMessage
         } catch {
@@ -538,12 +547,16 @@ try {
         } catch {
             [Console]::Error.WriteLine("Failed to write cancelled run status: $($_.Exception.Message)")
         }
-        Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
+        if ($script:LifecycleWaitCancelled) {
+            Write-Host "ITL lock wait cancelled by developer. It will not be resumed automatically."
+        } else {
+            Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
+        }
         exit 2
     }
     Set-RunFailureContextFromMessage -Message $errorMessage -RequestedAction $Action
     try {
-        $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure
+        $cleanupMessage = if ($script:LifecycleOperationHandles.Count -gt 0) { Invoke-GitIndexLockCleanupOnFailure } else { "" }
         if ($cleanupMessage) {
             Write-Host $cleanupMessage
             $errorMessage = "$errorMessage $cleanupMessage"

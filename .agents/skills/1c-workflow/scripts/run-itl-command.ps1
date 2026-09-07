@@ -619,10 +619,10 @@ if ($terminalStatus -eq "succeeded") {
     # A valid terminal success is authoritative over a handled native probe
     # code inherited by the PowerShell helper host.
     $exitCode = 0
-} elseif ($terminalStatus -eq "failed" -and $exitCode -eq 0) {
+} elseif ($terminalStatus -in @("failed", "cancelled") -and $exitCode -eq 0) {
     $exitCode = [Math]::Max(1, [int](Get-ObjectValue -Object $status -Name "exitCode" -Default 1))
 }
-if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed")) {
+if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed", "cancelled")) {
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")

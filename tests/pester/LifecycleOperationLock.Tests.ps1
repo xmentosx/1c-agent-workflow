@@ -4,6 +4,9 @@
         $context = Initialize-WorkflowPesterContext
         $HelperPath = $context.HelperPath
         $HelperText = $context.HelperText
+        # Existing exclusion tests explicitly exercise non-waiting admission.
+        $originalLockTimeout = $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS
+        $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS = '0'
 
         function Initialize-LifecycleLockTestRepository {
             param([string]$Path)
@@ -19,6 +22,8 @@
             & git -C $Path branch -M master
         }
     }
+
+    AfterAll { $env:LIFECYCLE_LOCK_TIMEOUT_SECONDS = $originalLockTimeout }
 
     It "publishes meaningful phases for the long lifecycle slices" {
         foreach ($phase in @(
