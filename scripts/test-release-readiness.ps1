@@ -129,6 +129,9 @@ function Get-ManagedPackageInventory {
         ".agents\skills\product-docs",
         ".agents\skills\itl-roctup-1c-data",
         ".agents\skills\itl-vanessa-ui-mcp",
+        ".agents\skills\itl-remote-runner",
+        ".agents\skills\itl-remote-agent",
+        ".agents\skills\itl-performance",
         "docs\itl-workflow",
         "templates"
     )

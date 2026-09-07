@@ -23,7 +23,10 @@
             ".agents\skills\1c-workflow-fast",
             ".agents\skills\product-docs",
             ".agents\skills\itl-roctup-1c-data",
-            ".agents\skills\itl-vanessa-ui-mcp"
+            ".agents\skills\itl-vanessa-ui-mcp",
+            ".agents\skills\itl-remote-runner",
+            ".agents\skills\itl-remote-agent",
+            ".agents\skills\itl-performance"
         )) {
             $installerText | Should -Match ([regex]::Escape($skillPath))
             $lifecycleText | Should -Match ([regex]::Escape($skillPath))

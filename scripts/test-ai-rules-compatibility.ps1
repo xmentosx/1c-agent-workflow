@@ -131,7 +131,7 @@ try {
     foreach ($client in $clients) {
         $projectRoot = Join-Path $workRoot "project-$client"
         New-Item -ItemType Directory -Force -Path $projectRoot | Out-Null
-        foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
+        foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
             $skillPath = Join-Path $projectRoot ".agents\skills\$itlSkill\SKILL.md"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $skillPath) | Out-Null
             [IO.File]::WriteAllText($skillPath, "fixture $itlSkill`n", [Text.UTF8Encoding]::new($false))
@@ -150,7 +150,7 @@ try {
         if (@($manifest.tools).Count -ne 1 -or [string]$manifest.tools[0] -ne $client) { throw "Exact-one-client manifest failed for $client" }
         Assert-OpenSpecBundle -RulesRoot $rulesRoot -ProjectRoot $projectRoot -Manifest $manifest -Tool $client
         Assert-WorkflowExtensionTools -HelperPath $workflowHelper -ProjectRoot $projectRoot -Manifest $manifest -Client $client
-        foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
+        foreach ($itlSkill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
             if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\$itlSkill\SKILL.md") -PathType Leaf)) { throw "ITL skill was removed for ${client}: $itlSkill" }
         }
         if ((Get-FileHash -LiteralPath (Join-Path $projectRoot "LLM-RULES.md") -Algorithm SHA256).Hash -ne $llmHash) { throw "LLM-RULES.md changed during init for $client" }

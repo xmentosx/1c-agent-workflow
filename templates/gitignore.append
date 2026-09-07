@@ -83,3 +83,4 @@ build/test-results/
 .mcp.json
 .cursor/mcp.json
 opencode.json
+.agent-1c/remote-work/

@@ -76,6 +76,9 @@
             "1c-workflow-fast",
             "itl-roctup-1c-data",
             "itl-vanessa-ui-mcp",
+            "itl-remote-runner",
+            "itl-remote-agent",
+            "itl-performance",
             "product-docs"
         ) | Sort-Object
         $actualSkillIds = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Select-Object -ExpandProperty Name | Sort-Object)
@@ -211,7 +214,7 @@
         $userRulesText | Should -Match ([regex]::Escape(".agent-1c/runs/"))
         $userRulesText | Should -Match ([regex]::Escape("build/test-results/"))
 
-        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
+        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")
         $skillReferences = [regex]::Matches($userRulesText, '\.agents/skills/([^/]+)/SKILL\.md') | ForEach-Object { $_.Groups[1].Value }
         foreach ($skillId in $skillReferences) {
             $installedSkillIds | Should -Contain $skillId

@@ -89,6 +89,15 @@
   },
   "contracts": [
     {
+      "id": "remote-performance",
+      "owner": "portable remote jobs and execution-host measurements",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/RemotePerformance.Tests.ps1",
+      "paths": [".agents/skills/itl-remote-runner/*", ".agents/skills/itl-remote-agent/*", ".agents/skills/itl-performance/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "tests/python/remote_work/*"],
+      "tests": ["tests/pester/RemotePerformance.Tests.ps1"]
+    },
+    {
       "id": "immutable-download",
       "owner": "bounded immutable dependency acquisition",
       "gate": "targeted",

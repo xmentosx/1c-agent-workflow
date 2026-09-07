@@ -75,24 +75,7 @@ function Assert-ExportPathInsideProject {
     return $resolved
 }
 
-function Get-StateValue {
-    param(
-        [object]$State,
-        [string]$Name,
-        [object]$Default = $null
-    )
-
-    if ($null -eq $State) {
-        return $Default
-    }
-
-    $prop = $State.PSObject.Properties[$Name]
-    if ($null -eq $prop -or $null -eq $prop.Value -or [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
-        return $Default
-    }
-
-    return $prop.Value
-}
+. (Join-Path $PSScriptRoot "agent-1c.runtime-values.ps1")
 
 function Get-DevBranchKind {
     param([object]$State)
@@ -3943,6 +3926,9 @@ function Assert-WorkflowPackageSourceRoot {
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
         ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
+        ".agents\skills\itl-remote-runner\SKILL.md",
+        ".agents\skills\itl-remote-agent\SKILL.md",
+        ".agents\skills\itl-performance\SKILL.md",
         "templates\USER-RULES.append.md"
     )) {
         $path = Join-Path $SourceRoot $relativePath
@@ -4116,6 +4102,9 @@ function Get-WorkflowUpdateManagedPathSpecs {
         ".agents/skills/product-docs",
         ".agents/skills/itl-roctup-1c-data",
         ".agents/skills/itl-vanessa-ui-mcp",
+        ".agents/skills/itl-remote-runner",
+        ".agents/skills/itl-remote-agent",
+        ".agents/skills/itl-performance",
         "docs/itl-workflow",
         "templates",
         "tests/features/Libraries/ITL",
@@ -4770,6 +4759,9 @@ function Update-WorkflowPackage {
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-runner"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-agent"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-performance"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "docs\itl-workflow"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
         foreach ($relativePath in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
