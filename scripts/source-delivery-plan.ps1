@@ -198,7 +198,7 @@ function New-DeliveryQualityPlanForCandidate {
     $paths = @(Get-RepositoryGitPathList -RepositoryRoot $CandidateRoot -Arguments @("diff", "--name-only", "--diff-filter=ACDMRT", "-z", "$BaseCommit...$CandidateCommit", "--"))
     $catalogPath = Join-Path $CandidateRoot "tests\quality-contracts.json"
     $gateVariable = Get-Variable -Name GateScript -Scope Script -ErrorAction SilentlyContinue
-    $customGateRequested = [bool]$AllowCustomGateFixture -or ($gateVariable -and [string]$gateVariable.Value -and (Split-Path -Leaf ([string]$gateVariable.Value) -ne 'check.ps1'))
+    $customGateRequested = [bool]$AllowCustomGateFixture -or ($gateVariable -and [string]$gateVariable.Value -and ((Split-Path -Leaf ([string]$gateVariable.Value)) -ne 'check.ps1'))
     if ($customGateRequested) {
         $gateIdentity = Get-DeliveryFileIdentity -Path $script:GateScript
         $stages = @(

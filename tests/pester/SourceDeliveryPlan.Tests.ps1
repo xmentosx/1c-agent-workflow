@@ -59,6 +59,7 @@ Describe 'Delivery v3 immutable selective plan' {
 
     It 'builds a stage DAG from changed owner inputs and reuses matching immutable evidence' {
         $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
         Mock Get-QualityContractCatalog { $catalog }
         Mock Test-QualityContractCatalog { $true }
         Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
