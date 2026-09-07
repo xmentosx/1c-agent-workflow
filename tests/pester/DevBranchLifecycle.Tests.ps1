@@ -318,6 +318,34 @@ exit 0
             }
         }
 
+        function New-LifecycleResetFormIntegrityFixture {
+            $fixture = New-LifecycleMergeFormIntegrityFixture
+            & git -C $fixture.root checkout --quiet master
+            $source = [IO.File]::ReadAllText($fixture.formPath, [Text.Encoding]::UTF8)
+            $source = $source.Replace('</Form>', '<Commands><Command name="УстановитьУровеньЗаглушка"><Action /></Command><Command name="Пустышка" /></Commands></Form>')
+            [IO.File]::WriteAllText($fixture.formPath, $source, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- $fixture.formRepoPath
+            & git -C $fixture.root commit -m "master placeholder commands" *> $null
+            $fixture.targetCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root checkout --quiet itldev/test
+            # Model the installed validator's inherited diagnostic, without requiring
+            # an external fork checkout or changing the real duplicate-form fixture.
+            [IO.File]::WriteAllText($fixture.formValidatorPath, @'
+param([string]$FormPath, [int]$MaxErrors)
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+[xml]$form = [IO.File]::ReadAllText($FormPath, [Text.Encoding]::UTF8)
+foreach ($command in $form.SelectNodes('/Form/Commands/Command')) {
+    $action = $command.SelectSingleNode('Action')
+    if ($null -eq $action -or -not $action.InnerText.Trim()) {
+        Write-Output "[ERROR] Command '$($command.GetAttribute('name'))': missing or empty Action"
+        exit 1
+    }
+}
+exit 0
+'@, [Text.UTF8Encoding]::new($true))
+            return $fixture
+        }
+
         function Copy-AutoUpdateToolFixture {
             param([string]$TargetRoot)
             $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -6838,6 +6866,121 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.mergeInProgress | Should -BeFalse
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "completes reset then refresh-lite with an inherited form diagnostic (resume=<Resume>)" -TestCases @(
+        @{ Resume = $false }, @{ Resume = $true }
+    ) {
+        param($Resume)
+        $fixture = New-LifecycleResetFormIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture, $Resume)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.configurationValidatorPath
+                $script:OneCSourceIntegrityValidatorPathOverrides = @{ form = $Fixture.formValidatorPath }
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force
+                    }
+                }
+                function Restart-Agent1cAfterDevBranchMerge { throw "RESTART_AFTER_MERGE" }
+
+                # Exercise the actual reset tree replacement, retaining the old parent.
+                $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $Fixture.targetCommit
+                $resetTree = Get-GitObjectIdForTreePath -Treeish $resetHead -RepoPath "src/cf"
+                $targetTree = Get-GitObjectIdForTreePath -Treeish $Fixture.targetCommit -RepoPath "src/cf"
+                $mergeBase = (Get-GitOutput @("merge-base", $resetHead, $Fixture.targetCommit)).Trim()
+                if ($Resume) {
+                    # Recreate the durable state left by the previous helper's false
+                    # source-integrity failure. Conflict paths are not explicit repairs.
+                    Invoke-Git @("merge", "--no-ff", "--no-commit", $Fixture.targetCommit)
+                    Set-PendingDevBranchMergeTransaction -State $script:MergeState -Operation "refresh-dev-branch-lite" `
+                        -Branch "itldev/test" -BranchCommit $resetHead -TargetCommit $Fixture.targetCommit `
+                        -Stage "conflicts" -AllowedPaths @(Get-DevBranchMergeIndexPaths) -ConflictPaths @($Fixture.formRepoPath)
+                }
+                $message = ""
+                try {
+                    if ($Resume) {
+                        Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch-lite" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                    } else {
+                        Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch-lite" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                    }
+                } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{
+                    message = $message
+                    resetHead = $resetHead
+                    resetParents = @(Get-GitCommitParents -Commit $resetHead)
+                    resetTree = $resetTree
+                    targetTree = $targetTree
+                    mergeBase = $mergeBase
+                    parents = @(Get-GitCommitParents -Commit (Get-CurrentCommit))
+                    stage = $script:MergeState.pendingMergeStage
+                    mergeInProgress = Test-GitMergeInProgress
+                    changes = @(Get-VerificationWorkingTreeChangePaths -PathSpec @("."))
+                    source = [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
+                }
+            } $fixture $Resume
+            $result.resetParents | Should -Be @($fixture.branchCommit)
+            $result.resetTree | Should -Be $result.targetTree
+            $result.mergeBase | Should -Not -Be $result.resetHead
+            $result.mergeBase | Should -Not -Be $fixture.targetCommit
+            $result.message | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($result.resetHead, $fixture.targetCommit)
+            $result.stage | Should -Be "merged"
+            $result.mergeInProgress | Should -BeFalse
+            $result.changes | Should -HaveCount 0
+            $result.source | Should -Match '<Command name="Пустышка" />'
+        } finally {
+            if ([IO.Path]::GetFullPath($fixture.root).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "keeps reset form validation for <Change> despite equal parent blobs" -TestCases @(
+        @{ Change = "staged" }, @{ Change = "unstaged" }, @{ Change = "staged-reverted-worktree" },
+        @{ Change = "repair" }, @{ Change = "relative-repair" }
+    ) {
+        param($Change)
+        $fixture = New-LifecycleResetFormIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture, $Change)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.configurationValidatorPath
+                $script:OneCSourceIntegrityValidatorPathOverrides = @{ form = $Fixture.formValidatorPath }
+                Set-DevBranchTreeToMasterCommit -MasterCommit $Fixture.targetCommit | Out-Null
+                Invoke-Git @("merge", "--no-ff", "--no-commit", $Fixture.targetCommit)
+                $source = [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
+                $arguments = @{ ExportPath = "src/cf" }
+                if ($Change -eq "repair") {
+                    $arguments.AdditionalPaths = @($Fixture.formRepoPath)
+                } elseif ($Change -eq "relative-repair") {
+                    $arguments.AdditionalRelativePaths = @($Fixture.formRepoPath.Substring("src/cf/".Length))
+                } else {
+                    [IO.File]::WriteAllText($Fixture.formPath, $source.Replace('</Form>', '<!-- agent edit --></Form>'), [Text.UTF8Encoding]::new($false))
+                    if ($Change -ne "unstaged") { Invoke-Git @("add", "--", $Fixture.formRepoPath) }
+                    if ($Change -eq "staged-reverted-worktree") { [IO.File]::WriteAllText($Fixture.formPath, $source, [Text.UTF8Encoding]::new($false)) }
+                }
+                $allMergePaths = @(Get-OneCSourceIntegrityCandidatePaths -ExportPath "src/cf" -IncludeAllMergeChanges)
+                $message = ""
+                try { Assert-OneCConfigurationSourceIntegrity @arguments } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{ message = $message; allMergePaths = $allMergePaths; mergeInProgress = Test-GitMergeInProgress }
+            } $fixture $Change
+            $result.message | Should -Match '^ONEC_SOURCE_INTEGRITY_FAILED'
+            $result.message | Should -Match 'missing or empty Action'
+            $result.allMergePaths | Should -Contain $fixture.formRepoPath
+            $result.mergeInProgress | Should -BeTrue
+        } finally {
+            if ([IO.Path]::GetFullPath($fixture.root).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

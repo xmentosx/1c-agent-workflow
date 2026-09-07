@@ -1049,7 +1049,22 @@ function Get-OneCSourceIntegrityCandidatePaths {
             @($branchPaths + $targetPaths + $normalizedAdditionalPaths)
         } else {
             $overlapPaths = @($targetPaths | Where-Object { $branchPathSet.Contains($_) })
-            @($overlapPaths + $normalizedAdditionalPaths)
+            # Reset preserves ancestry while copying the master tree. An overlap
+            # against the old merge-base is not a merge risk when both tips, the
+            # index and the worktree agree. Keep explicit repairs unconditional.
+            $differentPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+            if ($overlapPaths.Count -gt 0) {
+                foreach ($arguments in @(
+                    @("diff", "--name-only", "-z", "--no-renames", $branchCommit, $targetCommit, "--", $repoExportPath),
+                    @("diff", "--name-only", "-z", "--no-renames", "--cached", $branchCommit, "--", $repoExportPath),
+                    @("diff", "--name-only", "-z", "--no-renames", "--", $repoExportPath)
+                )) {
+                    foreach ($differentPath in @(Get-GitPathList -Arguments $arguments)) {
+                        [void]$differentPaths.Add(([string]$differentPath).Replace("\", "/"))
+                    }
+                }
+            }
+            @(@($overlapPaths | Where-Object { $differentPaths.Contains($_) }) + $normalizedAdditionalPaths)
         }
     } else {
         @((Get-VerificationWorkingTreeChangePaths -PathSpec @($repoExportPath)) + $normalizedAdditionalPaths)
