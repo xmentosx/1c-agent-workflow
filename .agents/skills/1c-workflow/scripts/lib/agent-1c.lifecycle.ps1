@@ -2168,6 +2168,7 @@ function Restore-DevBranchInfobaseFromSnapshot {
     )
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
+    Reset-DevBranchToolingProof -State $State -Reason $Reason
     Invoke-Designer `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
@@ -9053,6 +9054,13 @@ function New-ForkedDevBranchState {
 
     $state = ConvertTo-Agent1cHashtable -Object $SourceState
     Remove-DevBranchForkTransientState -State $state | Out-Null
+    $state["toolingInfoBaseGeneration"] = [guid]::NewGuid().ToString("N")
+    $state["vanessaMcpSafeModeProof"] = $null
+    $state["yaxunitInstallationProof"] = $null
+    $state["toolingRecoveryId"] = ""
+    $state["toolingMutationId"] = ""
+    $state["toolingRecoveredMutationId"] = ""
+    $state["toolingRecoveredAt"] = ""
 
     $now = (Get-Date).ToString("o")
     $state["devBranchName"] = [string]$Snapshot.targetBranchName
@@ -11275,6 +11283,7 @@ function Restore-ExistingDevBranchFromSeed {
         if ([string]$Seed.configurationFingerprint -cne $ExpectedConfigurationFingerprint) {
             throw "BRANCH_SEED_INCOMPATIBLE: captured seed does not match the reset master fingerprint."
         }
+        Reset-DevBranchToolingProof -State $State -Reason "branch-reset-seed"
         if ((Get-InfoBaseKind) -eq "file") {
             $infoBasePath = Resolve-Agent1cFullPath -Path ([string]$State.devBranchInfoBasePath)
             New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
@@ -11340,7 +11349,7 @@ function Add-DevBranchResetTransientStateClearUpdates {
 
     $stateHash = ConvertTo-Agent1cHashtable -Object $State
     foreach ($key in @($stateHash.Keys)) {
-        if ([string]$key -notmatch '^(?:last(?:Vanessa|Verification|Verified|Result|Unverified|EventLog)|finalResult|eventLogDebt|eventLogPendingCursor)') {
+        if ([string]$key -notmatch '^(?:last(?:Vanessa|YAxUnit|Verification|Verified|Result|Unverified|EventLog)|finalResult|eventLogDebt|eventLogPendingCursor)') {
             continue
         }
         $value = $stateHash[$key]

@@ -28,6 +28,7 @@ configure-web-publication
 publish-dev-branch
 install-vanessa-automation
 install-yaxunit
+repair-dev-branch-tooling
 install-agent-browser
 install-windows-mcp
 install-ui-tools

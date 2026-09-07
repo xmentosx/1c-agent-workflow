@@ -401,7 +401,16 @@ function Set-RunFailureContextFromMessage {
         return
     }
 
-    if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+    if ($Message -match '^ITL_TOOLING_') {
+        $category = "runner"
+        $requiredAction = "repair-dev-branch-tooling"
+    } elseif ($Message -match '^ITL_YAXUNIT_ZERO_TESTS') {
+        $category = "missing-suite"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '^ITL_YAXUNIT_TESTS_FAILED') {
+        $category = "product-assertion"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
         $category = "missing-suite"
         $requiredAction = "/itl-verify-fix"
     } elseif ($Message -match '^ITL_VANESSA_TEST_FIXTURE_') {

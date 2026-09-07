@@ -192,6 +192,21 @@ function Get-ItlVerificationRepairRecordMaximumAttempts {
 function Start-ItlVerificationRepairSession {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "begin-verification-repair"
+    $path = Get-ItlVerificationRepairStatePath
+    $recoveryId = [string](Get-StateValue $state "toolingRecoveryId" "")
+    if (Test-Path -LiteralPath $path -PathType Leaf) {
+        $previous = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ([string]$previous.status -eq "exhausted") {
+            if (-not $recoveryId -or $recoveryId -ceq [string](Get-StateValue $previous "toolingRecoveryId" "") -or
+                [datetime](Get-StateValue $state "toolingRecoveredAt" "0001-01-01") -le [datetime]$previous.updatedAt) {
+                Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
+                throw "ITL_VERIFICATION_REPAIR_EXHAUSTED: repair the diagnosed tooling prerequisite through repair-dev-branch-tooling before starting a new bounded session."
+            }
+            $archive = Join-Path (Split-Path -Parent $path) ("history/" + [string]$previous.sessionId + ".json")
+            New-Item -ItemType Directory -Path (Split-Path -Parent $archive) -Force | Out-Null
+            Copy-Item -LiteralPath $path -Destination $archive -ErrorAction Stop
+        }
+    }
     $maximumAttempts = Get-ItlVerificationRepairMaximumAttempts
     $record = [pscustomobject][ordered]@{
         schemaVersion = 1
@@ -199,6 +214,7 @@ function Start-ItlVerificationRepairSession {
         projectRoot = $script:ProjectRoot
         branch = Get-CurrentBranch
         attempts = 0
+        toolingRecoveryId = $recoveryId
         maximumAttempts = $maximumAttempts
         status = "active"
         startedAt = (Get-Date).ToString("o")

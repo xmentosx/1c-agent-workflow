@@ -299,6 +299,68 @@ function Get-YAxUnitJunitSummary {
     }
 }
 
+function Ensure-YAxUnitExtensions {
+    param([object]$State)
+    $State = Ensure-DevBranchToolingGeneration -State $State
+    $extensionName = Get-YAxUnitExtensionName
+    $testsExtensionName = Get-YAxUnitTestsExtensionName
+    $testsPath = Resolve-ProjectPath (Get-YAxUnitTestsPath)
+    [xml]$metadata = Read-Utf8Text -Path (Join-Path $testsPath "Configuration.xml")
+    $nameNode = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Name']")
+    if ($null -eq $nameNode -or $nameNode.InnerText -cne $testsExtensionName) {
+        throw "ITL_YAXUNIT_TEST_EXTENSION_NAME_MISMATCH: configure yaxunit.testsExtensionName to match Configuration.xml before loading tests."
+    }
+    $source = Get-ConfigSourceFingerprint -ExportPath (Get-YAxUnitTestsPath)
+    $entry = Get-YAxUnitPinnedEntry
+    $cfePath = Install-YAxUnit
+    $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath
+    $proof = Get-StateValue $State "yaxunitInstallationProof" $null
+    $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName, $testsExtensionName))
+    $engine = @($runtime | Where-Object { $_.name -ceq $extensionName }) | Select-Object -First 1
+    $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+    $scopeMatches = $null -ne $proof -and (Get-StateValue $proof "schemaVersion" 0) -eq 1 -and
+        [bool][string](Get-StateValue $proof "engineRuntimeHash" "") -and [bool][string](Get-StateValue $proof "testsRuntimeHash" "") -and
+        [string](Get-StateValue $proof "engineName" "") -ceq $extensionName -and [string](Get-StateValue $proof "testsName" "") -ceq $testsExtensionName -and
+        [string](Get-StateValue $proof "generation" "") -ceq [string]$State.toolingInfoBaseGeneration -and
+        [string](Get-StateValue $proof "infoBaseKey" "") -ceq [string]$identity.key
+    $engineMatches = $scopeMatches -and [string](Get-StateValue $proof "engineSha256" "") -ceq [string]$entry.sha256 -and
+        (Test-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -ExpectedHash ([string](Get-StateValue $proof "engineRuntimeHash" "")) -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled)
+    $testsMatch = $scopeMatches -and [string](Get-StateValue $proof "testsFingerprint" "") -ceq [string]$source.fingerprint -and
+        (Test-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName -ExpectedHash ([string](Get-StateValue $proof "testsRuntimeHash" "")))
+    if ($engineMatches -and $testsMatch) { return $State }
+
+    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "YAxUnit extension synchronization"
+    Update-DevBranchState -State $State -Updates @{ yaxunitInstallationProof = $null }
+    $State | Add-Member -NotePropertyName yaxunitInstallationProof -NotePropertyValue $null -Force
+    if (-not $engineMatches) {
+        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -DesignerArgs @("/LoadCfg", $cfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
+        Install-ItlOnDemandMcp | Out-Null
+        [void](Set-VanessaMcpExtensionUnsafeMode -State $State -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath `
+            -ExtensionName $extensionName -Artifact ([pscustomobject]@{ sha256 = [string]$entry.sha256 }) `
+            -User ([string](Get-EnvValue -Name "IB_USER")) -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) -Scope "yaxunit" -ReconcileYAxUnitProtections)
+    }
+    if (-not $testsMatch) {
+        Invoke-Designer -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -DesignerArgs @("/LoadConfigFromFiles", $testsPath, "-Extension", $testsExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg") | Out-Null
+    }
+    $runtime = @(Get-ToolingRuntimeExtensions -State $State -Names @($extensionName, $testsExtensionName))
+    $engine = @($runtime | Where-Object { $_.name -ceq $extensionName }) | Select-Object -First 1
+    $tests = @($runtime | Where-Object { $_.name -ceq $testsExtensionName }) | Select-Object -First 1
+    Assert-ToolingRuntimeExtensionReady -Runtime $engine -Name $extensionName -RequireUnsafeMode -RequireUnsafeActionProtectionDisabled
+    Assert-ToolingRuntimeExtensionReady -Runtime $tests -Name $testsExtensionName
+    Update-DevBranchState -State $State -Updates @{
+        yaxunitInstallationProof = [pscustomobject]@{
+            schemaVersion = 1; generation = [string]$State.toolingInfoBaseGeneration; infoBaseKey = [string]$identity.key
+            engineName = $extensionName; testsName = $testsExtensionName
+            engineSha256 = [string]$entry.sha256; engineRuntimeHash = [string]$engine.contentHash
+            testsFingerprint = [string]$source.fingerprint; testsRuntimeHash = [string]$tests.contentHash; verifiedAt = (Get-Date).ToString("o")
+        }
+        toolingMutationId = [guid]::NewGuid().ToString("N")
+    }
+    return Read-DevBranchState -Name ([string]$State.devBranchName)
+}
+
 function Invoke-YAxUnitVerification {
     param([Parameter(Mandatory = $true)][object]$State)
 
@@ -324,28 +386,7 @@ function Invoke-YAxUnitVerification {
     $entry = Get-YAxUnitPinnedEntry
 
     try {
-        $cfePath = Install-YAxUnit
-        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason "YAxUnit extension synchronization"
-        Invoke-Designer `
-            -InfoBasePath ([string]$State.devBranchInfoBasePath) `
-            -InfoBaseKind ([string]$State.infoBaseKind) `
-            -DesignerArgs @("/LoadCfg", $cfePath, "-Extension", $extensionName, "/UpdateDBCfg") | Out-Null
-        Invoke-Designer `
-            -InfoBasePath ([string]$State.devBranchInfoBasePath) `
-            -InfoBaseKind ([string]$State.infoBaseKind) `
-            -DesignerArgs @("/LoadConfigFromFiles", $testsPath, "-Extension", $testsExtensionName, "-Format", "Hierarchical", "/UpdateDBCfg") | Out-Null
-        Install-ItlOnDemandMcp | Out-Null
-        $artifact = [pscustomobject]@{ sha256 = ([string]$entry.sha256).ToLowerInvariant() }
-        [void](Set-VanessaMcpExtensionUnsafeMode `
-            -State $State `
-            -InfoBaseKind ([string]$State.infoBaseKind) `
-            -InfoBasePath ([string]$State.devBranchInfoBasePath) `
-            -ExtensionName $extensionName `
-            -Artifact $artifact `
-            -User ([string](Get-EnvValue -Name "IB_USER" -Default "")) `
-            -Password ([string](Get-EnvValue -Name "IB_PASSWORD" -Default "")) `
-            -Scope "yaxunit" `
-            -ReconcileYAxUnitProtections)
+        $State = Ensure-YAxUnitExtensions -State $State
 
         $config = [ordered]@{
             filter = [ordered]@{ extensions = @($testsExtensionName) }
@@ -394,15 +435,17 @@ function Invoke-YAxUnitVerification {
         Write-Host "YAxUnit verification passed: tests=$($summary.tests), skipped=$($summary.skipped). Report: $reportPath"
         return [pscustomobject]@{ status = "passed"; tests = $summary.tests; reportPath = $reportPath }
     } catch {
-        Update-DevBranchState -State $State -Updates @{
+        $failure = $_
+        try { Update-DevBranchState -State $State -Updates @{
             lastYAxUnitStatus = "failed"
-            lastYAxUnitReason = $_.Exception.Message
+            lastYAxUnitReason = $failure.Exception.Message
             lastYAxUnitTestAt = (Get-Date).ToString("o")
             lastYAxUnitReportPath = $reportPath
             lastYAxUnitLogPath = $yaxunitLogPath
-        }
-        Set-RunFailureContext -Category "yaxunit" -RequiredAction "/itl-verify-fix"
-        throw
+        } } catch { Write-Warning "Could not persist YAxUnit failure state: $($_.Exception.Message)" }
+        Set-RunFailureContextFromMessage -Message $failure.Exception.Message -RequestedAction "check-dev-branch"
+        if (-not $script:RunRequiredAction) { Set-RunFailureContext -RequiredAction "/itl-verify-fix" }
+        throw $failure
     }
 }
 
