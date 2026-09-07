@@ -30,6 +30,9 @@ This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code
 - Product documentation skill: `.agents/skills/product-docs`.
 - Branch data exploration skill: `.agents/skills/itl-roctup-1c-data`.
 - Runtime form investigation skill: `.agents/skills/itl-vanessa-ui-mcp`.
+- Remote worker skill: `.agents/skills/itl-remote-runner`.
+- Remote agent skill: `.agents/skills/itl-remote-agent`.
+- Local and remote measurement skill: `.agents/skills/itl-performance`.
 - Common project guidance: upstream `AGENTS.md` from `ai_rules_1c` plus detailed ITL overlay notes in `USER-RULES.md`.
 - ITL command source templates: `.agents/skills/1c-workflow/kilo-command-templates`; adapters render them to the active client's native command, skill, or prompt path. Codex receives ignored context-specific `.agents/skills/itl*/SKILL.md` wrappers from the same templates.
 - Client discovery paths and capabilities are registered in the helper for exactly ten clients: Codex, Kilo, Claude Code, Cursor, OpenCode, Kimi, Qwen, Command Code, Cline, and Pi. Kimi/Cline routines are skills, Pi routines are prompts, Qwen uses shared `.qwen/settings.json`, Command Code uses root `.mcp.json`, and Pi pins its MCP extension project-locally.
@@ -56,7 +59,7 @@ Create `<source>` with a fresh clone, for example:
 git clone --branch <workflow-ref> --single-branch https://github.com/xmentosx/1c-agent-workflow.git <new-empty-temp-path>
 ```
 
-The bootstrap command copies `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
+The bootstrap command copies `.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `.agents/skills/itl-remote-runner`, `.agents/skills/itl-remote-agent`, `.agents/skills/itl-performance`, `templates/`, the root docs/guides, and `install-agent-1c-workflow.ps1`. It does not copy `.dev.env`, `.agent-1c/dev-branches/`, `.agent-1c/mcp/`, `.codex/config.toml`, `.kilo/kilo.json*`, or generated `.kilo/commands/`.
 
 The bootstrap script then runs this monitored initialization command from the target project:
 
@@ -192,6 +195,9 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 <project>/.agents/skills/product-docs/
 <project>/.agents/skills/itl-roctup-1c-data/
 <project>/.agents/skills/itl-vanessa-ui-mcp/
+<project>/.agents/skills/itl-remote-runner/
+<project>/.agents/skills/itl-remote-agent/
+<project>/.agents/skills/itl-performance/
 ```
 
 2. Materialize the active client's native command/skill surface through the ITL adapter. For example, Kilo uses:
@@ -297,7 +303,7 @@ For projects that already have this workflow installed, do not rerun `init-proje
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action update-workflow
 ```
 
-Ask the active agent to update the ITL workflow or run the helper action directly. The command runs only from the `master` worktree. Before copying any managed file it requires the target source lock to contain an exact `aiRules1c` ref/commit with `compatibilityStatus=passed`; `pending`, missing, or malformed compatibility therefore leaves the project unchanged and reports that the workflow release must be completed. The explicit `-SkipAiRules` recovery mode bypasses only this dependency preflight. After it passes, the command updates managed files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, command templates, `templates/`, and workflow docs), reconciles the native ITL surface for the active client, preserves local runtime/project state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, populates immutable Vanessa Automation, ROCTUP, Vanessa UI MCP, and facade caches for the new pins, and runs pinned `update-ai-rules` unless `-SkipAiRules` is passed.
+Ask the active agent to update the ITL workflow or run the helper action directly. The command runs only from the `master` worktree. Before copying any managed file it requires the target source lock to contain an exact `aiRules1c` ref/commit with `compatibilityStatus=passed`; `pending`, missing, or malformed compatibility therefore leaves the project unchanged and reports that the workflow release must be completed. The explicit `-SkipAiRules` recovery mode bypasses only this dependency preflight. After it passes, the command updates managed files (`.agents/skills/1c-workflow*`, `.agents/skills/product-docs`, `.agents/skills/itl-roctup-1c-data`, `.agents/skills/itl-vanessa-ui-mcp`, `.agents/skills/itl-remote-runner`, `.agents/skills/itl-remote-agent`, `.agents/skills/itl-performance`, command templates, `templates/`, and workflow docs), reconciles the native ITL surface for the active client, preserves local runtime/project state, records `workflowPackage` in `.agent-1c/dependency-lock.json`, populates immutable Vanessa Automation, ROCTUP, Vanessa UI MCP, and facade caches for the new pins, and runs pinned `update-ai-rules` unless `-SkipAiRules` is passed.
 
 Optional source overrides:
 

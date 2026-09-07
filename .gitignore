@@ -80,3 +80,4 @@ __pycache__/
 .cursor/mcp.json
 opencode.json
 vibecoding1c-mcp-host/host.config.json
+.agent-1c/remote-work/

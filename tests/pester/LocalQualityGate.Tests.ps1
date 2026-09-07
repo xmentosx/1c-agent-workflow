@@ -489,9 +489,9 @@ Get-PesterShardFileSha256 -Path `$Path
         @($catalog.continuationScopes.release) | Should -Contain "scripts/test-release-readiness.ps1"
     }
 
-    It "keeps repository-only guidance out of installed packages and preserves the five skills" {
+    It "keeps repository-only guidance out of installed packages and preserves the managed skills" {
         Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks") | Should -BeFalse
-        $expected = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "product-docs") | Sort-Object
+        $expected = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-performance", "itl-remote-runner", "itl-remote-agent", "product-docs") | Sort-Object
         $actual = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills") -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actual | Should -Be $expected
         $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8

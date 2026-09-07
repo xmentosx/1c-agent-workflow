@@ -1528,9 +1528,9 @@ function Show-ItlDoctor {
     } catch {
         $checks.Add([pscustomobject]@{ status = "FAIL"; name = "ai-rules-provenance"; detail = $_.Exception.Message })
     }
-    $itlSkills = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")
+    $itlSkills = @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")
     $missingSkills = @($itlSkills | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".agents\skills\$_\SKILL.md") -PathType Leaf) })
-    $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all five installed" } else { "missing: $($missingSkills -join ', ')" }) })
+    $checks.Add([pscustomobject]@{ status = $(if ($missingSkills.Count -eq 0) { "OK" } else { "FAIL" }); name = "itl-skills"; detail = $(if ($missingSkills.Count -eq 0) { "all managed skills installed" } else { "missing: $($missingSkills -join ', ')" }) })
     if ($client -eq "kilocode") {
         try {
             $provenance = Get-KiloFastSkillProvenance
