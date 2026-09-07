@@ -267,13 +267,46 @@ Describe "Vanessa readiness reconciliation" {
     }
 }
 
+Describe "Tooling recovery receipt" {
+    BeforeEach {
+        $script:receiptState=[pscustomobject]@{devBranchName='branch';toolingMutationId='new-mutation';toolingMutationAt='2026-09-07T21:30:00Z'}
+        Mock Read-CurrentDevBranchStateForVanessaMcp { $script:receiptState }
+        Mock Read-DevBranchState { $script:receiptState }
+        Mock Assert-DevelopmentBranchWorktreeContext {}
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {}
+        Mock Ensure-VanessaMcpInstalled { $script:receiptState }
+        Mock Test-YAxUnitSuitePresent { $true }
+        Mock Ensure-YAxUnitExtensions { $script:receiptState }
+        Mock Set-RunUserReport {}
+        Mock Update-DevBranchState {
+            param($State,$Updates)
+            foreach ($key in $Updates.Keys) { $script:receiptState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+        }
+    }
+
+    It "preserves the actual mutation time and grants only one receipt for it" {
+        Repair-DevBranchTooling
+        $firstId=$script:receiptState.toolingRecoveryId
+        $script:receiptState.toolingRecoveredMutationAt | Should -Be '2026-09-07T21:30:00Z'
+        Repair-DevBranchTooling
+        $script:receiptState.toolingRecoveryId | Should -Be $firstId
+        Should -Invoke Update-DevBranchState -Times 1 -Exactly
+    }
+
+    It "cannot issue a successful receipt after a partial recovery failure" {
+        Mock Ensure-YAxUnitExtensions { throw 'test extension did not activate' }
+        { Repair-DevBranchTooling } | Should -Throw '*did not activate*'
+        Should -Invoke Update-DevBranchState -Times 0 -Exactly
+    }
+}
+
 Describe "Exhausted repair session after tooling recovery" {
     BeforeEach {
         $script:DevBranchName='branch'
         $script:sessionPath=Join-Path $TestDrive 'current.json'
         $script:previous=[pscustomobject]@{sessionId='old-session';status='exhausted';attempts=5;maximumAttempts=5;updatedAt='2026-09-07T21:00:00Z';toolingRecoveryId='old-recovery'}
         [IO.File]::WriteAllText($script:sessionPath,($script:previous | ConvertTo-Json))
-        $script:recoveryState=[pscustomobject]@{toolingRecoveryId='new-recovery';toolingRecoveredAt='2026-09-07T22:00:00Z'}
+        $script:recoveryState=[pscustomobject]@{toolingRecoveryId='new-recovery';toolingRecoveredAt='2026-09-07T22:00:00Z';toolingRecoveredMutationAt='2026-09-07T21:30:00Z'}
         Mock Read-DevBranchState { $script:recoveryState }
         Mock Assert-DevelopmentBranchWorktreeContext {}
         Mock Get-ItlVerificationRepairStatePath { $script:sessionPath }
@@ -302,5 +335,11 @@ Describe "Exhausted repair session after tooling recovery" {
     It "cannot refresh the budget using a recovery predating exhaustion" {
         $script:recoveryState.toolingRecoveredAt='2026-09-07T20:00:00Z'
         { Start-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_EXHAUSTED*'
+    }
+
+    It "cannot turn an older installation into a new budget by issuing its receipt later" {
+        $script:recoveryState.toolingRecoveredMutationAt='2026-09-07T20:00:00Z'
+        { Start-ItlVerificationRepairSession } | Should -Throw '*ITL_VERIFICATION_REPAIR_EXHAUSTED*'
+        (Get-Content $script:sessionPath -Raw | ConvertFrom-Json).attempts | Should -Be 5
     }
 }

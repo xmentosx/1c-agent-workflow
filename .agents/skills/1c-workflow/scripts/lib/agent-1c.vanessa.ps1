@@ -7554,6 +7554,7 @@ function Install-VanessaMcp {
         vanessaMcpVaExtensionInstallLogPath = $vaExtensionLog
         vanessaMcpSafeModeProof = $safeModeProof
         toolingMutationId = [guid]::NewGuid().ToString("N")
+        toolingMutationAt = (Get-Date).ToString("o")
     }
 
     Write-Host "client_mcp installed in Vanessa TestManager service infobase: $($serviceInfoBase.path)"

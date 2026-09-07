@@ -357,6 +357,7 @@ function Ensure-YAxUnitExtensions {
             testsFingerprint = [string]$source.fingerprint; testsRuntimeHash = [string]$tests.contentHash; verifiedAt = (Get-Date).ToString("o")
         }
         toolingMutationId = [guid]::NewGuid().ToString("N")
+        toolingMutationAt = (Get-Date).ToString("o")
     }
     return Read-DevBranchState -Name ([string]$State.devBranchName)
 }

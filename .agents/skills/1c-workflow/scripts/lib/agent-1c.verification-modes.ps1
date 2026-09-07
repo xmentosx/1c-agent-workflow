@@ -198,6 +198,7 @@ function Start-ItlVerificationRepairSession {
         $previous = Read-Utf8Text -Path $path | ConvertFrom-Json
         if ([string]$previous.status -eq "exhausted") {
             if (-not $recoveryId -or $recoveryId -ceq [string](Get-StateValue $previous "toolingRecoveryId" "") -or
+                [datetime](Get-StateValue $state "toolingRecoveredMutationAt" "0001-01-01") -le [datetime]$previous.updatedAt -or
                 [datetime](Get-StateValue $state "toolingRecoveredAt" "0001-01-01") -le [datetime]$previous.updatedAt) {
                 Set-RunFailureContext -Category "runner" -RequiredAction "report-blocker"
                 throw "ITL_VERIFICATION_REPAIR_EXHAUSTED: repair the diagnosed tooling prerequisite through repair-dev-branch-tooling before starting a new bounded session."

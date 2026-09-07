@@ -20,7 +20,7 @@ a changed engine pin loads only the engine. A replaced database invalidates both
 The configured test extension name must match `Configuration.xml` before loading.
 
 An exhausted verification session remains terminal. After an actual successful
-tooling mutation with a fresh recovery receipt, `begin-verification-repair` may
+tooling mutation newer than exhaustion and a fresh recovery receipt, `begin-verification-repair` may
 archive that terminal record and start a new bounded session. Repeating recovery
 against already-ready tooling does not grant another budget. Never change triggers
 or counters to escape exhaustion. Then run the canonical unfiltered check; a

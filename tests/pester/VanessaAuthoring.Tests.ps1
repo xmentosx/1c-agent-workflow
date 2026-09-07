@@ -282,7 +282,7 @@
                     $env:ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS = '2'
                     # Model a successful tooling recovery before the next bounded session.
                     $recoveredState = Read-DevBranchState -Name 'demo'
-                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-override'; toolingRecoveredAt=(Get-Date).ToString('o') }
+                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-override'; toolingRecoveredAt=(Get-Date).ToString('o'); toolingRecoveredMutationAt=(Get-Date).ToString('o') }
                     Start-ItlVerificationRepairSession *> $null
                     $overrideRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RepairSessionId = [string]$overrideRecord.sessionId
@@ -297,7 +297,7 @@
                     $overrideExhaustedAction = $script:RunRequiredAction
 
                     $recoveredState = Read-DevBranchState -Name 'demo'
-                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-passed-case'; toolingRecoveredAt=(Get-Date).ToString('o') }
+                    Update-DevBranchState -State $recoveredState -Updates @{ toolingRecoveryId='recovery-for-passed-case'; toolingRecoveredAt=(Get-Date).ToString('o'); toolingRecoveredMutationAt=(Get-Date).ToString('o') }
                     Start-ItlVerificationRepairSession *> $null
                     $passedRecord = Get-Content -LiteralPath (Get-ItlVerificationRepairStatePath) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $RepairSessionId = [string]$passedRecord.sessionId

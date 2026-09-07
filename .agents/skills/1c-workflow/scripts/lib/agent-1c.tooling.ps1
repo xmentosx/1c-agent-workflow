@@ -110,10 +110,12 @@ function Repair-DevBranchTooling {
     # the previously exhausted session's environment has actually been repaired.
     $latest = Read-DevBranchState -Name ([string]$state.devBranchName)
     $mutation = [string](Get-StateValue $latest "toolingMutationId" "")
-    if ($mutation -and $mutation -cne [string](Get-StateValue $latest "toolingRecoveredMutationId" "")) {
+    $mutationAt = [string](Get-StateValue $latest "toolingMutationAt" "")
+    if ($mutation -and $mutationAt -and $mutation -cne [string](Get-StateValue $latest "toolingRecoveredMutationId" "")) {
         Update-DevBranchState -State $latest -Updates @{
             toolingRecoveryId = [guid]::NewGuid().ToString("N")
             toolingRecoveredMutationId = $mutation
+            toolingRecoveredMutationAt = $mutationAt
             toolingRecoveredAt = (Get-Date).ToString("o")
         }
     } else {

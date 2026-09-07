@@ -9059,7 +9059,9 @@ function New-ForkedDevBranchState {
     $state["yaxunitInstallationProof"] = $null
     $state["toolingRecoveryId"] = ""
     $state["toolingMutationId"] = ""
+    $state["toolingMutationAt"] = ""
     $state["toolingRecoveredMutationId"] = ""
+    $state["toolingRecoveredMutationAt"] = ""
     $state["toolingRecoveredAt"] = ""
 
     $now = (Get-Date).ToString("o")
