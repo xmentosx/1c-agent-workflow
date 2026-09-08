@@ -77,6 +77,19 @@ Describe 'Delivery v3 resource ledger' {
         @($states.resources | Where-Object state -eq 'cleanup-pending' | Select-Object -ExpandProperty planId | Sort-Object) | Should -Be @('plan-1','plan-3')
     }
 
+    It 'reads JSON timestamps independently of the current culture' {
+        New-LedgerRepository | Out-Null
+        Register-DeliveryResource -PlanId 'culture-plan' -Kind 'candidate-worktree' -Owner 'delivery' -Identity ([ordered]@{ path=(Join-Path $TestDrive 'culture-candidate') }) -State retained | Out-Null
+        $previousCulture = [Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('ru-RU')
+            { Update-DeliveryFailedPlanRetention } | Should -Not -Throw
+            { Get-DeliveryResourceLedgerSummary } | Should -Not -Throw
+        } finally {
+            [Threading.Thread]::CurrentThread.CurrentCulture = $previousCulture
+        }
+    }
+
     It 'turns a stale active candidate into retained state and preserves its path' {
         $root = New-LedgerRepository; $active = Join-Path $root 'active-resource'; New-Item -ItemType Directory -Force -Path $active | Out-Null
         Register-DeliveryResource -PlanId 'active-plan' -Kind 'candidate-worktree' -Owner 'delivery' -Identity ([ordered]@{ path=$active }) -State active | Out-Null

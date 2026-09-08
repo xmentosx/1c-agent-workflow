@@ -30,6 +30,17 @@ function Write-DeliveryResourceLedger {
     return $path
 }
 
+function ConvertFrom-DeliveryUtcTimestamp {
+    param([Parameter(Mandatory = $true)][object]$Value)
+    if ($Value -is [DateTime]) { return ([DateTime]$Value).ToUniversalTime() }
+    if ($Value -is [DateTimeOffset]) { return ([DateTimeOffset]$Value).UtcDateTime }
+    return [DateTimeOffset]::Parse(
+        [string]$Value,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind
+    ).UtcDateTime
+}
+
 function Register-DeliveryResource {
     param(
         [Parameter(Mandatory = $true)][string]$PlanId,
@@ -80,13 +91,13 @@ function Update-DeliveryFailedPlanRetention {
     $ledger = Read-DeliveryResourceLedger
     $now = [DateTime]::UtcNow
     $retainedPlans = @($ledger.resources | Where-Object { [string]$_.state -eq "retained" } | Group-Object planId | ForEach-Object {
-        $latest = @($_.Group | Sort-Object { [DateTime]::Parse([string]$_.updatedAt) } -Descending | Select-Object -First 1)[0]
-        [pscustomobject]@{ planId=$_.Name; updatedAt=[DateTime]::Parse([string]$latest.updatedAt) }
+        $latest = @($_.Group | Sort-Object { ConvertFrom-DeliveryUtcTimestamp -Value $_.updatedAt } -Descending | Select-Object -First 1)[0]
+        [pscustomobject]@{ planId=$_.Name; updatedAt=(ConvertFrom-DeliveryUtcTimestamp -Value $latest.updatedAt) }
     } | Sort-Object updatedAt -Descending)
     $keepPlans = @($retainedPlans | Select-Object -First 2 | ForEach-Object { [string]$_.planId })
     $changed = $false
     foreach ($resource in @($ledger.resources | Where-Object { [string]$_.state -eq "retained" })) {
-        $expired = [DateTime]::Parse([string]$resource.retainUntil).ToUniversalTime() -le $now
+        $expired = (ConvertFrom-DeliveryUtcTimestamp -Value $resource.retainUntil) -le $now
         if ($expired -or [string]$resource.planId -notin $keepPlans) {
             $resource.state = "cleanup-pending"; $resource.updatedAt = $now.ToString("o"); $changed = $true
         }
@@ -109,7 +120,7 @@ function Get-DeliveryResourceLedgerSummary {
     }
     $oldest = @($pending | Sort-Object createdAt | Select-Object -First 1)
     $oldestAgeSeconds = if ($oldest.Count) {
-        [int64][Math]::Max(0, ([DateTime]::UtcNow - [DateTime]::Parse([string]$oldest[0].createdAt).ToUniversalTime()).TotalSeconds)
+        [int64][Math]::Max(0, ([DateTime]::UtcNow - (ConvertFrom-DeliveryUtcTimestamp -Value $oldest[0].createdAt)).TotalSeconds)
     } else { 0 }
     return [pscustomobject][ordered]@{
         path=(Get-DeliveryResourceLedgerPath); total=@($ledger.resources).Count
