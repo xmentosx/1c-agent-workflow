@@ -4857,6 +4857,8 @@ try {
                 $params.texterrorslogname | Should -Be (Join-Path $runDirectory "errors")
                 $params.maskpwdinlog | Should -BeTrue
                 $params.outputloginconsole | Should -BeFalse
+                $params.soundnotificationwhenscriptends | Should -BeFalse
+                $params.dosleepusingping | Should -BeFalse
                 $params.stoponerror | Should -BeFalse
                 $params.NumberOfAttemptsToExecuteTheScript | Should -Be 1
                 $params.updatetreewhenscenariostarts | Should -BeFalse
