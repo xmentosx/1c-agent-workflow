@@ -3923,6 +3923,8 @@ function New-VanessaParamsFile {
     $params["texterrorslogname"] = $vanessaErrorsDirectory
     $params["maskpwdinlog"] = $true
     $params["outputloginconsole"] = $false
+    $params["soundnotificationwhenscriptends"] = $false
+    $params["dosleepusingping"] = $false
     $params["pendingequalfailed"] = $true
     $params["stoponerror"] = $configuredTestClientRun
     $params["NumberOfAttemptsToExecuteTheScript"] = 1

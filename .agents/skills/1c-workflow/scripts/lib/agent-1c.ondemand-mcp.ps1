@@ -393,6 +393,8 @@ function New-ItlOnDemandVanessaParamsFile {
         useaddinforscreencapture = $true
         QuitIfSilentInstallationAddinFails = $true
         DisableLoadTestClientsTable = $true
+        soundnotificationwhenscriptends = $false
+        dosleepusingping = $false
     }
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClients
     Write-Utf8Text -Path $path -Value (($params | ConvertTo-Json -Depth 10) + [Environment]::NewLine)

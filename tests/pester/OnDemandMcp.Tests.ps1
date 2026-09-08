@@ -656,6 +656,8 @@ Describe "ITL on-demand MCP facade" {
                     disableLegacyProfiles = $params.DisableLoadTestClientsTable
                     useEditor = $params.UseEditor
                     useVanessaEditor = $params.usevanessaeditor
+                    soundNotification = $params.soundnotificationwhenscriptends
+                    sleepUsingPing = $params.dosleepusingping
                     name = $profile.$nameKey
                     port = $profile.$portKey
                     range = Get-ItlOnDemandVanessaTestClientPortRange
@@ -668,6 +670,8 @@ Describe "ITL on-demand MCP facade" {
             $result.disableLegacyProfiles | Should -BeTrue
             $result.useEditor | Should -BeTrue
             $result.useVanessaEditor | Should -BeTrue
+            $result.soundNotification | Should -BeFalse
+            $result.sleepUsingPing | Should -BeFalse
             $result.name | Should -Be "itl-ondemand"
             $result.port | Should -Be 48177
             $result.range.start | Should -Be 48151
