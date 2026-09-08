@@ -618,7 +618,11 @@ function Test-DevelopQualification {
                     [string]$report.candidate.tree -ne $Tree -or
                     (Get-DevelopE2ECanonicalJsonSha256 -Value $report.plan) -ne (Get-DevelopE2ECanonicalJsonSha256 -Value $qualification.plan)) { return $null }
                 $requiredJourneys = @($qualification.journeys.PSObject.Properties | ForEach-Object { [string]$_.Name })
-                if (@($qualification.plan.journeys).Count -eq 0 -and $requiredJourneys.Count -ne 0) { return $null }
+                $plannedJourneys = @($qualification.plan.journeys)
+                if (@($plannedJourneys | Select-Object -Unique).Count -ne $plannedJourneys.Count) { return $null }
+                foreach ($plannedJourney in $plannedJourneys) {
+                    if ($plannedJourney -notin @("upgrade", "fresh") -or $plannedJourney -notin $requiredJourneys) { return $null }
+                }
             }
             foreach ($journey in $requiredJourneys) {
                 if ($journey -notin @("upgrade", "fresh")) { return $null }
@@ -627,6 +631,8 @@ function Test-DevelopQualification {
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
                 $journeyPath = if ([IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } else { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') }
                 $continued = [string]$record.execution -eq "continued"
+                # The writer carries valid baseline routes even when this change requires no new journeys.
+                if ([int]$qualification.schemaVersion -eq 4 -and $journey -notin $plannedJourneys -and -not $continued) { return $null }
                 $routeIdentitySha256 = if ($continued) { [string]$record.identitySha256 } else { [string]$qualification.identitySha256 }
                 if ($continued -and ($routeIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or [string]$record.standStateSha256 -notmatch '^[a-f0-9]{64}$')) { return $null }
                 $routeValid = Test-DevelopE2ERouteReport -Path $journeyPath -Journey $journey -Tree ([string]$record.evidenceTree) -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $ExpectedStandStateSha256
