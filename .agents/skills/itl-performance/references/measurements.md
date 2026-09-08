@@ -16,7 +16,38 @@ For standalone execution configure `target.vanessa` with `epf`, `managerBase` an
 
 Vanessa/BSL can implement the handshake through JSON/text files in the per-iteration directory; use the example fragment as scaffolding, not as proof its business operation is correct. Write result signals atomically after the real readiness condition and assertions. Never treat a button's asynchronous return as rendered UI readiness.
 
+## Installed ITL facade adapter
+
+The runner's `scripts/vanessa_work.py` provides `prepare <setup.feature>`,
+`feature <action.feature>` and `cleanup`, using engine-supplied `ITL_RUN_CONTEXT`.
+Configure private `target.vanessa.facade`, `helper` and `catalog` with exact local
+paths to the pinned ITL executable, helper and Vanessa catalog. The adapter uses
+the public MCP stdio gateway; ITL still owns the manager, port leases and guarded
+TestClient launch. An existing client cannot be adopted into a performance job.
+
+Preparation runs outside timing. The pinned VAExtension server-expression step reads
+`НомерСеанса` in the own TestClient and binds it to the broker's actual PID/start time.
+With profiling enabled, the guarded launch receives the job's debugger endpoint;
+a changed endpoint or job cannot reuse the client. Discovery must find exactly one
+session/base instance and one ManagedClient for the configured alias and observed
+number. Missing or ambiguous matches fail before attach. The explicit-session CLI
+remains available; alternatively use `--session-observation <relative-run-path.json>`
+instead of `--seance`. The observation contains `jobId`, `clientPid`,
+`clientStartedAt` and `sessionNumber`.
+
+Each explicit feature is reloaded, its source hash and native results retained,
+successful nonempty step evidence required, and client restarts rejected. Wrap the
+measured feature in the scenario handshake and assert actual business readiness.
+Whole-feature timing includes dispatch, polling and assertions; it is not pure BSL
+time. Cleanup closes the own facade, with engine process-job containment as failure
+cleanup. Windows PowerShell children reconstruct their module path to avoid loading
+incompatible modules inherited from a pwsh host. Fixture tests prove these contracts
+only; live 1C and comparable A/B results require separate evidence.
+
 ## Debugger topology and ownership
+
+File bases register as `DefAlias`, not the filesystem path. See the platform's
+[debugging settings](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Developer_Guides/1C_Enterprise_8.3.24_Developer_Guide/Chapter_36._Service_features/36.2._Setting_Designer_parameters/36.2.4._Debugging/).
 
 For a file base, the worker selects `dbgs.exe` beside the configured platform or the explicit override, starts it on a free loopback port on this execution host, checks its own notification file and keeps ownership until cleanup. For a remote file base this happens remotely, not on the controller. The effective endpoint is in `context.rdbg.url` before preparation starts.
 
