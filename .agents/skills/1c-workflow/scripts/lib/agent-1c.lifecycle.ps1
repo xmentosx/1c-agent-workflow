@@ -10450,7 +10450,7 @@ function Invoke-BranchSourceMergeTree {
         if ($exitCode -notin @(0, 1)) {
             throw "DEV_BRANCH_SOURCE_SYNC_MERGE_TREE_FAILED: exit=$exitCode; $stderr"
         }
-        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) -split "`0", -1)
+        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join "") -split ([string][char]0))
         $tree = if ($tokens.Count -gt 0) { ([string]$tokens[0]).Trim() } else { "" }
         if ($tree -notmatch '^[a-f0-9]{40,64}$') {
             throw "DEV_BRANCH_SOURCE_SYNC_TREE_MISSING: merge-tree did not return a tree object. $stderr"
@@ -10547,6 +10547,47 @@ function Invoke-BranchSourceSyncLoad {
     return $loadResult
 }
 
+function Get-DevBranchSourceSyncRefreshWrapper {
+    param([string]$Operation)
+
+    switch ($Operation) {
+        "refresh-dev-branch" { return "/itl-refresh" }
+        "refresh-dev-branch-lite" { return "/itl-refresh-lite" }
+        default { return "" }
+    }
+}
+
+function Assert-DevBranchSourceSyncLifecycleReady {
+    param(
+        [object]$State,
+        [ValidateSet("primary", "peer")]
+        [string]$Role,
+        [string]$SyncWorktreePath
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) { return }
+
+    $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    $worktreePath = [string](Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default ""))
+    $operation = [string]$transaction.operation
+    $stage = [string]$transaction.stage
+    $conflictPaths = @($transaction.conflictPaths | Sort-Object -Unique)
+    $wrapper = Get-DevBranchSourceSyncRefreshWrapper -Operation $operation
+    Set-RunDevBranchState -State $State
+
+    if ($wrapper) {
+        $requiredAction = "In worktree '$worktreePath', continue the helper-owned merge with $wrapper. Resolve proven-compatible semantics, run git add, and repeat that wrapper until it succeeds; ask the user only if evidence leaves incompatible business outcomes. Then return to '$SyncWorktreePath' and repeat /itl-sync-branches."
+        Set-RunFailureContext -Category "merge-conflict" -RequiredAction $requiredAction
+        $pathText = if ($conflictPaths.Count -gt 0) { $conflictPaths -join ", " } else { "<none-recorded>" }
+        throw "DEV_BRANCH_SOURCE_SYNC_PENDING_REFRESH: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage' wrapper='$wrapper' files='$pathText'. Complete the recorded refresh through its original helper before source synchronization. Do not abort the merge or create its commit manually."
+    }
+
+    $requiredAction = "Ask the user whether to finish the helper-owned '$operation' operation in '$worktreePath' before synchronization. Do not abort the operation, alter its state, or create a commit manually."
+    Set-RunFailureContext -Category "runner" -RequiredAction $requiredAction
+    throw "DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage'. Source synchronization cannot replace a different helper-owned lifecycle operation."
+}
+
 function Sync-DevBranches {
     $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
     if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
@@ -10558,6 +10599,9 @@ function Sync-DevBranches {
     if ($peerName -ieq $primaryName) { throw "DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch." }
     $peerState = Read-DevBranchState -Name $peerName
     $exportPath = Assert-DevBranchSourceSyncCompatibility -PrimaryState $primaryState -PeerState $peerState
+    $syncWorktreePath = [string](Get-StateValue -State $primaryState -Name "worktreePath" -Default $script:ProjectRoot)
+    Assert-DevBranchSourceSyncLifecycleReady -State $primaryState -Role "primary" -SyncWorktreePath $syncWorktreePath
+    Assert-DevBranchSourceSyncLifecycleReady -State $peerState -Role "peer" -SyncWorktreePath $syncWorktreePath
     $pending = Get-PendingBranchSourceSync -State $primaryState
 
     if ($null -ne $pending) {
@@ -11070,7 +11114,7 @@ function Assert-DevBranchCheckpointGitState {
             Test-Path -LiteralPath $resolved -PathType Leaf -ErrorAction SilentlyContinue
         }
         if ($exists) {
-            throw "DEV_BRANCH_CHECKPOINT_GIT_OPERATION_IN_PROGRESS: $Operation cannot checkpoint while a $($entry.name) operation is in progress. Complete or abort it first."
+            throw "DEV_BRANCH_CHECKPOINT_GIT_OPERATION_IN_PROGRESS: $Operation cannot checkpoint while a $($entry.name) operation is in progress. Continue it through its owning workflow before retrying; do not alter or abort it from this command."
         }
     }
 
