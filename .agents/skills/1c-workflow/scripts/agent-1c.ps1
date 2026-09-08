@@ -341,6 +341,7 @@ $script:ResumedFrom = $(if ($ResumeRunStatusPath) { Resolve-Agent1cFullPath -Pat
 $script:RecoveryReason = $RecoveryReason
 $script:RunErrorCategory = ""
 $script:RunRequiredAction = ""
+$script:RunRefreshMasterCommit = ""
 $script:RunDevBranch = ""
 $script:RunWorktreePath = ""
 $script:RunExtensionInitializationStatus = ""

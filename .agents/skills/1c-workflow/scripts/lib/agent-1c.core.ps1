@@ -327,6 +327,7 @@ function Write-RunStatus {
         recoveryReason = $script:RecoveryReason
         errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
         requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        refreshMasterCommit = [string]$script:RunRefreshMasterCommit
         devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
         extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
@@ -358,7 +359,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )

@@ -129,6 +129,7 @@ $report = $reportLines -join [Environment]::NewLine
 $runRoot = Split-Path -Parent $RunStatusPath
 [IO.File]::WriteAllText((Join-Path $runRoot "side-effect.marker"), $Action, [Text.UTF8Encoding]::new($false))
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport=$report }
+$payload.refreshMasterCommit = '77ba2ef1c135802fef6de34a92bb86307ba7f0d6'
 [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 exit 0
 '@
@@ -151,6 +152,7 @@ exit 0
                 $summary.status | Should -Be "succeeded"
                 $summary.userReport | Should -BeExactly ""
                 $summary.userReportOmitted | Should -BeTrue
+                $summary.refreshMasterCommit | Should -Be '77ba2ef1c135802fef6de34a92bb86307ba7f0d6'
                 $summary.userReportSource | Should -Be "file"
                 [IO.Path]::IsPathRooted([string]$summary.userReportPath) | Should -BeTrue
                 [string]$summary.userReportPath | Should -BeExactly ([IO.Path]::GetFullPath([string]$summary.userReportPath))
