@@ -37,6 +37,30 @@ BeforeAll {
 }
 
 Describe 'Delivery v3 resource ledger' {
+    It 'journals known resources from a failed report before optional artifacts exist' {
+        $root=New-LedgerRepository
+        $output=Join-Path $root 'build/test-results/local'
+        New-Item -ItemType Directory -Path $output -Force | Out-Null
+        $reportPath=Join-Path $output 'partial-release.json'
+        $report=[ordered]@{status='failed';projectRoot=$root;artifactRetention=[ordered]@{}}
+        [IO.File]::WriteAllText($reportPath,($report | ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $output 'check-summary.json'),(@{e2eReportPath=$reportPath} | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+        foreach ($mode in @('Develop','Release')) {
+            @(Register-DeliveryGateResources -Plan ([pscustomobject]@{planId='partial'}) -CandidateRoot $root -Mode $mode -Failed).Count | Should -Be 1
+        }
+        @((Read-DeliveryResourceLedger).resources | Where-Object kind -eq 'reusable-stand').Count | Should -Be 2
+        $report.status='passed'
+        [IO.File]::WriteAllText($reportPath,($report | ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+        { Register-DeliveryGateResources -Plan ([pscustomobject]@{planId='partial'}) -CandidateRoot $root -Mode Release } | Should -Throw '*retainedResultArtifact*'
+    }
+
+    It 'keeps failed-gate journaling best effort while successful-gate journaling remains mandatory' {
+        $root=New-LedgerRepository
+        Mock Register-DeliveryGateResourcesCore { throw 'ledger write unavailable' }
+        Register-DeliveryGateResources -Plan ([pscustomobject]@{planId='partial'}) -CandidateRoot $root -Mode Release -Failed -WarningAction SilentlyContinue | Should -BeNullOrEmpty
+        { Register-DeliveryGateResources -Plan ([pscustomobject]@{planId='partial'}) -CandidateRoot $root -Mode Release } | Should -Throw '*ledger write unavailable*'
+    }
+
     It 'retains only the two newest failed plans and never longer than seven days' {
         New-LedgerRepository | Out-Null
         foreach ($id in 1..3) { Register-DeliveryResource -PlanId "plan-$id" -Kind 'candidate-worktree' -Owner 'delivery' -Identity ([ordered]@{ path=(Join-Path $TestDrive "candidate-$id") }) -State retained | Out-Null }

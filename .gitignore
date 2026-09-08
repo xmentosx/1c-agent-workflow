@@ -38,6 +38,7 @@ temp/
 .agent-1c/tmp/
 .agent-1c/release-e2e.json
 .agent-1c/tools/event-log-exporter/
+.agent-1c/tools/tooling-probe/
 .agent-1c/tools/data-mcp/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
@@ -45,6 +46,7 @@ temp/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/
+build/tooling-probe/
 outputs/
 __pycache__/
 *.pyc

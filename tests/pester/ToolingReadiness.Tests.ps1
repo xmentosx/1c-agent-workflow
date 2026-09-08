@@ -2,9 +2,46 @@
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
+    . (Join-Path $context.RepoRoot 'scripts/git-path-list.ps1')
     function New-ReadyToolingRuntime {
         param([string]$Name, [string]$Hash = "runtime-hash")
         [pscustomobject]@{ name=$Name; present=$true; active=$true; safeMode=$false; unsafeActionProtection=$false; contentHash=$Hash; serverCodeObject=$true }
+    }
+}
+
+Describe "Tooling runtime Git isolation" {
+    It "ignores probe artifacts before a checkpoint with legacyTemplate=<LegacyTemplate>" -TestCases @(
+        @{ LegacyTemplate=$true }, @{ LegacyTemplate=$false }
+    ) {
+        param($LegacyTemplate)
+        $savedRoot=$script:ProjectRoot
+        $root=Join-Path $TestDrive ("Стенд probe " + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        try {
+            & git -C $root init --quiet
+            $script:ProjectRoot=$root
+            if ($LegacyTemplate) {
+                New-Item -ItemType Directory -Path (Join-Path $root 'templates') -Force | Out-Null
+                [IO.File]::WriteAllText((Join-Path $root 'templates/gitignore.append'), "*.log" + [Environment]::NewLine)
+            }
+            $runtimePaths=@('.agent-1c/tools/tooling-probe/hash/ToolingProbe.epf','build/tooling-probe/run/request.json','build/tooling-probe/run/result.json')
+            foreach ($relative in $runtimePaths + @('build/user-evidence.txt')) {
+                $path=Join-Path $root $relative
+                New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+                [IO.File]::WriteAllText($path,'fixture')
+            }
+            Ensure-GitIgnore
+            Ensure-GitIgnore
+            $ignored=@(Get-RepositoryGitPathList -RepositoryRoot $root -Arguments (@('ls-files','--others','--ignored','--exclude-standard','-z','--') + $runtimePaths))
+            $ignored | Should -Be $runtimePaths
+            (Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('check-ignore','--quiet','--','build/user-evidence.txt') -AllowFailure).exitCode | Should -Be 1
+            $lines=Get-Content -LiteralPath (Join-Path $root '.gitignore')
+            @($lines | Where-Object { $_ -eq '.agent-1c/tools/tooling-probe/' }).Count | Should -Be 1
+            @($lines | Where-Object { $_ -eq 'build/tooling-probe/' }).Count | Should -Be 1
+            $template=Get-Content -LiteralPath (Join-Path $context.RepoRoot 'templates/gitignore.append') -Raw
+            $template | Should -Match ([regex]::Escape('.agent-1c/tools/tooling-probe/'))
+            $template | Should -Match ([regex]::Escape('build/tooling-probe/'))
+        } finally { $script:ProjectRoot=$savedRoot }
     }
 }
 

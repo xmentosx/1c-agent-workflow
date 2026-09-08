@@ -41,6 +41,7 @@ logs/
 .agent-1c/branch-seed/
 .agent-1c/workspaces/
 .agent-1c/tools/event-log-exporter/
+.agent-1c/tools/tooling-probe/
 .agent-1c/tools/auto-update/
 .agent-1c/tools/data-mcp/
 .agent-1c/tools/va/
@@ -51,6 +52,7 @@ logs/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/
 build/test-results/
+build/tooling-probe/
 .codex/config.toml
 .agents/skills/itl/
 .agents/skills/itl-litemode/

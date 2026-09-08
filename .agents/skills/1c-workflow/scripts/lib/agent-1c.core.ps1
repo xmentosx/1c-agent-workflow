@@ -2468,6 +2468,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tmp/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",
+        ".agent-1c/tools/tooling-probe/",
         ".agent-1c/tools/auto-update/",
         ".agent-1c/tools/data-mcp/",
         ".agent-1c/tools/va/",
@@ -2477,6 +2478,7 @@ function Ensure-GitIgnore {
         ".agent-1c/mcp/",
         "build/data-mcp-tools-loader/",
         "build/test-results/",
+        "build/tooling-probe/",
         ".codex/config.toml",
         ".kilo/commands/itl*.md",
         ".kilo/kilo.json",
@@ -2498,10 +2500,10 @@ function Ensure-GitIgnore {
     } else {
         $required = $fallbackRequired
     }
-    # Keep crash dumps mandatory in code as well as in the template. A refreshed
+    # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath

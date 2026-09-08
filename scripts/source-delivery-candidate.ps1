@@ -638,9 +638,10 @@ function Publish-AccumulatedDevelop {
                 Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "develop-qualified"
             } catch {
+                $gateFailure = $_
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Develop" -Failed)
-                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop" -Message $_.Exception.Message
-                throw
+                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Develop" -Message $gateFailure.Exception.Message
+                throw $gateFailure
             }
         }
         if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
@@ -654,9 +655,10 @@ function Publish-AccumulatedDevelop {
                 Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
                 Set-DevelopPublicationPhase -Attempt $attempt -Phase "release-qualified"
             } catch {
+                $gateFailure = $_
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release" -Failed)
-                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release" -Message $_.Exception.Message
-                throw
+                Register-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release" -Message $gateFailure.Exception.Message
+                throw $gateFailure
             }
         }
 

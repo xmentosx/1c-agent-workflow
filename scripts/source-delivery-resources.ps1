@@ -201,14 +201,44 @@ function Register-DeliveryGateResources {
         [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode,
         [switch]$Failed
     )
+    try { return @(Register-DeliveryGateResourcesCore @PSBoundParameters) }
+    catch {
+        if (-not $Failed) { throw }
+        Write-Warning "Could not journal failed $Mode resources: $($_.Exception.Message)"
+        return @()
+    }
+}
+
+function Register-DeliveryGateResourcesCore {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [Parameter(Mandatory = $true)][string]$CandidateRoot,
+        [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode,
+        [switch]$Failed
+    )
     $checkSummaryPath = Join-Path $CandidateRoot "build\test-results\local\check-summary.json"
     if (-not (Test-Path -LiteralPath $checkSummaryPath -PathType Leaf)) { return @() }
     try { $checkSummary = Get-Content -LiteralPath $checkSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return @() }
-    if (-not [string]$checkSummary.e2eReportPath -or -not (Test-Path -LiteralPath ([string]$checkSummary.e2eReportPath) -PathType Leaf)) { return @() }
+    if (-not $checkSummary.PSObject.Properties["e2eReportPath"] -or -not [string]$checkSummary.e2eReportPath -or -not (Test-Path -LiteralPath ([string]$checkSummary.e2eReportPath) -PathType Leaf)) { return @() }
     try { $report = Get-Content -LiteralPath ([string]$checkSummary.e2eReportPath) -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return @() }
     $registered = [Collections.Generic.List[string]]::new()
     $planId = [string]$Plan.planId
     $state = if ($Failed -or [string]$report.status -ne "passed") { "retained" } else { "active" }
+
+    # Failed E2E reports can precede creation of optional resources. Keep known
+    # resources without inventing paths or weakening successful-report checks.
+    if ($state -eq "retained") {
+        foreach ($name in @("projectRoot", "freshProjectRoot", "freshBranchRoot", "onDemandMcpEvidencePath")) {
+            if (-not $report.PSObject.Properties[$name]) { $report | Add-Member -NotePropertyName $name -NotePropertyValue "" }
+        }
+        if (-not $report.PSObject.Properties["snapshots"]) { $report | Add-Member -NotePropertyName snapshots -NotePropertyValue $null }
+        if (-not $report.PSObject.Properties["artifactRetention"] -or $null -eq $report.artifactRetention) {
+            $report | Add-Member -NotePropertyName artifactRetention -NotePropertyValue ([pscustomobject]@{}) -Force
+        }
+        foreach ($name in @("retainedResultArtifact", "retainedResultManifest", "retainedCapabilityManifest")) {
+            if (-not $report.artifactRetention.PSObject.Properties[$name]) { $report.artifactRetention | Add-Member -NotePropertyName $name -NotePropertyValue "" }
+        }
+    }
 
     if ([string]$report.projectRoot) {
         $id = Register-DeliveryResource -PlanId $planId -Kind "reusable-stand" -Owner "$Mode-e2e" -Identity ([ordered]@{ path=[IO.Path]::GetFullPath([string]$report.projectRoot); configured=$true }) -State active -RetainUntil ([DateTime]::MaxValue)
