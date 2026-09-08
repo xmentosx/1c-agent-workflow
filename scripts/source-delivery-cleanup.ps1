@@ -11,16 +11,22 @@ function Test-SourceDeliveryPathInUse {
 }
 
 function Remove-SourceDeliveryStaleCandidateWorktrees {
+    param([string[]]$PreservePaths = @())
+
     $removed = [Collections.Generic.List[object]]::new()
     $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+    $preserved = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($preservePath in $PreservePaths) { if ($preservePath) { [void]$preserved.Add(([IO.Path]::GetFullPath($preservePath)).TrimEnd('\')) } }
     foreach ($worktree in @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $script:Root)) {
         $path = [IO.Path]::GetFullPath([string]$worktree.path).TrimEnd('\')
         $leaf = Split-Path -Leaf $path
         $branch = [string]$worktree.branch
         if (-not $path.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
             $leaf -notmatch '^itl-source-(publish-develop|release-master)-([0-9a-f]{32})$' -or
-            $branch -cne "refs/heads/itl/$($matches[1])-$($matches[2])" -or
+            $branch -cne "refs/heads/itl/$($matches[1])-$($matches[2])" -or $preserved.Contains($path) -or
             (Test-SourceDeliveryPathInUse -Path $path)) { continue }
+        $trackedStatus = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @('status', '--porcelain', '--untracked-files=no') -AllowFailure
+        if ($trackedStatus.exitCode -ne 0 -or [string]$trackedStatus.stdout) { continue }
         $shortBranch = $branch.Substring('refs/heads/'.Length)
         $remove = Invoke-DeliveryGit -Arguments @('worktree', 'remove', '--force', '--force', '--', $path) -AllowFailure
         if ($remove.exitCode -ne 0) { throw "Unable to remove stale delivery candidate '$path': $($remove.stderr.Trim())" }
@@ -101,6 +107,8 @@ function Remove-SourceDeliveryStaleReleaseSeeds {
         if ($branch -cne "refs/heads/itldev/release-seed-$family-$id" -or
             -not [string]::Equals((Split-Path -Parent $path), ([IO.Path]::GetFullPath($SeedRoot).TrimEnd('\')), [StringComparison]::OrdinalIgnoreCase) -or
             (Test-SourceDeliveryPathInUse -Path $path)) { continue }
+        $trackedStatus = Invoke-RepositoryGit -RepositoryRoot $path -Arguments @('status', '--porcelain', '--untracked-files=no') -AllowFailure
+        if ($trackedStatus.exitCode -ne 0 -or [string]$trackedStatus.stdout) { continue }
         $shortBranch = $branch.Substring('refs/heads/'.Length)
         $remove = Invoke-RepositoryGit -RepositoryRoot $ProjectRoot -Arguments @('worktree', 'remove', '--force', '--force', '--', $path) -AllowFailure
         if ($remove.exitCode -ne 0) { throw "Unable to remove stale release seed '$path': $($remove.stderr.Trim())" }
@@ -133,13 +141,13 @@ function Remove-SourceDeliveryStaleReleaseSeedArchives {
 }
 
 function Invoke-SourceDeliveryPostSuccessCleanup {
-    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '')
+    param([string]$FreshProjectsRoot = 'C:\itlj', [string]$E2EProjectRoot = '', [string[]]$PreservePaths = @())
 
     $report = [ordered]@{ status = 'completed'; warnings = @() }
     foreach ($step in @(
-        [pscustomobject]@{ name = 'sourceCandidates'; action = { Remove-SourceDeliveryStaleCandidateWorktrees } },
+        [pscustomobject]@{ name = 'sourceCandidates'; action = { Remove-SourceDeliveryStaleCandidateWorktrees -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'sourceTestFixtures'; action = { Remove-SourceDeliveryStaleTestFixtures } },
-        [pscustomobject]@{ name = 'freshProjects'; action = { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $FreshProjectsRoot } },
+        [pscustomobject]@{ name = 'freshProjects'; action = { Remove-DevelopE2EStaleFreshProjects -FreshProjectsRoot $FreshProjectsRoot -PreservePaths $PreservePaths } },
         [pscustomobject]@{ name = 'freshLauncherEntries'; action = { Remove-DevelopE2EStaleLauncherRegistrations -FreshProjectsRoot $FreshProjectsRoot } }
     )) {
         try { $report[$step.name] = & $step.action }

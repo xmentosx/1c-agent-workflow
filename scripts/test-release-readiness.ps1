@@ -58,7 +58,10 @@ function Get-GitValue {
 function Get-FileSha256 {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return "" }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    $stream = [IO.File]::OpenRead($Path)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
+    finally { $sha.Dispose(); $stream.Dispose() }
 }
 
 function ConvertTo-NativeArgument {
@@ -126,6 +129,9 @@ function Get-ManagedPackageInventory {
         ".agents\skills\product-docs",
         ".agents\skills\itl-roctup-1c-data",
         ".agents\skills\itl-vanessa-ui-mcp",
+        ".agents\skills\itl-remote-runner",
+        ".agents\skills\itl-remote-agent",
+        ".agents\skills\itl-performance",
         "docs\itl-workflow",
         "templates"
     )

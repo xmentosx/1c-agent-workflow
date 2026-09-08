@@ -987,6 +987,9 @@ local after
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-agent\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-performance\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "install-agent-1c-workflow.ps1") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot ".kilo\commands\itl-status.md") -PathType Leaf) | Should -Be $true
@@ -1318,6 +1321,9 @@ local after
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\product-docs\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-vanessa-ui-mcp\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-remote-runner\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-remote-agent\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-performance\SKILL.md") -PathType Leaf) | Should -Be $true
             $copiedRoctupSkill = Get-Content -LiteralPath (Join-Path $tempRoot ".agents\skills\itl-roctup-1c-data\SKILL.md") -Raw -Encoding UTF8
             $copiedRoctupSkill | Should -Match '(?m)^name:\s*itl-roctup-1c-data\s*$'
             $copiedRoctupSkill | Should -Match '(?m)^description:\s*\S.+'
@@ -1382,6 +1388,9 @@ local after
                 ".agents\skills\product-docs\SKILL.md",
                 ".agents\skills\itl-roctup-1c-data\SKILL.md",
                 ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
+                ".agents\skills\itl-remote-runner\SKILL.md",
+                ".agents\skills\itl-remote-agent\SKILL.md",
+                ".agents\skills\itl-performance\SKILL.md",
                 "templates\USER-RULES.append.md",
                 "tracked-marker.txt"
             )) {

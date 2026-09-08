@@ -437,7 +437,7 @@ function Find-LauncherRunDirectory {
 
 $allowedActions = @(
     "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "adopt-dev-worktree", "close-dev-branch", "check-dev-branch",
-    "begin-verification-repair", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
+    "begin-verification-repair", "repair-dev-branch-tooling", "init-dev-branch-extension", "update-dev-branch-base", "verify-dev-branch",
     "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "sync-master", "export-dev-branch-result", "update-workflow",
     "itl-switch-client"
 )
@@ -619,10 +619,10 @@ if ($terminalStatus -eq "succeeded") {
     # A valid terminal success is authoritative over a handled native probe
     # code inherited by the PowerShell helper host.
     $exitCode = 0
-} elseif ($terminalStatus -eq "failed" -and $exitCode -eq 0) {
+} elseif ($terminalStatus -in @("failed", "cancelled") -and $exitCode -eq 0) {
     $exitCode = [Math]::Max(1, [int](Get-ObjectValue -Object $status -Name "exitCode" -Default 1))
 }
-if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed")) {
+if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status" -Default "") -notin @("succeeded", "failed", "cancelled")) {
     $now = Get-Date
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
@@ -725,6 +725,7 @@ $summary = [ordered]@{
     error = $errorText
     errorCategory = $errorCategory
     requiredAction = $requiredAction
+    refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
     devBranch = $devBranch
     worktreePath = $worktreePath
     extensionInitializationStatus = $extensionInitializationStatus
@@ -791,6 +792,7 @@ if ($summaryText.Length -gt 4000) {
         error = Limit-Text -Value $errorText -Length 400
         errorCategory = Limit-Text -Value $errorCategory -Length 120
         requiredAction = Limit-Text -Value $requiredAction -Length 400
+        refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
         userReport = ""
         userReportOmitted = $userReportOmitted
         userReportPath = $userReportPath

@@ -3,7 +3,7 @@
     $RepoRoot = $context.RepoRoot
     $DeliveryScript = Join-Path $RepoRoot "scripts\source-delivery.ps1"
     $DeliverySourcePaths = @($DeliveryScript)
-    foreach ($name in @("source-delivery-queue.ps1", "source-delivery-process.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1", "source-delivery-cleanup.ps1")) {
+    foreach ($name in @("source-delivery-supervisor.ps1", "source-delivery-queue.ps1", "source-delivery-process.ps1", "source-delivery-component.ps1", "source-delivery-plan.ps1", "source-delivery-resources.ps1", "source-delivery-candidate.ps1", "source-delivery-cleanup.ps1")) {
         $path = Join-Path $RepoRoot ("scripts\" + $name)
         if (Test-Path -LiteralPath $path -PathType Leaf) { $DeliverySourcePaths += $path }
     }

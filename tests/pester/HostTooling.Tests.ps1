@@ -608,7 +608,63 @@ services:
                 $composeText = Get-Content -Raw -LiteralPath $runtimeCompose
                 $composeText | Should -Match '(?m)^\s+memory: 4G\r?$'
                 $composeText | Should -Not -Match '(?m)^\s+memory:4G\r?$'
+                $composeText | Should -Match '(?m)^\s+command: .*import mcp_server;.*openai_embedding_api_key='''';.*main\.main\(\)'
                 Remove-Variable -Scope Script -Name GraphComposeCalls -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "refuses to replace an upstream Graph command while adding the CPU embedding bootstrap" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-command-preflight-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $compose = @'
+services:
+  mcp-app:
+    command: ["python", "run.py"]
+    image: fixture
+'@
+                { Add-GraphCpuEmbeddingBootstrapToComposeText -ComposeText $compose } | Should -Throw "*already declares command*"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "migrates a tracked Graph CPU model id through the dimension-validating container helper" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-model-migration-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (($([ordered]@{
+                schemaVersion = 1
+                stateRoot = $tempRoot
+                embedding = [ordered]@{ model = "intfloat/multilingual-e5-base" }
+            }) | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:GraphMigrationArguments = @()
+                function Read-HostState {
+                    param([object]$Config)
+                    return [pscustomobject]@{ servers = @([pscustomobject]@{
+                        id = "graph"; configId = "trade"; containerName = "itl-trade-graph"
+                    }) }
+                }
+                function Get-HostContainerPublishState { param([string]$ContainerName); return "running" }
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:GraphMigrationArguments = @($Arguments)
+                    return @('{"status":"migrated","previousModelId":"openai:text-embedding-ada-002","modelId":"offline:intfloat/multilingual-e5-base","dimension":768,"propertyCounts":{"MetadataObject.description_embedding":2,"Routine.routine_embedding":3,"DescriptionChunk.embedding":0},"vectorIndexes":["description_vector_index","routine_vector_index"]}')
+                }
+
+                { Invoke-GraphCpuEmbeddingModelMigration -Config (Read-JsonFile -Path $configPath) -TargetConfigId "trade" } | Should -Not -Throw
+                $script:GraphMigrationArguments[0..3] | Should -Be @("exec", "itl-trade-graph", "python", "-c")
+                $script:GraphMigrationArguments | Should -Contain "offline:intfloat/multilingual-e5-base"
+                $script:GraphMigrationArguments | Should -Contain "768"
+                $script:GraphMigrationArguments | Should -Contain "openai:text-embedding-ada-002|openai:intfloat/multilingual-e5-base"
+                Remove-Variable -Scope Script -Name GraphMigrationArguments -ErrorAction SilentlyContinue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
@@ -2532,6 +2588,43 @@ services:
                 $script:GraphReadyWaitCalls | Should -Be 1
                 Remove-Variable -Scope Script -Name GraphReadyAttempts -ErrorAction SilentlyContinue
                 Remove-Variable -Scope Script -Name GraphReadyWaitCalls -ErrorAction SilentlyContinue
+            }
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "reconnects after a transient index status timeout until stable completion" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-index-status-reconnect-test-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:IndexStatusCalls = 0
+                $script:IndexReconnectCalls = 0
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name, [object]$Arguments = $null, [int]$TimeoutSec = 120)
+                    $script:IndexStatusCalls++
+                    $TimeoutSec | Should -Be 300
+                    if ($script:IndexStatusCalls -eq 1) { throw "fixture atomic write timeout" }
+                    return [pscustomobject]@{ content = @([pscustomobject]@{ type = "text"; text = '{"status":"completed"}' }) }
+                }
+                function Open-HostMcpConnection {
+                    param([string]$Url, [int]$TimeoutSec = 60)
+                    $script:IndexReconnectCalls++
+                    return [pscustomobject]@{ url = $Url; headers = @{}; nextId = 2 }
+                }
+                function Start-Sleep { param([int]$Seconds) }
+
+                $connection = [pscustomobject]@{ url = "http://127.0.0.1:18100/mcp"; headers = @{}; nextId = 2 }
+                { Wait-HostMcpIndexCompletion -Connection $connection -StatusTool "stats" -ServerId "code" -ConfigId "trade" -TimeoutMinutes 1 -PollSeconds 5 } | Should -Not -Throw
+                $script:IndexStatusCalls | Should -Be 3
+                $script:IndexReconnectCalls | Should -Be 1
+                Remove-Variable -Scope Script -Name IndexStatusCalls, IndexReconnectCalls -ErrorAction SilentlyContinue
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {

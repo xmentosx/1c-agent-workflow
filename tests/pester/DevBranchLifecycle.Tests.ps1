@@ -318,6 +318,34 @@ exit 0
             }
         }
 
+        function New-LifecycleResetFormIntegrityFixture {
+            $fixture = New-LifecycleMergeFormIntegrityFixture
+            & git -C $fixture.root checkout --quiet master
+            $source = [IO.File]::ReadAllText($fixture.formPath, [Text.Encoding]::UTF8)
+            $source = $source.Replace('</Form>', '<Commands><Command name="УстановитьУровеньЗаглушка"><Action /></Command><Command name="Пустышка" /></Commands></Form>')
+            [IO.File]::WriteAllText($fixture.formPath, $source, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- $fixture.formRepoPath
+            & git -C $fixture.root commit -m "master placeholder commands" *> $null
+            $fixture.targetCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root checkout --quiet itldev/test
+            # Model the installed validator's inherited diagnostic, without requiring
+            # an external fork checkout or changing the real duplicate-form fixture.
+            [IO.File]::WriteAllText($fixture.formValidatorPath, @'
+param([string]$FormPath, [int]$MaxErrors)
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+[xml]$form = [IO.File]::ReadAllText($FormPath, [Text.Encoding]::UTF8)
+foreach ($command in $form.SelectNodes('/Form/Commands/Command')) {
+    $action = $command.SelectSingleNode('Action')
+    if ($null -eq $action -or -not $action.InnerText.Trim()) {
+        Write-Output "[ERROR] Command '$($command.GetAttribute('name'))': missing or empty Action"
+        exit 1
+    }
+}
+exit 0
+'@, [Text.UTF8Encoding]::new($true))
+            return $fixture
+        }
+
         function Copy-AutoUpdateToolFixture {
             param([string]$TargetRoot)
             $target = Join-Path $TargetRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -2385,6 +2413,67 @@ exit 0
         }
         $result.message | Should -Match "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED"
         $result.checkpointCalled | Should -BeFalse
+    }
+
+    It "validates the reset seed only after acquiring its reader lease for <Kind>" -ForEach @(
+        @{ Kind = 'file' }, @{ Kind = 'server' }
+    ) {
+        $tempRoot = Join-Path $TestDrive ("seed смена " + $Kind)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $script:seedVersion = 'expected'
+            $script:restoreTouched = $false
+            function Get-InfoBaseKind { $Kind }
+            function Open-BranchSeedLease {
+                $script:seedVersion = 'replacement'
+                [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+            }
+            function Assert-BranchSeedReady {
+                param($ExpectedConfigurationFingerprint)
+                if ($script:seedVersion -ne $ExpectedConfigurationFingerprint) { throw 'BRANCH_SEED_INCOMPATIBLE' }
+                [pscustomobject]@{ configurationFingerprint = $script:seedVersion }
+            }
+            function Resolve-Agent1cFullPath { $script:restoreTouched = $true; throw 'RESTORE_TOUCHED' }
+            function Get-BranchSeedServerProviderCapabilities { $script:restoreTouched = $true; throw 'RESTORE_TOUCHED' }
+            { Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchInfoBasePath = $tempRoot }) -ExpectedConfigurationFingerprint expected } | Should -Throw '*BRANCH_SEED_INCOMPATIBLE*'
+            $script:restoreTouched | Should -BeFalse
+            $writer = [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'Open', 'ReadWrite', 'None')
+            $writer.Dispose()
+        }
+    }
+
+    It "keeps the captured server reset seed leased through provider restore" {
+        $tempRoot = Join-Path $TestDrive 'серверный seed restore'
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $providerPath = Join-Path $tempRoot 'restore provider.ps1'
+        Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
+param($Operation, $ProjectRoot, $DevBranchName, $SeedArtifactPath, $DevBranchInfoBasePath)
+$ErrorActionPreference = 'Stop'
+if ($Operation -ne 'restore-seed' -or $DevBranchName -ne 'server') { throw 'Wrong provider contract' }
+try {
+    $writer = [IO.File]::Open((Join-Path $ProjectRoot 'seed.lease'), 'Open', 'ReadWrite', 'None')
+    $writer.Dispose()
+    throw 'Seed lease missing during server restore'
+} catch [IO.IOException] {}
+[IO.File]::WriteAllText((Join-Path $ProjectRoot 'provider-result.txt'), [IO.File]::ReadAllText($SeedArtifactPath))
+'@
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            function Get-InfoBaseKind { 'server' }
+            function Get-BranchSeedServerProviderCapabilities { [pscustomobject]@{ path = $providerPath } }
+            function Assert-BranchSeedReady { throw 'CAPTURED_SEED_MUST_NOT_BE_REREAD' }
+            $artifact = Join-Path $tempRoot 'исходная база.dt'
+            Write-Utf8Text -Path $artifact -Value 'captured seed'
+            $seed = [pscustomobject]@{ configurationFingerprint = 'expected'; artifactPath = $artifact }
+            $reader = [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+            try {
+                $result = Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchName = 'server'; devBranchInfoBasePath = 'server\base' }) -ExpectedConfigurationFingerprint expected -Seed $seed -ExistingLease $reader
+                $result.configurationFingerprint | Should -Be 'expected'
+                (Read-Utf8Text -Path (Join-Path $tempRoot 'provider-result.txt')) | Should -Be 'captured seed'
+                $reader.CanRead | Should -BeTrue
+            } finally { $reader.Dispose() }
+        }
     }
 
     It "restores the reset seed and unbinds repository-backed branch copies before initialization" {
@@ -4768,6 +4857,8 @@ exit 0
                 $params.texterrorslogname | Should -Be (Join-Path $runDirectory "errors")
                 $params.maskpwdinlog | Should -BeTrue
                 $params.outputloginconsole | Should -BeFalse
+                $params.soundnotificationwhenscriptends | Should -BeFalse
+                $params.dosleepusingping | Should -BeFalse
                 $params.stoponerror | Should -BeFalse
                 $params.NumberOfAttemptsToExecuteTheScript | Should -Be 1
                 $params.updatetreewhenscenariostarts | Should -BeFalse
@@ -6309,6 +6400,10 @@ if (`$?) { exit 0 } else { exit 1 }
         $forkBranchTemplate | Should -Not -Match ([regex]::Escape("run-itl-command.ps1 -Windowed"))
         $syncBranchesTemplate | Should -Match ([regex]::Escape("run-itl-command.ps1 -- -Action sync-dev-branches -PeerDevBranchName"))
         $syncBranchesTemplate | Should -Match ([regex]::Escape("never transfers specs, tests, documentation"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("DEV_BRANCH_SOURCE_SYNC_PENDING_REFRESH"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("do not stop after describing the peer as blocked"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("Ask the user only when authoritative evidence still leaves incompatible business outcomes"))
+        $syncBranchesTemplate | Should -Match ([regex]::Escape("return to the original worktree and repeat this synchronization automatically"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-dev-branch"))
         $fastSkill | Should -Match ([regex]::Escape("run-itl-command.ps1 -Windowed -- -Action new-extension-dev-branch"))
         $fastSkill | Should -Not -Match ([regex]::Escape("run-agent-1c-window.ps1 -- -Action"))
@@ -6777,6 +6872,121 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.mergeInProgress | Should -BeFalse
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "completes reset then refresh-lite with an inherited form diagnostic (resume=<Resume>)" -TestCases @(
+        @{ Resume = $false }, @{ Resume = $true }
+    ) {
+        param($Resume)
+        $fixture = New-LifecycleResetFormIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture, $Resume)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.configurationValidatorPath
+                $script:OneCSourceIntegrityValidatorPathOverrides = @{ form = $Fixture.formValidatorPath }
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force
+                    }
+                }
+                function Restart-Agent1cAfterDevBranchMerge { throw "RESTART_AFTER_MERGE" }
+
+                # Exercise the actual reset tree replacement, retaining the old parent.
+                $resetHead = Set-DevBranchTreeToMasterCommit -MasterCommit $Fixture.targetCommit
+                $resetTree = Get-GitObjectIdForTreePath -Treeish $resetHead -RepoPath "src/cf"
+                $targetTree = Get-GitObjectIdForTreePath -Treeish $Fixture.targetCommit -RepoPath "src/cf"
+                $mergeBase = (Get-GitOutput @("merge-base", $resetHead, $Fixture.targetCommit)).Trim()
+                if ($Resume) {
+                    # Recreate the durable state left by the previous helper's false
+                    # source-integrity failure. Conflict paths are not explicit repairs.
+                    Invoke-Git @("merge", "--no-ff", "--no-commit", $Fixture.targetCommit)
+                    Set-PendingDevBranchMergeTransaction -State $script:MergeState -Operation "refresh-dev-branch-lite" `
+                        -Branch "itldev/test" -BranchCommit $resetHead -TargetCommit $Fixture.targetCommit `
+                        -Stage "conflicts" -AllowedPaths @(Get-DevBranchMergeIndexPaths) -ConflictPaths @($Fixture.formRepoPath)
+                }
+                $message = ""
+                try {
+                    if ($Resume) {
+                        Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch-lite" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                    } else {
+                        Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch-lite" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                    }
+                } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{
+                    message = $message
+                    resetHead = $resetHead
+                    resetParents = @(Get-GitCommitParents -Commit $resetHead)
+                    resetTree = $resetTree
+                    targetTree = $targetTree
+                    mergeBase = $mergeBase
+                    parents = @(Get-GitCommitParents -Commit (Get-CurrentCommit))
+                    stage = $script:MergeState.pendingMergeStage
+                    mergeInProgress = Test-GitMergeInProgress
+                    changes = @(Get-VerificationWorkingTreeChangePaths -PathSpec @("."))
+                    source = [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
+                }
+            } $fixture $Resume
+            $result.resetParents | Should -Be @($fixture.branchCommit)
+            $result.resetTree | Should -Be $result.targetTree
+            $result.mergeBase | Should -Not -Be $result.resetHead
+            $result.mergeBase | Should -Not -Be $fixture.targetCommit
+            $result.message | Should -Be "RESTART_AFTER_MERGE"
+            $result.parents | Should -Be @($result.resetHead, $fixture.targetCommit)
+            $result.stage | Should -Be "merged"
+            $result.mergeInProgress | Should -BeFalse
+            $result.changes | Should -HaveCount 0
+            $result.source | Should -Match '<Command name="Пустышка" />'
+        } finally {
+            if ([IO.Path]::GetFullPath($fixture.root).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "keeps reset form validation for <Change> despite equal parent blobs" -TestCases @(
+        @{ Change = "staged" }, @{ Change = "unstaged" }, @{ Change = "staged-reverted-worktree" },
+        @{ Change = "repair" }, @{ Change = "relative-repair" }
+    ) {
+        param($Change)
+        $fixture = New-LifecycleResetFormIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture, $Change)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $script:OneCConfigurationSourceValidatorPathOverride = $Fixture.configurationValidatorPath
+                $script:OneCSourceIntegrityValidatorPathOverrides = @{ form = $Fixture.formValidatorPath }
+                Set-DevBranchTreeToMasterCommit -MasterCommit $Fixture.targetCommit | Out-Null
+                Invoke-Git @("merge", "--no-ff", "--no-commit", $Fixture.targetCommit)
+                $source = [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
+                $arguments = @{ ExportPath = "src/cf" }
+                if ($Change -eq "repair") {
+                    $arguments.AdditionalPaths = @($Fixture.formRepoPath)
+                } elseif ($Change -eq "relative-repair") {
+                    $arguments.AdditionalRelativePaths = @($Fixture.formRepoPath.Substring("src/cf/".Length))
+                } else {
+                    [IO.File]::WriteAllText($Fixture.formPath, $source.Replace('</Form>', '<!-- agent edit --></Form>'), [Text.UTF8Encoding]::new($false))
+                    if ($Change -ne "unstaged") { Invoke-Git @("add", "--", $Fixture.formRepoPath) }
+                    if ($Change -eq "staged-reverted-worktree") { [IO.File]::WriteAllText($Fixture.formPath, $source, [Text.UTF8Encoding]::new($false)) }
+                }
+                $allMergePaths = @(Get-OneCSourceIntegrityCandidatePaths -ExportPath "src/cf" -IncludeAllMergeChanges)
+                $message = ""
+                try { Assert-OneCConfigurationSourceIntegrity @arguments } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{ message = $message; allMergePaths = $allMergePaths; mergeInProgress = Test-GitMergeInProgress }
+            } $fixture $Change
+            $result.message | Should -Match '^ONEC_SOURCE_INTEGRITY_FAILED'
+            $result.message | Should -Match 'missing or empty Action'
+            $result.allMergePaths | Should -Contain $fixture.formRepoPath
+            $result.mergeInProgress | Should -BeTrue
+        } finally {
+            if ([IO.Path]::GetFullPath($fixture.root).StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -8416,7 +8626,7 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "restores only clean ignored ai_rules managed files from the main worktree" {
+    It "restores missing or stale clean ignored ai_rules managed files from the main worktree" {
         $mainRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-main-" + [guid]::NewGuid().ToString("N"))
         $branchRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-ignored-branch-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -8444,6 +8654,14 @@ if (`$?) { exit 0 } else { exit 1 }
             }
             $result | Should -Be 1
             $branchRuntimePath = Join-Path $branchRoot ".kilo\skills\runtime\package.json"
+            [IO.File]::ReadAllBytes($branchRuntimePath) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
+
+            [IO.File]::WriteAllText($branchRuntimePath, "{`"stale`":true}`n", (New-Object Text.UTF8Encoding $false))
+            $staleResult = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State ([pscustomobject]@{ mainWorktreePath = $mainRoot })
+            }
+            $staleResult | Should -Be 1
             [IO.File]::ReadAllBytes($branchRuntimePath) | Should -Be ([IO.File]::ReadAllBytes($runtimePath))
 
             Remove-Item -LiteralPath $branchRuntimePath -Force

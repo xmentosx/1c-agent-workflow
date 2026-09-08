@@ -66,16 +66,45 @@ Develop proof закрывают reuse. Это продолжение по finge
 
 ## Публикация develop
 
+`source-delivery.ps1` является bootstrap-shim. Он читает
+`refs/remotes/origin/master`, создаёт detached worktree и передаёт управление
+`source-delivery-supervisor.ps1` из стабильного `master`. Supervisor один владеет
+очередью, immutable plan, evidence, checkpoint, resource ledger и push; код
+кандидата запускается отдельным процессом и может только выполнить актуальные
+проверки. Пока supervisor впервые ещё отсутствует в `master`, shim явно помечает
+одноразовый bootstrap-режим; после первого выпуска candidate-копия supervisor
+никогда не выбирается.
+
+Перед дорогим запуском маршрут можно получить без публикации:
+
+```powershell
+.\scripts\source-delivery.ps1 -Action Plan -RequireRelease
+```
+
+Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит DAG со статусами
+`execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
+Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
+fallback нет. Повтор публикации может закрепить identity через
+`-ResumePlan <planId>`. Если сумма выполняемых стадий больше 60 минут, нужно явно
+передать `-ApproveLongPlan <planId>`. Исправление delivery/test harness меняет
+его собственный static proof, но не fingerprint независимой runtime capability.
+`verification-refresh` и `result-cleanup` намеренно всегда свежие.
+
+Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 минут; Develop
+`upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
+из `scripts/release-e2e/stages.json` для каждой capability. Timeout не расширяет
+маршрут и не удаляет checkpoint.
+
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
   -AiRulesSource D:\Git\itl_ai_rules_1c-r31-codechecker-logic `
   -E2EProjectRoot D:\Git\itl-workflow-e2e-pm5
 ```
 
-Команду запускают в foreground с внешним `timeout_ms >= 6000000`: внутренний
-hard budget Develop равен 90 минутам, а внешняя оболочка обязана оставить запас
-на сборку кандидата, push и удалённую сверку. Для `ReleaseMaster` требуется
-`timeout_ms >= 7800000`.
+Команду запускают в foreground с внешним timeout, покрывающим одобренный plan и
+запас на сборку кандидата, push и удалённую сверку. Не следует выбирать timeout
+до получения plan: маршрут дороже часа всё равно остановится без явного
+`-ApproveLongPlan`.
 
 Полный Pester inventory имеет hard budget 30 минут: обязательные процессные
 source-delivery fixtures на текущем стенде измеренно не укладываются в прежние
@@ -126,9 +155,10 @@ release-qualified -> component-finalized -> remote-pushed`. Retry начинае
 кандидата/gate создаёт новую цепочку. После 60 минут новый этап не стартует. Два
 одинаковых сбоя блокируют третий; повтор после диагностики требует
 `-RetryBlockedStage`. Scope `deliveryPostGate` включает только delivery control
-plane, покрытый собственными source-delivery regression-тестами. Его исправление
-сохраняет Full/Develop/Release proof установленного workflow; изменение реального
-gate/develop/release harness по-прежнему инвалидирует соответствующий proof.
+plane, покрытый собственными source-delivery regression-тестами. Qualification
+хранится по stage/input fingerprint, поэтому исправление control plane не
+сбрасывает независимые Develop/Release capability proofs; изменившийся runtime
+или stage-модуль инвалидирует только свои стадии и downstream dependencies.
 
 Успешный JSON явно различает каналы поставки: для `PublishDevelop` это
 `developPublished=true`, `dependenciesInstallable=true`, `masterReleased=false`
@@ -158,8 +188,8 @@ Develop состоит из двух независимо квалифициру
 
 Qualification `develop.json` связывает точный tree с SHA статического Full и
 live-отчётов. Каталог владельцев сопоставляет диапазон `origin/develop...HEAD`
-с `upgrade` и `fresh`; изменение самой оркестрации, неизвестный путь или
-повреждённое доказательство всегда включает обе journey. Изменения, не входящие
+с `upgrade` и `fresh`; изменение самой оркестрации включает обе journey, а
+неизвестный путь блокируется до назначения owner. Изменения, не входящие
 в установленный lifecycle (например standalone MCP host), могут продолжить
 незатронутые доказательства базового `develop` только при совпадении полного
 input identity. Отсутствующая или несовместимая baseline qualification также
@@ -170,8 +200,9 @@ input identity. Отсутствующая или несовместимая bas
 download/refresh/Vanessa границы — в обе journey. Source-delivery, документация,
 standalone host и прямые тесты не запускают live 1C journey. Если план пуст,
 точный Full плюс owner Targeted образуют явное `no-develop-journey-route`
-доказательство; искусственная baseline двух journey не требуется. Неизвестный
-путь и сама orchestration по-прежнему закрыто выбирают обе journey.
+доказательство; искусственная baseline двух journey не требуется. Сама
+orchestration закрыто выбирает обе journey; неизвестный путь никогда не
+расширяет маршрут автоматически.
 
 ## Controlled fork и Full
 
@@ -219,12 +250,19 @@ attempt. Если reconciliation с `master` меняет candidate, reuse за�
 каталоге до подтверждённого `master`. Поэтому новый процесс `PromoteRelease`
 возобновляет тот же commit/tree и не повторяет уже прошедшие Develop/Release.
 
-После успешного `PublishDevelop`, `PromoteRelease` или `ReleaseMaster` запускается
-best-effort уборка: удаляются только worktree/ветки с точными ITL-generated
-именами, disposable fresh/release-seed стенды, отсутствующие записи `ibases.v8i`
-и старые backup списка баз (остаются три). Текущий/активный и настроенные
-release/develop стенды сохраняются; ошибка уборки возвращается как warning и не
-отменяет уже подтверждённую публикацию.
+Supervisor ведёт `.git/itl/resources/v1/ledger.json`. Он регистрирует candidate и
+fresh worktree/базы/launcher identity, reusable stands, snapshots, current
+CF/CFE+manifest, capability generation и owned PID/ports. Перед каждой
+`PublishDevelop`, `PromoteRelease`, `ReleaseMaster` и после неё повторяется весь
+`cleanup-pending`. Используются прежние safe cleanup-функции: launcher-entry
+удаляется до базы, `ibases.v8i` меняется под lock с BOM-backup (остаются три), а
+имена, roots, process/worktree use, tracked drift, configured stand и artifact
+SHA проверяются до удаления. Housekeeping failure не отменяет push и даёт
+`completed-with-cleanup-warnings`; product cleanup assertion остаётся блокирующей.
+Ручной безопасный повтор — `-Action Cleanup`. `Status` показывает count, bytes,
+возраст, последнюю ошибку и следующую попытку. Failed plans сохраняют ресурсы
+только для двух новейших plan и не дольше семи дней; evidence после уборки не
+удаляется.
 
 ## Release уже опубликованного develop в master
 
@@ -263,11 +301,15 @@ Release явно записывает `server-reset: unverified` и продол
 неизменяемый cache, создаёт новый rollback baseline/HEAD и всегда повторяет
 свежую проверку, export и cleanup. `-ReleaseResumeMode Restart` остаётся
 штатным полным rollback; state/status вручную не редактируются.
-Если предыдущий Release остановился на конкретном этапе, а исправление меняет
-только объявленный harness scope и прошло точный Targeted, `Auto` дополнительно
-проверяет старый fingerprint с прежним runner SHA и переиспользует только целые
-этапы до точки отказа. Упавший этап и весь downstream выполняются снова; cleanup
-всегда свежий.
+Если предыдущий Release остановился на конкретном этапе, `Auto` проверяет
+stage-version, production inputs, dependencies и релевантную environment identity.
+Исправление только test/delivery harness не сбрасывает независимые целые этапы.
+Упавший этап и затронутый downstream выполняются снова; verification refresh и
+cleanup всегда свежие.
+
+Полный диагностический прогон больше не является fallback. Он запускается только
+вручную через `.\scripts\source-delivery.ps1 -Action DiagnoseFull` и ничего не
+публикует.
 
 Git hooks автоматически не устанавливаются. GitHub Actions не являются
 каноническим источником локальной квалификации; доказательства создают команды

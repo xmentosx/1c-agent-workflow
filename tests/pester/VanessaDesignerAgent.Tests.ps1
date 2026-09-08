@@ -450,7 +450,7 @@ param([string]$OutputPath, [string]$Value)
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             $script:sequence = New-Object System.Collections.Generic.List[string]
             $script:updates = $null
-            $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file" }
+            $script:fixtureState = [pscustomobject]@{ devBranchName = "demo"; devBranchInfoBasePath = "target-base"; infoBaseKind = "file"; vanessaServiceInfoBasePath = "service-base"; vanessaServiceInfoBaseKind = "file"; toolingInfoBaseGeneration = "generation" }
             function Read-CurrentDevBranchStateForVanessaMcp { return $script:fixtureState }
             function Read-DevBranchState { return $script:fixtureState }
             function Ensure-VanessaServiceInfoBase { return [pscustomobject]@{ kind = "file"; path = "service-base"; user = "itl_vanessa_service"; password = ""; created = $false } }
@@ -475,14 +475,19 @@ param([string]$OutputPath, [string]$Value)
             }
             function Update-DevBranchState {
                 param([object]$State, [hashtable]$Updates)
-                $script:sequence.Add("state") | Out-Null
+                $script:sequence.Add($(if ($null -eq $Updates.vanessaMcpSafeModeProof) { "invalidate" } else { "state" })) | Out-Null
                 $script:updates = $Updates
+            }
+            function Get-ToolingRuntimeExtensions {
+                param($State, $Names, $User, $Password)
+                $script:sequence.Add("probe:$($Names[0]):$($State.devBranchInfoBasePath)") | Out-Null
+                [pscustomobject]@{ name=$Names[0]; present=$true; active=$true; safeMode=$false; contentHash="hash"; serverCodeObject=$true }
             }
             Install-VanessaMcp *> $null
             [pscustomobject]@{ sequence = @($script:sequence); updates = $script:updates }
         }
 
-        $result.sequence | Should -Be @("load:client_mcp", "load:VAExtension", "safe:client_mcp:service-base", "safe:VAExtension:target-base", "state")
+        $result.sequence | Should -Be @("invalidate", "load:client_mcp", "load:VAExtension", "safe:client_mcp:service-base", "safe:VAExtension:target-base", "probe:client_mcp:service-base", "probe:VAExtension:target-base", "state")
         $result.updates.vanessaMcpSafeModeProof.clientMcpSafeMode | Should -BeFalse
         $result.updates.vanessaMcpSafeModeProof.vaExtensionSafeMode | Should -BeFalse
         $result.updates.vanessaMcpSafeModeProof.clientMcp.infoBasePath | Should -Be "service-base"
@@ -508,7 +513,7 @@ param([string]$OutputPath, [string]$Value)
             }
             function Install-VanessaMcpExtensionCfe { return "load.log" }
             function Set-VanessaMcpExtensionUnsafeMode { throw "safe-mode proof failed" }
-            function Update-DevBranchState { $script:updateCalled = $true }
+            function Update-DevBranchState { param($State, $Updates) if ($null -ne $Updates.vanessaMcpSafeModeProof) { $script:updateCalled = $true } }
             $message = ""
             try { Install-VanessaMcp *> $null } catch { $message = $_.Exception.Message }
             [pscustomobject]@{ message = $message; updateCalled = $script:updateCalled }
@@ -549,11 +554,16 @@ param([string]$OutputPath, [string]$Value)
                 $serviceIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind file -InfoBasePath $service
                 $targetIdentity = Get-OneCInfoBaseIdentity -InfoBaseKind file -InfoBasePath $target
                 $proof = [pscustomobject]@{
+                    schemaVersion = 3
+                    targetInfoBaseGeneration = "target-generation"
+                    clientRuntimeHash = "client-runtime"
+                    vaRuntimeHash = "va-runtime"
                     serviceInfoBaseGeneration = "generation-one"
                     clientMcp = [pscustomobject]@{ extensionName = "client_mcp"; infoBaseKey = $serviceIdentity.key; artifactSha256 = "client-sha"; safeMode = $false }
                     vaExtension = [pscustomobject]@{ extensionName = "VAExtension"; infoBaseKey = $targetIdentity.key; artifactSha256 = "va-sha"; safeMode = $false }
                 }
                 $state = [pscustomobject]@{
+                    toolingInfoBaseGeneration = "target-generation"
                     infoBaseKind = "file"; devBranchInfoBasePath = $target
                     vanessaServiceInfoBaseKind = "file"; vanessaServiceInfoBasePath = $service
                     vanessaServiceInfoBaseGeneration = "generation-one"

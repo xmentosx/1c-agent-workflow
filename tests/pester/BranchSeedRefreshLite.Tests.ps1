@@ -287,11 +287,11 @@
     }
 
     It "requires server provider schema v2 restore and baseline capabilities" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-server-provider-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl server provider путь " + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $providerPath = Join-Path $tempRoot "provider.ps1"
-            Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
+            [IO.File]::WriteAllText($providerPath, @'
 param([string]$Operation,[string]$ProjectRoot,[string]$SourceInfoBasePath,[int]$EventLogLookbackDays)
 if ($Operation -eq "capabilities") {
     [pscustomobject]@{ schemaVersion = 2; capabilities = @("restore-seed","event-log-baseline","event-log-baseline-lookback") } | ConvertTo-Json -Compress
@@ -302,7 +302,7 @@ if ($Operation -eq "event-log-baseline") {
     exit 0
 }
 exit 1
-'@
+'@, [Text.UTF8Encoding]::new($true))
             & {
                 . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
                 function Get-ConfigValue { return $providerPath }
@@ -315,7 +315,9 @@ exit 1
                 function Get-SourceInfoBasePath { return "server\base" }
                 function Get-SourceServerEventLogLookbackDays { return 7 }
                 $baseline = Get-SourceEventLogSeedBaseline
-                @($baseline.signatures) | Should -Be @("server error", "ошибка сервера")
+                # The provider contract is a set; its normalized order follows
+                # Sort-Object's host culture. Preserve exact Unicode membership.
+                @($baseline.signatures | Sort-Object) | Should -Be @(@("server error", "ошибка сервера") | Sort-Object)
                 $baseline.cache.status | Should -Be "hit"
                 $baseline.lookbackDays | Should -Be 7
                 $baseline.windowStart | Should -Be "bounded"
@@ -484,13 +486,62 @@ param([string]$Operation,[string]$ProjectRoot)
         }
     }
 
+    It "preserves an older pending refresh before recovery or post-merge work under an aggregate pin" {
+        foreach ($phase in @("", "post-merge")) {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $ExpectedMasterCommit = '77ba2ef1c135802fef6de34a92bb86307ba7f0d6'
+                $LifecyclePhase = $phase
+                $script:Calls = [Collections.Generic.List[string]]::new()
+                $script:Pending = [pscustomobject]@{ operation = 'refresh-dev-branch-lite'; targetCommit = 'cc76c707ef7c71cfba014ae59e3e3b5e6ea77288' }
+                function Read-DevBranchState { [pscustomobject]@{ devBranch = 'itldev/branch11' } }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Assert-DevBranchExtensionInitialized {}
+                function Get-PendingDevBranchMergeTransaction { $script:Pending }
+                function Sync-DevBranchContextToDotEnv { $script:Calls.Add('sync') }
+                function Complete-PendingDevBranchRefreshAfterVerifiedRecovery { $script:Calls.Add('clear'); $false }
+                function Resume-DevBranchLifecycleMergeIfPresent { $script:Calls.Add('resume'); $true }
+                function Assert-DevBranchLifecycleMergePostMerge { throw 'post-merge work reached' }
+                $before = $script:Pending | ConvertTo-Json -Compress
+                $failure = ''
+                try { Invoke-RefreshDevBranchCore -OperationName 'refresh-dev-branch-lite' } catch { $failure = $_.Exception.Message }
+                [pscustomobject]@{ failure = $failure; calls = @($script:Calls); before = $before; after = ($script:Pending | ConvertTo-Json -Compress); category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+            }
+            $result.failure | Should -Match 'REFRESH_MASTER_COMMIT_CHANGED.*expected=77ba2ef1.*actual=cc76c707'
+            $result.calls.Count | Should -Be 0
+            $result.after | Should -BeExactly $result.before
+            $result.category | Should -Be 'refresh-target'
+            $result.requiredAction | Should -Match 'original ITL helper without ExpectedMasterCommit'
+        }
+    }
+
+    It "allows matching pinned and standalone pending refreshes to use their original resume path" {
+        foreach ($pin in @('', 'cc76c707ef7c71cfba014ae59e3e3b5e6ea77288')) {
+            $resumed = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $ExpectedMasterCommit = $pin
+                $script:Resumed = $false
+                function Read-DevBranchState { [pscustomobject]@{ devBranch = 'itldev/branch11' } }
+                function Assert-DevelopmentBranchWorktreeContext {}
+                function Assert-DevBranchExtensionInitialized {}
+                function Get-PendingDevBranchMergeTransaction { [pscustomobject]@{ operation = 'refresh-dev-branch-lite'; targetCommit = 'cc76c707ef7c71cfba014ae59e3e3b5e6ea77288' } }
+                function Sync-DevBranchContextToDotEnv {}
+                function Complete-PendingDevBranchRefreshAfterVerifiedRecovery { $false }
+                function Resume-DevBranchLifecycleMergeIfPresent { $script:Resumed = $true; $true }
+                Invoke-RefreshDevBranchCore -OperationName 'refresh-dev-branch-lite'
+                $script:Resumed
+            }
+            $resumed | Should -BeTrue
+        }
+    }
+
     It "syncs master once limits refresh-all to two workers and aggregates isolated failures" {
         $entrypointText = Get-Content -LiteralPath $HelperPath -Raw -Encoding UTF8
         $lifecycleText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $entrypointText | Should -Match '\[ValidateRange\(1, 2\)\]\[int\]\$MaxParallelBranches = 2'
         $entrypointText | Should -Match 'Add-Agent1cReexecArgument -Arguments \$arguments -Name "ExpectedMasterCommit"'
         $lifecycleText | Should -Match '\$runner = Join-Path \$script:Agent1cScriptRoot "run-itl-command\.ps1"'
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-refresh-all-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl refresh все ветки " + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
             $result = & {
@@ -507,7 +558,9 @@ param([string]$Operation,[string]$ProjectRoot)
                     [pscustomobject]@{ errors = @(); targets = @(
                         [pscustomobject]@{ name = "one"; branch = "itldev/one"; worktreePath = $tempRoot },
                         [pscustomobject]@{ name = "two"; branch = "itldev/two"; worktreePath = $tempRoot },
-                        [pscustomobject]@{ name = "three"; branch = "itldev/three"; worktreePath = $tempRoot }
+                        [pscustomobject]@{ name = "three"; branch = "itldev/three"; worktreePath = $tempRoot },
+                        [pscustomobject]@{ name = "old"; branch = "itldev/old"; worktreePath = $tempRoot },
+                        [pscustomobject]@{ name = "missing"; branch = "itldev/missing"; worktreePath = $tempRoot }
                     ) }
                 }
                 function Start-RefreshAllBranchProcess {
@@ -520,6 +573,16 @@ param([string]$Operation,[string]$ProjectRoot)
                     $stderr = Join-Path $OutputRoot ("$($Target.name).log")
                     $isFailure = [string]$Target.name -eq "two"
                     $payload = [ordered]@{ status = $(if ($isFailure) { "failed" } else { "succeeded" }); error = $(if ($isFailure) { "fixture conflict" } else { "" }); userReport = "branch $($Target.name)" }
+                    $payload.refreshMasterCommit = $(if ($Target.name -eq 'old') { 'cc76c707ef7c71cfba014ae59e3e3b5e6ea77288' } elseif ($Target.name -eq 'missing') { '' } else { $MasterCommit })
+                    $payload.requiredAction = $(if ($isFailure) { 'agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit' } elseif ($Target.name -eq 'three') { 'classify-tests-after-refresh: classify branch three' } else { '' })
+                    $payload.errorCategory = $(if ($isFailure) { 'merge-conflict' } else { '' })
+                    $payload.stage = $(if ($isFailure) { 'refresh.merge-conflicts' } else { 'refresh-dev-branch-lite.complete' })
+                    $payload.statusPath = Join-Path $OutputRoot "$($Target.name).status.json"
+                    [IO.File]::WriteAllText($payload.statusPath, ($payload | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+                    # Exercise compact omission: the full child status owns the
+                    # recovery action and target proof, not a truncated summary.
+                    $payload.requiredAction = ''
+                    $payload.Remove('refreshMasterCommit')
                     [IO.File]::WriteAllText($stdout, (($payload | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
                     [IO.File]::WriteAllText($stderr, "", [Text.UTF8Encoding]::new($false))
                     # A valid compact terminal summary owns the outcome even when
@@ -540,20 +603,35 @@ param([string]$Operation,[string]$ProjectRoot)
                     $script:Processes.Add($entry) | Out-Null
                     return $entry
                 }
-                function Set-RunStage {}
+                function Set-RunStage { param($Stage, $Detail) $script:FinalStage = $Stage; $script:FinalDetail = $Detail }
                 $failure = ""
+                Enter-Agent1cLifecycleOperation -RequestedAction 'refresh-all-dev-branches'
                 try { Refresh-AllDevBranches 6>$null } catch { $failure = $_.Exception.Message }
+                finally { Exit-Agent1cLifecycleOperation }
                 foreach ($entry in @($script:Processes)) { try { $entry.process.Dispose() } catch {} }
-                [pscustomobject]@{ syncCalls = $script:SyncCalls; started = @($script:Started); maxObserved = $script:MaxObserved; failure = $failure; report = $script:RunUserReport }
+                [pscustomobject]@{ syncCalls = $script:SyncCalls; started = @($script:Started); maxObserved = $script:MaxObserved; failure = $failure; report = $script:RunUserReport; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction; manifest = (Get-Content -LiteralPath $script:RunResultManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json); stage = $script:FinalStage; detail = $script:FinalDetail }
             }
 
             $result.syncCalls | Should -Be 1
-            @($result.started) | Should -Be @("itldev/one", "itldev/two", "itldev/three")
+            @($result.started) | Should -Be @("itldev/one", "itldev/two", "itldev/three", "itldev/old", "itldev/missing")
             $result.maxObserved | Should -Be 2
             $result.failure | Should -Match "REFRESH_ALL_BRANCH_FAILURE"
             $result.report | Should -Match "itldev/one: succeeded"
             $result.report | Should -Match "itldev/two: failed: fixture conflict"
             $result.report | Should -Match "itldev/three: succeeded"
+            $result.report | Should -Match 'itldev/old: failed: REFRESH_ALL_TARGET_UNVERIFIED'
+            $result.report | Should -Match 'itldev/missing: failed: REFRESH_ALL_TARGET_UNVERIFIED'
+            $result.category | Should -Be 'branch-aggregate'
+            $result.requiredAction | Should -Match '^recover-refresh-all:.*results.json'
+            $result.stage | Should -Be 'refresh-all.complete'
+            $result.detail | Should -Match 'running=0; pending=0; complete=5; succeeded=2; failed=3'
+            $conflict = $result.manifest.results | Where-Object branch -eq 'itldev/two'
+            $conflict.errorCategory | Should -Be 'merge-conflict'
+            $conflict.stage | Should -Be 'refresh.merge-conflicts'
+            $conflict.worktreePath | Should -BeExactly $tempRoot
+            $conflict.requiredAction | Should -Be 'agent-progressive-semantic-repair-run-git-add-repeat-same-itl-command-no-manual-commit'
+            ($result.manifest.results | Where-Object branch -eq 'itldev/three').requiredAction | Should -Match '^classify-tests-after-refresh:'
+            ($result.manifest.results | Where-Object branch -eq 'itldev/one').refreshMasterCommit | Should -Be $result.manifest.masterCommit
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

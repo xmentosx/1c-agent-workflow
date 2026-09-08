@@ -5,14 +5,19 @@ This source-only document describes the package layout for maintainers. It is no
 - `.agents/skills/1c-workflow` owns the full lifecycle router, references, helper scripts, and generated client templates.
 - `.agents/skills/1c-workflow-fast` owns the compact routine-operation surface.
 - `.agents/skills/product-docs`, `itl-roctup-1c-data`, and `itl-vanessa-ui-mcp` own optional product/runtime integrations.
+- `itl-remote-runner`, `itl-remote-agent`, and `itl-performance` share a portable Python job/measurement runtime. Local, SSH/exchange and agent routes use identical execution-host timing and artifact contracts. The portable bundle includes the existing 1C process/session guard modules; it does not install the full lifecycle. Remote worker startup remains an explicit user action. See [remote operation contracts](../.agents/skills/itl-remote-runner/references/operations.md) and [measurement recipes](../.agents/skills/itl-performance/references/measurements.md).
 - `docs/itl-workflow` contains the human-facing documentation installed into projects.
 - `templates` contains tracked project defaults, ignored-file additions, dependency locks, and project guidance overlays.
 - `install-agent-1c-workflow.ps1` installs the managed package and starts monitored initialization.
 - `scripts/check.ps1` and `scripts/test-ai-rules-compatibility.ps1` own source-repository qualification.
+- `scripts/source-delivery.ps1` bootstraps the stable supervisor from
+  `origin/master`; `source-delivery-supervisor.ps1` owns publication authority,
+  while `source-delivery-plan.ps1` and `source-delivery-resources.ps1` own the
+  immutable selective plan/evidence and common-Git resource ledger.
 
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
-The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the five ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
+The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
 
 ## Runtime check blocking policy
 

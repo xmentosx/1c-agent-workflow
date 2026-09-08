@@ -12,7 +12,7 @@ When bounded JSON sets `userReportOmitted=true`, the complete report remains ava
 
 Use direct `agent-1c.ps1` only for actions that the compact runner intentionally does not expose, including short read-only actions and explicitly documented internal diagnostics.
 
-Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. On `LIFECYCLE_OPERATION_CONFLICT`, use `status`, `doctor`, or `help` and wait for or diagnose the recorded PID/phase. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
+Mutating actions are serialized per worktree through the ignored lifecycle operation lock. Concurrent ordinary operations in separate development worktrees are allowed; actions that also mutate master acquire both scopes. Temporary contention waits automatically; use `status` to inspect the waiter and holder. See [lock waiting and cancellation](branch-lifecycle.md#lifecycle-operation-lock) for the timeout and cancel contract. Do not delete lock files or edit operation JSON. Status remains observable during active work and removes proven-stale on-demand leases only when it can immediately take lifecycle then runtime locks without disturbing the active operation record.
 
 Common internal actions:
 
@@ -28,6 +28,7 @@ configure-web-publication
 publish-dev-branch
 install-vanessa-automation
 install-yaxunit
+repair-dev-branch-tooling
 install-agent-browser
 install-windows-mcp
 install-ui-tools
@@ -125,11 +126,21 @@ When a successful refresh returns `classify-tests-after-refresh:*`, do not
 finalize and do not ask the developer to classify. In the same task, read
 `.agent-1c/verification-selection/inventory.json` and
 `verification-suite-selection.md`, inspect the named tests and production
-owners, update that branch's Vanessa/YAxUnit catalogs, then run the compact
-helper with `-Action validate-test-classification`. Do not run `/itl-check`
-unless separately requested. Report the successful refresh together with the
-completed classification instead of returning the original report alone. For
-refresh-all, repeat this bounded continuation in every listed branch worktree.
+owners, and update that branch's tests and Vanessa/YAxUnit catalogs. For
+`VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD` or
+`VERIFICATION_SUITE_MIXED_CADENCE`, move intact scenario blocks and required
+shared setup into coherent separately selectable feature files, keep each
+acceptance suite at eight scenarios or fewer, give every suite narrow production
+owners, and put diagnostics, A/B checks, profiling, benchmarks, and measurement
+launchers in `purpose=explicit` files. Do not merely rename the original file,
+create one catch-all suite, relabel real acceptance as explicit, delete scenarios,
+weaken assertions, or ask the developer to perform the migration. Then run the
+compact helper with `-Action validate-test-classification`; its post-refresh
+baseline rejects changed or lost scenario behavior and it does not start 1C. Do
+not run `/itl-check` unless separately requested. Report the successful refresh
+together with the completed classification instead of returning the original
+report alone. For refresh-all, repeat this bounded continuation in every listed
+branch worktree.
 `classify-tests-and-repeat-original-itl-command` follows the same repair and
 static validation, then repeats the original command; its preflight stopped
 before 1C.

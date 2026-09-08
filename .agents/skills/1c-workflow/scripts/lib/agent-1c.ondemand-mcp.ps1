@@ -393,6 +393,8 @@ function New-ItlOnDemandVanessaParamsFile {
         useaddinforscreencapture = $true
         QuitIfSilentInstallationAddinFails = $true
         DisableLoadTestClientsTable = $true
+        soundnotificationwhenscriptends = $false
+        dosleepusingping = $false
     }
     $params[(ConvertFrom-Utf8Base64 "0JrQu9C40LXQvdGC0KLQtdGB0YLQuNGA0L7QstCw0L3QuNGP")] = $testClients
     Write-Utf8Text -Path $path -Value (($params | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
@@ -821,6 +823,48 @@ function Test-ItlOnDemandVanessaPlatformLicenseUnavailableLog {
     }
 }
 
+function Get-ItlPerformanceTestClientContext {
+    param([object]$State)
+    if (-not $env:ITL_PERFORMANCE_CONTEXT) { return $null }
+    $path = [IO.Path]::GetFullPath($env:ITL_PERFORMANCE_CONTEXT)
+    $context = Read-Utf8Text -Path $path | ConvertFrom-Json
+    if ([string]$context.jobId -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$' -or
+        'measure' -notin @($context.operations)) {
+        throw 'ITL_PERFORMANCE_JOB_INVALID'
+    }
+    if ([IO.Path]::GetFullPath([string]$context.target.workspace) -ne [IO.Path]::GetFullPath($script:ProjectRoot) -or
+        [string]$context.target.infoBase.kind -ne [string]$State.infoBaseKind -or
+        [string]$context.target.infoBase.path -ne [string]$State.devBranchInfoBasePath) {
+        throw 'ITL_PERFORMANCE_TARGET_MISMATCH'
+    }
+    $debuggerUrl = [string](Get-ConfigValueFromObject -Object $context -Path 'rdbg.url' -Default '')
+    if ($debuggerUrl) {
+        $uri = $null
+        if (-not [Uri]::TryCreate($debuggerUrl, [UriKind]::Absolute, [ref]$uri) -or
+            $uri.Scheme -notin @('http','https') -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or
+            $uri.AbsolutePath -ne '/' -or ($State.infoBaseKind -eq 'file' -and -not $uri.IsLoopback)) {
+            throw 'ITL_PERFORMANCE_DEBUGGER_URL_INVALID'
+        }
+    }
+    return [pscustomobject]@{ jobId=[string]$context.jobId; runDirectory=(Split-Path -Parent $path); debuggerUrl=$debuggerUrl }
+}
+
+function Write-ItlPerformanceTestClientLaunch {
+    param([object]$Context, [object]$RuntimeState, [object]$State, [object]$Process)
+    if ($null -eq $Context) { return }
+    $record = [ordered]@{
+        jobId=$Context.jobId
+        pid=$Process.Id
+        startedAt=$Process.StartTime.ToUniversalTime().ToString('o')
+        infoBase=@{ kind=[string]$State.infoBaseKind; path=[string]$State.devBranchInfoBasePath }
+        ownershipKind='itl-broker'
+        instanceId=[string]$RuntimeState.instanceId
+        debuggerUrl=$Context.debuggerUrl
+    }
+    $path = Join-Path $Context.runDirectory ('onec-process-' + $Process.Id + '.json')
+    Write-Utf8TextAtomic -Path $path -Value ($record | ConvertTo-Json -Depth 8)
+}
+
 function Ensure-ItlOnDemandVanessaTestClient {
     param([string]$InstanceId)
 
@@ -853,6 +897,14 @@ function Ensure-ItlOnDemandVanessaTestClient {
     } else {
         $state = Assert-DevBranchApplicationReady -State $state -Operation "ITL on-demand Vanessa TestClient start"
     }
+    $performanceContext = Get-ItlPerformanceTestClientContext -State $state
+    $performanceJobId = [string](Get-ConfigValueFromObject -Object $runtimeState -Path 'performanceJobId' -Default '')
+    if ($performanceJobId -and ($null -eq $performanceContext -or $performanceContext.jobId -cne $performanceJobId)) {
+        throw 'ITL_PERFORMANCE_RUNTIME_OWNER_MISMATCH'
+    }
+    if ($performanceJobId -and [string](Get-ConfigValueFromObject -Object $runtimeState -Path 'performanceDebuggerUrl' -Default '') -cne $performanceContext.debuggerUrl) {
+        throw 'ITL_PERFORMANCE_DEBUGGER_CHANGED'
+    }
     $testClientPort = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPort" -Default 0) -Default 0
     $recordedPid = ConvertTo-IntOrDefault -Value (Get-ConfigValueFromObject -Object $runtimeState -Path "testClientPid" -Default 0) -Default 0
     $previousPid = 0
@@ -862,12 +914,16 @@ function Ensure-ItlOnDemandVanessaTestClient {
     }
 
     if ($recordedPid -gt 0) {
+        if ($null -ne $performanceContext -and $performanceContext.jobId -cne $performanceJobId) {
+            throw 'ITL_PERFORMANCE_EXISTING_CLIENT_NOT_ADOPTED'
+        }
         $recordedProcess = Get-Process -Id $recordedPid -ErrorAction SilentlyContinue
         $owned = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $runtimeState)
         if ($null -ne $recordedProcess -and $owned.Count -eq 0) {
             throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientOwnership expected='registered exact child' actual='unverified' pid=$recordedPid family=vanessa-ui instanceId=$InstanceId."
         }
         if ($owned.Count -eq 1 -and (Test-TcpPortOpen -Port $testClientPort)) {
+            Write-ItlPerformanceTestClientLaunch -Context $performanceContext -RuntimeState $runtimeState -State $state -Process $owned[0].process
             $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
                 schemaVersion = 4
                 testClientState = "port-ready"
@@ -905,6 +961,10 @@ function Ensure-ItlOnDemandVanessaTestClient {
         throw "ITL_ONDEMAND_OWNERSHIP_MISMATCH: failedPredicate=testClientPortOwnership expected='free or registered exact child' actual='unregistered owner' port=$testClientPort family=vanessa-ui instanceId=$InstanceId."
     }
     $testClientResult = $null
+    $performanceArgs = @()
+    if ($null -ne $performanceContext -and $performanceContext.debuggerUrl) {
+        $performanceArgs = @('/DEBUG', '-http', '/DEBUGGERURL', $performanceContext.debuggerUrl)
+    }
     try {
         $testClientResult = Start-EnterpriseBackground `
             -InfoBasePath $state.devBranchInfoBasePath `
@@ -919,7 +979,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
                     -InfoBasePath $state.devBranchInfoBasePath `
                     -Reason "managed TestClient session admission" | Out-Null
             } `
-            -EnterpriseArgs @()
+            -EnterpriseArgs $performanceArgs
         $process = Get-Process -Id $testClientResult.process.Id -ErrorAction Stop
         $platformPath = Resolve-Agent1cFullPath -Path $testClientResult.executablePath
         $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
@@ -933,6 +993,12 @@ function Ensure-ItlOnDemandVanessaTestClient {
             testClientReused = $false
             previousTestClientPid = $previousPid
             previousTestClientState = $previousState
+        }
+        if ($null -ne $performanceContext) {
+            $runtimeState = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtimeState -Values @{
+                performanceJobId=$performanceContext.jobId
+                performanceDebuggerUrl=$performanceContext.debuggerUrl
+            }
         }
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         if (-not (Wait-ItlOnDemandTestClientPortReady -Process $process -Port $testClientPort -TimeoutSeconds 120)) {
@@ -956,6 +1022,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
             testClientState = "port-ready"
         }
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
+        Write-ItlPerformanceTestClientLaunch -Context $performanceContext -RuntimeState $runtimeState -State $state -Process $process
         return $runtimeState
     } catch {
         if ($null -ne $testClientResult -and $null -ne $testClientResult.process) {

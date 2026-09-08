@@ -283,6 +283,9 @@ function Assert-SourcePackage {
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
         ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
+        ".agents\skills\itl-remote-runner\SKILL.md",
+        ".agents\skills\itl-remote-agent\SKILL.md",
+        ".agents\skills\itl-performance\SKILL.md",
         "templates\project.json",
         "templates\dependency-lock.json",
         "templates\USER-RULES.append.md"
@@ -521,6 +524,9 @@ $managedDirectoryPaths = @(
     ".agents\skills\product-docs",
     ".agents\skills\itl-roctup-1c-data",
     ".agents\skills\itl-vanessa-ui-mcp",
+    ".agents\skills\itl-remote-runner",
+    ".agents\skills\itl-remote-agent",
+    ".agents\skills\itl-performance",
     "docs\itl-workflow",
     "templates"
 )

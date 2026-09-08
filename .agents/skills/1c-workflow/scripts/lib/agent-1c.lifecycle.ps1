@@ -75,24 +75,7 @@ function Assert-ExportPathInsideProject {
     return $resolved
 }
 
-function Get-StateValue {
-    param(
-        [object]$State,
-        [string]$Name,
-        [object]$Default = $null
-    )
-
-    if ($null -eq $State) {
-        return $Default
-    }
-
-    $prop = $State.PSObject.Properties[$Name]
-    if ($null -eq $prop -or $null -eq $prop.Value -or [string]::IsNullOrWhiteSpace([string]$prop.Value)) {
-        return $Default
-    }
-
-    return $prop.Value
-}
+. (Join-Path $PSScriptRoot "agent-1c.runtime-values.ps1")
 
 function Get-DevBranchKind {
     param([object]$State)
@@ -1049,7 +1032,22 @@ function Get-OneCSourceIntegrityCandidatePaths {
             @($branchPaths + $targetPaths + $normalizedAdditionalPaths)
         } else {
             $overlapPaths = @($targetPaths | Where-Object { $branchPathSet.Contains($_) })
-            @($overlapPaths + $normalizedAdditionalPaths)
+            # Reset preserves ancestry while copying the master tree. An overlap
+            # against the old merge-base is not a merge risk when both tips, the
+            # index and the worktree agree. Keep explicit repairs unconditional.
+            $differentPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::Ordinal)
+            if ($overlapPaths.Count -gt 0) {
+                foreach ($arguments in @(
+                    @("diff", "--name-only", "-z", "--no-renames", $branchCommit, $targetCommit, "--", $repoExportPath),
+                    @("diff", "--name-only", "-z", "--no-renames", "--cached", $branchCommit, "--", $repoExportPath),
+                    @("diff", "--name-only", "-z", "--no-renames", "--", $repoExportPath)
+                )) {
+                    foreach ($differentPath in @(Get-GitPathList -Arguments $arguments)) {
+                        [void]$differentPaths.Add(([string]$differentPath).Replace("\", "/"))
+                    }
+                }
+            }
+            @(@($overlapPaths | Where-Object { $differentPaths.Contains($_) }) + $normalizedAdditionalPaths)
         }
     } else {
         @((Get-VerificationWorkingTreeChangePaths -PathSpec @($repoExportPath)) + $normalizedAdditionalPaths)
@@ -2170,6 +2168,7 @@ function Restore-DevBranchInfobaseFromSnapshot {
     )
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
+    Reset-DevBranchToolingProof -State $State -Reason $Reason
     Invoke-Designer `
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
@@ -2857,7 +2856,13 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             continue
         }
         $branchPath = [IO.Path]::GetFullPath((Join-Path $branchRoot ($target.Replace('/', [IO.Path]::DirectorySeparatorChar))))
-        if (-not $branchPath.StartsWith($branchPrefix, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath $branchPath -PathType Leaf)) {
+        if (-not $branchPath.StartsWith($branchPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+
+        $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
+        if ((Test-Path -LiteralPath $branchPath -PathType Leaf) -and
+            (Test-AiRulesFileMatchesInstalledHash -Path $branchPath -InstalledHash $expected)) {
             continue
         }
 
@@ -2875,7 +2880,6 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
         if (-not $mainEntries.ContainsKey($target)) {
             throw "AI_RULES_MANAGED_IGNORED_SOURCE_ENTRY_MISSING: $target"
         }
-        $expected = [string](Get-ConfigValueFromObject -Object $property.Value -Path "installedHash" -Default "")
         $mainExpected = [string](Get-ConfigValueFromObject -Object $mainEntries[$target] -Path "installedHash" -Default "")
         if ($expected -notmatch '^[0-9a-fA-F]{64}$' -or $mainExpected -ne $expected) {
             throw "AI_RULES_MANAGED_IGNORED_HASH_CONTRACT_MISMATCH: $target"
@@ -2894,7 +2898,7 @@ function Sync-AiRules1cManagedIgnoredFilesFromMain {
             throw "AI_RULES_MANAGED_IGNORED_COPY_VERIFY_FAILED: $target"
         }
         $copied++
-        Write-Host "Restored ignored ai_rules_1c managed file from main worktree: $target"
+        Write-Host "Synchronized ignored ai_rules_1c managed file from main worktree: $target"
     }
     return $copied
 }
@@ -3938,6 +3942,9 @@ function Assert-WorkflowPackageSourceRoot {
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
         ".agents\skills\itl-vanessa-ui-mcp\SKILL.md",
+        ".agents\skills\itl-remote-runner\SKILL.md",
+        ".agents\skills\itl-remote-agent\SKILL.md",
+        ".agents\skills\itl-performance\SKILL.md",
         "templates\USER-RULES.append.md"
     )) {
         $path = Join-Path $SourceRoot $relativePath
@@ -4111,6 +4118,9 @@ function Get-WorkflowUpdateManagedPathSpecs {
         ".agents/skills/product-docs",
         ".agents/skills/itl-roctup-1c-data",
         ".agents/skills/itl-vanessa-ui-mcp",
+        ".agents/skills/itl-remote-runner",
+        ".agents/skills/itl-remote-agent",
+        ".agents/skills/itl-performance",
         "docs/itl-workflow",
         "templates",
         "tests/features/Libraries/ITL",
@@ -4765,6 +4775,9 @@ function Update-WorkflowPackage {
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-runner"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-agent"
+        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-performance"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "docs\itl-workflow"
         Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
         foreach ($relativePath in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
@@ -9041,6 +9054,15 @@ function New-ForkedDevBranchState {
 
     $state = ConvertTo-Agent1cHashtable -Object $SourceState
     Remove-DevBranchForkTransientState -State $state | Out-Null
+    $state["toolingInfoBaseGeneration"] = [guid]::NewGuid().ToString("N")
+    $state["vanessaMcpSafeModeProof"] = $null
+    $state["yaxunitInstallationProof"] = $null
+    $state["toolingRecoveryId"] = ""
+    $state["toolingMutationId"] = ""
+    $state["toolingMutationAt"] = ""
+    $state["toolingRecoveredMutationId"] = ""
+    $state["toolingRecoveredMutationAt"] = ""
+    $state["toolingRecoveredAt"] = ""
 
     $now = (Get-Date).ToString("o")
     $state["devBranchName"] = [string]$Snapshot.targetBranchName
@@ -10428,7 +10450,7 @@ function Invoke-BranchSourceMergeTree {
         if ($exitCode -notin @(0, 1)) {
             throw "DEV_BRANCH_SOURCE_SYNC_MERGE_TREE_FAILED: exit=$exitCode; $stderr"
         }
-        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join [Environment]::NewLine) -split "`0", -1)
+        $tokens = ((@($rawOutput | ForEach-Object { [string]$_ }) -join "") -split ([string][char]0))
         $tree = if ($tokens.Count -gt 0) { ([string]$tokens[0]).Trim() } else { "" }
         if ($tree -notmatch '^[a-f0-9]{40,64}$') {
             throw "DEV_BRANCH_SOURCE_SYNC_TREE_MISSING: merge-tree did not return a tree object. $stderr"
@@ -10525,6 +10547,47 @@ function Invoke-BranchSourceSyncLoad {
     return $loadResult
 }
 
+function Get-DevBranchSourceSyncRefreshWrapper {
+    param([string]$Operation)
+
+    switch ($Operation) {
+        "refresh-dev-branch" { return "/itl-refresh" }
+        "refresh-dev-branch-lite" { return "/itl-refresh-lite" }
+        default { return "" }
+    }
+}
+
+function Assert-DevBranchSourceSyncLifecycleReady {
+    param(
+        [object]$State,
+        [ValidateSet("primary", "peer")]
+        [string]$Role,
+        [string]$SyncWorktreePath
+    )
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) { return }
+
+    $branch = [string](Get-StateValue -State $State -Name "devBranch" -Default "")
+    $worktreePath = [string](Get-StateValue -State $State -Name "worktreePath" -Default (Get-StateValue -State $State -Name "stateProjectRoot" -Default ""))
+    $operation = [string]$transaction.operation
+    $stage = [string]$transaction.stage
+    $conflictPaths = @($transaction.conflictPaths | Sort-Object -Unique)
+    $wrapper = Get-DevBranchSourceSyncRefreshWrapper -Operation $operation
+    Set-RunDevBranchState -State $State
+
+    if ($wrapper) {
+        $requiredAction = "In worktree '$worktreePath', continue the helper-owned merge with $wrapper. Resolve proven-compatible semantics, run git add, and repeat that wrapper until it succeeds; ask the user only if evidence leaves incompatible business outcomes. Then return to '$SyncWorktreePath' and repeat /itl-sync-branches."
+        Set-RunFailureContext -Category "merge-conflict" -RequiredAction $requiredAction
+        $pathText = if ($conflictPaths.Count -gt 0) { $conflictPaths -join ", " } else { "<none-recorded>" }
+        throw "DEV_BRANCH_SOURCE_SYNC_PENDING_REFRESH: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage' wrapper='$wrapper' files='$pathText'. Complete the recorded refresh through its original helper before source synchronization. Do not abort the merge or create its commit manually."
+    }
+
+    $requiredAction = "Ask the user whether to finish the helper-owned '$operation' operation in '$worktreePath' before synchronization. Do not abort the operation, alter its state, or create a commit manually."
+    Set-RunFailureContext -Category "runner" -RequiredAction $requiredAction
+    throw "DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage'. Source synchronization cannot replace a different helper-owned lifecycle operation."
+}
+
 function Sync-DevBranches {
     $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
     if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
@@ -10536,6 +10599,9 @@ function Sync-DevBranches {
     if ($peerName -ieq $primaryName) { throw "DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch." }
     $peerState = Read-DevBranchState -Name $peerName
     $exportPath = Assert-DevBranchSourceSyncCompatibility -PrimaryState $primaryState -PeerState $peerState
+    $syncWorktreePath = [string](Get-StateValue -State $primaryState -Name "worktreePath" -Default $script:ProjectRoot)
+    Assert-DevBranchSourceSyncLifecycleReady -State $primaryState -Role "primary" -SyncWorktreePath $syncWorktreePath
+    Assert-DevBranchSourceSyncLifecycleReady -State $peerState -Role "peer" -SyncWorktreePath $syncWorktreePath
     $pending = Get-PendingBranchSourceSync -State $primaryState
 
     if ($null -ne $pending) {
@@ -11048,7 +11114,7 @@ function Assert-DevBranchCheckpointGitState {
             Test-Path -LiteralPath $resolved -PathType Leaf -ErrorAction SilentlyContinue
         }
         if ($exists) {
-            throw "DEV_BRANCH_CHECKPOINT_GIT_OPERATION_IN_PROGRESS: $Operation cannot checkpoint while a $($entry.name) operation is in progress. Complete or abort it first."
+            throw "DEV_BRANCH_CHECKPOINT_GIT_OPERATION_IN_PROGRESS: $Operation cannot checkpoint while a $($entry.name) operation is in progress. Continue it through its owning workflow before retrying; do not alter or abort it from this command."
         }
     }
 
@@ -11248,12 +11314,22 @@ function Set-DevBranchTreeToMasterCommit {
 function Restore-ExistingDevBranchFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint,
+        [object]$Seed = $null,
+        [System.IDisposable]$ExistingLease = $null
     )
 
-    $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint
-    $lease = Open-BranchSeedLease -Mode read
+    if ($null -ne $Seed -and $null -eq $ExistingLease) {
+        throw "RESET_DEV_BRANCH_SEED_LEASE_REQUIRED: a captured seed requires its active reader lease."
+    }
+    $ownsLease = $null -eq $ExistingLease
+    $lease = if ($ownsLease) { Open-BranchSeedLease -Mode read } else { $ExistingLease }
     try {
+        if ($null -eq $Seed) { $Seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint }
+        if ([string]$Seed.configurationFingerprint -cne $ExpectedConfigurationFingerprint) {
+            throw "BRANCH_SEED_INCOMPATIBLE: captured seed does not match the reset master fingerprint."
+        }
+        Reset-DevBranchToolingProof -State $State -Reason "branch-reset-seed"
         if ((Get-InfoBaseKind) -eq "file") {
             $infoBasePath = Resolve-Agent1cFullPath -Path ([string]$State.devBranchInfoBasePath)
             New-Item -ItemType Directory -Force -Path $infoBasePath | Out-Null
@@ -11282,7 +11358,7 @@ function Restore-ExistingDevBranchFromSeed {
             if ($LASTEXITCODE -ne 0) { throw "Server seed restore provider failed with exit code $LASTEXITCODE." }
         }
     } finally {
-        $lease.Dispose()
+        if ($ownsLease) { $lease.Dispose() }
     }
     return $seed
 }
@@ -11290,12 +11366,15 @@ function Restore-ExistingDevBranchFromSeed {
 function Restore-ExistingDevBranchRuntimeFromSeed {
     param(
         [Parameter(Mandatory = $true)][object]$State,
-        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigurationFingerprint,
+        [object]$CapturedSeed = $null,
+        [System.IDisposable]$ExistingLease = $null
     )
 
     $seed = Restore-ExistingDevBranchFromSeed `
         -State $State `
-        -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint
+        -ExpectedConfigurationFingerprint $ExpectedConfigurationFingerprint `
+        -Seed $CapturedSeed -ExistingLease $ExistingLease
     $repositoryUnbound = $false
     if (Get-SourceUsesRepository) {
         Set-RunStage -Stage "reset.repository-unbind" -Detail "Unbinding the restored development copy from the source configuration repository."
@@ -11316,7 +11395,7 @@ function Add-DevBranchResetTransientStateClearUpdates {
 
     $stateHash = ConvertTo-Agent1cHashtable -Object $State
     foreach ($key in @($stateHash.Keys)) {
-        if ([string]$key -notmatch '^(?:last(?:Vanessa|Verification|Verified|Result|Unverified|EventLog)|finalResult|eventLogDebt|eventLogPendingCursor)') {
+        if ([string]$key -notmatch '^(?:last(?:Vanessa|YAxUnit|Verification|Verified|Result|Unverified|EventLog)|finalResult|eventLogDebt|eventLogPendingCursor)') {
             continue
         }
         $value = $stateHash[$key]
@@ -11348,95 +11427,130 @@ function Reset-DevBranch {
         }
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation "reset-dev-branch" -ConflictStage "reset.merge-conflicts") { return }
         Save-DevBranchCheckpoint -Operation "reset-dev-branch" -Message "chore: checkpoint before branch reset" | Out-Null
-        $masterSource = Get-DevBranchResetMasterSource
-        Assert-BranchSeedReady -ExpectedConfigurationFingerprint ([string]$masterSource.fingerprint) | Out-Null
-        $oldHead = Get-CurrentCommit
-        $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
-        Update-DevBranchState -State $state -Updates @{
-            resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
-            resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
-            resetMasterFingerprint = [string]$masterSource.fingerprint
-            resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
-            resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
-        }
-        $state = Read-DevBranchState -Name $DevBranchName
     }
 
-    $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
-    if (-not (Test-GitCommitExists $masterCommit)) {
-        throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
-    }
-    $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
-    if ($phase -eq "archive-pending") {
-        $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
-        Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
-        $state = Read-DevBranchState -Name $DevBranchName
-        $phase = "archive-complete"
-    }
-    if ($phase -eq "archive-complete") {
-        Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
-        $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
-        if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
-            Assert-CleanGit
-            $newHead = Get-CurrentCommit
-        } else {
-            $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+    Set-RunStage -Stage "reset.source" -Detail "Capturing local master and its compatible seed under shared source protection."
+    $inputs = Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
+        $masterSource = if ($resetStatus -ne "resetting") { Get-DevBranchResetMasterSource } else { $null }
+        $expected = if ($null -ne $masterSource) { [string]$masterSource.fingerprint } else { [string]$state.resetMasterFingerprint }
+        $lease = Open-BranchSeedLease -Mode read
+        try {
+            $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $expected
+            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; lease = $lease }
+        } catch {
+            $lease.Dispose()
+            throw
         }
-        Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
-        $state = Read-DevBranchState -Name $DevBranchName
-        $phase = "git-reset-complete"
     }
-    if ($phase -in @("git-reset-complete", "runtime-initializing")) {
-        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
-        Set-RunStage -Stage "reset.infobase" -Detail "Restoring the development infobase from the exact compatible branch seed."
-        $runtimeRestore = Restore-ExistingDevBranchRuntimeFromSeed -State $state -ExpectedConfigurationFingerprint ([string]$state.resetMasterFingerprint)
-        $seed = $runtimeRestore.seed
-        $now = (Get-Date).ToString("o")
-        $clear = @{
-            initializationStatus = "ready"; initializationError = ""; resetStatus = "resetting"; resetPhase = "runtime-initializing"
-            repositoryUnbound = [bool]$runtimeRestore.repositoryUnbound
-            lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
-            lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
-            loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
-            lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
-            lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
-            lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
-            lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
-            pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
-            branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
-            branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
-            branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
-            enterpriseNormalizationStatus = "pending"; enterpriseNormalizationReason = "branch-reset"; enterpriseNormalizationError = ""
+    $seedLease = $inputs.lease
+    try {
+        if ($resetStatus -ne "resetting") {
+            $masterSource = $inputs.masterSource
+            $oldHead = Get-CurrentCommit
+            $archivePath = Join-Path (Join-Path (Get-DevBranchArchiveRoot) ([string]$state.safeDevBranchName)) ("{0}-{1}" -f ((Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")), $oldHead.Substring(0, 8))
+            Update-DevBranchState -State $state -Updates @{
+                resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
+                resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
+                resetMasterFingerprint = [string]$masterSource.fingerprint
+                resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
+                resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
+            }
+            $state = Read-DevBranchState -Name $DevBranchName
         }
-        Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
-        Update-DevBranchState -State $state -Updates $clear
-        $state = Read-DevBranchState -Name $DevBranchName
-        $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
-        Ensure-DevBranchEventLogPendingCursor -State $state -Reason "branch-reset" | Out-Null
-        Ensure-DevBranchEnterpriseNormalized -State (Read-DevBranchState -Name $DevBranchName) -Reason "branch-reset" | Out-Null
-        $state = Read-DevBranchState -Name $DevBranchName
-        Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-        $state = Invoke-DevBranchDefaultMcpSetup -State $state
-        Sync-KiloItlCommandSurface
-        Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
-        Sync-DevBranchContextToDotEnv -State $state
-        $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
-        Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
-        Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
-    }
 
-    $completed = Read-DevBranchState -Name $DevBranchName
-    $report = [System.Collections.Generic.List[string]]::new()
-    $report.Add("## Ветка сброшена для новой доработки")
-    Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
-    Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
-    Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
-    Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
-    Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
-    Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
-    $report.Add("")
-    $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
-    Write-AndSetRunUserReport -Lines $report
+        $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
+        if (-not (Test-GitCommitExists $masterCommit)) {
+            throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
+        }
+        $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
+        if ($phase -eq "archive-pending") {
+            $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
+            Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
+            $state = Read-DevBranchState -Name $DevBranchName
+            $phase = "archive-complete"
+        }
+        if ($phase -eq "archive-complete") {
+            Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
+            $currentHeadTree = (Get-GitOutput @("rev-parse", "HEAD^{tree}")).Trim()
+            if ($currentHeadTree -ceq [string]$state.resetMasterTree) {
+                Assert-CleanGit
+                $newHead = Get-CurrentCommit
+            } else {
+                $newHead = Set-DevBranchTreeToMasterCommit -MasterCommit $masterCommit
+            }
+            Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
+            $state = Read-DevBranchState -Name $DevBranchName
+            $phase = "git-reset-complete"
+        }
+        if ($phase -in @("git-reset-complete", "runtime-initializing")) {
+            Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
+            Set-RunStage -Stage "reset.infobase" -Detail "Restoring the development infobase from the exact compatible branch seed."
+            $runtimeRestore = Restore-ExistingDevBranchRuntimeFromSeed -State $state -ExpectedConfigurationFingerprint ([string]$state.resetMasterFingerprint) -CapturedSeed $inputs.seed -ExistingLease $seedLease
+            $seed = $runtimeRestore.seed
+            $now = (Get-Date).ToString("o")
+            $clear = @{
+                initializationStatus = "ready"; initializationError = ""; resetStatus = "resetting"; resetPhase = "runtime-initializing"
+                repositoryUnbound = [bool]$runtimeRestore.repositoryUnbound
+                lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
+                lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
+                loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
+                lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
+                lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
+                lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
+                lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
+                pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
+                branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
+                branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
+                branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
+                enterpriseNormalizationStatus = "pending"; enterpriseNormalizationReason = "branch-reset"; enterpriseNormalizationError = ""
+            }
+            Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
+            Update-DevBranchState -State $state -Updates $clear
+            $state = Read-DevBranchState -Name $DevBranchName
+            $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
+            # No shared seed paths are read after installing the event-log baseline.
+            # Release before re-entering main: a seed writer may already own main.
+            $seedLease.Dispose()
+            $seedLease = $null
+            Ensure-DevBranchEventLogPendingCursor -State $state -Reason "branch-reset" | Out-Null
+            Ensure-DevBranchEnterpriseNormalized -State (Read-DevBranchState -Name $DevBranchName) -Reason "branch-reset" | Out-Null
+            $state = Read-DevBranchState -Name $DevBranchName
+            Invoke-Agent1cMainWorktreeReadScope -ScriptBlock {
+                Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
+            }
+            $state = Invoke-DevBranchDefaultMcpSetup -State $state
+            Sync-KiloItlCommandSurface
+            Invoke-AiRules1cManagedMcpConfigReconcile -Operation "reset-dev-branch MCP reconcile" | Out-Null
+            Sync-DevBranchContextToDotEnv -State $state
+            $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
+            Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
+            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+        }
+
+        $completed = Read-DevBranchState -Name $DevBranchName
+        $report = [System.Collections.Generic.List[string]]::new()
+        $report.Add("## Ветка сброшена для новой доработки")
+        Add-RunUserReportLine -Lines $report -Label "Архив" -Value ([string]$completed.resetArchivePath)
+        Add-RunUserReportLine -Lines $report -Label "DT" -Value ([string]$completed.resetArchiveDtPath)
+        Add-RunUserReportLine -Lines $report -Label "Предыдущий HEAD" -Value ([string]$completed.resetOldHead)
+        Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
+        Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
+        Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
+        $report.Add("")
+        $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
+        Write-AndSetRunUserReport -Lines $report
+    } finally {
+        if ($null -ne $seedLease) { $seedLease.Dispose() }
+    }
+}
+
+function Assert-RefreshExpectedMasterCommit {
+    param([string]$TargetCommit, [string]$Operation)
+
+    if ($ExpectedMasterCommit -and $TargetCommit -cne $ExpectedMasterCommit) {
+        Set-RunFailureContext -Category "refresh-target" -RequiredAction "recover-refresh-target: inspect the recorded pending merge; finish it through its original ITL helper without ExpectedMasterCommit, then run refresh-dev-branch-lite with -ExpectedMasterCommit $ExpectedMasterCommit. Preserve pending state; never retarget or commit the merge manually."
+        throw "REFRESH_MASTER_COMMIT_CHANGED: operation=$Operation expected=$ExpectedMasterCommit actual=$TargetCommit"
+    }
 }
 
 function Invoke-RefreshDevBranchCore {
@@ -11448,6 +11562,12 @@ function Invoke-RefreshDevBranchCore {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation $OperationName
     Assert-DevBranchExtensionInitialized -State $state -Operation $OperationName
+    # A resumed merge owns its original target. Check before recovery can clear
+    # that transaction or restart the helper with the old target.
+    $pendingRefresh = Get-PendingDevBranchMergeTransaction -State $state
+    if ($null -ne $pendingRefresh -and $pendingRefresh.operation -ceq $OperationName) {
+        Assert-RefreshExpectedMasterCommit -TargetCommit $pendingRefresh.targetCommit -Operation $OperationName
+    }
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
@@ -11470,9 +11590,7 @@ function Invoke-RefreshDevBranchCore {
         if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
             throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
         }
-        if ($ExpectedMasterCommit -and $targetMasterCommit -cne $ExpectedMasterCommit) {
-            throw "REFRESH_MASTER_COMMIT_CHANGED: expected=$ExpectedMasterCommit actual=$targetMasterCommit"
-        }
+        Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-NewDevBranchLifecycleMerge `
             -State $state `
@@ -11487,6 +11605,7 @@ function Invoke-RefreshDevBranchCore {
     if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
+    Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
@@ -11533,6 +11652,7 @@ function Invoke-RefreshDevBranchCore {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Read-DevBranchState -Name $DevBranchName
+        $script:RunRefreshMasterCommit = $targetMasterCommit
         Write-Host "Development branch refreshed from exact master commit: $targetMasterCommit"
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
         if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -11627,10 +11747,15 @@ function Refresh-AllDevBranches {
     Set-RunStage -Stage "refresh-all.master" -Detail "Synchronizing master once before refreshing active branches."
     Sync-Master -NoDelegate -SeedPolicy "Rebuild"
     $masterCommit = Get-CurrentCommit
+    Enter-Agent1cMainReadPhase
+    $currentMasterCommit = Get-CurrentCommit
+    if ($currentMasterCommit -cne $masterCommit) {
+        throw "REFRESH_MASTER_COMMIT_CHANGED: expected=$masterCommit actual=$currentMasterCommit"
+    }
     $inventory = Get-ActiveReadyDevBranchTargets
     $results = [System.Collections.Generic.List[object]]::new()
     foreach ($error in @($inventory.errors)) {
-        $results.Add([pscustomobject]@{ branch = "<state>"; worktreePath = ""; status = "failed"; detail = [string]$error; userReport = ""; requiredAction = "" }) | Out-Null
+        $results.Add([pscustomobject]@{ branch = "<state>"; worktreePath = ""; status = "failed"; detail = [string]$error; errorCategory = "branch-state"; stage = "inventory"; statusPath = ""; refreshMasterCommit = ""; requiredAction = "inspect the named branch state and use its lifecycle recovery; do not delete state or reset the branch" }) | Out-Null
     }
 
     $runRoot = if ($RunStatusPath) { Split-Path -Parent (Resolve-RunFilePath -Path $RunStatusPath) } else { Join-Path $script:ProjectRoot ".agent-1c\runs" }
@@ -11646,7 +11771,7 @@ function Refresh-AllDevBranches {
             try {
                 $running.Add((Start-RefreshAllBranchProcess -Target $target -MasterCommit $masterCommit -OutputRoot $outputRoot)) | Out-Null
             } catch {
-                $results.Add([pscustomobject]@{ branch = [string]$target.branch; worktreePath = [string]$target.worktreePath; status = "failed"; detail = $_.Exception.Message; userReport = ""; requiredAction = "" }) | Out-Null
+                $results.Add([pscustomobject]@{ branch = [string]$target.branch; worktreePath = [string]$target.worktreePath; status = "failed"; detail = $_.Exception.Message; errorCategory = "runner"; stage = "start"; statusPath = ""; refreshMasterCommit = ""; requiredAction = "diagnose the branch runner launch failure before retrying" }) | Out-Null
             }
         }
         Set-RunStage -Stage "refresh-all.branches" -Detail ("master={0}; running={1}; pending={2}; complete={3}" -f $masterCommit, $running.Count, $pending.Count, $results.Count)
@@ -11661,29 +11786,64 @@ function Refresh-AllDevBranches {
             $stderrText = if (Test-Path -LiteralPath $entry.stderr -PathType Leaf) { Read-Utf8Text -Path $entry.stderr } else { "" }
             $summary = $null
             try { if ($stdoutText) { $summary = $stdoutText | ConvertFrom-Json } } catch {}
+            # Recover the unbounded child evidence before aggregating: compact
+            # transport may omit or shorten both errors and requiredAction.
+            $evidence = $summary
+            $childStatusPath = [string](Get-StateValue -State $summary -Name "statusPath" -Default "")
+            if ($childStatusPath -and (Test-Path -LiteralPath $childStatusPath -PathType Leaf)) {
+                try {
+                    $childStatus = Read-Utf8Text -Path $childStatusPath | ConvertFrom-Json
+                    if ([string]$childStatus.status -ceq [string]$summary.status) { $evidence = $childStatus }
+                } catch {}
+            }
             # The compact runner's terminal JSON is authoritative. Under parallel
             # Start-Process collection Windows PowerShell can expose a stale
             # non-zero ExitCode even after the owned runner validated and emitted
             # a terminal success. Missing or malformed JSON still fails closed.
             $succeeded = $null -ne $summary -and [string]$summary.status -eq "succeeded"
-            $detail = if ($null -ne $summary -and $summary.error) { [string]$summary.error } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
+            $childError = [string](Get-StateValue -State $evidence -Name "errorMessage" -Default (Get-StateValue -State $summary -Name "error" -Default ""))
+            $detail = if ($childError) { $childError } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
+            $actualMasterCommit = [string](Get-StateValue -State $evidence -Name "refreshMasterCommit" -Default "")
+            $category = [string](Get-StateValue -State $evidence -Name "errorCategory" -Default $(if ($succeeded) { "" } else { "runner" }))
+            $requiredAction = [string](Get-StateValue -State $evidence -Name "requiredAction" -Default "")
+            if ($succeeded -and $actualMasterCommit -cne $masterCommit) {
+                $succeeded = $false
+                $category = "refresh-target"
+                $detail = "REFRESH_ALL_TARGET_UNVERIFIED: expected=$masterCommit actual=$actualMasterCommit"
+                $requiredAction = "inspect the child status and pending merge, then run refresh-dev-branch-lite with -ExpectedMasterCommit $masterCommit; success requires this exact target"
+            }
+            if (-not $succeeded -and -not $requiredAction) {
+                $requiredAction = "inspect the child status and logs, resolve the reported blocker, then repeat the same branch ITL helper"
+            }
             $results.Add([pscustomobject]@{
                 branch = [string]$entry.target.branch
                 worktreePath = [string]$entry.target.worktreePath
                 status = $(if ($succeeded) { "succeeded" } else { "failed" })
                 detail = $detail
-                userReport = $(if ($null -ne $summary) { [string]$summary.userReport } else { "" })
-                requiredAction = $(if ($null -ne $summary) { [string](Get-StateValue -State $summary -Name "requiredAction" -Default "") } else { "" })
+                errorCategory = $category
+                stage = [string](Get-StateValue -State $evidence -Name "stage" -Default "")
+                statusPath = $childStatusPath
+                stdoutPath = [string]$entry.stdout
+                stderrPath = [string]$entry.stderr
+                refreshMasterCommit = $actualMasterCommit
+                requiredAction = $requiredAction
             }) | Out-Null
             [void]$running.Remove($entry)
         }
         if ($running.Count -gt 0) { Start-Sleep -Milliseconds 500 }
     }
 
+    $failed = @($results | Where-Object status -ne "succeeded")
+    Set-RunStage -Stage "refresh-all.complete" -Detail "master=$masterCommit; running=0; pending=0; complete=$($results.Count); succeeded=$($results.Count - $failed.Count); failed=$($failed.Count)"
+    $resultsPath = Join-Path $outputRoot "results.json"
+    Write-Utf8TextAtomic -Path $resultsPath -Value (([ordered]@{ schemaVersion = 1; masterCommit = $masterCommit; results = @($results | Sort-Object branch) } | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    Set-RunResultArtifacts -ResultManifestPath $resultsPath
     $report = [System.Collections.Generic.List[string]]::new()
     $report.Add("## Обновление всех веток")
     Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value $masterCommit
     Add-RunUserReportLine -Lines $report -Label "Параллельность" -Value $MaxParallelBranches
+    Add-RunUserReportLine -Lines $report -Label "Успешно / ошибок" -Value "$($results.Count - $failed.Count) / $($failed.Count)"
+    Add-RunUserReportLine -Lines $report -Label "Подробные результаты и продолжение" -Value $resultsPath
     if ($results.Count -eq 0) {
         Add-RunUserReportLine -Lines $report -Label "Ветки" -Value "активных ready-веток нет"
     } else {
@@ -11692,6 +11852,12 @@ function Refresh-AllDevBranches {
         foreach ($result in @($results | Sort-Object branch)) {
             $suffix = if ($result.detail) { ": $($result.detail)" } else { "" }
             $report.Add("- $($result.branch): $($result.status)$suffix")
+            if ($result.status -ne "succeeded") {
+                $report.Add("  - Категория: $($result.errorCategory); worktree: $($result.worktreePath)")
+            }
+            if ($result.requiredAction) {
+                $report.Add("  - Продолжение: $($result.requiredAction)")
+            }
             if ([string]$result.requiredAction -match '^classify-tests-after-refresh:') {
                 $report.Add("  - Классификация тестов: требуется в $($result.worktreePath)")
             }
@@ -11699,11 +11865,11 @@ function Refresh-AllDevBranches {
     }
     $classificationTargets = @($results | Where-Object { [string]$_.requiredAction -match '^classify-tests-after-refresh:' })
     if ($classificationTargets.Count -gt 0) {
-        $script:RunRequiredAction = "classify-tests-after-refresh: update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
+        $script:RunRequiredAction = "classify-tests-after-refresh: split oversized or mixed feature files and update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
     }
     Write-AndSetRunUserReport -Lines $report
-    $failed = @($results | Where-Object status -ne "succeeded")
     if ($failed.Count -gt 0) {
+        Set-RunFailureContext -Category "branch-aggregate" -RequiredAction "recover-refresh-all: read $resultsPath and continue each branch's requiredAction in its worktree, including test classification. Preserve the pinned master $masterCommit and pending merges; do not rerun master synchronization or report completion while any branch remains blocked."
         throw "REFRESH_ALL_BRANCH_FAILURE: $($failed.Count) branch operation(s) failed. See the aggregate user report."
     }
 }

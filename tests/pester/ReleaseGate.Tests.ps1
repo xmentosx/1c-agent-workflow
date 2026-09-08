@@ -1124,7 +1124,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             ($upgradeOutput -join [Environment]::NewLine) | Should -Match "RELEASE_E2E_CHECKPOINT_UPGRADE_REQUIRED"
             [System.IO.File]::WriteAllText($checkpointPath, $checkpointV2Text, [System.Text.UTF8Encoding]::new($false))
 
-            # Auto keeps only exact stage fingerprints across a new release.
+            # A harness-only repair must not invalidate independent runtime proof.
             Add-Content -LiteralPath $helperPath -Encoding UTF8 -Value "# changed helper identity"
             $incrementalSummaryPath = Join-Path $tempRoot "incremental-summary.json"
             & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
@@ -1132,7 +1132,9 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $LASTEXITCODE | Should -Be 0
             $incrementalSummary = Get-Content -LiteralPath $incrementalSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $incrementalSummary.crossReleaseReuse | Should -BeTrue
-            @($incrementalSummary.invalidatedStages) | Should -Contain "config-cadence"
+            @($incrementalSummary.invalidatedStages) | Should -Not -Contain "config-cadence"
+            $incrementalSummary.stages.'config-cadence'.execution | Should -Be "reused"
+            @($incrementalSummary.executedStages) | Should -Not -Contain "config-cadence"
             $incrementalSummary.stages.'verification-refresh'.execution | Should -Be "executed"
             @($incrementalSummary.executedStages) | Should -Contain "verification-refresh"
             @($incrementalSummary.executedStages) | Should -Contain "result-cleanup"

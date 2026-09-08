@@ -1,5 +1,9 @@
 # YAxUnit: Algorithmic Unit Tests
 
+Engine and test-extension loading is incremental and tied to the target database
+generation plus fresh runtime evidence. For prerequisite failures and recovery,
+see [tooling-recovery.md](tooling-recovery.md).
+
 Read this reference before changing non-trivial calculations, parsers, selectors, grouping, allocation, rounding, date/period logic, recursive traversal, state transitions, or error recovery. YAxUnit complements Vanessa: it proves local algorithmic contracts quickly; Vanessa proves object interaction, persistence, integration, and visible UI behavior.
 
 ## Required decision

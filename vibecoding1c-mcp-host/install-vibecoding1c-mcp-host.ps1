@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -2242,6 +2242,24 @@ function Repair-GraphComposeResourceText {
     return [regex]::Replace($ComposeText, '(?m)^([ \t]+memory):(?=\S)', '$1: ')
 }
 
+function Add-GraphCpuEmbeddingBootstrapToComposeText {
+    param([string]$ComposeText)
+
+    $servicePattern = '(?ms)(^  mcp-app:\r?\n)(?<body>.*?)(?=^  [A-Za-z0-9_.-]+:\s*\r?$|\z)'
+    $match = [regex]::Match($ComposeText, $servicePattern)
+    if (-not $match.Success) {
+        throw "Graph compose does not contain the expected mcp-app service."
+    }
+    $body = $match.Groups["body"].Value
+    if ($body -match '(?m)^    command:') {
+        throw "Graph compose mcp-app already declares command; refusing to replace the upstream entrypoint implicitly."
+    }
+    $newline = $(if ($ComposeText.Contains("`r`n")) { "`r`n" } else { "`n" })
+    $bootstrap = "import config; import mcp_server; config.settings.openai_api_key=''; config.settings.openai_embedding_api_key=''; config.settings.openai_embedding_api_base=''; import main; main.main()"
+    $commandLine = "    command: [`"python`", `"-c`", `"$bootstrap`"]$newline"
+    return ($ComposeText.Substring(0, $match.Groups["body"].Index) + $commandLine + $body + $ComposeText.Substring($match.Index + $match.Length))
+}
+
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2267,6 +2285,9 @@ function Start-ComposeServer {
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
         $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
         $composeText = Repair-GraphComposeResourceText -ComposeText $composeText
+        if ((Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+            $composeText = Add-GraphCpuEmbeddingBootstrapToComposeText -ComposeText $composeText
+        }
     }
     Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
@@ -3419,8 +3440,25 @@ function Wait-HostMcpIndexCompletion {
     $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
     $successfulPolls = 0
     $lastText = ""
+    $lastProbeError = ""
     while ((Get-Date) -lt $deadline) {
-        $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool
+        try {
+            $result = Invoke-HostMcpTool -Connection $Connection -Name $StatusTool -TimeoutSec 300
+            $lastProbeError = ""
+        } catch {
+            $lastProbeError = $_.Exception.Message
+            $successfulPolls = 0
+            Write-Warning "Index status probe failed transiently: server=$ServerId configId=$ConfigId error=$lastProbeError"
+            if ((Get-Date) -ge $deadline) { break }
+            Start-Sleep -Seconds $PollSeconds
+            try {
+                $Connection = Open-HostMcpConnection -Url ([string]$Connection.url) -TimeoutSec 60
+            } catch {
+                $lastProbeError = $_.Exception.Message
+                Write-Warning "Index status reconnect pending: server=$ServerId configId=$ConfigId error=$lastProbeError"
+            }
+            continue
+        }
         $lastText = Get-HostMcpToolResultText -Result $result
         $state = Get-HostMcpIndexState -Text $lastText
         Write-Host "Index status: server=$ServerId configId=$ConfigId state=$state"
@@ -3435,7 +3473,7 @@ function Wait-HostMcpIndexCompletion {
         }
         Start-Sleep -Seconds $PollSeconds
     }
-    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText"
+    throw "Incremental indexing did not reach a stable successful status for '$ServerId' configId '$ConfigId' within $TimeoutMinutes minute(s). Last status: $lastText. Last probe error: $lastProbeError"
 }
 
 function Get-TrackedProjectServerForConfig {
@@ -4126,6 +4164,137 @@ function Start-HostServers {
     }
 }
 
+function Invoke-GraphCpuEmbeddingModelMigration {
+    param(
+        [object]$Config,
+        [string]$TargetConfigId
+    )
+    if ([string]::IsNullOrWhiteSpace($TargetConfigId)) {
+        throw "graph-cpu-migrate-model requires an explicit -ConfigId."
+    }
+    $settings = Get-HostEmbeddingSettings -Config $Config
+    if ($settings.mode -ne "cpu") {
+        throw "graph-cpu-migrate-model is available only in standalone CPU embedding mode."
+    }
+    $expectedDimension = switch ([string]$settings.model) {
+        "intfloat/multilingual-e5-small" { 384 }
+        "intfloat/multilingual-e5-base" { 768 }
+        "intfloat/multilingual-e5-large" { 1024 }
+        default { throw "graph-cpu-migrate-model has no safe dimension contract for embedding model '$($settings.model)'." }
+    }
+    $state = Read-HostState -Config $Config
+    $matches = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq "graph" -and
+        [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") -eq $TargetConfigId
+    })
+    if ($matches.Count -ne 1) {
+        throw "Expected exactly one tracked Graph server for configId '$TargetConfigId', found $($matches.Count)."
+    }
+    $containerName = [string](Get-ObjectValue -Object $matches[0] -Name "containerName" -Default "")
+    if (-not $containerName -or (Get-HostContainerPublishState -ContainerName $containerName) -ne "running") {
+        throw "Tracked Graph container for configId '$TargetConfigId' is not running: $containerName"
+    }
+    $targetModelId = "offline:$($settings.model)"
+    $legacyModelIds = @("openai:text-embedding-ada-002", "openai:$($settings.model)")
+    if ($DryRun) {
+        Write-Host "Would validate $expectedDimension-dimensional Graph vectors and migrate configId '$TargetConfigId' to model id '$targetModelId' in container '$containerName'."
+        return
+    }
+
+    $migrationScript = @'
+import json
+import os
+import sys
+from neo4j import GraphDatabase
+
+target_model_id = sys.argv[1]
+expected_dimension = int(sys.argv[2])
+allowed_model_ids = set(sys.argv[3].split("|")) | {target_model_id}
+driver = GraphDatabase.driver(
+    os.environ["NEO4J_URI"],
+    auth=(os.environ["NEO4J_USERNAME"], os.environ["NEO4J_PASSWORD"]),
+)
+database = os.environ.get("NEO4J_DATABASE", "neo4j")
+try:
+    rows = driver.execute_query(
+        "MATCH (n:SystemMeta) RETURN n.embedding_model_id AS model_id",
+        database_=database,
+    ).records
+    if len(rows) != 1:
+        raise RuntimeError(f"expected exactly one SystemMeta node, found {len(rows)}")
+    current_model_id = rows[0]["model_id"]
+    if current_model_id not in allowed_model_ids:
+        raise RuntimeError(f"refusing unexpected stored embedding model id: {current_model_id!r}")
+
+    vector_properties = (
+        ("MetadataObject", "description_embedding"),
+        ("Routine", "routine_embedding"),
+        ("DescriptionChunk", "embedding"),
+    )
+    property_counts = {}
+    populated_vectors = 0
+    for label, prop in vector_properties:
+        query = (
+            f"MATCH (n:{label}) WHERE n.{prop} IS NOT NULL "
+            f"RETURN collect(DISTINCT size(n.{prop})) AS dimensions, count(n) AS count"
+        )
+        record = driver.execute_query(query, database_=database).records[0]
+        dimensions = sorted(int(value) for value in record["dimensions"])
+        count = int(record["count"])
+        if dimensions and dimensions != [expected_dimension]:
+            raise RuntimeError(f"refusing {label}.{prop} dimensions {dimensions}; expected [{expected_dimension}]")
+        property_counts[f"{label}.{prop}"] = count
+        populated_vectors += count
+    if populated_vectors == 0:
+        raise RuntimeError("refusing model-id migration because the database contains no populated vectors")
+
+    indexes = driver.execute_query(
+        "SHOW INDEXES YIELD name, type, state, options "
+        "WHERE type = 'VECTOR' RETURN name, state, options ORDER BY name",
+        database_=database,
+    ).records
+    if not indexes:
+        raise RuntimeError("refusing model-id migration because the database contains no vector indexes")
+    index_names = []
+    for record in indexes:
+        name = str(record["name"])
+        state = str(record["state"])
+        dimension = int(record["options"]["indexConfig"]["vector.dimensions"])
+        if state != "ONLINE" or dimension != expected_dimension:
+            raise RuntimeError(
+                f"refusing vector index {name!r}: state={state!r}, dimension={dimension}, expected={expected_dimension}"
+            )
+        index_names.append(name)
+
+    if current_model_id != target_model_id:
+        driver.execute_query(
+            "MATCH (n:SystemMeta) SET n.embedding_model_id = $target_model_id",
+            target_model_id=target_model_id,
+            database_=database,
+        )
+    print(json.dumps({
+        "status": "unchanged" if current_model_id == target_model_id else "migrated",
+        "previousModelId": current_model_id,
+        "modelId": target_model_id,
+        "dimension": expected_dimension,
+        "propertyCounts": property_counts,
+        "vectorIndexes": index_names,
+    }, separators=(",", ":")))
+finally:
+    driver.close()
+'@
+    $output = @(Invoke-DockerCommandCapture -Arguments @(
+        "exec", $containerName, "python", "-c", $migrationScript,
+        $targetModelId, [string]$expectedDimension, ($legacyModelIds -join "|")
+    ) -TimeoutSec 120 -Description "migrate Graph CPU embedding model id for $TargetConfigId")
+    $jsonLine = @($output | Where-Object { ([string]$_).TrimStart().StartsWith("{") } | Select-Object -Last 1)
+    if ($jsonLine.Count -ne 1) {
+        throw "Graph CPU embedding model migration for configId '$TargetConfigId' returned no JSON result."
+    }
+    $result = ([string]$jsonLine[0]) | ConvertFrom-Json
+    Write-Host "Graph CPU embedding model $($result.status): configId=$TargetConfigId previous=$($result.previousModelId) current=$($result.modelId) dimension=$($result.dimension) vectors=$((@($result.propertyCounts.PSObject.Properties | ForEach-Object { [int]$_.Value }) | Measure-Object -Sum).Sum)"
+}
+
 function Invoke-HostReindex {
     param(
         [object]$Config,
@@ -4599,6 +4768,12 @@ switch ($Action) {
     }
     "reindex" {
         Invoke-HostReindex -Config $config -TargetConfigId $ConfigId -TargetServerId $ServerId
+    }
+    "graph-cpu-migrate-model" {
+        if ($ServerId -and $ServerId -ne "graph") {
+            throw "graph-cpu-migrate-model accepts only -ServerId graph."
+        }
+        Invoke-GraphCpuEmbeddingModelMigration -Config $config -TargetConfigId $ConfigId
     }
     "publish" {
         Publish-Registry -Config $config

@@ -7,7 +7,7 @@ It "parses the orchestrator and exposes the bounded delivery actions" {
         $ast = [Management.Automation.Language.Parser]::ParseFile($DeliveryScript, [ref]$tokens, [ref]$errors)
         @($errors) | Should -BeNullOrEmpty
         $action = $ast.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "Action" } | Select-Object -First 1
-        @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "PublishDevelop", "PromoteRelease", "ReleaseMaster")
+        @($action.Attributes | Where-Object TypeName -match ValidateSet | Select-Object -ExpandProperty PositionalArguments | ForEach-Object SafeGetValue) | Should -Be @("RegisterChange", "Status", "Plan", "Cleanup", "DiagnoseFull", "PublishDevelop", "PromoteRelease", "ReleaseMaster")
         $text = $DeliverySourceText
         $text | Should -Not -Match 'Restore-DeliveryContinuationQualification'
         $text | Should -Match 'publication-attempts\\develop\.json'
@@ -17,6 +17,8 @@ It "parses the orchestrator and exposes the bounded delivery actions" {
         $text | Should -Match 'Restore-PriorDevelopPublicationQualification'
         $text | Should -Match 'Invoke-SourceGate -Mode "Develop" -WorkingRoot \$worktree\.path -TargetBaseRef \$remoteDevelop'
         $text | Should -Match 'Promote-AccumulatedDevelopToMaster'
+        $text | Should -Match 'source-delivery-supervisor\.ps1'
+        $text | Should -Match 'refs/remotes/\$Remote/master'
     }
 
 It "resolves the repository root after parameter binding in Windows PowerShell 5.1" {
@@ -25,6 +27,32 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         $status = $result.stdout | ConvertFrom-Json
         $status.status | Should -Be "ok"
         @($status.PSObject.Properties.Name) | Should -Contain "queue"
+    }
+
+It "runs the immutable origin master supervisor while the candidate checkout contains different delivery code" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root switch --quiet -c master $fixture.base
+            $supervisorDirectory = Join-Path $fixture.root 'scripts'; New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            $stableSupervisor = @'
+[CmdletBinding()]
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor)
+[pscustomobject]@{ status='stable-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
+'@
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $stableSupervisor, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: stable supervisor'
+            $masterCommit = (& git -C $fixture.root rev-parse HEAD).Trim(); & git -C $fixture.root push --quiet origin HEAD:master
+            & git -C $fixture.root switch --quiet develop
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "throw 'candidate supervisor must not execute'", [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
+            & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
+
+            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Status','-RepositoryRoot',('"' + $fixture.root + '"'))
+            $payload = $result.stdout | ConvertFrom-Json
+            $payload.status | Should -Be 'stable-supervisor'; $payload.supervisorCommit | Should -Be $masterCommit; $payload.bootstrap | Should -BeFalse
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 
 It "registers base and head atomically for a path with Cyrillic and spaces" {

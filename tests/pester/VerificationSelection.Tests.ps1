@@ -169,6 +169,160 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "requires the agent to split an oversized mixed-cadence acceptance suite" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-scenario-scope-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $features = Join-Path $tempRoot "tests\features"
+            New-Item -ItemType Directory -Force -Path $features | Out-Null
+            $feature = Join-Path $features "Monolith.feature"
+            $featureLines = @("# language: ru", "Функционал: Монолит")
+            foreach ($number in 1..10) {
+                if ($number -eq 10) { $featureLines += "@diag_slow_probe" }
+                $featureLines += "Сценарий: Проверка $number"
+                $featureLines += "    Дано выполнено действие $number"
+            }
+            [IO.File]::WriteAllText($feature, ($featureLines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), '{"schemaVersion":1,"suites":[{"id":"monolith","purpose":"acceptance","featurePaths":["tests/features/Monolith.feature"],"ownerPaths":["src/cf/**"]}]}', [Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            }
+
+            $result.classificationComplete | Should -BeFalse
+            $result.migrationRequired | Should -BeTrue
+            @($result.scenarios).Count | Should -Be 10
+            $result.scenarios[0].line | Should -Be 3
+            $result.scenarios[9].cadenceHint | Should -Be "explicit"
+            ($result.issues -join "`n") | Should -Match "VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD"
+            ($result.issues -join "`n") | Should -Match "VERIFICATION_SUITE_MIXED_CADENCE"
+            ($result.issues -join "`n") | Should -Match "The agent must"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts bounded acceptance suites and a separate explicit diagnostic suite" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-scenario-split-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $features = Join-Path $tempRoot "tests\features"
+            New-Item -ItemType Directory -Force -Path $features | Out-Null
+            $files = @()
+            foreach ($definition in @(
+                [pscustomobject]@{ Name = "Orders"; Count = 4; Tag = "" },
+                [pscustomobject]@{ Name = "Reports"; Count = 4; Tag = "" },
+                [pscustomobject]@{ Name = "Diagnostics"; Count = 10; Tag = "@diag_probe" }
+            )) {
+                $path = Join-Path $features ($definition.Name + ".feature")
+                $lines = @("# language: ru", "Функционал: $($definition.Name)")
+                foreach ($number in 1..$definition.Count) {
+                    if ($definition.Tag) { $lines += $definition.Tag }
+                    $lines += "Сценарий: $($definition.Name) $number"
+                    $lines += "    Дано выполнено действие $number"
+                }
+                [IO.File]::WriteAllText($path, ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                $files += $path
+            }
+            [IO.File]::WriteAllText((Join-Path $tempRoot "tests\verification-suites.branch.json"), @'
+{"schemaVersion":1,"suites":[
+  {"id":"orders","purpose":"acceptance","featurePaths":["tests/features/Orders.feature"],"ownerPaths":["src/cf/Orders/**"]},
+  {"id":"reports","purpose":"acceptance","featurePaths":["tests/features/Reports.feature"],"ownerPaths":["src/cf/Reports/**"]},
+  {"id":"diagnostics","purpose":"explicit","featurePaths":["tests/features/Diagnostics.feature"],"ownerPaths":["tools/diagnostics/**"]}
+]}
+'@, [Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                Read-VerificationSuiteCatalog -ApplicationFeatureFiles $files
+            }
+
+            $result.classificationComplete | Should -BeTrue
+            $result.migrationRequired | Should -BeFalse
+            @($result.scenarios).Count | Should -Be 18
+            @($result.scenarios | Where-Object purpose -eq "acceptance").Count | Should -Be 8
+            @($result.scenarios | Where-Object purpose -eq "explicit").Count | Should -Be 10
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "allows refresh migration to move intact scenarios but not rewrite them" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-scenario-preserve-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
+            [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}', [Text.UTF8Encoding]::new($false))
+            $monolith = Join-Path $tempRoot "tests\features\Monolith.feature"
+            $scenarioBlocks = @(1..9 | ForEach-Object { "Сценарий: Проверка $_`n    Дано выполнено действие $_" })
+            [IO.File]::WriteAllText($monolith, "# language: ru`nФункционал: Монолит`n" + ($scenarioBlocks -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+            $catalogPath = Join-Path $tempRoot "tests\verification-suites.branch.json"
+            [IO.File]::WriteAllText($catalogPath, '{"schemaVersion":1,"suites":[{"id":"monolith","purpose":"acceptance","featurePaths":["tests/features/Monolith.feature"],"ownerPaths":["src/cf/**"]}]}', [Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $before = Update-VerificationSuiteInventory -Reason "refresh-dev-branch-lite post-merge"
+                $baselinePath = Get-VerificationScenarioMigrationBaselinePath
+                $baselineCreated = Test-Path -LiteralPath $baselinePath -PathType Leaf
+
+                Remove-Item -LiteralPath $monolith -Force
+                $first = Join-Path $tempRoot "tests\features\First.feature"
+                $second = Join-Path $tempRoot "tests\features\Second.feature"
+                [IO.File]::WriteAllText($first, "# language: ru`nФункционал: First`n" + ($scenarioBlocks[0..4] -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($second, "# language: ru`nФункционал: Second`n" + ($scenarioBlocks[5..8] -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($catalogPath, '{"schemaVersion":1,"suites":[{"id":"first","purpose":"acceptance","featurePaths":["tests/features/First.feature"],"ownerPaths":["src/cf/First/**"]},{"id":"second","purpose":"acceptance","featurePaths":["tests/features/Second.feature"],"ownerPaths":["src/cf/Second/**"]}]}', [Text.UTF8Encoding]::new($false))
+                $after = Update-VerificationSuiteInventory -Reason "explicit classification validation"
+                Assert-VerificationScenarioMigrationPreserved -Inventory $after
+                [pscustomobject]@{
+                    before = $before
+                    after = $after
+                    baselineCreated = $baselineCreated
+                    baselineRemoved = -not (Test-Path -LiteralPath $baselinePath -PathType Leaf)
+                }
+            }
+
+            $result.before.scenarioMigrationRequired | Should -BeTrue
+            $result.baselineCreated | Should -BeTrue
+            $result.after.classificationComplete | Should -BeTrue
+            $result.baselineRemoved | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects scenario behavior changes during refresh classification migration" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-scenario-rewrite-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "tests\features") | Out-Null
+            [IO.File]::WriteAllText((Join-Path $tempRoot ".agent-1c\project.json"), '{"schemaVersion":1,"baseConfigurationVersion":"PM5","testsPath":"tests/features"}', [Text.UTF8Encoding]::new($false))
+            $monolith = Join-Path $tempRoot "tests\features\Monolith.feature"
+            $scenarioBlocks = @(1..9 | ForEach-Object { "Сценарий: Проверка $_`n    Дано выполнено действие $_" })
+            [IO.File]::WriteAllText($monolith, "# language: ru`nФункционал: Монолит`n" + ($scenarioBlocks -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+            $catalogPath = Join-Path $tempRoot "tests\verification-suites.branch.json"
+            [IO.File]::WriteAllText($catalogPath, '{"schemaVersion":1,"suites":[{"id":"monolith","purpose":"acceptance","featurePaths":["tests/features/Monolith.feature"],"ownerPaths":["src/cf/**"]}]}', [Text.UTF8Encoding]::new($false))
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                [void](Update-VerificationSuiteInventory -Reason "refresh-dev-branch post-merge")
+                $baselinePath = Get-VerificationScenarioMigrationBaselinePath
+                Remove-Item -LiteralPath $monolith -Force
+                $first = Join-Path $tempRoot "tests\features\First.feature"
+                $second = Join-Path $tempRoot "tests\features\Second.feature"
+                $rewritten = @($scenarioBlocks)
+                $rewritten[0] = "Сценарий: Проверка 1`n    Дано незаметно изменено действие 1"
+                [IO.File]::WriteAllText($first, "# language: ru`nФункционал: First`n" + ($rewritten[0..4] -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($second, "# language: ru`nФункционал: Second`n" + ($rewritten[5..8] -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText($catalogPath, '{"schemaVersion":1,"suites":[{"id":"first","purpose":"acceptance","featurePaths":["tests/features/First.feature"],"ownerPaths":["src/cf/First/**"]},{"id":"second","purpose":"acceptance","featurePaths":["tests/features/Second.feature"],"ownerPaths":["src/cf/Second/**"]}]}', [Text.UTF8Encoding]::new($false))
+                $after = Update-VerificationSuiteInventory -Reason "explicit classification validation"
+                $message = try { Assert-VerificationScenarioMigrationPreserved -Inventory $after; "not-rejected" } catch { $_.Exception.Message }
+                [pscustomobject]@{ message = $message; baselineRetained = Test-Path -LiteralPath $baselinePath -PathType Leaf }
+            }
+
+            $result.message | Should -Match "VERIFICATION_SUITE_MIGRATION_CHANGED_SCENARIOS"
+            $result.baselineRetained | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "classifies the configured Vanessa inventory when a single feature is selected" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-single-feature-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -309,6 +463,8 @@ Describe "Branch-first verification suite selection" {
         $lifecycle = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1") -Raw -Encoding UTF8
         $fastSkill = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow-fast\SKILL.md") -Raw -Encoding UTF8
         $refreshTemplate = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template") -Raw -Encoding UTF8
+        $advanced = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\advanced-actions.md") -Raw -Encoding UTF8
+        $selectionReference = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\references\verification-suite-selection.md") -Raw -Encoding UTF8
 
         $refresh = [regex]::Match($lifecycle, '(?s)function Invoke-RefreshDevBranchCore \{(?<body>.*?)(?=\nfunction Refresh-DevBranch)').Groups['body'].Value
         $refresh | Should -Match 'Update-VerificationSuiteInventory'
@@ -319,5 +475,11 @@ Describe "Branch-first verification suite selection" {
             $contract | Should -Match 'same task|same agent task|same task'
             $contract | Should -Match '(?is)do not ask the developer to\s+classify'
         }
+        $fastSkill | Should -Match 'split oversized/mixed feature files yourself'
+        $refreshTemplate | Should -Match 'split oversized or mixed feature files yourself'
+        $advanced | Should -Match 'VERIFICATION_SUITE_ACCEPTANCE_SCOPE_TOO_BROAD'
+        $advanced | Should -Match 'Do not merely rename the original file'
+        $selectionReference | Should -Match '(?s)at most eight flat\s+scenarios'
+        $selectionReference | Should -Match 'post-merge scenario baseline'
     }
 }

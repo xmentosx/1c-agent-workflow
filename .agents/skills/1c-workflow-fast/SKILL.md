@@ -9,7 +9,7 @@ description: Route routine natural-language requests in installed ITL 1C project
 
 ## Purpose
 
-Map routine requests to one helper action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations and long checks, then parse terminal JSON. Open full references only for recovery, missing setup, or explanation.
+Map routine requests to one action. Explicit generated `itl-*` skills run alone. Use the compact runner for mutations/long checks and parse terminal JSON. Open references only for recovery/explanation.
 
 For a mapped routine, make the helper the first and only tool action after one sentence; do not pre-read `.dev.env`, inspect Git, or repeat preflight. Honor explicit Caveman, otherwise the helper's response style. Send one-line heartbeats only on stage/liveness changes. A successful `userReport` remains verbatim. For `userReportOmitted=true`, see `.agents/skills/1c-workflow/references/advanced-actions.md`.
 
@@ -54,7 +54,7 @@ For CFE, use `Cfe` plus `-ExtensionSourcePath`. Unknown extension values may be 
 On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown, including for refresh. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
 
 `classify-tests-after-refresh:*`: follow `advanced-actions.md` in the same task;
-do not ask the developer to classify.
+split oversized/mixed feature files yourself. Do not ask the developer to classify.
 
 Current-branch actions infer `itldev/<name>`; do not ask for a branch name. Data/UI work uses the matching MCP skill. `/itl-check` is Vanessa Automation verification, not MCP.
 

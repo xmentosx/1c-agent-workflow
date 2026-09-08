@@ -106,12 +106,9 @@ Describe "Develop E2E journey qualification router" {
         @($cleanup.contracts) | Should -Be @('source-delivery-cleanup'); @($cleanup.journeys) | Should -BeNullOrEmpty
     }
 
-    It "fails closed for unknown and orchestration paths but skips direct tests" {
+    It "blocks unknown ownership, fails closed for orchestration paths, and skips direct tests" {
         $unknownPath = "new-owner/unknown $(Get-NonAsciiFixtureSegment).ps1"
-        $unknown = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($unknownPath)
-        $unknown.reason | Should -Be 'unknown-paths-fail-closed'
-        @($unknown.journeys) | Should -Be @('upgrade','fresh')
-        @($unknown.unknownPaths) | Should -Be @($unknownPath)
+        { Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @($unknownPath) } | Should -Throw '*QUALITY_OWNER_MISSING*'
 
         $orchestration = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $RepoRoot -ChangedPath @('scripts/invoke-develop-e2e.ps1')
         $orchestration.reason | Should -Be 'develop-orchestration-full-path'
@@ -262,5 +259,79 @@ Describe "Develop E2E journey qualification router" {
         $ensureCall | Should -BeGreaterThan $helperEnd
         $postStageIdentity | Should -BeGreaterThan $ensureCall
         $routeValidation | Should -BeGreaterThan $postStageIdentity
+    }
+
+    It "accepts writer-produced documentation qualification with continued routes while rejecting invalid evidence" {
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        foreach ($name in @('Get-RelativeRepositoryPath', 'Write-DevelopQualification', 'Test-DevelopQualification')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+            . ([scriptblock]::Create($definition.Extent.Text))
+        }
+        . (Join-Path $RepoRoot 'scripts/release-qualification.ps1')
+        $sourceRoot = $RepoRoot
+        $repoRoot = Join-Path $TestDrive ("qualification $(Get-NonAsciiFixtureSegment) with spaces")
+        $baseCommit = New-RouterFixture -Root $repoRoot
+        $baseTree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+        $oldIdentity = 'a' * 64
+        $currentIdentity = 'b' * 64
+        $standHash = 'c' * 64
+        $runtimePlan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $repoRoot -ChangedPath @('fixture/change.txt')
+        $records = [ordered]@{}
+        foreach ($journey in @('upgrade', 'fresh')) {
+            $routePath = Join-Path $repoRoot "build/$journey.json"
+            $route = New-DevelopE2ERouteReport -RepositoryRoot $repoRoot -Plan $runtimePlan -Journey $journey -IdentitySha256 $oldIdentity -StandStateSha256 $standHash -JourneyResult ([pscustomobject]@{ name=$journey; status='passed' })
+            Write-Utf8Json -Path $routePath -Value $route
+            $records[$journey] = [ordered]@{
+                path=$routePath; sha256=(Get-FileHash -LiteralPath $routePath).Hash.ToLowerInvariant()
+                evidenceCommit=$baseCommit; evidenceTree=$baseTree
+                identitySha256=$oldIdentity; standStateSha256=$standHash; execution='continued'
+            }
+        }
+        Add-Content -LiteralPath (Join-Path $repoRoot 'README.md') -Value 'documentation change'
+        & git -C $repoRoot add -- README.md
+        & git -C $repoRoot commit -m documentation *> $null
+        $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
+        $tree = (& git -C $repoRoot rev-parse 'HEAD^{tree}').Trim()
+        $plan = Resolve-DevelopE2EJourneyPlan -RepositoryRoot $sourceRoot -ChangedPath @('.agents/skills/1c-workflow/references/tooling-recovery.md')
+        @($plan.journeys) | Should -BeNullOrEmpty
+        $qualificationFullPath = Join-Path $repoRoot 'build/qualification/full.json'
+        $developQualificationFullPath = Join-Path $repoRoot 'build/qualification/develop.json'
+        Write-Utf8Json -Path $qualificationFullPath -Value @{ status='passed'; repository=@{ commit=$commit; tree=$tree } }
+        $combinedPath = Join-Path $repoRoot 'build/combined.json'
+        $combined = [ordered]@{ kind='itl-develop-e2e-combined'; status='passed'; candidate=@{ tree=$tree }; plan=$plan; journeys=$records }
+        Write-Utf8Json -Path $combinedPath -Value $combined
+        $qualification = Write-DevelopQualification -Commit $commit -Tree $tree -ReportPath $combinedPath -IdentitySha256 $currentIdentity -JourneyRecords $records -Plan $plan
+        $validJson = Get-Content -LiteralPath $developQualificationFullPath -Raw -Encoding UTF8
+        $arguments = @{ Commit=$commit; Tree=$tree; ExpectedIdentitySha256=$currentIdentity; ExpectedStandStateSha256=$standHash }
+
+        (Test-DevelopQualification @arguments).reuseKind | Should -Be 'exact-commit'
+        foreach ($defect in @('route-hash', 'route-identity', 'unplanned-execution', 'missing-planned-route', 'unknown-planned-route', 'duplicate-planned-route')) {
+            $invalid = $validJson | ConvertFrom-Json
+            switch ($defect) {
+                'route-hash' { $invalid.journeys.upgrade.sha256 = '0' * 64 }
+                'route-identity' { $invalid.journeys.upgrade.identitySha256 = '0' * 64 }
+                'unplanned-execution' { $invalid.journeys.upgrade.execution = 'executed' }
+                'missing-planned-route' { $invalid.plan.journeys = @('upgrade'); $invalid.journeys.PSObject.Properties.Remove('upgrade') }
+                'unknown-planned-route' { $invalid.plan.journeys = @('unknown') }
+                'duplicate-planned-route' { $invalid.plan.journeys = @('upgrade', 'upgrade') }
+            }
+            $combined.plan = $invalid.plan
+            Write-Utf8Json -Path (Join-Path $repoRoot $invalid.e2e.path) -Value $combined
+            $invalid.e2e.sha256 = (Get-FileHash -LiteralPath (Join-Path $repoRoot $invalid.e2e.path)).Hash.ToLowerInvariant()
+            Write-Utf8Json -Path $developQualificationFullPath -Value $invalid
+            Test-DevelopQualification @arguments | Should -BeNullOrEmpty -Because $defect
+        }
+        # Restore the writer's report and prove runtime stand changes and file tampering remain blocking.
+        Copy-Item -LiteralPath $combinedPath -Destination (Join-Path $repoRoot $qualification.e2e.path) -Force
+        [IO.File]::WriteAllText($developQualificationFullPath, $validJson, [Text.UTF8Encoding]::new($false))
+        $arguments.ExpectedStandStateSha256 = 'd' * 64
+        Test-DevelopQualification @arguments | Should -BeNullOrEmpty
+        $arguments.ExpectedStandStateSha256 = $standHash
+        (Test-DevelopQualification @arguments).reuseKind | Should -Be 'exact-commit'
+        Add-Content -LiteralPath $records.fresh.path -Value 'tampered'
+        Test-DevelopQualification @arguments | Should -BeNullOrEmpty
     }
 }

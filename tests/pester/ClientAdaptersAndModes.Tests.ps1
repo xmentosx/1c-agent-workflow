@@ -929,7 +929,7 @@
             $files = [ordered]@{
                 ".kilo/rules-1c/sdd-integrations.md" = [ordered]@{ source = "content/rules/sdd-integrations.md"; installedHash = (Get-FileHash -LiteralPath $rulePath -Algorithm SHA256).Hash.ToLowerInvariant() }
             }
-            foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
+            foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
                 $path = Join-Path $tempRoot ".agents\skills\$skill\SKILL.md"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                 $skillText = if ($skill -eq "1c-workflow-fast") { "# $skill`n<!-- ITL_KILO_SKILL_CONTRACT: fixture -->" } else { "# $skill" }
@@ -969,7 +969,7 @@
             $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo = "https://github.com/xmentosx/itl_ai_rules_1c.git"; ref = "itl-main-410951e7-r24"; commit = "83e179469363c16497d9cc389a9a814537cc076b"; upstreamCommit = "410951e74fd3e6b7a763cf49757935b9a34d3f31"; downstreamRevision = 24; compatibilityStatus = "passed" } } }
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c/dependency-lock.json") -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 8) + "`n")
             Set-Content -LiteralPath (Join-Path $tempRoot ".dev.env") -Encoding UTF8 -Value "ITL_VANESSA_TESTING=auto`nITL_CHECK_EVENT_LOG=manual`n"
-            foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp")) {
+            foreach ($skill in @("1c-workflow", "1c-workflow-fast", "product-docs", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-remote-runner", "itl-remote-agent", "itl-performance")) {
                 $path = Join-Path $tempRoot ".agents/skills/$skill/SKILL.md"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
                 Set-Content -LiteralPath $path -Encoding UTF8 -Value "# $skill"

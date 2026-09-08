@@ -227,6 +227,11 @@ function Complete-E2EHelperProcess {
         [int]$TimeoutSeconds,
         [switch]$AllowFailure
     )
+    if ($script:activeStageDeadlineUtc) {
+        $remaining = [int][Math]::Floor(($script:activeStageDeadlineUtc - [DateTime]::UtcNow).TotalSeconds)
+        if ($remaining -le 0) { throw "RELEASE_E2E_STAGE_BUDGET_EXCEEDED: stage '$($script:activeStageName)' exhausted its hard budget." }
+        $TimeoutSeconds = [Math]::Min($TimeoutSeconds, $remaining)
+    }
     $process = $Invocation.process
     # Windows PowerShell 5.1 may expose a null ExitCode after timed WaitForExit
     # unless the native process handle is materialized before the wait.
@@ -293,6 +298,11 @@ function Invoke-E2EHelperAtRoot {
         [string]$LogPrefix = "",
         [switch]$AllowFailure
     )
+    if ($script:activeStageDeadlineUtc) {
+        $remaining = [int][Math]::Floor(($script:activeStageDeadlineUtc - [DateTime]::UtcNow).TotalSeconds)
+        if ($remaining -le 0) { throw "RELEASE_E2E_STAGE_BUDGET_EXCEEDED: stage '$($script:activeStageName)' exhausted its hard budget." }
+        $TimeoutSeconds = [Math]::Min($TimeoutSeconds, $remaining)
+    }
     $invocation = Start-E2EHelperAtRoot `
         -Root $Root `
         -BranchName $BranchName `
@@ -650,6 +660,9 @@ $releaseContinuationProof = $null
 $continuationBoundaryStage = ""
 $promotedCapabilityPath = ""
 $stageTimers = @{}
+$activeStageName = ""
+$activeStageDeadlineUtc = $null
+$releaseStageBudgets = @{}
 
 function Write-E2ECheckpoint {
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $checkpointPath) | Out-Null
@@ -764,6 +777,9 @@ function Set-E2EStageStatus {
     $now = [DateTime]::UtcNow
     if (-not $record.Contains("attempts")) { $record["attempts"] = @() }
     if ($Status -eq "running") {
+        if (-not $script:releaseStageBudgets.ContainsKey($Name) -or [int]$script:releaseStageBudgets[$Name] -le 0) { throw "Release E2E stage '$Name' has no hard budget." }
+        $script:activeStageName = $Name
+        $script:activeStageDeadlineUtc = $now.AddSeconds([int]$script:releaseStageBudgets[$Name])
         $script:stageTimers[$Name] = [System.Diagnostics.Stopwatch]::StartNew()
         $record["proofStartedAt"] = $now.ToString("o")
         $record["execution"] = "executed"
@@ -782,6 +798,10 @@ function Set-E2EStageStatus {
         $record["attempts"] = @($record["attempts"]) + @([ordered]@{
             status = $Status; startedAt = [string]$record["proofStartedAt"]; finishedAt = $now.ToString("o"); durationMs = $durationMs; error = $ErrorText
         })
+        $budgetExceeded = $Status -eq "passed" -and $durationMs -gt ([int64]$script:releaseStageBudgets[$Name] * 1000)
+        $script:activeStageName = ""
+        $script:activeStageDeadlineUtc = $null
+        if ($budgetExceeded) { throw "RELEASE_E2E_STAGE_BUDGET_EXCEEDED: stage '$Name' exceeded $([int]$script:releaseStageBudgets[$Name]) seconds." }
     }
     $record["status"] = $Status
     $record["updatedAt"] = $now.ToString("o")
@@ -1460,6 +1480,17 @@ function Test-E2EManagedRefreshHead {
 foreach ($stageModule in @("seed-parallel.ps1", "server-reset.ps1", "config-cadence.ps1", "config-roundtrip.ps1", "extension-smoke.ps1", "ondemand-mcp.ps1", "result-cleanup.ps1")) {
     . (Join-Path $stageModuleRoot $stageModule)
 }
+$releaseStageCatalog = Get-Content -LiteralPath (Join-Path $stageModuleRoot "stages.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+if ([int]$releaseStageCatalog.schemaVersion -ne 1) { throw "Unsupported Release E2E stage catalog schema." }
+foreach ($stage in @($releaseStageCatalog.stages)) {
+    $stageId = [string]$stage.id
+    if ($script:releaseStageBudgets.ContainsKey($stageId)) { throw "Release E2E stage budget catalog contains duplicate '$stageId'." }
+    if (-not $script:ReleaseE2EStageDefinitions.Contains($stageId)) { throw "Release E2E stage budget catalog contains unknown stage '$stageId'." }
+    if ([int]$stage.version -ne [int]$script:ReleaseE2EStageDefinitions[$stageId].version) { throw "Release E2E stage budget catalog version mismatch for '$stageId'." }
+    if ([int]$stage.budgetSeconds -le 0) { throw "Release E2E stage '$stageId' has an invalid hard budget." }
+    $script:releaseStageBudgets[$stageId] = [int]$stage.budgetSeconds
+}
+if (@($script:ReleaseE2EStageDefinitions.Keys | Where-Object { -not $script:releaseStageBudgets.ContainsKey([string]$_) }).Count -gt 0) { throw "Release E2E stage budget catalog is incomplete." }
 $serverResetDisposition = Get-ReleaseE2EServerResetDisposition `
     -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
     -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
@@ -1471,7 +1502,13 @@ function Get-E2EStageInputFiles {
     param([string]$Name)
     $definition = $script:ReleaseE2EStageDefinitions[$Name]
     if (-not $definition) { throw "Unknown Release E2E stage definition: $Name" }
-    $allFiles = @(Get-ChildItem -LiteralPath $workflowRoot -Recurse -File)
+    if (-not (Get-Variable -Name E2ETrackedInputFiles -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:E2ETrackedInputFiles = @(Get-RepositoryGitPathList -RepositoryRoot $workflowRoot -Arguments @("ls-files", "-z", "--") | ForEach-Object {
+            $path = Join-Path $workflowRoot ([string]$_).Replace('/', '\')
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Get-Item -LiteralPath $path }
+        })
+    }
+    $allFiles = @($script:E2ETrackedInputFiles)
     $resolved = New-Object System.Collections.Generic.List[string]
     foreach ($patternText in @($definition.paths)) {
         $normalizedPattern = ([string]$patternText).Replace('\', '/')
@@ -1490,7 +1527,6 @@ function Get-E2EStageInputFiles {
         }
     }
     $resolved.Add((Join-Path $stageModuleRoot ([string]$definition.moduleFile))) | Out-Null
-    $resolved.Add((Join-Path $stageModuleRoot "common.ps1")) | Out-Null
     return @($resolved | Sort-Object -Unique)
 }
 
@@ -1511,7 +1547,7 @@ function Get-E2EStageFingerprint {
         }
     } else { $null }
     $payload = [ordered]@{
-        name = $Name; version = [int]$definition.version; runnerSha256 = $RunnerSha256; helperSha256 = $helperSha256
+        schemaVersion = 2; name = $Name; version = [int]$definition.version
         aiRulesCommit = $aiRulesCommit; aiRulesTree = $aiRulesTree; projectConfigSha256 = $projectConfigSha256
         inputs = $inputs; dependencies = $dependencies; stageConfiguration = $stageConfiguration
     }
@@ -1763,11 +1799,10 @@ function Find-E2ECompletedCapabilityCache {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
             $identity = $cache["identity"]
-            $helperIdentityMatches = Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$identity["helperSha256"])
             if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
-                -not $helperIdentityMatches -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
+                [string]$identity["projectConfigSha256"] -ne $projectConfigSha256) { Write-Verbose "Completed capability cache identity mismatch: $($file.FullName)"; continue }
             $cacheContinuation = Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree
             if (-not $cacheContinuation) { Write-Verbose "Completed capability cache has no exact Targeted continuation: $($file.FullName)"; continue }
             $compatible = $true
@@ -1820,12 +1855,11 @@ function Restore-E2EInterruptedCapabilityStage {
         try {
             $cache = ConvertTo-E2EHashtable (Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json)
             $identity = $cache["identity"]
-            $helperIdentityMatches = Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$identity["helperSha256"])
             if ([int]$cache["schemaVersion"] -ne 1 -or [string]$identity["projectRoot"] -ne $ProjectRoot -or
                 [string]$identity["worktreePath"] -ne $worktreePath -or [string]$identity["branch"] -ne $branch -or
                 [string]$identity["initialHead"] -ne [string]$checkpoint["identity"]["initialHead"] -or
                 [string]$identity["aiRulesCommit"] -ne $aiRulesCommit -or [string]$identity["aiRulesTree"] -ne $aiRulesTree -or
-                -not $helperIdentityMatches -or [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
+                [string]$identity["projectConfigSha256"] -ne $projectConfigSha256 -or
                 -not $cache["stages"].Contains($Name)) { continue }
             if (-not (Get-WorkflowContinuationProof -RepositoryRoot $workflowRoot -QualifiedCommit ([string]$identity["workflowCommit"]) -CurrentCommit $workflowCommit -CurrentTree $workflowTree)) { continue }
             $record = $cache["stages"][$Name]
@@ -1914,7 +1948,6 @@ function Import-E2ECapabilityCache {
             $script:ReleaseE2EStageDefinitions.Contains($stageName) -and
             [string]$cache["identity"]["aiRulesCommit"] -eq $aiRulesCommit -and
             [string]$cache["identity"]["aiRulesTree"] -eq $aiRulesTree -and
-            (Test-E2ETextSha256Compatible -Path $HelperPath -ExpectedSha256 ([string]$cache["identity"]["helperSha256"])) -and
             [string]$cache["identity"]["projectConfigSha256"] -eq $projectConfigSha256 -and
             (Test-E2EStageInputsUnchanged -Name $stageName -QualifiedCommit ([string]$cache["identity"]["workflowCommit"]))) {
             $checkpoint["stages"][$stageName]["fingerprint"] = Get-E2EStageFingerprint -Name $stageName

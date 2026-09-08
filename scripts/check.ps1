@@ -200,7 +200,8 @@ function Ensure-DevelopE2ERoute {
 
     $rawPath = Join-Path $outputRoot ("develop-e2e-$Journey-raw.json")
     Invoke-GateStage -Name "develop-e2e-$Journey" -Reason $Reason -Detail $rawPath -Body {
-        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey) -TimeoutSeconds 5400 -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
+        $journeyHardSeconds = if ($Journey -eq "upgrade") { 1200 } else { 2100 }
+        Invoke-PowerShellChild -ScriptPath $script:developScript -Arguments @("-CandidateRoot", $repoRoot, "-ProjectRoot", ([IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $script:developRulesSource, "-OutputPath", $rawPath, "-Journey", $Journey) -TimeoutSeconds $journeyHardSeconds -NoProgressSeconds 900 -LogName "develop-e2e-$Journey"
         if (-not (Test-Path -LiteralPath $rawPath -PathType Leaf)) { throw "Develop E2E $Journey summary was not created." }
         $raw = Get-Content -LiteralPath $rawPath -Raw -Encoding UTF8 | ConvertFrom-Json
         $result = @($raw.journeys | Where-Object { [string]$_.name -eq $Journey }) | Select-Object -First 1
@@ -437,16 +438,21 @@ function Get-WorkflowGateScriptPaths {
         (Join-Path $repoRoot "scripts\quality-contracts.ps1"),
         (Join-Path $repoRoot "scripts\resolve-targeted-tests.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery-supervisor.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-process.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-queue.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-component.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery-plan.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery-resources.ps1"),
         (Join-Path $repoRoot "scripts\source-delivery-candidate.ps1"),
+        (Join-Path $repoRoot "scripts\source-delivery-cleanup.ps1"),
         (Join-Path $repoRoot "scripts\develop-static-qualification.ps1"),
         (Join-Path $repoRoot "scripts\develop-e2e-qualification.ps1"),
         (Join-Path $repoRoot "scripts\invoke-develop-e2e.ps1"),
         (Join-Path $repoRoot "scripts\test-powershell-encoding.ps1"),
         (Join-Path $repoRoot "scripts\test-release-readiness.ps1"),
         (Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"),
+        (Join-Path $repoRoot "scripts\release-e2e\stages.json"),
         (Join-Path $repoRoot "scripts\test-ai-rules-compatibility.ps1"),
         (Join-Path $repoRoot "scripts\test-ai-rules-overlay-lock.ps1"),
         (Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"),
@@ -612,7 +618,11 @@ function Test-DevelopQualification {
                     [string]$report.candidate.tree -ne $Tree -or
                     (Get-DevelopE2ECanonicalJsonSha256 -Value $report.plan) -ne (Get-DevelopE2ECanonicalJsonSha256 -Value $qualification.plan)) { return $null }
                 $requiredJourneys = @($qualification.journeys.PSObject.Properties | ForEach-Object { [string]$_.Name })
-                if (@($qualification.plan.journeys).Count -eq 0 -and $requiredJourneys.Count -ne 0) { return $null }
+                $plannedJourneys = @($qualification.plan.journeys)
+                if (@($plannedJourneys | Select-Object -Unique).Count -ne $plannedJourneys.Count) { return $null }
+                foreach ($plannedJourney in $plannedJourneys) {
+                    if ($plannedJourney -notin @("upgrade", "fresh") -or $plannedJourney -notin $requiredJourneys) { return $null }
+                }
             }
             foreach ($journey in $requiredJourneys) {
                 if ($journey -notin @("upgrade", "fresh")) { return $null }
@@ -621,6 +631,8 @@ function Test-DevelopQualification {
                 if (-not $record -or [string]$record.evidenceCommit -notmatch '^[a-f0-9]{40}$' -or [string]$record.evidenceTree -notmatch '^[a-f0-9]{40}$') { return $null }
                 $journeyPath = if ([IO.Path]::IsPathRooted([string]$record.path)) { [string]$record.path } else { Join-Path $repoRoot ([string]$record.path).Replace('/', '\') }
                 $continued = [string]$record.execution -eq "continued"
+                # The writer carries valid baseline routes even when this change requires no new journeys.
+                if ([int]$qualification.schemaVersion -eq 4 -and $journey -notin $plannedJourneys -and -not $continued) { return $null }
                 $routeIdentitySha256 = if ($continued) { [string]$record.identitySha256 } else { [string]$qualification.identitySha256 }
                 if ($continued -and ($routeIdentitySha256 -notmatch '^[a-f0-9]{64}$' -or [string]$record.standStateSha256 -notmatch '^[a-f0-9]{64}$')) { return $null }
                 $routeValid = Test-DevelopE2ERouteReport -Path $journeyPath -Journey $journey -Tree ([string]$record.evidenceTree) -IdentitySha256 $routeIdentitySha256 -StandStateSha256 $ExpectedStandStateSha256

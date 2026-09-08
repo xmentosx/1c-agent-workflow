@@ -236,6 +236,7 @@ status          Show tracked servers and endpoints.
 dump-config     Update a local sourcePath from a 1C configuration repository infobase.
 refresh-config  Regenerate Report.txt and fingerprints for one or all configs.
 reindex         Regenerate Report.txt, recreate RESET_DATABASE-capable servers.
+graph-cpu-migrate-model  Validate existing Graph vector dimensions and migrate one legacy CPU model id without rebuilding vectors.
 publish         Publish current host state to the registry repo.
 proxy           Transactionally rebuild and qualify tracked tools-list proxies, then publish.
 reconcile       Recover tracked runtimes/proxies and publish only MCP-ready endpoints.
@@ -268,6 +269,15 @@ powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Ac
 ```
 CPU embedding mode always sets `RESET_CACHE=false` because CPU model cache is mounted at `/app/model_cache` and must not be removed from inside a container.
 In CPU embedding mode the Graph server uses `EMBEDDING_MODEL` locally. Compatibility OpenAI variables are pinned to a loopback fail-closed endpoint so distribution defaults cannot send embedding or chat requests to OpenRouter/OpenAI; set a real `CHAT_API_KEY`, `CHAT_API_BASE`, and `CHAT_MODEL` in `host.config.json` secrets only when Graph chat functions should use an LLM.
+The generated Graph compose command initializes the image's mandatory chat client first and then clears only its embedding credentials before `VectorIndexer` starts. This keeps the canonical CPU model id as `offline:<embedding.model>` and prevents the image from confusing the non-secret chat placeholder with an OpenAI embedding provider.
+
+For a legacy Graph database that already contains local E5 vectors under an `openai:*` model id, migrate one configuration explicitly before clearing restart-loop state and restarting Graph:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action graph-cpu-migrate-model -ConfigPath .\host.config.json -ConfigId trade
+```
+
+The migration is fail-closed: it requires a running tracked Graph container, exactly one `SystemMeta` node, a known E5 dimension, populated vectors of only that dimension, and ONLINE vector indexes of the same dimension. It changes only `SystemMeta.embedding_model_id`; it never enables `RESET_DATABASE` or rebuilds vectors.
 Config-specific vector stores from `PATH_BASES` are isolated as `<stateRoot>/bases/<configId>/<serverId>/...` so multiple `code` containers do not share the same zvec lock.
 
 ## Registry Contract

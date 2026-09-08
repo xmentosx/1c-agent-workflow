@@ -1,6 +1,6 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -341,6 +341,7 @@ $script:ResumedFrom = $(if ($ResumeRunStatusPath) { Resolve-Agent1cFullPath -Pat
 $script:RecoveryReason = $RecoveryReason
 $script:RunErrorCategory = ""
 $script:RunRequiredAction = ""
+$script:RunRefreshMasterCommit = ""
 $script:RunDevBranch = ""
 $script:RunWorktreePath = ""
 $script:RunExtensionInitializationStatus = ""
@@ -367,6 +368,7 @@ $script:LifecycleOperationId = ""
 $script:LifecycleOperationIsContinuation = [bool]$OperationContinuation
 $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
+$script:LifecycleWaitCancelled = $false
 $script:ActiveVanessaRunEvidence = $null
 $script:ActiveAuxiliaryVanessaContext = $null
 $script:ActiveVerificationSelectionPlan = $null
@@ -379,6 +381,7 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.ports.ps1",
     "agent-1c.sessions.ps1",
     "agent-1c.vanessa.ps1",
+    "agent-1c.tooling.ps1",
     "agent-1c.yaxunit.ps1",
     "agent-1c.verification-selection.ps1",
     "agent-1c.seed.ps1",
@@ -403,8 +406,6 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
     . $modulePath
 }
 
-Initialize-GitIndexLockTracking
-
 try {
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
@@ -416,7 +417,9 @@ try {
             Copy-Item -LiteralPath $sourceDotEnv -Destination $targetDotEnv
         }
     }
-    Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env")
+    $lifecycleEnvPath = Join-Path $script:ProjectRoot ".dev.env"
+    $lifecycleEnvBefore = if (Test-Path -LiteralPath $lifecycleEnvPath) { Read-Utf8Text -Path $lifecycleEnvPath } else { $null }
+    Import-DotEnv -Path $lifecycleEnvPath
     Read-ProjectConfig
     $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
     Enter-Agent1cLifecycleOperation `
@@ -424,6 +427,13 @@ try {
         -RequestedOperationId $OperationId `
         -RequestedOwnerPid $OperationOwnerPid `
         -Continuation:$OperationContinuation
+    $lifecycleEnvAfter = if (Test-Path -LiteralPath $lifecycleEnvPath) { Read-Utf8Text -Path $lifecycleEnvPath } else { $null }
+    if ($lifecycleEnvBefore -cne $lifecycleEnvAfter) {
+        throw "LIFECYCLE_INPUT_CHANGED .dev.env changed during lock acquisition. Repeat the same helper to resolve the current target."
+    }
+    # All action preconditions run after admission with current configuration.
+    Read-ProjectConfig
+    Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
     if ($InternalOnDemandOperation) {
@@ -449,6 +459,7 @@ try {
         "publish-dev-branch" { Publish-DevBranch }
         "install-vanessa-automation" { Install-VanessaAutomation }
         "install-yaxunit" { Install-YAxUnit | Out-Null }
+        "repair-dev-branch-tooling" { Repair-DevBranchTooling }
         "begin-verification-repair" { Start-ItlVerificationRepairSession }
         "vibecoding1c-mcp-setup" { Setup-Vibecoding1cMcp }
         "vibecoding1c-mcp-update" { Update-Vibecoding1cMcp }
@@ -527,7 +538,8 @@ try {
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
     $errorMessage = $_.Exception.Message
-    if ($Action -eq "init-project" -and $script:InitCancelledByDeveloper) {
+    if (($Action -eq "init-project" -and $script:InitCancelledByDeveloper) -or $script:LifecycleWaitCancelled) {
+        $script:RunLiveness = "cancelled"
         try {
             Complete-Agent1cLifecycleOperation -Status "cancelled" -ExitCode 2 -ErrorMessage $errorMessage
         } catch {
@@ -538,12 +550,16 @@ try {
         } catch {
             [Console]::Error.WriteLine("Failed to write cancelled run status: $($_.Exception.Message)")
         }
-        Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
+        if ($script:LifecycleWaitCancelled) {
+            Write-Host "ITL lock wait cancelled by developer. It will not be resumed automatically."
+        } else {
+            Write-Host "ITL initialization cancelled by developer. It will not be resumed automatically."
+        }
         exit 2
     }
     Set-RunFailureContextFromMessage -Message $errorMessage -RequestedAction $Action
     try {
-        $cleanupMessage = Invoke-GitIndexLockCleanupOnFailure
+        $cleanupMessage = if ($script:LifecycleOperationHandles.Count -gt 0) { Invoke-GitIndexLockCleanupOnFailure } else { "" }
         if ($cleanupMessage) {
             Write-Host $cleanupMessage
             $errorMessage = "$errorMessage $cleanupMessage"

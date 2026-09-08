@@ -165,6 +165,128 @@ Describe "development branch source-only synchronization" {
         }
     }
 
+    It "routes a helper-owned peer refresh before either branch is checkpointed" {
+        $expectedPeerPath = "C:\work trees\$([char]0x0432) peer"
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $nonAscii = [string][char]0x0432
+            $PeerDevBranchName = "peer"
+            $DevBranchName = ""
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            $script:RunDevBranch = ""
+            $script:RunWorktreePath = ""
+            $script:checkpointCalled = $false
+            $primary = [pscustomobject]@{
+                devBranch = "itldev/primary"; devBranchName = "primary"; worktreePath = "C:\work trees\$nonAscii primary"
+            }
+            $peer = [pscustomobject]@{
+                devBranch = "itldev/peer"; devBranchName = "peer"; worktreePath = "C:\work trees\$nonAscii peer"
+                pendingMergeOperation = "refresh-dev-branch-lite"; pendingMergeTargetCommit = ("a" * 40)
+                pendingMergeStage = "conflicts"; pendingMergeConflictPaths = @("src/cf/Module.bsl")
+            }
+
+            function Read-DevBranchState { param([string]$Name) if ($Name -eq "peer") { return $peer }; return $primary }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchSourceSyncCompatibility { return "src/cf" }
+            function Save-DevBranchCheckpoint { $script:checkpointCalled = $true }
+            function Set-RunDevBranchState {
+                param([object]$State)
+                $script:RunDevBranch = [string]$State.devBranch
+                $script:RunWorktreePath = [string]$State.worktreePath
+            }
+
+            $message = ""
+            try { Sync-DevBranches } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{
+                message = $message
+                category = $script:RunErrorCategory
+                requiredAction = $script:RunRequiredAction
+                devBranch = $script:RunDevBranch
+                worktreePath = $script:RunWorktreePath
+                checkpointCalled = $script:checkpointCalled
+            }
+        }
+
+        $result.message | Should -Match "^DEV_BRANCH_SOURCE_SYNC_PENDING_REFRESH:"
+        $result.message | Should -Match "role='peer'"
+        $result.message | Should -Match "operation='refresh-dev-branch-lite'"
+        $result.message | Should -Match ([regex]::Escape("src/cf/Module.bsl"))
+        $result.category | Should -Be "merge-conflict"
+        $result.requiredAction | Should -Match ([regex]::Escape("/itl-refresh-lite"))
+        $result.requiredAction | Should -Match ([regex]::Escape($expectedPeerPath))
+        $result.requiredAction | Should -Match ([regex]::Escape("repeat /itl-sync-branches"))
+        $result.devBranch | Should -Be "itldev/peer"
+        $result.worktreePath | Should -Be $expectedPeerPath
+        $result.checkpointCalled | Should -BeFalse
+    }
+
+    It "asks before replacing a different helper-owned peer lifecycle operation" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $nonAscii = [string][char]0x0432
+            $PeerDevBranchName = "peer"
+            $DevBranchName = ""
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            $script:checkpointCalled = $false
+            $primary = [pscustomobject]@{
+                devBranch = "itldev/primary"; devBranchName = "primary"; worktreePath = "C:\work trees\$nonAscii primary"
+            }
+            $peer = [pscustomobject]@{
+                devBranch = "itldev/peer"; devBranchName = "peer"; worktreePath = "C:\work trees\$nonAscii peer"
+                pendingMergeOperation = "close-dev-branch"; pendingMergeTargetCommit = ("b" * 40)
+                pendingMergeStage = "conflicts"; pendingMergeConflictPaths = @("src/cf/Module.bsl")
+            }
+
+            function Read-DevBranchState { param([string]$Name) if ($Name -eq "peer") { return $peer }; return $primary }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchSourceSyncCompatibility { return "src/cf" }
+            function Save-DevBranchCheckpoint { $script:checkpointCalled = $true }
+            function Set-RunDevBranchState {}
+
+            $message = ""
+            try { Sync-DevBranches } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{
+                message = $message
+                category = $script:RunErrorCategory
+                requiredAction = $script:RunRequiredAction
+                checkpointCalled = $script:checkpointCalled
+            }
+        }
+
+        $result.message | Should -Match "^DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE:"
+        $result.message | Should -Match "operation='close-dev-branch'"
+        $result.category | Should -Be "runner"
+        $result.requiredAction | Should -Match "Ask the user whether to finish"
+        $result.requiredAction | Should -Match "Do not abort"
+        $result.checkpointCalled | Should -BeFalse
+    }
+
+    It "keeps an unowned Git operation fail-closed without advising an abort" {
+        $nonAscii = [string][char]0x0432
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-source-sync unowned $nonAscii " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            & git -C $tempRoot init --quiet
+            $mergeHeadPath = (& git -C $tempRoot rev-parse --git-path MERGE_HEAD).Trim()
+            if (-not [IO.Path]::IsPathRooted($mergeHeadPath)) { $mergeHeadPath = Join-Path $tempRoot $mergeHeadPath }
+            Set-Content -LiteralPath $mergeHeadPath -Encoding ASCII -Value ("a" * 40)
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try { Assert-DevBranchCheckpointGitState -Operation "sync-dev-branches"; "" } catch { $_.Exception.Message }
+            }
+
+            $message | Should -Match "^DEV_BRANCH_CHECKPOINT_GIT_OPERATION_IN_PROGRESS:"
+            $message | Should -Match "owning workflow"
+            $message | Should -Match "do not alter or abort"
+            $message | Should -Not -Match "Complete or abort it first"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "locks exactly the two participating branch worktrees" {
         $peerRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-source-sync-lock-" + [guid]::NewGuid().ToString("N"))
         & {

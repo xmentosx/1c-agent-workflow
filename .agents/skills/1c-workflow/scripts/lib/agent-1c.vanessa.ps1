@@ -500,8 +500,10 @@ function Get-VanessaFeatureScenarioDefinitions {
         $inBackground = $false
         $inExamples = $false
         $exampleHeaders = @()
+        $lineNumber = 0
 
         foreach ($line in @(Get-Content -LiteralPath $featureFile -Encoding UTF8)) {
+            $lineNumber++
             if ($line -match '^\s*@') {
                 foreach ($token in @([regex]::Matches($line, '@(?<tag>[^\s@]+)'))) {
                     $pendingTags.Add([string]$token.Groups['tag'].Value)
@@ -530,6 +532,7 @@ function Get-VanessaFeatureScenarioDefinitions {
                 $kind = [string]$scenarioMatch.Groups['kind'].Value
                 $current = [pscustomobject][ordered]@{
                     source = $featureFile
+                    sourceLine = $lineNumber
                     name = ([string]$scenarioMatch.Groups['name'].Value).Trim()
                     isOutline = ($kind -match '(?i)Структура|шаблон|Outline|Template')
                     tags = @($featureTags + @($pendingTags.ToArray()))
@@ -3920,6 +3923,8 @@ function New-VanessaParamsFile {
     $params["texterrorslogname"] = $vanessaErrorsDirectory
     $params["maskpwdinlog"] = $true
     $params["outputloginconsole"] = $false
+    $params["soundnotificationwhenscriptends"] = $false
+    $params["dosleepusingping"] = $false
     $params["pendingequalfailed"] = $true
     $params["stoponerror"] = $configuredTestClientRun
     $params["NumberOfAttemptsToExecuteTheScript"] = 1
@@ -7428,6 +7433,10 @@ function Test-VanessaMcpSafeModeProofMatchesState {
     param([object]$State)
 
     $proof = Get-StateValue -State $State -Name "vanessaMcpSafeModeProof" -Default $null
+    $generation = [string](Get-StateValue -State $State -Name "toolingInfoBaseGeneration" -Default "")
+    if (-not $generation -or (Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -ne 3 -or
+        [string](Get-StateValue -State $proof -Name "targetInfoBaseGeneration" -Default "") -cne $generation) { return $false }
+    if (-not [string](Get-StateValue $proof "clientRuntimeHash" "") -or -not [string](Get-StateValue $proof "vaRuntimeHash" "")) { return $false }
     $clientProof = Get-StateValue -State $proof -Name "clientMcp" -Default $null
     $vaProof = Get-StateValue -State $proof -Name "vaExtension" -Default $null
     if ($null -eq $proof -or $null -eq $clientProof -or $null -eq $vaProof -or
@@ -7460,6 +7469,7 @@ function Install-VanessaMcp {
     Write-Section "Install Vanessa UI MCP"
 
     $state = Read-CurrentDevBranchStateForVanessaMcp -Operation "install-vanessa-mcp"
+    $state = Ensure-DevBranchToolingGeneration -State $state
     $runtime = Get-VanessaMcpRuntimeInfo -State $state
     if ($runtime.processAlive) {
         throw "Stop Vanessa UI MCP for this branch before reinstalling MCP extensions. PID: $($runtime.pid)"
@@ -7481,6 +7491,7 @@ function Install-VanessaMcp {
     $vaExtensionArtifact = $artifactsByKey["vaExtension"]
 
     Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "Vanessa UI MCP extension installation"
+    Update-DevBranchState -State $state -Updates @{ vanessaMcpSafeModeProof = $null }
     $clientLog = Install-VanessaMcpExtensionCfe `
         -State $state `
         -CfePath $clientArtifact.path `
@@ -7516,8 +7527,16 @@ function Install-VanessaMcp {
         -User ([string](Get-EnvValue -Name "IB_USER")) `
         -Password ([string](Get-EnvValue -Name "IB_PASSWORD")) `
         -Scope "target-va-extension"
+    $serviceState = [pscustomobject]@{ infoBaseKind = $serviceInfoBase.kind; devBranchInfoBasePath = $serviceInfoBase.path }
+    $clientRuntime = @(Get-ToolingRuntimeExtensions -State $serviceState -Names @("client_mcp") -User $serviceInfoBase.user -Password $serviceInfoBase.password)[0]
+    $vaRuntime = @(Get-ToolingRuntimeExtensions -State $state -Names @("VAExtension"))[0]
+    Assert-ToolingRuntimeExtensionReady -Runtime $clientRuntime -Name "client_mcp" -RequireUnsafeMode
+    Assert-ToolingRuntimeExtensionReady -Runtime $vaRuntime -Name "VAExtension" -RequireUnsafeMode
     $safeModeProof = [pscustomobject][ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
+        targetInfoBaseGeneration = [string]$state.toolingInfoBaseGeneration
+        clientRuntimeHash = [string]$clientRuntime.contentHash
+        vaRuntimeHash = [string]$vaRuntime.contentHash
         serviceInfoBaseGeneration = [string](Get-StateValue -State $state -Name "vanessaServiceInfoBaseGeneration" -Default "")
         clientMcpSafeMode = $false
         vaExtensionSafeMode = $false
@@ -7536,6 +7555,8 @@ function Install-VanessaMcp {
         vanessaMcpClientMcpInstallLogPath = $clientLog
         vanessaMcpVaExtensionInstallLogPath = $vaExtensionLog
         vanessaMcpSafeModeProof = $safeModeProof
+        toolingMutationId = [guid]::NewGuid().ToString("N")
+        toolingMutationAt = (Get-Date).ToString("o")
     }
 
     Write-Host "client_mcp installed in Vanessa TestManager service infobase: $($serviceInfoBase.path)"
@@ -7548,16 +7569,28 @@ function Install-VanessaMcp {
 function Ensure-VanessaMcpInstalled {
     param([object]$State)
 
+    $State = Ensure-DevBranchToolingGeneration -State $State
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $State
     $State = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 
+    $pinned = @{}
+    foreach ($artifact in Install-VanessaMcpArtifacts) { $pinned[[string]$artifact.key] = $artifact }
     $clientPath = Get-StateValue -State $State -Name "vanessaMcpClientMcpCfePath" -Default ""
     $vaExtensionPath = Get-StateValue -State $State -Name "vanessaMcpVaExtensionCfePath" -Default ""
     if ($clientPath -and $vaExtensionPath -and
+        [string]$pinned.clientMcp.sha256 -ceq [string](Get-StateValue $State "vanessaMcpClientMcpSha256" "") -and
+        [string]$pinned.vaExtension.sha256 -ceq [string](Get-StateValue $State "vanessaMcpVaExtensionSha256" "") -and
         (Test-Path -LiteralPath $clientPath -PathType Leaf -ErrorAction SilentlyContinue) -and
         (Test-Path -LiteralPath $vaExtensionPath -PathType Leaf -ErrorAction SilentlyContinue) -and
         (Test-VanessaMcpSafeModeProofMatchesState -State $State)) {
-        return $State
+        $serviceState = [pscustomobject]@{ infoBaseKind = $serviceInfoBase.kind; devBranchInfoBasePath = $serviceInfoBase.path }
+        $clientRuntime = @(Get-ToolingRuntimeExtensions -State $serviceState -Names @("client_mcp") -User $serviceInfoBase.user -Password $serviceInfoBase.password)[0]
+        $vaRuntime = @(Get-ToolingRuntimeExtensions -State $State -Names @("VAExtension"))[0]
+        $proof = $State.vanessaMcpSafeModeProof
+        if ((Test-ToolingRuntimeExtensionReady -Runtime $clientRuntime -Name "client_mcp" -ExpectedHash ([string](Get-StateValue $proof "clientRuntimeHash" "")) -RequireUnsafeMode) -and
+            (Test-ToolingRuntimeExtensionReady -Runtime $vaRuntime -Name "VAExtension" -ExpectedHash ([string](Get-StateValue $proof "vaRuntimeHash" "")) -RequireUnsafeMode)) {
+            return $State
+        }
     }
 
     Write-Host "Vanessa UI MCP dependencies are not installed for this branch; installing them now."

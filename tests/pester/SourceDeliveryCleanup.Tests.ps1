@@ -34,6 +34,26 @@ Describe 'Source delivery post-success cleanup' {
         }
     }
 
+    It 'preserves active and tracked-dirty generated candidate worktrees' {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl cleanup protected repo ' + [guid]::NewGuid().ToString('N'))
+        $activeId = [guid]::NewGuid().ToString('N'); $dirtyId = [guid]::NewGuid().ToString('N')
+        $active = Join-Path ([IO.Path]::GetTempPath()) "itl-source-publish-develop-$activeId"; $dirty = Join-Path ([IO.Path]::GetTempPath()) "itl-source-publish-develop-$dirtyId"
+        try {
+            New-CleanupRepository -Root $root
+            & git -C $root worktree add --quiet -b "itl/publish-develop-$activeId" $active
+            & git -C $root worktree add --quiet -b "itl/publish-develop-$dirtyId" $dirty
+            Set-Content -LiteralPath (Join-Path $dirty 'README.md') -Encoding ASCII -Value 'tracked drift'
+            $script:Root = $root
+            function Invoke-DeliveryGit { param([string[]]$Arguments, [switch]$AllowFailure); Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+            $result = Remove-SourceDeliveryStaleCandidateWorktrees -PreservePaths @($active)
+            $result.removedWorktrees | Should -Be 0; Test-Path -LiteralPath $active | Should -BeTrue; Test-Path -LiteralPath $dirty | Should -BeTrue
+        } finally {
+            if (Test-Path -LiteralPath $root) { & git -C $root worktree remove --force $active 2>$null; & git -C $root worktree remove --force $dirty 2>$null; Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $active, $dirty -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It 'removes only an exact generated release seed under the explicit seed root' {
         $container = Join-Path ([IO.Path]::GetTempPath()) ('itl seed root ' + [guid]::NewGuid().ToString('N')); $root = Join-Path $container 'main'; $id = '1234abcd'; $seed = Join-Path $container "itlsa-$id"; $keep = Join-Path $container 'itlsa-not-a-seed'
         try {

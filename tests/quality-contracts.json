@@ -20,6 +20,9 @@
     ],
     "deliveryPostGate": [
       "scripts/source-delivery.ps1",
+      "scripts/source-delivery-supervisor.ps1",
+      "scripts/source-delivery-plan.ps1",
+      "scripts/source-delivery-resources.ps1",
       "scripts/source-delivery-process.ps1",
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
@@ -57,8 +60,7 @@
     "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
-      "scripts/git-path-list.ps1",
-      "scripts/quality-contracts.ps1"
+      "scripts/git-path-list.ps1"
     ],
     "routes": {
       "upgrade": {
@@ -87,6 +89,15 @@
   },
   "contracts": [
     {
+      "id": "remote-performance",
+      "owner": "portable remote jobs and execution-host measurements",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/RemotePerformance.Tests.ps1",
+      "paths": [".agents/skills/itl-remote-runner/*", ".agents/skills/itl-remote-agent/*", ".agents/skills/itl-performance/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "tests/python/remote_work/*"],
+      "tests": ["tests/pester/RemotePerformance.Tests.ps1"]
+    },
+    {
       "id": "immutable-download",
       "owner": "bounded immutable dependency acquisition",
       "gate": "targeted",
@@ -101,7 +112,7 @@
       "gate": "targeted",
       "budgetSeconds": 1200,
       "primaryTest": "tests/pester/LocalQualityGate.Tests.ps1",
-      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
+      "paths": ["scripts/check.ps1", "scripts/quality-contracts.ps1", "scripts/resolve-targeted-tests.ps1", "scripts/invoke-pester-*.ps1", "scripts/run-pester-*.ps1", "scripts/pester-timings.json", "scripts/release-qualification.ps1", "scripts/develop-static-qualification.ps1", "scripts/develop-e2e-qualification.ps1", "scripts/git-path-list.ps1", "scripts/test-powershell-encoding.ps1", "scripts/test-release-readiness.ps1", "tests/quality-contracts.json"],
       "tests": ["tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1"]
     },
     {
@@ -110,8 +121,26 @@
       "gate": "targeted",
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
-      "paths": ["scripts/source-delivery.ps1"],
+      "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1"],
       "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-plan",
+      "owner": "selective immutable delivery plans and stage evidence",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryPlan.Tests.ps1",
+      "paths": ["scripts/source-delivery-plan.ps1", "scripts/release-e2e/stages.json"],
+      "tests": ["tests/pester/SourceDeliveryPlan.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-resources",
+      "owner": "delivery resource ledger retention and cleanup debt",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
+      "paths": ["scripts/source-delivery-resources.ps1"],
+      "tests": ["tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/pester/SourceDeliveryCleanup.Tests.ps1"]
     },
     {
       "id": "source-delivery-candidate",
@@ -207,7 +236,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
+      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/LifecycleLockWaiting.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
     },
     {
       "id": "auxiliary-contours",
@@ -243,7 +272,16 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/YAxUnitVerification.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/references/yaxunit-tests.md"],
-      "tests": ["tests/pester/YAxUnitVerification.Tests.ps1"]
+      "tests": ["tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/ToolingReadiness.Tests.ps1"]
+    },
+    {
+      "id": "tooling-readiness",
+      "owner": "Branch tooling generation, runtime readiness and recovery",
+      "gate": "targeted",
+      "budgetSeconds": 900,
+      "primaryTest": "tests/pester/ToolingReadiness.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.tooling.ps1", ".agents/skills/1c-workflow/tools/tooling-probe/*", ".agents/skills/1c-workflow/references/tooling-recovery.md"],
+      "tests": ["tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1"]
     },
     {
       "id": "vanessa-verification",
@@ -305,7 +343,7 @@
       "check-dev-branch", "close-dev-branch", "export-dev-branch-result", "fork-dev-branch", "init-dev-branch-extension", "init-project", "lock-config-repository-objects", "new-dev-branch", "new-extension-dev-branch", "refresh-all-dev-branches", "refresh-dev-branch", "refresh-dev-branch-lite", "reset-dev-branch", "status", "sync-dev-branches", "sync-master", "update-workflow"
     ],
     "boundary": [
-      "activate-dev-branch-context", "adopt-dev-worktree", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "cleanup-interrupted-vanessa-run", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "install-yaxunit", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update1cbase", "validate", "validate-test-classification", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config"
+      "activate-dev-branch-context", "adopt-dev-worktree", "begin-verification-repair", "check-auxiliary-contour", "check-tools", "cleanup-interrupted-vanessa-run", "configure-auxiliary-contour", "configure-dev-branch-unsafe-action-protection", "configure-web-publication", "context-benchmark", "deploy-and-test", "detect-apache", "detect-web-publication", "doctor", "dump-auxiliary-contour", "dump-dev-branch-extension", "export-auxiliary-contour-result", "get-dev-workspace-close-plan", "get-dev-workspace-plan", "getconfigfiles", "help", "initialize-dev-branch-runtime", "install-agent-browser", "install-ui-tools", "install-vanessa-automation", "install-windows-mcp", "install-yaxunit", "itl-litemode", "itl-repository-mode", "itl-switch-client", "list-dev-branches", "list-platforms", "loadfrom1cbase", "publish-dev-branch", "release-e2e-config-repository-lock-roundtrip", "release-e2e-config-roundtrip", "release-e2e-extension-smoke", "release-e2e-prepare-ondemand", "release-e2e-restore", "release-e2e-snapshot", "repair-dev-branch-tooling", "reset-auxiliary-contour", "set-dev-branch-extension", "set-dev-workspace-deregistration", "start-vanessa-profile", "status-auxiliary-contours", "status-vanessa-profile", "stop-dev-branch-test-clients", "stop-vanessa-profile", "switch-dev-branch", "switch-master", "ui-tools-status", "update-ai-rules", "update-auxiliary-contour", "update-dev-branch-base", "update1cbase", "validate", "validate-test-classification", "verify-dev-branch", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-select", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-start", "vibecoding1c-mcp-status", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-update", "vibecoding1c-mcp-write-client-config"
     ]
   }
 }

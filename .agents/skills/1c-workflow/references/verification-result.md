@@ -1,5 +1,7 @@
 # Verification And Result Reference
 
+For missing or stale tooling extensions, use [tooling recovery](tooling-recovery.md).
+
 Use this reference for `/itl-check`, `verify-dev-branch`, Vanessa Automation, event-log checks, CF/CFE export, and verification policy.
 
 ## Normal Gate

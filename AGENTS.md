@@ -8,7 +8,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 ## Ownership boundaries
 
-- ITL owns project bootstrap and lifecycle, `/itl*`, MCP client config, verification, export, and the five repo skills.
+- ITL owns project bootstrap and lifecycle, `/itl*`, MCP client config, verification, export, and the managed repo skills.
 - The controlled `ai_rules_1c` fork owns upstream rules, agents, skills, commands, its manifest, and tags. Change it only in that repo on an upgrade/release branch; never patch an installed copy.
 - Kilo `itl*.md` comes from `.agents/skills/1c-workflow/kilo-command-templates` and stays ignored. Do not add `.kilocode` or generated `.kilo/commands/itl*.md`.
 

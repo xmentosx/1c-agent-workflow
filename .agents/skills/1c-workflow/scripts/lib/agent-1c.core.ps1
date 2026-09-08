@@ -327,6 +327,7 @@ function Write-RunStatus {
         recoveryReason = $script:RecoveryReason
         errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
         requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        refreshMasterCommit = [string]$script:RunRefreshMasterCommit
         devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
         extensionInitializationStatus = $(if ($script:RunExtensionInitializationStatus) { [string]$script:RunExtensionInitializationStatus } else { "" })
@@ -358,7 +359,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -401,7 +402,16 @@ function Set-RunFailureContextFromMessage {
         return
     }
 
-    if ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
+    if ($Message -match '^ITL_TOOLING_') {
+        $category = "runner"
+        $requiredAction = "repair-dev-branch-tooling"
+    } elseif ($Message -match '^ITL_YAXUNIT_ZERO_TESTS') {
+        $category = "missing-suite"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '^ITL_YAXUNIT_TESTS_FAILED') {
+        $category = "product-assertion"
+        $requiredAction = "/itl-verify-fix"
+    } elseif ($Message -match '(?i)(No Vanessa .*feature|features path was not found|missing-suite)') {
         $category = "missing-suite"
         $requiredAction = "/itl-verify-fix"
     } elseif ($Message -match '^ITL_VANESSA_TEST_FIXTURE_') {
@@ -609,7 +619,7 @@ function Get-Agent1cLifecycleOperationLockScopes {
         $peerState = Read-DevBranchState -Name $peerName
         $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
     }
-    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
+    if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath
     }
 
@@ -664,6 +674,15 @@ function Get-Agent1cLifecycleConflictRecord {
 
     $statePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $WorktreePath
     $record = Read-Agent1cLifecycleOperationRecord -Path $statePath
+    $readersPath = Join-Path (Split-Path -Parent $statePath) "lifecycle-readers"
+    foreach ($readerFile in @(Get-ChildItem -LiteralPath $readersPath -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+        $reader = Read-Agent1cLifecycleOperationRecord -Path $readerFile.FullName
+        if ($null -ne $reader -and (Test-Agent1cProcessAlive -ProcessId ([int]$reader["ownerPid"]))) {
+            $record = $reader
+            $statePath = $readerFile.FullName
+            break
+        }
+    }
     if ($null -ne $record -and $record.Contains("ownerStatePath") -and -not [string]::IsNullOrWhiteSpace([string]$record["ownerStatePath"])) {
         $ownerStatePath = Resolve-Agent1cFullPath -Path ([string]$record["ownerStatePath"])
         $ownerRecord = Read-Agent1cLifecycleOperationRecord -Path $ownerStatePath
@@ -672,6 +691,38 @@ function Get-Agent1cLifecycleConflictRecord {
         }
     }
     return [pscustomobject]@{ record = $record; statePath = $statePath }
+}
+
+function Invoke-Agent1cMainWorktreeReadScope {
+    param(
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+        [int]$TimeoutSeconds = -1
+    )
+
+    Assert-Agent1cLifecycleContinuationOwner
+    $mainRoot = Get-MainWorktreePath
+    $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $mainRoot
+    Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $mainRoot
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+    $reader = $null
+    $readerPath = ""
+    try {
+        $lease = Wait-Agent1cLockSet -RequestedAction "reset-dev-branch" -TimeoutSeconds $TimeoutSeconds -GetRequests {
+            [pscustomobject]@{ worktreePath = $mainRoot; lockPath = $lockPath; share = [IO.FileShare]::ReadWrite; kind = "lifecycle" }
+        }
+        $reader = $lease.handles[0].stream
+        Assert-Agent1cLifecycleContinuationOwner
+        $readerPath = Join-Path (Split-Path -Parent $lockPath) ("lifecycle-readers/{0}.json" -f [guid]::NewGuid().ToString("N"))
+        Write-Agent1cLifecycleOperationRecord -Path $readerPath -Record ([ordered]@{
+            schemaVersion = 1; status = "running"; action = "reset-dev-branch"
+            operationId = $script:LifecycleOperationId; ownerPid = $PID
+            ownerStatePath = $script:LifecycleOperationStatePath; worktreePath = $mainRoot
+        })
+        & $ScriptBlock
+    } finally {
+        if ($readerPath) { Remove-Item -LiteralPath $readerPath -Force -ErrorAction SilentlyContinue }
+        if ($null -ne $reader) { $reader.Dispose() }
+    }
 }
 
 function New-Agent1cLifecycleConflictMessage {
@@ -688,6 +739,134 @@ function New-Agent1cLifecycleConflictMessage {
     $phase = if ($null -ne $record -and $record.Contains("phase")) { [string]$record["phase"] } else { "<unknown>" }
     $startedAt = if ($null -ne $record -and $record.Contains("startedAt")) { [string]$record["startedAt"] } else { "<unknown>" }
     return "LIFECYCLE_OPERATION_CONFLICT requestedAction='$RequestedAction' activeAction='$activeAction' worktree='$WorktreePath' branch='$branch' pid='$ownerPid' phase='$phase' startedAt='$startedAt' statePath='$($conflict.statePath)'"
+}
+
+function Get-Agent1cLockWaitTimeoutSeconds {
+    $raw = [string](Get-Setting -EnvName "LIFECYCLE_LOCK_TIMEOUT_SECONDS" -ConfigName "lifecycleLockTimeoutSeconds" -Default 3600)
+    $value = 0
+    if ($raw -notmatch '^\d+$' -or -not [int]::TryParse($raw, [ref]$value) -or $value -gt 86400) {
+        throw "LIFECYCLE_LOCK_TIMEOUT_SECONDS or lifecycleLockTimeoutSeconds must be an integer between 0 and 86400."
+    }
+    return $value
+}
+
+function Enter-Agent1cMainReadPhase {
+    # refresh-all has finished mutating master. Keep its snapshot stable while
+    # branch workers run, but let a reset holding a branch finish its main reads.
+    $record = $script:LifecycleOperationRecord
+    $statePath = $script:LifecycleOperationStatePath
+    if ($null -eq $record -or $record.action -ne 'refresh-all-dev-branches' -or
+        $script:LifecycleOperationIsContinuation -or @($record.lockScopes).Count -ne 1 -or
+        [string]$record.lockScopes[0] -cne $script:ProjectRoot) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='main read phase requires the main refresh-all owner'"
+    }
+    Exit-Agent1cLifecycleOperation
+    # A writer may enter during the handover. Until shared admission succeeds,
+    # failure handling must not publish over that writer's operation record.
+    $script:LifecycleOperationRecord = $null
+    $script:LifecycleOperationStatePath = ''
+    $lease = Wait-Agent1cLockSet -RequestedAction 'refresh-all-dev-branches' -GetRequests {
+        [pscustomobject]@{ worktreePath=$script:ProjectRoot; lockPath=(Get-Agent1cLifecycleLockPath $script:ProjectRoot); share=[IO.FileShare]::ReadWrite; kind='lifecycle' }
+    }
+    $script:LifecycleOperationHandles = @($lease.handles)
+    $script:LifecycleOperationRecord = $record
+    $script:LifecycleOperationStatePath = $statePath
+    $record['phase'] = 'refresh-all.read-snapshot'
+    $record['detail'] = 'Shared master snapshot lease; branch resets may finish source reads.'
+    Write-Agent1cLifecycleOperationRecord -Path $statePath -Record $record
+}
+
+function Wait-Agent1cLockSet {
+    param(
+        [string]$RequestedAction,
+        [Parameter(Mandatory = $true)][scriptblock]$GetRequests,
+        [int]$TimeoutSeconds = -1
+    )
+
+    if ($TimeoutSeconds -lt 0) { $TimeoutSeconds = Get-Agent1cLockWaitTimeoutSeconds }
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $waitPath = Join-Path $script:ProjectRoot (".agent-1c/locks/lifecycle-waiters/{0}.json" -f [guid]::NewGuid().ToString("N"))
+    $cancelPath = $waitPath + ".cancel"
+    $handles = @()
+    $transferred = $false
+    $nextPublish = 0
+    $previousStage = $script:RunStage
+    $previousDetail = $script:RunStageDetail
+    $previousLiveness = $script:RunLiveness
+    try {
+        while ($true) {
+            if (Test-Path -LiteralPath $cancelPath) {
+                $script:LifecycleWaitCancelled = $true
+                throw "LIFECYCLE_LOCK_WAIT_CANCELLED requestedAction='$RequestedAction' waitPath='$waitPath'"
+            }
+            Assert-Agent1cLifecycleContinuationOwner
+            # Re-resolve topology on every attempt. No partial acquisition survives
+            # a failed attempt, including a runtime lease that still has MCP readers.
+            $requests = @(& $GetRequests)
+            $blocked = $null
+            foreach ($request in $requests) {
+                try {
+                    $stream = [IO.File]::Open($request.lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, $request.share)
+                    $handles += [pscustomobject]@{ worktreePath = $request.worktreePath; lockPath = $request.lockPath; stream = $stream }
+                } catch [IO.IOException] {
+                    # Only Windows sharing/lock violations mean another operation
+                    # is busy. Disk, path and access failures must retain their error.
+                    if (($_.Exception.HResult -band 0xffff) -notin @(32, 33)) { throw }
+                    $blocked = $request
+                    break
+                }
+            }
+            if ($null -eq $blocked) {
+                if (Test-Path -LiteralPath $cancelPath) {
+                    $script:LifecycleWaitCancelled = $true
+                    throw "LIFECYCLE_LOCK_WAIT_CANCELLED requestedAction='$RequestedAction' waitPath='$waitPath'"
+                }
+                if (Test-Path -LiteralPath $waitPath) {
+                    $script:RunStage = $previousStage
+                    $script:RunStageDetail = $previousDetail
+                    $script:RunLiveness = $previousLiveness
+                    $script:RunTimeoutRemainingSeconds = 0
+                    Write-RunStatus -Status running
+                }
+                $transferred = $true
+                return [pscustomobject]@{ handles = @($handles); waited = (Test-Path -LiteralPath $waitPath) }
+            }
+            for ($index = $handles.Count - 1; $index -ge 0; $index--) { $handles[$index].stream.Dispose() }
+            $handles = @()
+            $conflict = New-Agent1cLifecycleConflictMessage -RequestedAction $RequestedAction -WorktreePath $blocked.worktreePath
+            if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+                throw "LIFECYCLE_LOCK_WAIT_TIMEOUT timeoutSeconds='$TimeoutSeconds' resource='$($blocked.kind)' $conflict"
+            }
+            if ($timer.ElapsedMilliseconds -ge $nextPublish) {
+                $elapsed = [int][Math]::Floor($timer.Elapsed.TotalSeconds)
+                $wait = [ordered]@{
+                    status = "waiting"; pid = $PID; action = $RequestedAction
+                    updatedAt = (Get-Date).ToString("o"); elapsedSeconds = $elapsed
+                    timeoutSeconds = $TimeoutSeconds; resource = $blocked.kind
+                    worktreePath = $blocked.worktreePath; lockPath = $blocked.lockPath
+                    owner = $conflict; cancelPath = $cancelPath
+                }
+                Write-Agent1cLifecycleOperationRecord -Path $waitPath -Record $wait
+                # Publish only this invocation's run status, never the holder's
+                # lifecycle-operation.json (also true while waiting before entry).
+                $script:RunStage = "lifecycle.waiting-lock"
+                $script:RunStageDetail = "resource=$($blocked.kind); waited=${elapsed}s; $conflict; cancelPath='$cancelPath'"
+                $script:RunLiveness = "waiting-lock"
+                $script:RunNoProgressSeconds = 0
+                $script:RunTimeoutRemainingSeconds = [Math]::Max(0, $TimeoutSeconds - $elapsed)
+                Write-RunStatus -Status running
+                if ($nextPublish -eq 0) { [Console]::Error.WriteLine("ITL waiting: $($script:RunStageDetail)") }
+                $nextPublish = $timer.ElapsedMilliseconds + 1000
+            }
+            Start-Sleep -Milliseconds 200
+        }
+    } finally {
+        if (-not $transferred) {
+            for ($index = $handles.Count - 1; $index -ge 0; $index--) { $handles[$index].stream.Dispose() }
+        }
+        Remove-Item -LiteralPath $waitPath, $cancelPath -Force -ErrorAction SilentlyContinue
+        $timer.Stop()
+    }
 }
 
 function Assert-Agent1cLifecycleContinuationOwner {
@@ -755,55 +934,28 @@ function Enter-Agent1cLifecycleOperation {
         throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='continuation arguments require OperationContinuation' action='$RequestedAction' operationId='$RequestedOperationId' ownerPid='$RequestedOwnerPid'"
     }
 
-    $scopes = @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction $RequestedAction)
-    $handles = @()
-    try {
+    $preparedScopes = @{}
+    $lease = Wait-Agent1cLockSet -RequestedAction $RequestedAction -GetRequests {
+        $scopes = @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction $RequestedAction)
         foreach ($scope in $scopes) {
-            Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $scope
             $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath $scope
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
-            try {
-                $stream = [System.IO.File]::Open(
-                    $lockPath,
-                    [System.IO.FileMode]::OpenOrCreate,
-                    [System.IO.FileAccess]::ReadWrite,
-                    [System.IO.FileShare]::Read
-                )
-            } catch [System.IO.IOException] {
-                throw (New-Agent1cLifecycleConflictMessage -RequestedAction $RequestedAction -WorktreePath $scope)
+            if (-not $preparedScopes.ContainsKey($scope)) {
+                Ensure-Agent1cLifecycleLocksIgnored -WorktreePath $scope
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+                $preparedScopes[$scope] = $true
             }
-            $handles += [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; stream = $stream }
+            [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = "lifecycle" }
         }
         # Lifecycle is acquired first. The runtime lock then drains active MCP calls
         # and prevents infobase refresh/close from racing with a proxied tool call.
         foreach ($scope in $scopes) {
             $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeLockPath) | Out-Null
-            $deadline = (Get-Date).AddMinutes(10)
-            $runtimeStream = $null
-            while ($null -eq $runtimeStream -and (Get-Date) -lt $deadline) {
-                try {
-                    $runtimeStream = [System.IO.File]::Open(
-                        $runtimeLockPath,
-                        [System.IO.FileMode]::OpenOrCreate,
-                        [System.IO.FileAccess]::ReadWrite,
-                        [System.IO.FileShare]::None
-                    )
-                } catch [System.IO.IOException] {
-                    Start-Sleep -Milliseconds 200
-                }
-            }
-            if ($null -eq $runtimeStream) {
-                throw "ITL_RUNTIME_MCP_LOCK_TIMEOUT requestedAction='$RequestedAction' worktree='$scope' lockPath='$runtimeLockPath' timeoutSeconds='600'"
-            }
-            $handles += [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; stream = $runtimeStream }
+            [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; share = [IO.FileShare]::None; kind = "runtime-mcp" }
         }
-    } catch {
-        for ($index = $handles.Count - 1; $index -ge 0; $index--) {
-            $handles[$index].stream.Dispose()
-        }
-        throw
     }
+    $handles = @($lease.handles)
+    $scopes = @($handles | ForEach-Object { $_.worktreePath } | Select-Object -Unique)
+    $script:LifecycleOperationHandles = $handles
 
     $recoveredOperation = Archive-StaleAgent1cLifecycleOperation -Path $primaryStatePath
     $now = (Get-Date).ToString("o")
@@ -1054,6 +1206,13 @@ function Exit-Agent1cLifecycleOperation {
 }
 
 function Write-Agent1cLifecycleOperationStatusLines {
+    $waitersRoot = Join-Path $script:ProjectRoot ".agent-1c/locks/lifecycle-waiters"
+    foreach ($file in @(Get-ChildItem -LiteralPath $waitersRoot -Filter "*.json" -File -ErrorAction SilentlyContinue)) {
+        $waiter = Read-Agent1cLifecycleOperationRecord -Path $file.FullName
+        if ($null -ne $waiter -and (Test-Agent1cProcessAlive -ProcessId ([int]$waiter["pid"]))) {
+            Write-Host "Lifecycle waiter: action=$($waiter.action), pid=$($waiter.pid), waited=$($waiter.elapsedSeconds)s, resource=$($waiter.resource), owner=$($waiter.owner), cancelPath=$($waiter.cancelPath)"
+        }
+    }
     $statePath = Get-Agent1cLifecycleOperationStatePath -WorktreePath $script:ProjectRoot
     $record = Read-Agent1cLifecycleOperationRecord -Path $statePath
     if ($null -eq $record) {
@@ -2310,6 +2469,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tmp/",
         ".agent-1c/infobases/",
         ".agent-1c/tools/event-log-exporter/",
+        ".agent-1c/tools/tooling-probe/",
         ".agent-1c/tools/auto-update/",
         ".agent-1c/tools/data-mcp/",
         ".agent-1c/tools/va/",
@@ -2319,6 +2479,7 @@ function Ensure-GitIgnore {
         ".agent-1c/mcp/",
         "build/data-mcp-tools-loader/",
         "build/test-results/",
+        "build/tooling-probe/",
         ".codex/config.toml",
         ".kilo/commands/itl*.md",
         ".kilo/kilo.json",
@@ -2340,10 +2501,10 @@ function Ensure-GitIgnore {
     } else {
         $required = $fallbackRequired
     }
-    # Keep crash dumps mandatory in code as well as in the template. A refreshed
+    # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath
