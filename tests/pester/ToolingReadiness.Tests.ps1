@@ -10,6 +10,52 @@
 }
 
 Describe "Tooling runtime Git isolation" {
+    It "keeps actual probe artifacts ignored after rollback to the pre-probe Git baseline" {
+        $savedRoot=$script:ProjectRoot
+        $root=Join-Path $TestDrive ("Откат probe " + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        try {
+            & git -C $root init --quiet
+            $sourceRelative='.agents/skills/1c-workflow/tools/tooling-probe'
+            $sourceParent=Split-Path -Parent (Join-Path $root $sourceRelative)
+            New-Item -ItemType Directory -Path $sourceParent -Force | Out-Null
+            Copy-Item -LiteralPath (Join-Path $context.RepoRoot $sourceRelative) -Destination $sourceParent -Recurse
+            [IO.File]::WriteAllText((Join-Path $root '.gitignore'), ".agent-1c/tmp/`nbuild/test-results/`n")
+            & git -C $root add -- .
+            & git -C $root -c user.name=Test -c user.email=test@example.invalid commit --quiet -m baseline
+            $baseline=(& git -C $root rev-parse HEAD).Trim()
+            $script:ProjectRoot=$root
+            Mock Invoke-Designer {
+                param($DesignerArgs)
+                [IO.File]::WriteAllText($DesignerArgs[-1], 'probe fixture')
+            }
+            Mock Invoke-Enterprise {
+                param($EnterpriseArgs)
+                $requestPath=$EnterpriseArgs[-1].Substring('/CToolingProbe;Params='.Length)
+                $request=Get-Content -LiteralPath $requestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                Write-Utf8Text -Path $request.outputPath -Value (@{
+                    status='passed'; nonce=$request.nonce; extensions=@(New-ReadyToolingRuntime VAExtension)
+                } | ConvertTo-Json -Depth 5)
+            }
+            $state=[pscustomobject]@{ infoBaseKind='file'; devBranchInfoBasePath=(Join-Path $root 'База теста') }
+            $runtime=@(Get-ToolingRuntimeExtensions -State $state -Names @('VAExtension') -User '' -Password '')
+            $runtime.Count | Should -Be 1
+            $runtime[0].active | Should -BeTrue
+            Ensure-GitIgnore
+            & git -C $root add -- .gitignore
+            & git -C $root -c user.name=Test -c user.email=test@example.invalid commit --quiet -m current
+            & git -C $root reset --hard $baseline | Out-Null
+            $LASTEXITCODE | Should -Be 0
+            @(Get-RepositoryGitPathList -RepositoryRoot $root -Arguments @('ls-files','--others','--exclude-standard','-z')).Count | Should -Be 0
+            (Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('diff','--exit-code') -AllowFailure).exitCode | Should -Be 0
+            $ignored=@(Get-RepositoryGitPathList -RepositoryRoot $root -Arguments @('ls-files','--others','--ignored','--exclude-standard','-z'))
+            $ignored.Count | Should -Be 3
+            @($ignored | Where-Object { $_ -like '.agent-1c/tmp/tooling-probe/*/ToolingProbe.epf' }).Count | Should -Be 1
+            @($ignored | Where-Object { $_ -like 'build/test-results/tooling-probe/*/*.json' }).Count | Should -Be 2
+            (Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('check-ignore','--quiet','--','build/user-evidence.txt') -AllowFailure).exitCode | Should -Be 1
+        } finally { $script:ProjectRoot=$savedRoot }
+    }
+
     It "ignores probe artifacts before a checkpoint with legacyTemplate=<LegacyTemplate>" -TestCases @(
         @{ LegacyTemplate=$true }, @{ LegacyTemplate=$false }
     ) {

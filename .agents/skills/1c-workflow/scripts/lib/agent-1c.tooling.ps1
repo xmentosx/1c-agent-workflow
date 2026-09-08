@@ -32,7 +32,8 @@ function Ensure-ToolingProbeEpf {
     }
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $key = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($hashInput -join "`n"))))).Replace("-", "").ToLowerInvariant() } finally { $sha.Dispose() }
-    $root = Resolve-ProjectPath ".agent-1c/tools/tooling-probe/$key"
+    # Use a long-standing runtime root: rollback can restore an older .gitignore.
+    $root = Resolve-ProjectPath ".agent-1c/tmp/tooling-probe/$key"
     $epf = Join-Path $root "ToolingProbe.epf"
     if (-not (Test-Path -LiteralPath $epf -PathType Leaf)) {
         New-Item -ItemType Directory -Path $root -Force | Out-Null
@@ -54,7 +55,7 @@ function Get-ToolingRuntimeExtensions {
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
     $epf = Ensure-ToolingProbeEpf -State $State -User $User -Password $Password
-    $run = Resolve-ProjectPath ("build/tooling-probe/" + [guid]::NewGuid().ToString("N"))
+    $run = Resolve-ProjectPath ("build/test-results/tooling-probe/" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $run -Force | Out-Null
     $request = Join-Path $run "request.json"
     $output = Join-Path $run "result.json"
