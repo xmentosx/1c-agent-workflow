@@ -725,6 +725,7 @@ $summary = [ordered]@{
     error = $errorText
     errorCategory = $errorCategory
     requiredAction = $requiredAction
+    refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
     devBranch = $devBranch
     worktreePath = $worktreePath
     extensionInitializationStatus = $extensionInitializationStatus
@@ -791,6 +792,7 @@ if ($summaryText.Length -gt 4000) {
         error = Limit-Text -Value $errorText -Length 400
         errorCategory = Limit-Text -Value $errorCategory -Length 120
         requiredAction = Limit-Text -Value $requiredAction -Length 400
+        refreshMasterCommit = [string](Get-ObjectValue -Object $status -Name "refreshMasterCommit" -Default "")
         userReport = ""
         userReportOmitted = $userReportOmitted
         userReportPath = $userReportPath

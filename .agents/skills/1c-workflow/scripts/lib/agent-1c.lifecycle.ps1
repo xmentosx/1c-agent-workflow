@@ -11544,6 +11544,15 @@ function Reset-DevBranch {
     }
 }
 
+function Assert-RefreshExpectedMasterCommit {
+    param([string]$TargetCommit, [string]$Operation)
+
+    if ($ExpectedMasterCommit -and $TargetCommit -cne $ExpectedMasterCommit) {
+        Set-RunFailureContext -Category "refresh-target" -RequiredAction "recover-refresh-target: inspect the recorded pending merge; finish it through its original ITL helper without ExpectedMasterCommit, then run refresh-dev-branch-lite with -ExpectedMasterCommit $ExpectedMasterCommit. Preserve pending state; never retarget or commit the merge manually."
+        throw "REFRESH_MASTER_COMMIT_CHANGED: operation=$Operation expected=$ExpectedMasterCommit actual=$TargetCommit"
+    }
+}
+
 function Invoke-RefreshDevBranchCore {
     param(
         [switch]$SynchronizeMaster,
@@ -11553,6 +11562,12 @@ function Invoke-RefreshDevBranchCore {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation $OperationName
     Assert-DevBranchExtensionInitialized -State $state -Operation $OperationName
+    # A resumed merge owns its original target. Check before recovery can clear
+    # that transaction or restart the helper with the old target.
+    $pendingRefresh = Get-PendingDevBranchMergeTransaction -State $state
+    if ($null -ne $pendingRefresh -and $pendingRefresh.operation -ceq $OperationName) {
+        Assert-RefreshExpectedMasterCommit -TargetCommit $pendingRefresh.targetCommit -Operation $OperationName
+    }
     Sync-DevBranchContextToDotEnv -State $state -AllowIncompleteExtension
 
     if ($LifecyclePhase -ne "post-merge") {
@@ -11575,9 +11590,7 @@ function Invoke-RefreshDevBranchCore {
         if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
             throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
         }
-        if ($ExpectedMasterCommit -and $targetMasterCommit -cne $ExpectedMasterCommit) {
-            throw "REFRESH_MASTER_COMMIT_CHANGED: expected=$ExpectedMasterCommit actual=$targetMasterCommit"
-        }
+        Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-NewDevBranchLifecycleMerge `
             -State $state `
@@ -11592,6 +11605,7 @@ function Invoke-RefreshDevBranchCore {
     if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
+    Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
@@ -11638,6 +11652,7 @@ function Invoke-RefreshDevBranchCore {
         Add-VerificationStaleIfNeeded -State $state -Updates $updates -Reason "Development branch was refreshed from master." -CurrentCommit $loadResult.currentCommit
         Update-DevBranchState -State $state -Updates $updates
         $updatedState = Read-DevBranchState -Name $DevBranchName
+        $script:RunRefreshMasterCommit = $targetMasterCommit
         Write-Host "Development branch refreshed from exact master commit: $targetMasterCommit"
         Write-BaseUpdateResult -State $updatedState -LoadResult $loadResult -Label "Development branch configuration"
         if ((Get-DevBranchKind -State $state) -eq "extension") {
@@ -11740,7 +11755,7 @@ function Refresh-AllDevBranches {
     $inventory = Get-ActiveReadyDevBranchTargets
     $results = [System.Collections.Generic.List[object]]::new()
     foreach ($error in @($inventory.errors)) {
-        $results.Add([pscustomobject]@{ branch = "<state>"; worktreePath = ""; status = "failed"; detail = [string]$error; userReport = ""; requiredAction = "" }) | Out-Null
+        $results.Add([pscustomobject]@{ branch = "<state>"; worktreePath = ""; status = "failed"; detail = [string]$error; errorCategory = "branch-state"; stage = "inventory"; statusPath = ""; refreshMasterCommit = ""; requiredAction = "inspect the named branch state and use its lifecycle recovery; do not delete state or reset the branch" }) | Out-Null
     }
 
     $runRoot = if ($RunStatusPath) { Split-Path -Parent (Resolve-RunFilePath -Path $RunStatusPath) } else { Join-Path $script:ProjectRoot ".agent-1c\runs" }
@@ -11756,7 +11771,7 @@ function Refresh-AllDevBranches {
             try {
                 $running.Add((Start-RefreshAllBranchProcess -Target $target -MasterCommit $masterCommit -OutputRoot $outputRoot)) | Out-Null
             } catch {
-                $results.Add([pscustomobject]@{ branch = [string]$target.branch; worktreePath = [string]$target.worktreePath; status = "failed"; detail = $_.Exception.Message; userReport = ""; requiredAction = "" }) | Out-Null
+                $results.Add([pscustomobject]@{ branch = [string]$target.branch; worktreePath = [string]$target.worktreePath; status = "failed"; detail = $_.Exception.Message; errorCategory = "runner"; stage = "start"; statusPath = ""; refreshMasterCommit = ""; requiredAction = "diagnose the branch runner launch failure before retrying" }) | Out-Null
             }
         }
         Set-RunStage -Stage "refresh-all.branches" -Detail ("master={0}; running={1}; pending={2}; complete={3}" -f $masterCommit, $running.Count, $pending.Count, $results.Count)
@@ -11771,29 +11786,64 @@ function Refresh-AllDevBranches {
             $stderrText = if (Test-Path -LiteralPath $entry.stderr -PathType Leaf) { Read-Utf8Text -Path $entry.stderr } else { "" }
             $summary = $null
             try { if ($stdoutText) { $summary = $stdoutText | ConvertFrom-Json } } catch {}
+            # Recover the unbounded child evidence before aggregating: compact
+            # transport may omit or shorten both errors and requiredAction.
+            $evidence = $summary
+            $childStatusPath = [string](Get-StateValue -State $summary -Name "statusPath" -Default "")
+            if ($childStatusPath -and (Test-Path -LiteralPath $childStatusPath -PathType Leaf)) {
+                try {
+                    $childStatus = Read-Utf8Text -Path $childStatusPath | ConvertFrom-Json
+                    if ([string]$childStatus.status -ceq [string]$summary.status) { $evidence = $childStatus }
+                } catch {}
+            }
             # The compact runner's terminal JSON is authoritative. Under parallel
             # Start-Process collection Windows PowerShell can expose a stale
             # non-zero ExitCode even after the owned runner validated and emitted
             # a terminal success. Missing or malformed JSON still fails closed.
             $succeeded = $null -ne $summary -and [string]$summary.status -eq "succeeded"
-            $detail = if ($null -ne $summary -and $summary.error) { [string]$summary.error } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
+            $childError = [string](Get-StateValue -State $evidence -Name "errorMessage" -Default (Get-StateValue -State $summary -Name "error" -Default ""))
+            $detail = if ($childError) { $childError } elseif ($succeeded) { "" } else { ($stderrText.Trim() + " " + $stdoutText.Trim()).Trim() }
+            $actualMasterCommit = [string](Get-StateValue -State $evidence -Name "refreshMasterCommit" -Default "")
+            $category = [string](Get-StateValue -State $evidence -Name "errorCategory" -Default $(if ($succeeded) { "" } else { "runner" }))
+            $requiredAction = [string](Get-StateValue -State $evidence -Name "requiredAction" -Default "")
+            if ($succeeded -and $actualMasterCommit -cne $masterCommit) {
+                $succeeded = $false
+                $category = "refresh-target"
+                $detail = "REFRESH_ALL_TARGET_UNVERIFIED: expected=$masterCommit actual=$actualMasterCommit"
+                $requiredAction = "inspect the child status and pending merge, then run refresh-dev-branch-lite with -ExpectedMasterCommit $masterCommit; success requires this exact target"
+            }
+            if (-not $succeeded -and -not $requiredAction) {
+                $requiredAction = "inspect the child status and logs, resolve the reported blocker, then repeat the same branch ITL helper"
+            }
             $results.Add([pscustomobject]@{
                 branch = [string]$entry.target.branch
                 worktreePath = [string]$entry.target.worktreePath
                 status = $(if ($succeeded) { "succeeded" } else { "failed" })
                 detail = $detail
-                userReport = $(if ($null -ne $summary) { [string]$summary.userReport } else { "" })
-                requiredAction = $(if ($null -ne $summary) { [string](Get-StateValue -State $summary -Name "requiredAction" -Default "") } else { "" })
+                errorCategory = $category
+                stage = [string](Get-StateValue -State $evidence -Name "stage" -Default "")
+                statusPath = $childStatusPath
+                stdoutPath = [string]$entry.stdout
+                stderrPath = [string]$entry.stderr
+                refreshMasterCommit = $actualMasterCommit
+                requiredAction = $requiredAction
             }) | Out-Null
             [void]$running.Remove($entry)
         }
         if ($running.Count -gt 0) { Start-Sleep -Milliseconds 500 }
     }
 
+    $failed = @($results | Where-Object status -ne "succeeded")
+    Set-RunStage -Stage "refresh-all.complete" -Detail "master=$masterCommit; running=0; pending=0; complete=$($results.Count); succeeded=$($results.Count - $failed.Count); failed=$($failed.Count)"
+    $resultsPath = Join-Path $outputRoot "results.json"
+    Write-Utf8TextAtomic -Path $resultsPath -Value (([ordered]@{ schemaVersion = 1; masterCommit = $masterCommit; results = @($results | Sort-Object branch) } | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
+    Set-RunResultArtifacts -ResultManifestPath $resultsPath
     $report = [System.Collections.Generic.List[string]]::new()
     $report.Add("## Обновление всех веток")
     Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value $masterCommit
     Add-RunUserReportLine -Lines $report -Label "Параллельность" -Value $MaxParallelBranches
+    Add-RunUserReportLine -Lines $report -Label "Успешно / ошибок" -Value "$($results.Count - $failed.Count) / $($failed.Count)"
+    Add-RunUserReportLine -Lines $report -Label "Подробные результаты и продолжение" -Value $resultsPath
     if ($results.Count -eq 0) {
         Add-RunUserReportLine -Lines $report -Label "Ветки" -Value "активных ready-веток нет"
     } else {
@@ -11802,6 +11852,12 @@ function Refresh-AllDevBranches {
         foreach ($result in @($results | Sort-Object branch)) {
             $suffix = if ($result.detail) { ": $($result.detail)" } else { "" }
             $report.Add("- $($result.branch): $($result.status)$suffix")
+            if ($result.status -ne "succeeded") {
+                $report.Add("  - Категория: $($result.errorCategory); worktree: $($result.worktreePath)")
+            }
+            if ($result.requiredAction) {
+                $report.Add("  - Продолжение: $($result.requiredAction)")
+            }
             if ([string]$result.requiredAction -match '^classify-tests-after-refresh:') {
                 $report.Add("  - Классификация тестов: требуется в $($result.worktreePath)")
             }
@@ -11812,8 +11868,8 @@ function Refresh-AllDevBranches {
         $script:RunRequiredAction = "classify-tests-after-refresh: split oversized or mixed feature files and update test catalogs in the $($classificationTargets.Count) branch worktree(s) listed in this aggregate report before reporting refresh-all complete"
     }
     Write-AndSetRunUserReport -Lines $report
-    $failed = @($results | Where-Object status -ne "succeeded")
     if ($failed.Count -gt 0) {
+        Set-RunFailureContext -Category "branch-aggregate" -RequiredAction "recover-refresh-all: read $resultsPath and continue each branch's requiredAction in its worktree, including test classification. Preserve the pinned master $masterCommit and pending merges; do not rerun master synchronization or report completion while any branch remains blocked."
         throw "REFRESH_ALL_BRANCH_FAILURE: $($failed.Count) branch operation(s) failed. See the aggregate user report."
     }
 }
