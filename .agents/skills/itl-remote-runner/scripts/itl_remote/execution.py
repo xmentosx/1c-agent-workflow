@@ -85,7 +85,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             raise WorkError("RDBG_OWNED_CLIENT_PID_REQUIRED")
         launch_path = run / ("onec-process-%d.json" % client_pid)
         launch = read_json(launch_path)
-        if launch.get("jobId") != request["id"] or launch.get("infoBase") != target.get("infoBase"):
+        if launch.get("pid") != client_pid or launch.get("jobId") != request["id"] or launch.get("infoBase") != target.get("infoBase"):
             raise WorkError("RDBG_FOREIGN_CLIENT_LAUNCH")
         from .common import capture
         capture(["powershell.exe", "-NoProfile", "-File", str(variables["runtime"] / "Test-OneCProcessRecord.ps1"),

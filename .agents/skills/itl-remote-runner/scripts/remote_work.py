@@ -70,8 +70,10 @@ def main():
     command = commands.add_parser("runtime-proof")
     command.add_argument("--context", required=True)
     command.add_argument("--client-pid", type=int, required=True)
-    command.add_argument("--seance", required=True)
-    command.add_argument("--instance", required=True)
+    session = command.add_mutually_exclusive_group(required=True)
+    session.add_argument("--seance")
+    session.add_argument("--session-observation", help="own TestClient observation JSON path relative to the run directory")
+    command.add_argument("--instance")
     command = commands.add_parser("export")
     command.add_argument("--repository", required=True)
     command.add_argument("--output", required=True)
@@ -100,7 +102,7 @@ def main():
         return profiling.analyze_raw(args.raw, args.session,
                                      source_map=read_json(args.source_map) if args.source_map else None)
     if args.command == "runtime-proof":
-        return profiling.runtime_proof(args.context, args.client_pid, args.seance, args.instance)
+        return profiling.runtime_proof(args.context, args.client_pid, args.seance, args.instance, args.session_observation)
     if args.command == "submit":
         return jobs.submit(args.package, args.spool)
     if args.command == "send":

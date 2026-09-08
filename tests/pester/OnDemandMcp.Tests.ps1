@@ -1,3 +1,92 @@
+﻿Describe 'ITL performance TestClient owner bridge' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $fixtureRoot = Join-Path $TestDrive 'Профиль с пробелом'
+        New-Item -ItemType Directory -Path (Join-Path $fixtureRoot '.agent-1c') -Force | Out-Null
+        Set-Content -LiteralPath (Join-Path $fixtureRoot '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+        . $context.HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+        $savedPerformanceContext = $env:ITL_PERFORMANCE_CONTEXT
+    }
+    BeforeEach {
+        $env:ITL_PERFORMANCE_CONTEXT = Join-Path $fixtureRoot 'context.json'
+        $script:performanceFixture = @{ jobId='job'; operations=@('measure'); target=@{
+            workspace=$fixtureRoot; infoBase=@{kind='file';path=(Join-Path $fixtureRoot 'База данных')}
+        }; rdbg=@{url='http://127.0.0.1:1550'} }
+        $script:performanceState = [pscustomobject]@{ infoBaseKind='file'; devBranchInfoBasePath=$performanceFixture.target.infoBase.path }
+        Write-Utf8Text -Path $env:ITL_PERFORMANCE_CONTEXT -Value ($performanceFixture | ConvertTo-Json -Depth 8)
+    }
+    AfterAll { $env:ITL_PERFORMANCE_CONTEXT = $savedPerformanceContext }
+
+    It 'keeps ordinary launches unchanged and binds the profile to the exact owned base' {
+        $proof = Get-ItlPerformanceTestClientContext -State $performanceState
+        $proof.jobId | Should -Be 'job'
+        $proof.runDirectory | Should -Be $fixtureRoot
+        $performanceState.devBranchInfoBasePath = 'D:\foreign'
+        { Get-ItlPerformanceTestClientContext -State $performanceState } | Should -Throw '*TARGET_MISMATCH*'
+        $env:ITL_PERFORMANCE_CONTEXT = $null
+        Get-ItlPerformanceTestClientContext -State $performanceState | Should -BeNullOrEmpty
+    }
+
+    It 'rejects non-local debugger URLs and missing measurement authorization' {
+        foreach ($url in @('http://example.com:1550','http://127.0.0.1:1550/path','http://user@127.0.0.1:1550')) {
+            $performanceFixture.rdbg.url=$url
+            Write-Utf8Text -Path $env:ITL_PERFORMANCE_CONTEXT -Value ($performanceFixture | ConvertTo-Json -Depth 8)
+            { Get-ItlPerformanceTestClientContext -State $performanceState } | Should -Throw '*DEBUGGER_URL_INVALID*'
+        }
+        $performanceFixture.operations=@()
+        Write-Utf8Text -Path $env:ITL_PERFORMANCE_CONTEXT -Value ($performanceFixture | ConvertTo-Json -Depth 8)
+        { Get-ItlPerformanceTestClientContext -State $performanceState } | Should -Throw '*JOB_INVALID*'
+    }
+
+    It 'exports the real guarded process and passes debugger arguments through the normal launcher' {
+        $actual = & {
+            $script:launchedArgs = @()
+            $runtime = [pscustomobject]@{ instanceId='fixture'; pid=75001; port=9877; testClientPort=48151; testClientPid=0 }
+            function Read-ItlOnDemandRuntimeState { $runtime }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$true} }
+            function Test-TcpPortOpen { $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { $performanceState }
+            function Assert-DevBranchApplicationReady { param($State) $State }
+            function Test-VanessaTestPortOwnedByState { $false }
+            function Test-VanessaTestPortUsedByForeignProcess { $false }
+            function Start-EnterpriseBackground {
+                param($EnterpriseArgs, [switch]$UseTestClient, $InfoBasePath, $InfoBaseKind, $User, $Password, $TestClientPort, $SessionLimitRecovery)
+                if (-not $UseTestClient -or $InfoBasePath -ne $performanceState.devBranchInfoBasePath) { throw 'wrong launch' }
+                $script:launchedArgs = $EnterpriseArgs
+                [pscustomobject]@{ process=[pscustomobject]@{Id=75002}; executablePath='D:\platform\1cv8c.exe'; logPath='fixture.log' }
+            }
+            function Get-Process { [pscustomobject]@{Id=75002;StartTime=[datetime]'2026-09-08T01:00:00Z'} }
+            function Write-ItlOnDemandRuntimeState { }
+            function Wait-ItlOnDemandTestClientPortReady { $true }
+            function Set-ItlOnDemandManagedPortLeaseStatus { }
+            $ensured = Ensure-ItlOnDemandVanessaTestClient -InstanceId 'fixture'
+            [pscustomobject]@{args=$script:launchedArgs;state=$ensured}
+        }
+        ($actual.args -join '|') | Should -Be '/DEBUG|-http|/DEBUGGERURL|http://127.0.0.1:1550'
+        $actual.state.performanceJobId | Should -Be 'job'
+        $record = Read-Utf8Text -Path (Join-Path $fixtureRoot 'onec-process-75002.json') | ConvertFrom-Json
+        $record.pid | Should -Be 75002
+        ([datetime]$record.startedAt).ToUniversalTime() | Should -Be ([datetime]'2026-09-08T01:00:00Z').ToUniversalTime()
+        $record.infoBase.path | Should -Be $performanceState.devBranchInfoBasePath
+        $record.ownershipKind | Should -Be 'itl-broker'
+    }
+
+    It 'refuses adoption of an existing client and a changed debugger in the same job' {
+        & {
+            $runtime = [pscustomobject]@{ instanceId='fixture';pid=75001;port=9877;testClientPort=48151;testClientPid=75002 }
+            function Read-ItlOnDemandRuntimeState { $runtime }
+            function Get-ItlOnDemandProcessOwnershipProof { [pscustomobject]@{owned=$true} }
+            function Test-TcpPortOpen { $true }
+            function Read-CurrentDevBranchStateForRoctupMcp { $performanceState }
+            function Assert-DevBranchApplicationReady { param($State) $State }
+            { Ensure-ItlOnDemandVanessaTestClient -InstanceId 'fixture' } | Should -Throw '*EXISTING_CLIENT_NOT_ADOPTED*'
+            $runtime = Set-ItlOnDemandRuntimeStateValues -RuntimeState $runtime -Values @{ performanceJobId='job';performanceDebuggerUrl='http://127.0.0.1:1551' }
+            { Ensure-ItlOnDemandVanessaTestClient -InstanceId 'fixture' } | Should -Throw '*DEBUGGER_CHANGED*'
+        }
+    }
+}
+
 Describe "ITL on-demand MCP facade" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')

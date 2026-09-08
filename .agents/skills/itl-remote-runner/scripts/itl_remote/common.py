@@ -105,8 +105,14 @@ class FileLock:
         self.stream.close()
 
 
-def native_environment(extra=None):
+def native_environment(extra=None, *, windows_powershell=False):
     env = dict(os.environ)
+    if windows_powershell:
+        # Windows PowerShell must reconstruct its own edition's module search path.
+        # A facade started from pwsh otherwise autoloads incompatible PS7 modules.
+        for key in list(env):
+            if key.lower() == "psmodulepath":
+                del env[key]
     env.update(PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
     env.update(extra or {})
     return env
@@ -122,7 +128,7 @@ def native_args(argv):
 def capture(argv, *, cwd=None, timeout=60, input_bytes=None):
     result = subprocess.run(native_args(argv), cwd=cwd, input=input_bytes,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=timeout, env=native_environment(), shell=False)
+                            timeout=timeout, env=native_environment(windows_powershell=Path(argv[0]).name.lower() in ("powershell", "powershell.exe")), shell=False)
     if result.returncode:
         raise WorkError("NATIVE_FAILED: " + result.stderr.decode("utf-8", errors="replace")[-2000:])
     return result.stdout

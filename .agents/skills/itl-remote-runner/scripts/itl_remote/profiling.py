@@ -79,7 +79,45 @@ def prepare_debug_server(target, run, processes, cancelled):
 
 
 
-def runtime_proof(context_path, client_pid, seance, instance):
+def select_runtime_session(targets, alias, seance=None, instance=None, session_number=None):
+    """Resolve one runtime session; never select the first debugger target."""
+    from decimal import Decimal, InvalidOperation
+    if not alias or (not seance and session_number is None):
+        raise WorkError("RDBG_SESSION_IDENTITY_REQUIRED")
+    if session_number is not None:
+        try:
+            number = Decimal(str(session_number))
+            if not number.is_finite() or number <= 0 or number != number.to_integral_value():
+                raise ValueError()
+        except (InvalidOperation, ValueError):
+            raise WorkError("RDBG_SESSION_NUMBER_INVALID") from None
+    candidates = []
+    for target in targets:
+        if target.get("infoBaseAlias") != alias or target.get("targetType") not in ("ManagedClient", "Server"):
+            continue
+        if seance and target.get("seanceId") != seance:
+            continue
+        if instance and target.get("infoBaseInstanceID") != instance:
+            continue
+        if session_number is not None:
+            try:
+                if Decimal(str(target.get("seanceNo", ""))) != number:
+                    continue
+            except InvalidOperation:
+                continue
+        candidates.append(target)
+    sessions = {(t.get("seanceId"), t.get("infoBaseInstanceID")) for t in candidates}
+    if len(sessions) != 1 or any(not sid or not iid for sid, iid in sessions):
+        raise WorkError("RDBG_OWNED_SESSION_AMBIGUOUS" if sessions else "RDBG_OWNED_SESSION_NOT_DISCOVERED")
+    ids = [t.get("id") for t in candidates]
+    if not all(ids) or len(ids) != len(set(ids)):
+        raise WorkError("RDBG_TARGET_IDS_INVALID")
+    if sum(t["targetType"] == "ManagedClient" for t in candidates) != 1:
+        raise WorkError("RDBG_OWNED_CLIENT_AMBIGUOUS")
+    return candidates
+
+
+def runtime_proof(context_path, client_pid, seance=None, instance=None, observation_path=None):
     """Discover targets for an explicitly identified runtime session, without attaching them."""
     from .common import capture
     context_path = Path(context_path)
@@ -87,13 +125,26 @@ def runtime_proof(context_path, client_pid, seance, instance):
     run = context_path.parent
     record_path = run / ("onec-process-%d.json" % client_pid)
     record = read_json(record_path)
-    if record.get("jobId") != context["jobId"] or record.get("infoBase") != context["target"].get("infoBase"):
+    if record.get("pid") != client_pid or record.get("jobId") != context["jobId"] or record.get("infoBase") != context["target"].get("infoBase"):
         raise WorkError("RDBG_FOREIGN_CLIENT_LAUNCH")
     capture(["powershell.exe", "-NoProfile", "-File", str(Path(__file__).resolve().parent.parent / "Test-OneCProcessRecord.ps1"),
              "-RecordPath", str(record_path)], timeout=20)
+    session_number = None
+    if observation_path is not None:
+        observation_path = beneath(run, observation_path)
+        observation = read_json(observation_path)
+        if (observation.get("jobId") != context["jobId"] or observation.get("clientPid") != client_pid
+                or not record.get("startedAt") or observation.get("clientStartedAt") != record["startedAt"]):
+            raise WorkError("RDBG_FOREIGN_SESSION_OBSERVATION")
+        session_number = observation.get("sessionNumber")
+        if session_number is None:
+            raise WorkError("RDBG_SESSION_NUMBER_INVALID")
+    if not seance and session_number is None:
+        raise WorkError("RDBG_SESSION_IDENTITY_REQUIRED")
     config = context["rdbg"]
     proof = {"jobId": context["jobId"], "clientPid": client_pid, "infoBaseAlias": config["infoBaseAlias"],
-             "seanceId": seance, "infoBaseInstanceID": instance, "targetIds": ["discovery-only"]}
+             "seanceId": seance or "discovery-only", "infoBaseInstanceID": instance or "discovery-only",
+             "targetIds": ["discovery-only"]}
     debugger = Rdbg(config, proof, run / "discovery" / uuid.uuid4().hex)
     try:
         response = debugger.call("attachDebugUI")
@@ -102,11 +153,13 @@ def runtime_proof(context_path, client_pid, seance, instance):
         debugger.registered = True
         debugger.call("initSettings")
         targets = [fields(t) for t in debugger.call("getDbgTargets").findall("{" + RESPONSE + "}id")]
-        selected = [t for t in targets if all(t.get(k) == proof[k] for k in ("infoBaseAlias", "seanceId", "infoBaseInstanceID"))
-                    and t.get("targetType") in ("ManagedClient", "Server")]
+        selected = select_runtime_session(targets, config["infoBaseAlias"], seance, instance, session_number)
+        proof["seanceId"] = selected[0]["seanceId"]
+        proof["infoBaseInstanceID"] = selected[0]["infoBaseInstanceID"]
         proof["targetIds"] = [t["id"] for t in selected]
-        if not selected:
-            raise WorkError("RDBG_OWNED_SESSION_NOT_DISCOVERED")
+        if observation_path is not None:
+            proof["sessionObservationSha256"] = digest(observation_path)
+            proof["sessionNumber"] = session_number
         proof["observedAt"] = stamp()
         write_json(run / "runtime-proof.json", proof)
         return proof
@@ -243,8 +296,15 @@ class Rdbg:
                     raw = zlib.decompress(raw, 16 + zlib.MAX_WBITS)
                 path = prefix.with_suffix(".response.xml")
                 path.write_bytes(raw)
+                if response.status == 204 and command == "pingDebugUIParams" and not raw:
+                    # A long poll with no pending debugger events carries no packet.
+                    return ET.Element("response")
                 if response.status != 200:
                     raise WorkError("RDBG_HTTP_ERROR: " + str(response.status))
+                if not raw and command in ("initSettings", "attachDetachDbgTargets", "setMeasureMode"):
+                    # These commands have no consumed payload; 8.3.27 can acknowledge
+                    # them with HTTP 200 and no XML. Profile success still requires packets.
+                    return ET.Element("response")
                 tree = ET.fromstring(raw)
                 if command == "pingDebugUIParams":
                     self.raw.append(path)
