@@ -175,6 +175,17 @@ helper and classification owner against isolated project catalogs, and preserve
 the original feature bytes. No classification or verification policy is loosened. Registration and
 the installed-project public command acceptance must still be recorded.
 
+The first registration gate exposed an exit-path failure in the unchanged
+lifecycle cancellation reproducer: cancelled JSON was emitted, but the process
+returned `0x80131029` instead of 2. The CLR names this code
+[`HOST_E_EXITPROCESS_TIMEOUT`](https://github.com/dotnet/coreclr/blob/v2.0.0/src/inc/corerror.xml).
+That observation alone does not prove the particular shutdown race. Extending
+the same real-runner reproducer established a deterministic defect:
+`Environment.Exit` prevents the calling script's finally block from executing.
+The runner now returns with PowerShell `exit`, retaining its result code and
+allowing caller cleanup. All ten lifecycle waiting tests pass with the added
+finally assertion; no holder, lock, cancellation assertion or timeout was weakened.
+
 **6b — Missing nested scenarios in a combined Vanessa run, P1.** The handoff
 reports 49 expected scenarios but only 45 loaded, despite both nested feature
 files being present in `FeaturesToRun` and execution-features. Separate runs

@@ -162,7 +162,8 @@ finally { Exit-Agent1cLifecycleOperation }
             Set-Content -LiteralPath $wrapper -Encoding UTF8 -Value @'
 param($Root, $Runner)
 Set-Location -LiteralPath $Root
-& $Runner -- -Action check-dev-branch
+try { & $Runner -- -Action check-dev-branch }
+finally { [IO.File]::WriteAllText((Join-Path $Root 'caller-finally.txt'), 'caller cleanup completed') }
 exit $LASTEXITCODE
 '@
             $job = Start-Worker $wrapper @('-Root', $root, '-Runner', $runner)
@@ -172,6 +173,7 @@ exit $LASTEXITCODE
                 [IO.File]::WriteAllText($wait.cancelPath, '')
                 $result = Receive-Worker $job
                 $result.exitCode | Should -Be 2 -Because $result.combinedText
+                [IO.File]::ReadAllText((Join-Path $root 'caller-finally.txt')) | Should -Be 'caller cleanup completed'
                 $summary = $result.stdout | ConvertFrom-Json
                 $summary.status | Should -Be cancelled
                 $summary.error | Should -Match LIFECYCLE_LOCK_WAIT_CANCELLED

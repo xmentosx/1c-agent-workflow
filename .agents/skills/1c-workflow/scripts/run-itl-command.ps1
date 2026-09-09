@@ -851,4 +851,6 @@ if ($userReportOmitted) {
     }
 }
 Write-Output $summaryText
-[Environment]::Exit($exitCode)
+# Return through the PowerShell host so a calling script can finish its finally
+# blocks. Forced CLR shutdown can also replace the intended cancellation code.
+exit $exitCode
