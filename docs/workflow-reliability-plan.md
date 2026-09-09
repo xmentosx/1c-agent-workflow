@@ -272,8 +272,10 @@ commit after the helper cursor, stale proof, retained strict cursor recovery,
 and five negative identity/checkpoint cases, plus transport of a structured
 recovery action through the real compact runner. The positive cases serialize
 the failed run status, prove state is unchanged before fresh proof, and only
-then complete recovery. Registration and installed public-command acceptance
-remain pending; the historical branch11 successful full check is incident
+then complete recovery. Source registration at
+`a468fb311925635a4349a87e3e1d6011de042156` passed 538 tests with zero failures
+or skips in 508306 ms, clean tree `dfcecf3c9f01dad2bbee673bb52c2546e1bf5a73`.
+Installed public-command acceptance remains pending; the historical branch11 successful full check is incident
 evidence, not delivery proof of this new diagnostic.
 
 The remaining messages are covered separately: empty command actions by item 12,
@@ -602,7 +604,17 @@ Remaining integration before registration/delivery:
   including installed non-chat owner-ID propagation and observable wait progress.
 - Integrate full-resource planning and native cleanup with composed measurement
   owners; distinguish confirmed pre-launch failure from an interrupted launch.
-- Qualify installed Python/runtime availability, update the finished component's
+- Resolve and qualify installed Python/runtime availability before delivery:
+  Python 3.11+ was already a prerequisite for remote jobs and measurements, but
+  the shared database queue broadens that dependency to ordinary integrated
+  operations. The interpreter is currently external (PATH or
+  `ITL_INFOBASE_ACCESS_PYTHON`), with no third-party Python packages. Qualify a
+  pinned distribution usable without administrator rights and helper-owned
+  discovery/update; do not assume Codex's development interpreter exists on an
+  end-user machine. Test a clean user profile with no Python in PATH, spaces and
+  Cyrillic in the install path, unavailable downloads, version mismatch and
+  offline reuse. Keep this as explicit delivery work, not a development-only note.
+  Update the finished component's
   version/build pin, run its owned registration checks, and retain exact real
   Release E2E proof for both backend families before publishing its asset.
 - Complete live 1C recovery observations, PM5/UFA and multi-host qualification.
@@ -1391,3 +1403,53 @@ Native repository report follow-ups were registered at
 zero failures/skips, clean tree `ad5c2cfe56b67de31391b0c72007e887508d8449`,
 474058 ms. The cumulative source branch includes this packet; publication and
 installed acceptance remain outstanding.
+
+## Vanessa build admission and the conf.cfg constraint
+
+The user explicitly forbids workflow edits to `conf.cfg`; terminal-server users
+may lack write permission. The old builder's temporary protection edit is
+removed, including its restore path. The replacement restores the existing
+SHA-qualified `service-infobase.dt` into an owned build-only base and launches
+the cache preparation under `itl_vanessa_service`, whose per-base/user protection
+setting is already prepared. No business base or installed configuration is
+changed by this build.
+
+The builder plans the compile scratch base, single-build scratch base and service
+base before starting 1C, reserves their complete set through the common database
+queue, and uses the shared session-capacity guard for OneScript proxies as well
+as direct qualification launches. The native journal requires observed release
+of owned descendants; a surviving child or unknown launch retains recovery debt
+and the build directory. An unrelated user's client does not prevent release.
+
+Pinned upstream Compile.os and MakeVASingle.os bytes remain unchanged. Separate
+hash-checked execution copies select the planned scratch path, the pinned 1C
+executable and the prepared service user, and suppress only the final directory
+window. The original synchronous Enterprise cache-building call is retained.
+Explicit platform selection also fixes a reproduced preflight rejection when
+8.5 is installed alongside the required 8.3.27.2130; the executable's manifest
+version check remains mandatory.
+
+The focused group passes 26/26 on Windows PowerShell 5.1/Pester 5.8. It includes
+real Python queue owners competing for each of the three resources, independent
+resource admission, full-set release, and native-boundary failures for surviving
+children, nonzero exits and unknown starts. Both complete execution copies pass
+the pinned OneScript engine's syntax check.
+
+Native r9 compilation subsequently completed on platform 8.3.27.2130 and
+OneScript 1.9.4.16, with the original source layout under
+`C:/va сборка/bcf14d42`. The observed Enterprise cache-builder command used
+`/N"itl_vanessa_service"`; RestoreIB and all three native stages completed.
+The private runtime result confirms release, and a fresh independent queue owner
+then acquired and released the entire actual three-base set without waiting.
+The user protection file's existence and SHA were identical before and after;
+evidence is retained under `build/diagnostics/vanessa-build-no-conf` in this
+worktree. The native run predates the added per-operation JSON telemetry fields;
+it proves the execution path, not those additional fields.
+
+The candidate ZIP SHA-256 is
+`ee3e0f86faf30951731b6bbaaf4fc6dd5ab294990d4ae558d989aaeb4302bc59`,
+EPF SHA-256 `856b773bd55f5b77b1d93c6793e62a12e0c9d1a4ba744ad5ce829b7b829457ac`.
+Its provenance and 32094350-byte archive are under
+`build/third-party/vanessa-automation/1.2.043.28-itl-r9`. This is a local candidate;
+the original combined 49-scenario case, retained MCP behavior, normal component
+delivery and installed acceptance remain pending. The installed pin remains r8.

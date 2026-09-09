@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
@@ -10,6 +10,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version 2.0
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
 
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -113,79 +115,6 @@ function Test-PathInside {
     return $candidateFull.StartsWith($parentFull + "\", [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Enter-ScopedUnsafeActionProtectionBypass {
-    param(
-        [Parameter(Mandatory = $true)][string]$ConfPath,
-        [Parameter(Mandatory = $true)][string]$BuildToken
-    )
-
-    if ($BuildToken -notmatch "^[0-9a-f]{8}$") {
-        throw "Unsafe qualification-base token: $BuildToken"
-    }
-
-    $confDirectory = Split-Path -Parent $ConfPath
-    New-Item -ItemType Directory -Path $confDirectory -Force | Out-Null
-
-    $originalExists = Test-Path -LiteralPath $ConfPath -PathType Leaf
-    $originalBytes = if ($originalExists) {
-        [System.IO.File]::ReadAllBytes($ConfPath)
-    } else {
-        [byte[]]@()
-    }
-
-    $originalText = if ($originalBytes.Length -gt 0) {
-        [System.Text.Encoding]::UTF8.GetString($originalBytes)
-    } else {
-        ""
-    }
-    $ownedPattern = ".*$BuildToken.*"
-    $settingPattern = "(?m)^(DisableUnsafeActionProtection=)([^\r\n]*)"
-    if ([regex]::IsMatch($originalText, $settingPattern)) {
-        $expectedText = ([regex]::new($settingPattern)).Replace(
-            $originalText,
-            {
-                param($match)
-                $existingPatterns = $match.Groups[2].Value.TrimEnd(";")
-                return $match.Groups[1].Value + $existingPatterns + ";" + $ownedPattern + ";"
-            }
-        )
-    } else {
-        $separator = if ($originalText.Length -gt 0 -and
-            -not $originalText.EndsWith("`n") -and
-            -not $originalText.EndsWith("`r")) {
-            "`r`n"
-        } else {
-            ""
-        }
-        $expectedText = $originalText + $separator + "DisableUnsafeActionProtection=" + $ownedPattern + ";`r`n"
-    }
-    $expectedBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($expectedText)
-    [System.IO.File]::WriteAllBytes($ConfPath, $expectedBytes)
-
-    return [pscustomobject]@{
-        confPath = $ConfPath
-        originalExists = $originalExists
-        originalBytes = $originalBytes
-        expectedSha256 = (Get-Sha256 -Path $ConfPath)
-        ownedPattern = $ownedPattern
-    }
-}
-
-function Exit-ScopedUnsafeActionProtectionBypass {
-    param([Parameter(Mandatory = $true)]$State)
-
-    if (-not (Test-Path -LiteralPath $State.confPath -PathType Leaf)) {
-        throw "Qualification conf.cfg disappeared before restoration: $($State.confPath)"
-    }
-    Assert-Equal (Get-Sha256 -Path $State.confPath) ([string]$State.expectedSha256) "Qualification conf.cfg"
-
-    if ([bool]$State.originalExists) {
-        [System.IO.File]::WriteAllBytes([string]$State.confPath, [byte[]]$State.originalBytes)
-    } else {
-        Remove-Item -LiteralPath ([string]$State.confPath) -Force
-    }
-}
-
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $assetVersion = "1.2.043.28-$DownstreamRevision"
 $assetRoot = Join-Path $repoRoot ("third-party\vanessa-automation\" + $assetVersion)
@@ -245,21 +174,8 @@ if (-not (Test-Path -LiteralPath $platformExe -PathType Leaf)) {
 $platformVersion = (Get-Item -LiteralPath $platformExe).VersionInfo.FileVersion
 Assert-Equal $platformVersion ([string]$manifest.build.platform.version) "1C:Enterprise platform version"
 
-$installedPlatformExecutables = @()
-foreach ($platformRoot in @("C:\Program Files\1cv8", "C:\Program Files (x86)\1cv8")) {
-    if (Test-Path -LiteralPath $platformRoot -PathType Container) {
-        $installedPlatformExecutables += Get-ChildItem -LiteralPath $platformRoot -Directory |
-            ForEach-Object { Join-Path $_.FullName "bin\1cv8.exe" } |
-            Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
-    }
-}
-$latestPlatformVersion = @($installedPlatformExecutables |
-    ForEach-Object { [version](Get-Item -LiteralPath $_).VersionInfo.FileVersion } |
-    Sort-Object -Descending |
-    Select-Object -First 1)
-if ($latestPlatformVersion.Count -ne 1 -or $latestPlatformVersion[0].ToString() -ne $platformVersion) {
-    throw "Upstream Compile.os selects the latest installed 8.3 platform. The selected version would not be the pinned $platformVersion."
-}
+# Both execution copies explicitly select this manifest-validated executable.
+# Other installed platform versions do not determine the build toolchain.
 
 $workId = [Guid]::NewGuid().ToString("N").Substring(0, 8)
 $workDirectory = Join-Path $WorkRoot $workId
@@ -272,10 +188,10 @@ if ($workDirectory.Length -gt 40) {
 
 $sourceDirectory = Join-Path $workDirectory "src"
 $singleBuildDirectory = Join-Path $workDirectory "out"
-$qualificationBase = Join-Path $workDirectory "base"
 $stageDirectory = Join-Path $workDirectory "stage"
 $sourceArchivePath = Join-Path $workDirectory "source.tar"
-$createBaseLog = Join-Path $workDirectory "create-base.log"
+$nativeRuntimeInvoked = $false
+$nativeRuntimeResultPath = Join-Path $workDirectory 'native-runtime-result.json'
 
 New-Item -ItemType Directory -Path $workDirectory -Force | Out-Null
 try {
@@ -318,8 +234,11 @@ try {
         "-C", $sourceDirectory, "diff", "--check"
     ) -Description "Check patched source whitespace"
 
-    $changedPaths = @(& git -C $sourceDirectory -c core.quotepath=false diff --name-only)
-    if ($LASTEXITCODE -ne 0) { throw "Could not enumerate patched paths." }
+    $changedPaths = @(& {
+        param($SourceRoot, $HelperPath)
+        . $HelperPath -ProjectRoot $SourceRoot -Action help *> $null
+        Get-GitPathList -Arguments @('diff', '--name-only', '-z')
+    } $sourceDirectory (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'))
     $expectedChangedPaths = @($manifest.patch.expectedChangedPaths)
     if (($changedPaths -join "`n") -ne ($expectedChangedPaths -join "`n")) {
         throw "Patch changed an unexpected path set. Expected '$($expectedChangedPaths -join ", ")'; actual '$($changedPaths -join ", ")'."
@@ -339,48 +258,20 @@ try {
         Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
             (Join-Path $sourceDirectory "tools\onescript\ZipTemplates.os")
         ) -Description "Build upstream templates"
-        Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-            (Join-Path $sourceDirectory "tools\onescript\Compile.os"), ($sourceDirectory + "\")
-        ) -Description "Run upstream Compile.os"
     } finally {
         Pop-Location
     }
 
-    New-Item -ItemType Directory -Path $qualificationBase -Force | Out-Null
-    $createBaseArguments = @(
-        "CREATEINFOBASE",
-        "File=`"$qualificationBase`"",
-        "/DisableStartupDialogs",
-        "/Out",
-        "`"$createBaseLog`""
-    )
-    $createBaseProcess = Start-Process -FilePath $platformExe -ArgumentList $createBaseArguments -Wait -PassThru -WindowStyle Hidden
-    if ($createBaseProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $qualificationBase "1Cv8.1CD") -PathType Leaf)) {
-        $createBaseDetails = if (Test-Path -LiteralPath $createBaseLog) { Get-Content -LiteralPath $createBaseLog -Raw -Encoding UTF8 } else { "" }
-        throw "Creating the qualification infobase failed with exit code $($createBaseProcess.ExitCode). $createBaseDetails"
-    }
-
-    Push-Location $sourceDirectory
-    try {
-        $userConfPath = Join-Path $env:LOCALAPPDATA "1C\1cv8\conf\conf.cfg"
-        $unsafeActionProtectionState = Enter-ScopedUnsafeActionProtectionBypass `
-            -ConfPath $userConfPath `
-            -BuildToken $workId
-        try {
-            Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-                (Join-Path $sourceDirectory "tools\onescript\MakeVASingle.os"),
-                $sourceDirectory,
-                $singleBuildDirectory,
-                (Join-Path $sourceDirectory "features\Libraries"),
-                $PlatformBin,
-                $qualificationBase
-            ) -Description "Run upstream MakeVASingle.os"
-        } finally {
-            Exit-ScopedUnsafeActionProtectionBypass -State $unsafeActionProtectionState
-        }
-    } finally {
-        Pop-Location
-    }
+    $nativeRuntimeRequestPath = Join-Path $workDirectory 'native-runtime-request.json'
+    $nativeRuntimeRequest = @{ workRoot = $workDirectory; platformExe = $platformExe; oscriptExe = $oscriptCommand.Source; manifestPath = $manifestPath }
+    [IO.File]::WriteAllText($nativeRuntimeRequestPath, ($nativeRuntimeRequest | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    $nativeRuntimeInvoked = $true
+    Invoke-Native -FilePath ([Diagnostics.Process]::GetCurrentProcess().MainModule.FileName) -Arguments @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1'),
+        '-RequestPath', $nativeRuntimeRequestPath
+    ) -Description 'Run guarded upstream Compile.os and MakeVASingle.os with the qualified service template'
+    $nativeRuntimeResult = Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not $nativeRuntimeResult.succeeded -or -not $nativeRuntimeResult.released) { throw 'VANESSA_BUILD_RUNTIME_NOT_QUALIFIED' }
 
     $distributionDirectory = Join-Path $singleBuildDirectory "Temp\DistribVanessaAutomationsingle"
     $epfPath = Join-Path $distributionDirectory ([string]$manifest.artifact.entryPoint)
@@ -417,6 +308,7 @@ try {
         platformVersion = $platformVersion
         oneScriptVersion = $oscriptVersion
         opmVersion = $opmVersion
+        nativeRuntime = $nativeRuntimeResult
         builtAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $candidateProvenanceJson = $candidateProvenance | ConvertTo-Json -Depth 8
@@ -426,7 +318,11 @@ try {
     Write-Host "SHA256: $($candidateProvenance.artifactSha256)"
     Write-Host "Provenance: $provenancePath"
 } finally {
-    if ($KeepWork) {
+    $nativeCleanupConfirmed = -not $nativeRuntimeInvoked
+    if ($nativeRuntimeInvoked -and (Test-Path -LiteralPath $nativeRuntimeResultPath -PathType Leaf)) {
+        try { $nativeCleanupConfirmed = [bool](Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json).released } catch { $nativeCleanupConfirmed = $false }
+    }
+    if ($KeepWork -or -not $nativeCleanupConfirmed) {
         Write-Host "Build work directory retained: $workDirectory"
     } elseif (Test-Path -LiteralPath $workDirectory) {
         if (-not (Test-PathInside -Candidate $workDirectory -Parent $WorkRoot)) {

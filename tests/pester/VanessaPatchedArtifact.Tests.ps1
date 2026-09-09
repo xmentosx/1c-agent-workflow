@@ -103,13 +103,15 @@ Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(
     It "builds fail closed through the official upstream flow" {
         $buildScriptText | Should -Match ([regex]::Escape('"apply", "--check", "--whitespace=error-all"'))
         $buildScriptText | Should -Match ([regex]::Escape('"archive", "--format=tar"'))
-        $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\Compile.os"'))
-        $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\MakeVASingle.os"'))
+        $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
+        $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
+        $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
         $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9")]'))
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
-        $buildScriptText | Should -Match ([regex]::Escape("Enter-ScopedUnsafeActionProtectionBypass"))
-        $buildScriptText | Should -Match ([regex]::Escape("Exit-ScopedUnsafeActionProtectionBypass"))
-        $buildScriptText | Should -Not -Match "DisableUnsafeActionProtection=\.\*;"
+        $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
+        $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'
+        $runtimeText | Should -Match '/RestoreIB'
+        ($buildScriptText + $runtimeText) | Should -Not -Match 'conf\.cfg|ScopedUnsafeActionProtectionBypass|DisableUnsafeActionProtection'
         $buildScriptText | Should -Match ([regex]::Escape("New-DeterministicZip"))
         $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-$revision.zip"
     }

@@ -5,7 +5,7 @@ Describe "Non-interactive 1C startup dialogs" {
         $RepoRoot = $context.RepoRoot
         $CorePath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.core.ps1"
         $VanessaPath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1"
-        $VanessaBuildPath = Join-Path $RepoRoot "scripts\build-vanessa-automation-patched.ps1"
+        $VanessaBuildPath = Join-Path $RepoRoot "scripts\run-vanessa-build-runtime.ps1"
         $McpHostDumpPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\export-1c-config-dump.ps1"
     }
 
@@ -44,7 +44,7 @@ Describe "Non-interactive 1C startup dialogs" {
         $buildText = Get-Content -LiteralPath $VanessaBuildPath -Raw -Encoding UTF8
         $dumpText = Get-Content -LiteralPath $McpHostDumpPath -Raw -Encoding UTF8
 
-        $buildText | Should -Match '(?s)\$createBaseArguments\s*=\s*@\(.*?"/DisableStartupDialogs".*?"/Out"'
+        $buildText | Should -Match "(?s)\`$createBaseArguments\s*=\s*@\(.*?'/DisableStartupDialogs'.*?'/Out'"
         $dumpText | Should -Match ([regex]::Escape('"/DisableStartupMessages", "/DisableStartupDialogs", "/Out"'))
     }
 }
