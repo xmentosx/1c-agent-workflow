@@ -15,7 +15,7 @@ import secrets
 import time
 import uuid
 
-from .access import Coordinator, public
+from .access import Coordinator, inheritance_token, participants, public
 from .common import FileLock, WorkError, identity, stamp
 
 
@@ -91,7 +91,7 @@ class Recovery:
                                  "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}})
                 # Keep the original ticket, sequence and complete resource set.
                 # Old inherited proofs must never authorize recovery or replay.
-                record.update(status="recovering", token=secrets.token_hex(32), reason="recovery-in-progress")
+                record.update(status="recovering", token=secrets.token_hex(32), participantProtocol=1, reason="recovery-in-progress")
                 self.record = record
                 self.coordinator.save(record)
             return self
@@ -103,7 +103,7 @@ class Recovery:
         with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
             record = self._current()
             return {"coordinator": str(self.coordinator.root), "ticket": self.ticket,
-                    "token": record["token"], "purpose": "recovery"}
+                    "token": inheritance_token(record), "purpose": "recovery"}
 
     def _current(self):
         if not self.live_lock or self.completed:
@@ -136,8 +136,14 @@ class Recovery:
         evidence_hash = identity(evidence)
         with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
             record = self._current()
+            nested = participants(record)
+            if any(entry["generation"] == identity(record["token"]) for entry in nested.values()):
+                raise WorkError("INFOBASE_ACCESS_RECOVERY_NESTED_CLEANUP_UNCONFIRMED")
             record["recoveryAttempts"][-1].update(status="completed", finishedAt=stamp(),
                                                   evidence=evidence, evidenceSha256=evidence_hash)
+            if nested:
+                record["recoveryAttempts"][-1]["resolvedParticipants"] = copy.deepcopy(nested)
+                record.pop("participants", None)
             record.update(status="released", finishedAt=stamp(), reason="recovery-verified")
             self.coordinator.save(record)
             self.record = record

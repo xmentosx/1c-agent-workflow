@@ -164,6 +164,82 @@ class AccessHostTests(unittest.TestCase):
             self.assertNotIn("wrong-private-token", json.dumps(error))
             self.assertTrue(Coordinator(self.coordinator).alive(parent.record["ticket"]))
 
+    def test_inherited_failure_prevents_a_clean_parent_release(self):
+        parent, parent_events = self.start()
+        proof = self.next(parent_events, "admitted")["proof"]
+        child, child_events = self.start(inherited=proof)
+        self.next(child_events, "admitted")
+        self.send(child, {"event": "release", "cleanupErrors": ["native child still unproven"]})
+        self.assertEqual("needs-attention", self.next(child_events, "released")["status"])
+        self.assertEqual(0, child.wait(timeout=5))
+        self.send(parent, {"event": "release", "cleanupErrors": []})
+        self.assertEqual("needs-attention", self.next(parent_events, "released")["status"])
+        parent.wait(timeout=5)
+        record = Coordinator(self.coordinator).records()[0]
+        self.assertEqual("uncertain", next(iter(record["participants"].values()))["status"])
+        with self.assertRaisesRegex(WorkError, "RECOVERY_REQUIRED"):
+            with Lease(self.coordinator, [self.base], {}, timeout=0):
+                self.fail("nested cleanup must not be forgotten")
+
+    def test_crashed_borrowed_host_keeps_a_participant_after_os_exit(self):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
+            child, events = self.start(inherited=parent.proof())
+            self.next(events, "admitted")
+            child.kill()
+            child.wait(timeout=5)
+            self.assertEqual("needs-attention", parent.release())
+        self.assertEqual("active", next(iter(Coordinator(self.coordinator).records()[0]["participants"].values()))["status"])
+
+    def test_parent_cannot_release_while_a_child_or_grandchild_remains(self):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
+            child, child_events = self.start(inherited=parent.proof())
+            proof = self.next(child_events, "admitted")["proof"]
+            grandchild, grandchild_events = self.start(inherited=proof)
+            self.next(grandchild_events, "admitted")
+            self.send(child, {"event": "release", "cleanupErrors": []})
+            self.assertEqual("released", self.next(child_events, "released")["status"])
+            child.wait(timeout=5)
+            self.assertEqual("needs-attention", parent.release())
+            self.send(grandchild, {"event": "validate"})
+            self.assertIn("INHERITANCE_INVALID", self.next(grandchild_events, "error")["error"])
+            grandchild.wait(timeout=5)
+        self.assertEqual("needs-attention", Coordinator(self.coordinator).records()[0]["status"])
+
+    def test_validation_does_not_create_work_participants(self):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
+            child, events = self.start(inherited=parent.proof())
+            self.next(events, "admitted")
+            original = Coordinator(self.coordinator).records()[0]["participants"]
+            self.assertEqual(1, len(original))
+            for _ in range(4):
+                self.send(child, {"event": "validate"})
+                self.next(events, "validated")
+                self.assertEqual(original, Coordinator(self.coordinator).records()[0]["participants"])
+            self.send(child, {"event": "release", "cleanupErrors": []})
+            self.next(events, "released")
+            child.wait(timeout=5)
+            self.assertEqual("released", parent.release())
+
+    def test_parent_release_and_child_admission_are_serialized(self):
+        for index in range(3):
+            coordinator = self.root / ("release-race-" + str(index))
+            parent, parent_events = self.start(coordinator=str(coordinator))
+            proof = self.next(parent_events, "admitted")["proof"]
+            child, child_events = self.start(coordinator=str(coordinator), inherited=proof)
+            self.send(parent, {"event": "release", "cleanupErrors": []})
+            release = self.next(parent_events, "released")
+            admission = child_events.get(timeout=8)
+            if admission["event"] == "admitted":
+                self.assertEqual("needs-attention", release["status"])
+                self.send(child, {"event": "release", "cleanupErrors": []})
+                self.next(child_events, "released")
+            else:
+                self.assertEqual("error", admission["event"], admission)
+                self.assertIn("INHERITANCE_INVALID", admission["error"])
+                self.assertEqual("released", release["status"])
+            child.wait(timeout=5)
+            parent.wait(timeout=5)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -721,6 +721,44 @@ after the correction. This is native process-control evidence, not live 1C/PM5
 acceptance. Registration and delivered database-admission acceptance remain
 separate milestones.
 
+## Item 4: nested database ownership and cleanup evidence
+
+The Enterprise completion slice is registered at `248d7f6`: its normal Targeted
+gate passed 554 tests with no failures or skips and a clean worktree. Publication
+and installed 1C acceptance remain separate.
+
+A permanent integration reproducer found that an inherited native host could
+report uncertain cleanup while its parent still released the shared database.
+The coordinator now records each borrowed participant under the parent's ticket.
+Admission and release use the same allocator mutex. A live, crashed or uncertain
+participant prevents a clean root release; merely closing its OS process or pipe
+does not prove that its native database work stopped. A successful child removes
+only its own participation, including when another descendant remains active.
+
+The pipe host reports the actual release disposition and validates its current
+fencing authority without creating another work participant. A completed workload
+with unresolved nested cleanup remains needs-attention in its authoritative result,
+preserving collected measurements. Source capture keeps its participation through
+scratch cleanup and distinguishes a known capture failure from unproven native
+cleanup. Recovery retains old participant evidence until fresh full-resource
+verification; current recovery participants must finish before release, and old
+fenced children cannot modify the new recovery generation.
+
+Inherited admission requires participant protocol v1. Its private proof is
+domain-separated from the stored owner token, so old children cannot silently
+borrow new ownership without registering; new children reject legacy parents
+which cannot preserve their records. Existing top-level tickets still serialize
+through the same authority. A diagnostic loaded the actual pre-participant
+implementation from `248d7f6` and confirmed rejection in both directions before
+database work. Ordinary recovery upgrades only the newly claimed generation.
+
+Focused evidence: 52 access/host/recovery/runtime Python tests and 14 source
+capture tests pass. The integration worktree's ten update-admission Pester cases
+now pass, including the original failing borrowed-host case. Its Go facade suite
+also passes with explicit child-disconnect and failed-cleanup cases. Those facade
+and update entrypoint changes are separate unregistered integration work; this
+protocol slice does not claim delivered cross-chat or cross-host 1C acceptance.
+
 The four unchanged branch-creation reproducers now pass (4/4, 66.47 seconds),
 including resume and legacy checkout mode. The nine focused Enterprise cases
 also pass. The final registered tree still requires its normal Targeted proof.

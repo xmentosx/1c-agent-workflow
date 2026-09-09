@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import ExitStack
 from pathlib import Path
 import shutil
 import uuid
@@ -124,15 +125,26 @@ class Snapshot:
         except OSError:
             self.result["cleanupWarnings"].append("SOURCE_CAPTURE_SCRATCH_RETAINED")
 
+    def cleanup_and_release(self, lease):
+        try:
+            self.cleanup_scratch()
+        except Exception as error:
+            self.result["cleanupErrors"].append(str(error))
+            raise
+        finally:
+            lease.release(cleanup_errors=self.result["cleanupErrors"])
+
     def run(self):
         proof = self.context.get("accessLease")
         try:
             if not proof:
                 raise WorkError("SOURCE_CAPTURE_ACCESS_LEASE_REQUIRED")
-            with Lease(proof["coordinator"], [self.context["target"]["infoBase"]],
-                       {"jobId": self.context["jobId"], "purpose": "source-capture"}, inherited=proof,
-                       timeout=self.deadline.remaining(),
-                       cancelled=lambda: bool(self.context.get("cancelPath") and Path(self.context["cancelPath"]).exists())):
+            with ExitStack() as owner:
+                lease = owner.enter_context(Lease(proof["coordinator"], [self.context["target"]["infoBase"]],
+                            {"jobId": self.context["jobId"], "purpose": "source-capture"}, inherited=proof,
+                            timeout=self.deadline.remaining(),
+                            cancelled=lambda: bool(self.context.get("cancelPath") and Path(self.context["cancelPath"]).exists())))
+                owner.callback(self.cleanup_and_release, lease)
                 initial = extension_names(self.step("list-extensions")["log"])
                 self.step("dump-database")
                 self.artifact(self.root / "database.cf")
@@ -155,7 +167,6 @@ class Snapshot:
             self.result["status"] = "failed"
             self.result["error"] = str(error)
         finally:
-            self.cleanup_scratch()
             self.result["finishedAt"] = stamp()
             self.save()
         return {**self.result, "path": str(self.root)}

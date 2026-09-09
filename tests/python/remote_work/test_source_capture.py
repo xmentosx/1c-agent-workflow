@@ -151,6 +151,7 @@ class SnapshotTests(unittest.TestCase):
         self.assertTrue((snapshot.root / "database.cf").is_file())
         record = read_json(self.root / "coordinator/tickets" / (self.lease.record["ticket"] + ".json"))
         self.assertEqual("running", record["status"])
+        self.assertEqual({}, record["participants"])
         self.assertEqual([], result["cleanupErrors"])
 
     def test_missing_or_invalid_lease_cannot_launch_a_capture(self):
@@ -174,6 +175,29 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual("failed", result["status"])
         self.assertEqual("fixture creation failed", result["error"])
         self.assertTrue((snapshot.root / "database.cf").is_file())
+
+        self.assertEqual("released", self.lease.release(), "a proven capture failure does not imply surviving native work")
+
+    def test_capture_cleanup_keeps_its_participant_until_scratch_cleanup_finishes(self):
+        snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
+        self.operations = []
+        cleanup = snapshot.cleanup_scratch
+        def inspect_cleanup():
+            record = read_json(self.root / "coordinator/tickets" / (self.lease.record["ticket"] + ".json"))
+            self.assertEqual(1, len(record["participants"]))
+            cleanup()
+        with patch.object(Snapshot, "step", lambda s, op, ext=None: self.fake_step(s, op, ext)), patch.object(snapshot, "cleanup_scratch", inspect_cleanup):
+            self.assertEqual("captured", snapshot.run()["status"])
+        self.assertEqual("released", self.lease.release())
+
+    def test_capture_unproven_native_cleanup_keeps_parent_reserved(self):
+        snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
+        def fail(s, operation, extension=None):
+            s.result["cleanupErrors"].append("owned process still unproven")
+            raise WorkError("capture failed")
+        with patch.object(Snapshot, "step", fail):
+            self.assertEqual("failed", snapshot.run()["status"])
+        self.assertEqual("needs-attention", self.lease.release())
 
     def test_extension_log_is_utf8_and_diagnostics_are_not_treated_as_names(self):
         log = self.root / "extensions.log"

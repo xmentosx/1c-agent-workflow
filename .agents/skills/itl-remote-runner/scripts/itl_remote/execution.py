@@ -341,7 +341,12 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
                                          progress, access_lease=lease, access_scope=access["scope"],
                                          cancel_path=spool / "control" / (identifier + ".cancel.json"))
-                lease.release(cleanup_errors=result["cleanupErrors"])
+                release_status = lease.release(cleanup_errors=result["cleanupErrors"])
+                if release_status == "needs-attention" and not result["cleanupErrors"]:
+                    result["status"] = "needs-attention"
+                    result["cleanupErrors"].append("INFOBASE_ACCESS_NESTED_CLEANUP_UNCONFIRMED")
+                    result["error"] = result.get("error") or "INFOBASE_ACCESS_NESTED_CLEANUP_UNCONFIRMED"
+                    write_json(spool / "runs" / identifier / "result.json", result)
                 state.update(status=result["status"], phase="finished", access=result.get("access"),
                              result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
                 if result.get("error"):

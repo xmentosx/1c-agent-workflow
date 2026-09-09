@@ -148,6 +148,28 @@ class RecoveryTests(unittest.TestCase):
             self.assertIsNone(old_owner.live_lock)
             recovery.complete(self.verified)
 
+    def test_recovery_resolves_only_fenced_prior_participants_with_fresh_verification(self):
+        parent = Lease(self.coordinator, [self.base], {})
+        parent.__enter__()
+        child = Lease(self.coordinator, [self.base], {}, inherited=parent.proof())
+        child.__enter__()
+        self.assertEqual("needs-attention", parent.release())
+        with self.recovery(parent.record["ticket"]) as recovery:
+            with self.assertRaisesRegex(WorkError, "RELEASE_OWNERSHIP_CHANGED"):
+                child.release()
+            result = recovery.complete(self.verified)
+            self.assertEqual("released", result["status"])
+            self.assertNotIn("participants", result)
+            self.assertEqual(1, len(result["recoveryAttempts"][-1]["resolvedParticipants"]))
+
+    def test_recovery_cannot_finish_with_a_current_nested_participant(self):
+        proof = self.orphan()
+        with self.recovery(proof["ticket"]) as recovery:
+            with Lease(self.coordinator, [self.base], {}, inherited=recovery.proof(), purpose="recovery"):
+                with self.assertRaisesRegex(WorkError, "RECOVERY_NESTED_CLEANUP_UNCONFIRMED"):
+                    recovery.complete(self.verified)
+            self.assertEqual("released", recovery.complete(self.verified)["status"])
+
     def test_live_verification_releases_waiters_in_order_without_replay(self):
         proof = self.orphan()
         with self.recovery(proof["ticket"]) as recovery:

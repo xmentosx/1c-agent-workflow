@@ -108,6 +108,31 @@ class AccessTests(unittest.TestCase):
         self.assertIsNone(pa.poll())
         self.release(a, pa)
 
+    def test_legacy_parent_cannot_admit_a_new_untracked_child(self):
+        with Lease(self.coordinator, [self.base], {"jobId": "legacy-parent"}) as parent:
+            path = self.coordinator / "tickets" / (parent.record["ticket"] + ".json")
+            record = read_json(path)
+            record.pop("participantProtocol")
+            write_json(path, record)
+            legacy_proof = {"coordinator": str(self.coordinator), "ticket": record["ticket"], "token": record["token"]}
+            with self.assertRaisesRegex(WorkError, "INHERITANCE_PROTOCOL_UNSUPPORTED"):
+                with Lease(self.coordinator, [self.base], {}, inherited=legacy_proof):
+                    self.fail("legacy parent cannot preserve child participation")
+
+    def test_new_proof_is_incompatible_with_legacy_untracked_inheritance(self):
+        with Lease(self.coordinator, [self.base], {}) as parent:
+            proof = parent.proof()
+            record = read_json(self.coordinator / "tickets" / (parent.record["ticket"] + ".json"))
+            # The pre-participant protocol admits only if these two values are
+            # equal. A new proof must fail that historical admission condition.
+            self.assertNotEqual(record["token"], proof["token"])
+            self.assertNotIn(proof["token"], json.dumps(Coordinator(self.coordinator).snapshot()))
+            with self.assertRaisesRegex(WorkError, "INHERITANCE_INVALID"):
+                with Lease(self.coordinator, [self.base], {}, inherited={**proof, "token": record["token"]}):
+                    self.fail("raw legacy token admitted unversioned inheritance")
+            with Lease(self.coordinator, [self.base], {}, inherited=proof):
+                self.assertEqual(1, len(read_json(self.coordinator / "tickets" / (parent.record["ticket"] + ".json"))["participants"]))
+
     def test_registered_connection_aliases_share_one_queue(self):
         alias = {"kind": "server", "path": "192.0.2.10:1541/test"}
         Coordinator(self.coordinator).register("shared-test", [self.base, alias])

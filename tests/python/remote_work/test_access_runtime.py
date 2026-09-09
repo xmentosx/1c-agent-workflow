@@ -122,6 +122,26 @@ with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['worksp
         self.assertEqual(1, len(evidence))
         self.assertEqual(state["access"]["ticket"], read_json(evidence[0])["ticket"])
 
+    def test_completed_workload_cannot_hide_uncertain_nested_cleanup(self):
+        workload = self.fixture.source / "workload.py"
+        text = workload.read_text(encoding="utf-8")
+        text = text.replace('c = context()', '''c = context()
+import json
+from itl_remote.access import Lease
+proof = json.loads(os.environ['ITL_INFOBASE_ACCESS_LEASE'])
+with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['workspace']}],
+           {'operation':'nested'}, inherited=proof) as nested:
+    nested.release(cleanup_errors=['native outcome unproven'])''')
+        workload.write_text(text, encoding="utf-8")
+        self.package()
+        state = execution.execute_job(self.fixture.spool, "one", self.fixture.profile)
+        self.assertEqual("needs-attention", state["status"], state)
+        result = read_json(self.fixture.spool / "runs/one/result.json")
+        self.assertEqual("needs-attention", result["status"])
+        self.assertIn("INFOBASE_ACCESS_NESTED_CLEANUP_UNCONFIRMED", result["cleanupErrors"])
+        self.assertTrue(result["timings"], "retain collected performance evidence")
+        self.assertEqual("needs-attention", access.Coordinator(self.config["coordinator"]).snapshot()[0]["status"])
+
 
 if __name__ == "__main__":
     unittest.main()

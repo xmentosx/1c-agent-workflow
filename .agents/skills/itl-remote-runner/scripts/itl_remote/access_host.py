@@ -52,6 +52,11 @@ def serve(input_stream, output_stream):
                         interrupted.set()
                         messages.put(WorkError("INFOBASE_ACCESS_PARENT_CANCELLED"))
                         return
+                    if value == {"event": "validate"}:
+                        if not admitted.is_set():
+                            raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
+                        messages.put(value)
+                        continue
                     if (set(value) != {"event", "cleanupErrors"} or value["event"] != "release" or
                             not isinstance(value["cleanupErrors"], list) or
                             any(not isinstance(error, str) or not error for error in value["cleanupErrors"])):
@@ -79,12 +84,20 @@ def serve(input_stream, output_stream):
         lease.__enter__()
         admitted.set()
         emit({"event": "admitted", "proof": lease.proof(), "owner": public(lease.record)})
-        value = messages.get()
-        if isinstance(value, BaseException):
-            raise value
-        lease.release(cleanup_errors=value["cleanupErrors"])
-        emit({"event": "released", "status": "needs-attention" if value["cleanupErrors"] else "released",
-              "inherited": bool(lease.inherited)})
+        while True:
+            value = messages.get()
+            if isinstance(value, BaseException):
+                raise value
+            if value["event"] == "validate":
+                # Fresh inheritance checks both fencing and the live outer
+                # owner; retaining a private pipe is not renewed authorization.
+                lease.validate()
+                emit({"event": "validated"})
+                continue
+            status = lease.release(cleanup_errors=value["cleanupErrors"])
+            emit({"event": "released", "status": status,
+                  "inherited": bool(lease.inherited)})
+            break
     except BaseException as error:
         if lease is not None:
             lease.release(cleanup_errors=["native parent did not confirm operation cleanup"])

@@ -44,6 +44,20 @@ def busy(error):
     return isinstance(error, WorkError) and str(error).startswith("OWNER_BUSY:")
 
 
+def participants(record):
+    entries = record.get("participants", {})
+    if (not isinstance(entries, dict) or any(
+            not isinstance(key, str) or not re.fullmatch(r"[0-9a-f]{32}", key) or not isinstance(value, dict) or
+            value.get("status") not in ("active", "uncertain") or
+            not re.fullmatch(r"[0-9a-f]{64}", str(value.get("generation", ""))) or
+            not isinstance(value.get("resources"), list) or
+            any(not isinstance(resource, str) for resource in value["resources"]) or
+            not set(value["resources"]) <= set(record["resources"])
+            for key, value in entries.items())):
+        raise WorkError("INFOBASE_ACCESS_PARTICIPANTS_INVALID")
+    return entries
+
+
 class Coordinator:
     def __init__(self, root):
         self.root = Path(root).resolve()
@@ -83,6 +97,7 @@ class Coordinator:
                 if (not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict) or
                         attempts[-1].get("status") != "running" or not attempts[-1].get("id")):
                     raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
+            participants(record)
             records.append(record)
         return sorted(records, key=lambda item: item["sequence"])
 
@@ -139,6 +154,16 @@ def public(record):
     return {key: value for key, value in record.items() if key != "token"}
 
 
+def inheritance_token(record):
+    if record.get("participantProtocol") != 1:
+        raise WorkError("INFOBASE_ACCESS_INHERITANCE_PROTOCOL_UNSUPPORTED")
+    # Legacy children compare the supplied token directly to record['token'].
+    # A domain-separated proof makes them reject admission rather than silently
+    # borrowing without registering their native work. Do not expose this proof
+    # in the public ticket or derive it from the public participant generation.
+    return identity({"protocol": "itl-database-participants-v1", "secret": record["token"]})
+
+
 class Lease:
     def __init__(self, coordinator, bases, owner, *, timeout=3600, cancelled=lambda: False,
                  progress=lambda record: None, inherited=None, purpose="operation"):
@@ -157,6 +182,8 @@ class Lease:
         self.live_lock = None
         self.started = time.monotonic()
         self.wait_seconds = 0
+        self.participant_id = None
+        self.release_status = None
 
     def __enter__(self):
         deadline = self.started + self.timeout
@@ -165,12 +192,18 @@ class Lease:
                 resources = self.coordinator.resources(self.bases)
                 if self.inherited:
                     self._inherit(resources)
+                    self.participant_id = uuid.uuid4().hex
+                    self.record.setdefault("participants", {})[self.participant_id] = {
+                        "status": "active", "generation": identity(self.record["token"]),
+                        "resources": resources, "admittedAt": stamp(),
+                        "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
+                    self.coordinator.save(self.record)
                     return self
                 records = self.coordinator.records()
                 ticket = uuid.uuid4().hex
                 self.live_lock = FileLock(self.coordinator.root / "tickets" / (ticket + ".alive"))
                 self.live_lock.__enter__()
-                self.record = {"schemaVersion": 1, "ticket": ticket, "token": secrets.token_hex(32),
+                self.record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket, "token": secrets.token_hex(32),
                                "sequence": max((r["sequence"] for r in records), default=0) + 1,
                                "resources": resources, "status": "waiting", "createdAt": stamp(),
                                "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
@@ -231,28 +264,72 @@ class Lease:
         record = read_json(self.coordinator.root / "tickets" / (ticket + ".json"))
         expected_status = "recovering" if self.purpose == "recovery" else "running"
         if (record["status"] != expected_status or self.inherited.get("purpose", "operation") != self.purpose or
-                not secrets.compare_digest(record["token"], self.inherited.get("token", "")) or
+                not secrets.compare_digest(inheritance_token(record), self.inherited.get("token", "")) or
                 not set(resources) <= set(record["resources"]) or not self.coordinator.alive(ticket)):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+        participants(record)
         self.record = record
 
     def proof(self):
         return {"coordinator": str(self.coordinator.root), "ticket": self.record["ticket"],
-                "token": self.record["token"], **({"purpose": "recovery"} if self.purpose == "recovery" else {})}
+                "token": inheritance_token(self.record), **({"purpose": "recovery"} if self.purpose == "recovery" else {})}
+
+    def validate(self):
+        """Check the current fencing authority without creating a work participant."""
+        if self.record is None or self.release_status is not None:
+            raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+        with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
+            current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+            expected = "recovering" if self.purpose == "recovery" else "running"
+            if (current["status"] != expected or current["token"] != self.record["token"] or
+                    not self.coordinator.alive(current["ticket"]) or
+                    not set(self.coordinator.resources(self.bases)) <= set(current["resources"])):
+                raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+            entries = participants(current)
+            if self.participant_id and entries.get(self.participant_id, {}).get("status") != "active":
+                raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+            self.record = current
 
     def release(self, *, cleanup_errors=()):
-        if self.inherited or not self.live_lock:
-            return
+        if self.inherited:
+            if self.participant_id is None:
+                return self.release_status
+            try:
+                with self.coordinator.mutex(time.monotonic() + 30, lambda: False):
+                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    if current["token"] != self.record["token"] or current["status"] not in ("running", "recovering", "needs-attention"):
+                        raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
+                    entries = participants(current)
+                    if self.participant_id not in entries:
+                        raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
+                    if cleanup_errors:
+                        entries[self.participant_id].update(status="uncertain", finishedAt=stamp(), reason="cleanup-unproven")
+                    else:
+                        del entries[self.participant_id]
+                    self.coordinator.save(current)
+                    self.record = current
+                    self.release_status = "needs-attention" if cleanup_errors else "released"
+                    return self.release_status
+            finally:
+                self.participant_id = None
+        if not self.live_lock:
+            return self.release_status
         try:
             with self.coordinator.mutex(time.monotonic() + 30, lambda: False):
                 current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
                 if (current.get("status") != "running" or
                         current.get("token") != self.record["token"]):
                     raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
-                self.record.update(status="needs-attention" if cleanup_errors else "released", finishedAt=stamp())
-                if cleanup_errors:
-                    self.record["reason"] = "cleanup-unproven"
+                # Reload the authoritative record: children may have registered
+                # or failed since this parent's last in-memory observation.
+                self.record = current
+                pending = participants(current)
+                self.release_status = "needs-attention" if cleanup_errors or pending else "released"
+                self.record.update(status=self.release_status, finishedAt=stamp())
+                if cleanup_errors or pending:
+                    self.record["reason"] = "nested-cleanup-unproven" if pending else "cleanup-unproven"
                 self.coordinator.save(self.record)
+                return self.release_status
         finally:
             self.live_lock.__exit__(None, None, None)
             self.live_lock = None
