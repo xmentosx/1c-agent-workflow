@@ -6045,6 +6045,7 @@ function Get-DesignerInvocationProcessState {
         $enumeration = Receive-DesignerProcessEnumeration -ProbeState $ProbeState -LogPath $LogPath
         if ($enumeration.status -ne "completed") {
             $state = [pscustomobject]@{
+                observationStatus = 'pending'
                 querySucceeded = $false
                 active = $true
                 processIds = @()
@@ -6104,6 +6105,7 @@ function Get-DesignerInvocationProcessState {
         }
         $state = [pscustomobject]@{
             querySucceeded = $true
+            observationStatus = 'completed'
             active = ($activeProcessIds.Count -gt 0)
             processIds = $activeProcessIds
             cpuSampleAvailable = $cpuSampleAvailable
@@ -6464,6 +6466,7 @@ function Invoke-NativeProcessAndWaitResult {
         [scriptblock]$CompletionProbe = $null,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 86400)][int]$PostExitProbeSeconds = 0,
+        [switch]$RequirePostExitProbeOnFailure,
         [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
     )
 
@@ -6648,8 +6651,8 @@ function Invoke-NativeProcessAndWaitResult {
                     $postExitProbeExpired = $PostExitProbeSeconds -le 0 -or
                         $null -eq $postExitProbeDeadlineUtc -or
                         [DateTime]::UtcNow -ge [DateTime]$postExitProbeDeadlineUtc
-                    if ($launcherExitCode -ne 0 -or $postExitProbeExpired) {
-                        if ($launcherExitCode -eq 0 -and $postExitProbeExpired -and -not $completedByProbe) {
+                    if (($launcherExitCode -ne 0 -and -not $RequirePostExitProbeOnFailure) -or $postExitProbeExpired) {
+                        if (($launcherExitCode -eq 0 -or $RequirePostExitProbeOnFailure) -and $postExitProbeExpired -and -not $completedByProbe) {
                             $postExitProbeTimedOut = $true
                         }
                         $finished = $true
@@ -7267,6 +7270,34 @@ function Start-EnterpriseBackground {
     }
 }
 
+function Test-OneCNativeInvocationReleased {
+    param([object]$ProbeState, [object]$ProbeContext, [string]$LogPath)
+    $launcherId = [int](Get-StateValue -State $ProbeContext -Name 'processId' -Default 0)
+    if ($launcherId -gt 0) { $ProbeState.trackedProcessIds.Add($launcherId) | Out-Null }
+    $previousObservation = $ProbeState.lastProcessState
+    $processState = Get-DesignerInvocationProcessState -ProbeState $ProbeState -LogPath $LogPath
+    $freshObservation = -not [object]::ReferenceEquals($previousObservation, $processState)
+    if ((Get-StateValue -State $processState -Name 'observationStatus' -Default '') -eq 'pending') {
+        # An in-flight bounded scan is not an observation of a surviving child.
+        # Retain the first empty observation but require a fresh completed scan
+        # before confirming release; the cached empty result cannot suffice.
+        $ProbeState.processesReleaseConfirmed = $false
+        return $false
+    }
+    if (-not $processState.querySucceeded -or $processState.active) {
+        $ProbeState.processesReleasedSinceUtc = $null
+        $ProbeState.processesReleaseConfirmed = $false
+    } elseif (-not $ProbeState.processesReleaseConfirmed) {
+        if ($null -eq $ProbeState.processesReleasedSinceUtc) {
+            $ProbeState.processesReleasedSinceUtc = [DateTime]::UtcNow
+        } elseif ($freshObservation -and ([DateTime]::UtcNow - [DateTime]$ProbeState.processesReleasedSinceUtc).TotalSeconds -ge 1) {
+            $ProbeState.processesReleaseConfirmed = $true
+        }
+    }
+    return ([bool](Get-StateValue -State $ProbeContext -Name 'launcherExited' -Default $false) -and
+        [bool]$ProbeState.processesReleaseConfirmed)
+}
+
 function Invoke-Enterprise {
     param(
         [string]$InfoBasePath,
@@ -7279,6 +7310,7 @@ function Invoke-Enterprise {
         [int]$TimeoutSeconds = 0,
         [scriptblock]$OnTimeout = $null,
         [scriptblock]$CompletionProbe = $null,
+        [switch]$RequireOwnedProcessRelease,
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
         [object[]]$AdditionalSessionAdmissions = @(),
@@ -7315,7 +7347,26 @@ function Invoke-Enterprise {
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
-    $postExitProbeSeconds = if ($null -ne $CompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
+    $ownedProcessProbe = $null
+    $requestedEnterpriseCompletionProbe = $CompletionProbe
+    $enterpriseApplicationEvidence = [pscustomobject]@{ since = $null; graceSeconds = $CompletionGraceSeconds }
+    $effectiveCompletionProbe = $CompletionProbe
+    if ($RequireOwnedProcessRelease) {
+        $ownedProcessProbe = New-DesignerInvocationProbeState -LauncherProcessId 0
+        $effectiveCompletionProbe = {
+            param($probeContext)
+            $released = Test-OneCNativeInvocationReleased -ProbeState $ownedProcessProbe -ProbeContext $probeContext -LogPath $logPath
+            $applicationCompleted = $null -eq $requestedEnterpriseCompletionProbe -or [bool](& $requestedEnterpriseCompletionProbe $probeContext)
+            if (-not $applicationCompleted) { $enterpriseApplicationEvidence.since = $null }
+            elseif ($null -eq $enterpriseApplicationEvidence.since) { $enterpriseApplicationEvidence.since = [DateTime]::UtcNow }
+            $applicationStable = $applicationCompleted -and ($null -eq $requestedEnterpriseCompletionProbe -or
+                ([DateTime]::UtcNow - [DateTime]$enterpriseApplicationEvidence.since).TotalSeconds -ge $enterpriseApplicationEvidence.graceSeconds)
+            return ($released -and $applicationStable)
+        }
+    }
+    $postExitProbeSeconds = if ($null -ne $effectiveCompletionProbe) { Get-CompletionPostExitTimeoutSeconds } else { 0 }
+    $nativeCompletionGraceSeconds = if ($RequireOwnedProcessRelease) { 0 } else { $CompletionGraceSeconds }
     $requiredSessions = if ($ExpectedSessionCount -gt 0) {
         $ExpectedSessionCount
     } elseif ($effectiveTestClientPort -gt 0) {
@@ -7324,27 +7375,47 @@ function Invoke-Enterprise {
         1
     }
     $nativeArguments = @($args)
-    $result = Invoke-WithOneCSessionAdmissionContext `
-        -InfoBaseKind $InfoBaseKind `
-        -InfoBasePath $InfoBasePath `
-        -RequiredSessions $requiredSessions `
-        -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
-        -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
-        -AdditionalAdmissions $AdditionalSessionAdmissions `
-        -SessionLimitRecovery $SessionLimitRecovery `
-        -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
-        -SessionCancelPath $SessionCancelPath `
-        -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
-        -ScriptBlock {
-            Invoke-NativeProcessAndWaitResult `
-                -FilePath $platformPath `
-                -Arguments $nativeArguments `
-                -TimeoutSeconds $TimeoutSeconds `
-                -OnTimeout $OnTimeout `
-                -CompletionProbe $CompletionProbe `
-                -CompletionGraceSeconds $CompletionGraceSeconds `
-                -PostExitProbeSeconds $postExitProbeSeconds
+    $result = $null
+    try {
+        $result = Invoke-WithOneCSessionAdmissionContext `
+            -InfoBaseKind $InfoBaseKind `
+            -InfoBasePath $InfoBasePath `
+            -RequiredSessions $requiredSessions `
+            -ExpectedChildRole $(if ($effectiveTestClientPort -gt 0) { "test-client" } else { "" }) `
+            -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
+            -AdditionalAdmissions $AdditionalSessionAdmissions `
+            -SessionLimitRecovery $SessionLimitRecovery `
+            -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+            -SessionCancelPath $SessionCancelPath `
+            -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
+            -ScriptBlock {
+                $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+                Invoke-NativeProcessAndWaitResult `
+                    -FilePath $platformPath `
+                    -Arguments $nativeArguments `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -OnTimeout $OnTimeout `
+                    -CompletionProbe $effectiveCompletionProbe `
+                    -CompletionGraceSeconds $nativeCompletionGraceSeconds `
+                    -PostExitProbeSeconds $postExitProbeSeconds `
+                    -RequirePostExitProbeOnFailure:$RequireOwnedProcessRelease
+            }
+        } finally {
+        $probeCleanupConfirmed = $true
+        if ($null -ne $ownedProcessProbe -and $null -ne $ownedProcessProbe.processScanProcess) {
+            $cleanup = Stop-DesignerProcessEnumeration -ProbeState $ownedProcessProbe
+            $probeCleanupConfirmed = [bool]$cleanup.confirmed
         }
+        $ownedReleaseConfirmed = $null -ne $ownedProcessProbe -and $probeCleanupConfirmed -and
+            [bool]$ownedProcessProbe.processesReleaseConfirmed
+        Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record `
+            -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
+            -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'enterprise-owned-process-release'
+        if (-not $probeCleanupConfirmed) { throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED' }
+    }
+    if ($RequireOwnedProcessRelease -and [bool](Get-StateValue -State $result -Name 'postExitProbeTimedOut' -Default $false)) {
+        throw "ENTERPRISE_OWNED_PROCESS_RELEASE_TIMEOUT pid=$($result.processId) log=$logPath"
+    }
     if ([bool](Get-StateValue -State $result -Name "completionProbeFailed" -Default $false)) {
         $probeErrorType = [string](Get-StateValue -State $result -Name "completionProbeErrorType" -Default "")
         $probeErrorMessage = [string](Get-StateValue -State $result -Name "completionProbeErrorMessage" -Default "")
@@ -7354,8 +7425,14 @@ function Invoke-Enterprise {
     if ($result.timedOut) {
         throw "1C Enterprise timed out after $TimeoutSeconds seconds. PID: $($result.processId). Log: $logPath"
     }
-    if ($result.exitCode -ne 0) {
-        throw "1C Enterprise failed with exit code $($result.exitCode). PID: $($result.processId). Log: $logPath"
+    $enterpriseExitCode = if ($RequireOwnedProcessRelease -and [bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) {
+        Get-StateValue -State $result -Name 'launcherExitCode' -Default $result.exitCode
+    } else { $result.exitCode }
+    if ($enterpriseExitCode -ne 0) {
+        throw "1C Enterprise failed with exit code $enterpriseExitCode. PID: $($result.processId). Log: $logPath"
+    }
+    if ($RequireOwnedProcessRelease -and -not $ownedReleaseConfirmed) {
+        throw "ENTERPRISE_OWNED_PROCESS_RELEASE_UNCONFIRMED pid=$($result.processId) log=$logPath"
     }
 
     return $logPath

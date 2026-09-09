@@ -569,6 +569,7 @@ exit 0
                         [string]$InfoBasePath,
                         [string]$InfoBaseKind,
                         [string[]]$EnterpriseArgs,
+                        [switch]$RequireOwnedProcessRelease,
                         [int]$TimeoutSeconds
                     )
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
@@ -576,6 +577,7 @@ exit 0
                         infoBasePath = $InfoBasePath
                         infoBaseKind = $InfoBaseKind
                         enterpriseArgs = @($EnterpriseArgs)
+                        requireOwnedProcessRelease = [bool]$RequireOwnedProcessRelease
                         timeoutSeconds = $TimeoutSeconds
                     }
                 }
@@ -610,6 +612,7 @@ exit 0
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
             $enterpriseCalls.calls[0].timeoutSeconds | Should -Be 900
+            $enterpriseCalls.calls[0].requireOwnedProcessRelease | Should -BeTrue
             $enterpriseCalls.updates["lastEnterpriseAutoUpdateLogPath"] | Should -Be "C:\logs\enterprise-auto-update.log"
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf) -PathType Leaf | Should -Be $true
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf) -PathType Leaf | Should -Be $true

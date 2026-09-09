@@ -693,3 +693,34 @@ The retained public CF/CFE export reproducer also asserts journal release on
 success/business failure and retained ownership for a surviving Designer process,
 while keeping an unrelated database holder open. These use simulated native 1C
 boundaries; they do not establish live concurrent database admission.
+
+
+## Item 4: Enterprise owned-process completion
+
+Enterprise normalization after a configuration load now explicitly waits for its
+owned native processes. Ordinary Enterprise calls retain their previous contract.
+The bounded process inventory supplies two fresh empty observations separated by
+a quiet interval; a cached result alone cannot confirm release. An asynchronous
+scan remains pending without discarding the first completed empty observation.
+Application-result stability is measured independently of those pending scans,
+so the existing grace period cannot be reset forever by normal worker polling.
+
+A nonzero native exit remains an application failure even when native cleanup
+succeeds. The caller explicitly enables bounded post-exit probing on failure to
+avoid releasing an uncertain descendant or confusing business failure with
+unconfirmed cleanup. Missing native proof never produces successful normalization.
+The update call site requests this behavior; its existing lifecycle regression
+now checks that request. Nine focused cases include pending scans, delayed and
+surviving descendants, inherited application-probe stability, unrelated clients,
+uncertain start, native failure and unchanged ordinary-call behavior.
+
+The first lifecycle run exposed the pending-scan and grace-period interaction;
+its four original branch-creation reproducers are retained. A diagnostic using a
+real command process and the real bounded CIM worker confirms normal completion
+after the correction. This is native process-control evidence, not live 1C/PM5
+acceptance. Registration and delivered database-admission acceptance remain
+separate milestones.
+
+The four unchanged branch-creation reproducers now pass (4/4, 66.47 seconds),
+including resume and legacy checkout mode. The nine focused Enterprise cases
+also pass. The final registered tree still requires its normal Targeted proof.

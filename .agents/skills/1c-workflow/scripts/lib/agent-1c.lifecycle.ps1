@@ -1796,6 +1796,7 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
         -InfoBasePath $State.devBranchInfoBasePath `
         -InfoBaseKind $State.infoBaseKind `
         -EnterpriseArgs @("/Execute", $epfPath) `
+        -RequireOwnedProcessRelease `
         -TimeoutSeconds $timeoutSeconds | Out-Null
 
     return [pscustomobject]@{
