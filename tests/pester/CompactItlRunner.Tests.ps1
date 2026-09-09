@@ -111,6 +111,47 @@ exit 1
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "preserves a complete long repository-lock report and recovery action on failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl partial report захват с пробелом ' + [guid]::NewGuid().ToString('N'))
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$lines = @('## Захват объектов в хранилище', '- Результат: операция завершилась с ошибкой', '### Захваченные объекты')
+$lines += @(1..90 | ForEach-Object { "- ОбщийМодуль.ЗахваченныйОбъектСДлиннымКириллическимИменем$_ (partial)" })
+$lines += @('### Не захвачены', '- Справочник.Планы.Форма.ФормаЭлемента — ДругойПользователь', '### Отсутствуют', '- Константа.Новая')
+$report = $lines -join [Environment]::NewLine
+$payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='repository-lock.conflict'; stageDetail='partial lock'; errorMessage='LOCK_CONFIG_REPOSITORY_OBJECT_CONFLICT'; errorCategory='runner'; requiredAction='Согласуйте освобождение с ДругойПользователь'; exitCode=1; lastLogPath=''; userReport=$report }
+[IO.File]::WriteAllText($RunStatusPath,($payload | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
+exit 1
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--', '-Action', 'lock-config-repository-objects')
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 1
+            $text = $processResult.stdout -join "`n"
+            $text.Length | Should -BeLessOrEqual 4000
+            $summary = $text | ConvertFrom-Json
+            $summary.status | Should -Be 'failed'
+            $summary.userReportOmitted | Should -BeTrue
+            $summary.userReportSource | Should -Be 'file'
+            [IO.Path]::IsPathRooted($summary.userReportPath) | Should -BeTrue
+            $summary.requiredAction | Should -Be 'Согласуйте освобождение с ДругойПользователь'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fullReport = Get-Content -LiteralPath $summary.userReportPath -Raw -Encoding UTF8
+            $fullReport | Should -BeExactly $status.userReport
+            ([regex]::Matches($fullReport, '(?m)^- ОбщийМодуль\.')).Count | Should -Be 90
+            $fullReport | Should -Match 'ДругойПользователь'
+            $fullReport | Should -Match 'Константа.Новая'
+            @($summary.artifacts) | Should -Contain $summary.userReportPath
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
     It "preserves semantic success and exposes an absolute report file for every long-report action" {
         foreach ($action in @("export-dev-branch-result", "lock-config-repository-objects", "update-workflow", "refresh-all-dev-branches")) {
             $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl long report путь с пробелом " + $action + "-" + [guid]::NewGuid().ToString("N"))

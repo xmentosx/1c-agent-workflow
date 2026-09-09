@@ -11040,6 +11040,74 @@ function Write-ConfigRepositoryLockRedactedLog {
     return (Resolve-Agent1cFullPath -Path $path)
 }
 
+function Get-ConfigRepositoryLockOutcome {
+    param([object]$Plan, [string]$LogPath, [bool]$Succeeded)
+    $byName = @{}
+    $items = @(foreach ($item in @($Plan.items)) {
+        $entry = [pscustomobject]@{ name = [string]$item.name; scope = [string]$item.scope; status = 'unconfirmed'; owner = ''; observations = @() }
+        $byName[$entry.name] = $entry
+        $entry
+    })
+    $text = if ($LogPath -and (Test-Path -LiteralPath $LogPath -PathType Leaf)) { Read-Utf8Text -Path $LogPath } else { '' }
+    $starts = [regex]::Matches($text, '(?m)^---- Начало операции с хранилищем конфигурации ----\s*$').Count
+    $inOperation = $false
+    $inAbsentList = $false
+    $ended = $false
+    if ($starts -eq 1) {
+        foreach ($line in @($text -split '\r?\n')) {
+            $name = ''; $status = ''; $owner = ''
+            if ($line -eq 'Объекты, отсутствующие в обеих конфигурациях:') { $inAbsentList = $true; continue }
+            if ($line -eq '---- Начало операции с хранилищем конфигурации ----') { $inOperation = $true; $inAbsentList = $false; continue }
+            if ($line -eq '---- Операция с хранилищем конфигурации завершена ----') { if ($inOperation) { $ended = $true }; $inOperation = $false; continue }
+            if ($inAbsentList -and $byName.ContainsKey($line.Trim())) { $name = $line.Trim(); $status = 'absent' }
+            elseif ($inOperation -and $line -match '^Объект захвачен для редактирования другим пользователем:\s*(.+?)\s+\(([^()\r\n]+)\)\s*$') {
+                $name = $Matches[1].Trim(); $owner = $Matches[2].Trim(); $status = 'conflict'
+            } elseif ($inOperation -and $line -match '^Объект захвачен для редактирования:\s*(.+?)\s*$') {
+                $name = $Matches[1].Trim(); $status = 'captured'
+            }
+            if ($name -and $byName.ContainsKey($name)) {
+                $entry = $byName[$name]
+                $entry.observations = @($entry.observations) + [pscustomobject]@{ status = $status; owner = $owner }
+            }
+        }
+    }
+    foreach ($entry in $items) {
+        $statuses = @($entry.observations | ForEach-Object { $_.status } | Sort-Object -Unique)
+        $owners = @($entry.observations | ForEach-Object { $_.owner } | Where-Object { $_ } | Sort-Object -Unique)
+        if ($statuses.Count -eq 1 -and $owners.Count -le 1) { $entry.status = $statuses[0] }
+        $entry.owner = $owners -join ', '
+    }
+    return [pscustomobject]@{
+        schemaVersion = 1; baseCommit = [string]$Plan.baseCommit
+        operationStatus = $(if ($Succeeded) { 'succeeded' } else { 'failed' })
+        logPath = $LogPath; operationEndObserved = $ended; items = $items
+    }
+}
+
+function Write-ConfigRepositoryLockOutcomeReport {
+    param([Collections.Generic.List[string]]$Lines, [object]$Outcome, [string]$RunRoot, [string]$ObjectListPath)
+    $outcomePath = Join-Path $RunRoot 'repository-lock-result.json'
+    Write-Utf8Text -Path $outcomePath -Value ($Outcome | ConvertTo-Json -Depth 12)
+    $capturedCount = @($Outcome.items | Where-Object status -eq 'captured').Count
+    $result = if ($Outcome.operationStatus -eq 'succeeded') { 'операция завершена' } else { 'операция завершилась с ошибкой; выполненные захваты сохранены' }
+    Add-RunUserReportLine -Lines $Lines -Label 'Результат' -Value $result
+    Add-RunUserReportLine -Lines $Lines -Label 'Подтверждено захватов' -Value ([string]$capturedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Файл объектов' -Value $ObjectListPath
+    Add-RunUserReportLine -Lines $Lines -Label 'Результаты по объектам' -Value $outcomePath
+    Add-RunUserReportLine -Lines $Lines -Label 'Редактированный лог' -Value $Outcome.logPath -Default '<лог 1С не создан>'
+    $sections = [ordered]@{ captured = 'Захваченные объекты'; conflict = 'Не захвачены: заняты другими пользователями'; absent = 'Отсутствуют в обеих конфигурациях'; unconfirmed = 'Результат захвата не подтверждён' }
+    foreach ($status in $sections.Keys) {
+        $entries = @($Outcome.items | Where-Object status -eq $status)
+        if ($entries.Count -eq 0) { continue }
+        $Lines.Add(''); $Lines.Add('### ' + $sections[$status])
+        foreach ($entry in $entries) {
+            $ownerDetail = if ($entry.owner) { ' — пользователь хранилища: ' + $entry.owner } else { '' }
+            $Lines.Add("- $($entry.name) ($($entry.scope))$ownerDetail")
+        }
+    }
+    Write-AndSetRunUserReport -Lines $Lines
+}
+
 function Get-ConfigRepositoryLockConflictSummary {
     param(
         [string]$LogPath,
@@ -11127,6 +11195,8 @@ function Lock-ConfigRepositoryObjects {
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
     Set-RunStage -Stage "repository-lock.designer" -Detail "Locking the exact changed configuration objects in the source repository."
+    # A launch failure before a new log exists must not reuse an earlier operation.
+    $script:LastLogPath = ''
     try {
         Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
         $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
@@ -11139,6 +11209,8 @@ function Lock-ConfigRepositoryObjects {
             $redactedLogPath = ""
         }
         $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
+        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false
+        Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
         $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
         if ($conflictSummary) {
             if ($redactedLogPath) { $script:LastLogPath = $redactedLogPath }
@@ -11153,17 +11225,10 @@ function Lock-ConfigRepositoryObjects {
         throw "$designerError$redactedLogDetail"
     }
 
-    Add-RunUserReportLine -Lines $report -Label "Результат" -Value "успешно"
     Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
     Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
-    Add-RunUserReportLine -Lines $report -Label "Файл объектов" -Value $objectListPath
-    Add-RunUserReportLine -Lines $report -Label "Редактированный лог" -Value $redactedLogPath -Default "<лог 1С не создан>"
-    $report.Add("")
-    $report.Add("### Захваченные объекты")
-    foreach ($item in $items) {
-        $report.Add("- $([string]$item.name) ($([string]$item.scope))")
-    }
-    Write-AndSetRunUserReport -Lines $report
+    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true
+    Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
 }
 
 function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {

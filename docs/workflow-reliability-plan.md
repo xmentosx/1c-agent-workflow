@@ -41,7 +41,7 @@ different milestones; none implies the next one.
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients; exact branch11 findings, case-based acceptance and normal workflow delivery remain open |
-| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Named branch11 log confirms 24 captured objects, one conflict and four absent objects; helper throws before producing the partial report; implementation pending |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Shared partial-report implementation and five outcome regressions pass; exact historical branch11 XML/log yields 24 captures, one named-owner conflict and four absent entries; public long failed-report transport passes; registration, already-owned native semantics and delivered repository acceptance remain open |
 | 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Transfer planner currently skips Configuration.xml and has no root dependency for top-level additions; implementation and native repository qualification pending |
 
 Implementation order: establish item 4 with the timeout and source-capture
@@ -1134,6 +1134,33 @@ Implementation and acceptance:
    repository. Report all objects and owners without manually disturbing foreign
    locks. The original branch11 source repository is evidence, not an implicit
    target for another lock/unlock operation in this task.
+
+Item 16 implementation evidence: the helper now records every requested object
+in `repository-lock-result.json`, preserving observed capture/conflict/absence
+and leaving missing or contradictory evidence unconfirmed. It writes its full
+Russian report before propagating native failure. Confirmed captures before a
+truncated operation end are retained without claiming the operation succeeded.
+Repeated capture lines do not inflate counts, unrelated log entries do not enter
+the request inventory, and a failed new launch cannot reuse a prior log. Only a
+redacted log is included in the report. The explicit wrapper preserves reports
+on failure and uses the same absolute-file fallback for a long report.
+
+Five new outcome cases and both retained lifecycle lock cases pass. A separate
+public compact-runner test preserves all 90 capture lines, the conflicting owner,
+the absent object and requiredAction while retaining exit 1 and a bounded JSON
+response. Read-only parsing of the exact original branch11 object-list XML and
+redacted platform log reproduces 24 captured, one conflict with Проценко2 and four
+absent objects; evidence is in the implementation worktree at
+`build/diagnostics/repository-lock-report/branch11-original-outcomes.json`.
+No source repository lock/unlock operation was repeated. Distinguishing
+already-owned objects where the platform exposes that state, other native log
+variants, normal delivery and a fresh authorized technical repository run remain
+separate acceptance work. Root dependencies remain item 17 below.
+
+The r35 workflow pin was registered at `a1178d0`: Targeted passed 229 tests with
+no failures/skips and a clean tree (150906 ms; tree
+`8aa59a772fb9e713e335ab2377acb62e6fdb44c0`). The cumulative integration branch
+contains it; the fork and workflow remain unpublished.
 
 ## Added task 17: configuration-root dependency for top-level additions
 
