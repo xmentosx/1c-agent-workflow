@@ -100,7 +100,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_recovery_preserves_original_owner_and_blocks_stale_proof(self):
         proof = self.orphan()
-        with self.recovery(proof["ticket"]):
+        with self.recovery(proof["ticket"]) as recovery:
             current = Coordinator(self.coordinator).snapshot()[0]
             self.assertEqual("recovering", current["status"])
             self.assertEqual("original", current["owner"]["jobId"])
@@ -110,6 +110,12 @@ class RecoveryTests(unittest.TestCase):
                     self.fail("An original action must not inherit recovery ownership")
             with self.assertRaisesRegex(WorkError, "RECOVERY_OWNER_LIVE"):
                 plan(self.coordinator, proof["ticket"])
+            current_proof = recovery.proof()
+            with self.assertRaisesRegex(WorkError, "INHERITANCE_INVALID"):
+                with Lease(self.coordinator, [self.base], {}, inherited=current_proof):
+                    self.fail("An ordinary operation must not inherit a recovery token")
+            with Lease(self.coordinator, [self.base], {}, inherited=current_proof, purpose="recovery") as nested:
+                self.assertEqual(current_proof, nested.proof())
         record = Coordinator(self.coordinator).snapshot()[0]
         self.assertEqual("needs-attention", record["status"])
         self.assertEqual("incomplete", record["recoveryAttempts"][-1]["status"])

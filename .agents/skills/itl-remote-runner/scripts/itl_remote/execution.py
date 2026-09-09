@@ -323,7 +323,9 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
         try:
             inherited = json.loads(os.environ["ITL_INFOBASE_ACCESS_LEASE"]) if os.environ.get("ITL_INFOBASE_ACCESS_LEASE") else None
             with Lease(access["coordinator"], access["bases"], {"jobId": identifier, "workspace": target["workspace"],
-                       "operation": "measure"}, timeout=access["timeout"], cancelled=cancelled,
+                       "operation": "measure", "spool": str(spool),
+                       "recoveryBinding": {"requestSha256": identity(request), "targetSha256": identity(target)}},
+                       timeout=access["timeout"], cancelled=cancelled,
                        progress=waiting, inherited=inherited) as lease:
                 # Revalidate immutable inputs and target authorization after the
                 # queue. Actual loaded configuration/data checks belong to prepare.
@@ -333,6 +335,8 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                 current_target = authorize(request, scenario, profile)
                 if target_access(current_target) != access:
                     raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
+                state["access"] = {"coordinator": str(lease.coordinator.root), "ticket": lease.record["ticket"],
+                                   "resources": lease.record["resources"], "scope": access["scope"]}
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
                                          progress, access_lease=lease, access_scope=access["scope"],

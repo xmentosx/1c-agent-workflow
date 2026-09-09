@@ -33,6 +33,11 @@ The verify phase writes `{iteration}/verification.json` with the matching `jobId
 
 `prepare` runs once before iterations; `reset` runs between iterations. A repeatable mutating scenario requires reset. Updates require both job and target permission and happen outside the timer. Non-repeatable operations get one permitted run: default additional timings/profile remain explicitly missing. Cleanup executes even on failure/cancel; owned subprocess trees are contained in Windows jobs and closed afterward.
 
+Optional `recovery` pins separate inspection, quiescence and restoration hooks
+before the original job starts. It never reuses `action` or blindly reruns
+`cleanup`. See [job recovery](job-recovery.md) for permissions, evidence, deadlines
+and crash semantics. Missing recovery support does not block a normal measurement.
+
 ## Jobs and results
 
 `pack` creates immutable `request.json`, `scenario.json`, input files, SHA256 and sizes. Job fields include ID, parent ID, target alias, route, mode, resolved parameters, operations and repetition counts. A controller requests a new experiment with a new ID; resend the same package after uncertain delivery. Same ID/different inputs is an error.

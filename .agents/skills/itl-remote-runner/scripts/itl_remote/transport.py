@@ -21,6 +21,12 @@ def blob_path(spool, sha):
 
 
 def endpoint(spool, message):
+    if message.get("operation") in ("recovery-plan", "recover", "recovery-cancel"):
+        from . import recovery_job
+        if message["operation"] == "recovery-plan":
+            return recovery_job.create_plan(spool, message["id"])
+        handler = recovery_job.enqueue if message["operation"] == "recover" else recovery_job.cancel
+        return handler(spool, message["id"], message["planId"])
     spool = Path(spool).resolve()
     operation = message["operation"]
     if operation == "probe":

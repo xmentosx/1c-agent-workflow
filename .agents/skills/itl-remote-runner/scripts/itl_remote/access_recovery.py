@@ -71,6 +71,8 @@ class Recovery:
         self.completed = False
 
     def __enter__(self):
+        if self.attempt is not None:
+            raise WorkError("INFOBASE_ACCESS_RECOVERY_ALREADY_USED")
         try:
             with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
                 record = _record(self.coordinator, self.ticket)
@@ -96,6 +98,12 @@ class Recovery:
         except BaseException:
             self._close()
             raise
+
+    def proof(self):
+        with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
+            record = self._current()
+            return {"coordinator": str(self.coordinator.root), "ticket": self.ticket,
+                    "token": record["token"], "purpose": "recovery"}
 
     def _current(self):
         if not self.live_lock or self.completed:

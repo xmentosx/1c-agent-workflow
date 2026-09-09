@@ -29,7 +29,7 @@ different milestones; none implies the next one.
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime integration and pinned job recovery hooks implemented; live 1C recovery adapters, lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal and asynchronous MCP progress evidence implemented; full scenario provenance and detailed runtime stages remain open |
@@ -220,3 +220,28 @@ Pester suite passed 8/8, including the complete portable Python suite. The publi
 inspection command also read retained technical-run ticket
 `cbbfb220f6c2418fa12c72721b1c85e3` and reported its cleanup-unproven condition;
 it did not claim or release that database.
+
+Item 4 next slice connects the recovery protocol to immutable portable jobs.
+Original admission records bind the request and target before execution. Pinned
+scenario hooks inspect real state, optionally quiesce owned work, and restore
+only after quiescence is proven. Every resource requires fresh correlated
+observations and hashed artifacts; a successful command exit alone cannot
+release the resource set. Local commands and queued SSH/exchange requests share
+the implementation. Recovery status is separate from the unchanged measurement
+result, and a completed restoration is inspected before deciding whether another
+restoration call is necessary. Recovery-only inherited tokens cannot run normal
+measurement jobs.
+
+Focused tests use SQLite changes and separate processes, including a killed
+Windows recovery owner after the restoration commit. They verify one original
+action, no repeated restoration after that crash, honest failed-measurement
+status, cancellation, bounded hangs, missing/tampered evidence and changed input
+rejection. Initial fixture failures exposed unclosed SQLite connections in the
+test harness; explicit closing fixed teardown without weakening the workload or
+assertions. Real 1C/Vanessa recovery adapters, partial-artifact collection after
+an engine crash with no result.json, legacy technical-run reconciliation and
+two-host live proof remain open.
+Focused recovery checks passed 28/28 and the owning RemotePerformance suite
+passed 8/8 (including the portable Python inventory). The queued transport path
+was additionally exercised through the public `worker --once` command: one
+restoration, one original action, and no action on duplicate request delivery.

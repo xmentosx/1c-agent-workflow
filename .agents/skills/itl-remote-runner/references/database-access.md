@@ -68,11 +68,13 @@ restoration under that ownership before calling completion. The coordinator
 checks full resource coverage and records the adapter's evidence, but cannot
 infer database quiescence from a dead Python process. There is deliberately no
 CLI accepting `passed: true`, a force-unlock flag, or arbitrary cleanup command.
-The public command currently provides inspection only; live 1C recovery
-adapters and their evidence remain required before recovering those operations.
+The generic ticket command provides inspection only. Jobs with an original
+pinned recovery contract use the [job recovery commands](job-recovery.md).
+Live 1C recovery adapters and their evidence remain required before recovering
+those operations; a calibration/SQLite fixture does not qualify them.
 
 This implementation currently integrates the portable measurement engine.
-Installed lifecycle, persistent facade admission, operation-specific recovery
+Installed lifecycle, persistent facade admission, live 1C recovery
 and real multi-host acceptance remain pending in source plan item 4. The queue must
 not be advertised as exclusion against those routes until they are integrated.
 External user sessions never become participants automatically and are not

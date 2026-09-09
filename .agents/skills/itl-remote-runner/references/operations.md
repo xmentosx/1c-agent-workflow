@@ -28,7 +28,7 @@ Local `execute` runs directly in the current user session: no SSH or second agen
 
 `--parameters` takes a JSON file. `--operation measure --operation write-data --operation update` expresses only operations already authorized by the user; omit unneeded permissions. Job requests never enlarge the target's allowed operations.
 
-For an explicit remote agent route use the same package/transfer operations with `--route agent`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, `agentFallback` only diagnoses; create a new linked job (`--parent`) for reconciled recovery rather than changing old evidence.
+For an explicit remote agent route use the same package/transfer operations with `--route agent`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, `agentFallback` only diagnoses. Use [job recovery](job-recovery.md) when the original package supports it; a subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence.
 
 ## Observe and collect
 

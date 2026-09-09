@@ -45,6 +45,10 @@ def validate_scenario(scenario):
         raise WorkError("SCENARIO_MUTATION_AND_REPEATABILITY_REQUIRED")
     if scenario["mutates"] and scenario["repeatable"] and not scenario["commands"].get("reset"):
         raise WorkError("MUTATING_REPEAT_REQUIRES_RESET")
+    recovery = scenario.get("recovery")
+    if recovery is not None:
+        from .recovery_adapter import validate_contract
+        validate_contract(recovery)
 
 
 def parameters(scenario, supplied):
@@ -103,6 +107,8 @@ def pack(scenario_path, destination, *, target, values=None, mode="time+profile"
             raise WorkError("WRITE_DATA_AUTHORIZATION_REQUIRED")
         if "update" in scenario["commands"] and "update" not in request["operations"]:
             raise WorkError("UPDATE_AUTHORIZATION_REQUIRED")
+        if set(scenario.get("recovery", {}).get("operations", [])) - set(request["operations"]):
+            raise WorkError("RECOVERY_OPERATION_NOT_AUTHORIZED")
         write_json(stage / "request.json", request)
         publish_path(stage, destination)
         return request
@@ -150,6 +156,8 @@ def authorize(request, scenario, profile):
         raise WorkError("WRITE_DATA_AUTHORIZATION_REQUIRED")
     if "update" in scenario["commands"] and "update" not in request["operations"]:
         raise WorkError("UPDATE_AUTHORIZATION_REQUIRED")
+    if set(scenario.get("recovery", {}).get("operations", [])) - set(request["operations"]):
+        raise WorkError("RECOVERY_OPERATION_NOT_AUTHORIZED")
     workspace = Path(target["workspace"]).resolve(strict=True)
     if not workspace.is_dir():
         raise WorkError("WORKSPACE_NOT_DIRECTORY")

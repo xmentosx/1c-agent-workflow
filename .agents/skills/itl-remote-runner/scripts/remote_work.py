@@ -24,6 +24,12 @@ def main():
     command = commands.add_parser("access-recovery-plan")
     command.add_argument("--coordinator", required=True)
     command.add_argument("--ticket", required=True)
+    for name in ("recovery-plan", "recover", "recovery-cancel"):
+        command = commands.add_parser(name)
+        command.add_argument("--spool", required=True)
+        command.add_argument("--id", required=True)
+        if name != "recovery-plan":
+            command.add_argument("--plan-id", required=True)
     command = commands.add_parser("scaffold")
     command.add_argument("--project", required=True)
     command.add_argument("--name", required=True)
@@ -64,7 +70,9 @@ def main():
         command.add_argument("--spool" if name == "submit" else "--connection", required=True)
     command = commands.add_parser("remote")
     command.add_argument("--connection", required=True)
-    command.add_argument("--action", choices=["probe", "status", "cancel", "collect", "agent-request"], required=True)
+    command.add_argument("--action", choices=["probe", "status", "cancel", "collect", "agent-request",
+                                             "recovery-plan", "recover", "recovery-cancel"], required=True)
+    command.add_argument("--plan-id")
     command.add_argument("--agent-action", choices=["read", "followup", "interrupt", "respond"])
     command.add_argument("--payload")
     command.add_argument("--id")
@@ -90,6 +98,11 @@ def main():
     command.add_argument("--output", required=True)
     args = parser.parse_args()
     from itl_remote import bootstrap, execution, jobs, profiling, transport
+    if args.command in ("recovery-plan", "recover", "recovery-cancel"):
+        from itl_remote import recovery_job
+        if args.command == "recovery-plan":
+            return recovery_job.create_plan(args.spool, args.id)
+        return (recovery_job.run if args.command == "recover" else recovery_job.cancel)(args.spool, args.id, args.plan_id)
     if args.command == "access-recovery-plan":
         from itl_remote.access_recovery import plan
         return plan(args.coordinator, args.ticket)
@@ -132,6 +145,10 @@ def main():
         return transport.Connection(read_json(args.connection)).send(args.package)
     if args.command == "remote":
         connection = transport.Connection(read_json(args.connection))
+        if args.action in ("recovery-plan", "recover", "recovery-cancel"):
+            if not args.id or (args.action != "recovery-plan" and not args.plan_id):
+                raise WorkError("RECOVERY_JOB_AND_PLAN_REQUIRED")
+            return connection.call({"operation": args.action, "id": args.id, "planId": args.plan_id})
         if args.action == "collect":
             return connection.collect(args.id, args.output)
         if args.action == "agent-request":
@@ -171,6 +188,8 @@ def main():
                                            {"id": package.name, "status": "needs-attention", "error": str(error), "updatedAt": stamp()})
                     from itl_remote.agents import run_queued_controls
                     run_queued_controls(spool)
+                    from itl_remote.recovery_job import run_queued
+                    run_queued(spool)
                     if args.once:
                         return {"status": "stopped"}
                     time.sleep(1)

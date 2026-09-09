@@ -141,15 +141,18 @@ def public(record):
 
 class Lease:
     def __init__(self, coordinator, bases, owner, *, timeout=3600, cancelled=lambda: False,
-                 progress=lambda record: None, inherited=None):
+                 progress=lambda record: None, inherited=None, purpose="operation"):
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 86400:
             raise WorkError("INFOBASE_ACCESS_TIMEOUT_INVALID")
         if not bases:
             raise WorkError("INFOBASE_ACCESS_IDENTITY_REQUIRED")
+        if purpose not in ("operation", "recovery") or (purpose == "recovery" and not inherited):
+            raise WorkError("INFOBASE_ACCESS_PURPOSE_INVALID")
         self.coordinator = Coordinator(coordinator)
         self.bases, self.owner = bases, owner
         self.timeout, self.cancelled, self.progress = timeout, cancelled, progress
         self.inherited = inherited
+        self.purpose = purpose
         self.record = None
         self.live_lock = None
         self.started = time.monotonic()
@@ -226,13 +229,16 @@ class Lease:
                 Path(self.inherited.get("coordinator", "")).resolve() != self.coordinator.root):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
         record = read_json(self.coordinator.root / "tickets" / (ticket + ".json"))
-        if (record["status"] != "running" or not secrets.compare_digest(record["token"], self.inherited.get("token", "")) or
+        expected_status = "recovering" if self.purpose == "recovery" else "running"
+        if (record["status"] != expected_status or self.inherited.get("purpose", "operation") != self.purpose or
+                not secrets.compare_digest(record["token"], self.inherited.get("token", "")) or
                 not set(resources) <= set(record["resources"]) or not self.coordinator.alive(ticket)):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
         self.record = record
 
     def proof(self):
-        return {"coordinator": str(self.coordinator.root), "ticket": self.record["ticket"], "token": self.record["token"]}
+        return {"coordinator": str(self.coordinator.root), "ticket": self.record["ticket"],
+                "token": self.record["token"], **({"purpose": "recovery"} if self.purpose == "recovery" else {})}
 
     def release(self, *, cleanup_errors=()):
         if self.inherited or not self.live_lock:
