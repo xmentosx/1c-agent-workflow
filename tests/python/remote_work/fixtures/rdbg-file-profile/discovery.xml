@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ns0:response xmlns:ns0="http://v8.1c.ru/8.3/debugger/debugBaseData" xmlns:ns1="http://v8.1c.ru/8.3/debugger/debugRDBGRequestResponse">
+  <ns1:id>
+    <ns0:id>efdcb67d-ad8b-4981-8157-eaed6cff46cc</ns0:id>
+    <ns0:seanceId>e414e9db-bfc8-4daf-ba41-ac0a8eac7398</ns0:seanceId>
+    <ns0:seanceNo>1</ns0:seanceNo>
+    <ns0:infoBaseInstanceID>352c4287-ee32-4ad8-9a65-6dc4882b1b0e</ns0:infoBaseInstanceID>
+    <ns0:infoBaseAlias>DefAlias</ns0:infoBaseAlias>
+    <ns0:isServerInfoBase>undefined</ns0:isServerInfoBase>
+    <ns0:configVersion>e90e19e711d4e449940709b1a7b0df4500000000</ns0:configVersion>
+    <ns0:targetType>ServerEmulation</ns0:targetType>
+  </ns1:id>
+  <ns1:id>
+    <ns0:id>643ddff9-b690-477a-84e9-6058689db161</ns0:id>
+    <ns0:seanceId>e414e9db-bfc8-4daf-ba41-ac0a8eac7398</ns0:seanceId>
+    <ns0:seanceNo>1</ns0:seanceNo>
+    <ns0:infoBaseInstanceID>352c4287-ee32-4ad8-9a65-6dc4882b1b0e</ns0:infoBaseInstanceID>
+    <ns0:infoBaseAlias>DefAlias</ns0:infoBaseAlias>
+    <ns0:isServerInfoBase>undefined</ns0:isServerInfoBase>
+    <ns0:configVersion>e90e19e711d4e449940709b1a7b0df4500000000</ns0:configVersion>
+    <ns0:targetType>ManagedClient</ns0:targetType>
+  </ns1:id>
+</ns0:response>

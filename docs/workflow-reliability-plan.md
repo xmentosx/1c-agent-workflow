@@ -26,7 +26,7 @@ different milestones; none implies the next one.
 
 | ID | Priority | Deliverable | Required acceptance | Current evidence |
 |---|---|---|---|---|
-| 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Pending; branch4 diagnostic patch is not package delivery |
+| 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Pending |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
@@ -70,3 +70,14 @@ Local verification: `python -X utf8 -m unittest discover -s
 tests/python/remote_work -v` passed 69/69, including 21 admission/integration
 cases. These are separate-process and fixture-engine checks on Windows; they
 are not evidence of real two-host SMB admission or 1C runtime qualification.
+
+Item 1 source slice includes ServerEmulation, requires the correct families for
+each base kind, retains incomplete profile artifacts and exposes coverage in the
+engine verdict. Discovery rejects duplicate owned IDs and foreign identities;
+uncertain attach attempts receive cleanup, whose failures reach cleanupErrors.
+Eleven focused profile tests passed, including engine-level partial/error paths.
+Fixtures derive from retained 8.3.27.2074 branch4 packets with native identities;
+their provenance records original hashes. Offline analysis of the full originals
+found both families: client 37 modules/4299 lines, server emulation 63 modules/
+11421 lines. Client-only input remains incomplete. This verifies retained real
+data analysis, not a new live capture with the delivered collector.

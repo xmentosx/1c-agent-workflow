@@ -12,7 +12,7 @@ import time
 
 from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
 from .jobs import authorize, job_id, status, validate_package
-from .profiling import Rdbg, prepare_debug_server
+from .profiling import Rdbg, prepare_debug_server, required_profile_types
 from .access import Lease, target_access
 
 
@@ -99,7 +99,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         from .common import capture
         capture(["powershell.exe", "-NoProfile", "-File", str(variables["runtime"] / "Test-OneCProcessRecord.ps1"),
                  "-RecordPath", str(launch_path)], timeout=20)
-        proof["requiredTypes"] = ["ManagedClient", "Server"] if target.get("infoBase", {}).get("kind") == "server" else ["ManagedClient"]
+        proof["requiredTypes"] = required_profile_types(target.get("infoBase", {}).get("kind"))
         collector = Rdbg(effective_rdbg, proof, iteration / "raw")
         collector.open()
         return collector
@@ -175,7 +175,10 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 end = time.monotonic_ns()
             if profiler:
                 try:
-                    result["profiles"].append(profiler.finish())
+                    profile_result = profiler.finish()
+                    result["profiles"].append(profile_result)
+                    if not profile_result["complete"]:
+                        result["limitations"].append("PROFILE_INCOMPLETE: " + json.dumps(profile_result.get("coverage", {}), ensure_ascii=False))
                 finally:
                     profiler.close()
                     profiler = None
@@ -193,6 +196,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     except Exception as error:
         result["status"] = "cancelled" if str(error) == "CANCELLED" else "needs-attention"
         result["error"] = str(error)
+        result["cleanupErrors"].extend(getattr(error, "cleanup_errors", []))
     finally:
         if profiler:
             try:

@@ -1,0 +1,24 @@
+{
+  "platform": "8.3.27.2074",
+  "sourceRun": "bdr-server-emulation-01",
+  "files": [
+    {
+      "fixture": "discovery.xml",
+      "original": "000003-getDbgTargets.response.xml",
+      "originalSha256": "1877ee324a0f24f3900f3d6b328bd6a50b2c3c7b44be8cbbc96b008b33bbe21a",
+      "changes": "userName removed; at most one module and two lines per packet retained; native identities and families preserved"
+    },
+    {
+      "fixture": "client.xml",
+      "original": "000011-pingDebugUIParams.response.xml",
+      "originalSha256": "5ace76df80f5c5005ee1be511050c788d7e2bfeefb61eff8f158ffbeafaf96de",
+      "changes": "userName removed; at most one module and two lines per packet retained; native identities and families preserved"
+    },
+    {
+      "fixture": "server.xml",
+      "original": "000012-pingDebugUIParams.response.xml",
+      "originalSha256": "50e92f07c637ae414cd73493acb178f3d6650657ff90a3680526ac91706e1276",
+      "changes": "userName removed; at most one module and two lines per packet retained; native identities and families preserved"
+    }
+  ]
+}
