@@ -51,8 +51,10 @@
             function Test-VanessaTestPortOwnedByState { $false }
             function Test-VanessaTestPortUsedByForeignProcess { $false }
             function Start-EnterpriseBackground {
-                param($EnterpriseArgs, [switch]$UseTestClient, $InfoBasePath, $InfoBaseKind, $User, $Password, $TestClientPort, $SessionLimitRecovery)
+                param($EnterpriseArgs, [switch]$UseTestClient, $InfoBasePath, $InfoBaseKind, $User, $Password, $TestClientPort, $SessionLimitRecovery,
+                      $SessionWaitTimeoutSeconds, $SessionCancelPath, $SessionDeadlineMonotonicNs)
                 if (-not $UseTestClient -or $InfoBasePath -ne $performanceState.devBranchInfoBasePath) { throw 'wrong launch' }
+                if ($null -ne $SessionLimitRecovery -or $SessionWaitTimeoutSeconds -le 0) { throw 'capacity must wait without stopping foreign clients' }
                 $script:launchedArgs = $EnterpriseArgs
                 [pscustomobject]@{ process=[pscustomobject]@{Id=75002}; executablePath='D:\platform\1cv8c.exe'; logPath='fixture.log' }
             }

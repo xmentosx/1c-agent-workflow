@@ -367,7 +367,7 @@ Describe "Per-infobase 1C session admission" {
             function Invoke-OneCSessionAdmissionSet {
                 param([object[]]$Admissions, [scriptblock]$StartProcess)
                 $script:AdmissionCalls++
-                if ($script:AdmissionCalls -eq 1) { throw "ITL_ONEC_SESSION_LIMIT: fixture" }
+                if ($script:AdmissionCalls -eq 1) { throw (New-OneCSessionCapacityError -Waitable -Message "ITL_ONEC_SESSION_LIMIT: fixture") }
                 return (& $StartProcess)
             }
             $started = Invoke-WithOneCSessionAdmissionContext `

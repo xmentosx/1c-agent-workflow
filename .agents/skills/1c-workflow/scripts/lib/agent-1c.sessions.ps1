@@ -261,6 +261,12 @@ function Get-OneCSessionReservationSnapshot {
             -ProcessId ([int](Get-StateValue -State $reservation -Name "leaderPid" -Default 0)) `
             -ProcessStartTime ([string](Get-StateValue -State $reservation -Name "leaderProcessStartTime" -Default ""))
         if (-not $ownerAlive -and -not $leaderAlive) { continue }
+        # A single-process reservation only bridges discovery of that process.
+        # Its exited leader cannot occupy a slot merely because the launcher is
+        # still alive. Promised child slots retain their existing owner lifetime.
+        if (-not $leaderAlive -and [int](Get-StateValue -State $reservation -Name 'leaderPid' -Default 0) -gt 0 -and
+            [int](Get-StateValue -State $reservation -Name 'requiredSessions' -Default 1) -eq 1 -and
+            -not [string](Get-StateValue -State $reservation -Name 'expectedChildRole' -Default '')) { continue }
 
         if ([string](Get-StateValue -State $reservation -Name "infoBaseKey" -Default "") -eq [string]$InfoBaseIdentity.key) {
             $matching.Add($reservation) | Out-Null
@@ -409,6 +415,50 @@ function Stop-OneCInfoBaseSessionProcesses {
     }
 }
 
+function New-OneCSessionCapacityError {
+    param([string]$Message, [switch]$Waitable)
+    $error = [InvalidOperationException]::new($Message)
+    $error.Data['ItlSessionCapacityBeforeLaunch'] = $true
+    $error.Data['ItlSessionCapacityWaitable'] = [bool]$Waitable
+    return $error
+}
+
+function Get-OneCSessionWaitParameters {
+    param([ValidateRange(0, 86400)][double]$DefaultTimeoutSeconds = 300,
+          [string]$ContextPath = $env:ITL_PERFORMANCE_CONTEXT)
+    $options = @{ SessionWaitTimeoutSeconds=$DefaultTimeoutSeconds; SessionCancelPath=''; SessionDeadlineMonotonicNs=[long]0 }
+    if ($ContextPath) {
+        $context = Read-Utf8Text -Path $ContextPath | ConvertFrom-Json
+        $options.SessionCancelPath = [string](Get-StateValue -State $context -Name 'cancelPath' -Default '')
+        $phase = Get-StateValue -State $context -Name 'phase' -Default $null
+        if ($null -ne $phase) {
+            $timeout = [double](Get-StateValue -State $phase -Name 'timeoutSeconds' -Default $DefaultTimeoutSeconds)
+            if ([double]::IsNaN($timeout) -or [double]::IsInfinity($timeout) -or $timeout -le 0 -or $timeout -gt 86400) {
+                throw 'INVALID_PHASE_DEADLINE'
+            }
+            $options.SessionWaitTimeoutSeconds = if ($PSBoundParameters.ContainsKey('DefaultTimeoutSeconds')) { [math]::Min($DefaultTimeoutSeconds, $timeout) } else { $timeout }
+            $deadline = [long](Get-StateValue -State $phase -Name 'deadlineMonotonicNs' -Default 0)
+            if ($deadline -gt 0) {
+                if (-not [string]::Equals([string](Get-StateValue -State $phase -Name 'executionHost' -Default ''), [Environment]::MachineName, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'FOREIGN_PHASE_DEADLINE_HOST'
+                }
+                # Python's Windows monotonic clock and Stopwatch both use QPC.
+                $options.SessionDeadlineMonotonicNs = $deadline
+            }
+        }
+    }
+    return $options
+}
+
+function Test-OneCSessionWaitExpired {
+    param([object]$Context, [Diagnostics.Stopwatch]$Watch)
+    if ($Context.sessionDeadlineMonotonicNs -gt 0) {
+        $now = [decimal][Diagnostics.Stopwatch]::GetTimestamp() * 1000000000 / [Diagnostics.Stopwatch]::Frequency
+        if ($now -ge $Context.sessionDeadlineMonotonicNs) { return $true }
+    }
+    return ($Context.sessionWaitTimeoutSeconds -gt 0 -and $Watch.Elapsed.TotalSeconds -ge $Context.sessionWaitTimeoutSeconds)
+}
+
 function Invoke-OneCSessionAdmissionSet {
     param(
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
@@ -432,7 +482,7 @@ function Invoke-OneCSessionAdmissionSet {
         }
         $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $kind -InfoBasePath $path
         if ($required -gt $maximum) {
-            throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=0 reserved=0 required=$required infobase='$($identity.value)' purpose=$purpose errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+            throw (New-OneCSessionCapacityError -Message "ITL_ONEC_SESSION_LIMIT: max=$maximum active=0 reserved=0 required=$required infobase='$($identity.value)' purpose=$purpose errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only")
         }
         [pscustomobject][ordered]@{
             identity = $identity
@@ -462,7 +512,7 @@ function Invoke-OneCSessionAdmissionSet {
             if (($active + $reserved + [int]$admission.requiredSessions) -gt $maximum) {
                 $processDetails = @($processes | Select-Object pid, role) | ConvertTo-Json -Compress -Depth 4
                 $reservationDetails = @($snapshot.pendingDetails) | ConvertTo-Json -Compress -Depth 4
-                throw "ITL_ONEC_SESSION_LIMIT: max=$maximum active=$active reserved=$reserved required=$($admission.requiredSessions) infobase='$($identity.value)' purpose=$($admission.purpose) processes=$processDetails reservations=$reservationDetails errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only"
+                throw (New-OneCSessionCapacityError -Waitable -Message "ITL_ONEC_SESSION_LIMIT: max=$maximum active=$active reserved=$reserved required=$($admission.requiredSessions) infobase='$($identity.value)' purpose=$($admission.purpose) processes=$processDetails reservations=$reservationDetails errorCategory=session-capacity requiredAction=finish-or-close-owned-sessions-before-retry retryAction=repeat-original-command-after-session-count-changes limitChange=developer-only")
             }
             $preservedReservations = @($snapshot.reservations)
             $snapshots.Add([pscustomobject]@{ admission = $admission; processes = @($processes) }) | Out-Null
@@ -523,16 +573,37 @@ function Invoke-OneCSessionProcessStart {
         throw "ITL_ONEC_SESSION_ADMISSION_REUSED: one admission context cannot launch more than one process."
     }
     $context.consumed = $true
-    try {
-        return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
-    } catch {
-        $isCapacityFailure = $_.Exception.Message -match '^ITL_ONEC_SESSION_LIMIT:'
-        if (-not $isCapacityFailure -or $null -eq $context.sessionLimitRecovery -or [bool]$context.recoveryAttempted) {
-            throw
+    $waitWatch = [Diagnostics.Stopwatch]::StartNew()
+    $waitSeconds = [double]$context.sessionWaitTimeoutSeconds
+    $nextNotice = 0.0
+    $requestedStartProcess = $StartProcess
+    while ($true) {
+        if ($context.sessionCancelPath -and (Test-Path -LiteralPath $context.sessionCancelPath)) { throw 'CANCELLED' }
+        try {
+            return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess {
+                if ($context.sessionCancelPath -and (Test-Path -LiteralPath $context.sessionCancelPath)) { throw 'CANCELLED' }
+                if (Test-OneCSessionWaitExpired -Context $context -Watch $waitWatch) { throw 'ITL_ONEC_SESSION_WAIT_TIMEOUT: admission expired before launch' }
+                $context.nativeStartAttempted = $true
+                & $requestedStartProcess
+            })
+        } catch {
+            # Retry admission only when no process start was attempted. A
+            # native launcher failure never authorizes replay, even if it has
+            # the same message or exception data as a capacity rejection.
+            $beforeLaunch = -not $context.nativeStartAttempted -and [bool]$_.Exception.Data['ItlSessionCapacityBeforeLaunch']
+            if ($beforeLaunch -and $waitSeconds -gt 0 -and [bool]$_.Exception.Data['ItlSessionCapacityWaitable']) {
+                if (Test-OneCSessionWaitExpired -Context $context -Watch $waitWatch) { throw }
+                if ($waitWatch.Elapsed.TotalSeconds -ge $nextNotice) {
+                    Write-Host "ITL_ONEC_SESSION_WAIT: elapsed=$([math]::Round($waitWatch.Elapsed.TotalSeconds, 1))s; $($_.Exception.Message)"
+                    $nextNotice = $waitWatch.Elapsed.TotalSeconds + 5
+                }
+                Start-Sleep -Milliseconds 100
+                continue
+            }
+            if (-not $beforeLaunch -or $waitSeconds -gt 0 -or $null -eq $context.sessionLimitRecovery -or [bool]$context.recoveryAttempted) { throw }
+            $context.recoveryAttempted = $true
+            & $context.sessionLimitRecovery
         }
-        $context.recoveryAttempted = $true
-        & $context.sessionLimitRecovery
-        return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess $StartProcess)
     }
 }
 
@@ -545,11 +616,17 @@ function Invoke-WithOneCSessionAdmissionContext {
         [string]$Purpose = "1c-process",
         [object[]]$AdditionalAdmissions = @(),
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [switch]$KeepReservation,
         [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
     )
 
     $previous = $script:OneCSessionLaunchContext
+    if ($SessionWaitTimeoutSeconds -gt 0 -and $null -ne $SessionLimitRecovery) {
+        throw 'ITL_ONEC_SESSION_ADMISSION_INVALID: waiting cannot invoke destructive capacity recovery'
+    }
     $admissions = @([pscustomobject]@{
         infoBaseKind = $InfoBaseKind
         infoBasePath = $InfoBasePath
@@ -568,6 +645,10 @@ function Invoke-WithOneCSessionAdmissionContext {
         reservationIds = @()
         sessionLimitRecovery = $SessionLimitRecovery
         recoveryAttempted = $false
+        nativeStartAttempted = $false
+        sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
+        sessionCancelPath = $SessionCancelPath
+        sessionDeadlineMonotonicNs = $SessionDeadlineMonotonicNs
         keepReservation = [bool]$KeepReservation
     }
     try {
@@ -593,6 +674,9 @@ function Start-OneCProcessBackground {
         [ValidateSet("", "test-client")][string]$ExpectedChildRole = "",
         [string]$Purpose = "project-1c-process",
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [switch]$Visible
     )
 
@@ -603,6 +687,9 @@ function Start-OneCProcessBackground {
         -ExpectedChildRole $ExpectedChildRole `
         -Purpose $Purpose `
         -SessionLimitRecovery $SessionLimitRecovery `
+        -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+        -SessionCancelPath $SessionCancelPath `
+        -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
         -KeepReservation `
         -ScriptBlock {
             Start-NativeProcessBackground -FilePath $FilePath -Arguments $Arguments -Visible:$Visible

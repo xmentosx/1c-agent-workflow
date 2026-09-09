@@ -4871,6 +4871,7 @@ function Run-DevBranchTests {
         -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name })
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
+    $sessionWait = Get-OneCSessionWaitParameters -DefaultTimeoutSeconds ([math]::Min(300, $timeoutSeconds))
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
         $logPath = Invoke-Enterprise `
@@ -4882,11 +4883,7 @@ function Run-DevBranchTests {
             -TestClientPort $testPort `
             -ExpectedSessionCount 1 `
             -AdditionalSessionAdmissions $admissionTargets `
-            -SessionLimitRecovery {
-                foreach ($target in $admissionTargets) {
-                    Stop-OneCInfoBaseSessionProcesses -InfoBaseKind $target.infoBaseKind -InfoBasePath $target.infoBasePath -Reason "managed Vanessa verification admission" | Out-Null
-                }
-            } `
+            @sessionWait `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath

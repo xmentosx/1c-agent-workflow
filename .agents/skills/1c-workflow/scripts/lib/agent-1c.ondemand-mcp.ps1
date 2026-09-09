@@ -965,6 +965,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
     if ($null -ne $performanceContext -and $performanceContext.debuggerUrl) {
         $performanceArgs = @('/DEBUG', '-http', '/DEBUGGERURL', $performanceContext.debuggerUrl)
     }
+    $sessionWait = Get-OneCSessionWaitParameters
     try {
         $testClientResult = Start-EnterpriseBackground `
             -InfoBasePath $state.devBranchInfoBasePath `
@@ -973,12 +974,7 @@ function Ensure-ItlOnDemandVanessaTestClient {
             -Password $targetPassword `
             -UseTestClient `
             -TestClientPort $testClientPort `
-            -SessionLimitRecovery {
-                Stop-OneCInfoBaseSessionProcesses `
-                    -InfoBaseKind $state.infoBaseKind `
-                    -InfoBasePath $state.devBranchInfoBasePath `
-                    -Reason "managed TestClient session admission" | Out-Null
-            } `
+            @sessionWait `
             -EnterpriseArgs $performanceArgs
         $process = Get-Process -Id $testClientResult.process.Id -ErrorAction Stop
         $platformPath = Resolve-Agent1cFullPath -Path $testClientResult.executablePath
@@ -1150,18 +1146,14 @@ function Start-ItlOnDemandBackendInstance {
         }
         Write-ItlOnDemandRuntimeState -RuntimeState $runtimeState | Out-Null
         $runtimeStatePersisted = $true
+        $sessionWait = Get-OneCSessionWaitParameters
         if ($Family -eq "roctup") {
             $result = Start-EnterpriseBackground `
                 -InfoBasePath $state.devBranchInfoBasePath `
                 -InfoBaseKind $state.infoBaseKind `
                 -User $targetUser `
                 -Password $targetPassword `
-                -SessionLimitRecovery {
-                    Stop-OneCInfoBaseSessionProcesses `
-                        -InfoBaseKind $state.infoBaseKind `
-                        -InfoBasePath $state.devBranchInfoBasePath `
-                        -Reason "managed ROCTUP session admission" | Out-Null
-                } `
+                @sessionWait `
                 -EnterpriseArgs @("/Execute", $artifact.path, "/Cstartup;mode=embedded;port=$port")
         } else {
             $result = Start-EnterpriseBackground `
@@ -1169,12 +1161,7 @@ function Start-ItlOnDemandBackendInstance {
                 -InfoBaseKind $serviceInfoBase.kind `
                 -UseTestManager `
                 -TestClientPort $testClientPort `
-                -SessionLimitRecovery {
-                    Stop-OneCInfoBaseSessionProcesses `
-                        -InfoBaseKind $state.infoBaseKind `
-                        -InfoBasePath $state.devBranchInfoBasePath `
-                        -Reason "managed Vanessa session admission" | Out-Null
-                } `
+                @sessionWait `
                 -User $serviceInfoBase.user `
                 -Password $serviceInfoBase.password `
                 -EnterpriseArgs @("/Execute", $vanessa.epfPath, "/C$command")

@@ -145,3 +145,30 @@ are diagnostic and may be repaired by capture. Synthetic/native-packet tests
 cover drift, conflicts, source removal, selected scope and engine capture routing.
 This does not yet prove PM5/UFA integration or produce checkout bindings without
 existing authoritative source evidence.
+
+Items 3/4 capacity integration removes the automatic stop-all-target-sessions
+callbacks from on-demand MCP and Vanessa verification. Admission waits outside
+the allocator lock, honors cancellation and the original performance deadline,
+and retries only a capacity rejection proven to precede any native start attempt.
+Impossible requests and uncertain launch results are not retried. Source capture
+and portable 1C launch now import the target workspace's `.dev.env` session ceiling.
+An exited single-process leader no longer leaves a phantom reservation merely
+because its launching PowerShell is alive; promised child reservations remain.
+
+The native fixture at `build/diagnostics/source-capture-live/Ожидание сеанса a1ff903c6a3d48298f1648d166e6347b`
+qualified waiting on 8.3.27.2074 with the configured limit of one: client PID 48344
+remained alive until the fixture owner stopped it, then Designer PID 35704 ran
+`list-extensions` successfully. Its result records 1.324 seconds of admission
+wait and no cleanup errors. Native qualification exposed Windows hostname casing
+differences between Python/.NET and the stale single-process reservation; both
+were corrected without changing the contention workload. A prior diagnostic
+log reader also needed file sharing while redirect output remained open.
+Failed technical-run access records remain retained for supported coordinator
+recovery; none was edited to retry the measurement. This is session-capacity
+evidence, not the still-required multi-host operation-queue qualification or
+automatic quiescence of an operation's persistent client when no slot exists.
+The prior Vanessa topology assertion explicitly required stopping every target
+base's sessions on capacity failure. The user's shared-base requirement replaces
+that behavior with waiting; topology, feature selection and scenario-count
+assertions remain, with a ban on that destructive callback and behavioral waiting
+regressions plus the native contention qualification above.

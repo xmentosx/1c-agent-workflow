@@ -7189,6 +7189,9 @@ function Start-EnterpriseBackground {
         [switch]$UseTestClient,
         [int]$TestClientPort = 0,
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -7236,7 +7239,10 @@ function Start-EnterpriseBackground {
         -InfoBasePath $InfoBasePath `
         -RequiredSessions 1 `
         -Purpose $(if ($UseTestManager) { "test-manager" } elseif ($UseTestClient) { "test-client" } else { "enterprise-background" }) `
-        -SessionLimitRecovery $SessionLimitRecovery
+        -SessionLimitRecovery $SessionLimitRecovery `
+        -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+        -SessionCancelPath $SessionCancelPath `
+        -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs
     return [pscustomobject]@{
         process = $process
         logPath = $logPath
@@ -7260,6 +7266,9 @@ function Invoke-Enterprise {
         [ValidateRange(0, 64)][int]$ExpectedSessionCount = 0,
         [object[]]$AdditionalSessionAdmissions = @(),
         [scriptblock]$SessionLimitRecovery = $null,
+        [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
+        [string]$SessionCancelPath = '',
+        [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
     )
@@ -7306,6 +7315,9 @@ function Invoke-Enterprise {
         -Purpose $(if ($effectiveTestClientPort -gt 0) { "test-manager-run" } else { "enterprise-run" }) `
         -AdditionalAdmissions $AdditionalSessionAdmissions `
         -SessionLimitRecovery $SessionLimitRecovery `
+        -SessionWaitTimeoutSeconds $SessionWaitTimeoutSeconds `
+        -SessionCancelPath $SessionCancelPath `
+        -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
         -ScriptBlock {
             Invoke-NativeProcessAndWaitResult `
                 -FilePath $platformPath `

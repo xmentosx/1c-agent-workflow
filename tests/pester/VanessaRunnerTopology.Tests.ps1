@@ -509,7 +509,9 @@
             $runText | Should -Match '-ExpectedSessionCount 1'
         $runText | Should -Match 'Get-VanessaTestClientAdmissionTargets -Topology \$testClientTopology -DefaultState \$state'
         $runText | Should -Match '-AdditionalSessionAdmissions \$admissionTargets'
-        $runText | Should -Match '(?s)foreach \(\$target in \$admissionTargets\).*?Stop-OneCInfoBaseSessionProcesses.*?-InfoBaseKind \$target\.infoBaseKind.*?-InfoBasePath \$target\.infoBasePath'
+        $runText | Should -Match '\$sessionWait = Get-OneCSessionWaitParameters'
+        $runText | Should -Match '(?s)Invoke-Enterprise.*?-AdditionalSessionAdmissions \$admissionTargets.*?@sessionWait'
+        $runText | Should -Not -Match 'SessionLimitRecovery|Stop-OneCInfoBaseSessionProcesses'
             $runText | Should -Not -Match 'Assert-VanessaTestClientCapacity'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

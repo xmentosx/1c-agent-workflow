@@ -82,6 +82,12 @@ Source analysis requires profile or time+profile mode. Set a separate
 runs after scenario verification and before cleanup, under the existing database
 lease and outside every timed interval. It also obeys the per-base session limit;
 it never stops a foreign client to obtain a Designer slot.
+The capture process reads the target workspace's `.dev.env` session limit and
+waits for capacity within the existing capture deadline, including cancellation.
+TestManager normally runs in its separate service base; only the target client
+and Designer use the measured base. If the configured ceiling leaves no slot
+while a persistent owned client remains open, waiting can time out; automatic
+adapter quiescence remains an integration task, not permission to raise the limit.
 
 The Windows capture step reads `/DumpDBCfg` and `/DumpDBCfgList -AllExtensions`
 from the target, including each extension's saved database configuration. It
