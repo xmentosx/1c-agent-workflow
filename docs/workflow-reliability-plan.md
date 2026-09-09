@@ -36,9 +36,9 @@ different milestones; none implies the next one.
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
-| 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Read-only follow-up confirms current producer writes run-root snapshots/baseline.dt and post-config.dt while cleanup accepts only the older .agent-1c/snapshots naming contract; common ledger retains the corresponding cleanup debt; owner correction and retention qualification pending |
+| 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
-| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; source correction prepared for registration; delivery and installed full check pending |
+| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Fourth branch11 handoff and current controlled-fork rules confirm a missing decision route; recorded rebuttals exist, but clean AI acceptance and shared correction remain unconfirmed |
 
@@ -51,6 +51,47 @@ gets directly owned checks, a local commit and RegisterChange. Publication and
 live installation/acceptance must be recorded explicitly, using normal helpers.
 Investigations close only with an implemented correction or evidence explaining
 why no workflow change is appropriate; an unresolved hypothesis stays open.
+
+## Item 11: release snapshot cleanup implementation and remaining acceptance
+
+The current E2E producer writes `baseline.dt` and `post-config.dt` below its run
+root, but the cleanup owner only recognized older filename-prefixed snapshots.
+Four producer-path regressions reproduced the rejection before the correction.
+The shared resource cleanup now accepts the current
+`.agent-1c/runs/release-e2e/<run>/snapshots/` layout, the resumable legacy
+`.agent-1c/release-e2e-runs/<run>/snapshots/` layout, and the older
+`.agent-1c/snapshots/` filename contract. Tests execute the producer's actual path
+assignments and `Set-E2ERunPaths`, so a future producer change must remain aligned.
+
+Two further regressions reproduced unsafe deletion when an old pending record
+shared a filename and SHA with another retained or active snapshot record.
+Such records now protect their path until their ownership is released or the
+existing retention policy expires. The policy remains the two newest failed
+plans for at most seven days; a future `retainUntil` on a `cleanup-pending`
+successful/evicted resource does not itself mean it remains retained.
+
+SHA checks, active-process and tracked-drift guards remain required. Unknown
+paths/names and reparse points below the owned worktree are rejected without
+deleting files. After a matching pending owner removes a snapshot, obsolete
+records for that now-missing filename are reconciled in the same sweep. A stale
+SHA alone never authorizes deleting a new or unidentified generation.
+
+All 25 ledger tests plus seven cleanup integration tests pass (32/32), including
+the original culture/retention cases, current and legacy layouts, foreign paths,
+junction redirection, changed SHA, active/dirty worktrees, retained ownership,
+expiration and same-pass reconciliation. Paths contain spaces and Cyrillic
+together. Read-only examination of five real debt records accepts their layouts:
+three match current file hashes, while two refer to older generations of a reused
+filename. Evidence is in the snapshot-cleanup source worktree under
+`build/diagnostics/release-snapshot-cleanup/qualification.json`.
+
+Remaining acceptance: register/deliver the correction and execute normal
+`source-delivery.ps1 -Action Cleanup` with a stable supervisor that contains it.
+The entrypoint currently selects the supervisor from `origin/master`, so a local
+source correction alone does not replace the executing cleanup implementation.
+No real snapshot or shared ledger entry was manually removed or rewritten during
+this work. Actual debt retirement and unchanged retained/foreign resources must
+be verified after the normal delivered helper sweep.
 
 ## Added task 12: advisory command-handler diagnostics and agent behavior
 

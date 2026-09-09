@@ -146,6 +146,45 @@ function Assert-DeliveryResourceWorktreeMayBeCleaned {
     if ($status.exitCode -ne 0 -or [string]$status.stdout) { throw "resource worktree has tracked drift: $WorktreePath" }
 }
 
+function Test-DeliveryReleaseSnapshotPath {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    $path = [IO.Path]::GetFullPath($Path)
+    $root = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
+    if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $root)) { return $false }
+    $relative = $path.Substring($root.Length + 1) -replace '\\', '/'
+    # Current and resumable legacy layouts are produced by Set-E2ERunPaths.
+    if ($relative -match '^\.agent-1c/(runs/release-e2e|release-e2e-runs)/[A-Za-z0-9_.-]+/snapshots/(baseline|post-config)\.dt$') { return $true }
+    $legacyRoot = Join-Path $root '.agent-1c\snapshots'
+    return ((Test-DeliveryResourcePathWithinRoot -Path $path -Root $legacyRoot) -and
+        (Split-Path -Leaf $path) -match '^(release-e2e-|extension-init-).+\.dt$')
+}
+
+function Assert-DeliverySnapshotOwnership {
+    param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    if (-not (Test-DeliveryReleaseSnapshotPath -Path $Path -WorktreePath $WorktreePath)) {
+        throw "snapshot path is outside the owned Release snapshot root: $Path"
+    }
+    $root = [IO.Path]::GetFullPath($WorktreePath).TrimEnd('\', '/')
+    $cursor = [IO.Path]::GetFullPath($Path)
+    while (-not [string]::Equals($cursor.TrimEnd('\', '/'), $root, [StringComparison]::OrdinalIgnoreCase)) {
+        if ((Get-Item -LiteralPath $cursor -Force -ErrorAction Stop).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "snapshot path contains a reparse point below its owned worktree: $cursor"
+        }
+        $cursor = Split-Path -Parent $cursor
+    }
+    # A reusable run filename can be registered by several plans. The old
+    # pending record must not delete bytes still owned by a retained/active one,
+    # even if both snapshots happen to have the same SHA.
+    foreach ($other in @((Read-DeliveryResourceLedger).resources | Where-Object {
+        [string]$_.kind -eq 'release-snapshot' -and [string]$_.state -in @('active', 'retained')
+    })) {
+        $otherPath = [IO.Path]::GetFullPath([string]$other.identity.path)
+        if ([string]::Equals([IO.Path]::GetFullPath($Path), $otherPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "snapshot path is retained or active in another ledger record: $Path"
+        }
+    }
+}
+
 function Remove-DeliveryPendingLedgerResource {
     param([Parameter(Mandatory = $true)][object]$Resource)
     $identity = $Resource.identity
@@ -153,10 +192,7 @@ function Remove-DeliveryPendingLedgerResource {
         "release-snapshot" {
             $path = [IO.Path]::GetFullPath([string]$identity.path)
             $worktreePath = [IO.Path]::GetFullPath([string]$identity.worktreePath)
-            $snapshotRoot = Join-Path $worktreePath '.agent-1c\snapshots'
-            if (-not (Test-DeliveryResourcePathWithinRoot -Path $path -Root $snapshotRoot) -or (Split-Path -Leaf $path) -notmatch '^(release-e2e-|extension-init-).+\.dt$') {
-                throw "snapshot path is outside the owned Release snapshot root: $path"
-            }
+            Assert-DeliverySnapshotOwnership -Path $path -WorktreePath $worktreePath
             Assert-DeliveryResourceWorktreeMayBeCleaned -WorktreePath $worktreePath
             if ((Get-DeliveryFileSha256 -Path $path) -ne ([string]$identity.sha256).ToLowerInvariant()) { throw "snapshot SHA differs from the ledger: $path" }
             Remove-Item -LiteralPath $path -Force -ErrorAction Stop
@@ -343,6 +379,15 @@ function Invoke-DeliveryCleanupSweep {
                 $message = "$([string]$resource.kind): $($_.Exception.Message)"
                 $resource.lastError = $message; $ledgerWarnings.Add($message) | Out-Null
             }
+        }
+    }
+    # Reused run filenames can leave earlier SHA-mismatched records in this
+    # pass even after a later matching owner safely removes the file. Retire
+    # those now-missing snapshot identities without another cleanup invocation.
+    foreach ($resource in @($ledger.resources | Where-Object { [string]$_.kind -eq 'release-snapshot' -and [string]$_.state -eq 'cleanup-pending' })) {
+        if (-not (Test-Path -LiteralPath ([string]$resource.identity.path))) {
+            [void]$ledgerWarnings.Remove([string]$resource.lastError)
+            $resource.state = 'removed'; $resource.lastError = ''
         }
     }
     [void](Write-DeliveryResourceLedger -Ledger $ledger)

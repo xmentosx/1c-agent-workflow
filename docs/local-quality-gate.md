@@ -264,6 +264,17 @@ SHA проверяются до удаления. Housekeeping failure не от
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.
 
+Для release-снимков распознаются текущий путь
+`.agent-1c/runs/release-e2e/<run>/snapshots/{baseline,post-config}.dt`,
+прежний `.agent-1c/release-e2e-runs/<run>/snapshots/` с теми же именами и
+старые `release-e2e-*.dt`/`extension-init-*.dt` под `.agent-1c/snapshots/`.
+SHA из ledger, отсутствие процесса и tracked drift по-прежнему обязательны;
+reparse point ниже worktree не даёт права удалить перенаправленный файл.
+Любая active/retained запись снимка защищает тот же путь от очистки
+старой pending-записью, даже при одинаковом SHA. После штатного удаления по
+совпадающей записи старые записи исчезнувшего файла закрываются в том же
+проходе. Несовпадение SHA само по себе никогда не разрешает удаление.
+
 ## Release уже опубликованного develop в master
 
 ```powershell
