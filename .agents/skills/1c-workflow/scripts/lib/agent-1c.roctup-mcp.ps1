@@ -1,4 +1,4 @@
-function ConvertTo-ItlBranchMcpSafeSegment {
+﻿function ConvertTo-ItlBranchMcpSafeSegment {
     param([string]$Value)
 
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -927,9 +927,19 @@ function Invoke-DevBranchMcpRestartAfterInfobaseLoad {
         return (Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default ""))
     }
 
+    $loadedTarget = [string](Get-StateValue $LoadResult 'infoBasePath' '')
+    $loadedKind = [string](Get-StateValue $LoadResult 'infoBaseKind' '')
+    if ([string]::IsNullOrWhiteSpace($loadedTarget) -or $loadedKind -notin @('file','server')) {
+        throw 'ITL_ONDEMAND_LOAD_TARGET_REQUIRED: the loaded infobase must be identified before backend cleanup.'
+    }
     $state = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
-    Write-Host "Stopping on-demand MCP backend instances after $Reason; the next tool call starts fresh instances."
-    Stop-ItlOnDemandBackends
+    $currentTarget = [string](Get-StateValue $state 'devBranchInfoBasePath' '')
+    if (-not (Test-ItlOnDemandInfoBaseMatch -First $loadedTarget -Second $currentTarget) -or
+        $loadedKind -cne [string](Get-StateValue $state 'infoBaseKind' '')) {
+        throw 'ITL_ONDEMAND_LOAD_TARGET_CHANGED: branch database changed after load; no backend was stopped.'
+    }
+    Write-Host "Stopping on-demand MCP backends for the loaded infobase after $Reason; the next tool call starts fresh instances."
+    Stop-ItlOnDemandBackends -InfoBasePath $loadedTarget -Strict
     Write-ItlBranchMcpClientConfig -State $state
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }

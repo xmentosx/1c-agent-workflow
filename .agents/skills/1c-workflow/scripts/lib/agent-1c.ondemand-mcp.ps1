@@ -1290,16 +1290,18 @@ function Test-ItlOnDemandInfoBaseMatch {
     if ([string]::Equals($firstText, $secondText, [System.StringComparison]::OrdinalIgnoreCase)) {
         return $true
     }
-    if ([System.IO.Path]::IsPathRooted($firstText) -and [System.IO.Path]::IsPathRooted($secondText)) {
-        try {
+    try {
+        if ([System.IO.Path]::IsPathRooted($firstText) -and [System.IO.Path]::IsPathRooted($secondText)) {
             return [string]::Equals(
                 (Resolve-Agent1cFullPath -Path $firstText),
                 (Resolve-Agent1cFullPath -Path $secondText),
                 [System.StringComparison]::OrdinalIgnoreCase
             )
-        } catch {
-            return $false
         }
+    } catch {
+        # Server connection strings can contain quotes and other characters
+        # rejected by Windows path APIs. Unequal opaque connections do not match.
+        return $false
     }
     return $false
 }

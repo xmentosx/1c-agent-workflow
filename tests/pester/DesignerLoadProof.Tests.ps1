@@ -97,6 +97,8 @@ Describe "1C Designer load proof invalidation" {
             @($result.observedProofs | Where-Object { $_.inMemory -or $_.persisted -or $_.status -ne "pending" }).Count | Should -Be 0
             $result.observedModes | Should -Be @("Auto", "Full")
             $result.recovery.loadReason | Should -Be "designer-proof-invalidated-full-load"
+            $result.recovery.infoBasePath | Should -Be 'C:\base'
+            $result.recovery.infoBaseKind | Should -Be 'file'
             $result.finalFingerprint | Should -Be "fingerprint-a"
             $result.finalStatus | Should -Be "passed"
         } finally {
@@ -228,6 +230,8 @@ Describe "1C Designer load proof invalidation" {
             $result.load.loaded | Should -BeFalse
             $result.load.designerInvoked | Should -BeFalse
             $result.load.loadReason | Should -Be "source-fingerprint-match"
+            $result.load.infoBasePath | Should -Be 'C:\base'
+            $result.load.infoBaseKind | Should -Be 'file'
             $result.state.lastConfigDesignerFingerprint | Should -Be "fingerprint-a"
             $result.state.configLoadStatus | Should -Be "passed"
         } finally {

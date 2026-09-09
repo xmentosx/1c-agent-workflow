@@ -2239,6 +2239,8 @@ function Load-ConfigFromFiles {
         return [pscustomobject]@{
             loaded = $false
             normalizationRequired = $normalizationRequired
+            infoBasePath = $InfoBasePath
+            infoBaseKind = $InfoBaseKind
             fileCount = $source.fileCount
             listFile = ""
             currentCommit = $currentCommit
@@ -2355,6 +2357,8 @@ function Load-ConfigFromFiles {
     return [pscustomobject]@{
         loaded = $true
         fileCount = $changeSet.files.Count
+        infoBasePath = $InfoBasePath
+        infoBaseKind = $InfoBaseKind
         listFile = $listFilePath
         currentCommit = $changeSet.currentCommit
         lastLogPath = $orchestration.lastLogPath

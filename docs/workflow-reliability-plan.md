@@ -648,3 +648,23 @@ syntax with zero errors, and the existing check
 `compact-20260909-163435-297-2d8737a7` (YAxUnit 118/118, Vanessa 49/49). These
 results do not establish a clean AI-review pass. Neither product code nor proof
 files were changed in that episode; no source correction for item 15 is claimed.
+
+## Item 4: exact database scope after source load
+
+The post-load MCP refresh previously stopped every registered backend in the
+branch, including auxiliary databases. It now stops only backends for the database
+identified by the load result and checks the current branch target against that
+recorded identity before cleanup. `Load-ConfigFromFiles` returns the actual kind
+and path for both completed and skipped loads; a missing identity cannot turn into
+stop-all. This applies to update, source synchronization, refresh and result export
+through their existing shared post-load route.
+
+Five focused regressions cover file/server targets, preservation of auxiliary
+ROCTUP and Vanessa runtimes, missing identity, changed target and skipped load.
+The server case also exposed Windows path parsing of unequal quoted connection
+strings; the match helper now returns false for non-file strings rejected by path
+APIs, while exact opaque server matches retain their existing behavior. Load-proof
+tests verify the identity producer for completed recovery and an unchanged load.
+
+This fixes post-load cleanup scope. It does not by itself complete admission
+before lifecycle locks, native-operation cleanup accounting, or real 1C acceptance.
