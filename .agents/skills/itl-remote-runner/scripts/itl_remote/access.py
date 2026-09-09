@@ -75,9 +75,14 @@ class Coordinator:
         for path in (self.root / "tickets").glob("*.json"):
             record = read_json(path)
             if (record.get("schemaVersion") != 1 or record.get("ticket") != path.stem or
-                    record.get("status") not in ("waiting", "running", "released", "cancelled", "needs-attention") or
+                    record.get("status") not in ("waiting", "running", "recovering", "released", "cancelled", "needs-attention") or
                     type(record.get("sequence")) is not int or not isinstance(record.get("resources"), list)):
                 raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
+            if record["status"] == "recovering":
+                attempts = record.get("recoveryAttempts")
+                if (not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict) or
+                        attempts[-1].get("status") != "running" or not attempts[-1].get("id")):
+                    raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
             records.append(record)
         return sorted(records, key=lambda item: item["sequence"])
 
@@ -112,7 +117,7 @@ class Coordinator:
             # create two independent queues for the very same database.
             affected = {"base-" + identity(key) for key in keys}
             for record in self.records():
-                if record["status"] in ("waiting", "running", "needs-attention") and affected.intersection(record["resources"]):
+                if record["status"] in ("waiting", "running", "recovering", "needs-attention") and affected.intersection(record["resources"]):
                     raise WorkError("INFOBASE_ACCESS_REGISTRATION_BUSY")
             registry["bindings"].update({key: name for key in keys})
             write_json(path, registry)
@@ -127,7 +132,7 @@ class Coordinator:
 
     def snapshot(self):
         with self.mutex(time.monotonic() + 30, lambda: False):
-            return [public(record) for record in self.records() if record["status"] in ("waiting", "running", "needs-attention")]
+            return [public(record) for record in self.records() if record["status"] in ("waiting", "running", "recovering", "needs-attention")]
 
 
 def public(record):
@@ -181,12 +186,14 @@ class Lease:
                             record.update(status="cancelled", finishedAt=stamp(), reason="waiter-exited-before-admission")
                             self.coordinator.save(record)
                             continue
-                        if record["status"] == "running" and not self.coordinator.alive(record["ticket"]):
+                        if record["status"] in ("running", "recovering") and not self.coordinator.alive(record["ticket"]):
+                            if record["status"] == "recovering":
+                                record["recoveryAttempts"][-1].update(status="interrupted", finishedAt=stamp())
                             record.update(status="needs-attention", reason="owner-exited; inspect surviving work and restoration")
                             self.coordinator.save(record)
                         if record["status"] == "needs-attention":
                             raise WorkError("INFOBASE_ACCESS_RECOVERY_REQUIRED: " + record["ticket"])
-                        if record["status"] == "running" or record["sequence"] < self.record["sequence"]:
+                        if record["status"] in ("running", "recovering") or record["sequence"] < self.record["sequence"]:
                             blockers.append(public(record))
                     if not blockers:
                         self.record.update(status="running", admittedAt=stamp())
@@ -232,6 +239,10 @@ class Lease:
             return
         try:
             with self.coordinator.mutex(time.monotonic() + 30, lambda: False):
+                current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                if (current.get("status") != "running" or
+                        current.get("token") != self.record["token"]):
+                    raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
                 self.record.update(status="needs-attention" if cleanup_errors else "released", finishedAt=stamp())
                 if cleanup_errors:
                     self.record["reason"] = "cleanup-unproven"

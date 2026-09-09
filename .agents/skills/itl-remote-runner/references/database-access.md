@@ -52,12 +52,28 @@ A crashed waiter has not been admitted and can be skipped. A crashed running
 owner or failed cleanup leaves `needs-attention`: freeing an OS handle does not
 prove that database side effects or surviving processes have stopped. No TTL
 steal, lock-file deletion, record editing or automatic replay is supported.
-Recovery must establish stopped owned work and completed restoration before a
-future supported recovery action may release that record.
+`access-recovery-plan --coordinator <directory> --ticket <ticket>` inspects an
+orphan without changing its record. It returns the whole resource set, original
+owner and revision, without a lease token. A live owner cannot be recovered.
+
+The recovery protocol claims the original complete resource set using that
+revision and the OS owner lock; a changed plan must be inspected again. It keeps
+the original owner/sequence and an audit of attempts, rotates the private token,
+and rejects late releases or inherited calls using the old token. Waiters remain
+queued behind active recovery. An interrupted or incomplete recovery retains
+`needs-attention`; neither claim nor normal context exit releases the bases.
+
+An operation-specific adapter must verify stopped owned work and completed
+restoration under that ownership before calling completion. The coordinator
+checks full resource coverage and records the adapter's evidence, but cannot
+infer database quiescence from a dead Python process. There is deliberately no
+CLI accepting `passed: true`, a force-unlock flag, or arbitrary cleanup command.
+The public command currently provides inspection only; live 1C recovery
+adapters and their evidence remain required before recovering those operations.
 
 This implementation currently integrates the portable measurement engine.
-Installed lifecycle, persistent facade admission, coordinated recovery and
-real multi-host acceptance remain pending in source plan item 4. The queue must
+Installed lifecycle, persistent facade admission, operation-specific recovery
+and real multi-host acceptance remain pending in source plan item 4. The queue must
 not be advertised as exclusion against those routes until they are integrated.
 External user sessions never become participants automatically and are not
 terminated by this coordinator. A database profile is not permission to update

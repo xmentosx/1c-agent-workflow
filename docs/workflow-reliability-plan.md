@@ -1,7 +1,7 @@
 # Measurement and workflow reliability implementation ledger
 
-This source-maintenance plan records the eleven user-approved tasks from the
-seven PM5 investigations. It is not installed-project guidance. A completed
+This source-maintenance plan records the twelve user-approved tasks from the
+original seven PM5 investigations and the added form-validator handoff. It is not installed-project guidance. A completed
 source change, registration, publication, installation and live acceptance are
 different milestones; none implies the next one.
 
@@ -37,13 +37,46 @@ different milestones; none implies the next one.
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Pending |
+| 12 | P1 | Investigate and correct false form validation failures for absent or empty command Action | Verify platform contract and current controlled-fork implementation; preserve genuine structural errors; deliver through the owning fork and workflow pin; refresh/check branch11 without the local workaround | Added from task 01a085aa-b4b8-75d2-a92e-acd4725b2d8d; local workaround and 13/13 regression reported, upstream correction and delivery unverified |
 
 Implementation order: establish item 4 with the timeout and source-capture
-contracts; complete items 1-3; then 5-8 and 9-11. Each coherent source change
+contracts; complete items 1-3; then 5-8 and 12, followed by 9-11. Each coherent source change
 gets directly owned checks, a local commit and RegisterChange. Publication and
 live installation/acceptance must be recorded explicitly, using normal helpers.
 Investigations close only with an implemented correction or evidence explaining
 why no workflow change is appropriate; an unresolved hypothesis stays open.
+
+## Added task 12: form command Action validation
+
+Source: [Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d),
+with `D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-local-form-validator.md`.
+The handoff reports that form-validate v1.8 Check8 classified missing/empty
+command Action as an error and blocked preparation on five forms/14 commands.
+It cites the platform's disabled-command behavior when no handler exists. This
+must be verified against the relevant platform documentation and current owner
+implementation; the installed workaround is evidence, not the upstream source.
+
+1. Reproduce absent, empty and whitespace Action plus a valid bound command;
+   compare the five retained real forms and verify the platform contract.
+2. Locate the actual validator in the controlled `itl_ai_rules_1c` fork and its
+   current pin. If the defect persists, fix its diagnostic severity there on the
+   prescribed upgrade/release branch. Do not add dummy business handlers, remove
+   business commands, disable source-integrity or patch another installed copy.
+3. Preserve regressions rejecting empty event handlers, duplicate command IDs,
+   invalid callType and malformed XML. Reuse the retained 13-case reproducer as
+   evidence, verifying its actual scope before adopting it upstream.
+4. Deliver the owning fork correction and workflow pin through normal intake;
+   remove only the now-redundant local workaround through managed update.
+5. Qualify branch11 refresh and the complete check on the delivered version.
+   The task reports local Vanessa 49/49, YAxUnit 118/118 and validator 13/13;
+   those results do not establish upstream delivery or installed-candidate proof.
+
+Related follow-ups from the same task remain tracked under item 6: verify the
+documented classification action against compact-runner dispatch, exact-HEAD
+resume behavior, and why four nested Vanessa scenarios disappeared in the
+combined run despite passing separately (3/3 and 1/1). Later aggregate success
+does not prove that the runtime cause was corrected. Each needs reproduction,
+an owning-layer fix if confirmed, and a regression preserving combined nesting.
 
 ## Starting source and evidence
 
@@ -172,3 +205,18 @@ base's sessions on capacity failure. The user's shared-base requirement replaces
 that behavior with waiting; topology, feature selection and scenario-count
 assertions remain, with a ban on that destructive callback and behavioral waiting
 regressions plus the native contention qualification above.
+
+Item 4 recovery protocol now provides read-only revisioned inspection and an
+exclusive recovery owner for the original complete resource set. Old inherited
+tokens and late original-owner releases are fenced; original ownership and
+attempt history remain available. A trusted operation adapter must perform live
+verification before completion; a success flag or dead process is insufficient.
+Incomplete/crashed recovery retains attention, while active recovery preserves
+FIFO waiters. Separate-process regressions exercise these coordinator contracts.
+This is not live 1C recovery: operation-specific verifiers/restoration adapters,
+reconciliation of retained technical-run debts, and multi-host proof remain open.
+Focused admission/recovery checks passed 33/33; the owning RemotePerformance
+Pester suite passed 8/8, including the complete portable Python suite. The public
+inspection command also read retained technical-run ticket
+`cbbfb220f6c2418fa12c72721b1c85e3` and reported its cleanup-unproven condition;
+it did not claim or release that database.
