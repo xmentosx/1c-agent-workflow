@@ -1,4 +1,4 @@
-Describe "Vanessa Designer Agent safe-mode reconciliation" {
+﻿Describe "Vanessa Designer Agent safe-mode reconciliation" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -612,5 +612,157 @@ param([string]$OutputPath, [string]$Value)
         $result.cleanup.confirmed | Should -BeFalse
         $result.cleanup.error | Should -Match "refusing to stop a foreign process"
         $result.stopCalled | Should -BeFalse
+    }
+}
+
+Describe 'Vanessa service-base admission planning' {
+    BeforeAll {
+        $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1')
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1')
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
+        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
+    }
+    BeforeEach {
+        $root = Join-Path $TestDrive ('План служебной базы ' + [guid]::NewGuid().ToString('N'))
+        $script:ProjectRoot = $root
+        $state = [pscustomobject]@{ devBranchName = 'test' }
+        $template = Get-VanessaServiceInfoBaseTemplate
+        Mock Get-PlatformPath { 'C:\fixture\1cv8.exe' }
+        Mock Get-ConfigValue { param($Path, $Default) return $Default }
+        Mock Invoke-WithOneCSessionAdmissionContext { param($ScriptBlock) & $ScriptBlock }
+        Mock Invoke-NativeProcessAndWaitResult {
+            param($Arguments)
+            $Arguments[0] | Should -Be 'CREATEINFOBASE'
+            $Arguments[1] | Should -Match '^File="(?<path>[^"]+)";$'
+            [void]($Arguments[1] -match '^File="(?<path>[^"]+)";$')
+            New-Item -ItemType Directory -Path $Matches.path -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $Matches.path '1Cv8.1CD'), 'created fixture')
+            [pscustomobject]@{ exitCode = 0; timedOut = $false }
+        }
+        Mock Invoke-Designer { }
+        Mock Update-DevBranchState { }
+    }
+
+    It 'selects a new manager path without creating files or changing branch state' {
+        $before = $state | ConvertTo-Json -Depth 20 -Compress
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $plan.generation | Should -Match '^[a-f0-9]{32}$'
+        $plan.reuse | Should -BeFalse
+        $plan.path | Should -Be (Join-Path $root ('.agent-1c\infobases\vanessa-service-' + $plan.generation))
+        (Test-Path -LiteralPath $root) | Should -BeFalse
+        ($state | ConvertTo-Json -Depth 20 -Compress) | Should -Be $before
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+        Should -Invoke Invoke-Designer -Times 0
+        Should -Invoke Update-DevBranchState -Times 0
+    }
+
+    It 'creates exactly the manager path reserved together with the target database' {
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $request = [pscustomobject]@{
+            schemaVersion = 1; coordinator = (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
+            bases = @([pscustomobject]@{kind='file';path=(Join-Path $root 'целевая база')}, [pscustomobject]@{kind=$plan.kind;path=$plan.path})
+            owner = [pscustomobject]@{project=$root;operation='service-admission'}; timeout = 0
+        }
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        try {
+            @($owner.public.resources).Count | Should -Be 2
+            $service = Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan
+            $service.path | Should -Be $plan.path
+            $service.generation | Should -Be $plan.generation
+            Should -Invoke Invoke-WithOneCSessionAdmissionContext -Times 1 -ParameterFilter { $InfoBasePath -eq $plan.path }
+            Should -Invoke Invoke-Designer -Times 1 -ParameterFilter { $InfoBasePath -eq $plan.path -and $DesignerArgs[0] -eq '/RestoreIB' }
+            Complete-ItlDatabaseAccessHost -Owner $owner | Out-Null
+        } finally { Close-ItlDatabaseAccessHost -Owner $owner }
+    }
+
+    It 'rejects changed resource inputs after a real queue wait before any 1C call' {
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $request = [pscustomobject]@{
+            schemaVersion = 1; coordinator = (Join-Path $TestDrive ([guid]::NewGuid().ToString('N')))
+            bases = @([pscustomobject]@{kind='file';path=$plan.path})
+            owner = [pscustomobject]@{project=$root;operation='wait-for-service'}; timeout = 3
+        }
+        $blocker = Start-ItlDatabaseAccessHost -Request $request
+        $waiter = $null
+        try {
+            $waiter = Start-ItlDatabaseAccessHost -Request $request -OnProgress {
+                param($event)
+                $state | Add-Member -NotePropertyName vanessaServiceInfoBaseUser -NotePropertyValue 'changed-service-input'
+                Complete-ItlDatabaseAccessHost -Owner $blocker | Out-Null
+            }
+            { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan } | Should -Throw '*PLAN_CHANGED*'
+            Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+            Should -Invoke Invoke-Designer -Times 0
+            Complete-ItlDatabaseAccessHost -Owner $waiter | Out-Null
+        } finally {
+            Close-ItlDatabaseAccessHost -Owner $waiter
+            Close-ItlDatabaseAccessHost -Owner $blocker
+        }
+    }
+
+    It 'rejects a replaced template and a redirected path before creation' {
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $redirected = $plan | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $redirected.path = Join-Path $root 'foreign database'
+        { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $redirected } | Should -Throw '*PLAN_CHANGED*'
+        Mock Get-VanessaServiceInfoBaseTemplate { [pscustomobject]@{path=$template.path;sha256=('a'*64);user=$template.user;password=''} }
+        { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan } | Should -Throw '*PLAN_CHANGED*'
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+        Should -Invoke Invoke-Designer -Times 0
+        (Test-Path -LiteralPath $root) | Should -BeFalse
+    }
+
+    It 'never adopts an unqualified database that appeared at a planned new path' {
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        New-Item -ItemType Directory -Path $plan.path -Force | Out-Null
+        $database = Join-Path $plan.path '1Cv8.1CD'
+        [IO.File]::WriteAllText($database, 'foreign fixture')
+        { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan } | Should -Throw '*PLAN_DESTINATION_EXISTS*'
+        [IO.File]::ReadAllText($database) | Should -Be 'foreign fixture'
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+        Should -Invoke Invoke-Designer -Times 0
+    }
+
+    It 'ignores serialized template commands and uses the currently verified template' {
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $plan.template.path = 'untrusted-template.dt'
+        $service = Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan
+        $service.path | Should -Be $plan.path
+        Should -Invoke Invoke-Designer -Times 1 -ParameterFilter { $DesignerArgs[1] -eq $template.path }
+    }
+
+    It 'pins qualified reuse and rejects a missing database after planning' {
+        $generation = 'b' * 32
+        $servicePath = Join-Path $root ('.agent-1c\infobases\vanessa-service-' + $generation)
+        New-Item -ItemType Directory -Path $servicePath -Force | Out-Null
+        $database = Join-Path $servicePath '1Cv8.1CD'
+        [IO.File]::WriteAllText($database, 'qualified fixture')
+        $state = [pscustomobject]@{
+            devBranchName='test';vanessaServiceInfoBaseKind='file';vanessaServiceInfoBaseSchemaVersion=3
+            vanessaServiceInfoBasePath=$servicePath;vanessaServiceInfoBaseGeneration=$generation
+            vanessaServiceInfoBaseTemplateSha256=$template.sha256;vanessaServiceInfoBaseUser=$template.user
+        }
+        Write-Utf8TextAtomic -Path (Join-Path $servicePath '.itl-service-template.json') -Value (
+            [pscustomobject]@{schemaVersion=1;generation=$generation;templateSha256=$template.sha256;serviceUser=$template.user} | ConvertTo-Json
+        )
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $plan.reuse | Should -BeTrue
+        (Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan).path | Should -Be $servicePath
+        Remove-Item -LiteralPath $database
+        { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan $plan } | Should -Throw '*PLAN_CHANGED*'
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+        Should -Invoke Invoke-Designer -Times 0
+        Should -Invoke Update-DevBranchState -Times 0
+    }
+
+    It 'rejects malformed generation and incomplete serialized plans without writing files' {
+        { Get-VanessaServiceInfoBasePlan -State $state -CandidateGeneration '../foreign' } | Should -Throw '*PLAN_INVALID*'
+        { Ensure-VanessaServiceInfoBase -State $state -AdmissionPlan ([pscustomobject]@{schemaVersion=1}) } | Should -Throw '*PLAN_INVALID*'
+        (Test-Path -LiteralPath $root) | Should -BeFalse
+        Should -Invoke Invoke-NativeProcessAndWaitResult -Times 0
+        Should -Invoke Invoke-Designer -Times 0
     }
 }

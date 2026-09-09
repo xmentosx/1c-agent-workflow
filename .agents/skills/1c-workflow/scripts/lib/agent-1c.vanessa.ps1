@@ -3581,8 +3581,12 @@ function Get-VanessaServiceInfoBaseTemplate {
     }
 }
 
-function Ensure-VanessaServiceInfoBase {
-    param([Parameter(Mandatory = $true)][object]$State)
+function Get-VanessaServiceInfoBasePlan {
+    param([Parameter(Mandatory = $true)][object]$State, [string]$CandidateGeneration = '')
+
+    if ($CandidateGeneration -and $CandidateGeneration -cnotmatch '^[a-f0-9]{32}$') {
+        throw 'ITL_VANESSA_SERVICE_INFOBASE_PLAN_INVALID: candidate generation is invalid.'
+    }
 
     $template = Get-VanessaServiceInfoBaseTemplate
     $savedSchema = [int](Get-StateValue -State $State -Name "vanessaServiceInfoBaseSchemaVersion" -Default 0)
@@ -3619,8 +3623,69 @@ function Ensure-VanessaServiceInfoBase {
     $canReuse = ($savedSchema -ge 3 -and $savedGeneration -match '^[a-f0-9]{32}$' -and
         $savedTemplateSha256 -ceq $template.sha256 -and $savedUser -ceq $template.user -and
         $savedPathIsOwned -and $markerMatches)
-    $generation = $(if ($canReuse) { $savedGeneration } else { [guid]::NewGuid().ToString("N") })
+    $generation = $(if ($canReuse) { $savedGeneration } elseif ($CandidateGeneration) { $CandidateGeneration } else { [guid]::NewGuid().ToString("N") })
     $path = Get-VanessaServiceInfoBasePath -State $State -Generation $generation
+    if (-not $canReuse -and (Test-Path -LiteralPath $path)) {
+        throw "ITL_VANESSA_SERVICE_INFOBASE_PLAN_DESTINATION_EXISTS: new generation path '$path' is already present."
+    }
+    $inputs = [ordered]@{
+        projectRoot = (Resolve-Agent1cFullPath -Path $script:ProjectRoot).ToLowerInvariant()
+        savedSchema = $savedSchema
+        savedGeneration = $savedGeneration
+        savedPath = $savedPath
+        savedTemplateSha256 = $savedTemplateSha256
+        savedUser = $savedUser
+        markerMatches = $markerMatches
+        savedPathIsOwned = $savedPathIsOwned
+        databaseExists = (Test-Path -LiteralPath (Join-Path $path '1Cv8.1CD') -PathType Leaf)
+        templatePath = $template.path
+        templateSha256 = $template.sha256
+        templateUser = $template.user
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        $inputSha256 = [BitConverter]::ToString($sha.ComputeHash((Get-Utf8Encoding).GetBytes(($inputs | ConvertTo-Json -Compress)))).Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+    return [pscustomobject][ordered]@{
+        schemaVersion = 1
+        kind = 'file'
+        path = $path
+        generation = $generation
+        reuse = [bool]$canReuse
+        inputSha256 = $inputSha256
+        template = $template
+    }
+}
+
+function Ensure-VanessaServiceInfoBase {
+    param([Parameter(Mandatory = $true)][object]$State, [object]$AdmissionPlan = $null)
+
+    if ($null -ne $AdmissionPlan -and (
+        [int](Get-StateValue -State $AdmissionPlan -Name 'schemaVersion' -Default 0) -ne 1 -or
+        [string](Get-StateValue -State $AdmissionPlan -Name 'generation' -Default '') -cnotmatch '^[a-f0-9]{32}$' -or
+        [string](Get-StateValue -State $AdmissionPlan -Name 'inputSha256' -Default '') -cnotmatch '^[a-f0-9]{64}$')) {
+        throw 'ITL_VANESSA_SERVICE_INFOBASE_PLAN_INVALID: expected a pinned service-base plan.'
+    }
+    $candidate = $(if ($null -ne $AdmissionPlan) { [string]$AdmissionPlan.generation } else { '' })
+    $plan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $candidate
+    if ($null -ne $AdmissionPlan -and (
+        [string]$AdmissionPlan.kind -cne $plan.kind -or
+        [string]$AdmissionPlan.generation -cne $plan.generation -or
+        [string]$AdmissionPlan.inputSha256 -cne $plan.inputSha256 -or
+        [bool]$AdmissionPlan.reuse -ne $plan.reuse -or
+        -not [string]::Equals([string]$AdmissionPlan.path, $plan.path, [StringComparison]::OrdinalIgnoreCase))) {
+        throw 'ITL_VANESSA_SERVICE_INFOBASE_PLAN_CHANGED: service-base inputs changed while waiting; resolve and admit the complete resource set again.'
+    }
+    # Only current, revalidated template data is used; never execute template
+    # paths or credentials supplied by a serialized admission plan.
+    $template = $plan.template
+    $generation = $plan.generation
+    $path = $plan.path
+    $savedSchema = [int](Get-StateValue -State $State -Name "vanessaServiceInfoBaseSchemaVersion" -Default 0)
+    $savedGeneration = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseGeneration" -Default "")
+    $savedTemplateSha256 = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseTemplateSha256" -Default "")
+    $savedUser = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBaseUser" -Default "")
+    $savedPath = [string](Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default "")
     $databasePath = Join-Path $path "1Cv8.1CD"
     $created = $false
     if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {

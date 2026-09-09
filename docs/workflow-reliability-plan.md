@@ -315,9 +315,26 @@ Entrypoint integration remains open. Inspection identified two required ordering
 constraints: database admission precedes lifecycle/runtime locks, and persistent
 facade stop/idle cleanup uses existing ownership rather than queuing behind an
 operation waiting for that backend to close. The complete initial resource set
-must include a pinned newly generated Vanessa manager base when one is needed;
-its current creation inside Ensure cannot be left outside admission. These are
-requirements of item 4, not optional follow-up investigations.
+must include a pinned newly generated Vanessa manager base when one is needed.
+These are requirements of item 4, not optional follow-up investigations.
+
+The service-base producer now separates read-only planning from creation.
+`Get-VanessaServiceInfoBasePlan` selects a qualified existing manager or pins a
+new generation and its resource path. `Ensure-VanessaServiceInfoBase` accepts
+that admission plan and revalidates the relevant state, marker, database presence
+and currently verified template before any 1C call. It rejects changed inputs,
+redirected paths and a new-generation path occupied during the wait. It never
+executes template paths supplied by the serialized plan. Existing callers use
+the same planner internally; moving their initial planning before global
+admission remains part of the lifecycle/facade integration.
+
+All 31 Vanessa Designer Agent tests passed, including eight new admission-plan
+cases. A real pipe-owner queue reserves target plus manager atomically and a
+real blocked wait changes an input before admission; creation is rejected before
+the mocked native boundary. Native CREATE/Restore calls in these tests are
+fixtures, so they are not live 1C qualification. Qualified reuse, unchanged state
+during planning, missing database, occupied path, template replacement and
+malformed plans are covered with paths containing spaces and Cyrillic together.
 
 Focused tests use SQLite changes and separate processes, including a killed
 Windows recovery owner after the restoration commit. They verify one original

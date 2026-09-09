@@ -72,6 +72,17 @@ must not reacquire behind a lifecycle waiter. Resolve and pin newly generated
 Vanessa manager-base paths before admission, then revalidate after waiting;
 reserving only the target while creating an unreserved manager is insufficient.
 
+The shared helper's read-only `Get-VanessaServiceInfoBasePlan -State ...`
+selects the qualified existing manager or a new generation without creating it.
+Include the returned `kind`/`path` in the complete reservation, then pass the
+same object to `Ensure-VanessaServiceInfoBase -State <current-state>
+-AdmissionPlan <plan>` after admission. Ensure rechecks relevant state, marker,
+database presence and current template before any native call. Changed inputs
+require resolving/admitting the resource set again; an occupied new-generation
+path is never adopted. Serialized template paths are not executed. Ordinary
+Ensure callers still obtain a new plan internally; entrypoint wiring must move
+planning before admission rather than reserving only the eventual launch.
+
 ## Interruption and current integration boundary
 
 A crashed waiter has not been admitted and can be skipped. A crashed running
