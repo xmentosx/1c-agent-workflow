@@ -227,6 +227,17 @@ an explicit r9 candidate without changing its default or installed dependency.
 The focused Windows PowerShell 5.1 group passes 40/40 tests, including the full
 local gate contract and the explicit no-reuse decision for the external runtime.
 
+The first normal registration exposed a completion-path defect: the OneScript
+worker passed, but the shard runner required a cache entry even though its digest
+was intentionally empty. A new process-boundary reproducer failed with the same
+error. Completion now requires persistence only for cacheable digests; unknown
+runtime identity still prevents all reuse. The new test executes the same passed
+file twice through the real runner and proves two executions with no digest or
+reuse. It and the retained owner-input/cache-invalidation case pass. The initial
+failed summary, error log and worker result are retained under
+`build/diagnostics/vanessa-nested-selection/first-registration-failure` in the
+implementation checkout. Registration must be retried for the corrected source.
+
 **6c — Resume after a corrective descendant commit, P1 investigation.** After
 the local validator correction was committed, ordinary resume rejected a changed
 HEAD with `LIFECYCLE_MERGE_POST_HEAD_MISMATCH`. The task reports taking the

@@ -549,7 +549,7 @@ function Complete-PesterFileEntry {
         $script:results += $workerResult
         if ([string]$workerResult.status -eq "passed" -and [int]$Entry.process.ExitCode -eq 0) {
             Save-ShardCache -Digest $Entry.digest -ResultPath $Entry.resultPath -JunitPath $Entry.junitPath
-            if (-not (Get-ShardCacheEntryRoot -Digest ([string]$Entry.digest))) {
+            if ($Entry.digest -and -not (Get-ShardCacheEntryRoot -Digest ([string]$Entry.digest))) {
                 throw "Passed Pester file cache was not persisted for worker $($Entry.worker)."
             }
             return $true

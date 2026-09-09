@@ -136,6 +136,38 @@ Describe "Local quality gate contract" {
         }
         @($result | Where-Object { $_ }) | Should -BeNullOrEmpty
     }
+    It "completes and reruns an explicitly non-reusable passed file through the real shard runner" {
+        $root = Join-Path $TestDrive 'Некэшируемая проверка с пробелом'
+        $testRoot = Join-Path $root 'tests/pester'
+        New-Item -ItemType Directory -Force -Path $testRoot | Out-Null
+        & git -C $root init *> $null
+        & git -C $root config user.name 'ITL Test'
+        & git -C $root config user.email 'itl-test@example.invalid'
+        Set-Content -LiteralPath (Join-Path $root '.gitignore') -Encoding UTF8 -Value "out/`ncounter.txt"
+        $testText = "Describe 'external runtime' { It 'actually executes' { Add-Content -LiteralPath (Join-Path `$PSScriptRoot '../../counter.txt') -Value 'executed'; `$true | Should -BeTrue } }"
+        Set-Content -LiteralPath (Join-Path $testRoot 'External.Tests.ps1') -Encoding UTF8 -Value $testText
+        $catalog = [ordered]@{
+            schemaVersion=1; pesterNonReusableTests=@('tests/pester/External.Tests.ps1')
+            contracts=@([ordered]@{id='external';owner='fixture';primaryTest='tests/pester/External.Tests.ps1';gate='targeted';budgetSeconds=30;paths=@('fixture/*');tests=@('tests/pester/External.Tests.ps1')})
+        }
+        [IO.File]::WriteAllText((Join-Path $root 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $selectionPath = Join-Path $root 'selection.json'
+        [IO.File]::WriteAllText($selectionPath, '{"tests":["tests/pester/External.Tests.ps1"]}', [Text.UTF8Encoding]::new($false))
+        & git -C $root add --all
+        & git -C $root commit -m fixture *> $null
+        $invoke = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $output = Join-Path $root 'out'
+        foreach ($attempt in 1..2) {
+            $run = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @('-RepositoryRoot', $root, '-OutputRoot', $output, '-JunitPath', (Join-Path $output 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', $selectionPath)
+            $run.exitCode | Should -Be 0 -Because ($run.stderr -join [Environment]::NewLine)
+            $summary = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $summary.status | Should -Be 'passed'
+            $summary.executedWorkerCount | Should -Be 1
+            $summary.reusedWorkerCount | Should -Be 0
+            $summary.workers[0].inputDigest | Should -BeNullOrEmpty
+        }
+        @(Get-Content -LiteralPath (Join-Path $root 'counter.txt')).Count | Should -Be 2
+    }
     It "owns shard archive and cache hashing without Get-FileHash" {
         $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
         $runner = Get-Content -LiteralPath $runnerPath -Raw -Encoding UTF8
