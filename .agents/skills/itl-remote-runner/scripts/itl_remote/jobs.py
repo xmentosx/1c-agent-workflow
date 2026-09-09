@@ -20,6 +20,8 @@ def job_id(value):
 
 def validate_scenario(scenario):
     budgets(scenario)
+    if scenario.get("sourceAnalysis", "none") not in ("none", "optional", "required"):
+        raise WorkError("INVALID_SOURCE_ANALYSIS_POLICY")
     if scenario.get("schemaVersion") != 1 or not scenario.get("id"):
         raise WorkError("SCENARIO_VERSION_OR_ID_INVALID")
     if scenario.get("adapter", "command") not in ("command", "handshake"):
@@ -70,6 +72,8 @@ def pack(scenario_path, destination, *, target, values=None, mode="time+profile"
     validate_scenario(scenario)
     if mode not in ("time", "profile", "time+profile") or route not in ("local", "auto", "ssh", "agent"):
         raise WorkError("INVALID_MODE_OR_ROUTE")
+    if mode == "time" and scenario.get("sourceAnalysis", "none") != "none":
+        raise WorkError("SOURCE_ANALYSIS_REQUIRES_PROFILE")
     if not 1 <= repeats <= 1000 or not 0 <= warmups <= 100:
         raise WorkError("INVALID_REPETITIONS")
     destination = Path(destination).resolve()
@@ -119,6 +123,8 @@ def validate_package(package):
         raise WorkError("SCENARIO_HASH_MISMATCH")
     scenario = read_json(package / "scenario.json")
     validate_scenario(scenario)
+    if request["mode"] == "time" and scenario.get("sourceAnalysis", "none") != "none":
+        raise WorkError("SOURCE_ANALYSIS_REQUIRES_PROFILE")
     if parameters(scenario, request["parameters"]) != request["parameters"]:
         raise WorkError("PARAMETERS_NOT_RESOLVED")
     for relative, entry in request["files"].items():

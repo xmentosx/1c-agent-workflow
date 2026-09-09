@@ -61,13 +61,33 @@ id. A native packet without an id never resolves through an empty dictionary key
 
 ## Source capture boundary
 
-This analyzer consumes bindings; automatic target-source capture is a separate
-implementation stage. Until the supported capture producer is delivered, missing
-bindings remain missing. Preserve packets for later analysis. A fresh export
-after the target changed does not prove it matches an earlier measurement.
+A measurement scenario can request automatic capture with `"sourceAnalysis":
+"optional"` or `"required"`; the default `"none"` does not export sources.
+Source analysis requires profile or time+profile mode. Set a separate
+`phaseTimeoutSeconds.source-capture` budget for a large configuration. Capture
+runs after scenario verification and before cleanup, under the existing database
+lease and outside every timed interval. It also obeys the per-base session limit;
+it never stops a foreign client to obtain a Designer slot.
 
-Target capture must use the actually executed database configuration and relevant
-extensions, preserve their identities and versions, and write separate immutable
-artifacts. Hold the database operation lease through capture and verification,
-outside the timed interval. Merely exporting the editable Designer configuration
-does not establish equivalence with the executing database configuration.
+The Windows capture step reads `/DumpDBCfg` and `/DumpDBCfgList -AllExtensions`
+from the target, including each extension's saved database configuration. It
+creates its own scratch file base, loads the CF/CFE there, and exports hierarchical
+XML/BSL. Target commands cannot load, restore or update a configuration. The
+scratch base is removed only after its identity and process exit are established;
+unproven termination reaches `cleanupErrors`, retained scratch files are reported.
+The selected platform's sibling `1cv8.exe` is used when the client is `1cv8c.exe`.
+Optional private target `sourceCapture.userEnv` and `sourceCapture.passwordEnv`
+refer to environment variable names; plaintext credentials are not stored.
+
+`source-snapshots/<id>/snapshot.json` retains phase progress, CF/CFE hashes and
+source indexes. `source-map.json` binds requested native module versions to the
+export's object UUID/version, module property and source bytes. Required capture
+or mapping failure leaves raw profiles available but the job needs attention;
+optional failure is a visible limitation. Each profile JSON is updated along with
+the job result. A fresh export after the target changed does not establish that
+it matches an earlier profile: mismatched modules remain unresolved.
+
+Automatic reuse of pre-existing matching source snapshots, source selection for
+only a subset of modules, and full runtime acceptance on PM5/UFA remain separate
+open integration work. The current explicit capture path exports the base and
+its extensions; it does not overwrite checkout sources.

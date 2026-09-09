@@ -9,7 +9,7 @@ import time
 from .common import WorkError
 
 
-PHASES = ("update", "prepare", "action", "ready", "verify", "reset", "cleanup")
+PHASES = ("update", "prepare", "action", "ready", "verify", "reset", "source-capture", "cleanup")
 
 
 def seconds(value):

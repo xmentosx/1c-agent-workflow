@@ -28,7 +28,7 @@ different milestones; none implies the next one.
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
-| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native offline binding and source requirement implemented with fixture checks; authoritative binding producer, target capture and live acceptance pending |
+| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; snapshot reuse, selected-module requirements and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
@@ -111,4 +111,26 @@ line-range validation, manifest-relative paths and explicit optional/required
 source analysis. Fourteen focused tests use retained native packet shapes and
 synthetic UTF-8/CRLF sources to exercise matching and mismatch behavior. This is
 an analyzer contract, not proof of a source capture from a real database. The
-authoritative manifest producer and read-only target capture remain required.
+authoritative manifest producer and read-only target capture are implemented in
+the next slice below; full end-to-end acceptance remains required.
+
+Item 3 next slice adds an explicit optional/required scenario source policy and
+the inherited-lease capture phase. Fixed Designer operations read the database
+configuration plus its extensions, then load/export only in an owned scratch
+base. Native object versions and module properties produce the source bindings;
+unmatched or ambiguous exports stay unresolved. Process cleanup failures retain
+the database admission, and raw profile coverage survives source-analysis failure.
+Python checks passed 114/114 and the owned Pester file passed 7/7 before the final
+progress/cleanup diagnostics addition; registration verifies the final tree.
+
+Real source-capture qualification on 8.3.27.2074 used an isolated technical base
+under `build/diagnostics/source-capture-live/Снимок базы b34fa6d8357e42749523c17e8e66adac`.
+Its database module returns `database`, while a fresh export of its editable
+Designer module returns `designer-only`. Capture preserved the database version,
+exported the YAXUNIT extension and removed its extraction scratch base without
+cleanup errors. `qualification.json` records the exact paths and hashes; snapshot
+`93cbd9ee41a1450582170e517ceb8930` retains the nine successful native steps.
+This is live configuration/export evidence on an owned fixture, not a new PM5
+measurement or proof of snapshot reuse. The first extension fixture lacked its
+borrowed Russian language; a corrected fixture supplied that dependency. No
+runtime assertion or target-capture operation was weakened to qualify it.

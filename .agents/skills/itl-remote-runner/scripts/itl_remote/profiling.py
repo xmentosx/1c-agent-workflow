@@ -390,12 +390,12 @@ class Rdbg:
         self.call("setMeasureMode")
         self.measuring = False
         deadline = time.monotonic() + self.config.get("collectTimeoutSeconds", 30)
-        result = analyze_raw(list(self.raw), self.session, self.proof)
+        result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"))
         while time.monotonic() < deadline:
             if self.error:
                 raise self.error
             self.call("pingDebugUIParams")
-            result = analyze_raw(list(self.raw), self.session, self.proof)
+            result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"))
             if result["complete"]:
                 break
             time.sleep(0.2)

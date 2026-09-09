@@ -5,12 +5,12 @@ A scenario can allow a long calculation while bounding preparation and cleanup:
 ```json
 {
   "timeoutSeconds": 300,
-  "phaseTimeoutSeconds": {"prepare": 600, "action": 2400, "cleanup": 180}
+  "phaseTimeoutSeconds": {"prepare": 600, "action": 2400, "source-capture": 1800, "cleanup": 180}
 }
 ```
 
 The execution host starts each deadline after database admission. Preparation,
-each iteration's action/readiness/verification, reset and cleanup have distinct
+each iteration's action/readiness/verification, reset, source capture and cleanup have distinct
 budgets. A handshake first uses `ready` for workload preparation and controller
 start, then receives a fresh `action` deadline in `go.json`. The measured interval
 continues to exclude preparation, transport and process teardown. A separate
