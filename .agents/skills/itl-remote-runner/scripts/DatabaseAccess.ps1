@@ -130,6 +130,16 @@ function Start-ItlDatabaseAccessHost {
     }
 }
 
+function Assert-ItlDatabaseAccessHost {
+    param([Parameter(Mandatory = $true)][object]$Owner)
+
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    $Owner.process.StandardInput.WriteLine('{"event":"validate"}')
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -ne 'validated') { throw 'INFOBASE_ACCESS_HOST_VALIDATION_UNCONFIRMED' }
+}
+
 function Complete-ItlDatabaseAccessHost {
     param([Parameter(Mandatory = $true)][object]$Owner, [string[]]$CleanupErrors = @())
 

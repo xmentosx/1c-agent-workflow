@@ -465,6 +465,14 @@ function Set-RunStage {
 function Test-Agent1cActionRequiresLifecycleLock {
     param([string]$RequestedAction)
 
+    if ($RequestedAction -eq 'stop-vanessa-profile' -and
+        (Get-Command Test-VanessaInteractiveProfileHasOwner -CommandType Function -ErrorAction SilentlyContinue) -and
+        (Test-VanessaInteractiveProfileHasOwner)) {
+        # The persistent owner performs strict stop under its existing database
+        # and runtime leases. Taking the writer lock here would block that stop.
+        return $false
+    }
+
     $readOnlyActions = @(
         "help",
         "doctor",
@@ -487,6 +495,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
     # would deadlock the nested helper against its own facade call.
     $facadeRuntimeLeaseActions = @(
         "start-vanessa-profile",
+        "internal-ondemand-access-plan",
         "internal-ondemand-ensure",
         "internal-ondemand-ensure-test-client",
         "internal-ondemand-mark-running",

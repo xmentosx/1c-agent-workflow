@@ -2104,6 +2104,102 @@ function Dump-ExtensionToFiles {
     }
 }
 
+function Get-ItlDevBranchMutationDatabasePlan {
+    param([object]$State)
+    $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
+    $bases = @($plan.bases)
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $plan.target.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $plan.target)
+    }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }) }
+}
+
+function Start-ItlDevBranchMutationDatabaseAdmission {
+    param([string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation
+    # A profile or another backend owner keeps its lease until normal release.
+    # Never stop that owner merely to make this request enter the database.
+    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state
+    $settings = Get-ItlDatabaseAccessSettings
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
+    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds
+        owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
+    if ($previousProof) {
+        try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
+    }
+    $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request -CancelPath $CancelPath
+    $admission = [pscustomobject]@{
+        owner = $owner; plan = $plan; journal = (New-OneCNativeOperationJournal -Resources $plan.bases -Owner $owner); operation = $Operation
+        previousJournal = $script:OneCNativeOperationJournal; previousProof = $previousProof
+        completed = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
+    }
+    try {
+        [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
+        $script:OneCNativeOperationJournal = $admission.journal
+        return $admission
+    } catch {
+        Complete-ItlDatabaseAccessHost -Owner $owner | Out-Null
+        throw
+    }
+}
+
+function Assert-ItlDevBranchMutationDatabaseAdmission {
+    param([object]$Admission, [object]$State)
+    if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
+    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State
+    if ($fresh.target.kind -cne $Admission.plan.target.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
+        throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'
+    }
+    foreach ($base in $fresh.bases) {
+        if (@($Admission.plan.bases | Where-Object {
+            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
+        }).Count -eq 0) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: manager resource appeared while waiting.' }
+    }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    Assert-ItlDatabaseAccessHost -Owner $Admission.owner
+}
+
+function Complete-ItlDevBranchMutationDatabaseAdmission {
+    param([AllowNull()][object]$Admission)
+    if ($null -eq $Admission -or $Admission.completed) { return }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    try {
+        if (-not (Test-OneCNativeOperationJournalReleased -Journal $Admission.journal)) {
+            Close-ItlDatabaseAccessHost -Owner $Admission.owner
+            throw 'INFOBASE_ACCESS_NATIVE_CLEANUP_UNCONFIRMED'
+        }
+        $released = Complete-ItlDatabaseAccessHost -Owner $Admission.owner
+        if ($released.status -ne 'released') { throw 'INFOBASE_ACCESS_RELEASE_UNCONFIRMED' }
+    } finally {
+        $script:OneCNativeOperationJournal = $Admission.previousJournal
+        [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $Admission.previousProof, 'Process')
+        $Admission.completed = $true
+    }
+}
+
+function Wait-ItlDevBranchMutationExternalSessions {
+    param([object]$Admission, [string]$InfoBaseKind, [string]$InfoBasePath)
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $nextNotice = 0.0
+    while (@(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath).Count -gt 0) {
+        Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
+        if ($Admission.cancelPath -and (Test-Path -LiteralPath $Admission.cancelPath)) { throw 'INFOBASE_ACCESS_PARENT_CANCELLED' }
+        if ($timer.Elapsed.TotalSeconds -ge $Admission.waitTimeoutSeconds) { throw 'INFOBASE_ACCESS_EXTERNAL_SESSIONS_WAIT_TIMEOUT: external sessions remain; no foreign process was stopped.' }
+        if ($timer.Elapsed.TotalSeconds -ge $nextNotice) {
+            Write-Host 'INFOBASE_ACCESS_EXTERNAL_SESSIONS_WAIT: waiting for sessions outside this operation to exit.'
+            $nextNotice = $timer.Elapsed.TotalSeconds + 5
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -2121,6 +2217,18 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     }
 
     $infoBaseKind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
+    $mutationAdmissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    $mutationAdmission = if ($null -ne $mutationAdmissionVariable) { $mutationAdmissionVariable.Value } else { $null }
+    $drainRecord = $null
+    if ($null -ne $mutationAdmission) {
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $mutationAdmission -State $State
+        if (-not (Test-ItlOnDemandInfoBaseMatch -First $infoBasePath -Second $mutationAdmission.plan.target.path)) {
+            throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
+        }
+        $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `
+            -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath })
+        $drainRecord.startAttempted = $true
+    }
     Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping 1C sessions for the exact development branch infobase before $Reason."
     $ownedCleanupError = ""
     try {
@@ -2132,14 +2240,26 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
         }
     } catch {
         $ownedCleanupError = $_.Exception.Message
+        if ($null -ne $mutationAdmission) { throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: owned cleanup is unconfirmed; foreign sessions are preserved. $ownedCleanupError" }
         Write-Warning "Workflow-owned cleanup could not prove ownership before exact-infobase cleanup: $ownedCleanupError"
     }
 
     try {
-        $sessionCleanup = Stop-OneCInfoBaseSessionProcesses `
-            -InfoBaseKind $infoBaseKind `
-            -InfoBasePath $infoBasePath `
-            -Reason $Reason
+        if ($null -ne $mutationAdmission) {
+            $remainingOwned = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
+            $remainingBackends = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+                Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
+            })
+            if ($remainingOwned.Count -gt 0 -or $remainingBackends.Count -gt 0) { throw 'Owned runtime remains after strict cleanup.' }
+            Confirm-OneCNativeOperationRelease -Record $drainRecord -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'strict-runtime-owner-cleanup'
+            Wait-ItlDevBranchMutationExternalSessions -Admission $mutationAdmission -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
+            $sessionCleanup = [pscustomobject]@{ stopped = 0 }
+        } else {
+            $sessionCleanup = Stop-OneCInfoBaseSessionProcesses `
+                -InfoBaseKind $infoBaseKind `
+                -InfoBasePath $infoBasePath `
+                -Reason $Reason
+        }
 
         if ($ownedCleanupError) {
             # Exact-infobase cleanup can recover from an ownership mismatch. In

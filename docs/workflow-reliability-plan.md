@@ -411,6 +411,151 @@ fixtures, so they are not live 1C qualification. Qualified reuse, unchanged stat
 during planning, missing database, occupied path, template replacement and
 malformed plans are covered with paths containing spaces and Cyrillic together.
 
+Entrypoint integration is in development in the database-entrypoints checkout.
+The Go private-pipe client in `tools/itl-ondemand-mcp/database_access*.go` now
+shares the Python coordinator and has focused process-boundary checks. The
+production PowerShell broker now exposes the read-only complete-resource plan
+and accepts a private, context-scoped proof from Go children. With that explicit
+context it revalidates actual resources through a native inherited pipe host
+before taking the start lock or dispatching an operation. Ensure/recover pass a
+freshly checked, pinned manager plan through `Ensure-VanessaMcpInstalled`;
+stop uses recorded runtime connections without planning a new manager. A
+single-instance context cannot authorize stop-all. Target, manager generation or
+template drift is rejected before native work; the same manager becoming
+qualified for reuse after our own creation is accepted with its fresh input hash.
+No process-global proof override is used for concurrent Go broker calls.
+
+Sixteen planning/admission Pester cases pass, including native inherited
+ownership and missing/replaced runtime cleanup cases. A Go-to-PowerShell-to-Python process-boundary regression reaches
+the simulated 1C launch only under a live parent and rejects the same proof after
+release; the private token is absent from returned diagnostics. All Go tests and
+nine Python pipe-host regressions passed. Before the latest runtime integration,
+full OnDemandMcp Pester reported 61/63:
+the changed executable does not match the old candidate hash, and the identical
+source-build install case consequently attempts a download and fails. The build
+pin must be updated with the completed component, not by weakening these checks.
+This WIP is not registered, published or qualified as installed facade exclusion.
+
+The pipe protocol's new `validate` control rechecks inherited fencing/outer-owner
+liveness before another call. `runtime.callNamed` now acquires cancellable
+per-backend serialization, global database ownership, then the runtime read lock.
+Standalone ownership survives the tool response and idle period; idle/stop
+inherits that same owner and releases only after broker cleanup succeeds. A
+regular inherited call closes its backend before returning control. Cached calls
+recheck target, manager/template and resource scope before using their existing
+connection. Private `itlDatabaseAccess` metadata is consumed locally and removed
+before forwarding to the backend. Process environment is not overridden globally.
+
+Eight runtime integration tests use real Python owners and an HTTP MCP backend
+with a simulated native 1C boundary. They cover two projects on one base,
+unrelated-base concurrency, cancellation while another call is active, inherited
+cleanup/private metadata, failed stop followed by confirmed retry, missing runtime
+state, cached-target drift, the explicit outer-owned interactive lifetime, and a
+Windows exclusive runtime writer. No waiting caller acquires a local runtime lock
+before global admission. The latest full Go suite passed; the directly affected
+Pester group passes 16/16. These are source/process-boundary results, not live 1C
+or installed component qualification.
+
+The broker retains cleanup uncertainty when its caller's native state is missing
+or incomplete. A known PID/port must also match the caller's recorded process
+start time before strict stop. Recovery attempts track both the original and
+replacement instance; absence alone never clears pending native work. Durable
+confirmed-cleanup evidence for internal recovery/pre-launch failure paths still
+needs completion so a proven no-work failure does not manufacture recovery debt.
+
+Standalone manual profile ownership now has a source implementation. A hidden
+Windows owner process holds the coordinator reservation after the launching
+helper exits; generation-scoped open/stop requests cannot replay an interrupted
+open. Stop cancels only the accepted request, waits for its completion, then
+performs strict native cleanup before releasing the reservation. A failed stop
+keeps ownership and permits an explicit stop retry. A crashed owner retains
+recovery debt and cannot silently restart native work. Status checks native PID,
+creation time and executable identity. Public control files contain no private
+lease proof. The PowerShell profile marker routes stop/status to this owner;
+legacy profiles retain their original lifecycle route.
+
+Native subprocess tests cover launcher exit, reservation exclusion, normal stop,
+exact-process owner crash, scoped cancellation, failed cleanup and request replay.
+A separate qualification crossed two actual Codex command invocations: the
+launcher command completed, the owner remained alive and excluded a competing
+reservation, then a second command stopped it and reacquired the database.
+Evidence is retained in the integration worktree at
+`build/diagnostics/profile-owner/Ручной профиль через завершение команды/qualification.json`.
+It explicitly records `native1C=false`: real Windows/Python process ownership is
+proven; the 1C boundary is simulated. The final-response reader also handles the
+race where normal stop persists its response and exits between the client's
+initial file read and process inspection. Missing final evidence remains an error.
+The full Go suite at that stage passed (18.2 seconds); the manual-profile Pester
+file and database-admission Pester group each passed 16/16.
+
+The explicit `stop-dev-branch-test-clients` entrypoint now delegates an existing
+manual profile stop to its owner before database admission and local locks. It
+then reserves its target, recorded service base and matching runtime managers;
+unrelated runtime databases are excluded and no new service base is created.
+After local lock acquisition, it rechecks the resource set and live reservation
+before invoking the existing strict cleanup. Successful cleanup releases the
+reservation; an admission/precondition failure with no native work also releases
+it, while an unconfirmed native stop retains recovery debt. A live inherited
+reservation is validated and remains owned by its parent after nested cleanup.
+Shared coordinator settings are used by this entrypoint and the facade planner.
+
+Eight new cleanup-admission tests use the actual Python pipe owner with a
+simulated native stop boundary. They cover exclusion before local locking,
+recorded-resource selection, manager drift, failed cleanup, owner-mediated stop
+ordering/failure, inherited ownership and entrypoint ordering. The three directly
+affected cleanup/profile Pester files pass 38/38; the facade admission group
+passes 16/16. This is not yet installed/real-1C cleanup qualification.
+
+Manual-profile reuse is now bound to a caller ID in configuration, public owner
+state and every mutating control request. Codex defaults to `CODEX_THREAD_ID`;
+non-chat use supports explicit `-VanessaProfileOwnerId` or a newly generated
+session ID returned in the report. An unidentified caller never adopts another
+session's ID from branch state. A different caller waits before opening; foreign
+open/stop/cancel requests are rejected by both client and owner. Cancellation of
+that wait does not stop the active pair. After confirmed cleanup and process exit,
+the waiting caller can start its own owner generation. Reports preserve the old
+start time only for reuse of the same generation and caller.
+
+A native two-launcher regression now starts two caller processes against one
+branch concurrently and proves feature preservation plus admission of the second
+caller after normal stop of the first. It exposed Windows sharing/access races
+on control files. Control-file reads/atomic rename now retry only bounded native
+sharing/access conflicts; owner lifetime locks are never stolen and native open
+requests are not replayed. Process inspection retries transient access denial but
+never treats denial itself as proof of exit. A losing startup waits for the
+verified other owner rather than reclaiming its native pair. The final full Go
+suite passes (22.1 seconds); the current profile and cleanup-admission Pester files
+pass 26/26. The two-launcher test uses actual Windows processes and Python leases
+with simulated 1C; installed two-chat/real-1C acceptance remains pending.
+
+Remaining integration before registration/delivery:
+
+- Complete per-action lifecycle resource planning and admission before its local
+  locks, including service and scratch bases. Do not reserve unrelated bases.
+- Integrate the persistent manual owner with branch-wide cleanup invoked by
+  verification preflight and lifecycle admission. These paths still have
+  legacy writer-lock/stop sequencing and must not stop an owner's native clients
+  behind its reservation or hold a writer lock while asking it to stop. Preserve
+  standalone manual use and qualify its actual 1C windows before delivery.
+- Qualify caller-bound manual-profile waiting with two actual chats and real 1C,
+  including installed non-chat owner-ID propagation and observable wait progress.
+- Integrate full-resource planning and native cleanup with composed measurement
+  owners; distinguish confirmed pre-launch failure from an interrupted launch.
+- Qualify installed Python/runtime availability, update the finished component's
+  version/build pin, run its owned registration checks, and retain exact real
+  Release E2E proof for both backend families before publishing its asset.
+- Complete live 1C recovery observations, PM5/UFA and multi-host qualification.
+
+This remains an unregistered integration WIP and is not a completed global gate.
+
+Persistent backend lifetime must be included in admission: returning a tool
+response alone does not free a database held by an idle backend. Calls on one
+backend require cancellable serialization; idle/stop uses its existing owner.
+An inherited facade backend must be stopped before returning control to the
+outer operation unless an explicit outer-lifetime cleanup contract owns it.
+This prevents a cached backend from outliving a released measurement lease.
+Actual 1C recovery observations and multi-host qualification remain required.
+
 Focused tests use SQLite changes and separate processes, including a killed
 Windows recovery owner after the restoration commit. They verify one original
 action, no repeated restoration after that crash, honest failed-measurement
@@ -744,6 +889,15 @@ tests verify the identity producer for completed recovery and an unchanged load.
 This fixes post-load cleanup scope. It does not by itself complete admission
 before lifecycle locks, native-operation cleanup accounting, or real 1C acceptance.
 
+Registered as `0e75c4457fd42b492b9035cfcc01fef3043c98b7` in queue
+`workflow-measurement-reliability`; the owning Targeted run passed in 736.695
+seconds. An earlier registration attempt stopped at selector validation because
+the new test file lacked a quality-contract owner; adding it to `mcp-hosts`
+resolved that defect without weakening or skipping the regression. The isolated
+registration worktree is clean. The database-integration worktree now uses this
+registered commit as its base; its remaining uncommitted changes were preserved.
+No publication or installed-project acceptance is claimed for this correction.
+
 ## Item 4: native-operation accounting before aggregate release
 
 The shared session launch boundary now supports an aggregate operation journal.
@@ -769,6 +923,18 @@ success/business failure and retained ownership for a surviving Designer process
 while keeping an unrelated database holder open. These use simulated native 1C
 boundaries; they do not establish live concurrent database admission.
 
+The next unregistered slice requires owned-process completion for Enterprise
+normalization after configuration load. Ordinary Enterprise calls retain their
+existing completion contract. The new probe composes with an application probe,
+uses the existing bounded native process inventory, and requires a fresh second
+empty observation after the quiet interval, not merely a cached empty result.
+A delayed descendant therefore keeps ownership pending. Nonzero launcher exits
+still fail the operation even when native cleanup is confirmed; the native wait
+can explicitly retain its bounded post-exit probe on failure for this purpose.
+The focused seven-case fixture includes unrelated clients, delayed and surviving
+owned children, application completion failure, uncertain launch, nonzero exit
+and unchanged ordinary-call behavior. This still does not activate update's
+aggregate admission or replace runtime-drain ownership accounting.
 
 ## Item 4: Enterprise owned-process completion
 
@@ -795,6 +961,14 @@ real command process and the real bounded CIM worker confirms normal completion
 after the correction. This is native process-control evidence, not live 1C/PM5
 acceptance. Registration and delivered database-admission acceptance remain
 separate milestones.
+
+Item 4 update admission is wired in the unregistered integration worktree
+before lifecycle locks, with target/recorded-manager revalidation, inherited
+private proof, per-native-launch resource/fencing checks and native journal
+release. Its mutation drain preserves foreign sessions and retains unconfirmed
+owned cleanup instead of using stop-all-infobase fallback. All ten real
+Python-host admission cases pass after the nested protocol correction below.
+This is not yet delivered or complete.
 
 ## Item 4: nested database ownership and cleanup evidence
 
@@ -836,4 +1010,49 @@ protocol slice does not claim delivered cross-chat or cross-host 1C acceptance.
 
 The four unchanged branch-creation reproducers now pass (4/4, 66.47 seconds),
 including resume and legacy checkout mode. The nine focused Enterprise cases
-also pass. The final registered tree still requires its normal Targeted proof.
+also pass. The participant protocol was subsequently registered at `d934199`:
+its owning Targeted gate passed 50 Pester tests, including the portable Python
+suite, with no failures or skips and a clean worktree.
+
+## Item 4: facade and update admission integration candidate
+
+The integration candidate connects facade calls and development-base updates to
+the shared coordinator. It pins target/manager resources before local locks,
+revalidates them after waiting, and holds native ownership through cleanup.
+Standalone interactive profiles retain a caller-bound owner after their launcher
+exits. Native uncertainty keeps the reservation unavailable for competing work;
+neither a closed pipe nor an absent caller proves native release.
+
+A failed inherited broker request before native work now releases only that
+request's participation. Previously, refusal at the local start lock incorrectly
+left an uncertain child behind even though no native call occurred. A native
+start failure still leaves recovery evidence. Both paths have permanent tests;
+the parent's previous native work is never declared quiescent by this distinction.
+
+Terminal facade close now closes its HTTP MCP transport even when bounded native
+cleanup fails. It preserves the native/backend evidence and disconnects the
+private owner without claiming successful database release. Persistent profile
+stop uses a separate retryable cleanup path so an explicit stop retry can still
+finish under its existing owner. The original failed-stop/retry test remains;
+the new inherited-failure regression also proves that a fenced parent cannot
+restart native work and that terminal cleanup does not leak the HTTP session.
+
+The 0.4.11 candidate was built from the current Go source. Its executable SHA256
+is `aaf13fb5d51f8dac37560d1d0aa643484fd31240beedfa03342e1f429b8af0a2`;
+the dependency lock and deterministic-build assertion use that same value.
+The full Go suite passed in 25.822 seconds. The final OnDemandMcp and
+DevBranchLifecycle Pester run passed 263 tests with no failures or skips
+(325.26 seconds), including the current build pin and broker admission cases.
+These results precede this candidate's normal RegisterChange gate.
+
+The independent public classification/runner cleanup correction was registered
+at `ccce8af`: Targeted passed 664 tests with no failures or skips and a clean
+worktree (498412 ms; 31 executed workers and one valid reused worker). Advancing
+the integration base to that registered commit preserved all 435 tracked and
+untracked source-file byte hashes and left the index unstaged.
+
+This candidate does not complete item 4. Remaining work includes admission for
+all other lifecycle actions and complete service/scratch resource sets, native
+recovery adapters, installed two-chat/manual-profile acceptance, real PM5/UFA
+and two-host coordination. The component has not been tagged or published;
+exact-source/executable Release E2E for both ROCTUP and Vanessa remains required.

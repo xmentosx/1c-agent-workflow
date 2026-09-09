@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 Describe "Interactive Vanessa profiling lifecycle" {
     BeforeAll {
@@ -157,7 +157,9 @@ Describe "Interactive Vanessa profiling lifecycle" {
                     [pscustomobject]@{
                         status = "running"; instanceId = $InstanceId; managerPid = 5101; managerPort = 9874
                         testClientPid = 5102; testClientPort = 48151; testClientState = "manager-connected"
-                        testClientReused = ($script:TransportCalls -gt 1); scenarioWasStarted = $false
+                        testClientReused = ($script:TransportCalls -eq 2); scenarioWasStarted = $false
+                        ownerId = $(if ($script:TransportCalls -le 2) { 'chat-a' } else { 'chat-b' })
+                        ownerGeneration = $(if ($script:TransportCalls -le 2) { 'b'*32 } else { 'c'*32 })
                     }
                 }
                 function Read-ItlOnDemandRuntimeState { return $script:Runtime }
@@ -174,9 +176,13 @@ Describe "Interactive Vanessa profiling lifecycle" {
                 $first = Start-DevBranchVanessaInteractiveProfile 6>$null
                 $firstInstance = [string]$script:ProfileMarker.instanceId
                 $second = Start-DevBranchVanessaInteractiveProfile 6>$null
+                $script:ProfileMarker.startedAt = '2000-01-01T00:00:00Z'
+                $third = Start-DevBranchVanessaInteractiveProfile 6>$null
                 [pscustomobject]@{
                     first = $first
                     second = $second
+                    third = $third
+                    thirdStartedAt = $script:ProfileMarker.startedAt
                     firstInstance = $firstInstance
                     secondInstance = [string]$script:ProfileMarker.instanceId
                     calls = $script:TransportCalls
@@ -187,7 +193,10 @@ Describe "Interactive Vanessa profiling lifecycle" {
             $result.first.action | Should -Be "started"
             $result.second.action | Should -Be "reused"
             $result.firstInstance | Should -Be $result.secondInstance
-            $result.calls | Should -Be 2
+            $result.calls | Should -Be 3
+            $result.third.action | Should -Be 'started'
+            $result.third.ownerId | Should -Be 'chat-b'
+            $result.thirdStartedAt | Should -Not -Be '2000-01-01T00:00:00Z'
             $report = $result.reportJson | ConvertFrom-Json
             $report.status | Should -Be "running"
             $report.managerPid | Should -Be 5101
@@ -368,5 +377,121 @@ Describe "Interactive Vanessa profiling lifecycle" {
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+}
+
+Describe 'Explicit interactive profile caller propagation' {
+    BeforeAll {
+        $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $lib = Join-Path $repo '.agents/skills/1c-workflow/scripts/lib'
+        foreach ($name in @('core','runtime-values','vanessa','ondemand-mcp')) { . (Join-Path $lib ("agent-1c.$name.ps1")) }
+    }
+    BeforeEach {
+        $script:ProjectRoot = $TestDrive
+        $script:Agent1cScriptPath = Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        $script:VanessaProfileOwnerId = $null
+        Mock Get-ItlOnDemandMcpExecutablePath { 'fixture.exe' }
+        Mock Get-ItlOnDemandMcpFamilyDefinition { [pscustomobject]@{catalogPath='catalog.json'} }
+        Mock Invoke-ItlNativeProcessCapture {
+            param($FilePath,$Arguments)
+            $script:capturedProfileArguments = @($Arguments)
+            $marker = $(if ($Arguments[0] -eq 'vanessa-profile-start') { 'ITL_VANESSA_PROFILE_RESULT=' } else { 'ITL_VANESSA_PROFILE_OWNER_RESULT=' })
+            [pscustomobject]@{exitCode=0;stderr='';stdout=($marker + '{"schemaVersion":1,"generation":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":"stopped","cleanupConfirmed":true}')}
+        }
+    }
+    AfterEach { $script:VanessaProfileOwnerId = $null }
+
+    It 'forwards an explicit session ID through both start and stop' {
+        $script:VanessaProfileOwnerId = 'manual-session'
+        Invoke-ItlOnDemandVanessaProfileStart -InstanceId ('a'*32) -FeaturePath 'feature.feature' | Out-Null
+        $script:capturedProfileArguments | Should -Contain '--caller-id'
+        $script:capturedProfileArguments | Should -Contain 'manual-session'
+        Invoke-VanessaInteractiveProfileOwnerControl -Operation stop -Owner ([pscustomobject]@{instanceId=('a'*32);generation=('b'*32);callerId='manual-session'}) | Out-Null
+        $script:capturedProfileArguments | Should -Contain 'manual-session'
+    }
+
+    It 'does not adopt a foreign caller ID from the branch descriptor' {
+        Invoke-VanessaInteractiveProfileOwnerControl -Operation stop -Owner ([pscustomobject]@{instanceId=('a'*32);generation=('b'*32);callerId='foreign-chat'}) | Out-Null
+        $script:capturedProfileArguments | Should -Not -Contain '--caller-id'
+        $script:capturedProfileArguments | Should -Not -Contain 'foreign-chat'
+    }
+}
+
+Describe 'Persistent interactive profile owner routing' {
+    BeforeAll {
+        $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        $lib = Join-Path $repo '.agents/skills/1c-workflow/scripts/lib'
+        foreach ($name in @('core', 'runtime-values', 'lifecycle', 'roctup-mcp', 'vanessa', 'ondemand-mcp')) {
+            . (Join-Path $lib ("agent-1c.$name.ps1"))
+        }
+    }
+    BeforeEach {
+        $script:ProjectRoot = Join-Path $TestDrive ('Ручной профиль с пробелом ' + [guid]::NewGuid().ToString('N'))
+        $script:DevBranchName = 'profile'
+        $owner = [pscustomobject]@{schemaVersion=1;projectRoot=$script:ProjectRoot;instanceId=('a'*32);generation=('b'*32);status='running'}
+        $profile = [pscustomobject]@{schemaVersion=1;instanceId=$owner.instanceId;ownerGeneration=$owner.generation}
+        $ownerPath = Join-Path $script:ProjectRoot '.agent-1c/mcp/vanessa-profile-owner/owner.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ownerPath) | Out-Null
+        $owner | ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
+        $profilePath = Get-VanessaInteractiveProfileStatePath
+        $profile | ConvertTo-Json | Set-Content -LiteralPath $profilePath -Encoding UTF8
+        $baseState = [pscustomobject]@{devBranchInfoBasePath=(Join-Path $script:ProjectRoot 'база профиля');worktreePath=$script:ProjectRoot;safeDevBranchName='profile'}
+        Mock Read-DevBranchState { $baseState }
+        Mock Read-CurrentDevBranchStateForVanessaMcp { $baseState }
+        Mock Assert-DevelopmentBranchWorktreeContext { }
+        Mock Read-ItlOnDemandRuntimeState { $null }
+        Mock Test-ItlOnDemandOwnedProcess { $false }
+        Mock Get-ItlOnDemandOwnedTestClientProcesses { @() }
+        Mock Get-VanessaInteractiveProfileRuntimeInstances { @() }
+        Mock Invoke-DevBranchVanessaRuntimeRelease { throw 'The owner must stop only its exact profile.' }
+        Mock Invoke-VanessaInteractiveProfileOwnerControl { [pscustomobject]@{schemaVersion=1;generation=$owner.generation;status='stopped';cleanupConfirmed=$true} }
+        Mock New-VanessaInteractiveProfileUserReport { param($Action,$Status) [pscustomobject]@{action=$Action;status=$Status} }
+        Mock Publish-VanessaInteractiveProfileUserReport { param($Report) $Report }
+    }
+
+    It 'delegates stop without taking the lock needed by the persistent owner and keeps legacy locking' {
+        Test-Agent1cActionRequiresLifecycleLock -RequestedAction stop-vanessa-profile | Should -BeFalse
+        (Stop-DevBranchVanessaInteractiveProfile).status | Should -Be 'stopped'
+        Test-Path -LiteralPath $profilePath | Should -BeFalse
+        Should -Invoke Invoke-VanessaInteractiveProfileOwnerControl -Times 1 -ParameterFilter { $Operation -eq 'stop' -and $Owner.instanceId -eq ('a'*32) }
+        Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+        Remove-Item -LiteralPath $ownerPath
+        Test-Agent1cActionRequiresLifecycleLock -RequestedAction stop-vanessa-profile | Should -BeTrue
+    }
+
+    It 'retains the marker on failed cleanup and does not fall back to a branch-wide stop' {
+        Mock Invoke-VanessaInteractiveProfileOwnerControl { [pscustomobject]@{schemaVersion=1;generation=$owner.generation;status='needs-attention';cleanupConfirmed=$false} }
+        { Stop-DevBranchVanessaInteractiveProfile } | Should -Throw '*STOP_UNCONFIRMED*'
+        (Read-VanessaInteractiveProfileState -Strict).ownerGeneration | Should -Be $owner.generation
+        Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+    }
+
+    It 'rejects stale generation before sending any stop command' {
+        $profile.ownerGeneration = 'c'*32
+        $profile | ConvertTo-Json | Set-Content -LiteralPath $profilePath -Encoding UTF8
+        { Stop-DevBranchVanessaInteractiveProfile } | Should -Throw '*GENERATION_CHANGED*'
+        (Read-VanessaInteractiveProfileState -Strict).ownerGeneration | Should -Be ('c'*32)
+        Should -Invoke Invoke-VanessaInteractiveProfileOwnerControl -Times 0
+        Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+    }
+
+    It 'rejects a successful control response when native registration still remains' {
+        Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{instanceId=$owner.instanceId;pid=4242} }
+        { Stop-DevBranchVanessaInteractiveProfile } | Should -Throw '*STOP_UNCONFIRMED*'
+        Test-Path -LiteralPath $profilePath | Should -BeTrue
+    }
+
+    It 'reports unconfirmed owner cleanup even when the native runtime file disappeared' {
+        Mock Invoke-VanessaInteractiveProfileOwnerControl { [pscustomobject]@{schemaVersion=1;generation=$owner.generation;status='owner-exited-unconfirmed';cleanupConfirmed=$false} }
+        (Show-DevBranchVanessaInteractiveProfile).status | Should -Be 'owner-exited-unconfirmed'
+        Should -Invoke Invoke-VanessaInteractiveProfileOwnerControl -Times 1 -ParameterFilter { $Operation -eq 'status' }
+    }
+
+    It 'keeps a later legacy profile on its normal lifecycle despite a retained stopped owner descriptor' {
+        $owner.status='stopped'
+        $owner | ConvertTo-Json | Set-Content -LiteralPath $ownerPath -Encoding UTF8
+        [pscustomobject]@{schemaVersion=1;instanceId=('d'*32)} | ConvertTo-Json | Set-Content -LiteralPath $profilePath -Encoding UTF8
+        Test-VanessaInteractiveProfileHasOwner | Should -BeFalse
+        Test-Agent1cActionRequiresLifecycleLock -RequestedAction stop-vanessa-profile | Should -BeTrue
     }
 }

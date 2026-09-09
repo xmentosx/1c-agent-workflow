@@ -26,6 +26,24 @@ never extend an earlier caller deadline. HTTP transport has no separate shorter
 wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
 minute); forced shutdown remains unproven cleanup at the adapter boundary.
 
+Facade 0.4.11 reserves its target and manager databases through the shared
+filesystem coordinator before taking the local runtime lock. It retains that
+reservation while its native backend exists. Nested broker work inherits a
+private proof and registers its participation; conflicting projects and chats
+wait outside the runtime lock. Uncertain native cleanup requires recovery and
+cannot be hidden by closing a process or a pipe. Inherited work requires the
+participant-aware protocol on both sides; incompatible versions reject it before
+launch. Shared coordination across hosts requires the same configured authority
+and database identities, rather than separate local default directories.
+
+Interactive profiles use a persistent owner bound to their caller identity.
+A failed stop retains ownership for an explicit retry. Terminal facade shutdown
+closes its own MCP transport even when native cleanup fails, retaining database
+recovery evidence and the failure result. A caller must not reuse another task's
+owner ID to bypass waiting. The local source build and matching dependency lock
+are preparatory evidence; publishing this component still requires its exact
+source and executable to pass Release E2E for ROCTUP and Vanessa.
+
 Build the release asset from the repository root:
 
 ```powershell

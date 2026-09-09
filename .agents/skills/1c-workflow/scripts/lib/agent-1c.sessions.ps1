@@ -7,14 +7,24 @@ if (-not (Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorActi
 }
 
 function New-OneCNativeOperationJournal {
+    param([object[]]$Resources = @(), [AllowNull()][object]$Owner = $null)
     # The aggregate database admission owns this journal. Session-capacity
     # reservation removal is not proof that database work has stopped.
-    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new() }
+    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new(); resources = @($Resources); owner = $Owner }
 }
 
 function Add-OneCNativeOperationRecord {
     param([object]$Journal, [object[]]$Admissions, [string]$Purpose)
     if ($null -eq $Journal) { return $null }
+    if ($null -ne $Journal.owner) {
+        foreach ($admission in $Admissions) {
+            $matches = @($Journal.resources | Where-Object {
+                $_.kind -ceq $admission.infoBaseKind -and
+                (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $admission.infoBasePath)
+            })
+            if ($matches.Count -eq 0) { throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED' }
+        }
+    }
     $record = [pscustomobject]@{
         id = [guid]::NewGuid().ToString('N')
         purpose = $Purpose
@@ -36,6 +46,13 @@ function Test-OneCNativeOperationJournalReleased {
         if ($record.startAttempted -and -not $record.quiescenceConfirmed) { return $false }
     }
     return $true
+}
+
+function Assert-OneCNativeOperationJournalOwner {
+    param([AllowNull()][object]$Journal)
+    if ($null -eq $Journal -or $null -eq $Journal.owner) { return }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    Assert-ItlDatabaseAccessHost -Owner $Journal.owner
 }
 
 function Confirm-OneCNativeOperationRelease {
@@ -629,6 +646,7 @@ function Invoke-OneCSessionProcessStart {
             return (Invoke-OneCSessionAdmissionSet -Admissions @($context.admissions) -StartProcess {
                 if ($context.sessionCancelPath -and (Test-Path -LiteralPath $context.sessionCancelPath)) { throw 'CANCELLED' }
                 if (Test-OneCSessionWaitExpired -Context $context -Watch $waitWatch) { throw 'ITL_ONEC_SESSION_WAIT_TIMEOUT: admission expired before launch' }
+                Assert-OneCNativeOperationJournalOwner -Journal $context.nativeOperationJournal
                 $context.nativeStartAttempted = $true
                 if ($null -ne $context.nativeOperationRecord) { $context.nativeOperationRecord.startAttempted = $true }
                 $startedProcess = & $requestedStartProcess
@@ -699,6 +717,7 @@ function Invoke-WithOneCSessionAdmissionContext {
         recoveryAttempted = $false
         nativeStartAttempted = $false
         nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose)
+        nativeOperationJournal = $script:OneCNativeOperationJournal
         sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
         sessionCancelPath = $SessionCancelPath
         sessionDeadlineMonotonicNs = $SessionDeadlineMonotonicNs

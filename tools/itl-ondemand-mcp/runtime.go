@@ -22,20 +22,27 @@ import (
 )
 
 type runtime struct {
-	mu                 sync.Mutex
-	catalog            *loadedCatalog
-	broker             backendBroker
-	projectRoot        string
-	family             string
-	instanceID         string
-	idle               time.Duration
-	catalogWait        time.Duration
-	vanessaConnectWait time.Duration
-	logger             *slog.Logger
-	progressMu         sync.Mutex
-	progress           map[string]*progressRoute
-	progressSerial     atomic.Uint64
-	progressWriteMu    sync.Mutex
+	mu                      sync.Mutex
+	catalog                 *loadedCatalog
+	broker                  backendBroker
+	projectRoot             string
+	family                  string
+	instanceID              string
+	idle                    time.Duration
+	catalogWait             time.Duration
+	vanessaConnectWait      time.Duration
+	logger                  *slog.Logger
+	progressMu              sync.Mutex
+	progress                map[string]*progressRoute
+	progressSerial          atomic.Uint64
+	progressWriteMu         sync.Mutex
+	databaseGateOnce        sync.Once
+	databaseGate            chan struct{}
+	databaseOwner           *databasePipeOwner
+	databasePlan            *facadeDatabasePlan
+	databaseParent          *databaseAccessProof
+	databaseNativePending   bool
+	databaseRetainInherited bool
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -85,7 +92,7 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 	return r.callNamed(ctx, req, req.Params.Name, arguments)
 }
 
-func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (*mcp.CallToolResult, error) {
+func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (callResult *mcp.CallToolResult, callError error) {
 	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
 	if budgetErr != nil {
 		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
@@ -103,14 +110,19 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}), nil
 	}
 
-	// Calls, including lazy ensure/start, hold a shared lease. Lifecycle writers
-	// acquire lifecycle -> runtime exclusively and therefore wait for the whole
-	// operation without requiring a client reload.
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
-		return toolError("ITL_ONDEMAND_RUNTIME_LOCK", err.Error(), nil), nil
+		code := "INFOBASE_ACCESS_ADMISSION_FAILED"
+		if strings.Contains(err.Error(), "ITL_ONDEMAND_RUNTIME_LOCK") {
+			code = "ITL_ONDEMAND_RUNTIME_LOCK"
+		}
+		return toolError(code, err.Error(), nil), nil
 	}
-	defer lock.Close()
+	defer func() {
+		if err := finishDatabaseCall(); err != nil {
+			callResult, callError = toolError("INFOBASE_ACCESS_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
+		}
+	}()
 
 	r.mu.Lock()
 	if r.timer != nil {
@@ -126,6 +138,10 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	if r.session != nil && r.backend != nil && r.backend.PID > 0 {
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
+			if r.databaseOwner != nil {
+				r.mu.Unlock()
+				return toolError("ITL_ONDEMAND_RUNTIME_STATE_MISSING", "registered native runtime state disappeared; ownership and cleanup evidence are retained", nil), nil
+			}
 			_ = r.session.Close()
 			r.clearProgress(r.session)
 			r.session = nil
@@ -169,17 +185,13 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	session := r.session
 	callInstanceID := r.instanceID
 	callBackend := r.backend
-	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}
+	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: publicBackendMeta(req.Params.Meta)}
 	var route *progressRoute
 	if progressTokenProvided {
 		progressID := fmt.Sprintf("%s-%d", callInstanceID, r.progressSerial.Add(1))
 		route = &progressRoute{session: req.Session, token: req.Params.GetProgressToken(),
 			id: progressID, tool: toolName, backend: session,
 			path: filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, callInstanceID+".progress.jsonl")}
-		params.Meta = make(mcp.Meta, len(req.Params.Meta))
-		for key, value := range req.Params.Meta {
-			params.Meta[key] = value
-		}
 		params.Meta["progressToken"] = progressID
 		r.progressMu.Lock()
 		r.progress[progressTokenKey(progressID)] = route
@@ -351,6 +363,7 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err != nil {
 		return nil, fmt.Errorf("generate replacement instance ID: %w", err)
 	}
+	r.databaseNativePending = r.databaseOwner != nil
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
 		return nil, err
@@ -510,6 +523,7 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 		return nil
 	}
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "broker-start")
+	r.databaseNativePending = r.databaseOwner != nil
 	info, err := r.broker.Ensure(ctx)
 	if err != nil {
 		return err
@@ -522,7 +536,7 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 
 func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err := validateBackendVersion(r.family, r.catalog.Data.BackendVersions, info.BackendVersion); err != nil {
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		return err
 	}
 	r.backend = info
@@ -560,20 +574,20 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	}
 	session, err := client.Connect(ctx, transport, nil)
 	if err != nil {
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		return fmt.Errorf("connect backend MCP: %w", err)
 	}
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "catalog-verify")
 	_, diff, err := r.waitForCatalog(ctx, session)
 	if err != nil {
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		return fmt.Errorf("list backend tools: %w", err)
 	}
 	if !diff.empty() {
 		r.mismatch = diff
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		return fmt.Errorf("ITL_ONDEMAND_CATALOG_MISMATCH: added=%v removed=%v changed=%v", diff.Added, diff.Removed, diff.Changed)
 	}
 	r.session = session
@@ -582,7 +596,7 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err := r.preflightVanessa(ctx, session); err != nil {
 		r.session = nil
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
 		return err
 	}
@@ -590,7 +604,7 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 	if err != nil {
 		r.session = nil
 		_ = session.Close()
-		_ = r.broker.Stop(context.Background())
+		r.stopBrokerAfterFailure(ctx)
 		r.backend = nil
 		return fmt.Errorf("confirm backend protocol readiness: %w", err)
 	}
@@ -751,6 +765,11 @@ func (r *runtime) armIdleLocked() {
 }
 
 func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
+	unlock, err := r.lockDatabaseCalls(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
 	if err != nil {
 		return err
@@ -758,7 +777,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	defer lock.Close()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
+	if r.closed || (r.backend == nil && r.databaseOwner == nil) || r.active > 0 || r.generation != generation {
 		return nil
 	}
 	if time.Now().Before(r.idleDeadline) {
@@ -766,7 +785,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 		return nil
 	}
 	r.stopping = true
-	err = r.broker.Stop(ctx)
+	err = r.stopDatabaseBackendLocked(ctx)
 	r.stopping = false
 	if err != nil {
 		r.armIdleLocked()
@@ -784,6 +803,11 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 }
 
 func (r *runtime) stop(ctx context.Context) error {
+	unlock, err := r.lockDatabaseCalls(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
 	if err != nil {
 		return err
@@ -795,20 +819,7 @@ func (r *runtime) stop(ctx context.Context) error {
 		r.timer.Stop()
 		r.timer = nil
 	}
-	if r.backend == nil {
-		return nil
-	}
-	err = r.broker.Stop(ctx)
-	if err != nil {
-		return err
-	}
-	if r.session != nil {
-		_ = r.session.Close()
-		r.clearProgress(r.session)
-		r.session = nil
-	}
-	r.backend = nil
-	return nil
+	return r.stopDatabaseBackendLocked(ctx)
 }
 
 func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) *mcp.CallToolResult {
@@ -1212,6 +1223,36 @@ func resultText(result *mcp.CallToolResult) string {
 }
 
 func (r *runtime) close(ctx context.Context) error {
+	defer func() {
+		// EOF is terminal even if native cleanup cannot be proven. Close our
+		// HTTP session and private pipe without reporting database release.
+		// Retain backend/native evidence for recovery, and do not hold r.mu
+		// while the MCP transport waits for its reader to finish.
+		r.mu.Lock()
+		session, owner := r.session, r.databaseOwner
+		if session != nil {
+			r.clearProgress(session)
+			r.session = nil
+		}
+		if r.timer != nil {
+			r.timer.Stop()
+			r.timer = nil
+		}
+		r.mu.Unlock()
+		if session != nil {
+			_ = session.Close()
+		}
+		if owner != nil {
+			_ = owner.Close()
+		}
+	}()
+	return r.stopOwnedRuntime(ctx)
+}
+
+// A persistent profile owner must be able to retry an explicitly requested stop
+// after native cleanup failed. Keep its private lease and HTTP session until
+// that retry succeeds; only terminal close abandons those local connections.
+func (r *runtime) stopOwnedRuntime(ctx context.Context) error {
 	r.mu.Lock()
 	r.closed = true
 	r.mu.Unlock()
@@ -1224,11 +1265,11 @@ func (r *runtime) close(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("cleanup owned backend after stdio EOF: %w", lastErr)
+			return fmt.Errorf("cleanup owned backend: %w", lastErr)
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
-	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
+	return fmt.Errorf("cleanup owned backend after 3 attempts: %w", lastErr)
 }
 
 func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, progressID ...string) {

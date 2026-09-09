@@ -49,6 +49,7 @@ param(
     [string]$ReleaseAiRulesSource = "",
     [string]$ReleaseSnapshotPath = "",
     [string]$VanessaFeaturePath,
+    [string]$VanessaProfileOwnerId,
     [string]$VanessaFilterTags,
     [int]$VanessaTestPort = 0,
     [int]$VanessaMcpPort = 0,
@@ -115,7 +116,7 @@ param(
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
     [switch]$OperationContinuation,
-    [ValidateSet("", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
+    [ValidateSet("", "access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
     [string]$InternalOnDemandCatalogSha256 = "",
@@ -264,6 +265,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionInitMode" -Value $ExtensionInitMode
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ExtensionSourcePath" -Value $ExtensionSourcePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFeaturePath" -Value $VanessaFeaturePath
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaProfileOwnerId" -Value $VanessaProfileOwnerId
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaFilterTags" -Value $VanessaFilterTags
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaTestPort" -Value $(if ($VanessaTestPort -ne 0) { $VanessaTestPort } else { $null })
     Add-Agent1cReexecArgument -Arguments $arguments -Name "VanessaMcpPort" -Value $(if ($VanessaMcpPort -ne 0) { $VanessaMcpPort } else { $null })
@@ -406,6 +408,8 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
     . $modulePath
 }
 
+$script:VanessaCleanupDatabaseAdmission = $null
+$script:DevBranchMutationDatabaseAdmission = $null
 try {
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
@@ -422,6 +426,12 @@ try {
     Import-DotEnv -Path $lifecycleEnvPath
     Read-ProjectConfig
     $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
+    if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
+        $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
+    }
+    if ($requestedLifecycleAction -eq 'update-dev-branch-base') {
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction
+    }
     Enter-Agent1cLifecycleOperation `
         -RequestedAction $requestedLifecycleAction `
         -RequestedOperationId $OperationId `
@@ -433,6 +443,9 @@ try {
     }
     # All action preconditions run after admission with current configuration.
     Read-ProjectConfig
+    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Read-DevBranchState -Name $DevBranchName)
+    }
     Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
@@ -534,6 +547,8 @@ try {
         "release-e2e-config-repository-lock-roundtrip" { Invoke-ReleaseE2EConfigRepositoryLockRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     } }
+    Complete-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission
+    Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
@@ -594,5 +609,9 @@ try {
     }
     exit 1
 } finally {
-    Exit-Agent1cLifecycleOperation
+    try { Exit-Agent1cLifecycleOperation } finally {
+        try { Complete-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission } finally {
+            Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+        }
+    }
 }

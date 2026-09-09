@@ -6187,6 +6187,83 @@ function Get-VanessaInteractiveProfileStatePath {
     return (Join-Path $script:ProjectRoot ".agent-1c\vanessa-interactive-profile.json")
 }
 
+function Read-VanessaInteractiveProfileOwnerState {
+    $path = Join-Path $script:ProjectRoot '.agent-1c/mcp/vanessa-profile-owner/owner.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    try { $owner = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop } catch { throw 'ITL_PROFILE_OWNER_STATE_INVALID' }
+    if ([int](Get-StateValue $owner 'schemaVersion' 0) -ne 1 -or
+        [string](Get-StateValue $owner 'instanceId' '') -cnotmatch '^[a-f0-9]{32}$' -or
+        [string](Get-StateValue $owner 'generation' '') -cnotmatch '^[a-f0-9]{32}$' -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First ([string](Get-StateValue $owner 'projectRoot' '')) -Second $script:ProjectRoot)) {
+        throw 'ITL_PROFILE_OWNER_STATE_INVALID'
+    }
+    return $owner
+}
+
+function Test-VanessaInteractiveProfileHasOwner {
+    $rootVariable = Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $rootVariable -or -not $rootVariable.Value) { return $false }
+    $owner = Read-VanessaInteractiveProfileOwnerState
+    if ($null -eq $owner) { return $false }
+    $profile = Read-VanessaInteractiveProfileState -Strict
+    # A retained stopped descriptor must not change the legacy lifecycle of a
+    # subsequently created profile that has never used the persistent owner.
+    if ($null -ne $profile -and -not [string](Get-StateValue $profile 'ownerGeneration' '') -and
+        [string](Get-StateValue $owner 'status' '') -eq 'stopped') { return $false }
+    return $true
+}
+
+function Invoke-VanessaInteractiveProfileOwnerControl {
+    param([ValidateSet('stop', 'status')][string]$Operation, [Parameter(Mandatory = $true)][object]$Owner)
+
+    $executable = Get-ItlOnDemandMcpExecutablePath
+    $arguments = @("vanessa-profile-$Operation", '--project-root', $script:ProjectRoot,
+        '--instance-id', [string]$Owner.instanceId, '--owner-generation', [string]$Owner.generation)
+    $requestedOwner = Get-Variable -Name VanessaProfileOwnerId -ValueOnly -ErrorAction SilentlyContinue
+    if ($requestedOwner) { $arguments += @('--caller-id', [string]$requestedOwner) }
+    $captured = Invoke-ItlNativeProcessCapture -FilePath $executable -Arguments $arguments
+    if ($captured.exitCode -ne 0) {
+        $diagnostic = Protect-ItlVanessaProfileDiagnosticText -Text (([string]$captured.stderr) + ' ' + [string]$captured.stdout)
+        throw "ITL_PROFILE_OWNER_CONTROL_FAILED: $diagnostic"
+    }
+    $marker = 'ITL_VANESSA_PROFILE_OWNER_RESULT='
+    $lines = @(([string]$captured.stdout -split "`r?`n") | Where-Object { $_.StartsWith($marker, [StringComparison]::Ordinal) })
+    if ($lines.Count -ne 1) { throw 'ITL_PROFILE_OWNER_RESPONSE_INVALID' }
+    try { $result = $lines[0].Substring($marker.Length) | ConvertFrom-Json -ErrorAction Stop } catch { throw 'ITL_PROFILE_OWNER_RESPONSE_INVALID' }
+    if ([int](Get-StateValue $result 'schemaVersion' 0) -ne 1 -or [string](Get-StateValue $result 'generation' '') -cne [string]$Owner.generation) {
+        throw 'ITL_PROFILE_OWNER_RESPONSE_INVALID'
+    }
+    return $result
+}
+
+function Stop-VanessaInteractiveProfileOwnedRuntime {
+    param([object]$Owner, [object]$ProfileState)
+
+    $instanceId = [string]$Owner.instanceId
+    if ($null -ne $ProfileState -and ([string](Get-StateValue $ProfileState 'instanceId' '') -cne $instanceId -or
+        ([string](Get-StateValue $ProfileState 'ownerGeneration' '') -and [string]$ProfileState.ownerGeneration -cne [string]$Owner.generation))) {
+        throw 'ITL_PROFILE_OWNER_GENERATION_CHANGED'
+    }
+    $registered = Read-ItlOnDemandRuntimeState -Family 'vanessa-ui' -InstanceId $instanceId
+    $managerCount = 0
+    $clientCount = 0
+    if ($null -ne $registered) {
+        if (Test-ItlOnDemandOwnedProcess -RuntimeState $registered) { $managerCount = 1 }
+        $clientCount = @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $registered).Count
+    }
+    $response = Invoke-VanessaInteractiveProfileOwnerControl -Operation stop -Owner $Owner
+    if ([string](Get-StateValue $response 'status' '') -cne 'stopped' -or -not [bool](Get-StateValue $response 'cleanupConfirmed' $false)) {
+        throw 'ITL_PROFILE_OWNER_STOP_UNCONFIRMED'
+    }
+    if ($null -ne (Read-ItlOnDemandRuntimeState -Family 'vanessa-ui' -InstanceId $instanceId)) { throw 'ITL_PROFILE_OWNER_STOP_UNCONFIRMED: runtime registration remains.' }
+    if ($null -ne $registered -and ((Test-ItlOnDemandOwnedProcess -RuntimeState $registered) -or
+        @(Get-ItlOnDemandOwnedTestClientProcesses -RuntimeState $registered).Count -gt 0)) {
+        throw 'ITL_PROFILE_OWNER_STOP_UNCONFIRMED: exact owned native processes remain.'
+    }
+    return [pscustomobject]@{schemaVersion=1;status='released';reason='stop-vanessa-profile';
+        stoppedTestManager=$managerCount;stoppedTestClient=$clientCount;stoppedVanessaUiBackend=([int]($null -ne $registered));remainingOwnedRuntime=@();errors=@()}
+}
+
 function Read-VanessaInteractiveProfileState {
     param([switch]$Strict)
 
@@ -6252,6 +6329,7 @@ function New-VanessaInteractiveProfileUserReport {
         feature = [string](Get-StateValue -State $ProfileState -Name "featurePath" -Default "")
         connectionState = $connectionState
         persistentUntilExplicitStop = ($Status -eq "running")
+        ownerId = [string](Get-StateValue $ProfileState 'ownerId' '')
         scenarioStarted = $false
         verificationVerdictProduced = $false
         stoppedTestManager = ConvertTo-IntOrDefault -Value (Get-StateValue -State $ReleaseResult -Name "stoppedTestManager" -Default 0) -Default 0
@@ -6283,6 +6361,8 @@ function Invoke-ItlNativeProcessCapture {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
 
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
@@ -6383,6 +6463,8 @@ function Invoke-ItlOnDemandVanessaProfileStart {
         "--instance-id", $InstanceId,
         "--feature", $FeaturePath
     )
+    $requestedOwner = Get-Variable -Name VanessaProfileOwnerId -ValueOnly -ErrorAction SilentlyContinue
+    if ($requestedOwner) { $arguments += @('--caller-id', [string]$requestedOwner) }
     $processResult = Invoke-ItlNativeProcessCapture -FilePath $executable -Arguments $arguments
     if ($processResult.exitCode -ne 0) {
         $combined = @($processResult.stderr, $processResult.stdout) -join " "
@@ -6487,6 +6569,9 @@ function Start-DevBranchVanessaInteractiveProfile {
     }
 
     $now = (Get-Date).ToUniversalTime().ToString("o")
+    $transportGeneration = [string](Get-StateValue $transport 'ownerGeneration' '')
+    $sameOwner = (-not $transportGeneration) -or ($transportGeneration -ceq [string](Get-StateValue $profileState 'ownerGeneration' '') -and
+        [string](Get-StateValue $transport 'ownerId' '') -ceq [string](Get-StateValue $profileState 'ownerId' ''))
     $saved = [pscustomobject][ordered]@{
         schemaVersion = 1
         status = "running"
@@ -6498,11 +6583,14 @@ function Start-DevBranchVanessaInteractiveProfile {
         testClientPid = [int]$transport.testClientPid
         testClientPort = [int]$transport.testClientPort
         testClientState = [string]$transport.testClientState
-        startedAt = $(if ($profileState -and $profileState.startedAt) { [string]$profileState.startedAt } else { $now })
+        ownerGeneration = [string](Get-StateValue $transport 'ownerGeneration' '')
+        ownerId = [string](Get-StateValue $transport 'ownerId' '')
+        ownerProcess = (Get-StateValue $transport 'ownerProcess' $null)
+        startedAt = $(if ($sameOwner -and $profileState -and $profileState.startedAt) { [string]$profileState.startedAt } else { $now })
         updatedAt = $now
     }
     Write-VanessaInteractiveProfileState -ProfileState $saved | Out-Null
-    $action = $(if ($runtimes.Count -eq 1 -or [bool]$transport.testClientReused) { "reused" } else { "started" })
+    $action = $(if (($sameOwner -and $runtimes.Count -eq 1) -or [bool]$transport.testClientReused) { "reused" } else { "started" })
     $report = New-VanessaInteractiveProfileUserReport -Action $action -Status "running" -State $state -RuntimeState $runtime -ProfileState $saved
     Publish-VanessaInteractiveProfileUserReport -Report $report
 }
@@ -6512,6 +6600,18 @@ function Show-DevBranchVanessaInteractiveProfile {
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "status-vanessa-profile"
     $profileState = Read-VanessaInteractiveProfileState -Strict
     $runtimes = @(Get-VanessaInteractiveProfileRuntimeInstances -State $state)
+    if (Test-VanessaInteractiveProfileHasOwner) {
+        $owner = Read-VanessaInteractiveProfileOwnerState
+        $ownerStatus = Invoke-VanessaInteractiveProfileOwnerControl -Operation status -Owner $owner
+        if ([string]$ownerStatus.status -notin @('running', 'stopped')) {
+            $report = New-VanessaInteractiveProfileUserReport -Action 'status' -Status ([string]$ownerStatus.status) -State $state -ProfileState $profileState
+            return (Publish-VanessaInteractiveProfileUserReport -Report $report)
+        }
+        if ([string]$ownerStatus.status -eq 'running' -and $runtimes.Count -eq 0) {
+            $report = New-VanessaInteractiveProfileUserReport -Action 'status' -Status 'runtime-state-missing' -State $state -ProfileState $profileState
+            return (Publish-VanessaInteractiveProfileUserReport -Report $report)
+        }
+    }
     if ($runtimes.Count -gt 1) {
         $report = New-VanessaInteractiveProfileUserReport -Action "status" -Status "runtime-conflict" -State $state -ProfileState $profileState
         return (Publish-VanessaInteractiveProfileUserReport -Report $report)
@@ -6540,6 +6640,8 @@ function Stop-DevBranchVanessaInteractiveProfile {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-vanessa-profile"
     $path = Get-VanessaInteractiveProfileStatePath
+    $profileState = Read-VanessaInteractiveProfileState -Strict
+    $persistentOwner = $(if (Test-VanessaInteractiveProfileHasOwner) { Read-VanessaInteractiveProfileOwnerState } else { $null })
     $claimedPath = ""
     if (Test-Path -LiteralPath $path -PathType Leaf) {
         Read-VanessaInteractiveProfileState -Strict | Out-Null
@@ -6547,7 +6649,11 @@ function Stop-DevBranchVanessaInteractiveProfile {
         Move-Item -LiteralPath $path -Destination $claimedPath
     }
     try {
-        $release = Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-vanessa-profile"
+        if ($null -ne $persistentOwner) {
+            $release = Stop-VanessaInteractiveProfileOwnedRuntime -Owner $persistentOwner -ProfileState $profileState
+        } else {
+            $release = Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-vanessa-profile"
+        }
         if ($claimedPath) {
             Remove-Item -LiteralPath $claimedPath -Force
         }
@@ -6650,10 +6756,90 @@ function Invoke-DevBranchVanessaRuntimeRelease {
     return $result
 }
 
+function Get-ItlVanessaCleanupDatabasePlan {
+    param([object]$State)
+
+    $target = New-ItlOnDemandDatabaseConnection -Kind ([string](Get-StateValue $State 'infoBaseKind' '')) -Path ([string]$State.devBranchInfoBasePath)
+    $bases = @($target)
+    # Cleanup uses already recorded managers. It must not plan or create a new
+    # service generation just to stop old clients.
+    $service = [string](Get-StateValue $State 'vanessaServiceInfoBasePath' '')
+    if ($service) { $bases += New-ItlOnDemandDatabaseConnection -Kind file -Path $service }
+    $legacy = [string](Get-StateValue $State 'vanessaMcpInfoBasePath' '')
+    if ($legacy -and -not (Test-ItlOnDemandInfoBaseMatch -First $legacy -Second $target.path) -and
+        -not ($service -and (Test-ItlOnDemandInfoBaseMatch -First $legacy -Second $service))) {
+        throw 'INFOBASE_ACCESS_CLEANUP_IDENTITY_REQUIRED: legacy manager differs from its recorded target and service database.'
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        [string]$_.family -eq 'vanessa-ui' -and (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $target.path)
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family vanessa-ui -FallbackTarget $target)
+    }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{ target=$target; bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }) }
+}
+
+function Start-ItlVanessaCleanupDatabaseAdmission {
+    $state = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'stop-dev-branch-test-clients'
+    # This explicit stop command may stop its profile, but only through the
+    # persistent owner and before taking the writer lock that owner needs.
+    if (Test-VanessaInteractiveProfileHasOwner) { Stop-DevBranchVanessaInteractiveProfile | Out-Null }
+    $plan = Get-ItlVanessaCleanupDatabasePlan -State $state
+    $settings = Get-ItlDatabaseAccessSettings
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    $request = [ordered]@{schemaVersion=1;coordinator=$settings.coordinator;bases=$plan.bases;timeout=$settings.waitTimeoutSeconds
+        owner=@{project=$script:ProjectRoot;operation='stop-dev-branch-test-clients';requestId=[guid]::NewGuid().ToString('N')}}
+    $inherited = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
+    if ($inherited) {
+        try { $request.inherited = $inherited | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
+    }
+    $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request
+    return [pscustomobject]@{owner=$owner;plan=$plan;nativePending=$false;cleanupConfirmed=$false;completed=$false}
+}
+
+function Assert-ItlVanessaCleanupDatabaseAdmission {
+    param([object]$Admission, [object]$State)
+
+    if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_CLEANUP_ADMISSION_REQUIRED' }
+    $fresh = Get-ItlVanessaCleanupDatabasePlan -State $State
+    if ($fresh.target.kind -cne $Admission.plan.target.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
+        throw 'INFOBASE_ACCESS_CLEANUP_PLAN_CHANGED: target changed while waiting.'
+    }
+    foreach ($base in $fresh.bases) {
+        $matched = @($Admission.plan.bases | Where-Object {
+            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
+        })
+        if ($matched.Count -eq 0) { throw 'INFOBASE_ACCESS_CLEANUP_PLAN_CHANGED: manager resource appeared while waiting.' }
+    }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    Assert-ItlDatabaseAccessHost -Owner $Admission.owner
+}
+
+function Complete-ItlVanessaCleanupDatabaseAdmission {
+    param([AllowNull()][object]$Admission)
+
+    if ($null -eq $Admission -or $Admission.completed) { return }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    try {
+        if ($Admission.nativePending -and -not $Admission.cleanupConfirmed) {
+            Close-ItlDatabaseAccessHost -Owner $Admission.owner
+            throw 'INFOBASE_ACCESS_NATIVE_CLEANUP_UNCONFIRMED'
+        }
+        $released = Complete-ItlDatabaseAccessHost -Owner $Admission.owner
+        if ($released.status -ne 'released') { throw 'INFOBASE_ACCESS_RELEASE_UNCONFIRMED' }
+    } finally { $Admission.completed = $true }
+}
+
 function Stop-DevBranchTestClients {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-dev-branch-test-clients"
+    Assert-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission -State $state
+    $script:VanessaCleanupDatabaseAdmission.nativePending = $true
     Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-dev-branch-test-clients" | Out-Null
+    $script:VanessaCleanupDatabaseAdmission.cleanupConfirmed = $true
 }
 
 function Read-CurrentDevBranchStateForVanessaMcp {
@@ -7629,10 +7815,10 @@ function Install-VanessaMcp {
 }
 
 function Ensure-VanessaMcpInstalled {
-    param([object]$State)
+    param([object]$State, [object]$ServiceAdmissionPlan = $null)
 
     $State = Ensure-DevBranchToolingGeneration -State $State
-    $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $State
+    $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $State -AdmissionPlan $ServiceAdmissionPlan
     $State = Read-DevBranchState -Name (Get-StateValue -State $State -Name "devBranchName" -Default "")
 
     $pinned = @{}
