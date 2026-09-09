@@ -1,6 +1,6 @@
 # Measurement and workflow reliability implementation ledger
 
-This source-maintenance plan records fourteen tasks from the original seven PM5
+This source-maintenance plan records fifteen tasks from the original seven PM5
 investigations and the follow-up handoffs. It is not installed-project guidance. A completed
 source change, registration, publication, installation and live acceptance are
 different milestones; none implies the next one.
@@ -40,12 +40,13 @@ different milestones; none implies the next one.
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Independent branch11 handoff: local selector correction, 15/15 focused tests and subsequent Vanessa 49/49 plus YAxUnit 118/118 reported; current shared selector still lacks provenance handling; general implementation and delivery pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Independent branch11 handoff: successful DumpCfg was followed by designer-wait while close_1c_session was denied the export runtime lock; normal close then export recovered operationally; shared correction pending |
+| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Fourth branch11 handoff and current controlled-fork rules confirm a missing decision route; recorded rebuttals exist, but clean AI acceptance and shared correction remain unconfirmed |
 
 Implementation order: establish item 4 with the timeout and source-capture
 contracts and resolve the concrete export deadlock in item 14; complete items
-1-3; then 5-8, 12 and the accepted-master selection contract in 13, followed by
-9-11. Items 13 and 14 have their own acceptance below; linking them to 6 and 4
-does not remove them from the plan. Each coherent source change
+1-3; then 5-8, 12, the accepted-master selection contract in 13 and AI-review
+adjudication in 15, followed by 9-11. Items 13-15 have their own acceptance below;
+linking them to related tasks does not remove them from the plan. Each coherent source change
 gets directly owned checks, a local commit and RegisterChange. Publication and
 live installation/acceptance must be recorded explicitly, using normal helpers.
 Investigations close only with an implemented correction or evidence explaining
@@ -406,3 +407,90 @@ normal `close_1c_session`, retry `compact-20260909-164938-375-a2802801` succeede
 with fresh passed, CF and `.cf.manifest.json`. This confirms operational recovery,
 not an upstream fix. Historical PIDs from that handoff must not be reused for
 future operations. No shared implementation of this correction is claimed yet.
+
+## Added task 15: unsupported AI review and false blocking findings
+
+Source: the fourth handoff in
+[Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d),
+`D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-ai-review-false-positive.md`,
+and the retained `release-preparation-20260909-final/ENGINE-REVIEW-RECOVERY.md`
+with both raw review responses and `release-static-evidence.json` under
+`C:/Users/xment/.codex/visualizations/2026/09/08/01a08088-9d59-75f3-8387-c54fee76082f/`.
+
+Problem: the first review returned only ITS links, without substantive analysis.
+One explicitly authorized repeat returned three must-fix recommendations. The
+retained rebuttal identifies an inverted parameter-passing claim, an access to
+a nonexistent cache field despite an existing guard, and an unconditional
+calendar restriction that ignores a separate astronomical-duration path. These
+are reported rebuttals to inspect against the exact original validation unit;
+they are not a new independent audit of the PM5 engine in this workflow task.
+An inherited or out-of-scope risk must be distinguished from a disproven claim.
+
+The current controlled-fork rules require correction plus a clean confirming
+response, prohibit repeats on unchanged code, and prescribe documenting the
+remaining nondeterministic findings. They do not define how such documentation
+can result in a valid acceptance decision. An agent can therefore become stuck
+or make an incorrect source edit solely to satisfy an AI recommendation. The
+confirmed defect is this missing evidence/decision contract; a defect in the MCP
+server implementation or in PM5 business logic is not established by the handoff.
+
+Implementation:
+
+1. Preserve and replay the original evidence without another live validator
+   call: validation-unit content/hash, source snapshot, tool identity and call
+   parameters, timestamps, raw responses and individual findings. Check each
+   rebuttal against the submitted code and relevant primary documentation.
+   Record separately: confirmed defect, disproven finding, unsupported claim,
+   inherited/out-of-scope risk, and unresolved finding. The last three categories
+   must not silently become false positives or accepted changes.
+2. Define a result for an unusable response (`unsupported-result`): links alone,
+   empty output, wrong scope or missing analysis cannot count as a clean review.
+   Specify an explicit bounded recovery allowance and the evidence needed to
+   use it, coordinated with the existing per-validator call budget. Record the
+   recovery reason and result. Exhaustion remains visibly unverified; do not
+   keep requesting the same review until it happens to return green text.
+3. Define evidence-based adjudication for an actual finding. Retain the original
+   severity and text, exact source references, proof/reproducer, disposition,
+   decision authority and rationale. Specify which mechanically verifiable
+   contradictions the workflow may resolve autonomously under the new policy;
+   ambiguous business semantics or risk acceptance require a concrete decision
+   from the authorized user/reviewer. A request to implement a change does not
+   itself waive a reported risk, and the tool authoring a finding does not make
+   that finding authoritative evidence of a defect.
+4. Make the final result distinguish a clean tool response from acceptance with
+   adjudicated findings (`adjudicated-false-positive`). Such acceptance requires
+   an allowed decision for every blocking finding; any unresolved blocker keeps
+   the corresponding gate open. Bind decisions to the validation unit and its
+   relevant context; changed inputs invalidate affected decisions. Preserve
+   syntax, logic, metadata, runtime and fresh-proof requirements independently.
+   Neither passing business tests nor a manually edited proof file substitutes
+   for the required AI-review disposition. No business edit is required merely
+   to appease a disproven recommendation.
+5. Reconcile the canonical retry, verification, final-review and error-fixer
+   rules in the controlled `itl_ai_rules_1c` fork on an upgrade/release branch.
+   Update the MCP usage reference and all generated rule variants through their
+   owners. Where the workflow consumes these results, add structured decision
+   evidence and truthful reporting/export eligibility; do not patch an installed
+   project or loosen all blocking diagnostics. An MCP-server change is a separate
+   conditional subtask only if the retained response contract proves one needed.
+6. Add regressions for links-only/empty output, the three retained findings,
+   mixed true/false blockers, incomplete rebuttal, inherited risk, missing
+   authority, exhausted retry allowance, stale or changed validation units,
+   altered raw evidence and actual syntax/runtime failure. Prove that false
+   advice cannot force harmful edits and that unresolved or genuine defects
+   cannot gain acceptance through this route. Tests must exercise the actual
+   evidence consumer where one exists, as well as consistency of the rules.
+7. Register and deliver through the normal controlled-fork/workflow process.
+   Reassess the retained branch11 evidence using the delivered policy and record
+   its actual disposition. Reuse valid syntax/runtime proof where applicable;
+   no new runtime run is required solely to interpret an unchanged review.
+   This task closes only with consistent delivered rules and acceptance evidence,
+   or an explicit evidenced finding that a proposed conditional code change is
+   unnecessary. Unresolved review findings remain visible in the plan.
+
+Current evidence: the handoff reports the unchanged engine SHA256
+`578DCB5A64DAA5F7BBCE239143A67DEC89B2CE752841761700437CCB1045882B`, standalone
+syntax with zero errors, and the existing check
+`compact-20260909-163435-297-2d8737a7` (YAxUnit 118/118, Vanessa 49/49). These
+results do not establish a clean AI-review pass. Neither product code nor proof
+files were changed in that episode; no source correction for item 15 is claimed.
