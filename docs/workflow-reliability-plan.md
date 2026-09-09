@@ -1201,3 +1201,46 @@ Implementation and acceptance:
    guidance together, integrate the outcome inventory from item 16, register and
    deliver normally. Preserve all earlier plan items; these are additional tasks,
    not replacements for database coordination or AI-review correction.
+
+Item 16 registration completed at `546aad7`: Targeted passed 592 tests with zero
+failures/skips and a clean tree (`f50275a4566f0d2a01d31c7d3605c9711e1e48c3`,
+707074 ms). The cumulative branch includes the packet; it remains unpublished.
+
+Item 17 source implementation now compares changed top-level descriptor UUIDs
+against the pinned baseline. It includes committed, staged, dirty and untracked
+descriptors, recognizes renamed identities and replacement UUIDs at the same
+path, and validates new objects against the effective Configuration.xml list.
+Malformed XML, duplicate identity, type/path disagreement or missing root
+membership stops the lock request before any native mutation. Nested forms and
+attributes do not introduce a root dependency. Non-descriptor Ext XML is not
+misread as a metadata identity. This enrichment runs for the lock command;
+ordinary export planning retains its existing behavior.
+
+The serializer uses the separate `<Configuration includeChildObjects="false"/>`
+element, as documented in the platform's official
+[object-list examples](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_3._Description_and_location_of_internal_files/3.31._Object_list_file/3.31.5._Examples/?language=en).
+The helper makes a root-only request before requesting the other objects. A root
+failure leaves the second request unattempted. A later failure retains the
+root's separate redacted log and observed outcome in the full report. New objects
+absent from the source configuration remain absent; root ownership does not
+turn them into individually captured objects. Native exit zero without a
+per-object observation remains unconfirmed in the outcome inventory.
+
+Seventeen focused root/report tests pass, plus the three retained lifecycle
+transfer/lock cases. Coverage includes eight top-level categories, one root for
+multiple additions, Cyrillic and whitespace in the same paths, nested additions,
+renames, replacement identity, ambiguity before mutation, root/second-phase
+conflicts and preservation of both phase outcomes. These are source and fixture
+results. Actual native already-owned/root-name semantics, a technical repository
+roundtrip, shared ownership across the entire dependency sequence (item 4),
+installed delivery and adding root dependencies to the export transfer report
+remain acceptance/follow-up work. No new lock/unlock against the original PM5
+source repository was performed.
+
+A read-only run of the new planner against the named branch11 checkout resolves
+31 planned entries without unresolved paths against comparison commit
+`4f0cf2f5da743e8710bd56e99f58d9a0339bc6c4`. It adds a root dependency for the three
+new plan-editor constants (background-ready tables, packed tree restoration and
+packed table restoration), while the new nested subsystem does not trigger one.
+This confirms parsing of the actual PM5 metadata inventory; no Designer was
+started and it is not a native ownership roundtrip.

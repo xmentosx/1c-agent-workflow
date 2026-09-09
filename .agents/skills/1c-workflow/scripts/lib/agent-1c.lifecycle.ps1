@@ -2711,7 +2711,8 @@ function Get-DevBranchResultTransferBaseCommit {
 function Get-ConfigRepositoryTransferPlan {
     param(
         [string]$ExportPath,
-        [string]$BaseCommit = ""
+        [string]$BaseCommit = "",
+        [switch]$ForRepositoryLock
     )
 
     $normalizedExportPath = ([string]$ExportPath).Replace("\", "/").Trim("/")
@@ -2771,12 +2772,116 @@ function Get-ConfigRepositoryTransferPlan {
             $item
         }
     )
-    return [pscustomobject]@{
+    $plan = [pscustomobject]@{
         baseCommit = $BaseCommit
         exportPath = $normalizedExportPath
         items = $items
         unresolvedPaths = @($unresolved | Sort-Object -Unique)
     }
+    if ($ForRepositoryLock -and $plan.unresolvedPaths.Count -eq 0) {
+        return (Add-ConfigRepositoryRootLockDependency -Plan $plan)
+    }
+    return $plan
+}
+
+function Read-ConfigRepositoryMetadataIdentity {
+    param([string]$Text, [string]$Path)
+    try {
+        $document = [System.Xml.XmlDocument]::new()
+        $document.XmlResolver = $null
+        $document.LoadXml($Text)
+        $nodes = @($document.SelectNodes('/*[local-name()="MetaDataObject"]/*'))
+        if ($nodes.Count -ne 1) { throw 'Expected one metadata object.' }
+        $node = $nodes[0]
+        $irregularCollections = @{ BusinessProcess = 'BusinessProcesses'; FilterCriterion = 'FilterCriteria'; ChartOfAccounts = 'ChartsOfAccounts'; ChartOfCalculationTypes = 'ChartsOfCalculationTypes'; ChartOfCharacteristicTypes = 'ChartsOfCharacteristicTypes' }
+        $collection = if ($irregularCollections.ContainsKey($node.LocalName)) { $irregularCollections[$node.LocalName] } else { $node.LocalName + 's' }
+        if (($Path.Replace('\', '/') -split '/')[-2] -cne $collection) { throw 'Metadata type differs from descriptor collection.' }
+        $id = [guid]::Empty
+        if (-not [guid]::TryParse($node.GetAttribute('uuid'), [ref]$id) -or $id -eq [guid]::Empty) { throw 'Missing metadata UUID.' }
+        $nameNodes = @($node.SelectNodes('./*[local-name()="Properties"]/*[local-name()="Name"]'))
+        if ($nameNodes.Count -ne 1 -or -not $nameNodes[0].InnerText) { throw 'Missing metadata name.' }
+        if ([IO.Path]::GetFileNameWithoutExtension($Path) -cne $nameNodes[0].InnerText) { throw 'Metadata name differs from descriptor path.' }
+        return [pscustomobject]@{ uuid = $id.ToString('D'); type = $node.LocalName; name = $nameNodes[0].InnerText; path = $Path }
+    } catch {
+        throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: $Path; $($_.Exception.Message)"
+    }
+}
+
+function Add-ConfigRepositoryRootLockDependency {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+    # Inspect only changed top-level descriptors. A new form or attribute inside
+    # an existing object is not a root addition. Never infer identity from Git A.
+    $exportPath = [string]$Plan.exportPath
+    $prefix = $exportPath.TrimEnd('/') + '/'
+    $candidates = @(@($Plan.items | ForEach-Object { $_.paths }) | Where-Object {
+        $_ -and $_.StartsWith($prefix, [StringComparison]::Ordinal) -and
+        $_.Substring($prefix.Length) -match '^[^/]+/[^/]+\.xml$' -and
+        (Get-ConfigRepositoryMetadataCollectionLabel -Collection ($_.Substring($prefix.Length) -split '/')[0]) -and
+        (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $_) -PathType Leaf)
+    } | Sort-Object -Unique)
+    if ($candidates.Count -eq 0) { return $Plan }
+
+    $baseEntries = @(Get-GitPathList -Arguments @('ls-tree', '-r', '-z', [string]$Plan.baseCommit, '--', $exportPath))
+    $descriptors = @(foreach ($entry in $baseEntries) {
+        if ($entry -match '^[0-9]{6} blob (?<id>[a-f0-9]{40,64})\t(?<path>.+)$') {
+            $path = [string]$Matches.path; $id = [string]$Matches.id
+            if ($path.StartsWith($prefix, [StringComparison]::Ordinal) -and $path.Substring($prefix.Length) -match '^[^/]+/[^/]+\.xml$' -and
+                (Get-ConfigRepositoryMetadataCollectionLabel -Collection ($path.Substring($prefix.Length) -split '/')[0])) {
+                [pscustomobject]@{ path = $path; id = $id }
+            }
+        }
+    })
+    $baseById = @{}
+    # Bound the batch input too: do not fill stdin while Git is blocked writing
+    # a large XML blob to stdout.
+    for ($offset = 0; $offset -lt $descriptors.Count; $offset += 32) {
+        $chunk = @($descriptors | Select-Object -Skip $offset -First 32)
+        $blobs = Get-GitBlobBytesBatch -ObjectIds @($chunk.id)
+        foreach ($descriptor in $chunk) {
+            $text = [Text.Encoding]::UTF8.GetString([byte[]]$blobs[$descriptor.id]).TrimStart([char]0xFEFF)
+            $identity = Read-ConfigRepositoryMetadataIdentity -Text $text -Path $descriptor.path
+            if ($baseById.ContainsKey($identity.uuid)) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate baseline UUID $($identity.uuid)." }
+            $baseById[$identity.uuid] = $identity
+        }
+    }
+    $currentById = @{}
+    $additions = @(foreach ($path in $candidates) {
+        $identity = Read-ConfigRepositoryMetadataIdentity -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot $path)) -Path $path
+        if ($currentById.ContainsKey($identity.uuid)) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate changed UUID $($identity.uuid)." }
+        $currentById[$identity.uuid] = $identity
+        if ($baseById.ContainsKey($identity.uuid)) {
+            if ($baseById[$identity.uuid].type -cne $identity.type) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: metadata type changed for UUID $($identity.uuid)." }
+            $previousPath = [string]$baseById[$identity.uuid].path
+            if ($previousPath -cne $identity.path -and (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $previousPath) -PathType Leaf)) {
+                $previousCurrentIdentity = Read-ConfigRepositoryMetadataIdentity -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot $previousPath)) -Path $previousPath
+                if ($previousCurrentIdentity.uuid -eq $identity.uuid) { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: duplicate current UUID $($identity.uuid)." }
+            }
+            continue
+        }
+        $identity
+    })
+    if ($additions.Count -eq 0) { return $Plan }
+    $rootPath = Join-Path $script:ProjectRoot ($prefix + 'Configuration.xml')
+    try {
+        $configuration = [Xml.XmlDocument]::new(); $configuration.XmlResolver = $null
+        $configuration.LoadXml((Read-Utf8Text -Path $rootPath))
+        $children = @($configuration.SelectNodes('/*[local-name()="MetaDataObject"]/*[local-name()="Configuration"]/*[local-name()="ChildObjects"]/*'))
+        foreach ($addition in $additions) {
+            $matches = @($children | Where-Object { $_.LocalName -ceq $addition.type -and $_.InnerText -ceq $addition.name })
+            if ($matches.Count -ne 1) { throw "New object $($addition.path) is not listed exactly once in the configuration root." }
+        }
+    } catch { throw "LOCK_CONFIG_REPOSITORY_METADATA_AMBIGUOUS: $rootPath; $($_.Exception.Message)" }
+
+    $requiredBy = @($additions | ForEach-Object { (ConvertTo-ConfigRepositoryTransferPath -RelativePath $_.path.Substring($prefix.Length)).objectName } | Sort-Object -Unique)
+    $rootItem = @($Plan.items | Where-Object name -eq 'Конфигурация')
+    if ($rootItem.Count -eq 0) {
+        $rootItem = @([pscustomobject]@{ name = 'Конфигурация'; scope = 'partial'; parts = @(); paths = @($prefix + 'Configuration.xml') })
+        $Plan.items = @($Plan.items) + $rootItem
+    }
+    $rootItem[0].scope = 'partial'
+    $rootItem[0].parts = @($rootItem[0].parts) + 'корень без дочерних объектов: добавление объектов верхнего уровня'
+    $Plan | Add-Member -NotePropertyName rootLockRequiredBy -NotePropertyValue $requiredBy -Force
+    return $Plan
 }
 
 function Add-ConfigRepositoryTransferPlanRunUserReportLines {
@@ -11011,9 +11116,14 @@ function Write-ConfigRepositoryObjectList {
         $writer.WriteStartElement("Objects", $namespace)
         $writer.WriteAttributeString("version", "1.0")
         foreach ($item in @($Plan.items | Sort-Object name)) {
-            $writer.WriteStartElement("Object", $namespace)
-            $writer.WriteAttributeString("fullName", [string]$item.name)
-            $writer.WriteAttributeString("includeChildObjects", $(if ([string]$item.scope -eq "full") { "true" } else { "false" }))
+            if ([string]$item.name -eq 'Конфигурация') {
+                $writer.WriteStartElement('Configuration', $namespace)
+                $writer.WriteAttributeString('includeChildObjects', 'false')
+            } else {
+                $writer.WriteStartElement("Object", $namespace)
+                $writer.WriteAttributeString("fullName", [string]$item.name)
+                $writer.WriteAttributeString("includeChildObjects", $(if ([string]$item.scope -eq "full") { "true" } else { "false" }))
+            }
             $writer.WriteEndElement()
         }
         $writer.WriteEndElement()
@@ -11041,7 +11151,7 @@ function Write-ConfigRepositoryLockRedactedLog {
 }
 
 function Get-ConfigRepositoryLockOutcome {
-    param([object]$Plan, [string]$LogPath, [bool]$Succeeded)
+    param([object]$Plan, [string]$LogPath, [bool]$Succeeded, [object]$RootOutcome = $null)
     $byName = @{}
     $items = @(foreach ($item in @($Plan.items)) {
         $entry = [pscustomobject]@{ name = [string]$item.name; scope = [string]$item.scope; status = 'unconfirmed'; owner = ''; observations = @() }
@@ -11077,10 +11187,17 @@ function Get-ConfigRepositoryLockOutcome {
         if ($statuses.Count -eq 1 -and $owners.Count -le 1) { $entry.status = $statuses[0] }
         $entry.owner = $owners -join ', '
     }
+    if ($null -ne $RootOutcome) {
+        $rootEntry = @($RootOutcome.items | Where-Object name -eq 'Конфигурация')[0]
+        $entry = $byName['Конфигурация']
+        $entry.status = $rootEntry.status; $entry.owner = $rootEntry.owner; $entry.observations = $rootEntry.observations
+    }
+    $requiredBy = if ($null -ne $Plan.PSObject.Properties['rootLockRequiredBy']) { @($Plan.rootLockRequiredBy) } else { @() }
     return [pscustomobject]@{
         schemaVersion = 1; baseCommit = [string]$Plan.baseCommit
         operationStatus = $(if ($Succeeded) { 'succeeded' } else { 'failed' })
         logPath = $LogPath; operationEndObserved = $ended; items = $items
+        rootLockRequiredBy = @($requiredBy); rootOperation = $RootOutcome
     }
 }
 
@@ -11095,6 +11212,16 @@ function Write-ConfigRepositoryLockOutcomeReport {
     Add-RunUserReportLine -Lines $Lines -Label 'Файл объектов' -Value $ObjectListPath
     Add-RunUserReportLine -Lines $Lines -Label 'Результаты по объектам' -Value $outcomePath
     Add-RunUserReportLine -Lines $Lines -Label 'Редактированный лог' -Value $Outcome.logPath -Default '<лог 1С не создан>'
+    if (@($Outcome.rootLockRequiredBy).Count -gt 0) {
+        $Lines.Add(''); $Lines.Add('### Зависимость новых объектов от корня конфигурации')
+        $Lines.Add('Корень запрашивается отдельно, без дочерних объектов. Его захват не означает захват новых объектов.')
+        foreach ($name in $Outcome.rootLockRequiredBy) { $Lines.Add('- ' + $name) }
+        if ($null -eq $Outcome.rootOperation) {
+            $Lines.Add('Операция с корнем не завершилась успешно; захват остальных объектов не запускался.')
+        } else {
+            Add-RunUserReportLine -Lines $Lines -Label 'Лог операции с корнем' -Value $Outcome.rootOperation.logPath
+        }
+    }
     $sections = [ordered]@{ captured = 'Захваченные объекты'; conflict = 'Не захвачены: заняты другими пользователями'; absent = 'Отсутствуют в обеих конфигурациях'; unconfirmed = 'Результат захвата не подтверждён' }
     foreach ($status in $sections.Keys) {
         $entries = @($Outcome.items | Where-Object status -eq $status)
@@ -11172,7 +11299,7 @@ function Lock-ConfigRepositoryObjects {
     }
 
     Repair-OneCSourceLineEndings | Out-Null
-    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath)
+    $plan = Get-ConfigRepositoryTransferPlan -ExportPath (Get-ExportPath) -ForRepositoryLock
     $unresolved = @($plan.unresolvedPaths)
     if ($unresolved.Count -gt 0) {
         throw "LOCK_CONFIG_REPOSITORY_UNRESOLVED_PATHS: $($unresolved -join ', ')"
@@ -11193,11 +11320,30 @@ function Lock-ConfigRepositoryObjects {
         Join-Path $script:ProjectRoot (".agent-1c\runs\repository-lock-{0}-{1}" -f (Get-Date -Format "yyyyMMdd-HHmmss-fff"), ([guid]::NewGuid().ToString("N").Substring(0, 8)))
     }
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
-    $objectListPath = Write-ConfigRepositoryObjectList -Plan $plan -Path (Join-Path $runRoot "repository-objects.xml")
+    $hasRootDependency = $null -ne $plan.PSObject.Properties['rootLockRequiredBy'] -and @($plan.rootLockRequiredBy).Count -gt 0
+    $objectPlan = if ($hasRootDependency) { [pscustomobject]@{ items = @($plan.items | Where-Object name -ne 'Конфигурация') } } else { $plan }
+    $objectListPath = Write-ConfigRepositoryObjectList -Plan $objectPlan -Path (Join-Path $runRoot "repository-objects.xml")
+    $rootOutcome = $null
     Set-RunStage -Stage "repository-lock.designer" -Detail "Locking the exact changed configuration objects in the source repository."
     # A launch failure before a new log exists must not reuse an earlier operation.
     $script:LastLogPath = ''
     try {
+        if ($hasRootDependency) {
+            $rootPlan = [pscustomobject]@{ baseCommit = $plan.baseCommit; items = @($plan.items | Where-Object name -eq 'Конфигурация') }
+            $rootListPath = Write-ConfigRepositoryObjectList -Plan $rootPlan -Path (Join-Path $runRoot 'repository-root-objects.xml')
+            Add-RunUserReportLine -Lines $report -Label 'Файл захвата корня' -Value $rootListPath
+            Set-RunStage -Stage 'repository-lock.root' -Detail 'Locking only the configuration root required by new top-level objects.'
+            Invoke-ConfigRepositoryObjectOperation -Operation '/ConfigurationRepositoryLock' -ObjectListPath $rootListPath
+            $rootLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+            if ($rootLogPath) {
+                $preservedRootLogPath = Join-Path $runRoot 'repository-root-lock.log'
+                Move-Item -LiteralPath $rootLogPath -Destination $preservedRootLogPath
+                $rootLogPath = $preservedRootLogPath
+            }
+            $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootLogPath -Succeeded $true
+            $script:LastLogPath = ''
+            Set-RunStage -Stage 'repository-lock.designer' -Detail 'Locking the remaining exact changed configuration objects after the root operation.'
+        }
         Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
         $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
     } catch {
@@ -11209,7 +11355,7 @@ function Lock-ConfigRepositoryObjects {
             $redactedLogPath = ""
         }
         $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
-        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false
+        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false -RootOutcome $rootOutcome
         Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
         $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
         if ($conflictSummary) {
@@ -11227,7 +11373,7 @@ function Lock-ConfigRepositoryObjects {
 
     Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
     Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
-    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true
+    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true -RootOutcome $rootOutcome
     Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
 }
 
