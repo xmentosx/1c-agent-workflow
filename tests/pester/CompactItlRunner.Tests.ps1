@@ -422,6 +422,57 @@ exit 0
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "dispatches real classification and preserves its <Case> result without verification proof" -TestCases @(
+        @{ Case='ready'; HelperExit=0; ErrorPattern='' },
+        @{ Case='missing-suite'; HelperExit=1; ErrorPattern='Unclassified Vanessa feature' },
+        @{ Case='unowned-path'; HelperExit=1; ErrorPattern='VERIFICATION_SUITE_OWNERS_MISSING' }
+    ) {
+        param($Case, $HelperExit, $ErrorPattern)
+        $tempRoot = Join-Path $TestDrive ("Классификация команды " + $Case)
+        $features = Join-Path $tempRoot 'tests/features'
+        $stateRoot = Join-Path $tempRoot '.agent-1c/dev-branches'
+        $proofPath = Join-Path $tempRoot '.agent-1c/verification-selection/proof.json'
+        New-Item -ItemType Directory -Force -Path $features,$stateRoot,(Split-Path $proofPath) | Out-Null
+        Set-Content -LiteralPath (Join-Path $stateRoot 'probe.json') -Value '{"devBranchName":"probe","safeDevBranchName":"probe"}' -Encoding UTF8
+        $featurePath = Join-Path $features 'Example.feature'
+        Set-Content -LiteralPath $featurePath -Encoding UTF8 -Value @'
+# language: ru
+Функционал: Проверка классификации
+Сценарий: Сохранение поведения
+    Дано исходное действие
+'@
+        if ($Case -ne 'missing-suite') {
+            $owners = if ($Case -eq 'unowned-path') { @() } else { @('src/cf/**') }
+            @{ schemaVersion=1; suites=@(@{id='example';purpose='acceptance';featurePaths=@('tests/features/Example.feature');ownerPaths=$owners}) } |
+                ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $tempRoot 'tests/verification-suites.branch.json') -Encoding UTF8
+        }
+        Set-Content -LiteralPath $proofPath -Value '{"tree":"unchanged-existing-proof"}' -Encoding UTF8
+        $proofHash = (Get-FileHash -LiteralPath $proofPath).Hash
+        $featureHash = (Get-FileHash -LiteralPath $featurePath).Hash
+        Push-Location $tempRoot
+        try {
+            $result = Invoke-TestPowerShellFile -FilePath $RunnerSource -Arguments @('--','-Action','validate-test-classification','-DevBranchName','probe')
+        } finally { Pop-Location }
+        $result.exitCode | Should -Be $HelperExit -Because $result.combinedText
+        $summary = $result.stdout | ConvertFrom-Json
+        $summary.action | Should -Be 'validate-test-classification'
+        if ($HelperExit) {
+            $summary.errorCategory | Should -Be 'missing-suite'
+            $summary.error | Should -Match $ErrorPattern
+            $summary.requiredAction | Should -Be 'classify-tests-and-repeat-original-itl-command'
+        } else {
+            $summary.status | Should -Be 'succeeded'
+            $state = Get-Content -Raw -LiteralPath (Join-Path $stateRoot 'probe.json') | ConvertFrom-Json
+            $state.verificationClassificationStatus | Should -Be 'ready'
+        }
+        $inventory = Get-Content -Raw -LiteralPath (Join-Path $tempRoot '.agent-1c/verification-selection/inventory.json') | ConvertFrom-Json
+        $inventory.classificationComplete | Should -Be ($HelperExit -eq 0)
+        @($summary.ownedProcessIds).Count | Should -Be 0
+        $summary.resultPath | Should -BeNullOrEmpty
+        (Get-FileHash -LiteralPath $proofPath).Hash | Should -Be $proofHash
+        (Get-FileHash -LiteralPath $featurePath).Hash | Should -Be $featureHash
+    }
+
     It "returns absolute result paths and artifacts in the successful export summary" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-result-" + [guid]::NewGuid().ToString("N"))
         try {

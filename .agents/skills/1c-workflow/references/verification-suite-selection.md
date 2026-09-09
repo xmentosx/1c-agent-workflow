@@ -60,7 +60,7 @@ suite, cadence hint, and behavior fingerprint. The agent must read those
 scenarios and their production owners, preserve the scenario bodies, split
 oversized or mixed files into coherent separately selectable files, update the
 branch catalogs, and validate the assignments in the same task with the compact helper action
-`validate-test-classification`, which never starts 1C, before reporting refresh
+`run-itl-command.ps1 -- -Action validate-test-classification`, which never starts 1C, before reporting refresh
 complete. A normal
 `/itl-check` enforces the same contract before starting Designer or Enterprise.
 An unknown changed verification-relevant product path owned by this branch is

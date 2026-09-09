@@ -146,6 +146,70 @@ combined run despite passing separately (3/3 and 1/1). Later aggregate success
 does not prove that the runtime cause was corrected. Each needs reproduction,
 an owning-layer fix if confirmed, and a regression preserving combined nesting.
 
+### Item 6 follow-ups: explicit implementation and acceptance
+
+Rechecked against all available messages in task
+`01a085aa-b4b8-75d2-a92e-acd4725b2d8d`, including its fourth handoff. These
+subtasks remain independently open; completing master-input selection in item 13
+does not close them.
+
+**6a — Public classification command, P1.** The installed documentation tells
+the agent to run `run-itl-command.ps1 -Action validate-test-classification`, but
+that compact runner rejects the action while the underlying helper supports it.
+Reproduce with the reported installed version and compare current entrypoint
+validation, dispatch and generated references. Select one supported public route,
+implement missing dispatch or correct the owning documentation, and keep this
+classification-only action read-only: it must not start 1C, run business tests or
+manufacture verification proof. Acceptance: the exact documented command works
+in an installed project, reports ready/missing-suite/unowned-path distinctly,
+preserves tracked files and proof, and remains covered by an entrypoint/dispatch
+contract regression. Do not work around the defect by disabling classification.
+
+The source reproducer confirms that the compact runner rejects this action before
+dispatch, including both successful and failed classification results. The public
+allowlist now accepts the existing helper action; the reference spells out the
+exact compact invocation. Three process-boundary cases preserve ready,
+missing-catalog and missing-owner diagnostics, exit codes, and an existing proof
+file in a path containing Cyrillic and spaces. They invoke the real runner,
+helper and classification owner against isolated project catalogs, and preserve
+the original feature bytes. No classification or verification policy is loosened. Registration and
+the installed-project public command acceptance must still be recorded.
+
+**6b — Missing nested scenarios in a combined Vanessa run, P1.** The handoff
+reports 49 expected scenarios but only 45 loaded, despite both nested feature
+files being present in `FeaturesToRun` and execution-features. Separate runs
+passed 3/3 and 1/1. Moving the two unchanged files into the root restored the
+49-scenario aggregate; that is a local workaround, not proof that nested loading
+works. Preserve the original nested layout in the reproducer. Inspect selection,
+staging and the pinned Vanessa tree/filter behavior to establish the owning layer;
+the reported loss of directory nodes with retained levels is a hypothesis to test.
+Fix the confirmed owner or qualify a supported dependency update through its
+normal delivery route. Acceptance: the original combined nested layout loads and
+executes all 49 expected scenarios exactly once, including paths with spaces and
+Cyrillic together. Compare expected and actual scenario identities, not only
+counts; omitted or duplicated scenarios cannot produce a passing complete-suite
+result. Retain focused regressions for multiple nesting levels and mixed root /
+nested files. Moving fixtures to the root or lowering the expected count is not
+an acceptable correction.
+
+**6c — Resume after a corrective descendant commit, P1 investigation.** After
+the local validator correction was committed, ordinary resume rejected a changed
+HEAD with `LIFECYCLE_MERGE_POST_HEAD_MISMATCH`. The task reports taking the
+documented corrective-descendant/check route. The exact-HEAD guard itself is not
+established as defective. Reproduce that transition and verify that the helper's
+diagnostic and agent-facing reference identify the supported next action. If the
+route is already correct, close this investigation with concrete evidence; if
+routing or recovery is broken, fix that owner and retain a regression. Acceptance:
+the legitimate descendant resumes through the prescribed helper and fresh check,
+while an unrelated HEAD or mismatched operation remains rejected. No manual
+lifecycle edits, lock removal or weakening of exact-tree proof is permitted.
+
+The remaining messages are covered separately: empty command actions by item 12,
+accepted master inputs by item 13, export/ROCTUP coordination by item 14, and
+unsupported or disputed AI findings by item 15. Local successful checks and
+export recovery are evidence for those incidents, not automatic closure of their
+shared implementation and delivered acceptance.
+
 ## Starting source and evidence
 
 - Source baseline: `2d390d654a6dbcbaf72b4097f0e209d55b2b8582`.
