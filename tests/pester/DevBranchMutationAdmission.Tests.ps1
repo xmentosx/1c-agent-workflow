@@ -16,12 +16,18 @@
         $script:OneCNativeOperationJournal = $null
         $script:OneCSessionLaunchContext = $null
         $script:mutationState = [pscustomobject]@{ infoBaseKind='file'; devBranchInfoBasePath=(Join-Path $script:ProjectRoot 'Целевая база'); vanessaServiceInfoBasePath=(Join-Path $script:ProjectRoot 'Служебная база'); worktreePath=$script:ProjectRoot }
+        $script:mutationState | Add-Member -NotePropertyName devBranchKind -NotePropertyValue 'configuration'
+        $script:mutationState | Add-Member -NotePropertyName initializationStatus -NotePropertyValue 'ready'
+        $script:repositorySourcePath = Join-Path $script:ProjectRoot 'Общая исходная база'
         $script:mutationRuntimes = @()
         $script:mutationExternalSessions = @()
         $settings = [pscustomobject]@{ coordinator=(Join-Path $script:ProjectRoot 'Общий координатор'); python=$python; waitTimeoutSeconds=0 }
         $originalProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
         [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $null, 'Process')
         Mock Get-ItlDatabaseAccessSettings { $settings }
+        Mock Get-SourceUsesRepository { $true }
+        Mock Get-InfoBaseKind { 'file' }
+        Mock Get-SourceInfoBasePath { $script:repositorySourcePath }
         Mock Read-DevBranchState { $script:mutationState }
         Mock Assert-DevelopmentBranchWorktreeContext {}
         Mock Get-ItlOnDemandRuntimeInstances { $script:mutationRuntimes }
@@ -151,5 +157,89 @@
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
         $entry.IndexOf('Start-ItlDevBranchMutationDatabaseAdmission -Operation') | Should -BeLessThan $entry.IndexOf('Enter-Agent1cLifecycleOperation `')
         $entry.IndexOf('Complete-ItlDevBranchMutationDatabaseAdmission -Admission') | Should -BeLessThan $entry.IndexOf('Complete-Agent1cLifecycleOperation -Status "succeeded"')
+    }
+
+    It 'reserves the repository source base without reserving branch or Vanessa manager bases' -TestCases @(
+        @{ sourceKind = 'file' }, @{ sourceKind = 'server' }
+    ) {
+        param($sourceKind)
+        Mock Get-InfoBaseKind { $sourceKind }
+        if ($sourceKind -eq 'server') { $script:repositorySourcePath = 'test-server\ОбщаяБаза' }
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects'
+        $admission = $script:DevBranchMutationDatabaseAdmission
+        @($admission.plan.bases).Count | Should -Be 1
+        $admission.plan.target.kind | Should -Be $sourceKind
+        $admission.plan.target.path | Should -Be $script:repositorySourcePath
+        $branchOwner = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
+        Complete-ItlDatabaseAccessHost $branchOwner | Out-Null
+        $sourceRequest = [ordered]@{ schemaVersion=1; coordinator=$settings.coordinator; timeout=0; bases=$admission.plan.bases; owner=@{project='another-project';operation='source-measurement'} }
+        { Start-ItlDatabaseAccessHost -Python $python -Request $sourceRequest } | Should -Throw '*WAIT_TIMEOUT*'
+        Complete-ItlDevBranchMutationDatabaseAdmission $admission
+        $next = Start-ItlDatabaseAccessHost -Python $python -Request $sourceRequest
+        Complete-ItlDatabaseAccessHost $next | Out-Null
+    }
+
+    It 'waits for source ownership before lifecycle entry without stopping another session' {
+        $sourceRequest = [ordered]@{ schemaVersion=1; coordinator=$settings.coordinator; timeout=0; bases=@(@{kind='file';path=$script:repositorySourcePath}); owner=@{project='another-project';operation='source-profile'} }
+        $holder = Start-ItlDatabaseAccessHost -Python $python -Request $sourceRequest
+        try {
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects' } | Should -Throw '*WAIT_TIMEOUT*'
+            Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+            Should -Invoke Stop-DevBranchVanessaInteractiveProfile -Times 0 -Exactly
+            Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0 -Exactly
+        } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+    }
+
+    It 'rechecks the source target after waiting rather than comparing only the branch database' {
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects'
+        $script:repositorySourcePath = Join-Path $script:ProjectRoot 'Другая исходная база'
+        { Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $script:mutationState } | Should -Throw '*MUTATION_PLAN_CHANGED*'
+    }
+
+    It 'keeps the same source lease through root and object requests until the caller releases it' {
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects'
+        $script:sourceCompetingRequest = [ordered]@{ schemaVersion=1; coordinator=$settings.coordinator; timeout=0; bases=$script:DevBranchMutationDatabaseAdmission.plan.bases; owner=@{project='another-project';operation='repository-lock'} }
+        $script:phaseProofs = [Collections.Generic.List[string]]::new()
+        $script:RunStatusPath = ''; $script:RunUserReport = ''
+        Mock Repair-OneCSourceLineEndings {}
+        Mock Get-ExportPath { 'src/cf' }
+        Mock Get-EnvValue { '' }
+        Mock New-RepositoryConnectionArgs { @() }
+        Mock Get-ConfigRepositoryTransferPlan {
+            [pscustomobject]@{ baseCommit='base'; unresolvedPaths=@(); rootLockRequiredBy=@('Константа.Новая'); items=@(
+                [pscustomobject]@{name='Конфигурация';scope='partial'}, [pscustomobject]@{name='Константа.Новая';scope='full'}
+            ) }
+        }
+        Mock Invoke-Designer {
+            $script:phaseProofs.Add([Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process'))
+            { Start-ItlDatabaseAccessHost -Python $python -Request $script:sourceCompetingRequest } | Should -Throw '*WAIT_TIMEOUT*'
+            $script:LastLogPath = Join-Path $script:ProjectRoot ('native-' + $script:phaseProofs.Count + '.log')
+            $text = if ($script:phaseProofs.Count -eq 1) {
+                "---- Начало операции с хранилищем конфигурации ----`nОбъект захвачен для редактирования: Конфигурация`n---- Операция с хранилищем конфигурации завершена ----"
+            } else {
+                "Объекты, отсутствующие в обеих конфигурациях:`nКонстанта.Новая`n---- Начало операции с хранилищем конфигурации ----`n---- Операция с хранилищем конфигурации завершена ----"
+            }
+            Write-Utf8Text -Path $script:LastLogPath -Value $text
+        }
+        Lock-ConfigRepositoryObjects 6>$null
+        @($script:phaseProofs).Count | Should -Be 2
+        $script:phaseProofs[0] | Should -Not -BeNullOrEmpty
+        $script:phaseProofs[1] | Should -Be $script:phaseProofs[0]
+        { Start-ItlDatabaseAccessHost -Python $python -Request $script:sourceCompetingRequest } | Should -Throw '*WAIT_TIMEOUT*'
+        Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission
+        $next = Start-ItlDatabaseAccessHost -Python $python -Request $script:sourceCompetingRequest
+        Complete-ItlDatabaseAccessHost $next | Out-Null
+    }
+
+    It 'leaves unsupported repository diagnostics to the action without acquiring a database owner' {
+        Mock Get-SourceUsesRepository { $false }
+        Mock Start-ItlDatabaseAccessHost { throw 'must not acquire a source owner' }
+        Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects' | Should -BeNullOrEmpty
+        Should -Invoke Start-ItlDatabaseAccessHost -Times 0 -Exactly
+    }
+
+    It 'includes repository locking in the same pre-lifecycle admission route' {
+        $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
+        $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects'))"))
     }
 }

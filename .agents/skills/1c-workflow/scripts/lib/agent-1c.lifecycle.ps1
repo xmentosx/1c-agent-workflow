@@ -2105,7 +2105,13 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State)
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects')][string]$Operation = 'update-dev-branch-base')
+    if ($Operation -eq 'lock-config-repository-objects') {
+        # Repository ownership changes run against the source base. Branch and
+        # Vanessa manager databases are unrelated to this native operation.
+        $target = [pscustomobject]@{ kind = [string](Get-InfoBaseKind); path = [string](Get-SourceInfoBasePath) }
+        return [pscustomobject]@{ target = $target; bases = @($target) }
+    }
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
     foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
@@ -2119,12 +2125,19 @@ function Get-ItlDevBranchMutationDatabasePlan {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation
+    if ($Operation -eq 'lock-config-repository-objects' -and (
+        -not (Get-SourceUsesRepository) -or (Get-DevBranchKind -State $state) -ne 'configuration' -or
+        (Get-DevBranchInitializationStatus -State $state) -ne 'ready')) {
+        # The action owns these diagnostics; do not reserve an unrelated base
+        # before it rejects a non-repository or unsupported branch.
+        return $null
+    }
     # A profile or another backend owner keeps its lease until normal release.
     # Never stop that owner merely to make this request enter the database.
-    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state
+    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation
     $settings = Get-ItlDatabaseAccessSettings
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
@@ -2152,7 +2165,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
 function Assert-ItlDevBranchMutationDatabaseAdmission {
     param([object]$Admission, [object]$State)
     if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
-    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State
+    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation
     if ($fresh.target.kind -cne $Admission.plan.target.kind -or
         -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
         throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'

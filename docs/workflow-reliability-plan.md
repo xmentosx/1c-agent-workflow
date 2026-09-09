@@ -30,7 +30,7 @@ different milestones; none implies the next one.
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; live 1C recovery adapters, lifecycle/facade entrypoint integration and multi-host proof remain required |
-| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
+| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Exact losing merge e53505ccd identified: the result module equals the second parent byte for byte; E2 was subsequently restored in the product task; workflow prevention and justified replacement reporting remain pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
@@ -1282,3 +1282,32 @@ Item 17 registration completed at `38555f5`: Targeted passed 604 tests with zero
 failures/skips and a clean tree (`9c604df68ca1c9651b593a56de769574adaf762d`,
 696759 ms). The cumulative branch includes both repository-lock packets; no
 workflow or component publication has occurred.
+
+The source-lock command now enters the shared database queue before its local
+lifecycle lock and retains one ownership proof through both the root and object
+requests and confirmed cleanup. Its resource is the source infobase, not the
+branch or Vanessa service base. The post-wait check resolves the source target
+again; target drift stops before native execution. Existing unrelated owners
+are waited for, not stopped. Unsupported/non-repository branch diagnostics stay
+with the original action without acquiring an unrelated resource.
+
+The shared-host tests cover file and server identities, a competing source
+owner, an independently available branch base, target drift and the unchanged
+proof at both native request boundaries. They observe exclusion until the
+caller releases ownership. The native launches in that boundary test are
+fixtures: actual installed two-chat/two-host behavior and recovery remain part
+of item 4 acceptance, and native repository ownership remains item 17 acceptance.
+
+Item 5 evidence is pinned to merge
+`e53505ccd39bd024cf56245b010ad1ea36ebeab4` in branch6. Its first parent is
+`a8d8312785b393348d585c508d8d6c15dada592b`, second parent
+`77ba2ef1c135802fef6de34a92bb86307ba7f0d6`. For the economy data-model module,
+the first-parent blob is `8aa7f46e7ea0f4c3e1c56e5b8cd49a74349324e9`; both the
+second parent and merge result use `4f61dc17876e42d36af4f047988c148752933f76`.
+Thus this case retained the second-parent file wholesale. The later branch6
+task reports restoring only the E2 phase, with unchanged code outside it and a
+fresh 11/11 YAxUnit plus 2/2 Vanessa result. Its historical
+`analysis-economy-20260909/restore-proof.json` records the before/after hashes
+and the scope assertion. These are retained incident/repair facts, not a current
+performance claim or permission to repeat a product-source restoration. The
+remaining change belongs to workflow conflict-resolution evidence and prevention.

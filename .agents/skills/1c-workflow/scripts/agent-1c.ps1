@@ -429,7 +429,7 @@ try {
     if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
         $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
     }
-    if ($requestedLifecycleAction -eq 'update-dev-branch-base') {
+    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects')) {
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction
     }
     Enter-Agent1cLifecycleOperation `
