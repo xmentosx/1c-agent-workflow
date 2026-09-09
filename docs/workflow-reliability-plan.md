@@ -250,6 +250,32 @@ the legitimate descendant resumes through the prescribed helper and fresh check,
 while an unrelated HEAD or mismatched operation remains rejected. No manual
 lifecycle edits, lock removal or weakening of exact-tree proof is permitted.
 
+Item 6c investigation confirms the existing exact-HEAD guard is intentional.
+The retained branch11 execution record reports a normal corrective commit
+`7b34371e3497febb6fcdbf86f21d3542aab2369b`, followed by the mismatch and the
+documented full-check route. Read-only Git inspection confirms its single parent
+is merge `d3dc12487121170e3ebd3df210c51099c68e4187` (parents
+`bc1ccc75f265c4733d653ab956e15bacd7b18a06` and
+`823b335f568e656b440810a988c7716912558878`). The incident does not justify
+accepting arbitrary changed HEADs during ordinary resume.
+
+The confirmed gap is actionable routing: the original mismatch only printed
+expected/actual commits. A validated refresh checkpoint with a proven descendant
+in the same branch now retains that failure and records `requiredAction=/itl-check`.
+The diagnostic explains the required fresh full check, configuration load and
+Enterprise normalization and routes to the existing lifecycle reference.
+It neither clears the transaction nor starts verification automatically.
+
+Six focused lifecycle/compact cases pass on Windows PowerShell 5.1 across the
+focused runs. They cover a direct corrective commit after a merge, a corrective
+commit after the helper cursor, stale proof, retained strict cursor recovery,
+and five negative identity/checkpoint cases, plus transport of a structured
+recovery action through the real compact runner. The positive cases serialize
+the failed run status, prove state is unchanged before fresh proof, and only
+then complete recovery. Registration and installed public-command acceptance
+remain pending; the historical branch11 successful full check is incident
+evidence, not delivery proof of this new diagnostic.
+
 The remaining messages are covered separately: empty command actions by item 12,
 accepted master inputs by item 13, export/ROCTUP coordination by item 14, and
 unsupported or disputed AI findings by item 15. Local successful checks and
@@ -1359,3 +1385,9 @@ preserving the failure. The exact native log is
 The report test file passes all eight cases after this correction. The root
 test file's twelve cases passed before this absence-only parser correction;
 registration performs the required combined owner verification.
+
+Native repository report follow-ups were registered at
+`88ace9e058569bd9f8ddd0d80bb70c0dba6e0e9c`: Targeted passed 536 tests,
+zero failures/skips, clean tree `ad5c2cfe56b67de31391b0c72007e887508d8449`,
+474058 ms. The cumulative source branch includes this packet; publication and
+installed acceptance remain outstanding.

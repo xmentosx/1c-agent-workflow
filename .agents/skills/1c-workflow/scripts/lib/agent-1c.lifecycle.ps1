@@ -7890,7 +7890,17 @@ function Resolve-DevBranchLifecyclePostMergeHead {
             throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($Transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
         }
         if ($head -cne $recordedPostMergeHead) {
-            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'."
+            $recoveryHint = ''
+            $expectedBranch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+            if ($Operation -in @('refresh-dev-branch', 'refresh-dev-branch-lite') -and
+                $Transaction.operation -ceq $Operation -and $Transaction.stage -ceq 'merged' -and
+                $expectedBranch -and $Transaction.branch -ceq $expectedBranch -and
+                (Get-CurrentBranch) -ceq $expectedBranch -and
+                (Test-GitCommitIsAncestor -Ancestor $recordedPostMergeHead -Descendant $head)) {
+                Set-RunFailureContext -Category 'runner' -RequiredAction '/itl-check'
+                $recoveryHint = ' A descendant commit is present in the same branch. Run a full /itl-check here after correcting the reported source defect; only fresh full verification after configuration loading and Enterprise normalization can complete this pending refresh. See references/branch-lifecycle.md. Do not edit lifecycle state or repeat ordinary merge resume at this changed HEAD.'
+            }
+            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'.$recoveryHint"
         }
         return $head
     }

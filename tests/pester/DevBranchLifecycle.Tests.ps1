@@ -7463,11 +7463,72 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "completes a pending refresh on a corrective descendant only after fresh full verification" {
-        $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+    It 'does not offer corrective verification for an unrelated HEAD, branch, operation or checkpoint' {
+        foreach ($case in @('unrelated-head', 'other-branch', 'other-operation', 'invalid-checkpoint', 'missing-checkpoint')) {
+            $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+            try {
+                if ($case -eq 'unrelated-head') {
+                    # This freshly created fixture owns the whole temporary repository.
+                    & git -C $fixture.root reset --hard $fixture.branchCommit *> $null
+                } elseif ($case -eq 'other-branch') {
+                    & git -C $fixture.root checkout --quiet -b itldev/other
+                }
+                $result = & {
+                    param($Fixture, $Case)
+                    . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                    $DevBranchName = 'test'
+                    $script:MergeState = [pscustomobject]@{
+                        safeDevBranchName = 'test'; devBranchName = 'test'; devBranch = 'itldev/test'
+                        pendingMergeOperation = 'refresh-dev-branch'; pendingMergeBranch = 'itldev/test'
+                        pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                        pendingMergeStage = 'merged'; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                        pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = 'merge-commit'
+                    }
+                    if ($Case -eq 'invalid-checkpoint') { $script:MergeState.pendingMergePostMergeHead = $Fixture.branchCommit }
+                    if ($Case -eq 'missing-checkpoint') { $script:MergeState.pendingMergePostMergeHead = '' }
+                    function Read-DevBranchState { return $script:MergeState }
+                    function Update-DevBranchState { throw 'UNEXPECTED_STATE_CHANGE' }
+                    function Restart-Agent1cAfterDevBranchMerge { throw 'UNEXPECTED_RESTART' }
+                    $before = $script:MergeState | ConvertTo-Json -Depth 5 -Compress
+                    $headBefore = Get-CurrentCommit
+                    $operation = if ($Case -eq 'other-operation') { 'refresh-dev-branch-lite' } else { 'refresh-dev-branch' }
+                    $message = ''
+                    try {
+                        Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation $operation -ConflictStage 'refresh.merge-conflicts' | Out-Null
+                    } catch { $message = $_.Exception.Message }
+                    [pscustomobject]@{
+                        message = $message; requiredAction = $script:RunRequiredAction
+                        stateUnchanged = ($before -ceq ($script:MergeState | ConvertTo-Json -Depth 5 -Compress))
+                        headUnchanged = ($headBefore -ceq (Get-CurrentCommit))
+                    }
+                } $fixture $case
+                $expectedCode = switch ($case) {
+                    'unrelated-head' { 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+                    'other-branch' { 'LIFECYCLE_MERGE_BRANCH_MISMATCH' }
+                    'other-operation' { 'LIFECYCLE_MERGE_OPERATION_MISMATCH' }
+                    'invalid-checkpoint' { 'LIFECYCLE_MERGE_POST_HEAD_INVALID' }
+                    'missing-checkpoint' { 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+                }
+                $result.message | Should -Match "^$expectedCode" -Because $case
+                $result.requiredAction | Should -BeNullOrEmpty -Because $case
+                $result.stateUnchanged | Should -BeTrue -Because $case
+                $result.headUnchanged | Should -BeTrue -Because $case
+            } finally {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'completes a pending refresh on a corrective descendant only after fresh full verification (<Checkpoint>)' -TestCases @(
+        @{ Checkpoint = 'merge' }, @{ Checkpoint = 'cursor' }
+    ) {
+        param($Checkpoint)
+        $fixture = if ($Checkpoint -eq 'merge') {
+            New-LifecyclePostMergeCursorFixture -Subject 'fix: warn on unbound form commands in local validation' -ChangedPath foreign
+        } else { New-LifecyclePostMergeCursorFixture -AdditionalHead extra }
         try {
             $result = & {
-                param($Fixture)
+                param($Fixture, $Checkpoint)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
@@ -7476,11 +7537,12 @@ if (`$?) { exit 0 } else { exit 1 }
                     pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
                     pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
                     pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
-                    lastVerificationStatus = "passed"; lastVerificationEvidenceKind = "full"
+                    lastVerificationStatus = "failed"; lastVerificationEvidenceKind = "full"
                     lastVerifiedCommit = $Fixture.head; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
                     configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
                     enterpriseNormalizationStatus = "passed"
                 }
+                if ($Checkpoint -eq 'merge') { $script:MergeState.pendingMergePostMergeHead = $Fixture.mergeCommit }
                 function Update-DevBranchState {
                     param([object]$State, [hashtable]$Updates)
                     foreach ($key in $Updates.Keys) {
@@ -7492,8 +7554,24 @@ if (`$?) { exit 0 } else { exit 1 }
                     }
                 }
 
+                function Read-DevBranchState { return $script:MergeState }
+                function Restart-Agent1cAfterDevBranchMerge { throw 'UNEXPECTED_RESTART' }
+                $before = $script:MergeState | ConvertTo-Json -Depth 5 -Compress
+                $resumeMessage = ''
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation 'refresh-dev-branch' -ConflictStage 'refresh.merge-conflicts' | Out-Null
+                } catch { $resumeMessage = $_.Exception.Message }
+                $RunStatusPath = Join-Path $Fixture.root '.agent-1c/corrective-resume.json'
+                Write-RunStatus -Status failed -ExitCode 1 -ErrorMessage $resumeMessage
+                $failureStatus = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $premature = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation 'check-dev-branch'
+                $unchangedBeforeProof = ($before -ceq ($script:MergeState | ConvertTo-Json -Depth 5 -Compress))
+                $script:MergeState.lastVerificationStatus = 'passed'
                 $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
                 [pscustomobject]@{
+                    failureStatus = $failureStatus
+                    premature = $premature
+                    unchangedBeforeProof = $unchangedBeforeProof
                     completed = $completed
                     pendingOperation = $script:MergeState.pendingMergeOperation
                     refreshCommit = $script:MergeState.lastRefreshMasterCommit
@@ -7502,8 +7580,15 @@ if (`$?) { exit 0 } else { exit 1 }
                     recoveredHead = $script:MergeState.lastRefreshRecoveredHead
                     currentHead = Get-CurrentCommit
                 }
-            } $fixture
+            } $fixture $Checkpoint
 
+            $result.failureStatus.status | Should -Be 'failed'
+            $result.failureStatus.exitCode | Should -Be 1
+            $result.failureStatus.requiredAction | Should -Be '/itl-check'
+            $result.failureStatus.errorMessage | Should -Match '^LIFECYCLE_MERGE_POST_HEAD_MISMATCH'
+            $result.failureStatus.errorMessage | Should -Match 'fresh full verification'
+            $result.premature | Should -BeFalse
+            $result.unchangedBeforeProof | Should -BeTrue
             $result.completed | Should -BeTrue
             $result.pendingOperation | Should -BeNullOrEmpty
             $result.refreshCommit | Should -Be $fixture.targetCommit
