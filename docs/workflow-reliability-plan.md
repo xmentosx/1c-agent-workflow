@@ -32,7 +32,7 @@ different milestones; none implies the next one.
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime integration and pinned job recovery hooks implemented; live 1C recovery adapters, lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
-| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal and asynchronous MCP progress evidence implemented; full scenario provenance and detailed runtime stages remain open |
+| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
@@ -306,13 +306,28 @@ action, no repeated restoration after that crash, honest failed-measurement
 status, cancellation, bounded hangs, missing/tampered evidence and changed input
 rejection. Initial fixture failures exposed unclosed SQLite connections in the
 test harness; explicit closing fixed teardown without weakening the workload or
-assertions. Real 1C/Vanessa recovery adapters, partial-artifact collection after
-an engine crash with no result.json, legacy technical-run reconciliation and
-two-host live proof remain open.
+assertions. Real 1C/Vanessa recovery adapters, legacy technical-run reconciliation
+and two-host live proof remain open. Partial-artifact collection is implemented
+as described below; it does not replace recovery or quiescence evidence.
 Focused recovery checks passed 28/28 and the owning RemotePerformance suite
 passed 8/8 (including the portable Python inventory). The queued transport path
 was additionally exercised through the public `worker --once` command: one
 restoration, one original action, and no action on duplicate request delivery.
+
+Item 7 now supports explicit `collect --allow-partial` on local and remote
+routes. Without a result it returns a diagnostic manifest, retaining the observed
+job state even when an engine crash left it as `running`. It never manufactures
+result.json, changes job state, replays work or releases a database lease.
+Each downloaded file is hash verified, including the inventoried prefix of an
+appending log; replaced/truncated bytes fail without a completed manifest.
+Private recovery contexts stay excluded, and output cannot overwrite previous
+evidence or write into the exchange spool. Focused regressions reproduce an
+actual subprocess crash without a result and exercise local, exchange and CLI
+RPC collection with paths containing spaces and Cyrillic together. Full remote
+host acceptance and scenario provenance remain separate open requirements.
+All twelve focused collection regressions and the owning RemotePerformance
+suite passed (8/8, including the complete portable Python inventory). Missing or
+unreadable job state is recorded as unavailable without hiding available logs.
 
 Item 12 source correction is prepared as controlled fork
 `itl-main-410951e7-r34@ed2a1e3b44ace1e359d922adfcb70c3dfb874f3b`.

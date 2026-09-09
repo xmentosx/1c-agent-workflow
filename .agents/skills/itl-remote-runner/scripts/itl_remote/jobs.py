@@ -206,12 +206,6 @@ def cancel(spool, identifier):
     return state
 
 
-def collect(spool, identifier, destination):
-    source = Path(spool) / "runs" / job_id(identifier)
-    if not (source / "result.json").is_file():
-        raise WorkError("RESULT_NOT_READY")
-    destination = Path(destination)
-    if destination.exists():
-        raise WorkError("RESULT_DESTINATION_EXISTS")
+def collect(spool, identifier, destination, *, allow_partial=False):
     from .transport import Connection
-    return Connection({"transport": "exchange", "spool": str(spool)}).collect(identifier, destination)
+    return Connection({"transport": "exchange", "spool": str(spool)}).collect(identifier, destination, allow_partial=allow_partial)

@@ -35,9 +35,12 @@ one request; a recorded failure is not retried automatically.
 Job status has a separate `recovery` object. Detailed phases, observations and
 logs are retained under `runs/<job>/recovery/<attempt>/`; private `context.json`
 is excluded from transfer. The original result remains unchanged. If no original
-`result.json` exists, standard result collection still reports `RESULT_NOT_READY`;
-inspect recovery progress on the execution host until partial-artifact collection
-is implemented. Do not invent a successful measurement result to enable transfer.
+`result.json` exists, add `--allow-partial` to local `collect` or remote
+`--action collect` to download the available diagnostics and recovery artifacts.
+The returned collection manifest explicitly records a partial collection and
+the observed job state. It is neither a measurement result nor authorization
+to release database access. See `operations.md` for concurrent log changes and
+transfer integrity. Do not invent a successful measurement result to enable transfer.
 
 ## Authored scenario contract
 

@@ -8,10 +8,22 @@ import re
 import shutil
 import sys
 
-from .common import FileLock, WorkError, beneath, capture, digest, read_json, write_json
-from .jobs import collect, status, submit, validate_package
+from .common import FileLock, WorkError, beneath, capture, digest, read_json, stamp, write_json
+from .jobs import status, submit, validate_package
 
 CHUNK = 512 * 1024
+
+
+def private_result(relative):
+    path = Path(relative)
+    return path.name.casefold() == "context.json" or "private" in {part.casefold() for part in path.parts}
+
+
+def public_result_path(root, relative):
+    path = beneath(root, relative)
+    if private_result(relative) or private_result(path.relative_to(root.resolve())):
+        raise WorkError("PRIVATE_OR_INVALID_RESULT")
+    return path
 
 
 def blob_path(spool, sha):
@@ -86,23 +98,40 @@ def endpoint(spool, message):
     if operation == "results":
         from .jobs import job_id
         root = spool / "runs" / job_id(message["id"])
-        if not (root / "result.json").exists():
+        if not root.is_dir() or (not message.get("allowPartial", False) and not (root / "result.json").is_file()):
             raise WorkError("RESULT_NOT_READY")
         files = []
         for path in sorted(root.rglob("*")):
-            if path.is_file() and path.name != "context.json" and "private" not in path.relative_to(root).parts:
+            if path.is_file() and not private_result(path.relative_to(root)):
                 relative = path.relative_to(root).as_posix()
-                beneath(root, relative)
+                public_result_path(root, relative)
                 files.append({"path": relative, "bytes": path.stat().st_size, "sha256": digest(path)})
-        return {"files": files}
+        result_available = any(entry["path"] == "result.json" for entry in files)
+        if not result_available and not message.get("allowPartial", False):
+            raise WorkError("RESULT_NOT_READY")
+        observation_errors = []
+        try:
+            observed_job = status(spool, message["id"])
+        except WorkError as error:
+            if str(error) != "JOB_NOT_FOUND":
+                raise
+            observed_job = None
+            observation_errors.append("JOB_NOT_FOUND")
+        except (OSError, ValueError):
+            # A damaged/unavailable state file must not hide the run's diagnostics.
+            observed_job = None
+            observation_errors.append("JOB_STATE_UNREADABLE")
+        return {"files": files, "resultAvailable": result_available,
+                "observedAt": stamp(), "observedJob": observed_job, "observationErrors": observation_errors}
     if operation == "read-result":
         from .jobs import job_id
-        path = beneath(spool / "runs" / job_id(message["id"]), message["path"])
-        if path.name == "context.json" or "private" in Path(message["path"]).parts or message["offset"] < 0:
+        path = public_result_path(spool / "runs" / job_id(message["id"]), message["path"])
+        count = message.get("bytes", CHUNK)
+        if message["offset"] < 0 or type(count) is not int or not 0 < count <= CHUNK:
             raise WorkError("PRIVATE_OR_INVALID_RESULT")
         with path.open("rb") as stream:
             stream.seek(message["offset"])
-            return {"data": base64.b64encode(stream.read(CHUNK)).decode("ascii")}
+            return {"data": base64.b64encode(stream.read(count)).decode("ascii")}
     raise WorkError("UNKNOWN_TRANSPORT_OPERATION")
 
 
@@ -159,11 +188,19 @@ class Connection:
             missing.remove(entry["sha256"])
         return self.call({"operation": "commit", "request": request, "scenario": scenario})
 
-    def collect(self, identifier, destination):
+    def collect(self, identifier, destination, *, allow_partial=False):
         destination = Path(destination)
         if destination.exists():
             raise WorkError("RESULT_DESTINATION_EXISTS")
-        inventory = self.call({"operation": "results", "id": identifier})["files"]
+        if self.profile["transport"] == "exchange" and destination.resolve().is_relative_to(Path(self.profile["spool"]).resolve()):
+            raise WorkError("RESULT_DESTINATION_IN_SPOOL")
+        response = self.call({"operation": "results", "id": identifier, "allowPartial": allow_partial})
+        inventory = response["files"]
+        # Older completed-result endpoints only return files. They cannot serve a
+        # partial collection, but their existing completed-result route still works.
+        result_available = response.get("resultAvailable", any(entry["path"] == "result.json" for entry in inventory))
+        if not result_available and not allow_partial:
+            raise WorkError("RESULT_NOT_READY")
         destination.mkdir(parents=True)
         for entry in inventory:
             path = beneath(destination, entry["path"])
@@ -172,12 +209,17 @@ class Connection:
             with path.open("wb") as stream:
                 while offset < entry["bytes"]:
                     chunk = base64.b64decode(self.call({"operation": "read-result", "id": identifier,
-                                                       "path": entry["path"], "offset": offset})["data"], validate=True)
+                                                       "path": entry["path"], "offset": offset,
+                                                       "bytes": min(CHUNK, entry["bytes"] - offset)})["data"], validate=True)
                     if not chunk or offset + len(chunk) > entry["bytes"]:
                         raise WorkError("RESULT_TRANSFER_INCOMPLETE")
                     stream.write(chunk)
                     offset += len(chunk)
             if digest(path) != entry["sha256"]:
                 raise WorkError("RESULT_HASH_MISMATCH")
-        write_json(destination / "download-manifest.json", {"jobId": identifier, "files": inventory})
-        return read_json(destination / "result.json")
+        manifest = {"jobId": identifier, "files": inventory, "resultAvailable": result_available,
+                    "collectionStatus": "result" if result_available else "partial",
+                    "observedAt": response.get("observedAt"), "observedJob": response.get("observedJob"),
+                    "observationErrors": response.get("observationErrors", [])}
+        write_json(destination / "download-manifest.json", manifest)
+        return read_json(destination / "result.json") if result_available else manifest

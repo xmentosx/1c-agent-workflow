@@ -47,6 +47,7 @@ def main():
             command.add_argument("--via-agent", action="store_true")
         if name == "collect":
             command.add_argument("--output", required=True)
+            command.add_argument("--allow-partial", action="store_true", help="Collect available diagnostics without requiring a measurement result")
         if name == "worker":
             command.add_argument("--once", action="store_true")
     command = commands.add_parser("prepare")
@@ -77,6 +78,7 @@ def main():
     command.add_argument("--payload")
     command.add_argument("--id")
     command.add_argument("--output")
+    command.add_argument("--allow-partial", action="store_true", help="Allow diagnostic-only collection for --action collect")
     command = commands.add_parser("compare")
     command.add_argument("--baseline", required=True)
     command.add_argument("--candidate", required=True)
@@ -150,7 +152,7 @@ def main():
                 raise WorkError("RECOVERY_JOB_AND_PLAN_REQUIRED")
             return connection.call({"operation": args.action, "id": args.id, "planId": args.plan_id})
         if args.action == "collect":
-            return connection.collect(args.id, args.output)
+            return connection.collect(args.id, args.output, allow_partial=args.allow_partial)
         if args.action == "agent-request":
             if not args.agent_action:
                 raise WorkError("AGENT_ACTION_REQUIRED")
@@ -160,7 +162,7 @@ def main():
     if args.command in ("status", "cancel"):
         return getattr(jobs, args.command)(args.spool, args.id)
     if args.command == "collect":
-        return jobs.collect(args.spool, args.id, args.output)
+        return jobs.collect(args.spool, args.id, args.output, allow_partial=args.allow_partial)
     if args.command == "rpc":
         return transport.endpoint(args.spool, json.load(sys.stdin))
     if args.command == "execute":
