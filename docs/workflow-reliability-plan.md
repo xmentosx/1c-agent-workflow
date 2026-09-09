@@ -1,6 +1,6 @@
 # Measurement and workflow reliability implementation ledger
 
-This source-maintenance plan records fifteen tasks from the original seven PM5
+This source-maintenance plan records seventeen tasks from the original seven PM5
 investigations and the follow-up handoffs. It is not installed-project guidance. A completed
 source change, registration, publication, installation and live acceptance are
 different milestones; none implies the next one.
@@ -40,7 +40,9 @@ different milestones; none implies the next one.
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
-| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Fourth branch11 handoff and current controlled-fork rules confirm a missing decision route; recorded rebuttals exist, but clean AI acceptance and shared correction remain unconfirmed |
+| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients; exact branch11 findings, case-based acceptance and normal workflow delivery remain open |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Named branch11 log confirms 24 captured objects, one conflict and four absent objects; helper throws before producing the partial report; implementation pending |
+| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Transfer planner currently skips Configuration.xml and has no root dependency for top-level additions; implementation and native repository qualification pending |
 
 Implementation order: establish item 4 with the timeout and source-capture
 contracts and resolve the concrete export deadlock in item 14; complete items
@@ -869,6 +871,42 @@ syntax with zero errors, and the existing check
 results do not establish a clean AI-review pass. Neither product code nor proof
 files were changed in that episode; no source correction for item 15 is claimed.
 
+Item 15 source work has now started in the isolated controlled-fork candidate
+`D:/Git/itl_ai_rules_1c-r35-review-adjudication`, branch
+`upgrade/main-410951e7-r35` (the future immutable release is
+`release/itl-main-410951e7-r35`), rebuilt from the unchanged pinned upstream
+`410951e74fd3e6b7a763cf49757935b9a34d3f31` using the normal Prepare helper.
+The 124 reviewed r34 results were restored only after their ledger text hashes
+were verified (including intentional absent paths and UTF-8 BOM decoding).
+The tagged r34 stand remains unchanged. The new canonical
+`verification-ai-evidence.md` defines evidence preservation, one in-budget
+unsupported-result recovery, autonomous mechanical rebuttal versus authorized
+risk decisions, freshness and truthful outcomes. Gate, retry, delivery, root and
+six agent call sites route to it. The existing four ValidatorExecutionPolicy
+tests pass. This is uncommitted work, not a qualified r35 release: complete
+conflict/consumer inventory, case-based regressions, original-evidence assessment,
+installation coverage, path-ledger hashes, version pins, fork qualification and
+normal workflow registration/delivery remain required.
+
+The r35 candidate is now committed at
+`228dede770213b627159c60de8c04cdbb9930010` (tree
+`7905f33af1978790a79bea10722a2a8b0aab017d`). The normal reconstruction Verify
+passed all 197 path decisions. Actual installation/validator-policy tests passed
+16/16, and the final fork Full gate passed 99/99 with a clean tree (195193 ms).
+The first Full run found only an empty retired opsx directory left by this
+checkout's reconstruction; its absence requirement was retained, the confirmed
+empty/untracked directory removed, and the complete gate then passed unchanged.
+The normal publisher preview passed and created the local immutable r35 refs
+without Push; no remote ref was changed. Workflow dependency and migration
+tests passed 35/35 against the new pending pin. Registration and delivery remain
+separate, as does independent assessment of the original branch11 findings.
+
+The facade/update admission candidate was registered at `6f74741` with 903
+passing Targeted tests, no failures/skips and a clean tree (757319 ms; tree
+`5c33871b0d64e54c13adbbd8565f7526d9e05d1b`). The shared integration branch
+fast-forwarded to it. This is source qualification, not completion of the
+remaining per-action, two-chat, real-1C or multi-host requirements in item 4.
+
 ## Item 4: exact database scope after source load
 
 The post-load MCP refresh previously stopped every registered backend in the
@@ -1056,3 +1094,83 @@ all other lifecycle actions and complete service/scratch resource sets, native
 recovery adapters, installed two-chat/manual-profile acceptance, real PM5/UFA
 and two-host coordination. The component has not been tagged or published;
 exact-source/executable Release E2E for both ROCTUP and Vanessa remains required.
+
+## Added task 16: complete repository-lock reports after partial failure
+
+Source: user request and [Использовать результат ITL](codex://threads/01a087cd-0fee-7112-afe0-6774f6f38ed8),
+branch11 run `compact-20260909-231456-271-f748a8ca`. Read-only inspection of its
+`repository-lock.log` confirms 24 successful captures, one object held by
+Проценко2 (`Справочник.упо_Планы.Форма.ФормаЭлемента`), and four entries under
+objects absent from both configurations. The public failed result has an empty
+userReport and names only the conflict. No new repository operation was run.
+
+Current `Lock-ConfigRepositoryObjects` throws the parsed conflict before building
+its success-only report. Existing commit `0cad454` added conflict-owner reporting;
+that is not evidence that complete partial reporting was ever delivered. Compare
+source and installed versions during implementation rather than assuming a
+reintroduced regression from the user's recollection alone.
+
+Implementation and acceptance:
+
+1. Produce one structured per-object outcome inventory and the corresponding
+   Russian report on both success and failure. Preserve requested scope and
+   distinguish captured, already held by this repository user, conflict with
+   named owner, absent/new object and unconfirmed/not attempted. Do not infer
+   successful capture merely because an object is absent from conflict lines.
+2. Parse the platform's actual operation boundaries and retain evidence for each
+   outcome. Where logs cannot prove a result, use a supported read-only ownership
+   inspection or explicitly report unknown; never fabricate the owner.
+3. Persist report/artifacts before propagating failure. Keep partial failure
+   visibly unsuccessful and do not automatically unlock successfully captured
+   objects or retry the whole operation. Update compact transport and the
+   generated explicit wrapper so the full failure report is returned, including
+   its existing file fallback when output is too large. Preserve secret redaction.
+4. Retain the exact 24-success/one-conflict/four-absent reproducer and cover
+   multiple owners, existing ownership, unrecognized/truncated logs, cancellation,
+   zero/all success, missing objects and a report larger than the compact limit.
+   Verify the public wrapper response, not only the parser. Repository ownership
+   remains shared state coordinated under item 4.
+5. Deliver normally and confirm a partial-conflict run on an authorized technical
+   repository. Report all objects and owners without manually disturbing foreign
+   locks. The original branch11 source repository is evidence, not an implicit
+   target for another lock/unlock operation in this task.
+
+## Added task 17: configuration-root dependency for top-level additions
+
+User requirement: adding a top-level catalog, document, common form, common
+module, constant, session parameter, role or another top-level metadata object
+requires capture of the configuration root. Adding a form, attribute or other
+child of an existing object does not trigger this rule.
+
+The current transfer planner skips Configuration.xml and maps changed object
+files independently. Its XML writer uses includeChildObjects=true for full
+objects; blindly adding the root as another full object would widen the request
+to the entire configuration and must not be the implementation.
+
+Implementation and acceptance:
+
+1. Determine actual top-level additions against the pinned comparison input and
+   effective current metadata, including committed, staged, unstaged and untracked
+   changes. Use object identities and metadata structure to distinguish additions
+   from modified existing objects, nested additions, renames and moves. Git/path
+   or XML ambiguity must be explicit before the mutation, not guessed from a
+   filename or a changed Configuration.xml alone.
+2. Add one explicit root-only lock dependency with includeChildObjects=false
+   using the platform-supported identity. Explain in the report which new objects
+   require it. Preserve exact object/child scopes for all other entries; root
+   ownership is not recursive ownership of the configuration.
+3. Coordinate dependency order so an unavailable root is reported with its owner
+   and dependent additions remain incomplete. New objects absent from the source
+   repository are reported as new/dependent; never claim that the root lock alone
+   means those objects were individually captured. Do not load configuration or
+   create objects as a side effect of /itl-lock-objects.
+4. Test the metadata categories named by the user and another supported category,
+   several additions requiring one root, an already-owned/foreign-owned root,
+   Cyrillic and spaces, mixed new/existing objects, dirty/untracked additions,
+   renames and malformed metadata. Negative cases retain no root capture for a
+   new form or attribute inside an existing object. Verify serialized object-list
+   scope and a real technical repository roundtrip; no full-configuration fallback.
+5. Update the lock helper, transfer/root-dependency report and generated command
+   guidance together, integrate the outcome inventory from item 16, register and
+   deliver normally. Preserve all earlier plan items; these are additional tasks,
+   not replacements for database coordination or AI-review correction.

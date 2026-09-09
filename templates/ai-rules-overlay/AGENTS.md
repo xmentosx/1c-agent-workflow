@@ -62,6 +62,7 @@ For low-risk ambiguity, choose the codebase-consistent option, state the assumpt
 - Gate 3a is conditional and supplemental: use exposed `1c-data-mcp` `validatequery`/`vcexecutecode` only against a development/test infobase when its trigger fires. Do not publish an infobase merely to enable it, do not substitute another tool, and record the documented risk line when it cannot run.
 - For agent-made 1C configuration/extension behavior changes in an installed ITL project, do not report ready/done until relevant Vanessa coverage exists or was updated and a fresh successful `/itl-check` completed after the last change. The helper owns infobase update and Vanessa execution. A quick-fix validation is not a substitute for this project completion gate.
 - If `USER-RULES.md` defines a post-change or completion command, it is mandatory even when a narrower validator already passed.
+- For unusable AI responses or disputed Gate 2/3 findings, load `content/rules/verification-ai-evidence.md`. Use its bounded recovery and recorded decision route; do not edit code merely to appease a disproven finding or report adjudicated acceptance as a clean tool response.
 - Load `content/rules/verification-delivery.md` after the hard gates. Report what changed, evidence actually produced, remaining risks, and relevant artifact paths.
 
 ## MCP Tool Calling
