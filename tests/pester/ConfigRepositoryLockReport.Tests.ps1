@@ -3,6 +3,83 @@
 }
 
 Describe 'Repository lock partial outcome report' {
+    It 'retains the native all-absent failure before any operation-start marker' {
+        $root = Join-Path $TestDrive 'Все отсутствуют с пробелом'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $outcome = & {
+            . $script:LockReportHelper -ProjectRoot $root -Action help *> $null
+            $plan = [pscustomobject]@{ baseCommit = 'base'; items = @([pscustomobject]@{ name = 'Константа.ОтсутствующаяПроба'; scope = 'partial' }) }
+            $log = Join-Path $root 'absent.log'
+            [IO.File]::WriteAllLines($log, @(
+                'Загруженный список объектов пуст',
+                'Объекты, отсутствующие в обеих конфигурациях:',
+                'Константа.ОтсутствующаяПроба', '',
+                'Ошибка захвата объектов в хранилище'
+            ), [Text.UTF8Encoding]::new($false))
+            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $false
+        }
+        $outcome.operationStatus | Should -Be 'failed'
+        $outcome.operationEndObserved | Should -BeFalse
+        $outcome.items[0].status | Should -Be 'absent'
+        $outcome.items[0].owner | Should -BeNullOrEmpty
+    }
+
+    It 'recognizes native English metadata names without translating object identifiers' {
+        $root = Join-Path $TestDrive 'Английские имена с пробелом'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $outcome = & {
+            . $script:LockReportHelper -ProjectRoot $root -Action help *> $null
+            $plan = [pscustomobject]@{ baseCommit = 'base'; items = @(
+                'Конфигурация', 'ОбщийМодуль.CaptureProbe', 'Справочник.CommonModule.Форма.Configuration',
+                'ПланВидовХарактеристик.Новый', 'БизнесПроцесс.Новый', 'КритерийОтбора.Новый',
+                'CommonModule.Неизвестный.Лишний'
+            ) | ForEach-Object { [pscustomobject]@{ name = $_; scope = 'partial' } } }
+            $log = Join-Path $root 'native.log'
+            [IO.File]::WriteAllLines($log, @(
+                'Объекты, отсутствующие в обеих конфигурациях:',
+                'ChartOfCharacteristicTypes.Новый', 'BusinessProcess.Новый', 'FilterCriterion.Новый',
+                '---- Начало операции с хранилищем конфигурации ----',
+                'Объект захвачен для редактирования: Configuration',
+                'Объект захвачен для редактирования: CommonModule.CaptureProbe',
+                'Объект захвачен для редактирования: ОбщийМодуль.CaptureProbe',
+                'Объект захвачен для редактирования другим пользователем: Catalog.CommonModule.Form.Configuration (ДругойВладелец)',
+                'Объект захвачен для редактирования: UnknownType.CaptureProbe',
+                '---- Операция с хранилищем конфигурации завершена ----'
+            ), [Text.UTF8Encoding]::new($false))
+            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $false
+        }
+        @($outcome.items).Count | Should -Be 7
+        @($outcome.items | Where-Object status -eq 'captured').Count | Should -Be 2
+        $outcome.items[0].status | Should -Be 'captured'
+        $outcome.items[1].status | Should -Be 'captured'
+        $outcome.items[2].name | Should -Be 'Справочник.CommonModule.Форма.Configuration'
+        $outcome.items[2].status | Should -Be 'conflict'
+        $outcome.items[2].owner | Should -Be 'ДругойВладелец'
+        @($outcome.items | Where-Object status -eq 'absent').Count | Should -Be 3
+        $outcome.items[6].status | Should -Be 'unconfirmed'
+    }
+
+    It 'reports the native silent repeated lock as unconfirmed rather than a new capture' {
+        $root = Join-Path $TestDrive 'Повторный захват с пробелом'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $result = & {
+            . $script:LockReportHelper -ProjectRoot $root -Action help *> $null
+            $plan = [pscustomobject]@{ baseCommit = 'base'; items = @([pscustomobject]@{ name = 'Конфигурация'; scope = 'partial' }) }
+            $log = Join-Path $root 'repeat.log'
+            # Exact log of a second root-only lock by the same native repository user.
+            [IO.File]::WriteAllText($log, "Захват объектов в хранилище успешно завершен`r`n", [Text.UTF8Encoding]::new($false))
+            $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true
+            function Write-AndSetRunUserReport { param($Lines) }
+            $lines = [Collections.Generic.List[string]]::new()
+            Write-ConfigRepositoryLockOutcomeReport -Lines $lines -Outcome $outcome -RunRoot $root -ObjectListPath 'root.xml'
+            [pscustomobject]@{ outcome = $outcome; report = $lines -join "`n" }
+        }
+        $result.outcome.operationStatus | Should -Be 'succeeded'
+        $result.outcome.items[0].status | Should -Be 'unconfirmed'
+        $result.outcome.items[0].owner | Should -BeNullOrEmpty
+        $result.report | Should -Match 'не доказывает новый захват или текущего владельца'
+    }
+
     It 'retains 24 captures, one owner conflict and four absent objects after the native failure' {
         $root = Join-Path ([IO.Path]::GetTempPath()) ('itl-захват с пробелом-' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $root | Out-Null

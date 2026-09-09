@@ -2797,6 +2797,13 @@ function Get-ConfigRepositoryTransferPlan {
     return $plan
 }
 
+function Get-ConfigRepositoryMetadataTypeCollection {
+    param([string]$Type)
+    $irregularCollections = @{ BusinessProcess = 'BusinessProcesses'; FilterCriterion = 'FilterCriteria'; ChartOfAccounts = 'ChartsOfAccounts'; ChartOfCalculationTypes = 'ChartsOfCalculationTypes'; ChartOfCharacteristicTypes = 'ChartsOfCharacteristicTypes' }
+    if ($irregularCollections.ContainsKey($Type)) { return $irregularCollections[$Type] }
+    return ($Type + 's')
+}
+
 function Read-ConfigRepositoryMetadataIdentity {
     param([string]$Text, [string]$Path)
     try {
@@ -2806,8 +2813,7 @@ function Read-ConfigRepositoryMetadataIdentity {
         $nodes = @($document.SelectNodes('/*[local-name()="MetaDataObject"]/*'))
         if ($nodes.Count -ne 1) { throw 'Expected one metadata object.' }
         $node = $nodes[0]
-        $irregularCollections = @{ BusinessProcess = 'BusinessProcesses'; FilterCriterion = 'FilterCriteria'; ChartOfAccounts = 'ChartsOfAccounts'; ChartOfCalculationTypes = 'ChartsOfCalculationTypes'; ChartOfCharacteristicTypes = 'ChartsOfCharacteristicTypes' }
-        $collection = if ($irregularCollections.ContainsKey($node.LocalName)) { $irregularCollections[$node.LocalName] } else { $node.LocalName + 's' }
+        $collection = Get-ConfigRepositoryMetadataTypeCollection -Type $node.LocalName
         if (($Path.Replace('\', '/') -split '/')[-2] -cne $collection) { throw 'Metadata type differs from descriptor collection.' }
         $id = [guid]::Empty
         if (-not [guid]::TryParse($node.GetAttribute('uuid'), [ref]$id) -or $id -eq [guid]::Empty) { throw 'Missing metadata UUID.' }
@@ -11163,6 +11169,20 @@ function Write-ConfigRepositoryLockRedactedLog {
     return (Resolve-Agent1cFullPath -Path $path)
 }
 
+function ConvertTo-ConfigRepositoryLogObjectName {
+    param([string]$Name)
+    # Platform log language and metadata presentation language can differ.
+    # Translate type positions only; object identifiers are preserved verbatim.
+    if ($Name -eq 'Configuration') { return 'Конфигурация' }
+    $segments = $Name -split '\.'
+    if ($segments.Count % 2 -ne 0) { return $Name }
+    for ($index = 0; $index -lt $segments.Count; $index += 2) {
+        $label = Get-ConfigRepositoryMetadataCollectionLabel -Collection (Get-ConfigRepositoryMetadataTypeCollection -Type $segments[$index])
+        if ($label) { $segments[$index] = $label }
+    }
+    return ($segments -join '.')
+}
+
 function Get-ConfigRepositoryLockOutcome {
     param([object]$Plan, [string]$LogPath, [bool]$Succeeded, [object]$RootOutcome = $null)
     $byName = @{}
@@ -11176,18 +11196,22 @@ function Get-ConfigRepositoryLockOutcome {
     $inOperation = $false
     $inAbsentList = $false
     $ended = $false
-    if ($starts -eq 1) {
+    # An all-absent request fails before the native operation starts, but its
+    # explicit absence list is still valid per-object evidence.
+    if ($starts -le 1) {
         foreach ($line in @($text -split '\r?\n')) {
             $name = ''; $status = ''; $owner = ''
             if ($line -eq 'Объекты, отсутствующие в обеих конфигурациях:') { $inAbsentList = $true; continue }
+            if ($inAbsentList -and [string]::IsNullOrWhiteSpace($line)) { $inAbsentList = $false; continue }
             if ($line -eq '---- Начало операции с хранилищем конфигурации ----') { $inOperation = $true; $inAbsentList = $false; continue }
             if ($line -eq '---- Операция с хранилищем конфигурации завершена ----') { if ($inOperation) { $ended = $true }; $inOperation = $false; continue }
-            if ($inAbsentList -and $byName.ContainsKey($line.Trim())) { $name = $line.Trim(); $status = 'absent' }
+            if ($inAbsentList -and $byName.ContainsKey((ConvertTo-ConfigRepositoryLogObjectName -Name $line.Trim()))) { $name = $line.Trim(); $status = 'absent' }
             elseif ($inOperation -and $line -match '^Объект захвачен для редактирования другим пользователем:\s*(.+?)\s+\(([^()\r\n]+)\)\s*$') {
                 $name = $Matches[1].Trim(); $owner = $Matches[2].Trim(); $status = 'conflict'
             } elseif ($inOperation -and $line -match '^Объект захвачен для редактирования:\s*(.+?)\s*$') {
                 $name = $Matches[1].Trim(); $status = 'captured'
             }
+            if ($name) { $name = ConvertTo-ConfigRepositoryLogObjectName -Name $name }
             if ($name -and $byName.ContainsKey($name)) {
                 $entry = $byName[$name]
                 $entry.observations = @($entry.observations) + [pscustomobject]@{ status = $status; owner = $owner }
@@ -11240,6 +11264,9 @@ function Write-ConfigRepositoryLockOutcomeReport {
         $entries = @($Outcome.items | Where-Object status -eq $status)
         if ($entries.Count -eq 0) { continue }
         $Lines.Add(''); $Lines.Add('### ' + $sections[$status])
+        if ($status -eq 'unconfirmed') {
+            $Lines.Add('Журнал 1С не подтверждает результат по этим объектам. Успешное завершение команды само по себе не доказывает новый захват или текущего владельца.')
+        }
         foreach ($entry in $entries) {
             $ownerDetail = if ($entry.owner) { ' — пользователь хранилища: ' + $entry.owner } else { '' }
             $Lines.Add("- $($entry.name) ($($entry.scope))$ownerDetail")

@@ -41,8 +41,8 @@ different milestones; none implies the next one.
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients; exact branch11 findings, case-based acceptance and normal workflow delivery remain open |
-| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Registered at 546aad7 with 592 passed tests; exact historical branch11 XML/log yields 24 captures, one named-owner conflict and four absent entries; native already-owned semantics and delivered repository acceptance remain open |
-| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Registered at 38555f5 with 604 passed tests; UUID-based dependencies and separate root-first request implemented; actual branch11 metadata identifies the three new constants; native repository, full-sequence shared ownership, export reporting and delivery remain open |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names now recognized with 19 focused root/report tests passing; silent repeat ownership and delivered public-command acceptance remain open |
+| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
 
 Implementation order: establish item 4 with the timeout and source-capture
 contracts and resolve the concrete export deadlock in item 14; complete items
@@ -1311,3 +1311,51 @@ fresh 11/11 YAxUnit plus 2/2 Vanessa result. Its historical
 and the scope assertion. These are retained incident/repair facts, not a current
 performance claim or permission to repeat a product-source restoration. The
 remaining change belongs to workflow conflict-resolution evidence and prevention.
+
+The Vanessa r9 source candidate and non-reusable Pester completion correction
+were registered together at `f89c7a66440191b7f031594e3f87019cb9c73ad7`.
+Targeted passed 498 tests with zero failures/skips on a clean tree
+`26a33b75868481bc4189b270933f8c95516c8050`
+in 492422 ms. The installed dependency still pins r8; compiled r9 and the original
+49-scenario runtime acceptance remain outstanding.
+
+Items 16/17 native acceptance now includes a fresh owned technical file base and
+repository under the admission worktree's
+`build/diagnostics/root-native/Проба с пробелом afce99ab`. Platform 8.3.27.2130
+successfully captured only the root, repeated the root request, separately
+captured CaptureProbe, then released the two explicitly requested objects.
+The module's later capture confirms that the root request did not recursively
+capture it. All native launches used the existing per-infobase admission guard.
+No original PM5 repository was mutated.
+
+The native logs exposed English metadata names inside Russian operation text:
+`Configuration` and `CommonModule.CaptureProbe`. The outcome parser now converts
+only metadata type positions through the existing collection labels, preserving
+object identifiers. It handles both language variants for capture, conflict and
+absence without counting duplicate observations twice. Read-only re-parsing of
+the retained native logs now recognizes the root and module captures. The
+repeated root request contains only the general success line and remains
+unconfirmed; the report explicitly explains that a general successful exit
+cannot prove per-object capture or current ownership. Obtaining already-owned
+identity from supported read-only repository evidence remains follow-up work;
+it must not be inferred from this silent log.
+
+The 19 focused report/root tests pass on Windows PowerShell 5.1, including the
+native language variant, preserved English-looking object identifiers, foreign
+owners, irregular type names and the exact silent repeat response. Installed
+delivery, a fresh partial-conflict public-command run and two-chat/two-host
+acceptance remain open.
+
+Source database ownership across both lock phases was registered at
+`a52eba493cc8cc8718d2d496590bdb84aab70693`: Targeted passed 552 tests with
+zero failures/skips, clean tree `fc76225a505d3dd776cc55b075063c6c434127fd`,
+496731 ms. This remains source proof, not installed two-host qualification.
+
+A further request for one nonexistent constant in the same owned technical
+repository failed with native exit 1 and an explicit absence list, without an
+operation-start marker. The parser now retains that absence evidence while
+preserving the failure. The exact native log is
+`logs/1c/1c-20260910-010348-850-10740-99f369e0.log` below that probe directory.
+The report test file passes all eight cases after this correction. The root
+test file's twelve cases passed before this absence-only parser correction;
+registration performs the required combined owner verification.
