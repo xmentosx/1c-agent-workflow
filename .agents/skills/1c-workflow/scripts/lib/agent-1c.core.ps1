@@ -6925,6 +6925,15 @@ function Invoke-Designer {
               ($dumpIbIndex -ge 0 -and ($dumpIbIndex + 1) -lt $DesignerArgs.Count) -or
               ($externalProcessorIndex -ge 0 -and ($externalProcessorIndex + 2) -lt $DesignerArgs.Count)) {
         $operationKind = if ($dumpCfgIndex -ge 0) { "dump-cfg" } elseif ($dumpIbIndex -ge 0) { "dump-ib" } else { "build-external-processor" }
+        # A standalone CF/CFE export reads the configuration. Its own Designer
+        # must finish, but an unrelated Enterprise/ROCTUP session may stay open.
+        # Unknown or combined commands retain the existing release requirement.
+        $readOnlyCfgDump = $dumpCfgIndex -eq 0 -and (
+            $DesignerArgs.Count -eq 2 -or (
+                $DesignerArgs.Count -eq 4 -and $DesignerArgs[2] -eq "-Extension" -and
+                -not [string]::IsNullOrWhiteSpace([string]$DesignerArgs[3])
+            )
+        )
         $targetIndex = if ($dumpCfgIndex -ge 0) { $dumpCfgIndex + 1 } elseif ($dumpIbIndex -ge 0) { $dumpIbIndex + 1 } else { $externalProcessorIndex + 2 }
         $operationTarget = [string]$DesignerArgs[$targetIndex]
         $completionTimeoutSeconds = Get-DesignerOperationTimeoutSeconds
@@ -6944,7 +6953,8 @@ function Invoke-Designer {
                 -LogPath $logPath `
                 -InfoBaseKind $InfoBaseKind `
                 -InfoBasePath $InfoBasePath `
-                -OperationKind $operationKind)) {
+                -OperationKind $operationKind `
+                -RequireInfoBaseRelease:(-not $readOnlyCfgDump))) {
                 return $false
             }
             $observedAtUtc = [DateTime]::UtcNow

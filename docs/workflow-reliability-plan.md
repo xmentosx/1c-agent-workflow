@@ -39,7 +39,7 @@ different milestones; none implies the next one.
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Read-only follow-up confirms current producer writes run-root snapshots/baseline.dt and post-config.dt while cleanup accepts only the older .agent-1c/snapshots naming contract; common ledger retains the corresponding cleanup debt; owner correction and retention qualification pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Independent branch11 handoff: local selector correction, 15/15 focused tests and subsequent Vanessa 49/49 plus YAxUnit 118/118 reported; current shared selector still lacks provenance handling; general implementation and delivery pending |
-| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Independent branch11 handoff: successful DumpCfg was followed by designer-wait while close_1c_session was denied the export runtime lock; normal close then export recovered operationally; shared correction pending |
+| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Fourth branch11 handoff and current controlled-fork rules confirm a missing decision route; recorded rebuttals exist, but clean AI acceptance and shared correction remain unconfirmed |
 
 Implementation order: establish item 4 with the timeout and source-capture
@@ -406,7 +406,39 @@ the normal parent recorded failure and completed its lifecycle record. After
 normal `close_1c_session`, retry `compact-20260909-164938-375-a2802801` succeeded
 with fresh passed, CF and `.cf.manifest.json`. This confirms operational recovery,
 not an upstream fix. Historical PIDs from that handoff must not be reused for
-future operations. No shared implementation of this correction is claimed yet.
+future operations. The source correction and its current qualification follow.
+
+The shared `Invoke-Designer` now omits the exclusive file-base release probe only
+for the exact standalone `/DumpCfg <file> [-Extension <name>]` shapes used by
+CF/CFE export. Owned Designer process completion, exit status, error-log checks
+and stable nonempty output remain required. Unknown/combined commands, DumpIB
+and mutating operations retain their prior release conditions. This eliminates
+the demonstrated circular dependency without a backend close or lock bypass.
+
+The original completion condition failed the CF/CFE regression with an actually
+held file handle. After correction, 14 new cases plus all 31 existing Designer
+completion cases pass. New public `Export-DevBranchResult` cases use the real
+export and manifest producers with a simulated native boundary and skipped load;
+they verify hashes and fresh evidence, and reject source drift, lost freshness,
+nonzero Designer exit and surviving owned processes without a manifest. Separate
+negative cases retain the release requirement for DumpIB and mixed dump/update.
+
+Live technical qualification on platform 8.3.27.2074 created a new file base and
+loaded the retained technical configuration plus YAXUNIT extension. With its
+guarded thin client alive and holding the base open, real CF and CFE exports each
+completed in about 5.9 seconds; actual manifests and hashes matched. The session
+limit stayed 3 and only the created client was stopped during cleanup. Evidence:
+`build/diagnostics/export-shared-base/Экспорт с открытым клиентом f8f78dfb660043aab85e8658effa2f46/qualification.json`.
+These technical manifests truthfully say `warn-unverified`; no PM5 business gate
+or live public facade qualification is inferred. An earlier qualification-script
+variable collided with the helper's typed Client parameter; that failed run and
+the identity-checked cleanup of its own client are retained separately. The
+fixture was corrected without modifying product behavior or clearing locks.
+
+Remaining item-14 acceptance: delivered check/query/export through the live
+facade, actual-load behavior under coordination, two competing chats, cancellation
+and retry ownership, and server-family evidence. Item 4 still owns the broader
+cross-project/cross-host database admission contract.
 
 ## Added task 15: unsupported AI review and false blocking findings
 

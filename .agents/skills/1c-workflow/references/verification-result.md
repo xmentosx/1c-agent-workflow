@@ -64,6 +64,15 @@ Goal: export a CF or CFE artifact from the current development branch.
 
 The manifest also retains SHA256, verification status, latest 1C log path, and the manual import note.
 
+A standalone `/DumpCfg <file>` (including `-Extension <name>`) may finish while
+another Enterprise/ROCTUP session keeps the infobase open. The helper still
+requires its own Designer processes to finish, valid stable output, and passing
+exit/log checks. It does not require exclusive file-base availability for this
+read-only step. Configuration loads, updates, snapshots and combined commands
+retain their existing release requirements. Never close foreign sessions or
+bypass runtime locks to finish an export; a CF/CFE without the official manifest
+is not a completed result.
+
 Result manifest schema 3 records artifact SHA256, operation, branch metadata, master/development base commits, working-tree provenance, configuration and verification fingerprints, verification status/report/log, `verification.policy`, `verification.decision` (`fresh-passed` or `warn-unverified`), latest 1C log path, publication URL, and manual import note. The legacy `unverifiedOverride` key remains false unless the legacy flag was actually passed. A development commit in a dirty-tree manifest is the base commit, not a claim that the exported content was committed.
 
 Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
