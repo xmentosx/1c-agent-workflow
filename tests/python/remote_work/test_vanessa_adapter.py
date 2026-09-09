@@ -98,7 +98,7 @@ for line in sys.stdin:
             write_json(root / "onec-process-123.json", launch)
             calls, closed = [], []
             class Client:
-                def __init__(self, *args): pass
+                def __init__(self, *args, **kwargs): pass
                 def tool(self, name, args):
                     return result("- Значение: 1") if name == "manage_variables" else result()
                 def close(self): closed.append(True)

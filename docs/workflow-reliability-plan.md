@@ -27,12 +27,12 @@ different milestones; none implies the next one.
 | ID | Priority | Deliverable | Required acceptance | Current evidence |
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
-| 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Pending |
+| 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
-| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Pending |
+| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal and asynchronous MCP progress evidence implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
@@ -81,3 +81,22 @@ their provenance records original hashes. Offline analysis of the full originals
 found both families: client 37 modules/4299 lines, server emulation 63 modules/
 11421 lines. Client-only input remains incomplete. This verifies retained real
 data analysis, not a new live capture with the delivered collector.
+
+Items 2/7 next source slice introduces per-phase timeout overrides, inherited
+execution-host deadlines, independent cleanup, cancellation without replay, and
+truthful facade shutdown errors. Python engine/adapter tests pass 87/87; the Go
+component suite and reproducible build pass. A retained deadline after simulated
+301-second elapsed time verifies removal of the Python default cap; this is not
+a real 16-23-minute 1C run. Go request metadata propagates the remaining budget
+through HTTP and broker startup without the earlier 10/5-minute caps. Version
+0.4.10 is a local candidate until exact Release E2E and component publication.
+
+The full Go suite exposed a pre-existing progress evidence race: go-sdk v1.6.1
+dispatches notification handlers asynchronously relative to request responses.
+A completed response therefore cannot guarantee those handlers already updated
+the final counter. Successful forwarding now gets a separate correlated event;
+the completion counter is explicitly a snapshot. The prior transport assertion
+is retained against events, with an additional deterministic regression that
+holds one notification until after two completed calls reusing a caller token.
+Both calls retain isolated evidence. The two progress tests passed 25 repeated
+runs; no notification delay or guessed sleep is added to the runtime.

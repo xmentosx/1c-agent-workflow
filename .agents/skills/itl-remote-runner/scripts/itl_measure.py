@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 
 from itl_remote.common import WorkError, read_json, write_json
+from itl_remote.deadlines import Deadline
 
 
 def context():
@@ -12,17 +13,23 @@ def context():
 
 
 @contextlib.contextmanager
-def measurement(timeout=300):
+def measurement(timeout=None):
     value = context()
     iteration = Path(value["iteration"])
     write_json(iteration / "ready.json", {"jobId": value["jobId"], "ready": True})
-    deadline = time.monotonic() + timeout
+    deadline = Deadline.from_context(value)
+    # An explicit legacy caller limit may narrow, but never extend, its parent.
+    if timeout is not None:
+        deadline = Deadline("ready", min(timeout, deadline.remaining()), cancel_path=value.get("cancelPath"))
     while not (iteration / "go.json").exists():
-        if time.monotonic() > deadline:
-            raise WorkError("CONTROLLER_START_TIMEOUT")
+        deadline.remaining()
         time.sleep(0.01)
-    if read_json(iteration / "go.json")["jobId"] != value["jobId"]:
+    signal = read_json(iteration / "go.json")
+    if signal["jobId"] != value["jobId"]:
         raise WorkError("FOREIGN_START_SIGNAL")
+    if signal.get("phase"):
+        value["phase"] = signal["phase"]
+        Deadline.from_context(value).remaining()
     started = time.monotonic_ns()
     yield value
     finished = time.monotonic_ns()

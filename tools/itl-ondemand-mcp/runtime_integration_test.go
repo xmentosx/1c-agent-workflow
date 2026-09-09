@@ -405,8 +405,19 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	if started["outcome"] != "started" {
 		t.Fatalf("started evidence was not persisted before forwarding: %#v", started)
 	}
-	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressNotificationsForwarded"] != float64(1) {
+	if evidence["schemaVersion"] != float64(3) || evidence["progressTokenProvided"] != true || evidence["progressEvidenceId"] == "" {
 		t.Fatalf("progress diagnostics were not persisted: %#v", evidence)
+	}
+	// The SDK dispatches notification handlers asynchronously relative to replies.
+	// Preserve the original successful-forwarding assertion against the event log,
+	// which must include a notification even when its handler finishes late.
+	progressPath := filepath.Join(rt.projectRoot, ".agent-1c", "mcp", "ondemand", "roctup", rt.instanceID+".progress.jsonl")
+	events := awaitProgressEvidence(t, progressPath, 1)
+	if len(events) != 1 || events[0]["forwardedCount"] != float64(1) || events[0]["progressEvidenceId"] != evidence["progressEvidenceId"] {
+		t.Fatalf("successful notification was lost or duplicated: %#v", events)
+	}
+	if snapshot := evidence["progressNotificationsForwarded"].(float64); snapshot != 0 && snapshot != 1 {
+		t.Fatalf("invalid completion snapshot: %v", snapshot)
 	}
 }
 

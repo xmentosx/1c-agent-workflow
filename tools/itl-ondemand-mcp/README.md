@@ -6,9 +6,25 @@ The executable is registered once in the active client's project MCP config. Its
 
 For Vanessa, the broker leases separate MCP-manager and TestClient ports, creates the reserved `itl-ondemand` TestClient profile, and starts Vanessa Automation with silent/fail-closed VanessaExt installation. Editor-only calls leave TestClient stopped. Before a TestClient-dependent call, the facade reuses a proven owned process or runs the shared capacity/license preflight, starts one owned process, proves its port, auto-connects the reserved profile, and requires a positive logical-connection postcondition. A capacity failure permits one shared exact-dev-infobase cleanup and one admission retry; source-infobase, other-branch, and ambiguous processes remain fail-closed. Idle or stdio-EOF cleanup remains ownership-scoped and unsafe-action protection is never edited automatically.
 
-Every forwarded call appends schema-v2 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
+Every forwarded call appends schema-v3 evidence under `.agent-1c/mcp/ondemand/<family>/`. Evidence stores outcome/result code, catalog and instance identity, argument SHA, and—when applicable—the project-relative feature path, feature SHA, and scenario line. Failed calls also store a sanitized short result message and backend log path. Vanessa runtime/editor exception text is returned as `ITL_VANESSA_TOOL_RESULT_FAILED` even when the upstream MCP response incorrectly reports `IsError=false`; raw arguments, secrets, configuration content, successful result content, and scenario content are never persisted.
+
+Successfully forwarded progress notifications append separate events to
+`<instance>.progress.jsonl`, correlated by `progressEvidenceId`. The completion
+record's `progressNotificationsForwarded` is a snapshot at that moment, not a
+claim that asynchronous notification handlers have drained. Internal unique
+tokens isolate consecutive calls that reuse a caller token; the caller still
+receives its original token. Routes remain valid for late notifications until
+their backend session closes. Arbitrary progress text and caller tokens are not
+persisted. This avoids blocking final results on guessed notification delays.
 
 If a registered backend refuses a connection, the facade asks the private broker to compare the registered PID and port with the ownership record under the existing runtime/start locks. Only a dead PID or a verified owned PID with an unavailable port is stale; an unverified live PID fails closed. The broker atomically claims and removes the stale runtime, starts one replacement with a new instance ID, and the facade retries the original call once only when the compatibility contract marks it read-only/idempotent or it is in the conservative Vanessa idempotency policy. Other calls return `ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED` with the old/new instance IDs and an explicit manual-review action; their outcome is treated as unknown and they are never replayed automatically.
+
+The performance adapter supplies `_meta.itlPhaseRemainingMs` on tool calls to
+carry its remaining phase budget through HTTP and broker startup. Ordinary calls
+retain a ten-minute request budget; inherited budgets may extend to 24 hours and
+never extend an earlier caller deadline. HTTP transport has no separate shorter
+wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
+minute); forced shutdown remains unproven cleanup at the adapter boundary.
 
 Build the release asset from the repository root:
 

@@ -120,10 +120,7 @@ func (b *powershellBroker) Stop(ctx context.Context) error {
 }
 
 func (b *powershellBroker) invoke(ctx context.Context, operation string, extra []string) (*backendInfo, error) {
-	timeout := b.Timeout
-	if timeout == 0 {
-		timeout = 5 * time.Minute
-	}
+	timeout := brokerCallTimeout(ctx, b.Timeout)
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := b.PowerShell

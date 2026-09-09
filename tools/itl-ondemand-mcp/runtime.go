@@ -34,6 +34,8 @@ type runtime struct {
 	logger             *slog.Logger
 	progressMu         sync.Mutex
 	progress           map[string]*progressRoute
+	progressSerial     atomic.Uint64
+	progressWriteMu    sync.Mutex
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -56,6 +58,11 @@ type runtime struct {
 type progressRoute struct {
 	session   *mcp.ServerSession
 	forwarded atomic.Uint64
+	token     any
+	id        string
+	path      string
+	tool      string
+	backend   *mcp.ClientSession
 }
 
 const (
@@ -79,6 +86,11 @@ func (r *runtime) call(ctx context.Context, req *mcp.CallToolRequest) (*mcp.Call
 }
 
 func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolName string, arguments any) (*mcp.CallToolResult, error) {
+	ctx, cancel, budgetErr := phaseRequestContext(ctx, req.Params.Meta)
+	if budgetErr != nil {
+		return toolError("ITL_ONDEMAND_PHASE_BUDGET_INVALID", budgetErr.Error(), nil), nil
+	}
+	defer cancel()
 	progressTokenProvided := req.Params.GetProgressToken() != nil
 	tool := r.catalog.tool(toolName)
 	if tool == nil {
@@ -115,6 +127,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
 			_ = r.session.Close()
+			r.clearProgress(r.session)
 			r.session = nil
 			r.backend = nil
 		}
@@ -156,24 +169,25 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	session := r.session
 	callInstanceID := r.instanceID
 	callBackend := r.backend
-	r.active++
-	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0)
-	r.mu.Unlock()
-
 	params := &mcp.CallToolParams{Name: toolName, Arguments: arguments, Meta: req.Params.Meta}
-	progressKey := progressTokenKey(req.Params.GetProgressToken())
 	var route *progressRoute
-	if progressKey != "" {
-		route = &progressRoute{session: req.Session}
+	if progressTokenProvided {
+		progressID := fmt.Sprintf("%s-%d", callInstanceID, r.progressSerial.Add(1))
+		route = &progressRoute{session: req.Session, token: req.Params.GetProgressToken(),
+			id: progressID, tool: toolName, backend: session,
+			path: filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, callInstanceID+".progress.jsonl")}
+		params.Meta = make(mcp.Meta, len(req.Params.Meta))
+		for key, value := range req.Params.Meta {
+			params.Meta[key] = value
+		}
+		params.Meta["progressToken"] = progressID
 		r.progressMu.Lock()
-		r.progress[progressKey] = route
+		r.progress[progressTokenKey(progressID)] = route
 		r.progressMu.Unlock()
-		defer func() {
-			r.progressMu.Lock()
-			delete(r.progress, progressKey)
-			r.progressMu.Unlock()
-		}()
 	}
+	r.active++
+	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route))
+	r.mu.Unlock()
 	result, err := r.callUpstream(ctx, session, params)
 	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
 	r.mu.Lock()
@@ -184,7 +198,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
 	}
-	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route))
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route))
 	if err != nil && isConnectionRefused(err) {
 		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
 		if recoveryErr != nil {
@@ -343,6 +357,7 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	}
 	if r.session != nil {
 		_ = r.session.Close()
+		r.clearProgress(r.session)
 	}
 	r.session = nil
 	r.backend = nil
@@ -537,8 +552,10 @@ func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {
 		},
 	})
 	transport := &mcp.StreamableClientTransport{
-		Endpoint:   info.URL,
-		HTTPClient: &http.Client{Timeout: 10 * time.Minute},
+		Endpoint: info.URL,
+		// RPC contexts own phase deadlines; a fixed transport timeout would
+		// truncate explicitly budgeted long 1C calculations.
+		HTTPClient: &http.Client{},
 		MaxRetries: 2,
 	}
 	session, err := client.Connect(ctx, transport, nil)
@@ -708,8 +725,13 @@ func (r *runtime) forwardProgress(ctx context.Context, params *mcp.ProgressNotif
 	r.progressMu.Lock()
 	route := r.progress[key]
 	r.progressMu.Unlock()
-	if route != nil && route.session.NotifyProgress(ctx, params) == nil {
-		route.forwarded.Add(1)
+	if route != nil {
+		forwarded := *params
+		forwarded.ProgressToken = route.token
+		if route.session.NotifyProgress(ctx, &forwarded) == nil {
+			count := route.forwarded.Add(1)
+			r.writeProgressEvidence(route, count)
+		}
 	}
 }
 
@@ -752,6 +774,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	}
 	if r.session != nil {
 		_ = r.session.Close()
+		r.clearProgress(r.session)
 		r.session = nil
 	}
 	r.backend = nil
@@ -781,6 +804,7 @@ func (r *runtime) stop(ctx context.Context) error {
 	}
 	if r.session != nil {
 		_ = r.session.Close()
+		r.clearProgress(r.session)
 		r.session = nil
 	}
 	r.backend = nil
@@ -1207,7 +1231,7 @@ func (r *runtime) close(ctx context.Context) error {
 	return fmt.Errorf("cleanup owned backend after stdio EOF after 3 attempts: %w", lastErr)
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64) {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, progressID ...string) {
 	if r.suppressEvidence {
 		return
 	}
@@ -1235,6 +1259,10 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		"featurePath":     featurePath, "featureSha256": featureSHA, "scenarioLine": scenarioLine,
 		"progressTokenProvided": progressTokenProvided, "progressNotificationsForwarded": progressNotificationsForwarded,
 		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if len(progressID) > 0 && progressID[0] != "" {
+		entry["progressEvidenceId"] = progressID[0]
+		entry["progressCountScope"] = "snapshot-at-outcome; complete events in instance.progress.jsonl"
 	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, instanceID+".evidence.jsonl")

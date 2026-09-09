@@ -14,6 +14,7 @@ from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_js
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types
 from .access import Lease, target_access
+from .deadlines import Deadline, budgets
 
 
 def render(command, variables):
@@ -26,26 +27,27 @@ def render(command, variables):
 
 
 def wait_json(path, process, timeout, cancelled):
-    deadline = time.monotonic() + timeout
+    deadline = timeout if isinstance(timeout, Deadline) else Deadline("ready", timeout)
     while not path.exists():
         if cancelled():
             raise WorkError("CANCELLED")
         if process.process.poll() is not None:
             raise WorkError("WORKLOAD_EXITED_WITHOUT_SIGNAL: " + path.name)
-        if time.monotonic() >= deadline:
-            raise WorkError("WORKLOAD_READY_TIMEOUT: " + path.name)
+        deadline.remaining()
         time.sleep(0.01)
     return read_json(path)
 
 
-def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None):
+def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None, cancel_path=None):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
     variables = {"python": sys.executable, "runtime": Path(__file__).resolve().parent.parent,
                  "workspace": Path(target["workspace"]).resolve(), "input": Path(package) / "input",
                  "run": run, "context": run / "context.json"}
+    phase_budgets = budgets(scenario)
     context = {"schemaVersion": 1, "jobId": request["id"], "parameters": request["parameters"],
-               "target": target, "scenarioId": scenario["id"], "operations": request["operations"]}
+               "target": target, "scenarioId": scenario["id"], "operations": request["operations"],
+               "phaseTimeoutSeconds": phase_budgets, "cancelPath": str(cancel_path) if cancel_path else None}
     child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
     if access_lease:
         context["accessLease"] = access_lease.proof()
@@ -53,9 +55,6 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     # This file is machine-local, not included in the user-facing result archive.
     write_json(variables["context"], context)
     commands = scenario["commands"]
-    timeout = float(scenario.get("timeoutSeconds", 300))
-    if not 0 < timeout <= 86400:
-        raise WorkError("INVALID_SCENARIO_TIMEOUT")
     processes = []
     profiler = None
     result = {"schemaVersion": 1, "jobId": request["id"], "scenarioId": scenario["id"],
@@ -72,18 +71,42 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
 
-    def command(name):
+    def start_phase(name):
+        deadline = Deadline(name, phase_budgets[name], cancel_path=context["cancelPath"])
+        context["phase"] = deadline.record()
+        write_json(variables["context"], context)
+        progress(name)
+        return deadline
+
+    def command(name, deadline=None):
         if name not in commands:
             return
         if cancelled() and name != "cleanup":
             raise WorkError("CANCELLED")
-        progress(name)
+        deadline = deadline or start_phase(name)
+        deadline.remaining()
         begin = time.monotonic()
+        record = {"name": name, "startedAt": stamp(), "status": "running", "timeoutSeconds": deadline.timeout}
+        result["phases"].append(record)
+        write_json(run / "progress.json", {"jobId": request["id"], "phases": result["phases"]})
         process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
                                child_environment)
         processes.append(process)
-        process.wait(timeout, cancelled if name != "cleanup" else lambda: False)
-        result["phases"].append({"name": name, "seconds": time.monotonic() - begin})
+        try:
+            process.wait(deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
+            record["status"] = "completed"
+        except Exception as error:
+            record.update(status="failed", error=str(error))
+            # Stop this command's owned tree before starting recovery/cleanup.
+            # A persistent adapter started by prepare has its separate owner.
+            try:
+                process.close()
+            except Exception as cleanup:
+                result["cleanupErrors"].append(str(cleanup))
+            raise
+        finally:
+            record["seconds"] = time.monotonic() - begin
+            write_json(run / "progress.json", {"jobId": request["id"], "phases": result["phases"]})
 
     def open_profiler(iteration):
         proof = read_json(run / "runtime-proof.json")
@@ -137,24 +160,26 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 if not effective_rdbg:
                     result["limitations"].append("RDBG is not configured; requested profile is unavailable.")
                     continue
-            workload_process = None
             if scenario.get("adapter", "command") == "handshake":
+                readiness_deadline = start_phase("ready")
                 process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
                                        iteration / "action.log", child_environment)
                 processes.append(process)
-                ready = wait_json(iteration / "ready.json", process, timeout, cancelled)
+                ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
                 if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
                     raise WorkError("WORKLOAD_READINESS_UNPROVEN")
                 if kind == "profile":
                     profiler = open_profiler(iteration)
                 if profiler:
                     profiler.start()
+                action_deadline = start_phase("action")
                 begin = time.monotonic_ns()
-                write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin})
-                done = wait_json(iteration / "done.json", process, timeout, cancelled)
+                write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin, "phase": action_deadline.record()})
+                done = wait_json(iteration / "done.json", process, action_deadline, cancelled)
                 end = time.monotonic_ns()
                 if done.get("jobId") != request["id"] or done.get("ready") is not True:
                     raise WorkError("WORKLOAD_COMPLETION_UNPROVEN")
+                process.wait(action_deadline.remaining(), cancelled)
                 command("ready")
                 if "ready" in commands:
                     end = time.monotonic_ns()
@@ -163,7 +188,6 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                     if not isinstance(a, int) or not isinstance(b, int) or not begin <= a <= b <= end:
                         raise WorkError("WORKLOAD_CLOCK_INVALID")
                     begin, end = a, b
-                workload_process = process
             else:
                 if kind == "profile":
                     profiler = open_profiler(iteration)
@@ -182,8 +206,6 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 finally:
                     profiler.close()
                     profiler = None
-            if workload_process:
-                workload_process.wait(timeout, cancelled)
             command("verify")
             verification = read_json(iteration / "verification.json")
             checks = verification.get("checks")
@@ -303,7 +325,8 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                     raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
-                                         progress, access_lease=lease, access_scope=access["scope"])
+                                         progress, access_lease=lease, access_scope=access["scope"],
+                                         cancel_path=spool / "control" / (identifier + ".cancel.json"))
                 lease.release(cleanup_errors=result["cleanupErrors"])
                 state.update(status=result["status"], phase="finished", access=result.get("access"),
                              result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())

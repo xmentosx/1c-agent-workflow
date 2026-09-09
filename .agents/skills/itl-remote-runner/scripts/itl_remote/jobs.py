@@ -9,6 +9,7 @@ import tempfile
 import uuid
 
 from .common import FileLock, WorkError, beneath, digest, identity, publish_path, read_json, stamp, write_json
+from .deadlines import budgets
 
 
 def job_id(value):
@@ -18,6 +19,7 @@ def job_id(value):
 
 
 def validate_scenario(scenario):
+    budgets(scenario)
     if scenario.get("schemaVersion") != 1 or not scenario.get("id"):
         raise WorkError("SCENARIO_VERSION_OR_ID_INVALID")
     if scenario.get("adapter", "command") not in ("command", "handshake"):

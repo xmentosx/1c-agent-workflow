@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.9"
+const version = "0.4.10"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -46,9 +46,13 @@ func run(args []string) error {
 	catalogPath := flags.String("catalog", "", "compatibility catalog")
 	helperPath := flags.String("helper", "", "agent-1c.ps1 path")
 	idle := flags.Duration("idle-timeout", 10*time.Minute, "backend idle timeout")
+	cleanupTimeout := flags.Duration("cleanup-timeout", time.Minute, "owned backend shutdown budget")
 	surface := flags.String("surface", "gateway", "public tool surface: gateway or full")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
+	}
+	if *cleanupTimeout <= 0 || *cleanupTimeout > 24*time.Hour {
+		return fmt.Errorf("--cleanup-timeout must be positive and no greater than 24h")
 	}
 	if *family != "roctup" && *family != "vanessa-ui" {
 		return fmt.Errorf("invalid --family %q", *family)
@@ -101,7 +105,7 @@ func run(args []string) error {
 		}
 	}
 	err = server.Run(context.Background(), &mcp.StdioTransport{})
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), *cleanupTimeout)
 	defer cancel()
 	cleanupErr := rt.close(cleanupCtx)
 	if err != nil {

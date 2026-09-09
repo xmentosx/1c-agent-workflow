@@ -14,11 +14,16 @@ import time
 import uuid
 
 from .common import WorkError, digest, native_environment, read_json, write_json
+from .deadlines import Deadline
 
 
 class StdioMcp:
-    def __init__(self, command, directory, environment, log, timeout=300):
+    def __init__(self, command, directory, environment, log, timeout=300, *, deadline=None):
         self.timeout, self.serial = timeout, 0
+        self.deadline = deadline
+        self.uncertain = False
+        self.closed = False
+        self.close_error = None
         self.messages = queue.Queue()
         self.stderr = Path(log).open("wb")
         try:
@@ -34,8 +39,13 @@ class StdioMcp:
             self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
                                        "clientInfo": {"name": "itl-performance", "version": "1"}})
             self.notify("notifications/initialized", {})
-        except BaseException:
-            self.close()
+        except BaseException as primary:
+            try:
+                self.close()
+            except Exception as cleanup:
+                combined = WorkError(str(primary) + "; " + str(cleanup))
+                combined.cleanup_errors = [str(cleanup)]
+                raise combined from primary
             raise
 
     def _read(self):
@@ -52,26 +62,34 @@ class StdioMcp:
         self.process.stdin.flush()
 
     def request(self, method, params):
+        if self.uncertain:
+            raise WorkError("ITL_FACADE_PREVIOUS_REQUEST_UNCERTAIN: cleanup required")
+        deadline = self.deadline or Deadline("action", self.timeout)
+        remaining = deadline.remaining()
+        if method == "tools/call" and self.deadline:
+            params = {**params, "_meta": {"itlPhaseRemainingMs": remaining * 1000}}
         self.serial += 1
         identifier = self.serial
         self.process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": identifier, "method": method, "params": params}) + "\n")
         self.process.stdin.flush()
-        deadline = time.monotonic() + self.timeout
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise WorkError("ITL_FACADE_REQUEST_TIMEOUT")
-            try:
-                message = self.messages.get(timeout=remaining)
-            except queue.Empty:
-                raise WorkError("ITL_FACADE_REQUEST_TIMEOUT") from None
-            if isinstance(message, BaseException):
-                raise message
-            if message.get("id") != identifier:
-                continue  # progress/log notifications are not command completion
-            if "error" in message:
-                raise WorkError("ITL_FACADE_RPC_FAILED: " + str(message["error"]))
-            return message["result"]
+        try:
+            while True:
+                try:
+                    message = self.messages.get(timeout=min(deadline.remaining(), 0.1))
+                except queue.Empty:
+                    continue
+                if isinstance(message, BaseException):
+                    raise message
+                if message.get("id") != identifier:
+                    continue  # progress/log notifications are not command completion
+                if "error" in message:
+                    raise WorkError("ITL_FACADE_RPC_FAILED: " + str(message["error"]))
+                return message["result"]
+        except BaseException:
+            self.uncertain = True
+            with contextlib.suppress(BrokenPipeError, OSError):
+                self.notify("notifications/cancelled", {"requestId": identifier, "reason": "phase ended"})
+            raise
 
     def tool(self, name, arguments):
         result = self.request("tools/call", {"name": "call_tool", "arguments": {
@@ -81,18 +99,31 @@ class StdioMcp:
         return result
 
     def close(self):
+        if self.closed:
+            if self.close_error:
+                raise self.close_error
+            return
+        self.closed = True
         if self.process.stdin:
             with contextlib.suppress(BrokenPipeError, OSError):
                 self.process.stdin.close()  # facade owns and releases its manager/TestClient
+        forced = False
         try:
-            self.process.wait(timeout=30)
-        except subprocess.TimeoutExpired:
+            # Cleanup has its own budget; an expired action never cancels cleanup.
+            timeout = self.deadline.remaining() if self.deadline and self.deadline.phase == "cleanup" else 60
+            self.process.wait(timeout=timeout)
+        except (subprocess.TimeoutExpired, WorkError):
+            forced = True
             self.process.kill()  # only this job's facade; engine job contains descendants
             self.process.wait(timeout=5)
         self.reader.join(timeout=1)
         if self.process.stdout:
             self.process.stdout.close()
         self.stderr.close()
+        if forced or self.process.returncode:
+            self.close_error = WorkError("ITL_FACADE_CLEANUP_UNPROVEN: forced=" + str(forced)
+                                         + "; exit=" + str(self.process.returncode))
+            raise self.close_error
 
 
 def result_text(result):
@@ -138,6 +169,7 @@ def daemon(context_path, setup_feature):
     context = read_json(context_path)
     control = run / "vanessa-control"
     client = None
+    cleanup_errors = []
     try:
         va = context["target"]["vanessa"]
         for key in ("facade", "helper", "catalog"):
@@ -145,8 +177,10 @@ def daemon(context_path, setup_feature):
                 raise WorkError("ITL_VANESSA_INPUT_REQUIRED: " + key)
         environment = native_environment({"ITL_PERFORMANCE_CONTEXT": str(context_path)}, windows_powershell=True)
         command = [va["facade"], "serve", "--family", "vanessa-ui", "--project-root", context["target"]["workspace"],
-                   "--helper", va["helper"], "--catalog", va["catalog"], "--idle-timeout", "1h"]
-        client = StdioMcp(command, context["target"]["workspace"], environment, run / "vanessa-facade.log")
+                   "--helper", va["helper"], "--catalog", va["catalog"], "--idle-timeout", "1h",
+                   "--cleanup-timeout", str(context.get("phaseTimeoutSeconds", {}).get("cleanup", 300)) + "s"]
+        client = StdioMcp(command, context["target"]["workspace"], environment, run / "vanessa-facade.log",
+                          deadline=Deadline.from_context(context))
         client.tool("connect_test_client", {"profileName": "itl-ondemand"})
         launch = own_launch(run, context)
         run_feature(client, setup_feature, run / "vanessa-setup.json")
@@ -180,6 +214,7 @@ def daemon(context_path, setup_feature):
                 request = read_json(path)
                 if request.get("jobId") != context["jobId"]:
                     raise WorkError("ITL_PERFORMANCE_FOREIGN_REQUEST")
+                client.deadline = Deadline.from_context(context, phase=request.get("phase"))
                 if request["operation"] == "cleanup":
                     client.close()
                     client = None
@@ -197,21 +232,31 @@ def daemon(context_path, setup_feature):
                     write_json(response, {"jobId": context["jobId"], "passed": False, "error": str(error)})
             time.sleep(0.02)
     except Exception as error:
+        cleanup_errors.extend(getattr(error, "cleanup_errors", []))
         write_json(control / "error.json", {"jobId": context["jobId"], "error": str(error)})
         raise
     finally:
+        errors = cleanup_errors
         if client:
-            client.close()
+            try:
+                client.deadline = Deadline("cleanup", context.get("phaseTimeoutSeconds", {}).get("cleanup", 300))
+                client.close()
+            except Exception as error:
+                errors.append(str(error))
+        write_json(control / "stopped.json", {"jobId": context["jobId"], "passed": not errors, "errors": errors})
+        if errors:
+            raise WorkError("ITL_PERFORMANCE_CLEANUP_FAILED: " + "; ".join(errors))
 
 
-def wait_response(path, context, timeout=300):
+def wait_response(path, context, timeout=None):
     control = Path(context["run"]) / "vanessa-control"
-    deadline = time.monotonic() + timeout
+    deadline = Deadline.from_context(context)
+    if timeout is not None:
+        deadline = Deadline(deadline.phase, min(timeout, deadline.remaining()), cancel_path=context.get("cancelPath"))
     while not Path(path).exists():
-        if (control / "error.json").exists():
+        if deadline.phase != "cleanup" and (control / "error.json").exists():
             raise WorkError(read_json(control / "error.json")["error"])
-        if time.monotonic() >= deadline:
-            raise WorkError("ITL_PERFORMANCE_ADAPTER_TIMEOUT")
+        deadline.remaining()
         time.sleep(0.02)
     result = read_json(path)
     if result.get("jobId") != context["jobId"] or result.get("passed") is False:
@@ -236,9 +281,11 @@ def command(operation, feature=None):
         write_json(control / "started.json", {"jobId": context["jobId"], "pid": process.pid})
         return wait_response(control / "prepared.json", context)
     if operation == "cleanup" and not (control / "prepared.json").exists():
-        return  # failed preparation closes its own facade; engine closes the owned process tree
+        if not (control / "started.json").exists():
+            return
+        return wait_response(control / "stopped.json", context)
     nonce = uuid.uuid4().hex
     request = control / ("request-" + nonce + ".json")
     write_json(request, {"jobId": context["jobId"], "operation": "cleanup" if operation == "cleanup" else "feature",
-                         "feature": str(Path(feature).resolve()) if feature else None})
+                         "feature": str(Path(feature).resolve()) if feature else None, "phase": context.get("phase")})
     return wait_response(control / ("response-" + nonce + ".json"), context)
