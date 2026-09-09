@@ -1306,6 +1306,13 @@ function Assert-OneCConfigurationSourceIntegrity {
                 -ScriptPath $validatorPath `
                 -Arguments $validatorArguments `
                 -SupportsOutFile:$supportsOutFile
+            if ($kind.validator -eq "form") {
+                # Successful validation must not hide advisory findings. Keep
+                # the validator's exit code authoritative for structural errors.
+                foreach ($warning in [regex]::Matches([string]$result.details, '(?m)^\[WARN\][ \t]+[^\r\n]+')) {
+                    Write-Warning -Message "form:${repoPath}:$($warning.Value)" -WarningAction Continue
+                }
+            }
             if ($result.exitCode -ne 0) {
                 $issues.Add([pscustomobject]@{
                     validator = $kind.validator

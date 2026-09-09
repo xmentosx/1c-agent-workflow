@@ -182,13 +182,13 @@
                               "resultSha256":  "c9ffd485b3f74e4fe7f542f2b6ebc8fce98fa36634e510162778c815e041d617"
                           },
                           {
-                              "path":  "content/agents/error-fixer.md",
-                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
-                              "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
-                              "upstreamSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
-                              "baselineSha256":  "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
-                              "resultSha256":  "173e16c7e02532ab442c63478f56303d755960759a0de34175ae47925cc749ff"
+                              "path": "content/agents/error-fixer.md",
+                              "requirementId": "ITL-CODECHECKER-LATENCY-001",
+                              "disposition": "resolved",
+                              "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001.",
+                              "upstreamSha256": "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
+                              "baselineSha256": "95d70fb3c6d83b2dd8ec39bef1470f7b0d0e89e13729b7c038bb16b02f46a317",
+                              "resultSha256": "b8836db6db425b9b2924f887697bf50bd41065fd9eed22a5f349ed5bc0337f5a"
                           },
                           {
                               "path":  "content/commands/caveman.md",
@@ -848,13 +848,13 @@
                               "resultSha256":  "dd1fa1b78385afcbd09583bc84bd180af6b227e94dde0a94f42bcf0c4e7a7e28"
                           },
                           {
-                              "path":  "content/skills/1c-metadata-manage/docs/form-manage.md",
-                              "requirementId":  "ITL-MANAGED-FORM-ROW-GUARD-001",
-                              "disposition":  "resolved",
-                              "reason":  "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans.",
-                              "upstreamSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
-                              "baselineSha256":  "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
-                              "resultSha256":  "1a0d4ac2fbeb720cf67d2b48b1f72c8b3a6d726c352d84f6e3480238e46c942a"
+                              "path": "content/skills/1c-metadata-manage/docs/form-manage.md",
+                              "requirementId": "ITL-MANAGED-FORM-ROW-GUARD-001",
+                              "disposition": "resolved",
+                              "reason": "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by documenting explicit row-change booleans. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001.",
+                              "upstreamSha256": "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
+                              "baselineSha256": "f54a0230948e5a5c45d2fa172c5db528d886481828d535895745a3094b49b3ef",
+                              "resultSha256": "2fb1080106afe94ed3c2e1051c1e8247352c360cafc4ce73171450ea169b472b"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/docs/uuid-check.md",
@@ -1145,13 +1145,13 @@
                               "resultSha256":  "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b"
                           },
                           {
-                              "path":  "docs/DOWNSTREAM-PATCHES.md",
-                              "requirementId":  "ITL-GRILLING-001",
-                              "disposition":  "resolved",
-                              "reason":  "Resolve ITL-GRILLING-001 for r29 by recording the grilling skill family while preserving prior patch ownership.",
-                              "upstreamSha256":  "\u003cabsent\u003e",
-                              "baselineSha256":  "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
-                              "resultSha256":  "d9d107f7febee55f4ca075dcd3b402e5413ed36f82347a0c15a05bef27a3b949"
+                              "path": "docs/DOWNSTREAM-PATCHES.md",
+                              "requirementId": "ITL-GRILLING-001",
+                              "disposition": "resolved",
+                              "reason": "Resolve ITL-GRILLING-001 for r29 by recording the grilling skill family while preserving prior patch ownership. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001.",
+                              "upstreamSha256": "<absent>",
+                              "baselineSha256": "bf06a8b85b2985fc9a8c5e09c701b0324901e52799bf113ce9dc325788f8b301",
+                              "resultSha256": "f8aa69d04332c36512d242ffecf970a93d48dbddcb6607b6e10d3e0ab77b8103"
                           },
                           {
                               "path":  "docs/FORK-POLICY.md",
@@ -1613,13 +1613,13 @@
                               "resultSha256":  "60bd8e1e722d0a6049cd604f268db3b589dc22a677f89a2b1056cf0844362f44"
                           },
                           {
-                              "path":  "content/rules/verification-gates.md",
-                              "requirementId":  "ITL-CODECHECKER-LATENCY-001",
-                              "disposition":  "resolved",
-                              "reason":  "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback.",
-                              "upstreamSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
-                              "baselineSha256":  "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
-                              "resultSha256":  "22c803e5beb52a2917e0af75b15297a7f862b78d082dac3e2133ef84704ef5c7"
+                              "path": "content/rules/verification-gates.md",
+                              "requirementId": "ITL-CODECHECKER-LATENCY-001",
+                              "disposition": "resolved",
+                              "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001.",
+                              "upstreamSha256": "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
+                              "baselineSha256": "7d7fc8852461fad21b26a3dc7935e0bbef0cf694c2f655611d9d84aa40affa81",
+                              "resultSha256": "280d99bae077b71b8711ace4cf7e56b3a8979a67c5201b68db7f58e7261aa6b1"
                           },
                           {
                               "path":  "content/rules/verification-policy.md",
@@ -1764,6 +1764,42 @@
                               "upstreamSha256":  "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
                               "baselineSha256":  "d525a681cc61f62f2f06a1ec88928abc0c68e0cf75b25df7bea670fd7fa24a9e",
                               "resultSha256":  "d525a681cc61f62f2f06a1ec88928abc0c68e0cf75b25df7bea670fd7fa24a9e"
+                          },
+                          {
+                              "path": "content/rules/forms.md",
+                              "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
+                              "disposition": "resolved",
+                              "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence.",
+                              "upstreamSha256": "4f78bd3596e1fedb27cde573b960c9ce96ec0a11d7e73b0d6bd8fa7c0f044b88",
+                              "baselineSha256": "4f78bd3596e1fedb27cde573b960c9ce96ec0a11d7e73b0d6bd8fa7c0f044b88",
+                              "resultSha256": "775705f2c4e5e8249685fc0551ec80719e590438241875b0841c2153bcf5fa47"
+                          },
+                          {
+                              "path": "content/skills/1c-metadata-manage/tools/1c-form-validate/scripts/form-validate.ps1",
+                              "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
+                              "disposition": "resolved",
+                              "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence.",
+                              "upstreamSha256": "9de1616f65c2a208625f118b950b6a50a5309d1d65b14dfb8ae7f5d39c5968a9",
+                              "baselineSha256": "9de1616f65c2a208625f118b950b6a50a5309d1d65b14dfb8ae7f5d39c5968a9",
+                              "resultSha256": "6905e7b9b1d5219b3c173b7f6208369ce940bbd70d7360133729e2bfcbeb270b"
+                          },
+                          {
+                              "path": "docs/releases/itl-main-410951e7-r34.md",
+                              "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
+                              "disposition": "downstream-only",
+                              "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence.",
+                              "upstreamSha256": "<absent>",
+                              "baselineSha256": "<absent>",
+                              "resultSha256": "fd7abeb5c7d38eb2c6a13d69730c619e6d476f87ec9f2f772c7a14babc854cbe"
+                          },
+                          {
+                              "path": "tests/FormCommandAdvisory.Tests.ps1",
+                              "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
+                              "disposition": "downstream-only",
+                              "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence.",
+                              "upstreamSha256": "<absent>",
+                              "baselineSha256": "<absent>",
+                              "resultSha256": "13c98a4ed91437305ee6206f3f4312d1fc7b45c8db10b4a5a3181ac8c128d67e"
                           }
                       ]
 }

@@ -3,9 +3,9 @@
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
     $HelperPath = $context.HelperPath
-    $script:TargetAiRulesRef = "itl-main-410951e7-r33"
-    $script:TargetAiRulesCommit = "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"
-    $script:TargetAiRulesRevision = 33
+    $script:TargetAiRulesRef = "itl-main-410951e7-r34"
+    $script:TargetAiRulesCommit = "ed2a1e3b44ace1e359d922adfcb70c3dfb874f3b"
+    $script:TargetAiRulesRevision = 34
 
     function New-AiRulesMigrationFixture {
         param(
@@ -495,7 +495,7 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "plans monotonic r11 through r32 to r33 migration for all ten clients" {
+    It "plans monotonic r11 through r33 to r34 migration for all ten clients" {
         $releases = @(
             [pscustomobject]@{ revision = 11; ref = "itl-main-b4d9875b-r11"; commit = "af82570afca06c40a9588c8a678bf3665bba4870"; upstream = "b4d9875b15c6d93f493035aee51f077126e72a21" },
             [pscustomobject]@{ revision = 12; ref = "itl-main-72665287-r12"; commit = "16e9e44318a79d9e82c12b19e6759cdf6492d9a4"; upstream = "72665287e77361aea3aaf866fef163d98f0fabcd" },
@@ -518,12 +518,13 @@ Describe "ai_rules_1c migration planning" {
             [pscustomobject]@{ revision = 29; ref = "itl-main-410951e7-r29"; commit = "334a5ac6caeececc0a83d214c9f5ba6c98603190"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
             [pscustomobject]@{ revision = 30; ref = "itl-main-410951e7-r30"; commit = "dfe4fd1250b0c14c83be9f2c16ef62d8fc521add"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
             [pscustomobject]@{ revision = 31; ref = "itl-main-410951e7-r31"; commit = "01193bce08e0b1808bdf290af17d225bb99ccebe"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
-            [pscustomobject]@{ revision = 32; ref = "itl-main-410951e7-r32"; commit = "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
+            [pscustomobject]@{ revision = 32; ref = "itl-main-410951e7-r32"; commit = "507ac7cb8f6da63f1dc38e91c34d70164e5ff01b"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" },
+            [pscustomobject]@{ revision = 33; ref = "itl-main-410951e7-r33"; commit = "9309bfbbc9f8d844a21bce55178c2e0d72eaf965"; upstream = "410951e74fd3e6b7a763cf49757935b9a34d3f31" }
         )
         $clients = @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
         foreach ($release in $releases) {
             foreach ($client in $clients) {
-                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r33-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
+                $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-r34-$($release.revision)-$($client.Replace('-', '_'))-" + [guid]::NewGuid().ToString("N"))
                 try {
                     New-AiRulesMigrationFixture -Root $tempRoot -CurrentRepo "https://github.com/xmentosx/itl_ai_rules_1c.git" -CurrentRef $release.ref -CurrentCommit $release.commit -CurrentUpstreamCommit $release.upstream -CurrentDownstreamRevision $release.revision -CurrentTool $client
                     $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }

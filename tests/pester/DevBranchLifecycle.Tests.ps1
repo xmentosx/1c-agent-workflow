@@ -319,28 +319,37 @@ exit 0
         }
 
         function New-LifecycleResetFormIntegrityFixture {
+            param([switch]$InvalidCommandIds)
             $fixture = New-LifecycleMergeFormIntegrityFixture
             & git -C $fixture.root checkout --quiet master
             $source = [IO.File]::ReadAllText($fixture.formPath, [Text.Encoding]::UTF8)
             $source = $source.Replace('</Form>', '<Commands><Command name="УстановитьУровеньЗаглушка"><Action /></Command><Command name="Пустышка" /></Commands></Form>')
+            if ($InvalidCommandIds) { $source = $source.Replace('<Command name=', '<Command id="1" name=') }
             [IO.File]::WriteAllText($fixture.formPath, $source, [Text.UTF8Encoding]::new($false))
             & git -C $fixture.root add -- $fixture.formRepoPath
             & git -C $fixture.root commit -m "master placeholder commands" *> $null
             $fixture.targetCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
             & git -C $fixture.root checkout --quiet itldev/test
-            # Model the installed validator's inherited diagnostic, without requiring
-            # an external fork checkout or changing the real duplicate-form fixture.
+            # Mirror the pinned validator contract: unassigned actions are advisory,
+            # while duplicate command IDs remain genuine structural errors.
             [IO.File]::WriteAllText($fixture.formValidatorPath, @'
 param([string]$FormPath, [int]$MaxErrors)
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
 [xml]$form = [IO.File]::ReadAllText($FormPath, [Text.Encoding]::UTF8)
+$ids = @{}
+$errors = 0
 foreach ($command in $form.SelectNodes('/Form/Commands/Command')) {
+    $id = $command.GetAttribute('id')
+    if ($id) {
+        if ($ids.ContainsKey($id)) { Write-Output "[ERROR] Duplicate command id=$id"; $errors++ }
+        $ids[$id] = $true
+    }
     $action = $command.SelectSingleNode('Action')
     if ($null -eq $action -or -not $action.InnerText.Trim()) {
-        Write-Output "[ERROR] Command '$($command.GetAttribute('name'))': missing or empty Action"
-        exit 1
+        Write-Output "[WARN] COMMAND_ACTION_UNASSIGNED: Command '$($command.GetAttribute('name'))': missing or empty Action. Advisory only; do not create dummy handlers."
     }
 }
+if ($errors -gt 0) { exit 1 }
 exit 0
 '@, [Text.UTF8Encoding]::new($true))
             return $fixture
@@ -6949,12 +6958,13 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "keeps reset form validation for <Change> despite equal parent blobs" -TestCases @(
-        @{ Change = "staged" }, @{ Change = "unstaged" }, @{ Change = "staged-reverted-worktree" },
-        @{ Change = "repair" }, @{ Change = "relative-repair" }
+    It "keeps reset form validation for <Change> despite equal parent blobs (invalid commands: <InvalidCommands>)" -TestCases @(
+        foreach ($change in @('staged', 'unstaged', 'staged-reverted-worktree', 'repair', 'relative-repair')) {
+            foreach ($invalid in @($false, $true)) { @{ Change = $change; InvalidCommands = $invalid } }
+        }
     ) {
-        param($Change)
-        $fixture = New-LifecycleResetFormIntegrityFixture
+        param($Change, $InvalidCommands)
+        $fixture = New-LifecycleResetFormIntegrityFixture -InvalidCommandIds:$InvalidCommands
         try {
             $result = & {
                 param($Fixture, $Change)
@@ -6975,12 +6985,33 @@ if (`$?) { exit 0 } else { exit 1 }
                     if ($Change -eq "staged-reverted-worktree") { [IO.File]::WriteAllText($Fixture.formPath, $source, [Text.UTF8Encoding]::new($false)) }
                 }
                 $allMergePaths = @(Get-OneCSourceIntegrityCandidatePaths -ExportPath "src/cf" -IncludeAllMergeChanges)
+                $beforeValidation = [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
                 $message = ""
-                try { Assert-OneCConfigurationSourceIntegrity @arguments } catch { $message = $_.Exception.Message }
-                [pscustomobject]@{ message = $message; allMergePaths = $allMergePaths; mergeInProgress = Test-GitMergeInProgress }
+                $advisoryWarnings = @()
+                $WarningPreference = 'Stop'
+                try {
+                    Assert-OneCConfigurationSourceIntegrity @arguments 3>&1 | ForEach-Object {
+                        if ($_ -is [System.Management.Automation.WarningRecord]) { $advisoryWarnings += $_ }
+                    }
+                } catch { $message = $_.Exception.Message }
+                [pscustomobject]@{
+                    message = $message; allMergePaths = $allMergePaths; mergeInProgress = Test-GitMergeInProgress
+                    warnings = @($advisoryWarnings | ForEach-Object ToString)
+                    reportPath = $script:RunSourceIntegrityReportPath
+                    sourceUnchanged = $beforeValidation -ceq [IO.File]::ReadAllText($Fixture.formPath, [Text.Encoding]::UTF8)
+                }
             } $fixture $Change
-            $result.message | Should -Match '^ONEC_SOURCE_INTEGRITY_FAILED'
-            $result.message | Should -Match 'missing or empty Action'
+            if ($InvalidCommands) {
+                $result.message | Should -Match '^ONEC_SOURCE_INTEGRITY_FAILED'
+                $result.message | Should -Match 'Duplicate command id=1'
+            } else {
+                $result.message | Should -Be ''
+                $result.reportPath | Should -Be ''
+            }
+            $result.warnings | Should -HaveCount 2
+            $result.warnings[0] | Should -Match ([regex]::Escape($fixture.formRepoPath) + ':\[WARN\].*COMMAND_ACTION_UNASSIGNED')
+            $result.warnings[0] | Should -Match 'УстановитьУровеньЗаглушка'
+            $result.sourceUnchanged | Should -BeTrue
             $result.allMergePaths | Should -Contain $fixture.formRepoPath
             $result.mergeInProgress | Should -BeTrue
         } finally {

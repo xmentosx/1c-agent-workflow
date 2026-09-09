@@ -37,7 +37,7 @@ different milestones; none implies the next one.
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Pending |
-| 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Added from task 01a085aa-b4b8-75d2-a92e-acd4725b2d8d and clarified by the user: warnings must not trigger mandatory repair; local workaround and 13/13 regression reported, upstream correction and delivery unverified |
+| 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 
 Implementation order: establish item 4 with the timeout and source-capture
 contracts; complete items 1-3; then 5-8 and 12, followed by 9-11. Each coherent source change
@@ -266,3 +266,35 @@ Focused recovery checks passed 28/28 and the owning RemotePerformance suite
 passed 8/8 (including the portable Python inventory). The queued transport path
 was additionally exercised through the public `worker --once` command: one
 restoration, one original action, and no action on duplicate request delivery.
+
+Item 12 source correction is prepared as controlled fork
+`itl-main-410951e7-r34@ed2a1e3b44ace1e359d922adfcb70c3dfb874f3b`.
+The schema-3 reconstruction verifies all 195 decisions; the fork Full gate
+passed 99/99 on its clean committed tree. The workflow lock remains `pending`
+until ordinary delivery qualifies and promotes it. No remote fork ref was
+published by this preparation.
+
+The validator, managed-form router, verification gate and error-fixer agree:
+report unassigned command Action to the user and continue; no mandatory repair,
+dummy handlers, automatic binding or command removal. The host helper exposes
+form warnings with their source path even under `WarningPreference=Stop`, while
+retaining the validator exit code for actual structural errors. Ten reset/merge
+cases preserve the original staged, unstaged, reverted-index and explicit-repair
+topologies, with both advisory commands and genuinely duplicate command IDs.
+The former regression's unassigned Action is no longer a valid structural-error
+fixture; the duplicate-ID case retains its blocking and path-selection contract.
+All 198 lifecycle tests passed on the changed implementation.
+
+The new validator was run read-only against all five retained branch11 forms:
+all exited zero and reported the same 14 unassigned command actions. Form and
+module hashes stayed unchanged. Evidence is retained under
+`build/diagnostics/form-command-advisory/` (`verify.json`, `branch11-forms.json`).
+The nine focused validator tests also cover mixed warnings/errors and warning
+counts not exhausting MaxErrors. The invalid-callType fixture retains the
+extension BaseForm precondition from the original reproducer. Full branch11
+refresh/check after managed delivery, including removal of the local workaround,
+remains open; current source replay is not installed runtime qualification.
+Dependency and migration checks passed 35/35, including r33-to-r34 for all ten
+supported clients. Candidate preparation initially changed unrelated dependency
+statuses and retained revision 33 in the migration fixture; both were corrected
+without changing eligibility assertions or the protected user-modified cases.
