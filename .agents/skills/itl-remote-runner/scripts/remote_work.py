@@ -73,6 +73,7 @@ def main():
     command.add_argument("--raw", nargs="+", required=True)
     command.add_argument("--session")
     command.add_argument("--source-map")
+    command.add_argument("--source-modules", help="JSON array of native module identities; omitted means all measured modules")
     command.add_argument("--source-analysis", choices=["none", "optional", "required"], default="optional")
     command = commands.add_parser("runtime-proof")
     command.add_argument("--context", required=True)
@@ -115,7 +116,8 @@ def main():
         return profiling.analyze_raw(args.raw, args.session,
                                      source_map=read_json(args.source_map) if args.source_map and args.source_analysis != "none" else None,
                                      source_policy=args.source_analysis,
-                                     source_map_root=Path(args.source_map).resolve().parent if args.source_map else None)
+                                     source_map_root=Path(args.source_map).resolve().parent if args.source_map else None,
+                                     source_modules=read_json(args.source_modules) if args.source_modules else None)
     if args.command == "runtime-proof":
         return profiling.runtime_proof(args.context, args.client_pid, args.seance, args.instance, args.session_observation)
     if args.command == "submit":

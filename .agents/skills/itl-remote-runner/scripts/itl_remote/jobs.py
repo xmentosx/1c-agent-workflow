@@ -10,6 +10,7 @@ import uuid
 
 from .common import FileLock, WorkError, beneath, digest, identity, publish_path, read_json, stamp, write_json
 from .deadlines import budgets
+from .source_mapping import Selection
 
 
 def job_id(value):
@@ -22,6 +23,9 @@ def validate_scenario(scenario):
     budgets(scenario)
     if scenario.get("sourceAnalysis", "none") not in ("none", "optional", "required"):
         raise WorkError("INVALID_SOURCE_ANALYSIS_POLICY")
+    Selection(scenario.get("sourceAnalysisModules"))
+    if scenario.get("sourceAnalysisModules") is not None and scenario.get("sourceAnalysis", "none") == "none":
+        raise WorkError("SOURCE_MODULE_SELECTION_REQUIRES_ANALYSIS")
     if scenario.get("schemaVersion") != 1 or not scenario.get("id"):
         raise WorkError("SCENARIO_VERSION_OR_ID_INVALID")
     if scenario.get("adapter", "command") not in ("command", "handshake"):

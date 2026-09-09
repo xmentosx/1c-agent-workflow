@@ -32,11 +32,33 @@ def module_key(module):
     return None
 
 
+class Selection:
+    """Explicit native identities, optionally pinned to a measured version."""
+    def __init__(self, modules=None):
+        if modules is not None and (not isinstance(modules, list) or not modules):
+            raise WorkError("SOURCE_MODULE_SELECTION_INVALID")
+        self.modules = modules
+        for module in modules or []:
+            if (not isinstance(module, dict) or not module_key(module) or
+                    any(not isinstance(value, str) or (not value and key not in ("URL", "extensionName"))
+                        for key, value in module.items())):
+                raise WorkError("SOURCE_MODULE_SELECTION_INVALID")
+
+    @staticmethod
+    def matches(selector, module):
+        return (module_key(selector) == module_key(module) and
+                ("version" not in selector or selector["version"] == module.get("version")))
+
+    def includes(self, module):
+        return self.modules is None or any(self.matches(item, module) for item in self.modules)
+
+
 class SourceResolver:
-    def __init__(self, manifest=None, *, root=None, policy="optional"):
+    def __init__(self, manifest=None, *, root=None, policy="optional", selection=None):
         if policy not in ("none", "optional", "required"):
             raise WorkError("INVALID_SOURCE_ANALYSIS_POLICY")
         self.policy = policy
+        self.selection = Selection(selection)
         self.root = Path(root).resolve() if root is not None else Path.cwd()
         self.entries = {}
         self.provided = manifest is not None
@@ -63,6 +85,8 @@ class SourceResolver:
         result = {"sourceMatched": False}
         if self.policy == "none":
             return {**result, "sourceIssue": "not-requested"}
+        if not self.selection.includes(module):
+            return {**result, "sourceIssue": "outside-requested-scope"}
         key = module_key(module)
         if key is None:
             return {**result, "sourceIssue": "module-identity-missing"}
@@ -114,14 +138,18 @@ class SourceResolver:
         return match
 
 
-def coverage(packets, policy):
-    modules = [module for packet in packets for module in packet["sourceModules"]]
+def coverage(packets, policy, selection=None):
+    selected = Selection(selection)
+    inventory = [module for packet in packets for module in packet["sourceModules"]]
+    modules = [module for module in inventory if selected.includes(module["moduleID"])]
+    missing = [item for item in selection or [] if not any(selected.matches(item, module["moduleID"]) for module in inventory)]
     total_lines = sum(module["lines"] for module in modules)
     matched_lines = sum(module["matchedLines"] for module in modules)
     matched_modules = sum(bool(module["sourceMatched"]) for module in modules)
-    complete = bool(modules) and matched_modules == len(modules) and matched_lines == total_lines
+    complete = bool(modules) and not missing and matched_modules == len(modules) and matched_lines == total_lines
     return {"policy": policy, "status": "not-requested" if policy == "none" else
             "complete" if complete else "partial" if matched_modules else "unmatched",
             "requirementSatisfied": policy != "required" or complete,
             "modules": len(modules), "matchedModules": matched_modules,
-            "lines": total_lines, "matchedLines": matched_lines}
+            "lines": total_lines, "matchedLines": matched_lines,
+            "selection": selection, "missingSelections": missing, "excludedModules": len(inventory) - len(modules)}

@@ -27,8 +27,8 @@ class ProfileEngineTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def execute(self, fail_cleanup=False):
-        native = profiling.analyze_raw([FIXTURES / "client.xml"])
+    def execute(self, fail_cleanup=False, native=None):
+        native = native or profiling.analyze_raw([FIXTURES / "client.xml"])
         native.update(complete=False, coverage={"missingTypes": ["ServerEmulation"]})
         test = self
         class Collector:
@@ -58,10 +58,12 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertEqual("needs-attention", state["status"])
         self.assertEqual(["detach unproven"], result["cleanupErrors"])
 
-    def source_policy(self, policy):
+    def source_policy(self, policy, modules=None):
         scenario_path = self.package / "scenario.json"
         scenario = read_json(scenario_path)
         scenario["sourceAnalysis"] = policy
+        if modules is not None:
+            scenario["sourceAnalysisModules"] = modules
         write_json(scenario_path, scenario)
         request = read_json(self.package / "request.json")
         request["scenarioSha256"] = digest(scenario_path)

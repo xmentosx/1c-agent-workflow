@@ -9,13 +9,27 @@ Never update that database or overwrite the checkout to make source mapping pass
 
 - `none`: analyze timings without reading source files or a source manifest.
 - `optional` (default): report available mappings and explicit missing reasons.
-- `required`: retain the complete analysis JSON but exit 2 if any measured module
+- `required`: retain the complete analysis JSON but exit 2 if any requested module
   or line lacks a verified binding. This is an unmet source-analysis requirement,
   not a claim that the raw packets were lost or that the measurement failed.
 
 Top-level `complete` and `coverage` describe profile packet coverage. The separate
 `sourceAnalysis` reports its policy, status, matched/total modules and lines, and
 `requirementSatisfied`. Consumers requiring code analysis must check this field.
+
+By default all measured modules are requested. To investigate only certain
+modules, put their native `moduleID` objects from `packets[].sourceModules[]` in
+a JSON array and pass `--source-modules <file>`. A scenario uses the same array
+in `sourceAnalysisModules` together with `sourceAnalysis: optional|required`.
+Keep all identity fields, especially extension/context distinctions. `version`
+may be omitted in a reusable scenario selector; the actual source binding still
+must match the version in the new packet. Empty or malformed lists are rejected.
+
+Excluded modules and rows remain in the raw analysis with
+`sourceIssue: outside-requested-scope`; they do not make selected-source analysis
+incomplete. `sourceAnalysis.selection`, `excludedModules` and `missingSelections`
+make the scope explicit. A requested identity absent from the profile leaves a
+required analysis unsatisfied. It does not trigger an export with nothing to map.
 Each packet retains `sourceModules` for every module, including those outside
 the thirty displayed hotspot rows. Rows carry `sourceMatched` and `sourceIssue`.
 
@@ -61,7 +75,7 @@ id. A native packet without an id never resolves through an empty dictionary key
 
 ## Source capture boundary
 
-A measurement scenario can request automatic capture with `"sourceAnalysis":
+A measurement scenario can request automatic resolution with `"sourceAnalysis":
 "optional"` or `"required"`; the default `"none"` does not export sources.
 Source analysis requires profile or time+profile mode. Set a separate
 `phaseTimeoutSeconds.source-capture` budget for a large configuration. Capture
@@ -87,7 +101,31 @@ optional failure is a visible limitation. Each profile JSON is updated along wit
 the job result. A fresh export after the target changed does not establish that
 it matches an earlier profile: mismatched modules remain unresolved.
 
-Automatic reuse of pre-existing matching source snapshots, source selection for
-only a subset of modules, and full runtime acceptance on PM5/UFA remain separate
-open integration work. The current explicit capture path exports the base and
-its extensions; it does not overwrite checkout sources.
+## Reusing captured sources before exporting
+
+The execution-host target can supply `sourceCapture.manifests`, an array of
+`{"path": "<source-map.json>", "sha256": "<pinned manifest hash>"}` references.
+Relative paths resolve from that target's workspace, not the caller's checkout.
+References must come from a verified producer as described above. The engine
+checks the pinned manifest bytes and exact module identity/version/source bytes
+before reuse. It does not rebuild an old binding by hashing a modified file.
+
+Matching sources are copied byte-for-byte into the current run's
+`source-analysis/` directory, with retained binding manifests. The result's
+`sourceManifest` contains the path and hash to configure for a later run.
+`sourceResolution` records the requested scope, reused modules, input references,
+rejected bindings and whether capture was attempted. Identical bytes from two
+references are reusable; conflicting bindings are unresolved until an
+authoritative fresh capture establishes a binding. Bad cache entries do not
+block otherwise successful resolution, but remain in diagnostics.
+
+When every requested module and line matches, no Designer capture is launched.
+Otherwise the existing read-only capture obtains the base and extensions, and
+the producer binds only missing modules; verified reused modules are retained.
+Missing sources outside the selected scope do not require capture. The full
+CF/CFE export is currently retained because opaque native extension identities
+can require checking both the base and its extensions to detect ambiguity.
+
+Automatic production of verified checkout bindings, coordination of Designer
+capacity with persistent adapter sessions, and full runtime acceptance on PM5/UFA
+remain open integration work. No path overwrites checkout sources.

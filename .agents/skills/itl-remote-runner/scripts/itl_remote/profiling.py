@@ -182,8 +182,8 @@ def fields(element):
     return {child.tag.rsplit("}", 1)[-1]: child.text for child in element}
 
 
-def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_policy="optional", source_map_root=None):
-    sources = SourceResolver(source_map, root=source_map_root, policy=source_policy)
+def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_policy="optional", source_map_root=None, source_modules=None):
+    sources = SourceResolver(source_map, root=source_map_root, policy=source_policy, selection=source_modules)
     packets = {}
     for path in paths:
         root = ET.fromstring(Path(path).read_bytes())
@@ -206,7 +206,7 @@ def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_p
             if hz <= 0:
                 raise WorkError("INVALID_PROFILE_FREQUENCY")
             rows = []
-            source_modules = []
+            packet_sources = []
             modules = measure.findall("{" + MEASURE + "}moduleData")
             for module in modules:
                 identity_node = module.find("{" + MEASURE + "}moduleID")
@@ -221,12 +221,12 @@ def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_p
                     source_module["lines"] += 1
                     source_module["matchedLines"] += int(row["sourceMatched"])
                     rows.append(row)
-                source_modules.append(source_module)
+                packet_sources.append(source_module)
             key = (sid, target["id"])
             packet = {"sessionId": sid, "target": target, "raw": str(path), "sha256": digest(path),
                       "bytes": Path(path).stat().st_size, "frequency": hz,
                       "totalSeconds": float(measure.findtext("{" + MEASURE + "}totalDurability", "0")) / hz,
-                      "modules": len(modules), "lines": len(rows), "sourceModules": source_modules,
+                      "modules": len(modules), "lines": len(rows), "sourceModules": packet_sources,
                       "top": sorted(rows, key=lambda row: row["pureSeconds"], reverse=True)[:30]}
             import hashlib
             packet["measureSha256"] = hashlib.sha256(ET.canonicalize(ET.tostring(measure, encoding="unicode"), strip_text=True).encode("utf-8")).hexdigest()
@@ -246,7 +246,7 @@ def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_p
                 "missingTargetIds": sorted(set(expected["targetIds"]) - {p["target"]["id"] for p in values}) if expected else [],
                 "ownershipVerified": expected is not None}
     return {"format": "PerformanceInfoMain", "pff": None, "complete": complete, "coverage": coverage,
-            "sourceAnalysis": source_coverage(values, source_policy), "packets": values}
+            "sourceAnalysis": source_coverage(values, source_policy, source_modules), "packets": values}
 
 
 class Rdbg:
@@ -390,12 +390,14 @@ class Rdbg:
         self.call("setMeasureMode")
         self.measuring = False
         deadline = time.monotonic() + self.config.get("collectTimeoutSeconds", 30)
-        result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"))
+        result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"),
+                             source_modules=self.config.get("sourceAnalysisModules"))
         while time.monotonic() < deadline:
             if self.error:
                 raise self.error
             self.call("pingDebugUIParams")
-            result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"))
+            result = analyze_raw(list(self.raw), self.session, self.proof, source_policy=self.config.get("sourceAnalysis", "none"),
+                                 source_modules=self.config.get("sourceAnalysisModules"))
             if result["complete"]:
                 break
             time.sleep(0.2)

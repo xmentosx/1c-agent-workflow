@@ -28,7 +28,7 @@ different milestones; none implies the next one.
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
-| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; snapshot reuse, selected-module requirements and PM5/UFA acceptance pending |
+| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
@@ -134,3 +134,14 @@ This is live configuration/export evidence on an owned fixture, not a new PM5
 measurement or proof of snapshot reuse. The first extension fixture lacked its
 borrowed Russian language; a corrected fixture supplied that dependency. No
 runtime assertion or target-capture operation was weakened to qualify it.
+
+The next item 3 slice adds explicit native-module selection to scenarios and the
+offline CLI. Missing selections stay unmet; excluded rows remain visible.
+Execution-host pinned source manifests are checked before capture, with exact
+module versions and byte hashes. Reused sources and their binding evidence are
+copied into the new run. Complete selected coverage skips Designer; partial reuse
+retains matching modules and captures remaining bindings. Invalid cache entries
+are diagnostic and may be repaired by capture. Synthetic/native-packet tests
+cover drift, conflicts, source removal, selected scope and engine capture routing.
+This does not yet prove PM5/UFA integration or produce checkout bindings without
+existing authoritative source evidence.

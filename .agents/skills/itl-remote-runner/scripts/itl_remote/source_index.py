@@ -5,7 +5,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from .common import WorkError, beneath, digest, write_json
-from .source_mapping import module_key, coverage
+from .source_mapping import module_key, coverage, Selection
 
 # Platform property UUIDs, also documented by go1cover's metareader constants:
 # https://pkg.go.dev/github.com/asosnoviy/go1cover/pkg/metareader#pkg-constants
@@ -47,7 +47,7 @@ def metadata_path(name):
     return path.with_suffix(".xml")
 
 
-def build_manifest(snapshot, profiles):
+def build_manifest(snapshot, profiles, selection=None):
     if snapshot.get("status") != "captured":
         raise WorkError("SOURCE_CAPTURE_NOT_COMPLETE")
     root = Path(snapshot["path"]).resolve()
@@ -69,11 +69,13 @@ def build_manifest(snapshot, profiles):
         indexes.append((configuration, directory, index_relative, objects))
     manifest = {"schemaVersion": 2, "snapshotId": snapshot["snapshotId"], "modules": [], "unmatched": []}
     requested = {}
+    selected = Selection(selection)
     for profile in profiles:
         for packet in profile["packets"]:
             for item in packet["sourceModules"]:
                 module = item["moduleID"]
-                requested[(module_key(module), module.get("version"))] = module
+                if selected.includes(module):
+                    requested[(module_key(module), module.get("version"))] = module
     for module in requested.values():
         candidates = []
         property_path = PROPERTIES.get(module.get("propertyID"))
@@ -111,7 +113,7 @@ def build_manifest(snapshot, profiles):
     return manifest
 
 
-def apply_manifest(profile, snapshot, manifest, policy):
+def apply_manifest(profile, snapshot, manifest, policy, selection=None):
     from .profiling import analyze_raw
     for packet in profile["packets"]:
         try:
@@ -124,10 +126,10 @@ def apply_manifest(profile, snapshot, manifest, policy):
     for session in {p["sessionId"] for p in profile["packets"]}:
         paths = list({p["raw"] for p in profile["packets"] if p["sessionId"] == session})
         mapped = analyze_raw(paths, session=session, source_map=manifest,
-                             source_policy=policy, source_map_root=snapshot["path"])
+                             source_policy=policy, source_map_root=snapshot["path"], source_modules=selection)
         packets.update({(p["sessionId"], p["target"]["id"]): p for p in mapped["packets"]})
     for packet in profile["packets"]:
         match = packets[(packet["sessionId"], packet["target"]["id"])]
         packet.update(sourceModules=match["sourceModules"], top=match["top"])
-    profile["sourceAnalysis"] = coverage(profile["packets"], policy)
+    profile["sourceAnalysis"] = coverage(profile["packets"], policy, selection)
     return profile

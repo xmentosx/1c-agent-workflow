@@ -124,7 +124,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         capture(["powershell.exe", "-NoProfile", "-File", str(variables["runtime"] / "Test-OneCProcessRecord.ps1"),
                  "-RecordPath", str(launch_path)], timeout=20)
         proof["requiredTypes"] = required_profile_types(target.get("infoBase", {}).get("kind"))
-        collector = Rdbg({**effective_rdbg, "sourceAnalysis": scenario.get("sourceAnalysis", "none")}, proof, iteration / "raw")
+        collector = Rdbg({**effective_rdbg, "sourceAnalysis": scenario.get("sourceAnalysis", "none"),
+                          "sourceAnalysisModules": scenario.get("sourceAnalysisModules")}, proof, iteration / "raw")
         collector.open()
         return collector
 
@@ -218,32 +219,9 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                                           "profileEnabled": False, "verified": True})
         source_policy = scenario.get("sourceAnalysis", "none")
         if source_policy != "none" and result["profiles"]:
-            from .source_capture import Snapshot
-            from .source_index import build_manifest, apply_manifest
-            snapshot = Snapshot(variables["context"], start_phase("source-capture")).run()
-            result["sourceSnapshot"] = snapshot
-            result["cleanupErrors"].extend(snapshot["cleanupErrors"])
-            if snapshot.get("error") == "CANCELLED":
-                raise WorkError("CANCELLED")
-            source_error = None
-            if snapshot["status"] == "captured":
-                try:
-                    manifest = build_manifest(snapshot, result["profiles"])
-                    for profile, profile_path in zip(result["profiles"], profile_paths):
-                        apply_manifest(profile, snapshot, manifest, source_policy)
-                        write_json(profile_path, profile)
-                    if any(profile["sourceAnalysis"]["status"] != "complete" for profile in result["profiles"]):
-                        result["limitations"].append("SOURCE_ANALYSIS_INCOMPLETE")
-                except Exception as error:
-                    if str(error).startswith("SOURCE_PROFILE_PACKET_"):
-                        raise  # original measurement evidence itself is no longer intact
-                    source_error = str(error)
-                    result["limitations"].append("SOURCE_ANALYSIS_FAILED: " + source_error)
-            else:
-                result["limitations"].append("SOURCE_CAPTURE_FAILED: " + snapshot.get("error", "unknown"))
-            if source_policy == "required" and (source_error or snapshot["status"] != "captured" or
-                    any(not p["sourceAnalysis"]["requirementSatisfied"] for p in result["profiles"])):
-                raise WorkError("SOURCE_ANALYSIS_REQUIREMENT_UNSATISFIED")
+            from .source_analysis import resolve_sources
+            resolve_sources(variables["context"], result["profiles"], profile_paths, source_policy,
+                            scenario.get("sourceAnalysisModules"), start_phase("source-capture"), result)
         elif source_policy == "required":
             raise WorkError("SOURCE_ANALYSIS_PROFILE_UNAVAILABLE")
         result["status"] = "partial" if result["limitations"] else "completed"
