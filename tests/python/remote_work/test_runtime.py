@@ -47,6 +47,7 @@ class RuntimeTests(unittest.TestCase):
                                       "verify": ["{python}", "{input}/workload.py", "{runtime}", "verify"]}}
         self.profile = {"schemaVersion": 1, "targets": {"fixture": {"workspace": str(self.source),
                         "allowedOperations": ["measure"], "sourceIdentity": "fixture-code-v1",
+                        "access": {"coordinator": str(self.root / "координатор баз")},
                         "environmentIdentity": "fixture-environment-v1"}}}
         self.profile_path = self.root / "profile.json"
         write_json(self.profile_path, self.profile)

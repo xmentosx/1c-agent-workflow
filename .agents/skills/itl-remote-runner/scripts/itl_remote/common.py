@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -86,9 +87,9 @@ class FileLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.stream = self.path.open("a+b")
         self.stream.seek(0)
-        self.stream.write(b"0")
-        self.stream.flush()
-        self.stream.seek(0)
+        # Both Windows byte locks and POSIX flock permit an empty file. Writing
+        # the byte before acquiring it fails outside the contention handler on
+        # Windows when another process already owns that region.
         try:
             if os.name == "nt":
                 import msvcrt
@@ -98,6 +99,8 @@ class FileLock:
                 fcntl.flock(self.stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as error:
             self.stream.close()
+            if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise
             raise WorkError("OWNER_BUSY: " + str(self.path)) from error
         return self
 

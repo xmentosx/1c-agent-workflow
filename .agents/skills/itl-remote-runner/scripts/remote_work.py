@@ -15,6 +15,12 @@ from itl_remote.common import FileLock, WorkError, read_json, stamp, write_json
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("access-register")
+    command.add_argument("--coordinator", required=True)
+    command.add_argument("--resource", required=True)
+    command.add_argument("--bindings", required=True, help="JSON array of explicit database connections sharing this resource")
+    command = commands.add_parser("access-status")
+    command.add_argument("--coordinator", required=True)
     command = commands.add_parser("scaffold")
     command.add_argument("--project", required=True)
     command.add_argument("--name", required=True)
@@ -79,6 +85,12 @@ def main():
     command.add_argument("--output", required=True)
     args = parser.parse_args()
     from itl_remote import bootstrap, execution, jobs, profiling, transport
+    if args.command in ("access-register", "access-status"):
+        from itl_remote.access import Coordinator
+        coordinator = Coordinator(args.coordinator)
+        if args.command == "access-register":
+            return coordinator.register(args.resource, read_json(args.bindings))
+        return coordinator.snapshot()
     if args.command == "scaffold":
         from itl_remote.scenarios import scaffold
         return scaffold(args.project, args.name)
@@ -137,7 +149,7 @@ def main():
                         if package.name.startswith(".") or not package.is_dir():
                             continue
                         current = jobs.status(spool, package.name)
-                        if current["status"] in ("queued", "running"):
+                        if current["status"] in ("queued", "running", "waiting-for-base"):
                             try:
                                 result = execution.execute_job(spool, package.name, profile)
                                 print(json.dumps(result, ensure_ascii=True), flush=True)

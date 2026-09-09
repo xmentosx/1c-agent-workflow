@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 from pathlib import Path
 import platform
@@ -12,6 +13,7 @@ import time
 from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server
+from .access import Lease, target_access
 
 
 def render(command, variables):
@@ -36,7 +38,7 @@ def wait_json(path, process, timeout, cancelled):
     return read_json(path)
 
 
-def run_measurement(package, target, run, request, scenario, cancelled, progress):
+def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
     variables = {"python": sys.executable, "runtime": Path(__file__).resolve().parent.parent,
@@ -44,6 +46,10 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                  "run": run, "context": run / "context.json"}
     context = {"schemaVersion": 1, "jobId": request["id"], "parameters": request["parameters"],
                "target": target, "scenarioId": scenario["id"], "operations": request["operations"]}
+    child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
+    if access_lease:
+        context["accessLease"] = access_lease.proof()
+        child_environment["ITL_INFOBASE_ACCESS_LEASE"] = json.dumps(context["accessLease"])
     # This file is machine-local, not included in the user-facing result archive.
     write_json(variables["context"], context)
     commands = scenario["commands"]
@@ -62,6 +68,9 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "readiness": scenario["readyDescription"], "mode": request["mode"],
               "startedAt": stamp(), "timings": [], "profiles": [], "phases": [],
               "status": "running", "limitations": [], "cleanupErrors": []}
+    if access_lease:
+        result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
+                            "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
 
     def command(name):
         if name not in commands:
@@ -71,7 +80,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         progress(name)
         begin = time.monotonic()
         process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                               {"ITL_RUN_CONTEXT": str(variables["context"])})
+                               child_environment)
         processes.append(process)
         process.wait(timeout, cancelled if name != "cleanup" else lambda: False)
         result["phases"].append({"name": name, "seconds": time.monotonic() - begin})
@@ -131,7 +140,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             workload_process = None
             if scenario.get("adapter", "command") == "handshake":
                 process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                       iteration / "action.log", {"ITL_RUN_CONTEXT": str(variables["context"])})
+                                       iteration / "action.log", child_environment)
                 processes.append(process)
                 ready = wait_json(iteration / "ready.json", process, timeout, cancelled)
                 if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
@@ -249,10 +258,11 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
     if request["route"] == "agent" and not via_agent:
         from .agents import dispatch
         return dispatch(spool, request, profile, scenario)
-    with FileLock(spool / "worker.lock"):
+    # One claim per job prevents replay without serializing unrelated databases.
+    with FileLock(spool / "claims" / (identifier + ".lock")):
         state = status(spool, identifier)
         if state["status"] != "queued" and not (via_agent and state["status"] == "agent-running"):
-            if state["status"] == "running":
+            if state["status"] in ("running", "waiting-for-base"):
                 state.update(status="needs-attention", error="INTERRUPTED_OWNER: inspect effects; no automatic replay", updatedAt=stamp())
                 write_json(spool / "state" / (identifier + ".json"), state)
             return state
@@ -264,20 +274,43 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             state.update(status="cancelled", updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
-        base = target.get("infoBase", {"kind": "workspace", "path": target["workspace"]})
-        base_path = str(Path(base["path"]).resolve()) if base["kind"] in ("file", "workspace") else base["path"].strip()
-        lock_identity = identity({"kind": base["kind"].lower(), "path": os.path.normcase(base_path).casefold()})
-        lock_root = Path(os.environ.get("PROGRAMDATA", tempfile_root())) / "ITL" / "remote-work-locks"
-        with FileLock(lock_root / (lock_identity + ".lock")):
-            def progress(phase):
-                state.update(status="running", phase=phase, ownerPid=os.getpid(), updatedAt=stamp())
-                write_json(spool / "state" / (identifier + ".json"), state)
-            progress("preparing")
-            result = run_measurement(package, target, spool / "runs" / identifier, request, scenario, cancelled, progress)
-            state.update(status=result["status"], phase="finished", result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
-            if result.get("error"):
-                state["error"] = result["error"]
+        access = target_access(target)
+        profile_path = spool / "profile.json"
+        profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
+        def waiting(record):
+            state.update(status="waiting-for-base", phase="admission", access=record, ownerPid=os.getpid(), updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
+        def progress(phase):
+            state.update(status="running", phase=phase, ownerPid=os.getpid(), updatedAt=stamp())
+            write_json(spool / "state" / (identifier + ".json"), state)
+        result = None
+        try:
+            inherited = json.loads(os.environ["ITL_INFOBASE_ACCESS_LEASE"]) if os.environ.get("ITL_INFOBASE_ACCESS_LEASE") else None
+            with Lease(access["coordinator"], access["bases"], {"jobId": identifier, "workspace": target["workspace"],
+                       "operation": "measure"}, timeout=access["timeout"], cancelled=cancelled,
+                       progress=waiting, inherited=inherited) as lease:
+                # Revalidate immutable inputs and target authorization after the
+                # queue. Actual loaded configuration/data checks belong to prepare.
+                request, scenario = validate_package(package)
+                if profile_fingerprint and digest(profile_path) != profile_fingerprint:
+                    raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED: worker profile changed during admission")
+                current_target = authorize(request, scenario, profile)
+                if target_access(current_target) != access:
+                    raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
+                progress("preparing")
+                result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
+                                         progress, access_lease=lease, access_scope=access["scope"])
+                lease.release(cleanup_errors=result["cleanupErrors"])
+                state.update(status=result["status"], phase="finished", access=result.get("access"),
+                             result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
+                if result.get("error"):
+                    state["error"] = result["error"]
+                write_json(spool / "state" / (identifier + ".json"), state)
+        except WorkError as error:
+            state.update(status="cancelled" if str(error) == "INFOBASE_ACCESS_CANCELLED" else "needs-attention",
+                         error=str(error), updatedAt=stamp())
+            write_json(spool / "state" / (identifier + ".json"), state)
+            return state
     if result["status"] == "needs-attention" and request["route"] == "auto" and profile.get("agentFallback") and not via_agent:
         from .agents import dispatch
         dispatch(spool, request, profile, scenario, diagnosis=True)
