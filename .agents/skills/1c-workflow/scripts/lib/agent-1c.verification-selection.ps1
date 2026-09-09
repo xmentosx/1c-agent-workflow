@@ -333,6 +333,53 @@ function Get-VerificationSelectionChangedPaths {
     })
 }
 
+function Get-VerificationAcceptedMasterInput {
+    param([string[]]$ChangedPaths, [string]$CurrentTree)
+
+    $result = [pscustomobject]@{
+        available = $false; reference = ''; masterTip = ''; acceptedCommit = ''; branchHead = ''
+        importedPaths = @(); branchPaths = @($ChangedPaths); reason = ''
+    }
+    try {
+        if ($CurrentTree -notmatch '^[a-f0-9]{40}$') { throw 'Invalid effective tree.' }
+        $branch = ([string](Get-GitOutput @('branch', '--show-current'))).Trim()
+        if ($branch -notlike 'itldev/*') { throw 'Accepted master input requires a managed development branch.' }
+        $masterRef = "refs/heads/$(Get-MasterBranch)"
+        $masterTip = ([string](Get-GitOutput @('rev-parse', '--verify', "$masterRef^{commit}"))).Trim()
+        $branchHead = ([string](Get-GitOutput @('rev-parse', '--verify', 'HEAD^{commit}'))).Trim()
+        if ($masterTip -notmatch '^[a-f0-9]{40}$' -or $branchHead -notmatch '^[a-f0-9]{40}$') { throw 'Invalid master or branch commit.' }
+        # Freeze both tips before finding ancestry. A newer master tip is not
+        # necessarily accepted; multiple merge bases do not establish one source.
+        $acceptedCommit = ([string](Get-GitOutput @('merge-base', '--all', $masterTip, $branchHead))).Trim()
+        if ($acceptedCommit -notmatch '^[a-f0-9]{40}$') { throw 'No unique accepted master ancestor.' }
+        $roots = @((Get-ExportPath), (Get-ExtensionsPath) | ForEach-Object {
+            (Get-VerificationRepoRelativePath -Path (Resolve-ProjectPath $_)).TrimEnd('/')
+        } | Sort-Object -Unique)
+        $literalRoots = @($roots | ForEach-Object { ":(literal)$_" })
+        # NUL-delimited names and --no-renames preserve deletion/addition pairs.
+        # Comparing trees includes staged and unstaged content without touching
+        # the user's index; a modified imported module remains branch-owned.
+        $different = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in @(Get-GitPathList -Arguments (@('diff', '--name-only', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', $acceptedCommit, $CurrentTree, '--') + $literalRoots))) {
+            [void]$different.Add([string]$path)
+        }
+        $imported = @($ChangedPaths | Where-Object {
+            $path = [string]$_
+            @($roots | Where-Object { $path.StartsWith("$_/", [StringComparison]::Ordinal) }).Count -gt 0 -and
+                -not $different.Contains($path)
+        })
+        $result.available = $true
+        $result.reference = $masterRef; $result.masterTip = $masterTip
+        $result.acceptedCommit = $acceptedCommit; $result.branchHead = $branchHead
+        $result.importedPaths = $imported
+        $result.branchPaths = @($ChangedPaths | Where-Object { $_ -cnotin $imported })
+        $result.reason = 'Imported paths exactly match the unique accepted master ancestor in the effective tree.'
+    } catch {
+        $result.reason = $_.Exception.Message
+    }
+    return $result
+}
+
 function New-VerificationSelectionPlan {
     param(
         [string[]]$ApplicationFeatureFiles,
@@ -343,6 +390,7 @@ function New-VerificationSelectionPlan {
     $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $allFiles
     $currentTree = ""
     try { $currentTree = Get-VerificationSelectionEffectiveTree } catch {}
+    $acceptedMasterInput = $null
 
     $newFullPlan = {
         param([string]$Reason)
@@ -362,6 +410,7 @@ function New-VerificationSelectionPlan {
             catalogFingerprint = [string]$catalog.fingerprint
             currentTree = $currentTree
             catalogAvailable = [bool]($catalog.available -and $catalog.valid)
+            acceptedMasterInput = $acceptedMasterInput
         }
     }
 
@@ -377,6 +426,7 @@ function New-VerificationSelectionPlan {
             catalogFingerprint = [string]$catalog.fingerprint
             currentTree = $currentTree
             catalogAvailable = [bool]($catalog.available -and $catalog.valid)
+            acceptedMasterInput = $acceptedMasterInput
         }
     }
 
@@ -442,6 +492,9 @@ function New-VerificationSelectionPlan {
         }
     }
 
+    $acceptedMasterInput = Get-VerificationAcceptedMasterInput -ChangedPaths $changedPaths -CurrentTree $currentTree
+    $fullReasons = [Collections.Generic.List[string]]::new()
+    $classificationReasons = [Collections.Generic.List[string]]::new()
     $selectedIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($suiteProof in $acceptanceSuites) {
         $prior = @($provedSuites | Where-Object { [string](Get-VerificationCatalogValue -Value $_ -Name "id" -Default "") -eq [string]$suiteProof.id })
@@ -464,10 +517,12 @@ function New-VerificationSelectionPlan {
             continue
         }
         if ($featureRoot -and $changedPath.StartsWith("$featureRoot/", [System.StringComparison]::OrdinalIgnoreCase)) {
-            return (& $newFullPlan "Shared Vanessa support changed at '$changedPath'; the complete acceptance set is required.")
+            $fullReasons.Add("Shared Vanessa support changed at '$changedPath'; the complete acceptance set is required.")
+            continue
         }
         if ($changedPath -eq ".agent-1c/dependency-lock.json") {
-            return (& $newFullPlan "The pinned verification runtime changed; the complete acceptance set is required.")
+            $fullReasons.Add("The pinned verification runtime changed; the complete acceptance set is required.")
+            continue
         }
         $ownerMatches = @($catalog.suites | Where-Object {
             $suite = $_
@@ -482,12 +537,22 @@ function New-VerificationSelectionPlan {
                 }
             })
             if ($yaxunitOwnerMatches.Count -gt 0) { continue }
-            return (& $newClassificationRequiredPlan "Changed verification-relevant path '$changedPath' has no suite owner.")
+            if ($changedPath -cin $acceptedMasterInput.importedPaths) { continue }
+            $classificationReasons.Add("Changed verification-relevant path '$changedPath' has no suite owner.")
+            continue
         }
         foreach ($suite in $ownerMatches) {
             if ($suite.purpose -eq "acceptance") { [void]$selectedIds.Add([string]$suite.id) }
         }
     }
+
+    # A full-suite reason may not conceal another, branch-owned unclassified
+    # path. Evaluate the entire delta before deciding whether execution is ready.
+    if ($classificationReasons.Count -gt 0) { return (& $newClassificationRequiredPlan ($classificationReasons -join '; ')) }
+    if ($acceptedMasterInput.importedPaths.Count -gt 0) {
+        $fullReasons.Add("Accepted master input at '$($acceptedMasterInput.acceptedCommit)' requires complete existing acceptance coverage; imported paths=$($acceptedMasterInput.importedPaths.Count). No new master tests were authored.")
+    }
+    if ($fullReasons.Count -gt 0) { return (& $newFullPlan ($fullReasons -join '; ')) }
 
     $selectedFiles = @($acceptanceAssignments | Where-Object { $selectedIds.Contains([string]$_.suiteId) } | Select-Object -ExpandProperty fullPath -Unique)
     if ($selectedFiles.Count -eq 0) {
@@ -530,6 +595,7 @@ function Complete-VerificationSelectionProof {
         acceptanceSuites = @(Get-VerificationCatalogValue -Value $Plan -Name "acceptanceSuites" -Default @())
         lastSelectedSuiteIds = @($Plan.selectedSuiteIds)
         lastMode = [string]$Plan.mode
+        acceptedMasterInput = Get-VerificationCatalogValue -Value $Plan -Name 'acceptedMasterInput' -Default $null
         verifiedAt = (Get-Date).ToString("o")
     }
     Write-Utf8TextAtomic -Path (Join-Path $root "proof.json") -Value (($value | ConvertTo-Json -Depth 6) + [Environment]::NewLine)

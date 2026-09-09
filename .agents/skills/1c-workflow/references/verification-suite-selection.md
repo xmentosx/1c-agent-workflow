@@ -63,8 +63,26 @@ branch catalogs, and validate the assignments in the same task with the compact 
 `validate-test-classification`, which never starts 1C, before reporting refresh
 complete. A normal
 `/itl-check` enforces the same contract before starting Designer or Enterprise.
-An unknown changed verification-relevant product path is also a classification
-error, not permission to run everything.
+An unknown changed verification-relevant product path owned by this branch is
+also a classification error, not permission to run everything.
+
+During delta selection in `itldev/*`, the helper pins the branch HEAD and local
+master tip, resolves their unique common ancestor, and compares changed CF/CFE
+paths with that accepted commit in the effective tree. Matching imported paths
+select the full existing acceptance set without inventing tests or ownerPaths
+for master input. The current master tip may be ahead of the accepted ancestor.
+Configured extension roots, deletions and rename pairs participate; modified
+imported files are branch-owned. Missing or ambiguous ancestry and Git failures
+grant no imported-input exception. The temporary tree preserves the user's index.
+
+The selector evaluates the complete changed-path list before applying these
+full-suite reasons: an imported path, shared Vanessa support or runtime update
+cannot conceal another unowned branch change. Catalog validity and YAxUnit
+classification remain prerequisites; explicit profiling suites remain excluded.
+The plan and completed proof record `acceptedMasterInput` with the reference,
+pinned tips, accepted commit, imported paths and branch paths. Existing acceptance
+coverage establishes tested compatibility, not exhaustive business correctness
+or newly authored coverage for master changes.
 
 The first check with a complete catalog or unavailable proof selects the complete
 acceptance set once. After that set passes, the ignored proof matrix

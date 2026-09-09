@@ -38,7 +38,7 @@ different milestones; none implies the next one.
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Read-only follow-up confirms current producer writes run-root snapshots/baseline.dt and post-config.dt while cleanup accepts only the older .agent-1c/snapshots naming contract; common ledger retains the corresponding cleanup debt; owner correction and retention qualification pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
-| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Independent branch11 handoff: local selector correction, 15/15 focused tests and subsequent Vanessa 49/49 plus YAxUnit 118/118 reported; current shared selector still lacks provenance handling; general implementation and delivery pending |
+| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; source correction prepared for registration; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Fourth branch11 handoff and current controlled-fork rules confirm a missing decision route; recorded rebuttals exist, but clean AI acceptance and shared correction remain unconfirmed |
 
@@ -357,6 +357,36 @@ or skips, and unchanged 38 options. These are reported local results, not shared
 delivery proof. Item 6 still owns its separate classification-command dispatch,
 exact-HEAD resume and multi-branch convergence checks; they are not closed by
 this selector correction.
+
+Shared implementation now resolves one immutable common ancestor from pinned
+local master and branch tips. It compares the effective tree against that
+accepted commit through the NUL-delimited Git path helper, including configured
+extension roots, additions, deletions and rename pairs. A newer master tip is
+not assumed accepted. Missing/unrelated master, ambiguous ancestry, malformed
+trees and Git errors grant no provenance exception. Modified imports remain
+branch-owned. Imported paths trigger complete existing acceptance, while all
+delta paths are examined before imported/support/runtime full-suite reasons
+can be applied; a different unknown own path still requires classification.
+The plan and successful proof retain the accepted reference, commit, both tips
+and imported/branch paths. Existing generic first-check/no-proof fallbacks and
+catalog prerequisites remain unchanged.
+
+All 24 new Git/contract cases plus 13 existing selection tests passed (37/37).
+They cover CF, CFE, configured Cyrillic/spaced extension roots, literal bracketed
+paths, additions, deletions, renames, staged/unstaged imports, index-only drift,
+own changes before/after imported paths, newer/missing/unrelated master,
+ambiguous ancestry, Git errors and mixed support/runtime plus unowned changes.
+All real-tree cases verify that the user's index bytes remain unchanged.
+
+Read-only replay against branch11 HEAD
+`5aabbffdce1efc34e7ce041597b5ed6401ee1b2b` and master
+`9ce64fc77c98a0d5421577fd25a14ed75e781c91` recognized all 13 retained unowned
+imported paths and kept the branch-modified optimization form module separate.
+The actual index and existing verification proof hashes were unchanged; no 1C
+process was started. Evidence is retained in the source selection worktree at
+`build/diagnostics/accepted-master/qualification.json`. The same 13 path names
+are added to the isolated Git regression without copying business code.
+This is source/provenance proof, not a new business check or installed delivery.
 
 ## Added task 14: export blocked by its own ROCTUP runtime coordination
 

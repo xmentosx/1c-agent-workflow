@@ -31,6 +31,12 @@ verification scope and consume an unbounded runner budget. Refresh only
 inventories this contract and returns agent-owned continuation work, because the
 helper cannot infer semantic ownership safely.
 
+Proven accepted-master input is a distinct selection case: unchanged imported
+CF/CFE paths select complete existing acceptance coverage with recorded Git
+provenance. They do not require invented tests or owner declarations. Own unknown
+changes and invalid catalogs retain classification requirements; see
+`.agents/skills/1c-workflow/references/verification-suite-selection.md`.
+
 Keep integrity checks with their owning component. ITL may duplicate one only after a reproduced cross-boundary failure proves that the owner's check cannot protect the ITL operation.
 
 Capability checks use only the minimum prerequisites needed to perform the operation. File identity, update safety, and exact-result verification are separate contracts; integrity does not participate in capability detection unless exact identity is itself required for execution.
