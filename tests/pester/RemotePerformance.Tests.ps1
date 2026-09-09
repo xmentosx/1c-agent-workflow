@@ -1,4 +1,9 @@
-﻿Describe 'Portable remote execution and performance' {
+﻿BeforeAll {
+    $script:AdmissionFixturePythonOverride = $env:ITL_PYTHON_EXECUTABLE
+    if (-not $env:ITL_PYTHON_EXECUTABLE) { $env:ITL_PYTHON_EXECUTABLE = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
+}
+AfterAll { $env:ITL_PYTHON_EXECUTABLE = $script:AdmissionFixturePythonOverride }
+Describe 'Portable remote execution and performance' {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

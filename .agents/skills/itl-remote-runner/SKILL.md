@@ -5,7 +5,7 @@ description: Prepare a Windows remote worker and run authorized jobs through SSH
 
 # ITL remote runner
 
-Use the portable runtime in `scripts/remote_work.py` (Python 3.11+) for durable jobs. It works without a plugin, Codex, Git, or a full installed ITL project. Read [the operation contract](references/operations.md) for the requested operation and [the job contract](references/contracts.md) when preparing inputs.
+Use `scripts/Invoke-RemoteWork.ps1` on Windows for durable jobs; it provisions pinned user-local Python and invokes the shared `remote_work.py` engine. It works without a plugin, Codex, Git, or a full installed ITL project. Read [the operation contract](references/operations.md) for overrides, offline delivery and the requested operation, and [the job contract](references/contracts.md) when preparing inputs.
 
 ## User route
 

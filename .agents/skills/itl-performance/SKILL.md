@@ -5,7 +5,7 @@ description: Measure elapsed time, capture 1C client/server profiles, and compar
 
 # ITL performance
 
-Run the same engine locally, through SSH, or through a remote agent. Local measurements require neither SSH nor another AI agent. Use the shared runtime at `../itl-remote-runner/scripts/remote_work.py`; read [measurement recipes](references/measurements.md) and the [scenario contract](../itl-remote-runner/references/contracts.md) as needed.
+Run the same engine locally, through SSH, or through a remote agent. Local measurements require neither SSH nor another AI agent. On Windows use `../itl-remote-runner/scripts/Invoke-RemoteWork.ps1`, which provisions Python for the shared engine; read [measurement recipes](references/measurements.md) and the [scenario contract](../itl-remote-runner/references/contracts.md) as needed.
 
 ## Prepare the scenario
 

@@ -67,7 +67,7 @@ func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, r
 	if python == "" {
 		python = "python"
 	}
-	cmd := exec.Command(python, "-X", "utf8", "-u", "-m", "itl_remote.access_host")
+	cmd := exec.Command(python, "-B", "-X", "utf8", "-u", "-m", "itl_remote.access_host")
 	cmd.Dir = runtimeRoot
 	cmd.Env = databaseHostEnvironment(runtimeRoot)
 	hideDatabaseHost(cmd)
@@ -129,10 +129,13 @@ func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, r
 }
 
 func databaseHostEnvironment(runtimeRoot string) []string {
-	values := map[string]string{"PYTHONPATH": runtimeRoot, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+	values := map[string]string{"PYTHONPATH": runtimeRoot, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
 	result := []string{}
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
+		if strings.EqualFold(key, "PYTHONHOME") {
+			continue
+		}
 		if _, replaced := values[strings.ToUpper(key)]; !replaced {
 			result = append(result, value)
 		}

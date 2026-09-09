@@ -76,6 +76,29 @@ func TestDatabaseAccessNativeExclusionAndRelease(t *testing.T) {
 	releaseDatabaseFixture(t, last, nil)
 }
 
+func TestDatabaseHostIgnoresForeignPythonHomeAndKeepsPayloadImmutable(t *testing.T) {
+	python, _, _ := databaseAccessFixture(t)
+	root := filepath.Join(t.TempDir(), "Python библиотека с пробелом")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "owned_fixture.py"), []byte("value = 42\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PYTHONHOME", filepath.Join(root, "missing foreign installation"))
+	t.Setenv("PYTHONDONTWRITEBYTECODE", "0")
+	t.Setenv("PYTHONNOUSERSITE", "0")
+	command := exec.Command(python, "-X", "utf8", "-c", "import owned_fixture,sys; assert owned_fixture.value == 42; assert sys.flags.no_user_site == 1")
+	command.Env = databaseHostEnvironment(root)
+	hideDatabaseHost(command)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("managed environment failed: %v: %s", err, output)
+	}
+	if _, err := os.Stat(filepath.Join(root, "__pycache__")); !os.IsNotExist(err) {
+		t.Fatalf("runtime library was modified: %v", err)
+	}
+}
+
 func TestDatabaseAccessInheritanceDoesNotReleaseParent(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	parent := acquireDatabaseFixture(t, python, runtimeRoot, request)

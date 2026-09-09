@@ -1,13 +1,17 @@
 # Prepare, run, observe and transfer
 
-Use Python 3.11+; the runtime has no Python package dependencies. `remote_work.py --help` is the complete executable CLI. Each command returns JSON. Nonzero exit/error JSON means the operation failed; a successful transport call may still return a job with `needs-attention` or `partial`.
+On Windows use `scripts/Invoke-RemoteWork.ps1`; it provides the Python runtime automatically. `Invoke-RemoteWork.ps1 --help` lists the complete CLI. Each command returns JSON. Nonzero exit/error JSON means the operation failed; a successful transport call may still return a job with `needs-attention` or `partial`.
+
+The helper acquires pinned CPython 3.13.15 from the official NuGet package into the user-local shared ITL artifact cache. It verifies the package and every installed payload file, serializes concurrent installers and repairs a damaged installation into a new generation. Existing generations remain available to running workers. No administrator rights, NuGet client, pip packages, PATH/registry changes or `conf.cfg` edits are needed. Python runs on the agent/worker host; ordinary business users of 1C do not need it.
+
+Use `-Python <executable>` or `ITL_PYTHON_EXECUTABLE` for an explicit Python 3.11+ installation; an invalid override is reported rather than silently replaced. Database admission also preserves its existing `ITL_INFOBASE_ACCESS_PYTHON` / `databaseAccess.python` override. `-Offline` uses verified cache or the bundled archive and reports missing input without downloading. Runtime preparation precedes database ownership. Direct `remote_work.py` remains available for hosts with an explicitly managed interpreter.
 
 ## Prepare once
 
-Inspect Python, 1C, SSH and the user's permitted workspace/base. Resolve the profile from the shared contract. On an unconfigured Windows host use `Prepare-RemoteHost.ps1` to inspect prerequisites; `-EnableSsh` is an explicit administrative setup operation. Do not change firewall/service settings during mere inspection.
+Inspect 1C, SSH and the user's permitted workspace/base. Resolve the profile from the shared contract. On an unconfigured Windows host `Prepare-RemoteHost.ps1` prepares Python and reports prerequisites; `-EnableSsh` is an explicit administrative setup operation. Do not change firewall/service settings during mere inspection.
 
 ```powershell
-python .\.agents\skills\itl-remote-runner\scripts\remote_work.py prepare --spool C:\ITL\worker --profile C:\ITL\private-profile.json
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 prepare --spool C:\ITL\worker --profile C:\ITL\private-profile.json
 ```
 
 Give the user the generated `Start-Worker.cmd`. They launch it after logging into the session that will run 1C. `worker.json` is a heartbeat, not proof of current access to an interactive desktop; the real scenario establishes usable runtime readiness. Signing out can interrupt 1C; reconnecting the controller must not replay its job.
@@ -19,9 +23,9 @@ Use `probe --spool ...` locally or `remote --connection ... --action probe` remo
 ## Package and execute
 
 ```powershell
-python .\.agents\skills\itl-remote-runner\scripts\remote_work.py pack --scenario .\tests\performance\report\scenario.json --output C:\ITL\packages\report-1 --target test --route local
-python .\.agents\skills\itl-remote-runner\scripts\remote_work.py submit --package C:\ITL\packages\report-1 --spool C:\ITL\worker
-python .\.agents\skills\itl-remote-runner\scripts\remote_work.py execute --spool C:\ITL\worker --id <returned-id>
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pack --scenario .\tests\performance\report\scenario.json --output C:\ITL\packages\report-1 --target test --route local
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 submit --package C:\ITL\packages\report-1 --spool C:\ITL\worker
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 execute --spool C:\ITL\worker --id <returned-id>
 ```
 
 Local `execute` runs directly in the current user session: no SSH or second agent is needed. Remote packaging uses `auto`, `ssh`, or `agent`, then `send --package ... --connection ...`. The already running remote worker executes the queued job. Do not call remote `execute` from a noninteractive SSH session for a client-1C scenario.
@@ -60,4 +64,4 @@ work stopped or restoration completed; inspect the recovery evidence separately.
 
 ## Portable export
 
-`export --repository <source-root> --output <new-archive.zip>` includes the three skills, runtime and exact shared 1C core/port/session/value modules, with a SHA manifest. It excludes the full lifecycle, plugins, profiles, secrets, test bases and artifacts. On the target, verify the archive SHA from the sender, extract it to a private directory and prepare its profile. Python and licensed 1C remain machine prerequisites. The main agent can transfer dependencies once SSH exists; before then the user transfers the initial bundle.
+`Invoke-RemoteWork.ps1 export --repository <source-root> --output <new-archive.zip>` includes the three skills, pinned Python package and exact shared 1C core/port/session/value/download modules, with a SHA manifest. It excludes the full lifecycle, plugins, profiles, secrets, test bases and measurement artifacts. On the target, verify the archive SHA from the sender, extract it to a private directory and run `Prepare-RemoteHost.ps1 -Offline -Spool ... -Profile ...`. Python is installed from the included package; licensed 1C remains a machine prerequisite. The main agent can transfer dependencies once SSH exists; before then the user transfers the initial bundle. The lower-level Python `export` command includes Python only when `--python-archive <package>` is supplied; its hash must match the source manifest.

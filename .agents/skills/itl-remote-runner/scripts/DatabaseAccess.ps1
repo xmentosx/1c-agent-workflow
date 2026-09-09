@@ -57,11 +57,9 @@ function Start-ItlDatabaseAccessHost {
     if ($CancelPath -and (Test-Path -LiteralPath $CancelPath -PathType Leaf)) {
         throw 'INFOBASE_ACCESS_PARENT_CANCELLED'
     }
-    if (-not $Python) {
-        $command = Get-Command python -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($null -eq $command) { throw 'INFOBASE_ACCESS_PYTHON311_REQUIRED' }
-        $Python = $command.Source
-    }
+    . (Join-Path $PSScriptRoot 'PythonRuntime.ps1')
+    $Python = Resolve-ItlPythonExecutable -Python $Python
+    if ($CancelPath -and (Test-Path -LiteralPath $CancelPath -PathType Leaf)) { throw 'INFOBASE_ACCESS_PARENT_CANCELLED' }
     $budget = 3600.0
     if (($Request -is [Collections.IDictionary] -and $Request.Contains('timeout')) -or
         $null -ne $Request.PSObject.Properties['timeout']) { $budget = [double]$Request.timeout }
@@ -70,7 +68,7 @@ function Start-ItlDatabaseAccessHost {
     }
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $Python
-    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-X', 'utf8', '-u', '-m', 'itl_remote.access_host')
+    $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-B', '-X', 'utf8', '-u', '-m', 'itl_remote.access_host')
     $start.WorkingDirectory = $PSScriptRoot
     $start.UseShellExecute = $false
     $start.CreateNoWindow = $true
@@ -83,6 +81,8 @@ function Start-ItlDatabaseAccessHost {
     $start.EnvironmentVariables['PYTHONUTF8'] = '1'
     $start.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
     $start.EnvironmentVariables['PYTHONDONTWRITEBYTECODE'] = '1'
+    $start.EnvironmentVariables['PYTHONNOUSERSITE'] = '1'
+    $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     $owner = [pscustomobject]@{ process = $process; proof = $null; public = $null; closed = $false; stderr = $null }

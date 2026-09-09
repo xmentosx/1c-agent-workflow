@@ -248,6 +248,47 @@ class RuntimeTests(unittest.TestCase):
         state = json.loads(capture([sys.executable, str(runtime), "execute", "--spool", str(self.spool), "--id", request["id"]]))
         self.assertEqual("completed", state["status"], state)
 
+    def test_portable_bundle_includes_verified_external_python_package(self):
+        import shutil
+        import zipfile
+        root = self.root / "Исходники комплекта"
+        for name in ("itl-remote-runner", "itl-remote-agent", "itl-performance"):
+            shutil.copytree(REPO / ".agents/skills" / name, root / ".agents/skills" / name,
+                            ignore=shutil.ignore_patterns("__pycache__"))
+        lib = root / ".agents/skills/1c-workflow/scripts/lib"
+        lib.mkdir(parents=True)
+        for name in ("core", "ports", "sessions", "runtime-values", "immutable-download"):
+            filename = "agent-1c." + name + ".ps1"
+            shutil.copyfile(REPO / ".agents/skills/1c-workflow/scripts/lib" / filename, lib / filename)
+        package = self.root / "Внешний архив.nupkg"
+        package.write_bytes(b"fixture pinned package")
+        assets = root / ".agents/skills/itl-remote-runner/assets/python-runtime"
+        definition = read_json(assets / "manifest.json")
+        definition["sha256"] = digest(package)
+        write_json(assets / "manifest.json", definition)
+        archive = self.root / "Автономный комплект.zip"
+        bootstrap.export_bundle(root, archive, package)
+        relative = ".agents/skills/itl-remote-runner/assets/python-runtime/" + definition["package"]
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertEqual(package.read_bytes(), bundle.read(relative))
+            manifest = json.loads(bundle.read("bundle-manifest.json"))
+            self.assertEqual(definition["sha256"], manifest["files"][relative]["sha256"])
+            self.assertEqual(1, bundle.namelist().count(relative))
+            self.assertIn(".agents/skills/1c-workflow/scripts/lib/agent-1c.immutable-download.ps1", bundle.namelist())
+        package.write_bytes(b"modified archive")
+        rejected = self.root / "rejected.zip"
+        with self.assertRaisesRegex(WorkError, "PORTABLE_PYTHON_ARCHIVE_HASH_MISMATCH"):
+            bootstrap.export_bundle(root, rejected, package)
+        self.assertFalse(rejected.exists())
+
+    def test_prepared_worker_preserves_immutable_interpreter_and_native_exit(self):
+        launcher = (self.spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn(" -B -X utf8 -u ", launcher)
+        self.assertIn("$env:PYTHONDONTWRITEBYTECODE='1'", launcher)
+        self.assertIn("$env:PYTHONNOUSERSITE='1'", launcher)
+        self.assertIn("$env:PYTHONHOME=$null", launcher)
+        self.assertIn("exit $LASTEXITCODE", launcher)
+
     def fake_agent(self, kind, fail=False):
         script = self.root / "agent fixture.py"
         script.write_text('''import sys,json,subprocess

@@ -1,4 +1,9 @@
-﻿Describe 'ITL performance TestClient owner bridge' {
+﻿BeforeAll {
+    $script:AdmissionFixturePythonOverride = $env:ITL_PYTHON_EXECUTABLE
+    if (-not $env:ITL_PYTHON_EXECUTABLE) { $env:ITL_PYTHON_EXECUTABLE = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
+}
+AfterAll { $env:ITL_PYTHON_EXECUTABLE = $script:AdmissionFixturePythonOverride }
+Describe 'ITL performance TestClient owner bridge' {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -135,7 +140,7 @@ Describe "ITL on-demand MCP facade" {
         [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.11"
         [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.11"
         [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.11/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "aaf13fb5d51f8dac37560d1d0aa643484fd31240beedfa03342e1f429b8af0a2"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "5dd2bd12721bb2cf2d0a4f7d351e56429990605c7ac32296c1d897a33c04db91"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family

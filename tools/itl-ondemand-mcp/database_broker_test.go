@@ -13,6 +13,13 @@ import (
 )
 
 func TestDatabaseBrokerPlansThroughPublicHelper(t *testing.T) {
+	python, err := exec.LookPath("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This broker contract uses the qualified development interpreter. Managed
+	// acquisition has its own offline/no-PATH process qualification.
+	t.Setenv("ITL_PYTHON_EXECUTABLE", python)
 	root := filepath.Join(t.TempDir(), "Проект с пробелом")
 	stateRoot := filepath.Join(root, ".agent-1c", "dev-branches")
 	if err := os.MkdirAll(stateRoot, 0700); err != nil {

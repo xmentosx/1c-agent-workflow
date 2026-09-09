@@ -96,7 +96,7 @@
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/RemotePerformance.Tests.ps1",
       "paths": [".agents/skills/itl-remote-runner/*", ".agents/skills/itl-remote-agent/*", ".agents/skills/itl-performance/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "tests/python/remote_work/*"],
-      "tests": ["tests/pester/RemotePerformance.Tests.ps1"]
+      "tests": ["tests/pester/RemotePerformance.Tests.ps1", "tests/pester/PythonRuntime.Tests.ps1"]
     },
     {
       "id": "immutable-download",

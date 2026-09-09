@@ -1070,7 +1070,7 @@ function Get-ItlDatabaseAccessSettings {
         throw 'INFOBASE_ACCESS_TIMEOUT_INVALID'
     }
     return [pscustomobject]@{ coordinator=(Resolve-ProjectPath $coordinator); scope=$scope; waitTimeoutSeconds=$timeout
-        python=[string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_PYTHON' -ConfigName 'databaseAccess.python' -Default 'python') }
+        python=[string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_PYTHON' -ConfigName 'databaseAccess.python' -Default '') }
 }
 
 function Get-ItlOnDemandDatabaseAccessPlan {
@@ -1419,8 +1419,11 @@ function Invoke-ItlOnDemandBackendBroker {
         throw "Invalid on-demand MCP instance id."
     } elseif ($Operation -eq "access-plan") {
         $previousServicePlan = $(if ($null -ne $invocation) { $invocation.plan.servicePlan } else { $null })
+        $databasePlan = Get-ItlOnDemandDatabaseAccessPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $previousServicePlan
+        . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/PythonRuntime.ps1')
+        $databasePlan.python = Resolve-ItlPythonExecutable -Python $databasePlan.python
         $result = [pscustomobject]@{ schemaVersion = 1; status = 'planned'; family = $Family; instanceId = $InstanceId
-            databaseAccess = (Get-ItlOnDemandDatabaseAccessPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $previousServicePlan) }
+            databaseAccess = $databasePlan }
     } elseif ($Operation -eq "ensure") {
         $nativeWorkAttempted = $true
         $result = Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour -ServiceAdmissionPlan $serviceAdmissionPlan

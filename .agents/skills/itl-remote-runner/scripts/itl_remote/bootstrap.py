@@ -47,8 +47,9 @@ def prepare(spool, configuration):
     script = Path(__file__).resolve().parent.parent / "remote_work.py"
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
     launcher = ("$ErrorActionPreference='Stop'\n$env:PYTHONUTF8='1'\n$env:PYTHONIOENCODING='utf-8'\n"
+                "$env:PYTHONDONTWRITEBYTECODE='1'\n$env:PYTHONNOUSERSITE='1'\n$env:PYTHONHOME=$null\n"
                 "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n"
-                "& " + quote(sys.executable) + " -u " + quote(script) + " worker --spool " + quote(spool) + "\n")
+                "& " + quote(sys.executable) + " -B -X utf8 -u " + quote(script) + " worker --spool " + quote(spool) + "\nexit $LASTEXITCODE\n")
     (spool / "Start-Worker.ps1").write_text(launcher, encoding="utf-8-sig")
     (spool / "Start-Worker.cmd").write_bytes(b'@echo off\r\npowershell.exe -NoProfile -File "%~dp0Start-Worker.ps1"\r\npause\r\n')
     connection = {"schemaVersion": 1, "transport": "exchange", "spool": str(spool),
@@ -60,7 +61,7 @@ def prepare(spool, configuration):
             "connection": str(spool / "connection.json")}
 
 
-def export_bundle(repository, output):
+def export_bundle(repository, output, python_archive=None):
     root, output = Path(repository).resolve(), Path(output).resolve()
     if output.exists():
         raise WorkError("EXPORT_DESTINATION_EXISTS")
@@ -70,16 +71,26 @@ def export_bundle(repository, output):
         selected += [path for path in folder.rglob("*") if path.is_file() and "__pycache__" not in path.parts]
     # The same shared process/session code used by ITL, not a reimplementation.
     lib = root / ".agents/skills/1c-workflow/scripts/lib"
-    selected += [lib / ("agent-1c." + name + ".ps1") for name in ("core", "ports", "sessions", "runtime-values")]
+    selected += [lib / ("agent-1c." + name + ".ps1") for name in ("core", "ports", "sessions", "runtime-values", "immutable-download")]
     if any(not path.is_file() for path in selected):
         raise WorkError("PORTABLE_DEPENDENCY_MISSING")
+    entries = {path.relative_to(root).as_posix(): path for path in selected}
+    if python_archive is not None:
+        asset_dir = ".agents/skills/itl-remote-runner/assets/python-runtime/"
+        definition = read_json(root / asset_dir / "manifest.json")
+        package = Path(python_archive).resolve()
+        if not package.is_file() or digest(package) != definition["sha256"]:
+            raise WorkError("PORTABLE_PYTHON_ARCHIVE_HASH_MISMATCH")
+        name = definition["package"]
+        if Path(name).name != name or "/" in name or "\\" in name:
+            raise WorkError("PORTABLE_PYTHON_MANIFEST_INVALID")
+        entries[asset_dir + name] = package
     output.parent.mkdir(parents=True, exist_ok=True)
     manifest = {"schemaVersion": 1, "version": VERSION, "createdAt": stamp(), "files": {}}
     with zipfile.ZipFile(output, "x", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(selected):
-            relative = path.relative_to(root).as_posix()
+        for relative, path in sorted(entries.items()):
             archive.write(path, relative)
             manifest["files"][relative] = {"sha256": digest(path), "bytes": path.stat().st_size}
         import json
         archive.writestr("bundle-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
-    return {"path": str(output), "sha256": digest(output), "files": len(selected), "version": VERSION}
+    return {"path": str(output), "sha256": digest(output), "files": len(entries), "version": VERSION}

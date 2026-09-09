@@ -98,6 +98,7 @@ def main():
     command = commands.add_parser("export")
     command.add_argument("--repository", required=True)
     command.add_argument("--output", required=True)
+    command.add_argument("--python-archive", help="Pinned Python package to include for offline Windows setup")
     args = parser.parse_args()
     from itl_remote import bootstrap, execution, jobs, profiling, transport
     if args.command in ("recovery-plan", "recover", "recovery-cancel"):
@@ -130,7 +131,7 @@ def main():
     if args.command == "probe":
         return bootstrap.inspect(args.spool)
     if args.command == "export":
-        return bootstrap.export_bundle(args.repository, args.output)
+        return bootstrap.export_bundle(args.repository, args.output, args.python_archive)
     if args.command == "compare":
         return execution.compare(args.baseline, args.candidate)
     if args.command == "analyze":

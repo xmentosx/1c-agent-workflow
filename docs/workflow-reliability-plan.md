@@ -607,13 +607,12 @@ Remaining integration before registration/delivery:
 - Resolve and qualify installed Python/runtime availability before delivery:
   Python 3.11+ was already a prerequisite for remote jobs and measurements, but
   the shared database queue broadens that dependency to ordinary integrated
-  operations. The interpreter is currently external (PATH or
-  `ITL_INFOBASE_ACCESS_PYTHON`), with no third-party Python packages. Qualify a
-  pinned distribution usable without administrator rights and helper-owned
-  discovery/update; do not assume Codex's development interpreter exists on an
-  end-user machine. Test a clean user profile with no Python in PATH, spaces and
-  Cyrillic in the install path, unavailable downloads, version mismatch and
-  offline reuse. Keep this as explicit delivery work, not a development-only note.
+  operations. Managed user-local provisioning and offline bundle support are
+  now implemented below; ordinary end-user operations no longer assume a
+  development interpreter in PATH. The previous explicit interpreter override
+  remains supported. Clean-cache/no-PATH native qualification passes; normal
+  package delivery and installed-project qualification remain required. Keep
+  this as explicit delivery work, not a development-only note.
   Update the finished component's
   version/build pin, run its owned registration checks, and retain exact real
   Release E2E proof for both backend families before publishing its asset.
@@ -1453,3 +1452,60 @@ Its provenance and 32094350-byte archive are under
 `build/third-party/vanessa-automation/1.2.043.28-itl-r9`. This is a local candidate;
 the original combined 49-scenario case, retained MCP behavior, normal component
 delivery and installed acceptance remain pending. The installed pin remains r8.
+
+The build correction was registered as
+`c12320f2a6b38bdff912dfa4e5cbbb68be3a2968`: 509 Targeted tests passed with no
+failures/skips, tree `a93ecbd403681c976795bf4ec09b4ded2f75b2bf`, ledger duration
+498947 ms. Registration is not publication or installed acceptance.
+
+## Item 4: managed Python provision and offline portability
+
+`PythonRuntime.ps1` supplies the same interpreter to native database owners,
+the facade's public access-plan and Windows remote/performance entrypoints.
+The official CPython 3.13.15 NuGet distribution is pinned by archive SHA
+`05357887df50d3153efc681bdf432c321d3e2f9ce5788f99f4515b27e8fda0ac`.
+The source manifest includes all 1331 payload files with individual sizes/hashes;
+the package license is retained. There is no installer, global PATH/registry
+change, pip dependency installation, or 1C protection-file edit. NuGet's normal
+module lookup preserves existing scenario imports and PYTHONPATH; the isolated
+embeddable distribution was rejected after the actual access-host import failed.
+
+The package installer serializes processes against a shared per-user cache,
+verifies complete payload bytes before reuse, and selects a new immutable
+generation when files are damaged or redirected. Previously selected generations
+remain available to existing workers. Shallow executable paths fix the observed
+CreateProcess failure with the original combined Cyrillic/space cache path;
+the original path was retained in qualification. Explicit interpreter overrides
+are qualified as Python 3.11+ and retain errors instead of silently falling back.
+
+`Invoke-RemoteWork.ps1 export` includes the pinned package automatically. A
+recipient uses `Prepare-RemoteHost.ps1 -Offline` from the extracted bundle,
+without Python in PATH or an Internet download. The shared immutable-download
+module is included in the portable dependencies. The helper preserves the
+Python process's JSON stdout, diagnostic stderr and exit code: real Windows
+PowerShell 5.1 qualification found lost inherited output handles and then a
+VoidTaskResult contaminating the exit result; explicit concurrent byte-stream
+copies with suppressed task return values correct both. Worker launchers disable
+bytecode/user-site writes and foreign PYTHONHOME. Worker startup remains manual.
+
+Focused PS5.1/Pester 5.8 verification passes 93 cases across PythonRuntime,
+OnDemandMcp and RemotePerformance, including the portable Python inventory;
+VanessaBuildRuntime's nine cases also passed during the preceding combined run.
+Two real PowerShell installers select one verified generation from the same
+cache. Additional native qualification at `C:/itl автономный 68485339` exported,
+extracted and ran the public CLI from a complete bundle with a fresh cache,
+Python removed from PATH and invalid inherited PYTHONHOME. It created the
+original scenario, propagated argument error exit 2, acquired/released the
+database pipe owner, and retained unchanged interpreter bytes. Bundle SHA was
+`479b47c800c4fc98a186608ab2598e1ceca7f4f949fe004b88c39489ea591124`;
+this run preceded the later shared SHA-helper substitution. A subsequent actual
+public access-plan at `C:/itl план Python e61fd983` selected the managed executable
+with no Python in PATH and left its target database absent/unchanged.
+
+The Go database owner/broker/environment tests pass. The unpublished 0.4.11
+facade candidate was rebuilt; the exact executable SHA is now
+`5dd2bd12721bb2cf2d0a4f7d351e56429990605c7ac32296c1d897a33c04db91`.
+The package lock and exact-build regression follow this candidate. This is not
+component release proof: both backend families still require the real Release
+E2E stage before the executable can be published. This Python packet is pending
+normal RegisterChange, package delivery and installed-project acceptance.

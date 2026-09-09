@@ -1,4 +1,6 @@
 ﻿BeforeAll {
+    $script:AdmissionFixturePythonOverride = $env:ITL_PYTHON_EXECUTABLE
+    if (-not $env:ITL_PYTHON_EXECUTABLE) { $env:ITL_PYTHON_EXECUTABLE = (Get-Command python -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     $script:BuildRuntimeRepo = $context.RepoRoot
@@ -52,6 +54,8 @@
         } $root $Failure
     }
 }
+
+AfterAll { $env:ITL_PYTHON_EXECUTABLE = $script:AdmissionFixturePythonOverride }
 
 Describe 'Pinned upstream build execution adapters' {
     BeforeEach {
