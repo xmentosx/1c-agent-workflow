@@ -2,6 +2,52 @@ if (-not (Get-Variable -Name OneCSessionLaunchContext -Scope Script -ErrorAction
     $script:OneCSessionLaunchContext = $null
 }
 
+if (-not (Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:OneCNativeOperationJournal = $null
+}
+
+function New-OneCNativeOperationJournal {
+    # The aggregate database admission owns this journal. Session-capacity
+    # reservation removal is not proof that database work has stopped.
+    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new() }
+}
+
+function Add-OneCNativeOperationRecord {
+    param([object]$Journal, [object[]]$Admissions, [string]$Purpose)
+    if ($null -eq $Journal) { return $null }
+    $record = [pscustomobject]@{
+        id = [guid]::NewGuid().ToString('N')
+        purpose = $Purpose
+        admissions = @($Admissions)
+        startAttempted = $false
+        process = $null
+        processId = 0
+        launcherExited = $false
+        quiescenceConfirmed = $false
+        releaseEvidence = ''
+    }
+    $Journal.entries.Add($record)
+    return $record
+}
+
+function Test-OneCNativeOperationJournalReleased {
+    param([Parameter(Mandatory = $true)][object]$Journal)
+    foreach ($record in $Journal.entries) {
+        if ($record.startAttempted -and -not $record.quiescenceConfirmed) { return $false }
+    }
+    return $true
+}
+
+function Confirm-OneCNativeOperationRelease {
+    param([AllowNull()][object]$Record, [bool]$LauncherExited, [bool]$OwnedProcessesReleased, [string]$Evidence)
+    if ($null -eq $Record) { return }
+    $Record.launcherExited = $LauncherExited
+    # Never infer descendant release from launcher exit or an absent PID.
+    # The caller must supply its operation-specific owned-process proof.
+    $Record.quiescenceConfirmed = [bool]($Record.startAttempted -and $LauncherExited -and $OwnedProcessesReleased -and $Evidence)
+    $Record.releaseEvidence = if ($Record.quiescenceConfirmed) { $Evidence } else { '' }
+}
+
 function Get-OneCMaxConcurrentSessions {
     $rawValue = Get-EnvValue -Name "ONEC_MAX_CONCURRENT_SESSIONS" -Default 3
     $text = ([string]$rawValue).Trim()
@@ -584,7 +630,13 @@ function Invoke-OneCSessionProcessStart {
                 if ($context.sessionCancelPath -and (Test-Path -LiteralPath $context.sessionCancelPath)) { throw 'CANCELLED' }
                 if (Test-OneCSessionWaitExpired -Context $context -Watch $waitWatch) { throw 'ITL_ONEC_SESSION_WAIT_TIMEOUT: admission expired before launch' }
                 $context.nativeStartAttempted = $true
-                & $requestedStartProcess
+                if ($null -ne $context.nativeOperationRecord) { $context.nativeOperationRecord.startAttempted = $true }
+                $startedProcess = & $requestedStartProcess
+                if ($null -ne $context.nativeOperationRecord -and $null -ne $startedProcess) {
+                    $context.nativeOperationRecord.process = $startedProcess
+                    $context.nativeOperationRecord.processId = [int]$startedProcess.Id
+                }
+                return $startedProcess
             })
         } catch {
             # Retry admission only when no process start was attempted. A
@@ -646,6 +698,7 @@ function Invoke-WithOneCSessionAdmissionContext {
         sessionLimitRecovery = $SessionLimitRecovery
         recoveryAttempted = $false
         nativeStartAttempted = $false
+        nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose)
         sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
         sessionCancelPath = $SessionCancelPath
         sessionDeadlineMonotonicNs = $SessionDeadlineMonotonicNs

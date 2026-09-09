@@ -19,6 +19,7 @@
             }
             $script:CaseFailure = $Failure
             $script:ProbePassed = $false
+            $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
             $script:ReleaseProbeRequests = 0
             $script:NativeArguments = @()
             $script:OutputPath = ''
@@ -91,12 +92,14 @@
                     infoBaseReleased = ($releaseChecked -and (Test-DesignerInfoBaseReleased -InfoBaseKind file -InfoBasePath $Base))
                 }
             }
+            function Invoke-OneCSessionAdmissionSet { param($Admissions, $StartProcess) & $StartProcess }
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds,
                     [scriptblock]$OnTimeout, [scriptblock]$CompletionProbe,
                     [int]$CompletionGraceSeconds, [int]$PostExitProbeSeconds, [int]$MaxWorkingSetMb
                 )
+                Invoke-OneCSessionProcessStart -StartProcess { [pscustomobject]@{ Id = 87005 } } | Out-Null
                 $script:NativeArguments = @($Arguments)
                 $logPath = $Arguments[[Array]::IndexOf($Arguments, '/Out') + 1]
                 $outputIndex = [Array]::IndexOf($Arguments, '/DumpCfg')
@@ -155,6 +158,8 @@
                     manifestPath = $script:PublishedManifest
                     manifestFiles = @(Get-ChildItem -LiteralPath $Root -Filter '*.manifest.json' -Recurse)
                     loadRequests = $script:LoadRequests; verificationReads = $script:VerificationReads
+                    nativeReleased = (Test-OneCNativeOperationJournalReleased -Journal $script:OneCNativeOperationJournal)
+                    nativeRecordCount = $script:OneCNativeOperationJournal.entries.Count
                 }
             } finally { $holder.Dispose() }
         } $root $base $Kind $Failure $Operation
@@ -183,6 +188,8 @@ Describe 'Designer exports with another infobase session' {
         $result.lockedAfter | Should -BeTrue
         $result.holderOpen | Should -BeTrue
         $result.releaseProbeRequests | Should -Be 0
+        $result.nativeRecordCount | Should -Be 1
+        $result.nativeReleased | Should -BeTrue
     }
 
     It 'does not publish a manifest after <Failure>' -TestCases @(
@@ -199,6 +206,8 @@ Describe 'Designer exports with another infobase session' {
         $result.manifestFiles.Count | Should -Be 0
         $result.lockedAfter | Should -BeTrue
         $result.holderOpen | Should -BeTrue
+        $result.nativeRecordCount | Should -Be 1
+        $result.nativeReleased | Should -Be ($Failure -ne 'owned-process-active')
     }
 
     It 'completes <Kind> export while the other session keeps the infobase open' -TestCases @(

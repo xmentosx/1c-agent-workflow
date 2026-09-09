@@ -668,3 +668,28 @@ tests verify the identity producer for completed recovery and an unchanged load.
 
 This fixes post-load cleanup scope. It does not by itself complete admission
 before lifecycle locks, native-operation cleanup accounting, or real 1C acceptance.
+
+## Item 4: native-operation accounting before aggregate release
+
+The shared session launch boundary now supports an aggregate operation journal.
+Each nested launch has its own record and becomes pending immediately before the
+native start attempt. A capacity or preparation failure before that boundary can
+release the aggregate; a thrown launch without a process handle remains uncertain.
+Removing a session-capacity reservation or returning from a background launcher
+does not confirm that its database work has stopped. The journal retains the
+returned process object and distinguishes separate launches even on the same base.
+
+Designer supplies its existing invocation-specific descendant-release evidence
+and actual launcher-exit result after completion-probe cleanup. Business failure
+can coexist with confirmed native cleanup; a surviving owned process cannot.
+Unrelated sessions do not prevent this owned-process proof. A later contradictory
+observation withdraws an earlier release confirmation. No aggregate entrypoint is
+enabled by this slice alone: update admission, Enterprise completion accounting,
+runtime-drain accounting and actual shared-base acceptance remain required.
+
+Nine journal regressions cover prelaunch rejection, uncertain start, background
+lifetime, both parts of release proof, contradictory evidence and nested launches.
+The retained public CF/CFE export reproducer also asserts journal release on
+success/business failure and retained ownership for a surviving Designer process,
+while keeping an unrelated database holder open. These use simulated native 1C
+boundaries; they do not establish live concurrent database admission.

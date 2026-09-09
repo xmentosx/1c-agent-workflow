@@ -7043,6 +7043,7 @@ function Invoke-Designer {
     }
     $nativeArguments = @($args)
     $result = $null
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
     try {
         $result = Invoke-WithOneCSessionAdmissionContext `
             -InfoBaseKind $InfoBaseKind `
@@ -7050,6 +7051,7 @@ function Invoke-Designer {
             -RequiredSessions 1 `
             -Purpose "designer-$operationKind" `
             -ScriptBlock {
+                $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
                 Invoke-NativeProcessAndWaitResult `
                     -FilePath $platformPath `
                     -Arguments $nativeArguments `
@@ -7073,6 +7075,11 @@ function Invoke-Designer {
                 $timeoutCleanupState.error = (([string]$timeoutCleanupState.error + " " + [string]$processProbeTermination.error).Trim())
             }
         }
+        $ownedReleaseConfirmed = $null -ne $invocationProbeState -and
+            [bool]$invocationProbeState.processesReleaseConfirmed -and -not $timeoutCleanupState.error
+        Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record `
+            -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
+            -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'designer-owned-process-release'
     }
     if ($timeoutCleanupState.error) {
         throw "DESIGNER_COMPLETION_PROBE_CLEANUP_FAILED operation=$operationKind log=$logPath detail='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'"
