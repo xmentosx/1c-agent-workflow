@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET
 import zlib
 
 from .common import OwnedProcess, WorkError, beneath, digest, read_json, stamp, write_json
+from .source_mapping import SourceResolver, coverage as source_coverage
 
 RESPONSE = "http://v8.1c.ru/8.3/debugger/debugRDBGRequestResponse"
 DATA = "http://v8.1c.ru/8.3/debugger/debugBaseData"
@@ -181,7 +182,8 @@ def fields(element):
     return {child.tag.rsplit("}", 1)[-1]: child.text for child in element}
 
 
-def analyze_raw(paths, session=None, expected=None, source_map=None):
+def analyze_raw(paths, session=None, expected=None, source_map=None, *, source_policy="optional", source_map_root=None):
+    sources = SourceResolver(source_map, root=source_map_root, policy=source_policy)
     packets = {}
     for path in paths:
         root = ET.fromstring(Path(path).read_bytes())
@@ -204,29 +206,27 @@ def analyze_raw(paths, session=None, expected=None, source_map=None):
             if hz <= 0:
                 raise WorkError("INVALID_PROFILE_FREQUENCY")
             rows = []
+            source_modules = []
             modules = measure.findall("{" + MEASURE + "}moduleData")
             for module in modules:
-                module_id = fields(module.find("{" + MEASURE + "}moduleID"))
-                mapping = (source_map or {}).get(module_id.get("id", ""))
-                source_match = {"sourceMatched": False}
-                if mapping and mapping.get("moduleVersion") == module_id.get("version"):
-                    source = Path(mapping["path"])
-                    try:
-                        if source.is_file() and digest(source) == mapping["sha256"]:
-                            source_match.update(sourceMatched=True, source=str(source))
-                    except OSError as error:
-                        source_match["sourceIssue"] = str(error)
+                identity_node = module.find("{" + MEASURE + "}moduleID")
+                module_id = fields(identity_node) if identity_node is not None else {}
+                source_match = sources.resolve(module_id)
+                source_module = {"moduleID": module_id, **source_match, "lines": 0, "matchedLines": 0}
                 for line in module.findall("{" + MEASURE + "}lineInfo"):
                     row = {key: float(value) for key, value in fields(line).items()}
                     row.update(moduleID=module_id, seconds=row["durability"] / hz,
                                pureSeconds=row["pureDurability"] / hz, sourceMatched=False)
-                    row.update(source_match)
+                    row.update(sources.line(source_match, row.get("lineNo")))
+                    source_module["lines"] += 1
+                    source_module["matchedLines"] += int(row["sourceMatched"])
                     rows.append(row)
+                source_modules.append(source_module)
             key = (sid, target["id"])
             packet = {"sessionId": sid, "target": target, "raw": str(path), "sha256": digest(path),
                       "bytes": Path(path).stat().st_size, "frequency": hz,
                       "totalSeconds": float(measure.findtext("{" + MEASURE + "}totalDurability", "0")) / hz,
-                      "modules": len(modules), "lines": len(rows),
+                      "modules": len(modules), "lines": len(rows), "sourceModules": source_modules,
                       "top": sorted(rows, key=lambda row: row["pureSeconds"], reverse=True)[:30]}
             import hashlib
             packet["measureSha256"] = hashlib.sha256(ET.canonicalize(ET.tostring(measure, encoding="unicode"), strip_text=True).encode("utf-8")).hexdigest()
@@ -245,7 +245,8 @@ def analyze_raw(paths, session=None, expected=None, source_map=None):
                 "missingTypes": sorted(set(expected.get("requiredTypes", [])) - set(observed_types)) if expected else [],
                 "missingTargetIds": sorted(set(expected["targetIds"]) - {p["target"]["id"] for p in values}) if expected else [],
                 "ownershipVerified": expected is not None}
-    return {"format": "PerformanceInfoMain", "pff": None, "complete": complete, "coverage": coverage, "packets": values}
+    return {"format": "PerformanceInfoMain", "pff": None, "complete": complete, "coverage": coverage,
+            "sourceAnalysis": source_coverage(values, source_policy), "packets": values}
 
 
 class Rdbg:

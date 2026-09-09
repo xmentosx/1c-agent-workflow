@@ -73,6 +73,7 @@ def main():
     command.add_argument("--raw", nargs="+", required=True)
     command.add_argument("--session")
     command.add_argument("--source-map")
+    command.add_argument("--source-analysis", choices=["none", "optional", "required"], default="optional")
     command = commands.add_parser("runtime-proof")
     command.add_argument("--context", required=True)
     command.add_argument("--client-pid", type=int, required=True)
@@ -112,7 +113,9 @@ def main():
         return execution.compare(args.baseline, args.candidate)
     if args.command == "analyze":
         return profiling.analyze_raw(args.raw, args.session,
-                                     source_map=read_json(args.source_map) if args.source_map else None)
+                                     source_map=read_json(args.source_map) if args.source_map and args.source_analysis != "none" else None,
+                                     source_policy=args.source_analysis,
+                                     source_map_root=Path(args.source_map).resolve().parent if args.source_map else None)
     if args.command == "runtime-proof":
         return profiling.runtime_proof(args.context, args.client_pid, args.seance, args.instance, args.session_observation)
     if args.command == "submit":
@@ -171,6 +174,8 @@ if __name__ == "__main__":
     try:
         value = main()
         print(json.dumps(value, ensure_ascii=True, allow_nan=False))
+        if isinstance(value, dict) and value.get("sourceAnalysis", {}).get("requirementSatisfied") is False:
+            sys.exit(2)
     except KeyboardInterrupt:
         print(json.dumps({"status": "interrupted"}))
         sys.exit(130)

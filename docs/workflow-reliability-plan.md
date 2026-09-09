@@ -28,7 +28,7 @@ different milestones; none implies the next one.
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
-| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Pending |
+| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native offline binding and source requirement implemented with fixture checks; authoritative binding producer, target capture and live acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | In progress: common queue and portable runtime integration first; lifecycle/facade integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
@@ -100,3 +100,15 @@ is retained against events, with an additional deterministic regression that
 holds one notification until after two completed calls reusing a caller token.
 Both calls retain isolated evidence. The two progress tests passed 25 repeated
 runs; no notification delay or guessed sleep is added to the runtime.
+
+Items 2/7 registered as `0e3f771079b3b4d44e498d9fb69196dd571e36ea` after
+Targeted passed. Version fixture mismatches were corrected without changing the
+old-version rejection, exact-hash or backend ownership assertions. Publication,
+installation and long-running live acceptance remain separate open milestones.
+
+Item 3 first source slice adds native identity/version bindings, byte hashes,
+line-range validation, manifest-relative paths and explicit optional/required
+source analysis. Fourteen focused tests use retained native packet shapes and
+synthetic UTF-8/CRLF sources to exercise matching and mismatch behavior. This is
+an analyzer contract, not proof of a source capture from a real database. The
+authoritative manifest producer and read-only target capture remain required.
