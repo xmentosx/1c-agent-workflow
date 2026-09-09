@@ -41,8 +41,8 @@ different milestones; none implies the next one.
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients; exact branch11 findings, case-based acceptance and normal workflow delivery remain open |
-| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Shared partial-report implementation and five outcome regressions pass; exact historical branch11 XML/log yields 24 captures, one named-owner conflict and four absent entries; public long failed-report transport passes; registration, already-owned native semantics and delivered repository acceptance remain open |
-| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Transfer planner currently skips Configuration.xml and has no root dependency for top-level additions; implementation and native repository qualification pending |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Registered at 546aad7 with 592 passed tests; exact historical branch11 XML/log yields 24 captures, one named-owner conflict and four absent entries; native already-owned semantics and delivered repository acceptance remain open |
+| 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Registered at 38555f5 with 604 passed tests; UUID-based dependencies and separate root-first request implemented; actual branch11 metadata identifies the three new constants; native repository, full-sequence shared ownership, export reporting and delivery remain open |
 
 Implementation order: establish item 4 with the timeout and source-capture
 contracts and resolve the concrete export deadlock in item 14; complete items
@@ -204,6 +204,28 @@ counts; omitted or duplicated scenarios cannot produce a passing complete-suite
 result. Retain focused regressions for multiple nesting levels and mixed root /
 nested files. Moving fixtures to the root or lowering the expected count is not
 an acceptable correction.
+
+The item 6b algorithm defect is now reproduced with unchanged BSL excerpts from
+pinned Vanessa commit `f3a01778a14d29b38204685deea0131274d438ff`. With directory
+nodes and mixed nested file levels present, FeaturesToRun retains three files
+but the tree builder produces one root feature with the other two beneath it.
+The feature loader descends only through non-feature rows. A candidate `itl-r9`
+patch resets selected file levels after removing directory nodes, preserving
+every physical path and the explicit selection order. The unfiltered directory
+walk remains unchanged; no feature file is moved to the root.
+
+Four executable OneScript regressions cover the failing baseline, the candidate
+with ordinary/reordered selection and multiple nesting levels, and unfiltered
+traversal. Fourteen retained artifact contracts pass for both r8 and r9. The
+OneScript test has no reusable shard proof until the complete installed engine
+identity is modeled; both ordinary and legacy cache routes enforce this.
+The workflow still pins r8, and r9 is a source candidate only: native compilation,
+the actual combined PM5 49-scenario layout, retained MCP behavior, artifact hashes
+and normal component delivery remain open. The helper's build selector accepts
+an explicit r9 candidate without changing its default or installed dependency.
+
+The focused Windows PowerShell 5.1 group passes 40/40 tests, including the full
+local gate contract and the explicit no-reuse decision for the external runtime.
 
 **6c — Resume after a corrective descendant commit, P1 investigation.** After
 the local validator correction was committed, ordinary resume rejected a changed
@@ -1244,3 +1266,8 @@ new plan-editor constants (background-ready tables, packed tree restoration and
 packed table restoration), while the new nested subsystem does not trigger one.
 This confirms parsing of the actual PM5 metadata inventory; no Designer was
 started and it is not a native ownership roundtrip.
+
+Item 17 registration completed at `38555f5`: Targeted passed 604 tests with zero
+failures/skips and a clean tree (`9c604df68ca1c9651b593a56de769574adaf762d`,
+696759 ms). The cumulative branch includes both repository-lock packets; no
+workflow or component publication has occurred.

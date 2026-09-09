@@ -279,6 +279,10 @@ function Get-ShardInputDigest {
         [switch]$IncludeLegacyGlobalExternalInputs
     )
     $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
+    $nonReusableProperty = $catalog.PSObject.Properties['pesterNonReusableTests']
+    # Unknown external runtime identity cannot qualify a reusable shard. For
+    # example, the OneScript probe executes installed engine assemblies.
+    if ($nonReusableProperty -and @($relativeTests | Where-Object { $_ -in @($nonReusableProperty.Value) }).Count -gt 0) { return '' }
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
     $patterns = @($contracts | ForEach-Object { @($_.paths) } | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)

@@ -118,6 +118,24 @@ Describe "Local quality gate contract" {
         [int]$catalog.budgets.fullHardSeconds | Should -BeGreaterOrEqual 1800
         [int]($catalog.contracts | Where-Object id -eq "source-delivery-candidate").budgetSeconds | Should -BeGreaterOrEqual 1200
     }
+    It "does not cache a shard whose external runtime identity is not modeled" {
+        $runnerPath = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardInputDigest' }, $true)
+        $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        @($actualCatalog.pesterNonReusableTests) | Should -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
+        $result = & {
+            $RepositoryRoot = $RepoRoot
+            # Contracts and hashing dependencies deliberately absent: the
+            # runtime exclusion must apply before any cache key is produced.
+            $catalog = [pscustomobject]@{ pesterNonReusableTests = @('tests/pester/VanessaNestedSelection.Tests.ps1') }
+            . ([scriptblock]::Create($definition.Extent.Text))
+            $path = Join-Path $RepoRoot 'tests/pester/VanessaNestedSelection.Tests.ps1'
+            @((Get-ShardInputDigest -Paths @($path)), (Get-ShardInputDigest -Paths @($path) -IncludeLegacyGlobalExternalInputs))
+        }
+        @($result | Where-Object { $_ }) | Should -BeNullOrEmpty
+    }
     It "owns shard archive and cache hashing without Get-FileHash" {
         $runnerPath = Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1"
         $runner = Get-Content -LiteralPath $runnerPath -Raw -Encoding UTF8

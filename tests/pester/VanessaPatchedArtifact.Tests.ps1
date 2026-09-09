@@ -1,7 +1,7 @@
-Describe "Controlled Vanessa Automation patched artifact" {
+Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(@{ revision = 'itl-r8' }, @{ revision = 'itl-r9' }) {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r8"
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-$revision"
         $manifestPath = Join-Path $assetRoot "manifest.json"
         $patchPath = Join-Path $assetRoot "file-operations.patch"
         $licensePath = Join-Path $assetRoot "LICENSE.upstream"
@@ -17,7 +17,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $manifest.upstream.commit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
         $manifest.upstream.sourceArchive.sha256 | Should -Be "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
         $manifest.compatibilityVersion | Should -Be "1.2.043.28"
-        $manifest.downstreamRevision | Should -Be "itl-r8"
+        $manifest.downstreamRevision | Should -Be $revision
         $manifest.build.platform.version | Should -Be "8.3.27.2130"
         $manifest.build.oneScript.version | Should -Be "1.9.4.16"
         $manifest.build.oneScript.packages.v8runner | Should -Be "1.8.2"
@@ -30,7 +30,7 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $managedFormPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYUF1dG9tYXRpb24vRm9ybXMv0KPQv9GA0LDQstC70Y/QtdC80LDRj9Ck0L7RgNC80LAvRXh0L0Zvcm0vTW9kdWxlLmJzbA=="))
         $manifest.patch.expectedChangedPaths[1] | Should -Be $managedFormPath
         @($manifest.patch.upstreamBackports) | Should -HaveCount 2
-        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount 4
+        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount $(if ($revision -eq 'itl-r9') { 5 } else { 4 })
         @($manifest.patch.removedDownstreamWorkarounds) | Should -HaveCount 2
     }
 
@@ -105,13 +105,13 @@ Describe "Controlled Vanessa Automation patched artifact" {
         $buildScriptText | Should -Match ([regex]::Escape('"archive", "--format=tar"'))
         $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\Compile.os"'))
         $buildScriptText | Should -Match ([regex]::Escape('"tools\onescript\MakeVASingle.os"'))
-        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8")]'))
+        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9")]'))
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match ([regex]::Escape("Enter-ScopedUnsafeActionProtectionBypass"))
         $buildScriptText | Should -Match ([regex]::Escape("Exit-ScopedUnsafeActionProtectionBypass"))
         $buildScriptText | Should -Not -Match "DisableUnsafeActionProtection=\.\*;"
         $buildScriptText | Should -Match ([regex]::Escape("New-DeterministicZip"))
-        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r8.zip"
+        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-$revision.zip"
     }
 
     It "retains the complete BSD 3-Clause binary redistribution notice" {
