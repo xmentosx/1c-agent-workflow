@@ -1,7 +1,7 @@
 # Measurement and workflow reliability implementation ledger
 
-This source-maintenance plan records the twelve user-approved tasks from the
-original seven PM5 investigations and the added form-validator handoff. It is not installed-project guidance. A completed
+This source-maintenance plan records fourteen tasks from the original seven PM5
+investigations and the follow-up handoffs. It is not installed-project guidance. A completed
 source change, registration, publication, installation and live acceptance are
 different milestones; none implies the next one.
 
@@ -36,11 +36,16 @@ different milestones; none implies the next one.
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
-| 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Pending |
+| 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Read-only follow-up confirms current producer writes run-root snapshots/baseline.dt and post-config.dt while cleanup accepts only the older .agent-1c/snapshots naming contract; common ledger retains the corresponding cleanup debt; owner correction and retention qualification pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
+| 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Independent branch11 handoff: local selector correction, 15/15 focused tests and subsequent Vanessa 49/49 plus YAxUnit 118/118 reported; current shared selector still lacks provenance handling; general implementation and delivery pending |
+| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Independent branch11 handoff: successful DumpCfg was followed by designer-wait while close_1c_session was denied the export runtime lock; normal close then export recovered operationally; shared correction pending |
 
 Implementation order: establish item 4 with the timeout and source-capture
-contracts; complete items 1-3; then 5-8 and 12, followed by 9-11. Each coherent source change
+contracts and resolve the concrete export deadlock in item 14; complete items
+1-3; then 5-8, 12 and the accepted-master selection contract in 13, followed by
+9-11. Items 13 and 14 have their own acceptance below; linking them to 6 and 4
+does not remove them from the plan. Each coherent source change
 gets directly owned checks, a local commit and RegisterChange. Publication and
 live installation/acceptance must be recorded explicitly, using normal helpers.
 Investigations close only with an implemented correction or evidence explaining
@@ -298,3 +303,106 @@ Dependency and migration checks passed 35/35, including r33-to-r34 for all ten
 supported clients. Candidate preparation initially changed unrelated dependency
 statuses and retained revision 33 in the migration fixture; both were corrected
 without changing eligibility assertions or the protected user-modified cases.
+
+## Added task 13: accepted master input in verification selection
+
+Source: the updated [Валидатор форм: пустой Action блокирует…](codex://threads/01a085aa-b4b8-75d2-a92e-acd4725b2d8d)
+and `D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-verification-master-input.md`.
+
+Problem: after accepting master, the next ordinary check compares the effective
+tree with the previous verification proof. Thirteen imported master paths have
+no owner in this branch's test catalog, so selection stops before 1C starts and
+asks for additional tests/classification. The current shared
+`New-VerificationSelectionPlan` has this unconditional unowned-path branch and
+does not distinguish accepted input from the branch's own implementation.
+This is a selection defect, not evidence of a defect in master business logic.
+
+Implementation:
+
+1. Define and record accepted-master provenance using the actual branch ancestry
+   and an immutable Git reference. Compare against the effective tree including
+   staged and unstaged edits, through the existing temporary-index mechanism;
+   never replace or modify the user's index. Do not assume the current master
+   tip has already been accepted by the branch.
+2. Evaluate every relevant changed path before choosing the plan. Proven imported
+   master input may select the full existing acceptance set without requiring
+   new tests or invented ownerPaths for that input. A branch-owned unknown path
+   still requires classification even when an imported path occurs first. A
+   modified imported file must be evaluated as a branch change. Keep malformed
+   or incomplete test catalogs rejected and preserve the normal own-change gates.
+3. Preserve the distinction between acceptance and explicit profiling suites;
+   ordinary checks must not start performance experiments as a fallback. Keep
+   the existing Vanessa/YAxUnit layers and incremental/reuse semantics where
+   their proofs remain applicable.
+4. Report the accepted reference, imported paths, own paths, selected suites and
+   reason for full compatibility verification. Passing existing acceptance tests
+   proves only that tested behavior remains compatible; it does not establish
+   full business correctness or newly authored coverage of all master changes.
+5. Generalize the local CF-only correction deliberately. Cover CF and CFE with
+   their real source roots, deletions, renames, new files, changes in both diff
+   orders, mixed staged/unstaged content, absent/ahead/unrelated master, invalid
+   trees and Git errors. Unproven provenance must not grant the imported-input
+   exception. Reuse the 13 real paths and the 15-case reproducer; retain prior
+   incremental/reuse and catalog-negative regressions.
+6. Fix the shared selection owner, update `verification-suite-selection.md`,
+   register and deliver normally, then repeat the full branch11 check on the
+   delivered helper. Preserve all 38 option values and existing optimization
+   regression coverage. Remove only the identified obsolete local workaround
+   through the managed update path, preserving unrelated changes.
+
+Evidence: the handoff records Pester 15/15 and successful canonical check
+`compact-20260909-163435-297-2d8737a7`: YAxUnit 118/118, Vanessa 49/49, no failures
+or skips, and unchanged 38 options. These are reported local results, not shared
+delivery proof. Item 6 still owns its separate classification-command dispatch,
+exact-HEAD resume and multi-branch convergence checks; they are not closed by
+this selector correction.
+
+## Added task 14: export blocked by its own ROCTUP runtime coordination
+
+Source: the same updated task and
+`D:/Git/PM5 КОРП - Codex - 1-branch11/handoffs/handoff-20260909-export-roctup-lock.md`.
+
+Problem: a successful check was followed by a read-only ROCTUP query and ordinary
+export. With unchanged configuration the load was skipped; Designer produced a
+CF and logged successful completion, but the helper waited for the file infobase
+to be released. ROCTUP kept it open, while `close_1c_session` was denied by the
+export's exclusive `runtime-mcp.lock`. Thus the waiting export prevented the
+session closure needed by its completion condition. No official manifest was
+created, so the isolated CF was not a completed export.
+
+Implementation:
+
+1. Reproduce the exact sequence with an active facade backend and skipped load.
+   Trace `Export-DevBranchResult`, `Export-DevBranchResultFile`, `Invoke-Designer`
+   and its invocation-release probe together with the runtime lease. Preserve
+   the distinction between process completion, database availability and artifact
+   validity; determine which postcondition this read-only DumpCfg actually needs.
+2. Implement the smallest evidence-backed correction: either arrange normal
+   shutdown of the operation's owned backend before exclusive export admission,
+   or use a justified operation-specific read-only completion condition. Preserve
+   authoritative Designer completion, owned-process evidence, log/error checks,
+   artifact stability and hashes. File existence or a success log alone is not
+   enough. Do not broadly disable database-release checks for mutating operations.
+3. Integrate with item 4's database identity and ownership protocol. Required
+   nested closure/cleanup inherits the operation lease and must not reacquire
+   the same lock. Never bypass the broker/shared lease, remove lock files, or
+   stop unrelated 1C sessions. A conflicting owner must have a bounded,
+   diagnosable wait/cancel path, with no circular dependency on the waiting job.
+4. Add public-path regressions for check/query/export, skipped and actual load,
+   active owned and foreign backends, two competing chats, failed Designer,
+   incomplete output, cancellation and retry. Cover CF and CFE and retain server
+   support; record backend-specific live proof separately rather than inferring
+   it from the file-base incident. A forced helper exit remains failed and may
+   never manufacture a successful manifest or trigger unproven replay.
+5. Preserve fresh verification proof when business sources/runtime inputs have
+   not changed. An export-coordination failure alone is not a reason to rerun
+   all business tests. Complete normal export with the official manifest and
+   matching SHA on a delivered helper, without manual process interruption.
+
+Evidence: the handoff identifies failed export
+`compact-20260909-164419-033-22de3835`. Only the exact waiting helper was stopped;
+the normal parent recorded failure and completed its lifecycle record. After
+normal `close_1c_session`, retry `compact-20260909-164938-375-a2802801` succeeded
+with fresh passed, CF and `.cf.manifest.json`. This confirms operational recovery,
+not an upstream fix. Historical PIDs from that handoff must not be reused for
+future operations. No shared implementation of this correction is claimed yet.
