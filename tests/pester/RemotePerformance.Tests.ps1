@@ -17,6 +17,134 @@
     }
 }
 
+Describe 'Native database access pipe owner' {
+    BeforeAll {
+        $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
+    }
+    BeforeEach {
+        $root = Join-Path $TestDrive ('Общая база с пробелом ' + [guid]::NewGuid().ToString('N'))
+        $request = [pscustomobject]@{
+            schemaVersion = 1
+            coordinator = Join-Path $root 'координатор базы'
+            bases = @([pscustomobject]@{ kind = 'file'; path = (Join-Path $root 'целевая база') })
+            owner = [pscustomobject]@{ operation = 'native-test'; project = $root; parentPid = $PID }
+            timeout = 0
+        }
+        $owner = $null
+    }
+    AfterEach { Close-ItlDatabaseAccessHost -Owner $owner }
+
+    It 'holds the whole native operation and admits a second owner only after cleanup' {
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        $owner.proof.ticket | Should -Match '^[a-f0-9]{32}$'
+        ($owner.public | ConvertTo-Json -Depth 20) | Should -Not -Match 'token'
+        { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
+        (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
+    }
+
+    It 'inherits a parent token without releasing the parent database reservation' {
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        $nestedRequest = $request | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $nestedRequest | Add-Member -NotePropertyName inherited -NotePropertyValue $owner.proof
+        $nested = Start-ItlDatabaseAccessHost -Request $nestedRequest
+        try {
+            $nested.proof.ticket | Should -Be $owner.proof.ticket
+            (Complete-ItlDatabaseAccessHost -Owner $nested).inherited | Should -BeTrue
+            { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
+        } finally { Close-ItlDatabaseAccessHost -Owner $nested }
+        (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
+    }
+
+    It 'retains attention when the native parent has no cleanup confirmation' {
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        Close-ItlDatabaseAccessHost -Owner $owner
+        { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*RECOVERY_REQUIRED*'
+    }
+
+    It 'preserves an explicit failed cleanup with a Unicode explanation' {
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        (Complete-ItlDatabaseAccessHost -Owner $owner -CleanupErrors @('Серверная работа не завершена')).status | Should -Be 'needs-attention'
+        { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*RECOVERY_REQUIRED*'
+    }
+
+    It 'cancels waiting without stopping or releasing the first owner' {
+        $owner = Start-ItlDatabaseAccessHost -Request $request
+        $request.timeout = 3
+        $cancelPath = Join-Path $root 'отмена ожидания.json'
+        [IO.File]::WriteAllText($cancelPath, '{}')
+        { Start-ItlDatabaseAccessHost -Request $request -CancelPath $cancelPath -OnProgress { param($event) } } | Should -Throw '*CANCELLED*'
+        $request.timeout = 0
+        { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
+        (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
+    }
+
+    It 'reports a missing interpreter before creating any database ticket' {
+        { Start-ItlDatabaseAccessHost -Request $request -Python (Join-Path $root 'missing-python.exe') } | Should -Throw
+        (Test-Path -LiteralPath (Join-Path $request.coordinator 'tickets')) | Should -BeFalse
+    }
+
+    It 'retains database ownership after a real native parent process crash' {
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $parentScript = Join-Path $root 'родитель операции.ps1'
+        $requestPath = Join-Path $root 'заявка базы.json'
+        $ownerInfo = Join-Path $root 'процесс координатора.json'
+        [IO.File]::WriteAllText($requestPath, ($request | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $body = @'
+param([string]$Repo, [string]$RequestPath, [string]$OwnerInfo)
+$ErrorActionPreference = 'Stop'
+. (Join-Path $Repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+. (Join-Path $Repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
+$request = [IO.File]::ReadAllText($RequestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+$owner = Start-ItlDatabaseAccessHost -Request $request
+$identity = [pscustomobject]@{ pid = $owner.process.Id; started = $owner.process.StartTime.ToUniversalTime().Ticks; parentPid = $owner.public.owner.parentPid }
+[IO.File]::WriteAllText($OwnerInfo, ($identity | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+while ($true) { Start-Sleep -Seconds 1 }
+'@
+        [IO.File]::WriteAllText($parentScript, $body, [Text.UTF8Encoding]::new($true))
+        $start = New-Object Diagnostics.ProcessStartInfo
+        $start.FileName = 'powershell.exe'
+        $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-NoProfile', '-File', $parentScript, '-Repo', $repo, '-RequestPath', $requestPath, '-OwnerInfo', $ownerInfo)
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        $parentProcess = New-Object Diagnostics.Process
+        $parentProcess.StartInfo = $start
+        $hostProcess = $null
+        try {
+            [void]$parentProcess.Start()
+            $stderr = $parentProcess.StandardError.ReadToEndAsync()
+            $stdout = $parentProcess.StandardOutput.ReadToEndAsync()
+            $deadline = [DateTime]::UtcNow.AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $ownerInfo) -and -not $parentProcess.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+                Start-Sleep -Milliseconds 20
+            }
+            (Test-Path -LiteralPath $ownerInfo) | Should -BeTrue
+            $identity = [IO.File]::ReadAllText($ownerInfo, [Text.Encoding]::UTF8) | ConvertFrom-Json
+            $identity.parentPid | Should -Be $parentProcess.Id
+            $hostProcess = Get-Process -Id $identity.pid -ErrorAction Stop
+            $hostProcess.StartTime.ToUniversalTime().Ticks | Should -Be ([long]$identity.started)
+            # Open the exact OS handle before crashing the parent, preventing PID reuse.
+            $hostProcess.Handle | Should -Not -Be ([IntPtr]::Zero)
+            $parentProcess.Kill()
+            $parentProcess.WaitForExit(5000) | Should -BeTrue
+            $hostProcess.WaitForExit(5000) | Should -BeTrue
+            { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*RECOVERY_REQUIRED*'
+        } finally {
+            if (-not $parentProcess.HasExited) { $parentProcess.Kill(); [void]$parentProcess.WaitForExit(5000) }
+            if ($null -ne $hostProcess) {
+                if (-not $hostProcess.HasExited) { $hostProcess.Kill(); [void]$hostProcess.WaitForExit(5000) }
+                $hostProcess.Dispose()
+            }
+            $parentProcess.Dispose()
+        }
+    }
+}
+
 Describe 'Read-only target source capture boundary' {
     BeforeAll {
         $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

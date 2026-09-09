@@ -46,6 +46,32 @@ is held. A nested operation never releases the parent's ownership. User-facing
 results contain the ticket, resources, coordination scope and queue duration,
 not the token. All source capture and reset/cleanup happen outside sample timing.
 
+### Private native caller channel
+
+`itl_remote.access_host` exposes the same Python lease implementation over
+private parent/child stdio pipes. `scripts/DatabaseAccess.ps1` supplies its
+PowerShell adapter using shared native quoting and an explicit UTF-8/ASCII JSON
+boundary. It requires Python 3.11+. This is an internal live-owner channel,
+not a user-facing recovery or force-unlock command. Do not send its input or
+admission response to logs: the admitted response contains the inherited token.
+Waiting/progress and terminal responses contain no token.
+
+The caller supplies the complete resolved resource set before acquiring any
+project/runtime lock. It keeps the pipe owner through the entire operation and
+cleanup, then confirms cleanup or reports its errors. Disconnect/cancellation
+after admission retains `needs-attention`; before admission it cancels only the
+waiter. An inherited host never releases the outer owner. PowerShell cancellation
+observed before handing the grant to the operation starts no database work.
+Callers must not treat closing the pipe or killing its host as successful cleanup.
+
+The channel alone does not integrate an entrypoint. Lifecycle and persistent
+facade wiring remains required. In particular, a persistent backend that still
+holds a database cannot be treated as a released operation merely because one
+tool response returned: its stop/idle path must retain inherited access and
+must not reacquire behind a lifecycle waiter. Resolve and pin newly generated
+Vanessa manager-base paths before admission, then revalidate after waiting;
+reserving only the target while creating an unreserved manager is insufficient.
+
 ## Interruption and current integration boundary
 
 A crashed waiter has not been admitted and can be skipped. A crashed running

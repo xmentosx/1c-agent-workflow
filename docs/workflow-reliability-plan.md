@@ -29,7 +29,7 @@ different milestones; none implies the next one.
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime integration and pinned job recovery hooks implemented; live 1C recovery adapters, lifecycle/facade integration and multi-host proof remain required |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; live 1C recovery adapters, lifecycle/facade entrypoint integration and multi-host proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Pending |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
@@ -299,6 +299,25 @@ the implementation. Recovery status is separate from the unchanged measurement
 result, and a completed restoration is inspected before deciding whether another
 restoration call is necessary. Recovery-only inherited tokens cannot run normal
 measurement jobs.
+
+The native caller channel now uses the same coordinator through private stdio,
+with a PowerShell adapter and no second lock algorithm. Separate-process tests
+cover portable/native exclusion, complete resource sets, unrelated databases,
+inheritance, cancellation, failed cleanup and parent disconnection. A real
+PowerShell parent crash closes its pipe host and leaves the original database
+reservation for recovery. Tokens are excluded from progress and error messages.
+The first PS5.1 execution exposed multiple `Get-Command python` matches being
+joined as one executable name; selecting the first application fixes the native
+launch without changing the process/Unicode-path test. Invalid inheritance also
+exits while stdin is still open, without a buffered-reader finalization failure.
+
+Entrypoint integration remains open. Inspection identified two required ordering
+constraints: database admission precedes lifecycle/runtime locks, and persistent
+facade stop/idle cleanup uses existing ownership rather than queuing behind an
+operation waiting for that backend to close. The complete initial resource set
+must include a pinned newly generated Vanessa manager base when one is needed;
+its current creation inside Ensure cannot be left outside admission. These are
+requirements of item 4, not optional follow-up investigations.
 
 Focused tests use SQLite changes and separate processes, including a killed
 Windows recovery owner after the restoration commit. They verify one original
