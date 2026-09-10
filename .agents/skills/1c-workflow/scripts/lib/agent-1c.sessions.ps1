@@ -1,4 +1,4 @@
-if (-not (Get-Variable -Name OneCSessionLaunchContext -Scope Script -ErrorAction SilentlyContinue)) {
+﻿if (-not (Get-Variable -Name OneCSessionLaunchContext -Scope Script -ErrorAction SilentlyContinue)) {
     $script:OneCSessionLaunchContext = $null
 }
 
@@ -35,6 +35,7 @@ function Add-OneCNativeOperationRecord {
         launcherExited = $false
         quiescenceConfirmed = $false
         releaseEvidence = ''
+        ownedProcessScopes = @()
     }
     $Journal.entries.Add($record)
     return $record
@@ -647,6 +648,12 @@ function Invoke-OneCSessionProcessStart {
                 if ($context.sessionCancelPath -and (Test-Path -LiteralPath $context.sessionCancelPath)) { throw 'CANCELLED' }
                 if (Test-OneCSessionWaitExpired -Context $context -Watch $waitWatch) { throw 'ITL_ONEC_SESSION_WAIT_TIMEOUT: admission expired before launch' }
                 Assert-OneCNativeOperationJournalOwner -Journal $context.nativeOperationJournal
+                if ($null -ne $context.nativeOperationRecord) {
+                    foreach ($scope in $context.nativeOperationRecord.ownedProcessScopes) {
+                        $currentHash = (Get-FileHash -LiteralPath $scope.runParamsPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+                        if ($currentHash -cne $scope.runParamsSha256) { throw 'ONEC_NATIVE_RUN_PARAMETERS_CHANGED_BEFORE_LAUNCH' }
+                    }
+                }
                 $context.nativeStartAttempted = $true
                 if ($null -ne $context.nativeOperationRecord) { $context.nativeOperationRecord.startAttempted = $true }
                 $startedProcess = & $requestedStartProcess
@@ -766,4 +773,139 @@ function Start-OneCProcessBackground {
         -ScriptBlock {
             Start-NativeProcessBackground -FilePath $FilePath -Arguments $Arguments -Visible:$Visible
         })
+}
+
+function Test-OneCCommandLineOutputBelongsToRun {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [AllowNull()][string]$RunParamsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($RunParamsPath)) { return $false }
+    $outputPath = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("Out")
+    if ([string]::IsNullOrWhiteSpace($outputPath)) { return $false }
+    try {
+        $runDirectory = (Split-Path -Parent (Resolve-Agent1cFullPath -Path $RunParamsPath)).TrimEnd('\', '/')
+        $resolvedOutputPath = Resolve-Agent1cFullPath -Path $outputPath
+    } catch {
+        return $false
+    }
+    $runPrefix = $runDirectory + [System.IO.Path]::DirectorySeparatorChar
+    return $resolvedOutputPath.StartsWith($runPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Get-OneCCommandLineTestPort {
+    param([AllowNull()][string]$CommandLine)
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return 0
+    }
+
+    $matches = [regex]::Matches(
+        [string]$CommandLine,
+        '(?i)(?:^|\s)-TPort(?=\s)\s+(?:"(?<quoted>\d+)"|(?<plain>\d+))(?=\s|$)'
+    )
+    if ($matches.Count -ne 1) {
+        return 0
+    }
+    $match = $matches[0]
+    $value = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["plain"].Value })
+    $parsed = 0
+    if ([int]::TryParse($value, [ref]$parsed)) { return $parsed }
+    return 0
+}
+
+function Test-CommandLineContainsVaParamsPath {
+    param(
+        [AllowNull()][string]$CommandLine,
+        [AllowNull()][string]$ParamsPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($ParamsPath)) {
+        return $false
+    }
+
+    try {
+        $expected = (Resolve-Agent1cFullPath -Path $ParamsPath).Replace('/', '\').ToLowerInvariant()
+    } catch {
+        return $false
+    }
+    $normalized = ([string]$CommandLine).Replace('/', '\').ToLowerInvariant()
+    $marker = 'vaparams='
+    $offset = 0
+    while ($offset -lt $normalized.Length) {
+        $index = $normalized.IndexOf($marker, $offset, [System.StringComparison]::Ordinal)
+        if ($index -lt 0) { break }
+        $valueStart = $index + $marker.Length
+        if (($normalized.Length - $valueStart) -ge $expected.Length -and
+            $normalized.Substring($valueStart, $expected.Length) -ceq $expected) {
+            $valueEnd = $valueStart + $expected.Length
+            if ($valueEnd -eq $normalized.Length -or @(';', '"', ' ', "`t") -contains [string]$normalized[$valueEnd]) {
+                return $true
+            }
+        }
+        $offset = $valueStart
+    }
+    return $false
+}
+
+function Get-OneCNativeRunProcessScopes {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunParamsPath,
+        [Parameter(Mandatory = $true)][object[]]$Resources
+    )
+    $paramsPath = Resolve-Agent1cFullPath -Path $RunParamsPath
+    if ($Resources.Count -eq 0) { throw 'ONEC_NATIVE_RUN_RESOURCES_REQUIRED' }
+    $paramsBytes = [IO.File]::ReadAllBytes($paramsPath)
+    $paramsText = [Text.Encoding]::UTF8.GetString($paramsBytes).TrimStart([char]0xfeff)
+    $settings = $paramsText | ConvertFrom-Json -ErrorAction Stop
+    $clientSettings = $settings.PSObject.Properties['КлиентТестирования']
+    $clientsProperty = if ($null -ne $clientSettings -and $null -ne $clientSettings.Value) { $clientSettings.Value.PSObject.Properties['ДанныеКлиентовТестирования'] } else { $null }
+    $clients = @(if ($null -ne $clientsProperty) { $clientsProperty.Value })
+    if ($clients.Count -eq 0) { throw 'ONEC_NATIVE_RUN_CLIENTS_REQUIRED' }
+    $scopes = [Collections.Generic.List[object]]::new()
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($hasher.ComputeHash($paramsBytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $hasher.Dispose() }
+    $scopes.Add([pscustomobject]@{schemaVersion=1;role='test-manager';kind=$Resources[0].kind;path=$Resources[0].path;runParamsPath=$paramsPath;runParamsSha256=$hash;testPorts=@()})
+    foreach ($client in $clients) {
+        $connection = [string](Get-StateValue -State $client -Name 'ПутьКИнфобазе' -Default '')
+        $port = 0
+        if (-not [int]::TryParse([string](Get-StateValue -State $client -Name 'ПортЗапускаТестКлиента' -Default 0), [ref]$port) -or $port -lt 1 -or $port -gt 65535) {
+            throw 'ONEC_NATIVE_RUN_CLIENT_PORT_REQUIRED'
+        }
+        $uniqueTargets = @{}
+        foreach ($resource in $Resources) {
+            if (Test-OneCCommandLineInfoBasePath -CommandLine $connection -InfoBaseKind $resource.kind -InfoBasePath $resource.path) {
+                $identity = Get-OneCInfoBaseIdentity -InfoBaseKind $resource.kind -InfoBasePath $resource.path
+                $uniqueTargets[$identity.key] = $resource
+            }
+        }
+        $targets = @($uniqueTargets.Values)
+        if ($targets.Count -ne 1) { throw 'ONEC_NATIVE_RUN_CLIENT_TARGET_NOT_RESERVED' }
+        $scopes.Add([pscustomobject]@{schemaVersion=1;role='test-client';kind=$targets[0].kind;path=$targets[0].path;runParamsPath=$paramsPath;runParamsSha256=$hash;testPorts=@($port)})
+    }
+    # Vanessa may relocate a profile to another port in this run's assigned set.
+    # The original orphan used A's port with B's database and B's run-owned Out.
+    $runPorts = @($scopes | Where-Object role -eq 'test-client' | ForEach-Object { $_.testPorts } | Sort-Object -Unique)
+    foreach ($scope in $scopes) { if ($scope.role -eq 'test-client') { $scope.testPorts = $runPorts } }
+    return @($scopes.ToArray())
+}
+
+function Test-OneCNativeProcessInRunScopes {
+    param([object]$ProcessInfo, [object[]]$Scopes = @())
+    $name = [string](Get-StateValue -State $ProcessInfo -Name 'Name' -Default '')
+    if ($name -notin @('1cv8.exe','1cv8c.exe')) { return $false }
+    $commandLine = [string](Get-StateValue -State $ProcessInfo -Name 'CommandLine' -Default '')
+    foreach ($scope in $Scopes) {
+        if ($scope.schemaVersion -ne 1 -or $scope.role -notin @('test-client','test-manager')) { throw 'ONEC_NATIVE_RUN_SCOPE_INVALID' }
+        if ((Get-OneCSessionProcessRole -CommandLine $commandLine) -ne $scope.role) { continue }
+        if (-not (Test-OneCCommandLineInfoBasePath -CommandLine $commandLine -InfoBaseKind $scope.kind -InfoBasePath $scope.path)) { continue }
+        if ($scope.role -eq 'test-client') {
+            if (-not (Test-OneCCommandLineOutputBelongsToRun -CommandLine $commandLine -RunParamsPath $scope.runParamsPath)) { continue }
+            $port = Get-OneCCommandLineTestPort -CommandLine $commandLine
+            if ($port -gt 0 -and @($scope.testPorts) -contains $port) { return $true }
+        } elseif (Test-CommandLineContainsVaParamsPath -CommandLine $commandLine -ParamsPath $scope.runParamsPath) { return $true }
+    }
+    return $false
 }

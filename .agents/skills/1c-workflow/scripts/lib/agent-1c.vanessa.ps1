@@ -4948,6 +4948,8 @@ function Run-DevBranchTests {
             -TestClientPort $testPort `
             -ExpectedSessionCount 1 `
             -AdditionalSessionAdmissions $admissionTargets `
+            -RunParamsPath $paramsPath `
+            -OwnedProcessCleanup { param($scopes) Stop-OwnVanessaRunScopeProcesses -Scopes $scopes } `
             @sessionWait `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
@@ -5224,43 +5226,7 @@ function Get-VanessaTestPortRange {
     }
 }
 
-function Test-OneCCommandLineOutputBelongsToRun {
-    param(
-        [AllowNull()][string]$CommandLine,
-        [AllowNull()][string]$RunParamsPath
-    )
 
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($RunParamsPath)) { return $false }
-    $outputPath = Get-OneCCommandLineSwitchPath -CommandLine $CommandLine -SwitchNames @("Out")
-    if ([string]::IsNullOrWhiteSpace($outputPath)) { return $false }
-    try {
-        $runDirectory = (Split-Path -Parent (Resolve-Agent1cFullPath -Path $RunParamsPath)).TrimEnd('\', '/')
-        $resolvedOutputPath = Resolve-Agent1cFullPath -Path $outputPath
-    } catch {
-        return $false
-    }
-    $runPrefix = $runDirectory + [System.IO.Path]::DirectorySeparatorChar
-    return $resolvedOutputPath.StartsWith($runPrefix, [System.StringComparison]::OrdinalIgnoreCase)
-}
-
-function Get-OneCCommandLineTestPort {
-    param([AllowNull()][string]$CommandLine)
-
-    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
-        return 0
-    }
-
-    $matches = [regex]::Matches(
-        [string]$CommandLine,
-        '(?i)(?:^|\s)-TPort(?=\s)\s+(?:"(?<quoted>\d+)"|(?<plain>\d+))(?=\s|$)'
-    )
-    if ($matches.Count -ne 1) {
-        return 0
-    }
-    $match = $matches[0]
-    $value = $(if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["plain"].Value })
-    return (ConvertTo-IntOrDefault -Value $value -Default 0)
-}
 
 function Test-CommandLineContainsPort {
     param(
@@ -5305,39 +5271,6 @@ function Test-CommandLineContainsMcpPort {
     return (Get-OneCCommandLineMcpPort -CommandLine $CommandLine) -eq $Port
 }
 
-function Test-CommandLineContainsVaParamsPath {
-    param(
-        [AllowNull()][string]$CommandLine,
-        [AllowNull()][string]$ParamsPath
-    )
-
-    if ([string]::IsNullOrWhiteSpace($CommandLine) -or [string]::IsNullOrWhiteSpace($ParamsPath)) {
-        return $false
-    }
-
-    try {
-        $expected = (Resolve-Agent1cFullPath -Path $ParamsPath).Replace('/', '\').ToLowerInvariant()
-    } catch {
-        return $false
-    }
-    $normalized = ([string]$CommandLine).Replace('/', '\').ToLowerInvariant()
-    $marker = 'vaparams='
-    $offset = 0
-    while ($offset -lt $normalized.Length) {
-        $index = $normalized.IndexOf($marker, $offset, [System.StringComparison]::Ordinal)
-        if ($index -lt 0) { break }
-        $valueStart = $index + $marker.Length
-        if (($normalized.Length - $valueStart) -ge $expected.Length -and
-            $normalized.Substring($valueStart, $expected.Length) -ceq $expected) {
-            $valueEnd = $valueStart + $expected.Length
-            if ($valueEnd -eq $normalized.Length -or @(';', '"', ' ', "`t") -contains [string]$normalized[$valueEnd]) {
-                return $true
-            }
-        }
-        $offset = $valueStart
-    }
-    return $false
-}
 
 function Test-OneCVanessaTestProcess {
     param([object]$ProcessInfo)
@@ -6136,6 +6069,26 @@ function Stop-OwnVanessaTestProcesses {
         remaining = @($remaining)
         errors = @($errors)
     }
+}
+
+function Stop-OwnVanessaRunScopeProcesses {
+    param([Parameter(Mandatory = $true)][object[]]$Scopes)
+    $managers = @($Scopes | Where-Object role -eq 'test-manager')
+    if ($managers.Count -ne 1) { throw 'VANESSA_RUN_SCOPE_MANAGER_REQUIRED' }
+    $result = [pscustomobject]@{stoppedTestManager=0;stoppedTestClient=0;remaining=@();errors=@()}
+    foreach ($scope in @($Scopes | Where-Object role -eq 'test-client')) {
+        if ($scope.runParamsPath -cne $managers[0].runParamsPath) { throw 'VANESSA_RUN_SCOPE_IDENTITY_MISMATCH' }
+        $state = [pscustomobject]@{infoBaseKind=$scope.kind;devBranchInfoBasePath=$scope.path;vanessaServiceInfoBasePath=$managers[0].path}
+        $cleanup = Stop-OwnVanessaTestProcesses -State $state -TestPorts $scope.testPorts -RunParamsPath $scope.runParamsPath
+        $result.stoppedTestManager += $cleanup.stoppedTestManager
+        $result.stoppedTestClient += $cleanup.stoppedTestClient
+        $result.remaining += @($cleanup.remaining)
+        $result.errors += @($cleanup.errors)
+    }
+    if ($result.remaining.Count -or $result.errors.Count) {
+        throw "VANESSA_RUN_SCOPE_CLEANUP_UNCONFIRMED: remainingPids=$(@($result.remaining | ForEach-Object { $_.processId }) -join ','); errors=$($result.errors -join ' | ')"
+    }
+    return $result
 }
 
 function Stop-OwnVanessaTestProcessesAndAssert {

@@ -5811,7 +5811,8 @@ function New-DesignerInvocationProbeState {
         [int]$LauncherProcessId,
         [int]$StallWarningSeconds = -1,
         [int]$StallTimeoutSeconds = -1,
-        [int]$SubProbeTimeoutSeconds = -1
+        [int]$SubProbeTimeoutSeconds = -1,
+        [object[]]$OwnedProcessScopes = @()
     )
 
     $trackedProcessIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -5832,6 +5833,7 @@ function New-DesignerInvocationProbeState {
     }
     return [pscustomobject]@{
         trackedProcessIds = $trackedProcessIds
+        ownedProcessScopes = @($OwnedProcessScopes)
         lastDiagnosticSecond = -1
         nextProcessCheckAtUtc = [DateTime]::MinValue
         lastProcessState = $null
@@ -5880,21 +5882,31 @@ function Start-DesignerProcessEnumeration {
         outputPath = $outputPath
         operationTimeoutSeconds = [int][Math]::Max(1, [Math]::Min(10, [int]$ProbeState.subProbeTimeoutSeconds))
         trackedProcessIds = @($ProbeState.trackedProcessIds)
+        ownedProcessScopes = @(if ($ProbeState.PSObject.Properties['ownedProcessScopes']) { $ProbeState.ownedProcessScopes })
+        helperLibraryPath = $script:Agent1cCoreRoot
         logPath = $(if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" })
         databasePath = [string]$ProbeState.infoBaseReleaseDatabasePath
-    } | ConvertTo-Json -Compress)))
+    } | ConvertTo-Json -Compress -Depth 10)))
     $commandText = @"
 `$ErrorActionPreference = 'Stop'
 `$inputPayload = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$inputBase64')) | ConvertFrom-Json
 `$payload = `$null
 try {
+    `$scopes = @(`$inputPayload.ownedProcessScopes)
+    if (`$scopes.Count -gt 0) {
+        foreach (`$module in @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1')) { . (Join-Path ([string]`$inputPayload.helperLibraryPath) `$module) }
+    }
     `$inventory = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='1cv8.exe' OR Name='1cv8c.exe'" -OperationTimeoutSec ([uint32]`$inputPayload.operationTimeoutSeconds) -ErrorAction Stop)
     `$tracked = [System.Collections.Generic.HashSet[int]]::new()
-    foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null }
+    if (`$scopes.Count -eq 0) { foreach (`$trackedProcessId in @(`$inputPayload.trackedProcessIds)) { `$tracked.Add([int]`$trackedProcessId) | Out-Null } }
     `$changed = `$true
     while (`$changed) {
         `$changed = `$false
         foreach (`$candidate in `$inventory) {
+            if (`$scopes.Count -gt 0) {
+                if ((Test-OneCNativeProcessInRunScopes -ProcessInfo `$candidate -Scopes `$scopes) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
+                continue
+            }
             `$matchesLog = `$inputPayload.logPath -and ([string]`$candidate.CommandLine).IndexOf([string]`$inputPayload.logPath, [StringComparison]::OrdinalIgnoreCase) -ge 0
             `$matchesParent = `$tracked.Contains([int]`$candidate.ParentProcessId)
             if ((`$matchesLog -or `$matchesParent) -and `$tracked.Add([int]`$candidate.ProcessId)) { `$changed = `$true }
@@ -6079,10 +6091,16 @@ function Get-DesignerInvocationProcessState {
             }
         } else {
             $normalizedLogPath = if ($LogPath) { [System.IO.Path]::GetFullPath($LogPath) } else { "" }
+            $scopes = @(if ($ProbeState.PSObject.Properties['ownedProcessScopes']) { $ProbeState.ownedProcessScopes })
+            if ($scopes.Count -gt 0) { $ProbeState.trackedProcessIds.Clear() }
             $changed = $true
             while ($changed) {
                 $changed = $false
                 foreach ($candidate in $designerProcesses) {
+                    if ($scopes.Count -gt 0) {
+                        if ((Test-OneCNativeProcessInRunScopes -ProcessInfo $candidate -Scopes $scopes) -and $ProbeState.trackedProcessIds.Add([int]$candidate.ProcessId)) { $changed = $true }
+                        continue
+                    }
                     $processId = [int]$candidate.ProcessId
                     $parentProcessId = [int]$candidate.ParentProcessId
                     $commandLine = [string]$candidate.CommandLine
@@ -7307,6 +7325,25 @@ function Test-OneCNativeInvocationReleased {
         [bool]$ProbeState.processesReleaseConfirmed)
 }
 
+function Confirm-OneCNativeRunProcessRelease {
+    param([Parameter(Mandatory = $true)][object]$Record, [ValidateRange(1, 60)][int]$TimeoutSeconds = 10)
+    if (-not $Record.launcherExited -or @($Record.ownedProcessScopes).Count -eq 0) { return $false }
+    $probe = New-DesignerInvocationProbeState -LauncherProcessId $Record.processId -OwnedProcessScopes $Record.ownedProcessScopes
+    $context = [pscustomobject]@{processId=$Record.processId;launcherExited=$true}
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $released = $false
+    try {
+        do {
+            if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
+            Start-Sleep -Milliseconds 100
+        } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    } finally {
+        if ($null -ne $probe.processScanProcess) { $released = [bool](Stop-DesignerProcessEnumeration -ProbeState $probe).confirmed -and $released }
+        Confirm-OneCNativeOperationRelease -Record $Record -LauncherExited $true -OwnedProcessesReleased $released -Evidence 'native-run-scoped-process-release'
+    }
+    return $released
+}
+
 function Invoke-Enterprise {
     param(
         [string]$InfoBasePath,
@@ -7328,7 +7365,9 @@ function Invoke-Enterprise {
         [string]$SessionCancelPath = '',
         [long]$SessionDeadlineMonotonicNs = 0,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [string]$RunParamsPath = '',
+        [scriptblock]$OwnedProcessCleanup = $null
     )
 
     $platformPath = Resolve-EnterpriseClientExecutablePath -ClientType $ClientType
@@ -7353,6 +7392,18 @@ function Invoke-Enterprise {
     }
     $args += @("/Out", $logPath) + $EnterpriseArgs
 
+    $runScopes = @()
+    if ($RunParamsPath) {
+        if ($effectiveTestClientPort -le 0 -or -not (Test-CommandLineContainsVaParamsPath -CommandLine ($EnterpriseArgs -join ' ') -ParamsPath $RunParamsPath)) {
+            throw 'ENTERPRISE_NATIVE_RUN_ARGUMENT_MISMATCH'
+        }
+        $runResources = @([pscustomobject]@{kind=$InfoBaseKind;path=$InfoBasePath}) + @($AdditionalSessionAdmissions | ForEach-Object {
+            [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath}
+        })
+        $runScopes = @(Get-OneCNativeRunProcessScopes -RunParamsPath $RunParamsPath -Resources $runResources)
+    }
+    if ($null -ne $OwnedProcessCleanup -and $runScopes.Count -eq 0) { throw 'ENTERPRISE_NATIVE_RUN_SCOPE_REQUIRED' }
+
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
 
@@ -7362,7 +7413,7 @@ function Invoke-Enterprise {
     $enterpriseApplicationEvidence = [pscustomobject]@{ since = $null; graceSeconds = $CompletionGraceSeconds }
     $effectiveCompletionProbe = $CompletionProbe
     if ($RequireOwnedProcessRelease) {
-        $ownedProcessProbe = New-DesignerInvocationProbeState -LauncherProcessId 0
+        $ownedProcessProbe = New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes $runScopes
         $effectiveCompletionProbe = {
             param($probeContext)
             $released = Test-OneCNativeInvocationReleased -ProbeState $ownedProcessProbe -ProbeContext $probeContext -LogPath $logPath
@@ -7399,6 +7450,13 @@ function Invoke-Enterprise {
             -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
             -ScriptBlock {
                 $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+                if ($runScopes.Count -gt 0) {
+                    if ($null -eq $nativeOperationEvidence.record) {
+                        $nativeOperationEvidence.record = Add-OneCNativeOperationRecord -Journal (New-OneCNativeOperationJournal) -Admissions $script:OneCSessionLaunchContext.admissions -Purpose 'test-manager-run'
+                        $script:OneCSessionLaunchContext.nativeOperationRecord = $nativeOperationEvidence.record
+                    }
+                    $nativeOperationEvidence.record.ownedProcessScopes = $runScopes
+                }
                 Invoke-NativeProcessAndWaitResult `
                     -FilePath $platformPath `
                     -Arguments $nativeArguments `
@@ -7416,11 +7474,26 @@ function Invoke-Enterprise {
             $probeCleanupConfirmed = [bool]$cleanup.confirmed
         }
         $ownedReleaseConfirmed = $null -ne $ownedProcessProbe -and $probeCleanupConfirmed -and
-            [bool]$ownedProcessProbe.processesReleaseConfirmed
+            [bool]$ownedProcessProbe.processesReleaseConfirmed -and $null -eq $OwnedProcessCleanup
         Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record `
             -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
             -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'enterprise-owned-process-release'
-        if (-not $probeCleanupConfirmed) { throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED' }
+        if ($runScopes.Count -gt 0 -and $null -ne $nativeOperationEvidence.record -and $nativeOperationEvidence.record.startAttempted -and $null -ne $OwnedProcessCleanup) {
+            # The aggregate database owner still holds the journal here. Cleanup
+            # uses the captured run binding, including every TestClient target.
+            & $OwnedProcessCleanup $runScopes | Out-Null
+            $record = $nativeOperationEvidence.record
+            if ($null -ne $record.process) {
+                $record.process.Refresh()
+                $record.launcherExited = [bool]$record.process.HasExited
+            }
+            $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $record
+            if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
+        }
+        if (-not $probeCleanupConfirmed) {
+            Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record -LauncherExited $false -OwnedProcessesReleased $false -Evidence ''
+            throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED'
+        }
     }
     if ($RequireOwnedProcessRelease -and [bool](Get-StateValue -State $result -Name 'postExitProbeTimedOut' -Default $false)) {
         throw "ENTERPRISE_OWNED_PROCESS_RELEASE_TIMEOUT pid=$($result.processId) log=$logPath"

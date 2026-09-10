@@ -60,10 +60,13 @@ function Invoke-VanessaBuildOwnedNative {
         [string]$FilePath, [string[]]$Arguments, [object[]]$Bases,
         [string]$Purpose, [switch]$CreateInfoBase,
         [int]$TimeoutSeconds = 3600,
-        [int]$PostExitProbeSeconds = 60
+        [int]$PostExitProbeSeconds = 60,
+        [string]$RunParamsPath = ''
     )
     if (@($Bases).Count -eq 0) { throw 'VANESSA_BUILD_NATIVE_RESOURCES_REQUIRED' }
-    $probe = New-DesignerInvocationProbeState -LauncherProcessId 0
+    if (@($Arguments | Where-Object { $_ -ieq '/TESTMANAGER' }).Count -gt 0 -and -not $RunParamsPath) { throw 'VANESSA_BUILD_NATIVE_RUN_SCOPE_REQUIRED' }
+    $scopes = @(if ($RunParamsPath) { Get-OneCNativeRunProcessScopes -RunParamsPath $RunParamsPath -Resources $Bases })
+    $probe = New-DesignerInvocationProbeState -LauncherProcessId 0 -OwnedProcessScopes $scopes
     $evidence = [pscustomobject]@{ record = $null }
     $result = $null
     $released = $false
@@ -75,6 +78,7 @@ function Invoke-VanessaBuildOwnedNative {
             -RequiredSessions 1 -Purpose $Purpose -AdditionalAdmissions $additional `
             -SessionWaitTimeoutSeconds 300 -ScriptBlock {
                 $evidence.record = $script:OneCSessionLaunchContext.nativeOperationRecord
+                if ($null -ne $evidence.record) { $evidence.record.ownedProcessScopes = $scopes }
                 Invoke-NativeProcessAndWaitResult -FilePath $FilePath -Arguments $Arguments `
                     -OneCCreateInfoBaseSyntax:$CreateInfoBase -TimeoutSeconds $TimeoutSeconds `
                     -CompletionGraceSeconds 0 -PostExitProbeSeconds $PostExitProbeSeconds -RequirePostExitProbeOnFailure `

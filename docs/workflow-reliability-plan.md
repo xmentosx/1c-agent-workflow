@@ -29,13 +29,13 @@ different milestones; none implies the next one.
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; live 1C recovery adapters, lifecycle/facade entrypoint integration and multi-host proof remain required; failed native run probe-c0865302 additionally proves premature release with a surviving owned TestClient (PID 27584), subsequently removed by scoped helper recovery |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; detached TestClient release corrected with captured run scopes and ordinary Vanessa cleanup integration; native build and Enterprise probes retain the owner until exact cleanup; durable recovery, remaining entrypoints and multi-host/installed proof remain required |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
-| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting reproduced; r12 connection identity and captured wait ownership implemented; native two-client execution exposed occupied-port reuse in the upstream allocator, now reproduced and corrected. The combined focused protocol, port, artifact, navigation and gate contracts pass 160 tests. Native paired build and two-client A/B/A acceptance pass with three correct replies and distinct ports; source registration, scoped cleanup/restart reconciliation, delivery and original BDR acceptance remain open |
+| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting reproduced; r12 connection identity and captured wait ownership implemented; native two-client execution exposed occupied-port reuse in the upstream allocator, now reproduced and corrected. The combined focused protocol, port, artifact, navigation and gate contracts pass 160 tests. Native paired build and two-client A/B/A acceptance pass with three correct replies and distinct ports; r12 registered at b6f23f1 with 633 passed Targeted tests; scoped native cleanup now has a separate verified candidate, while restart reconciliation, delivery and original BDR acceptance remain open |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
@@ -1677,6 +1677,61 @@ and its EPF SHA-256 is
 Candidate provenance is retained in the isolated source worktree under
 `build/third-party/vanessa-automation/1.2.043.28-itl-r10/`.
 The candidate is neither published nor installed by this build.
+
+## Item 4 follow-up: detached native TestClient ownership
+
+The retained failure `C:/va канал/probe-c0865302` left TestClient PID 27584
+running in the second client database after the manager exited. Its intermediate
+parent was no longer available in the process inventory, so ancestry-only
+enumeration incorrectly reported release. The port allocator also assigned the
+second profile the first profile's port; fixing the port allocator alone does
+not repair the release proof.
+
+The current source captures each run's manager and client database identities,
+the complete assigned port set, and the unique VAParams path and SHA256 before
+launch. A client belongs to the run only when its database, role, assigned port
+and run-owned `/Out` path match. Manager ownership requires its database and
+exact VAParams marker. These descriptors are retained on the native operation
+record and passed to the bounded process-enumeration worker. Losing launcher
+ancestry no longer discards a matching client; another run using the same base
+and port remains excluded by its output path.
+
+The shared session launch boundary checks that VAParams still matches the
+captured hash after capacity waiting and before starting 1C. Ordinary Vanessa
+passes the run identity through `Invoke-Enterprise`, whose cleanup callback
+visits every captured client target before confirming native release. Cleanup
+failure preserves the unreleased operation; successful cleanup requires two
+fresh empty scoped observations and does not erase a native execution error.
+
+The real negative probe `C:/va канал/probe-85191677` retained the original
+two-client workload and the pre-port-fix EPF. It reproduced the wrong-database
+failure and surviving client PID 9736. The corrected build probe held the
+journal, rejected a competing request for the second base, stopped exactly one
+owned client, and admitted the competitor only after confirmed cleanup. The
+93 focused ownership, Enterprise, session-wait, build, cleanup and topology
+tests pass, including a foreign session with the same database and port but a
+different run output directory.
+
+The same workload through `Invoke-Enterprise` passed in
+`C:/va канал/probe-1abc7eef`: the journal remained unreleased before cleanup,
+the second-base competitor was rejected, one owned TestClient (PID 16076) was
+stopped, and the journal was confirmed before the aggregate owner released.
+The competitor was admitted after release. The original scenario still reports
+the expected wrong-database assertion from the deliberately retained old EPF;
+cleanup success is not represented as a successful business scenario.
+
+An earlier diagnostic callback in `probe-f1da2ba3` used a dynamically shadowed
+PowerShell result variable and failed before cleanup. The queue retained the
+resulting debt. Its exact ticket was recovered through `Recovery.complete`
+with a live scoped verifier covering all three resources; one owned TestClient
+was stopped, quiescence was confirmed, and the original failed result was
+preserved. This recovery adapter is diagnostic evidence, not yet a delivered
+general recovery command.
+
+This evidence does not close item 4: durable recovery after supervisor restart,
+the remaining entrypoints, installed acceptance and two-host competition remain
+open. The fixture proves foreign-session isolation; a new live foreign-session
+acceptance is still required. No `conf.cfg` changes are part of this correction.
 
 ## Item 10: correlated client-code outcomes
 
