@@ -2367,13 +2367,13 @@ function Get-ItlBranchSourceSyncDatabasePlan {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
     }
     if ($Operation -eq 'sync-dev-branches') { return Get-ItlBranchSourceSyncDatabasePlan -State $State }
-    if ($Operation -eq 'sync-master') {
-        $master = Get-ItlMasterDatabasePlan
+    if ($Operation -in @('sync-master','new-dev-branch','new-extension-dev-branch','init-project')) {
+        $master = if ($Operation -eq 'init-project') { Get-ItlSourceDatabasePlan } else { Get-ItlMasterDatabasePlan }
         return [pscustomobject]@{target=$master.source;bases=@($master.bases);masterPlan=$master}
     }
     if ($Operation -eq 'lock-config-repository-objects') {
@@ -2395,7 +2395,7 @@ function Get-ItlDevBranchMutationDatabasePlan {
         $bases += @($master.bases)
     }
     $servicePlan = $null
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'deploy-and-test')) {
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'deploy-and-test','initialize-dev-branch-runtime','adopt-dev-worktree')) {
         # Repairs can replace a service generation even when there is no test
         # suite. Reserve that exact new address before taking lifecycle locks.
         $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
@@ -2432,8 +2432,45 @@ function Get-ItlDevBranchMutationDatabaseState {
     param([string]$Operation)
     # Standalone auxiliary maintenance resolves its own connection and does not
     # require an initialized primary development database. Auxiliary tests do.
-    if ($Operation -in @('sync-master', 'update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
+    if ($Operation -in @('sync-master', 'init-project', 'new-dev-branch', 'new-extension-dev-branch', 'update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
+    if ($Operation -in @('initialize-dev-branch-runtime','adopt-dev-worktree')) {
+        return Get-ItlInitializationDatabaseState -Operation $Operation
+    }
+    if ($Operation -eq 'fork-dev-branch') {
+        $branch = Get-CurrentBranch
+        if ($branch -notlike 'itldev/*') { throw 'DEV_BRANCH_FORK_SOURCE_BRANCH_REQUIRED' }
+        return Read-DevBranchState -Name $branch.Substring('itldev/'.Length)
+    }
     return Read-DevBranchState -Name $DevBranchName
+}
+
+function Get-ItlInitializationDatabaseState {
+    param([string]$Operation = 'initialize-dev-branch-runtime')
+    Require-Value 'DevBranchName' $DevBranchName | Out-Null
+    $safe = ConvertTo-SafeName $DevBranchName
+    $path = $DevBranchInfoBasePath
+    if ($Operation -eq 'adopt-dev-worktree') {
+        Require-Value 'RuntimeRoot' $RuntimeRoot | Out-Null
+        Require-Value 'MainWorktreePath' $MainWorktreePath | Out-Null
+        $expected = Resolve-Agent1cFullPath -Path (Join-Path $MainWorktreePath ".agent-1c/workspaces/$safe")
+        if ((Resolve-Agent1cFullPath -Path $RuntimeRoot) -ine $expected) { throw 'WORKSPACE_RUNTIME_ROOT_CHANGED' }
+        $path = Join-Path $expected 'infobase'
+    } elseif (-not $path) {
+        $path = Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safe
+    }
+    $values = @{}
+    $statePath = Find-DevBranchStateFile -SafeDevBranchName $safe
+    if ($statePath) { $values = ConvertTo-Agent1cHashtable -Object (Read-DevBranchStateFile -Path $statePath) }
+    # Derive the future target by the same inputs as Initialize-DevBranchRuntime;
+    # an existing state cannot redirect admission to a different old database.
+    $values['devBranchName'] = $DevBranchName
+    $values['safeDevBranchName'] = $safe
+    $values['devBranch'] = $(if ($DevBranch) { $DevBranch } else { "itldev/$safe" })
+    $values['worktreePath'] = [IO.Path]::GetFullPath($script:ProjectRoot)
+    $values['devBranchInfoBasePath'] = $path
+    $values['infoBaseKind'] = Get-InfoBaseKind
+    $values['devBranchKind'] = $DevBranchKind
+    return [pscustomobject]$values
 }
 
 function Get-ItlDatabaseContinuationContext {
@@ -2470,6 +2507,16 @@ function Publish-ItlDevBranchContinuationPlan {
 
 function Get-ItlDevBranchMutationAdmissionPreparation {
     param([string]$Operation = 'update-dev-branch-base', [switch]$CheckSourcePreflight)
+    $settingsReady = Get-Variable -Name InitDatabaseSettingsReady -Scope Script -ErrorAction SilentlyContinue
+    if ($Operation -eq 'init-project' -and ($null -eq $settingsReady -or -not $settingsReady.Value)) { return $null }
+    if ($Operation -in @('new-dev-branch','new-extension-dev-branch')) { Assert-MasterWorktreeContext -Operation $Operation }
+    if ($Operation -eq 'new-extension-dev-branch' -and $null -ne (Get-PreparedExtensionDevBranchState)) { return $null }
+    if ($Operation -in @('new-dev-branch','new-extension-dev-branch') -and
+        $null -ne (Read-BranchSeedManifest -AllowMissing)) {
+        # With a retained seed, branch creation has no source-database work.
+        # Its runtime handoff reserves the future target after releasing Git locks.
+        return $null
+    }
     $state = Get-ItlDevBranchMutationDatabaseState -Operation $Operation
     if ($null -ne $state) { Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation }
     if ($CheckSourcePreflight -and $Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) {
@@ -2514,7 +2561,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
@@ -2597,7 +2644,7 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
 
 function Publish-ItlDevBranchLifecycleCompletion {
     param([AllowNull()][object]$Admission)
-    if ($null -eq $Admission -or $Admission.operation -notin @('sync-master','reset-dev-branch','refresh-dev-branch','refresh-dev-branch-lite')) { return }
+    if ($null -eq $Admission -or $Admission.operation -notin @('sync-master','reset-dev-branch','refresh-dev-branch','refresh-dev-branch-lite','initialize-dev-branch-runtime','adopt-dev-worktree','new-dev-branch','new-extension-dev-branch','fork-dev-branch','init-project')) { return }
     if ($Admission.completed -or -not (Test-OneCNativeOperationJournalReleased -Journal $Admission.journal)) {
         throw 'NATIVE_LIFECYCLE_COMPLETION_NATIVE_WORK_PENDING'
     }
@@ -7760,6 +7807,10 @@ function Initialize-Project {
     }
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
+    # Wizard/JSON preparation establishes the real connection. Release the
+    # settings/Git phase before waiting, then reserve that exact source/seed set.
+    $script:InitDatabaseSettingsReady = $true
+    Enter-ItlInitializationDatabasePhase -Operation 'init-project'
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
     $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
     $interactiveQuestionsWereCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.interactive-complete"))
@@ -8891,6 +8942,11 @@ function Initialize-DevBranchRuntime {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
         $DevBranchInfoBasePath = Join-Path $rootPath $SafeDevBranchName
     }
+    $admissionState = Get-ItlInitializationDatabaseState
+    $admissionState.infoBaseKind = $kind
+    $admissionState.devBranchInfoBasePath = $DevBranchInfoBasePath
+    $admissionState.worktreePath = $WorktreePath
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $admissionState
 
     $publishDefault = Get-WebPublishByDefault
     $publicationEnabled = ($PublishToWeb -or $publishDefault)
@@ -9570,7 +9626,7 @@ function Remove-DevBranchForkTransientState {
     foreach ($key in @($State.Keys)) {
         $name = [string]$key
         if ($name -in @("statePath", "stateProjectRoot", "closedAt", "pendingDeregistration", "pendingDeregistrationAt", "pendingDeregistrationError", "workspaceProvider", "clientWorkspaceId", "runtimeRoot", "lastVanessaStatusPath") -or
-            $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|dataMcp|vibecoding1c)' -or
+            $name -match '^(?:launcher|publication|roctupMcp|vanessaMcp|vanessaServiceInfoBase|dataMcp|vibecoding1c)' -or
             $name -match '^(?:reset|pendingMerge|pendingRefresh|lifecycleMerge|lastResult|finalResult|close|eventLogPendingCursor)' -or
             $name -match '(?i)(?:pid|pids|port|ports|leasetoken|lockpath|locked)$') {
             [void]$State.Remove($key)
@@ -9842,11 +9898,20 @@ function New-ForkedDevBranchState {
         [Parameter(Mandatory = $true)][object]$Snapshot,
         [Parameter(Mandatory = $true)][string]$TargetInfoBasePath,
         [Parameter(Mandatory = $true)][string]$TargetHistoryRoot,
-        [Parameter(Mandatory = $true)][string]$MainProjectRoot
+        [Parameter(Mandatory = $true)][string]$MainProjectRoot,
+        [AllowNull()][object]$TargetState = $null
     )
 
     $state = ConvertTo-Agent1cHashtable -Object $SourceState
     Remove-DevBranchForkTransientState -State $state | Out-Null
+    # The source manager belongs to the source lease. A resumed fork may keep
+    # only the target's own manager inputs, already covered by target admission.
+    if ($null -ne $TargetState) {
+        $targetValues = ConvertTo-Agent1cHashtable -Object $TargetState
+        foreach ($key in @($targetValues.Keys)) {
+            if ([string]$key -match '^vanessaServiceInfoBase') { $state[$key] = $targetValues[$key] }
+        }
+    }
     $state["toolingInfoBaseGeneration"] = [guid]::NewGuid().ToString("N")
     $state["vanessaMcpSafeModeProof"] = $null
     $state["yaxunitInstallationProof"] = $null
@@ -10140,6 +10205,10 @@ function Initialize-ForkedDevBranchRuntime {
         Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safeName
     }
     Assert-DevBranchForkInfoBaseIsolated -SourceState $sourceState -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+    $admissionState = Get-ItlInitializationDatabaseState
+    $admissionState.infoBaseKind = [string]$Snapshot.infoBaseKind
+    $admissionState.devBranchInfoBasePath = $targetInfoBasePath
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $admissionState
     Install-DevBranchForkDependencyLock -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot | Out-Null
     $targetHistoryRoot = Join-Path $script:ProjectRoot ".agent-1c\fork-history\$($Snapshot.forkId)"
     $stateHash = New-ForkedDevBranchState `
@@ -10147,7 +10216,8 @@ function Initialize-ForkedDevBranchRuntime {
         -Snapshot $Snapshot `
         -TargetInfoBasePath $targetInfoBasePath `
         -TargetHistoryRoot $targetHistoryRoot `
-        -MainProjectRoot $MainProjectRoot
+        -MainProjectRoot $MainProjectRoot `
+        -TargetState $admissionState
     $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "fork-initializing"
 
     try {
@@ -10268,8 +10338,13 @@ function Invoke-ForkDevBranchRuntimeAfterSnapshot {
     Set-RunStage -Stage "fork.snapshot-complete" -Detail "Fork snapshot completed; releasing source locks before target restoration."
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Exit-Agent1cLifecycleOperation
+    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
+        Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
+        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+        $script:DevBranchMutationDatabaseAdmission = $null
+    }
     Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
-        Enter-Agent1cLifecycleOperation -RequestedAction "fork-dev-branch"
+        Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime' -LifecycleAction 'fork-dev-branch'
         Initialize-ForkedDevBranchRuntime -Snapshot $Snapshot -MainProjectRoot $MainProjectRoot | Out-Null
     }
 }
@@ -10372,6 +10447,35 @@ function Fork-DevBranch {
     Write-DevBranchRunUserReport -State $state -AdvisoryRoot $targetWorktreePath -Operation "forked"
 }
 
+function Enter-ItlInitializationRuntimeAdmission {
+    param([Parameter(Mandatory=$true)][string]$Operation, [string]$LifecycleAction = $Operation)
+    $envFile = Join-Path $script:ProjectRoot '.dev.env'
+    $envBefore = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
+    $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $Operation
+    try {
+        Enter-Agent1cLifecycleOperation -RequestedAction $LifecycleAction
+        $envAfter = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
+        if ($envBefore -cne $envAfter) { throw 'LIFECYCLE_INPUT_CHANGED: .dev.env changed during initialization admission; repeat the same helper.' }
+        Read-ProjectConfig
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $Operation)
+    } catch {
+        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+        throw
+    }
+}
+
+function Enter-ItlInitializationDatabasePhase {
+    param([Parameter(Mandatory=$true)][string]$Operation)
+    Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
+    Exit-Agent1cLifecycleOperation
+    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
+        Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
+        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+        $script:DevBranchMutationDatabaseAdmission = $null
+    }
+    Enter-ItlInitializationRuntimeAdmission -Operation $Operation
+}
+
 function Invoke-DevBranchRuntimeAfterGitPhase {
     param(
         [ValidateSet("configuration", "extension")]
@@ -10379,22 +10483,28 @@ function Invoke-DevBranchRuntimeAfterGitPhase {
         [string]$GitBranch,
         [string]$MainProjectRoot,
         [string]$WorktreePath,
-        [object]$BranchSeedLease
+        [object]$BranchSeedLease,
+        [bool]$CreatedWithWorktree = $true
     )
 
     try {
         Set-RunStage -Stage "branch.git-phase-complete" -Detail "Git worktree phase completed; releasing the main lifecycle lock before branch runtime initialization."
         Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
         Exit-Agent1cLifecycleOperation
+        if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
+            Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
+            Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+            $script:DevBranchMutationDatabaseAdmission = $null
+        }
         Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
-            Enter-Agent1cLifecycleOperation -RequestedAction "initialize-dev-branch-runtime"
+            Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime'
             Initialize-DevBranchRuntime `
                 -DevBranchKind $DevBranchKind `
                 -SafeDevBranchName (ConvertTo-SafeName $DevBranchName) `
                 -GitBranch $GitBranch `
                 -MainProjectRoot $MainProjectRoot `
                 -WorktreePath $WorktreePath `
-                -CreatedWithWorktree $true `
+                -CreatedWithWorktree $CreatedWithWorktree `
                 -BranchSeedLease $BranchSeedLease
         }
     } finally {
@@ -10435,13 +10545,14 @@ function New-DevBranchCore {
             throw "Development branch already exists: $DevBranch"
         }
         Invoke-Git @("checkout", "-b", $DevBranch)
-        Initialize-DevBranchRuntime `
+        $seedLease = Open-BranchSeedLease -Mode read
+        Invoke-DevBranchRuntimeAfterGitPhase `
             -DevBranchKind $DevBranchKind `
-            -SafeDevBranchName $safe `
             -GitBranch $DevBranch `
             -MainProjectRoot $script:ProjectRoot `
             -WorktreePath $script:ProjectRoot `
-            -CreatedWithWorktree $false
+            -CreatedWithWorktree $false `
+            -BranchSeedLease $seedLease
         return
     }
 
@@ -10599,6 +10710,10 @@ function New-ExtensionDevBranch {
     if ($state) {
         Assert-MasterWorktreeContext -Operation "resume extension development branch provisioning"
         Assert-CleanGit
+        # The delegated initializer obtains its own target admission. It must
+        # never wait for that target while this parent holds the master lock.
+        Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
+        Exit-Agent1cLifecycleOperation
     } else {
         New-DevBranchCore -DevBranchKind "extension" -DeferHandoff
         $state = Read-DevBranchState -Name $DevBranchName

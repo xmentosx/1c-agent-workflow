@@ -2997,6 +2997,7 @@ Start-Sleep -Seconds 20
                     function Set-RunStage { param([string]$Stage, [string]$Detail = "") }
                     function Prepare-ConfiguredInitProjectSettings { $calls.Add("prepare") | Out-Null }
                     function Complete-InitProjectSettingsPreparation { $calls.Add("complete-settings") | Out-Null }
+                    function Enter-ItlInitializationDatabasePhase { param([string]$Operation); $calls.Add("database-admission:$Operation") | Out-Null }
                     function Apply-BootstrapWorkflowPackageProvenance { return $null }
                     function Initialize-SourceInfoBaseUnsafeActionProtection { $calls.Add("unsafe-action-protection") | Out-Null }
                     function Prepare-Vibecoding1cMcpSelectionForInit {
@@ -3050,6 +3051,8 @@ Start-Sleep -Seconds 20
             $legacyCalls | Should -Contain "mcp-selection:True"
             $legacyCalls.IndexOf("unsafe-action-protection") | Should -BeLessThan $legacyCalls.IndexOf("mcp-selection:True")
             $legacyCalls.IndexOf("mcp-selection:True") | Should -BeLessThan $legacyCalls.IndexOf("complete-settings")
+            $legacyCalls.IndexOf("prepare") | Should -BeLessThan $legacyCalls.IndexOf("database-admission:init-project")
+            $legacyCalls.IndexOf("database-admission:init-project") | Should -BeLessThan $legacyCalls.IndexOf("unsafe-action-protection")
             $legacyCalls.IndexOf("complete-settings") | Should -BeLessThan $legacyCalls.IndexOf("check-tools")
             $results["init.dump-config"] | Should -Contain "check-tools"
             $results["init.dump-config"] | Should -Contain "mcp-selection:False"

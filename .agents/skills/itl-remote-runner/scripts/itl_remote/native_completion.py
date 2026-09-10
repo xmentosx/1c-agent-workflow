@@ -7,7 +7,9 @@ import time
 from .common import WorkError, beneath, digest, identity, read_json, stamp, write_json
 from . import native_journal as native
 
-OPERATIONS = frozenset({'sync-master', 'reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite'})
+OPERATIONS = frozenset({'sync-master', 'reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite',
+                        'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch',
+                        'new-extension-dev-branch', 'fork-dev-branch', 'init-project'})
 
 
 def assert_writable(record, producer_id=None):

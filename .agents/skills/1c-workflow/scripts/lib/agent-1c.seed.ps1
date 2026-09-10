@@ -3,7 +3,9 @@ function Get-BranchSeedRoot {
     if ([System.IO.Path]::IsPathRooted([string]$configured)) {
         return (Resolve-Agent1cFullPath -Path ([string]$configured))
     }
-    $mainRoot = Get-MainWorktreePath
+    # Initialization reserves the seed before creating Git. Use the future
+    # project root in that phase; a real worktree still resolves its main root.
+    $mainRoot = if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git')) { Get-MainWorktreePath } else { $script:ProjectRoot }
     return (Resolve-Agent1cFullPath -Path (Join-Path $mainRoot ([string]$configured)))
 }
 

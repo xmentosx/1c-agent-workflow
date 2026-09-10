@@ -2579,6 +2579,8 @@ try {
                 roctupMcpPid = 111
                 roctupMcpPort = 48100
                 vanessaMcpPid = 222
+                vanessaServiceInfoBasePath = 'C:\source-manager'
+                vanessaServiceInfoBaseGeneration = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
                 publicationUrl = "http://old"
                 lastVanessaTestPid = 333
             }
@@ -2606,6 +2608,8 @@ try {
         $result.roctupMcpPid | Should -Be ""
         $result.roctupMcpPort | Should -Be 0
         $result.vanessaMcpPid | Should -Be ""
+        $result.Keys | Should -Not -Contain 'vanessaServiceInfoBasePath'
+        $result.Keys | Should -Not -Contain 'vanessaServiceInfoBaseGeneration'
         $result.publicationStatus | Should -Be "disabled"
         $result.publicationUrl | Should -Be ""
         $result.Contains("lastVanessaTestPid") | Should -BeFalse
@@ -5460,7 +5464,11 @@ try {
                     return [pscustomobject]@{ valid = $true }
                 }
 
-                Initialize-Project *> $null
+                try { Initialize-Project *> $null }
+                finally {
+                    Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
+                    Exit-Agent1cLifecycleOperation
+                }
 
                 [pscustomobject]@{
                     status = @(Get-EffectiveGitStatusLines -StatusLines (& git -C $script:ProjectRoot status --porcelain))

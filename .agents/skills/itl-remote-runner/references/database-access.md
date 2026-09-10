@@ -83,6 +83,29 @@ path is never adopted. Serialized template paths are not executed. Ordinary
 Ensure callers still obtain a new plan internally; entrypoint wiring must move
 planning before admission rather than reserving only the eventual launch.
 
+### Project and branch initialization
+
+Project initialization determines its source connection in the wizard/settings
+phase, releases the local lifecycle lock, then reserves the source and seed
+databases before any native preparation. Standalone runtime initialization and
+workspace adoption reserve their exact future target plus the planned Vanessa
+manager before lifecycle locking. Saved manager generations remain part of a
+resumed initialization's plan.
+
+Branch creation uses the retained seed without reserving the live source. When
+the seed must first be built, the source phase has its own admission. After the
+Git phase, the helper releases that source admission before waiting for the new
+target. Forking likewise releases the source after its immutable snapshot is
+complete, then admits the target. Fork state never inherits the source's Vanessa
+manager; a resumed fork preserves only the target's admitted manager inputs.
+
+Each handoff rechecks current configuration and rejects an environment-file or
+database-address change before native work. A busy target uses the ordinary
+bounded wait/cancellation policy without holding the preceding lifecycle lock
+or a partial database reservation. Completed phases publish their acknowledgement
+before release. Interrupted native effects still require the supported recovery
+inspection below; these entrypoints do not enable timeout-based ownership theft.
+
 ## Interruption and current integration boundary
 
 A crashed waiter has not been admitted and can be skipped. A crashed running

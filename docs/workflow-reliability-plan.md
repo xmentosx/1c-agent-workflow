@@ -91,7 +91,7 @@ and multi-host recovery remain open.
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
-| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients; exact branch11 findings, case-based acceptance and normal workflow delivery remain open |
+| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings retained; 1.1 and 5.2 mechanically contradicted, 5.4 remains unresolved. Overall review stays unverified; case-based acceptance and normal workflow delivery remain open |
 | 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names now recognized with 19 focused root/report tests passing; silent repeat ownership and delivered public-command acceptance remain open |
 | 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
 
@@ -2742,3 +2742,37 @@ budget and the already-used one-repeat authorization. Deliver and qualify r35's
 mixed-outcome behavior through the installed route. The workflow investigation
 must not relabel this remaining business finding as a false positive, modify PM5
 for a green response, or manufacture a host verification proof.
+
+## Item 4a: initialization and fork admission, 2026-09-10
+
+Initialization, workspace adoption, new configuration/extension branches and
+forking now use the same database coordinator as measurements and updates. The
+entrypoint, plan validator and recovery operation inventories contain the same
+29 operations. The wizard establishes the source connection before its native
+phase; source/seed preparation and the new target use separate admissions with
+local lifecycle locks released before either wait. A retained seed avoids an
+unnecessary live-source reservation. Forking releases the source only after its
+immutable snapshot is complete, then waits for the target.
+
+Runtime handoffs re-read project configuration and reject changes to .dev.env or
+the database target during waiting. Initialization reserves the target and the
+exact prospective Vanessa manager together, preserving saved target manager
+inputs on resume. Fork state no longer imports the source manager identity; a
+resumed fork keeps only the target's own admitted manager. Completed phases
+publish acknowledgement before normal release, using the existing journal and
+recovery protocol. No conf.cfg edits or new reset-continuation mechanism are
+part of this change.
+
+Twenty focused initialization/fork/context tests pass, including thirteen with
+real PowerShell/Python pipe
+owners and competing leases, including bounded waiting without local locks,
+independent progress, nested release, environment drift, saved manager reuse,
+adopted runtime roots and both source-to-target handoffs. The server-identity
+case is a protocol fixture, not server runtime acceptance. The completion and
+recovery operation contracts pass 29 Python tests. Existing lifecycle/seed and
+workspace coverage is included in the owning verification; registration owns
+the single Targeted gate for this coherent unit.
+
+Remaining work is unchanged: reconcile unknown native effects before releasing
+an interrupted admitted owner, and qualify actual server/two-host/installed
+routes. These front-door additions do not by themselves close item 4a.

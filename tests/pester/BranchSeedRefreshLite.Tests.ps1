@@ -386,7 +386,7 @@ param([string]$Operation,[string]$ProjectRoot)
             '(?s)function Invoke-DevBranchRuntimeAfterGitPhase \{.*?(?=\r?\nfunction New-DevBranchCore)'
         ).Value
         $runtimeSection | Should -Not -BeNullOrEmpty
-        $runtimeSection | Should -Match '(?s)Complete-Agent1cLifecycleOperation.*Exit-Agent1cLifecycleOperation.*Invoke-InProjectContext.*Enter-Agent1cLifecycleOperation.*Initialize-DevBranchRuntime'
+        $runtimeSection | Should -Match '(?s)Complete-Agent1cLifecycleOperation.*Exit-Agent1cLifecycleOperation.*Invoke-InProjectContext.*Enter-ItlInitializationRuntimeAdmission.*Initialize-DevBranchRuntime'
         $runtimeSection | Should -Not -Match '&\s*powershell'
     }
 
