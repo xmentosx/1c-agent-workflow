@@ -2166,6 +2166,38 @@ function Get-ItlSourceDatabasePlan {
     return [pscustomobject]@{project=[IO.Path]::GetFullPath($script:ProjectRoot);source=$source;bases=@($bases)}
 }
 
+function Restore-ItlProcessEnvironment {
+    param([Parameter(Mandatory = $true)][Collections.IDictionary]$Snapshot)
+    $current = [Environment]::GetEnvironmentVariables('Process')
+    foreach ($key in @($current.Keys)) {
+        if (-not $Snapshot.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null, 'Process') }
+    }
+    foreach ($key in $Snapshot.Keys) {
+        $value = [string]$Snapshot[$key]
+        if ($current.Contains($key) -and [string]$current[$key] -ceq $value) { continue }
+        if ($value.Length -eq 0 -and [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) {
+            # .NET Framework treats an empty value as deletion. Native Windows
+            # distinguishes an existing empty value from an absent variable.
+            if (-not ('ItlWorkflow.ProcessEnvironment' -as [type])) {
+                Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ItlWorkflow {
+    public static class ProcessEnvironment {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetEnvironmentVariable(string name, string value);
+    }
+}
+'@
+            }
+            if (-not [ItlWorkflow.ProcessEnvironment]::SetEnvironmentVariable([string]$key, '')) {
+                throw "PROCESS_ENVIRONMENT_RESTORE_FAILED: $key"
+            }
+        } else { [Environment]::SetEnvironmentVariable($key, $value, 'Process') }
+    }
+}
+
 function Get-ItlMasterDatabasePlan {
     $mainRoot = Get-MainWorktreePath
     # Planning precedes lifecycle locks and must leave the calling branch's
@@ -2174,12 +2206,7 @@ function Get-ItlMasterDatabasePlan {
     try {
         return Invoke-InProjectContext -Root $mainRoot -ScriptBlock { Get-ItlSourceDatabasePlan }
     } finally {
-        foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
-            if (-not $environmentBefore.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null, 'Process') }
-        }
-        foreach ($key in $environmentBefore.Keys) {
-            [Environment]::SetEnvironmentVariable($key, [string]$environmentBefore[$key], 'Process')
-        }
+        Restore-ItlProcessEnvironment -Snapshot $environmentBefore
     }
 }
 

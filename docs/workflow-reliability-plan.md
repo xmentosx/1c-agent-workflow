@@ -452,6 +452,17 @@ callers wait for the common terminal acknowledgement, even if a daemon already
 closing cannot reply to the later request. No additional scenario restoration
 is introduced by this shutdown.
 
+Registration of the lifecycle-admission unit found two distinct defects: an
+auxiliary regression still expected the old 18-operation inventory, and master
+planning deleted inherited empty environment variables through .NET Framework's
+empty-string setter semantics. The inventory now explicitly includes all 22
+operations, retaining equality checks between entrypoint and both validators.
+Process-environment restoration skips unchanged values and preserves changed
+empty values through the Windows environment API. Three focused PS5 checks
+passed for successful/failed planning and empty values both untouched and
+overwritten inside the temporary master context. Registration remains pending
+until the combined candidate passes; neither failed run is acceptance evidence.
+
 Items 3/4 capacity integration removes the automatic stop-all-target-sessions
 callbacks from on-demand MCP and Vanessa verification. Admission waits outside
 the allocator lock, honors cancellation and the original performance deadline,

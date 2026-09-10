@@ -47,10 +47,7 @@
     AfterEach {
         try { Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission }
         finally {
-            foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
-                if (-not $savedEnvironment.Contains($key)) { [Environment]::SetEnvironmentVariable($key,$null,'Process') }
-            }
-            foreach ($key in $savedEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key,[string]$savedEnvironment[$key],'Process') }
+            Restore-ItlProcessEnvironment -Snapshot $savedEnvironment
         }
     }
 
@@ -113,6 +110,23 @@
         [IO.File]::WriteAllText($masterEnvPath,"INFOBASE_KIND=file`nSOURCE_INFOBASE_PATH=$(Join-Path $masterRoot 'Другая база')`n",[Text.UTF8Encoding]::new($false))
         { Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $null } | Should -Throw '*MUTATION_PLAN_CHANGED*'
         Should -Invoke Invoke-Designer -Times 0
+    }
+
+    It 'preserves empty Windows environment values both unchanged and overwritten by master planning' {
+        $snapshot = [Environment]::GetEnvironmentVariables('Process')
+        $snapshot['ITL_MASTER_PLAN_PROBE'] = ''
+        $snapshot['ITL_UNCHANGED_EMPTY_PROBE'] = ''
+        Restore-ItlProcessEnvironment -Snapshot $snapshot
+        $before = [Environment]::GetEnvironmentVariables('Process')
+        foreach ($key in @('ITL_MASTER_PLAN_PROBE', 'ITL_UNCHANGED_EMPTY_PROBE')) {
+            $before.Contains($key) | Should -BeTrue
+            $before[$key] | Should -BeExactly ''
+        }
+        $plan = Get-ItlMasterDatabasePlan
+        $plan.source.path | Should -Be $sourcePath
+        $after = [Environment]::GetEnvironmentVariables('Process')
+        @($after.Keys | Sort-Object) | Should -Be @($before.Keys | Sort-Object)
+        foreach ($key in $before.Keys) { $after[$key] | Should -BeExactly $before[$key] }
     }
 
     It 'does not reserve a fictitious file seed database for a server source' {
