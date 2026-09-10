@@ -43,7 +43,11 @@
         $observedBeforeLaunch.processId | Should -Be 0
         $observedBeforeLaunch.resources[0].path | Should -Be $journalBase
         $observedBeforeLaunch.ownedProcessScopes[0].testPorts | Should -Be @(53941,53942)
-        $observedBeforeLaunch.helperInputs | Should -HaveCount 3
+        $observedBeforeLaunch.helperInputs | Should -HaveCount 4
+        foreach ($helper in $observedBeforeLaunch.helperInputs) {
+            $helper.path | Should -Match 'native-helper-generations[\\/][a-f0-9]{64}[\\/]agent-1c\.'
+            Test-Path -LiteralPath $helper.path -PathType Leaf | Should -BeTrue
+        }
         $observedBeforeLaunch.recoveryRequiresLiveVerification | Should -BeTrue
         $observedBeforeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match 'private-inheritance-secret|extra-scope-secret'
         $observedBeforeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match ([regex]::Escape($journalOwner.proof.token))
@@ -80,6 +84,55 @@
         $nativeStarts | Should -Be 0
         $script:OneCNativeOperationJournal.entries[0].startAttempted | Should -BeFalse
         Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeTrue
+    }
+
+    It 'does not start a native process when its recovery generation cannot be retained' {
+        $script:nativeStarts = 0
+        Mock Save-OneCNativeRecoveryHelpers { throw 'recovery helper archive unavailable' }
+        {
+            Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -ScriptBlock {
+                Invoke-OneCSessionProcessStart -StartProcess { $script:nativeStarts++ }
+            }
+        } | Should -Throw '*recovery helper archive unavailable*'
+        $nativeStarts | Should -Be 0
+        $script:OneCNativeOperationJournal.entries | Should -HaveCount 0
+        Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeTrue
+    }
+
+    It 'resolves the PowerShell archive through the authoritative Python journal index' {
+        Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -ScriptBlock {}
+        $runtime = Join-Path $context.RepoRoot '.agents/skills/itl-remote-runner/scripts'
+        $code = @'
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from itl_remote.access import Coordinator
+from itl_remote.native_journal import inspect
+coordinator = Coordinator(sys.argv[2])
+record = next(r for r in coordinator.records() if r['ticket'] == sys.argv[3])
+bundle = inspect(coordinator, record, resolve_helpers=True)
+assert len(bundle['helperGenerations']) == 1
+print(json.dumps({'helperGeneration': next(iter(bundle['helperGenerations'].values())), 'requiresLiveVerification': bundle['requiresLiveVerification']}))
+'@
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = $persistencePython
+        $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @('-B','-X','utf8','-c',$code,$runtime,$journalRoot,$journalOwner.proof.ticket)
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::Start($startInfo)
+        try {
+            $stdout = $process.StandardOutput.ReadToEnd()
+            $stderr = $process.StandardError.ReadToEnd()
+            $process.WaitForExit()
+            $process.ExitCode | Should -Be 0 -Because $stderr
+            $observed = $stdout | ConvertFrom-Json
+            $observed.helperGeneration.generation | Should -Match '^[a-f0-9]{64}$'
+            $observed.helperGeneration.files | Should -HaveCount 4
+            $observed.requiresLiveVerification | Should -BeTrue
+        } finally { $process.Dispose() }
     }
 
     It 'persists build callers that attach the owner after constructing the journal' {

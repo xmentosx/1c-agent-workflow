@@ -243,6 +243,9 @@ class RuntimeTests(unittest.TestCase):
             z.extractall(extracted)
         runtime = extracted / ".agents/skills/itl-remote-runner/scripts/remote_work.py"
         self.assertFalse((extracted / "install-agent-1c-workflow.ps1").exists())
+        for name in ('core', 'runtime-values', 'sessions', 'vanessa'):
+            relative = '.agents/skills/1c-workflow/scripts/lib/agent-1c.' + name + '.ps1'
+            self.assertEqual(digest(REPO / relative), digest(extracted / relative))
         jobs.submit(self.root / "calibration-package", self.spool)
         from itl_remote.common import capture
         state = json.loads(capture([sys.executable, str(runtime), "execute", "--spool", str(self.spool), "--id", request["id"]]))
@@ -257,7 +260,7 @@ class RuntimeTests(unittest.TestCase):
                             ignore=shutil.ignore_patterns("__pycache__"))
         lib = root / ".agents/skills/1c-workflow/scripts/lib"
         lib.mkdir(parents=True)
-        for name in ("core", "ports", "sessions", "runtime-values", "immutable-download"):
+        for name in ("core", "ports", "sessions", "runtime-values", "immutable-download", "vanessa"):
             filename = "agent-1c." + name + ".ps1"
             shutil.copyfile(REPO / ".agents/skills/1c-workflow/scripts/lib" / filename, lib / filename)
         package = self.root / "Внешний архив.nupkg"

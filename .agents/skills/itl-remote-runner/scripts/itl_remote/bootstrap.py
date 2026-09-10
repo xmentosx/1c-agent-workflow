@@ -71,7 +71,7 @@ def export_bundle(repository, output, python_archive=None):
         selected += [path for path in folder.rglob("*") if path.is_file() and "__pycache__" not in path.parts]
     # The same shared process/session code used by ITL, not a reimplementation.
     lib = root / ".agents/skills/1c-workflow/scripts/lib"
-    selected += [lib / ("agent-1c." + name + ".ps1") for name in ("core", "ports", "sessions", "runtime-values", "immutable-download")]
+    selected += [lib / ("agent-1c." + name + ".ps1") for name in ("core", "ports", "sessions", "runtime-values", "immutable-download", "vanessa")]
     if any(not path.is_file() for path in selected):
         raise WorkError("PORTABLE_DEPENDENCY_MISSING")
     entries = {path.relative_to(root).as_posix(): path for path in selected}

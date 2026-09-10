@@ -1892,8 +1892,32 @@ is retained separately. The diagnostic workload has no snapshot/configuration
 rollback duty and its business scenario is still reported as failed.
 
 The general script-owned recovery adapter and its per-operation restoration
-contracts remain open. It must also resolve the original helper generation after
-an installed update, rather than trusting a changed file at a retained path.
+contracts remain open. The helper-generation layer now retains immutable copies
+of core, runtime-values, sessions and Vanessa process-ownership code before the
+first native intent. Journals point to these retained paths and hashes, not the
+installed files that a later update can replace. A generation is derived from
+all four file hashes, published by an atomic directory move and reused only
+after complete validation. Only these code files are copied; project config,
+credentials and native command lines are excluded. Concurrent producers keep
+one complete generation, and changed archives are rejected without overwriting
+old recovery evidence.
+
+Explicit native-journal inspection can resolve the retained generation through
+the authoritative index. The resolver checks the full file set, archive scope,
+redirects, hashes and generation identity. It never imports today's installation
+as a fallback. Legacy records that retained only three original-file hashes do
+not acquire invented archive proof. Archived modules have a dedicated fresh
+verifier context; it does not execute the installed helper entrypoint or load
+current project settings. The portable bundle includes the same required code.
+
+The directly owned suites pass 28 PowerShell and 16 Python cases, plus 37
+portable-runtime cases. A separate process executes the archived enumeration
+worker after the original library files are removed, and the Python reader
+resolves a real PowerShell-produced journal. These prove retained process-tool
+availability, not successful crash recovery or configuration rollback. The
+operation-specific recovery adapter, pinned restoration implementation and
+generation-retention cleanup remain required. Archives must not be pruned while
+an unresolved journal can still require them.
 Abrupt interruption during launch, installed command
 acceptance and the remaining facade admission paths still require work.
 

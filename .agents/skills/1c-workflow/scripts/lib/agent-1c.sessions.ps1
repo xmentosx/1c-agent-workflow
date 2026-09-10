@@ -13,6 +13,77 @@ function New-OneCNativeOperationJournal {
     return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new(); resources = @($Resources); owner = $Owner; persistence = $null }
 }
 
+function Initialize-OneCNativeRecoveryContext {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    # Called in a fresh recovery verifier after loading the retained modules.
+    # Do not run today's helper entrypoint or import a changed project config.
+    $script:ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
+    $script:Config = [pscustomobject]@{}
+    $script:RunStatusPath = ''
+    $script:RunProbePhase = ''
+    $script:OneCSessionLaunchContext = $null
+    $script:OneCNativeOperationJournal = $null
+}
+
+function Save-OneCNativeRecoveryHelpers {
+    param([Parameter(Mandatory = $true)][string]$CoordinatorRoot, [string]$LibraryRoot = $PSScriptRoot)
+    # Retain code, not project config, credentials, command lines or native
+    # artifacts. The four modules include the child process-enumeration worker's
+    # dependencies. Content identity allows callers from different worktrees to
+    # share the same immutable generation.
+    $names = @('agent-1c.core.ps1', 'agent-1c.runtime-values.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1')
+    $files = [Collections.Generic.List[object]]::new()
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($name in $names) {
+            $bytes = [IO.File]::ReadAllBytes((Join-Path $LibraryRoot $name))
+            $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+            $files.Add([pscustomobject]@{name=$name;sha256=$hash;bytes=$bytes})
+        }
+        $identity = ($files | ForEach-Object { $_.name + ':' + $_.sha256 }) -join "`n"
+        $generation = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identity))).Replace('-', '').ToLowerInvariant()
+    } finally { $sha.Dispose() }
+    $archiveRoot = Join-Path ([IO.Path]::GetFullPath($CoordinatorRoot)) 'native-helper-generations'
+    [void][IO.Directory]::CreateDirectory($archiveRoot)
+    if ((Get-Item -LiteralPath $archiveRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_REDIRECTED'
+    }
+    $destination = Join-Path $archiveRoot $generation
+    $staging = $null
+    try {
+        if (-not (Test-Path -LiteralPath $destination)) {
+            $staging = Join-Path $archiveRoot ('.pending-' + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($staging)
+            foreach ($file in $files) { [IO.File]::WriteAllBytes((Join-Path $staging $file.name), $file.bytes) }
+            try { [IO.Directory]::Move($staging, $destination) }
+            catch {
+                # Another participant may publish identical bytes first. It
+                # must still pass the same complete validation below.
+                if (-not (Test-Path -LiteralPath $destination -PathType Container)) { throw }
+            }
+        }
+        if ((Get-Item -LiteralPath $destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_REDIRECTED'
+        }
+        foreach ($file in $files) {
+            $path = Join-Path $destination $file.name
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) {
+                throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_CHANGED'
+            }
+        }
+        return @($files | ForEach-Object { [pscustomobject]@{path=(Join-Path $destination $_.name);sha256=$_.sha256} })
+    } finally {
+        if ($staging -and (Test-Path -LiteralPath $staging -PathType Container)) {
+            # Only fixed files in this call's fresh staging directory are owned.
+            # Never recursively remove an archive generation or unknown files.
+            foreach ($name in $names) { [IO.File]::Delete((Join-Path $staging $name)) }
+            [IO.Directory]::Delete($staging)
+        }
+    }
+}
+
 function New-OneCNativeJournalPersistence {
     param([object[]]$Resources, [object]$Owner)
     $persistence = $null
@@ -34,10 +105,7 @@ function New-OneCNativeJournalPersistence {
             operation = $operation; project = $project
             resources = @($Resources | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path} })
             resourceIds = @($Owner.public.resources)
-            helperInputs = @('agent-1c.core.ps1','agent-1c.sessions.ps1','agent-1c.vanessa.ps1' | ForEach-Object {
-                $helperPath = Join-Path $PSScriptRoot $_
-                [pscustomobject]@{path=$helperPath;sha256=(Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLowerInvariant()}
-            })
+            helperInputs = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $Owner.proof.coordinator)
         }
     }
     return $persistence

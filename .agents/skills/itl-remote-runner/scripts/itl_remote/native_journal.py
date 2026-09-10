@@ -179,7 +179,7 @@ def _read_operation(coordinator, ticket, key, entry):
     return value
 
 
-def inspect(coordinator, record):
+def inspect(coordinator, record, *, resolve_helpers=False):
     """Read every indexed operation; the returned data is not live recovery proof."""
     if record.get("owner", {}).get("nativeJournalProtocol") != 1:
         raise WorkError("NATIVE_JOURNAL_OWNER_PROTOCOL_REQUIRED")
@@ -215,8 +215,13 @@ def inspect(coordinator, record):
             if resources != value["resourceIds"] or not set(resources) <= set(producer["resources"]) or not set(resources) <= set(record["resources"]):
                 raise WorkError("NATIVE_JOURNAL_RESOURCE_BINDING_CHANGED")
             operations.append(value)
-    return {"schemaVersion": 1, "ticket": record["ticket"], "recordRevision": identity(public(record)),
-            "resources": list(record["resources"]), "operations": operations, "requiresLiveVerification": True}
+    result = {"schemaVersion": 1, "ticket": record["ticket"], "recordRevision": identity(public(record)),
+              "resources": list(record["resources"]), "operations": operations, "requiresLiveVerification": True}
+    if resolve_helpers:
+        from .native_recovery_helpers import resolve
+        result['helperGenerations'] = {operation['journalId'] + '/' + operation['id']:
+                                       resolve(coordinator, operation['helperInputs']) for operation in operations}
+    return result
 
 
 def release_errors(lease, producer_id):
