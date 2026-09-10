@@ -278,7 +278,7 @@
 
     It 'includes repository locking in the same pre-lifecycle admission route' {
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
-        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')
+        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')
         $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('" + ($operations -join "', '") + "'))"))
         foreach ($command in @('Get-ItlDevBranchMutationDatabasePlan', 'Start-ItlDevBranchMutationDatabaseAdmission')) {
             $supported = (Get-Command $command).Parameters['Operation'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } | ForEach-Object ValidValues

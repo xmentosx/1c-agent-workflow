@@ -1891,6 +1891,24 @@ failed result and immutable native snapshots remain unchanged; recovery evidence
 is retained separately. The diagnostic workload has no snapshot/configuration
 rollback duty and its business scenario is still reported as failed.
 
+The combined primary check, auxiliary maintenance, primary export and extension
+dump admission changes are registered at
+`ddd0a9f19e6731ac76c57987dd9b391a2aee8613`. The canonical source worktree has
+advanced to that registered commit without publication or installed-project
+changes. This closes source registration of those routes, not their installed
+or multi-host acceptance.
+
+Tooling repair now participates in the same pre-lifecycle admission route. It
+reserves the primary target, recorded runtime cleanup resources and a pinned
+service generation before draining runtime or loading extensions. The existing
+service preparation consumes that generation rather than allocating another
+address inside the lock. Repair does not read the test-profile manifest or run
+test classification: those prerequisites belong to checks. Exact routing-set
+tests include the twelfth admitted operation. The 76 focused tests pass,
+including coordinator competition for each reserved database, repair success
+and extension failure without an early recovery receipt, and existing readiness
+contracts. Registration, real installed repair and server acceptance remain open.
+
 The general script-owned recovery adapter and its per-operation restoration
 contracts remain open. The helper-generation layer now retains immutable copies
 of core, runtime-values, sessions and Vanessa process-ownership code before the

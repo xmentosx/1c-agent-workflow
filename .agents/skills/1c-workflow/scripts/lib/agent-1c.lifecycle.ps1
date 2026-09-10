@@ -2105,7 +2105,7 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
     }
@@ -2123,12 +2123,15 @@ function Get-ItlDevBranchMutationDatabasePlan {
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
     $servicePlan = $null
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch')) {
-        # Resolve every address exposed to the runner before taking lifecycle
-        # locks. Capacity is still based on the selected scenarios, not on the
-        # manifest ceiling or the number of configured profiles.
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling')) {
+        # Repairs can replace a service generation even when there is no test
+        # suite. Reserve that exact new address before taking lifecycle locks.
         $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
         $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
+    }
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch')) {
+        # Only execution of tests uses their additional profile databases.
+        # Tooling repair must remain available with an invalid test manifest.
         $manifest = Read-VanessaTestClientManifest
         if ($null -ne $manifest) {
             $bases += @(Get-VanessaTestClientDatabaseResources -Topology $manifest -DefaultState $State)
@@ -2180,7 +2183,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }

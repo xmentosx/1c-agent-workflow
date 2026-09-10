@@ -6,6 +6,13 @@ It stops only branch-owned runtime, uses lifecycle and per-infobase admission,
 and restores pinned extensions without resetting the database or changing tests.
 Do not call internal installation functions or edit state, locks or repair counts.
 
+Before taking lifecycle locks, repair reserves the target database, recorded
+runtime cleanup databases and the exact planned service-base generation in the
+shared database queue. It waits for other owners and retains admission through
+repair and cleanup. Test-profile databases and test classification are not repair
+prerequisites; a broken test manifest must not prevent restoring the tools.
+Changed database addresses after waiting require a new plan before any mutation.
+
 Database replacement invalidates both installation receipts before mutation and
 advances the target generation. Legacy receipts require reconciliation once.
 Every preparation probes requested extensions in a fresh Enterprise session:

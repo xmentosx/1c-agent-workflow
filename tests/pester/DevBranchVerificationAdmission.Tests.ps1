@@ -55,6 +55,81 @@
         Complete-ItlDatabaseAccessHost $next | Out-Null
     }
 
+    It 'repairs tooling without reading test profiles and retains primary plus both service generations' {
+        Mock Read-VanessaTestClientManifest { throw 'invalid test manifest must not block tooling repair' }
+        Mock Assert-VanessaVerificationPreflight { throw 'tooling repair does not run test classification' }
+        $preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation repair-dev-branch-tooling -CheckSourcePreflight
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling -Preparation $preparation
+        $admission = $script:DevBranchMutationDatabaseAdmission
+        $admission.plan.bases | Should -HaveCount 3
+        $admission.plan.bases.path | Should -Contain $checkState.devBranchInfoBasePath
+        $admission.plan.bases.path | Should -Contain $checkState.vanessaServiceInfoBasePath
+        $admission.plan.bases.path | Should -Contain $admission.plan.servicePlan.path
+        $admission.plan.bases.path | Should -Not -Contain $auxPath
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $checkState
+        foreach ($base in $admission.plan.bases) {
+            { Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@($base);owner=@{operation='other-chat'};timeout=0} } | Should -Throw '*WAIT_TIMEOUT*'
+        }
+        $other = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$auxPath});owner=@{};timeout=0}
+        Complete-ItlDatabaseAccessHost $other | Out-Null
+        Should -Invoke Read-VanessaTestClientManifest -Times 0
+        Should -Invoke Assert-VanessaVerificationPreflight -Times 0
+        Should -Invoke Invoke-Designer -Times 0
+    }
+
+    It 'waits before repair when the <resource> database is owned elsewhere' -TestCases @(
+        @{resource='primary'}, @{resource='old-service'}, @{resource='new-service'}
+    ) {
+        param($resource)
+        $preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation repair-dev-branch-tooling
+        $path = switch ($resource) {
+            'primary' { $checkState.devBranchInfoBasePath }
+            'old-service' { $checkState.vanessaServiceInfoBasePath }
+            'new-service' { $preparation.plan.servicePlan.path }
+        }
+        $holder = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$path});owner=@{operation='other-project'};timeout=0}
+        try {
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling -Preparation $preparation } | Should -Throw '*WAIT_TIMEOUT*'
+            Test-Path -LiteralPath $preparation.plan.servicePlan.path | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+            Should -Invoke Invoke-Designer -Times 0
+        } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+    }
+
+    It 'retains the admitted repair until <outcome> without issuing an early recovery receipt' -TestCases @(
+        @{outcome='success'}, @{outcome='extension-failure'}
+    ) {
+        param($outcome)
+        $script:repairOutcome = $outcome
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling
+        Mock Read-CurrentDevBranchStateForVanessaMcp { $script:checkState }
+        Mock Stop-DevBranchRuntimeBeforeInfobaseMutation {
+            $script:DevBranchMutationDatabaseAdmission.completed | Should -BeFalse
+        }
+        Mock Ensure-VanessaMcpInstalled {
+            $admitted = $script:DevBranchMutationDatabaseAdmission
+            foreach ($base in $admitted.plan.bases) {
+                { Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@($base);owner=@{};timeout=0} } | Should -Throw '*WAIT_TIMEOUT*'
+            }
+            $script:checkState
+        }
+        Mock Test-YAxUnitSuitePresent { $true }
+        Mock Ensure-YAxUnitExtensions {
+            if ($script:repairOutcome -eq 'extension-failure') { throw 'fixture extension did not activate' }
+        }
+        Mock Set-RunUserReport {}
+        Mock Update-DevBranchState { throw 'unchanged tooling must not receive a new receipt' }
+        if ($outcome -eq 'extension-failure') { { Repair-DevBranchTooling } | Should -Throw '*did not activate*' }
+        else { Repair-DevBranchTooling }
+        $script:DevBranchMutationDatabaseAdmission.completed | Should -BeFalse
+        Should -Invoke Stop-DevBranchRuntimeBeforeInfobaseMutation -Times 1 -Exactly
+        Should -Invoke Ensure-VanessaMcpInstalled -Times 1 -Exactly
+        Should -Invoke Update-DevBranchState -Times 0
+        Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission
+        $next = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});owner=@{};timeout=0}
+        Complete-ItlDatabaseAccessHost $next | Out-Null
+    }
+
     It 'waits for an auxiliary database before taking lifecycle locks or creating a service generation' {
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$auxPath});owner=@{};timeout=0}
         try {
