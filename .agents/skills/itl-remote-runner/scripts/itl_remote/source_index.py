@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import base64
+import hashlib
 import xml.etree.ElementTree as ET
 
 from .common import WorkError, beneath, digest, write_json
@@ -47,7 +49,7 @@ def metadata_path(name):
     return path.with_suffix(".xml")
 
 
-def build_manifest(snapshot, profiles, selection=None):
+def build_manifest(snapshot, profiles, selection=None, *, save=True, allow_changed_files=False):
     if snapshot.get("status") != "captured":
         raise WorkError("SOURCE_CAPTURE_NOT_COMPLETE")
     root = Path(snapshot["path"]).resolve()
@@ -58,10 +60,12 @@ def build_manifest(snapshot, profiles, selection=None):
         directory = beneath(root, configuration["path"])
         index_path = directory / "ConfigDumpInfo.xml"
         index_relative = index_path.relative_to(root).as_posix()
-        if digest(index_path) != hashes.get(index_relative):
+        index_bytes = (base64.b64decode(configuration['indexXmlBase64'], validate=True)
+                       if 'indexXmlBase64' in configuration else index_path.read_bytes())
+        if hashlib.sha256(index_bytes).hexdigest() != hashes.get(index_relative):
             raise WorkError("SOURCE_CAPTURE_INDEX_CHANGED")
-        tree = ET.parse(index_path)
-        if tree.getroot().get("format") != "Hierarchical":
+        tree = ET.fromstring(index_bytes)
+        if tree.get("format") != "Hierarchical":
             raise WorkError("SOURCE_CAPTURE_DUMP_FORMAT_UNSUPPORTED")
         objects = {}
         for element in tree.iter("{http://v8.1c.ru/8.3/xcf/dumpinfo}Metadata"):
@@ -78,6 +82,7 @@ def build_manifest(snapshot, profiles, selection=None):
                     requested[(module_key(module), module.get("version"))] = module
     for module in requested.values():
         candidates = []
+        changed = None
         property_path = PROPERTIES.get(module.get("propertyID"))
         if property_path and module.get("version"):
             for configuration, directory, index_relative, objects in indexes:
@@ -94,7 +99,10 @@ def build_manifest(snapshot, profiles, selection=None):
                         continue
                     metadata_relative = metadata.relative_to(root).as_posix()
                     if digest(metadata) != hashes.get(metadata_relative):
-                        raise WorkError("SOURCE_CAPTURE_METADATA_CHANGED_OR_UNSEALED")
+                        if not allow_changed_files:
+                            raise WorkError("SOURCE_CAPTURE_METADATA_CHANGED_OR_UNSEALED")
+                        changed = 'checkout-metadata-changed'
+                        continue
                     metadata_root = ET.parse(metadata).getroot()
                     if not any(child.get("uuid") == module["objectID"] for child in metadata_root):
                         continue
@@ -105,9 +113,12 @@ def build_manifest(snapshot, profiles, selection=None):
                     source_relative = source.relative_to(root).as_posix()
                     source_sha = hashes.get(source_relative)
                     if digest(source) != source_sha:
-                        raise WorkError("SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED")
+                        if not allow_changed_files:
+                            raise WorkError("SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED")
+                        changed = 'checkout-module-changed'
+                        continue
                     candidates.append({"moduleID": module, "path": source.relative_to(root).as_posix(),
-                                       "sha256": source_sha, "origin": "database-snapshot",
+                                       "sha256": source_sha, "origin": 'checkout-native-export' if snapshot.get('source') == 'checkout-native-export' else 'database-snapshot',
                                        "snapshotId": snapshot["snapshotId"], "metadataName": obj["name"],
                                        "configurationExtension": configuration["extensionName"],
                                        "dumpIndex": index_relative, "dumpIndexSha256": hashes[index_relative]})
@@ -115,8 +126,9 @@ def build_manifest(snapshot, profiles, selection=None):
             manifest["modules"].append(candidates[0])
         else:
             manifest["unmatched"].append({"moduleID": module, "reason": "ambiguous-exported-module" if candidates else
-                                          "unsupported-module-property" if not property_path else "exact-exported-module-not-found"})
-    write_json(root / "source-map.json", manifest)
+                                          changed or ("unsupported-module-property" if not property_path else "exact-exported-module-not-found")})
+    if save:
+        write_json(root / "source-map.json", manifest)
     return manifest
 
 

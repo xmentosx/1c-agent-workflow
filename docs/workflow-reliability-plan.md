@@ -79,8 +79,8 @@ and multi-host recovery remain open.
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
-| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. Current unregistered candidate adds reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
+| 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
@@ -2455,6 +2455,37 @@ previous SHA-256. This source change passes 18 capture/producer cases plus 13
 selection/reuse cases. It is not a new profiler measurement, Vanessa one-slot
 quiescence proof, automatic checkout-binding production or PM5/UFA acceptance;
 those item 3 requirements remain open.
+
+## Item 3: automatic evidence from native checkout exports
+
+Full configuration and extension exports now record a local catalog only after
+successful source installation. It contains the native export index and hashes
+of metadata/BSL files, tied to the workspace and export root. Catalog write
+failure is advisory and cannot undo the completed export, including under
+PowerShell WarningPreference=Stop. Failed native export or CFE validation does
+not publish a new catalog. Nothing is added inside src/cf or src/cfe.
+
+The measurement engine discovers these catalogs automatically and copies matched
+source bytes into its run. Native object/property/version and extension name
+must match; opaque extId values remain distinct in each resulting identity.
+The retained index allows unchanged modules to remain usable after a different
+module or the current checkout index changed. Edited modules are unresolved and
+use target capture. Inconsistent catalog/index evidence is diagnostic and never
+authorizes rehashing current sources as the old version.
+
+Native qualification C:/va канал/checkout-binding-815eab5c ran the actual shared
+Dump-ConfigToFilesFromInfoBase against the owned repository-bound technical base
+and produced its catalog. Both CommonModule.CaptureProbe and CommonModule.FreeProbe
+initially reused correctly. After changing FreeProbe and the current dump index,
+only unchanged CaptureProbe reused; both local edits stayed intact. The native
+profile identities for this producer test came from the exported index, not a
+claimed new profiler measurement. Queue tickets released and conf.cfg stayed
+unchanged. Eighteen selection/reuse tests pass, including engine discovery with
+no configured manifest and no Designer/client shutdown. Three PowerShell cases
+cover configuration publication, failed/successful extension validation and
+unavailable optional catalog storage. The standalone checkout-binding producer
+gap is implemented; new PM5/UFA profiling and one-slot adapter/capture acceptance
+remain open.
 
 ## Item 10: correlated client-code outcomes
 

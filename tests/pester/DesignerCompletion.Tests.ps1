@@ -1564,6 +1564,9 @@
                 newExists = Test-Path -LiteralPath (Join-Path $targetPath "New.xml")
                 configuration = Get-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Raw
                 transactionRootExists = Test-Path -LiteralPath (Split-Path -Parent $script:DumpTarget)
+                exportEvidence = @(Get-ChildItem -LiteralPath (Join-Path $fixtureRoot '.agent-1c/source-exports') -Filter '*.json' | ForEach-Object {
+                    Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                })
             }
         }
 
@@ -1574,6 +1577,31 @@
         $result.newExists | Should -BeTrue
         $result.configuration | Should -Match "new-configuration"
         $result.transactionRootExists | Should -BeFalse
+        $result.exportEvidence.Count | Should -Be 1
+        $result.exportEvidence[0].producer | Should -Be 'itl-designer-export'
+        $result.exportEvidence[0].configurations[0].path | Should -Be 'src/cf'
+        $result.exportEvidence[0].artifacts.Count | Should -Be 3
+    }
+
+    It "keeps the successful source installation when optional catalog publication is unavailable" {
+        $fixtureRoot = Join-Path $TestDrive 'Недоступный каталог исходников'
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot '.agent-1c') | Out-Null
+        Set-Content -LiteralPath (Join-Path $fixtureRoot '.agent-1c/source-exports') -Value 'occupied file'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param($DesignerArgs)
+                $stage = $DesignerArgs[1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value '<Configuration/>'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value '<ConfigDumpInfo/>'
+            }
+            $WarningPreference = 'Stop'
+            Dump-ConfigToFilesFromInfoBase -InfoBaseKind file -InfoBasePath (Join-Path $fixtureRoot 'base') 3>$null
+        }
+        $result.transactional | Should -BeTrue
+        (Join-Path $fixtureRoot 'src/cf/Configuration.xml') | Should -Exist
+        (Join-Path $fixtureRoot 'src/cf/ConfigDumpInfo.xml') | Should -Exist
     }
 
     It "preserves the previous dump and diagnostic staging when the new dump fails" {

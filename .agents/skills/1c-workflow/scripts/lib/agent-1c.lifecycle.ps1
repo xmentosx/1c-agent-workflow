@@ -1993,6 +1993,48 @@ function Assert-DevBranchApplicationReady {
     return $State
 }
 
+function New-OneCSourceExportEvidence {
+    param([string]$StagedPath, [string]$ExportPath, [string]$ExtensionName = '')
+    $workspace = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $target = Assert-ExportPathInsideProject $ExportPath
+    $relative = $target.Substring($workspace.Length).TrimStart('\', '/').Replace('\', '/')
+    $stage = [IO.Path]::GetFullPath($StagedPath).TrimEnd('\', '/')
+    $artifacts = [Collections.Generic.List[object]]::new()
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try {
+        foreach ($path in [IO.Directory]::EnumerateFiles($stage, '*', [IO.SearchOption]::AllDirectories)) {
+            if ([IO.Path]::GetExtension($path) -notin @('.xml', '.bsl')) { continue }
+            $stream = [IO.File]::OpenRead($path)
+            try { $sha = [BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-', '').ToLowerInvariant() }
+            finally { $stream.Dispose() }
+            $name = $relative + '/' + $path.Substring($stage.Length).TrimStart('\', '/').Replace('\', '/')
+            $artifacts.Add([ordered]@{path=$name; sha256=$sha})
+        }
+    } finally { $hash.Dispose() }
+    return [ordered]@{
+        schemaVersion=1; producer='itl-designer-export'; workspace=$workspace
+        snapshotId=[Guid]::NewGuid().ToString('N'); status='captured'; source='checkout-native-export'
+        exportedAtUtc=[DateTime]::UtcNow.ToString('o'); artifacts=@($artifacts)
+        configurations=@([ordered]@{path=$relative; extensionName=$ExtensionName
+            indexXmlBase64=[Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $stage 'ConfigDumpInfo.xml')))})
+    }
+}
+
+function Save-OneCSourceExportEvidence {
+    param([object]$Evidence)
+    if ($null -eq $Evidence) { return }
+    try {
+        $hash = [Security.Cryptography.SHA256]::Create()
+        try { $key = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$Evidence.configurations[0].path))).Replace('-', '').ToLowerInvariant() }
+        finally { $hash.Dispose() }
+        $directory = Join-Path $script:ProjectRoot '.agent-1c/source-exports'
+        New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        Write-Utf8TextAtomic -Path (Join-Path $directory ($key + '.json')) -Value ($Evidence | ConvertTo-Json -Depth 8)
+    } catch {
+        Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue
+    }
+}
+
 function Dump-ConfigToFilesFromInfoBase {
     param(
         [string]$InfoBasePath,
@@ -2038,6 +2080,9 @@ function Dump-ConfigToFilesFromInfoBase {
             throw "1C configuration dump would lose Ext/ParentConfigurations.bin. The existing vendor-support state was preserved and the staged dump was rejected."
         }
 
+        $sourceEvidence = $null
+        try { $sourceEvidence = New-OneCSourceExportEvidence -StagedPath $stagedPath -ExportPath $absoluteExportPath }
+        catch { Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
@@ -2049,6 +2094,7 @@ function Dump-ConfigToFilesFromInfoBase {
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "installed" -Target $absoluteExportPath
 
         Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
             exportPath = $exportPath
@@ -2113,6 +2159,10 @@ function Dump-ExtensionToFiles {
         Assert-NormalizedExtensionDump -Path $stagedPath -Name $extensionName
         Invoke-ExtensionLifecycleTool -ScriptPath $tools.validate -Arguments @("-ExtensionPath", $stagedPath)
 
+        $sourceEvidence = $null
+        try { $sourceEvidence = New-OneCSourceExportEvidence -StagedPath $stagedPath -ExportPath $absoluteExportPath -ExtensionName $extensionName }
+        catch { Write-Warning ('SOURCE_EXPORT_EVIDENCE_UNAVAILABLE: ' + $_.Exception.Message) -WarningAction Continue }
+
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $absoluteExportPath) | Out-Null
         if ($targetExisted) {
             Move-Item -LiteralPath $absoluteExportPath -Destination $backupPath
@@ -2125,6 +2175,7 @@ function Dump-ExtensionToFiles {
         $stageInstalled = $true
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "e" -Phase "installed" -Target $absoluteExportPath
         Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
             extensionName = $extensionName

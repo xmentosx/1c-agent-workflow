@@ -552,6 +552,7 @@
                 $failure = ""
                 try { Dump-ExtensionToFiles -State $state *> $null } catch { $failure = $_.Exception.Message }
                 $sentinelAfterFailure = Test-Path -LiteralPath (Join-Path $target "sentinel.txt")
+                $evidenceAfterFailure = Test-Path -LiteralPath (Join-Path $tempRoot '.agent-1c/source-exports')
                 $script:validationFails = $false
                 $success = Dump-ExtensionToFiles -State $state
                 [pscustomobject]@{
@@ -560,6 +561,10 @@
                     freshAfterSuccess = Test-Path -LiteralPath (Join-Path $target "fresh.txt")
                     sentinelAfterSuccess = Test-Path -LiteralPath (Join-Path $target "sentinel.txt")
                     transactional = $success.transactional
+                    evidenceAfterFailure = $evidenceAfterFailure
+                    evidence = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot '.agent-1c/source-exports') -Filter '*.json' | ForEach-Object {
+                        Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                    })
                 }
             }
             $result.failure | Should -Match "before state or fingerprint update"
@@ -567,6 +572,10 @@
             $result.freshAfterSuccess | Should -BeTrue
             $result.sentinelAfterSuccess | Should -BeFalse
             $result.transactional | Should -BeTrue
+            $result.evidenceAfterFailure | Should -BeFalse
+            $result.evidence.Count | Should -Be 1
+            $result.evidence[0].configurations[0].extensionName | Should -Be 'ShipModel'
+            $result.evidence[0].configurations[0].path | Should -Be 'src/cfe/ShipModel'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

@@ -156,6 +156,23 @@ Missing sources outside the selected scope do not require capture. The full
 CF/CFE export is currently retained because opaque native extension identities
 can require checking both the base and its extensions to detect ambiguity.
 
-Automatic production of verified checkout bindings, coordination of Designer
-capacity with persistent adapter sessions, and full runtime acceptance on PM5/UFA
-remain open integration work. No path overwrites checkout sources.
+Normal full configuration and extension source exports automatically save a
+catalog under `.agent-1c/source-exports/` after successful source installation.
+The catalog retains the original dump index, workspace/export identity and
+hashes of exported metadata and BSL bytes. It is local runtime evidence and is
+not added to the configuration transport or Git. Failure to save this optional
+catalog warns without rolling back a successful source export.
+
+Source analysis automatically discovers catalogs in the target workspace.
+It compares requested native versions to the retained export index and checks
+each current metadata/module file against its original hash. An unrelated
+checkout change or later ConfigDumpInfo update does not invalidate unchanged
+modules. Changed modules remain unresolved and follow normal target capture.
+ExtensionName selects the configuration catalog; opaque extId values stay in
+the exact binding identity and are never interpreted as extension names.
+Analysis copies accepted bytes and catalog evidence into its run without
+editing checkout files. A checkout with no catalog simply uses the existing
+capture fallback; do not fabricate a catalog from arbitrary current sources.
+
+Full runtime acceptance of Designer capacity with persistent adapter sessions
+and PM5/UFA measurements remains open. No analysis path overwrites checkout sources.

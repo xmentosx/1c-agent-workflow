@@ -90,6 +90,40 @@ class Bindings:
         write_json(path, self.manifest)
         return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
+    def reuse_checkout_exports(self, workspace):
+        from .source_index import build_manifest
+        workspace = Path(workspace).resolve()
+        for path in sorted((workspace / '.agent-1c/source-exports').glob('*.json')):
+            self.deadline.remaining()
+            try:
+                raw = path.read_bytes()
+                catalog = json.loads(raw.decode('utf-8-sig'))
+                if (catalog.get('schemaVersion') != 1 or catalog.get('producer') != 'itl-designer-export' or
+                        Path(catalog.get('workspace', '')).resolve() != workspace or
+                        not isinstance(catalog.get('configurations'), list) or len(catalog['configurations']) != 1):
+                    raise WorkError('SOURCE_EXPORT_CATALOG_INVALID')
+                extension = catalog['configurations'][0]['extensionName']
+                # ExtensionName and extId are different native fields. Match
+                # the declared extension name and preserve opaque extId values
+                # in each binding; never interpret them as extension names.
+                modules = [module for module in self.requested.values()
+                           if module.get('extensionName', '') == extension]
+                if not modules:
+                    continue
+                manifest = build_manifest({**catalog, 'path': str(workspace)},
+                    [{'packets': [{'sourceModules': [{'moduleID': module} for module in modules]}]}],
+                    save=False, allow_changed_files=True)
+                reference = hashlib.sha256(raw).hexdigest() + '-export.json'
+                (self.root / reference).write_bytes(raw)
+                self.add(manifest, workspace, reference)
+                self.evidence['diagnostics'].extend(manifest['unmatched'])
+                self.evidence['references'].append({'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest(),
+                                                    'producer': 'itl-designer-export'})
+            except Exception as error:
+                if str(error) == 'CANCELLED' or str(error).startswith('PHASE_'):
+                    raise
+                self.evidence['diagnostics'].append(str(error))
+
 
 def resolve_sources(context_path, profiles, profile_paths, policy, selection, deadline, result, *, before_capture=None):
     from .source_capture import Snapshot
@@ -113,6 +147,7 @@ def resolve_sources(context_path, profiles, profile_paths, policy, selection, de
         bindings = Bindings(context_path.parent / "source-analysis", profiles, selection, deadline)
         references = (context["target"].get("sourceCapture") or {}).get("manifests", [])
         bindings.reuse(references, context["target"]["workspace"])
+        bindings.reuse_checkout_exports(context['target']['workspace'])
         resolution.update(bindings.evidence)
         complete = apply(bindings)
         resolution["reusedModules"] = len({identity(item["moduleID"])

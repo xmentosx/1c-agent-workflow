@@ -92,6 +92,61 @@ class SourceReuseTests(unittest.TestCase):
     def bindings(self, suffix="analysis"):
         return Bindings(self.source.root / suffix, [self.source.profile], None, Deadline("source-capture", 30))
 
+    def export_catalog(self):
+        import base64
+        catalog = copy.deepcopy(self.source.snapshot)
+        catalog.update(schemaVersion=1, producer='itl-designer-export', workspace=str(self.source.root), source='checkout-native-export')
+        catalog['configurations'][0]['indexXmlBase64'] = base64.b64encode(
+            (self.source.root / 'configuration/ConfigDumpInfo.xml').read_bytes()).decode('ascii')
+        path = self.source.root / '.agent-1c/source-exports/native.json'
+        write_json(path, catalog)
+        return path
+
+    def test_checkout_reuse_keeps_exported_versions_when_unrelated_index_entries_change(self):
+        self.export_catalog()
+        (self.source.root / 'configuration/ConfigDumpInfo.xml').write_bytes(b'changed index after another operation')
+        bindings = self.bindings()
+        original_manifest = self.path.read_bytes()
+        bindings.reuse_checkout_exports(self.source.root)
+        self.assertEqual(2, len(bindings.manifest['modules']))
+        self.assertEqual({'2', '3'}, {item['moduleID']['extId'] for item in bindings.manifest['modules']})
+        self.assertEqual('checkout-native-export', bindings.manifest['modules'][0]['origin'])
+        self.assertEqual(original_manifest, self.path.read_bytes(), 'reuse must not write source-map.json to the checkout')
+        for module in bindings.manifest['modules']:
+            self.assertTrue((bindings.root / module['path']).is_file())
+
+    def test_changed_checkout_module_is_not_rebound_to_its_exported_version(self):
+        self.export_catalog()
+        source = self.source.root / self.manifest['modules'][0]['path']
+        source.write_bytes(b'// edited after the native export\n')
+        bindings = self.bindings()
+        bindings.reuse_checkout_exports(self.source.root)
+        self.assertEqual([], bindings.manifest['modules'])
+        self.assertTrue(any(item.get('reason') == 'checkout-module-changed' for item in bindings.evidence['diagnostics']))
+
+    def test_corrupt_saved_index_and_foreign_workspace_do_not_authorize_checkout_reuse(self):
+        path = self.export_catalog()
+        catalog = read_json(path)
+        catalog['configurations'][0]['indexXmlBase64'] = 'PGNoYW5nZWQvPg=='
+        write_json(path, catalog)
+        bindings = self.bindings()
+        bindings.reuse_checkout_exports(self.source.root)
+        self.assertEqual([], bindings.manifest['modules'])
+        self.assertIn('SOURCE_CAPTURE_INDEX_CHANGED', bindings.evidence['diagnostics'])
+        catalog['workspace'] = str(self.source.root / 'another branch')
+        write_json(path, catalog)
+        bindings.reuse_checkout_exports(self.source.root)
+        self.assertIn('SOURCE_EXPORT_CATALOG_INVALID', bindings.evidence['diagnostics'])
+
+    def test_named_extension_cannot_reuse_the_base_configuration_catalog(self):
+        self.export_catalog()
+        for packet in self.source.profile['packets']:
+            for item in packet['sourceModules']:
+                item['moduleID']['extensionName'] = 'ДругоеРасширение'
+        bindings = self.bindings()
+        bindings.reuse_checkout_exports(self.source.root)
+        self.assertEqual([], bindings.manifest['modules'])
+
     def test_copied_run_sources_survive_original_source_removal(self):
         bindings = self.bindings()
         bindings.reuse([self.reference], self.source.root)
@@ -146,6 +201,19 @@ class SourceReuseTests(unittest.TestCase):
         self.assertEqual(1, result["sourceResolution"]["reusedModules"])
         self.assertTrue(result["profiles"][0]["sourceAnalysis"]["requirementSatisfied"])
         self.assertEqual(1, result["profiles"][0]["sourceAnalysis"]["excludedModules"])
+
+    def test_engine_discovers_native_checkout_catalog_without_explicit_manifest_configuration(self):
+        self.export_catalog()
+        fixture = self.engine([self.source.module])
+        fixture.target.pop('sourceCapture')
+        fixture.target['workspace'] = str(self.source.root)
+        with patch('itl_remote.source_capture.Snapshot', side_effect=AssertionError('native checkout binding must avoid capture')), \
+                patch('itl_remote.vanessa.quiesce', side_effect=AssertionError('reuse needs no client shutdown')):
+            state, result = fixture.execute(native=copy.deepcopy(self.source.profile))
+        self.assertEqual('partial', state['status'])
+        self.assertFalse(result['sourceResolution']['captureAttempted'])
+        self.assertEqual(1, result['sourceResolution']['reusedModules'])
+        self.assertTrue(result['profiles'][0]['sourceAnalysis']['requirementSatisfied'])
         self.assertEqual(digest(result["sourceManifest"]["path"]), result["sourceManifest"]["sha256"])
 
     def test_engine_captures_only_unresolved_bindings_and_keeps_reused_modules(self):
