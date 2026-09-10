@@ -203,7 +203,12 @@
     ) {
         param($sourceKind)
         Mock Get-InfoBaseKind { $sourceKind }
-        if ($sourceKind -eq 'server') { $script:repositorySourcePath = 'test-server\ОбщаяБаза' }
+        if ($sourceKind -eq 'server') {
+            $script:repositorySourcePath = 'test-server\ОбщаяБаза'
+            Mock Get-OneCNativeServerRecoveryInspector {
+                [pscustomobject]@{schemaVersion=1;path='provider.ps1';sha256=('a' * 64);capability='recovery-observe'}
+            }
+        }
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects'
         $admission = $script:DevBranchMutationDatabaseAdmission
         @($admission.plan.bases).Count | Should -Be 1
@@ -216,6 +221,9 @@
         Complete-ItlDevBranchMutationDatabaseAdmission $admission
         $next = Start-ItlDatabaseAccessHost -Python $python -Request $sourceRequest
         Complete-ItlDatabaseAccessHost $next | Out-Null
+        if ($sourceKind -eq 'server') {
+            Should -Invoke Get-OneCNativeServerRecoveryInspector -Times 1 -Exactly
+        }
     }
 
     It 'waits for source ownership before lifecycle entry without stopping another session' {
