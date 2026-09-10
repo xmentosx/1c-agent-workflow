@@ -116,6 +116,66 @@ function Save-OneCNativeRecoveryHelpers {
     }
 }
 
+function Get-OneCNativeServerRecoveryInspector {
+    param([Parameter(Mandatory = $true)][object[]]$Resources)
+    if (-not @($Resources | Where-Object { $_.kind -eq 'server' }).Count) { return $null }
+
+    $provider = [string](Get-ConfigValue -Path 'serverBaseCopyScript' -Default '')
+    if ([string]::IsNullOrWhiteSpace($provider)) {
+        throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: serverBaseCopyScript must advertise recovery-observe before a recoverable server-base operation can start.'
+    }
+    $providerPath = Resolve-ProjectPath $provider
+    if (-not (Test-Path -LiteralPath $providerPath -PathType Leaf)) {
+        throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: provider was not found: $providerPath"
+    }
+    $providerItem = Get-Item -LiteralPath $providerPath -Force
+    if ($providerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REDIRECTED'
+    }
+    $providerSha256 = (Get-FileHash -LiteralPath $providerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+
+    $process = $null
+    try {
+        $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$providerPath,
+            '-Operation','capabilities','-ProjectRoot',[IO.Path]::GetFullPath($script:ProjectRoot))
+        $startInfo = [Diagnostics.ProcessStartInfo]::new()
+        $startInfo.FileName = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'
+        $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments $arguments
+        $startInfo.WorkingDirectory = $script:ProjectRoot
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+        $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
+        $process = [Diagnostics.Process]::new()
+        $process.StartInfo = $startInfo
+        if (-not $process.Start()) { throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_START_FAILED' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(30000)) {
+            $stopped = Stop-NativeProcessForSafety -Process $process
+            if (-not $stopped.confirmed) { throw ('ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_STOP_FAILED: ' + $stopped.error) }
+            throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_TIMEOUT: capabilities did not finish within 30 seconds.'
+        }
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: capabilities failed with exit code $($process.ExitCode)."
+        }
+        try { $contract = $stdout.Result | ConvertFrom-Json }
+        catch { throw ('ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: capabilities output is not JSON. ' + $_.Exception.Message) }
+        if ([int]$contract.schemaVersion -ne 2 -or @($contract.capabilities) -notcontains 'recovery-observe') {
+            throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: schemaVersion=2 and capability 'recovery-observe' are required."
+        }
+        if ((Get-FileHash -LiteralPath $providerPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $providerSha256) {
+            throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_CHANGED'
+        }
+        return [pscustomobject][ordered]@{schemaVersion=1;path=$providerPath;sha256=$providerSha256;capability='recovery-observe'}
+    } finally {
+        if ($null -ne $process) { $process.Dispose() }
+    }
+}
+
 function New-OneCNativeJournalPersistence {
     param([object[]]$Resources, [object]$Owner)
     $persistence = $null
@@ -130,6 +190,7 @@ function New-OneCNativeJournalPersistence {
         $operation = ''; $project = ''
         if ($Owner.public.owner.PSObject.Properties['operation']) { $operation = [string]$Owner.public.owner.operation }
         if ($Owner.public.owner.PSObject.Properties['project']) { $project = [string]$Owner.public.owner.project }
+        $serverRecoveryInspector = Get-OneCNativeServerRecoveryInspector -Resources $Resources
         $persistence = [pscustomobject]@{
             owner = $Owner
             journalId = $journalId; ticket = $Owner.proof.ticket
@@ -138,6 +199,7 @@ function New-OneCNativeJournalPersistence {
             resources = @($Resources | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path} })
             resourceIds = @($Owner.public.resources)
             helperInputs = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $Owner.proof.coordinator)
+            serverRecoveryInspector = $serverRecoveryInspector
         }
     }
     return $persistence
@@ -156,6 +218,7 @@ function Save-OneCNativeOperationRecord {
         hostName = $binding.hostName; ownerPid = $binding.ownerPid
         operation = $binding.operation; project = $binding.project; purpose = $Record.purpose
         resources = @($binding.resources); resourceIds = @($binding.resourceIds); helperInputs = @($binding.helperInputs)
+        serverRecoveryInspector = $binding.serverRecoveryInspector
         admissions = @($Record.admissions | ForEach-Object {
             [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath;requiredSessions=$_.requiredSessions;expectedChildRole=$_.expectedChildRole}
         })

@@ -71,10 +71,11 @@ def _validate(payload):
               "processId", "launcherExited", "quiescenceConfirmed", "releaseEvidence", "ownedProcessScopes",
               "recoveryRequiresLiveVerification", "resourceIds"}
     modern = fields | {'effectContract', 'outcome'}
-    if (not isinstance(payload, dict) or set(payload) not in (fields, modern) or payload.get("schemaVersion") != 1 or
+    recoverable_server = modern | {'serverRecoveryInspector'}
+    if (not isinstance(payload, dict) or set(payload) not in (fields, modern, recoverable_server) or payload.get("schemaVersion") != 1 or
             payload.get("recoveryRequiresLiveVerification") is not True):
         raise WorkError("NATIVE_JOURNAL_RECORD_INVALID")
-    if set(payload) == modern:
+    if set(payload) in (modern, recoverable_server):
         _validate_effect(payload['effectContract'])
         outcome = payload['outcome']
         if (not isinstance(outcome, dict) or set(outcome) != {'status', 'recordedAt'} or
@@ -89,6 +90,17 @@ def _validate(payload):
                     raise ValueError('timezone required')
             except ValueError as error:
                 raise WorkError('NATIVE_JOURNAL_OUTCOME_INVALID') from error
+    if set(payload) == recoverable_server:
+        inspector = payload['serverRecoveryInspector']
+        if inspector is not None and (not isinstance(inspector, dict) or
+                set(inspector) != {'schemaVersion', 'path', 'sha256', 'capability'} or
+                inspector.get('schemaVersion') != 1 or inspector.get('capability') != 'recovery-observe' or
+                not isinstance(inspector.get('path'), str) or not Path(inspector['path']).is_absolute() or
+                not isinstance(inspector.get('sha256'), str) or not re.fullmatch(r'[a-f0-9]{64}', inspector['sha256'])):
+            raise WorkError('NATIVE_JOURNAL_SERVER_RECOVERY_INSPECTOR_INVALID')
+        has_server = any(base.get('kind') == 'server' for base in payload.get('resources', []))
+        if has_server != (inspector is not None):
+            raise WorkError('NATIVE_JOURNAL_SERVER_RECOVERY_INSPECTOR_REQUIRED')
     for name in ("ticket", "journalId", "id"):
         _identifier(payload[name])
     for name in ("createdAt", "updatedAt", "hostName", "operation", "project", "purpose", "releaseEvidence"):
@@ -203,6 +215,10 @@ def publish(lease, producer_id, payload):
                 raise WorkError("NATIVE_JOURNAL_IMMUTABLE_INPUT_CHANGED")
             if 'effectContract' in before:
                 stable += ('effectContract',)
+            if ('serverRecoveryInspector' in before) != ('serverRecoveryInspector' in value):
+                raise WorkError('NATIVE_JOURNAL_IMMUTABLE_INPUT_CHANGED')
+            if 'serverRecoveryInspector' in before:
+                stable += ('serverRecoveryInspector',)
             if (any(before[n] != value[n] for n in stable) or
                     (before["startAttempted"] and (not value["startAttempted"] or before["ownedProcessScopes"] != value["ownedProcessScopes"])) or
                     (before["processId"] and before["processId"] != value["processId"]) or

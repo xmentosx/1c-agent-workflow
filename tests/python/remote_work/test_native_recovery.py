@@ -28,7 +28,9 @@ c = read_json(sys.argv[3]); root = Path(c['root']); kind = c['case']
 fixture = RestorationJournalTests()
 fixture.root = root; fixture.coordinator = Coordinator(root / 'Общая очередь')
 fixture.base = {'kind': 'file', 'path': str(root / 'База проекта')}
-operation = 'unknown-operation' if kind == 'unknown-operation' else ('lock-config-repository-objects' if kind == 'repository-capture' else 'export-dev-branch-result')
+server_case = kind == 'server-repository-capture'
+if server_case: fixture.base = {'kind': 'server', 'path': 'server:1541/База проекта'}
+operation = 'unknown-operation' if kind == 'unknown-operation' else ('lock-config-repository-objects' if kind in ('repository-capture', 'server-repository-capture') else 'export-dev-branch-result')
 read_only = kind.startswith('read-only:')
 if read_only: operation = kind.split(':')[1]
 completion = kind.startswith('committed')
@@ -45,7 +47,7 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
     value = fixture.database_payload(lease, policy='on-failure') if completion else fixture.payload(lease, existed=kind != 'absent')
     if completion: value.update(operation=operation, resources=bases)
     contents = {name: ('# retained ' + name).encode() for name in NAMES}
-    if completion or read_only or kind in ('native-started', 'repository-capture'):
+    if completion or read_only or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
         library = Path(sys.argv[1]).parent.parent / '1c-workflow/scripts/lib'
         contents = {name: (library / name).read_bytes() for name in NAMES}
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
@@ -63,14 +65,27 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
         inner['helperInputs'] = value['helperInputs']
         duties.publish(lease, producer, inner)
     if not completion: Path(value['destination']).write_bytes(b'interrupted preparation cursor')
-    if completion or read_only or kind in ('native-started', 'repository-capture'):
+    if completion or read_only or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
         operation_record = fixture.native_restore(value)
         operation_record['helperInputs'] = value['helperInputs']
-        if completion or read_only or kind == 'repository-capture':
+        if completion or read_only or kind in ('repository-capture', 'server-repository-capture'):
             operation_record['purpose'] = 'designer-designer-command'
-            Path(fixture.base['path']).mkdir()
-            (Path(fixture.base['path']) / '1Cv8.1CD').write_bytes(b'fixture database-file access sentinel; not a 1C database')
+            if fixture.base['kind'] == 'file':
+                Path(fixture.base['path']).mkdir()
+                (Path(fixture.base['path']) / '1Cv8.1CD').write_bytes(b'fixture database-file access sentinel; not a 1C database')
             write_json(root / 'repository-claims.json', {'objects': ['Configuration'], 'owner': 'original-owner'})
+        if server_case:
+            provider = root / 'server recovery provider.ps1'
+            provider.write_text(r"""param([string]$Operation,[string]$ProjectRoot,[string]$InfoBasePath,[string]$ObservationId,[int]$Sample)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $OutputEncoding
+if ($Operation -ne 'recovery-observe') { exit 8 }
+[pscustomobject]@{schemaVersion=1;observationId=$ObservationId;infoBase=@{kind='server';path=$InfoBasePath};databasePresent=$true;sessionCount=0;exclusive=$true} | ConvertTo-Json -Compress
+""", encoding='utf-8-sig')
+            operation_record['effectContract'] = None
+            operation_record['outcome'] = {'status': 'pending', 'recordedAt': ''}
+            operation_record['serverRecoveryInspector'] = {'schemaVersion': 1, 'path': str(provider),
+                'sha256': digest(provider), 'capability': 'recovery-observe'}
         if read_only:
             operation_record['purpose'] = 'designer-designer-command' if kind.endswith(':write') else 'designer-dump-config-to-files'
         native.publish(lease, producer, operation_record)
@@ -205,6 +220,19 @@ class NativeRecoveryTests(unittest.TestCase):
         self.assertEqual('workflow-repository-capture', evidence['adapter'])
         self.assertEqual('interrupted', evidence['originalOutcome'])
         self.assertTrue(evidence['nativeStartAttempted'])
+
+    @unittest.skipUnless(os.name == 'nt', 'native server observation uses Windows PowerShell')
+    def test_server_repository_capture_releases_only_after_two_provider_observations(self):
+        data = self.orphan('server-repository-capture')
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        evidence = record['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('workflow-repository-capture', evidence['adapter'])
+        self.assertEqual(1, len(evidence['nativeObservations']))
+        for sample in evidence['nativeObservations'][0]['observation']['samples']:
+            self.assertEqual('server', sample['resources'][0]['kind'])
+            self.assertEqual(0, sample['resources'][0]['sessionCount'])
+            self.assertTrue(sample['resources'][0]['exclusive'])
 
     def test_repository_capture_waits_for_an_independent_file_handle(self):
         data = self.orphan('repository-capture')

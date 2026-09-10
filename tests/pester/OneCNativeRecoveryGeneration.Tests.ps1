@@ -2,6 +2,7 @@
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
+        $script:recoveryRepoRoot = $context.RepoRoot
         $script:recoveryHelperSource = Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib'
         . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
     }
@@ -111,6 +112,67 @@
             [IO.File]::ReadAllText($sentinel) | Should -Be 'unchanged foreign file'
             @(Get-ChildItem -LiteralPath $foreign) | Should -HaveCount 1
         } finally { [IO.Directory]::Delete($junction) }
+    }
+
+    It 'requires and pins a bounded recovery observer before server native work can be journaled' {
+        $server = [pscustomobject]@{kind='server';path='server:1541/База с пробелом'}
+        $script:Config = [pscustomobject]@{serverBaseCopyScript=''}
+        { Get-OneCNativeServerRecoveryInspector -Resources @($server) } | Should -Throw '*SERVER_RECOVERY_PROVIDER_REQUIRED*'
+
+        $provider = Join-Path $TestDrive 'Серверный provider с пробелом.ps1'
+        [IO.File]::WriteAllText($provider, @'
+param([string]$Operation,[string]$ProjectRoot,[string]$InfoBasePath,[string]$ObservationId,[int]$Sample)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $OutputEncoding
+if ($Operation -eq 'capabilities') {
+    [pscustomobject]@{schemaVersion=2;capabilities=@('restore-seed','event-log-baseline','recovery-observe')} | ConvertTo-Json -Compress
+    exit 0
+}
+if ($Operation -eq 'recovery-observe') {
+    [pscustomobject]@{schemaVersion=1;observationId=$ObservationId;infoBase=@{kind='server';path=$InfoBasePath};databasePresent=$true;sessionCount=0;exclusive=$true} | ConvertTo-Json -Compress
+    exit 0
+}
+exit 9
+'@, [Text.UTF8Encoding]::new($true))
+        $script:ProjectRoot = $TestDrive
+        $script:Config = [pscustomobject]@{serverBaseCopyScript=$provider}
+        $inspector = Get-OneCNativeServerRecoveryInspector -Resources @($server)
+        $inspector.path | Should -Be $provider
+        $inspector.capability | Should -Be 'recovery-observe'
+        $inspector.sha256 | Should -Be (Get-FileHash -LiteralPath $provider -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    It 'observes a server base twice through the pinned provider without exposing session identities' {
+        $helpers = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $archiveAuthority -LibraryRoot $sourceCopy)
+        $provider = Join-Path $TestDrive 'Наблюдение серверной базы.ps1'
+        [IO.File]::WriteAllText($provider, @'
+param([string]$Operation,[string]$ProjectRoot,[string]$InfoBasePath,[string]$ObservationId,[int]$Sample)
+$OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $OutputEncoding
+if ($Operation -ne 'recovery-observe') { exit 8 }
+[pscustomobject]@{schemaVersion=1;observationId=$ObservationId;infoBase=@{kind='server';path=$InfoBasePath};databasePresent=$true;sessionCount=0;exclusive=$true} | ConvertTo-Json -Compress
+'@, [Text.UTF8Encoding]::new($true))
+        $contextPath = Join-Path $TestDrive 'server-observation-context.json'
+        $observationId = [guid]::NewGuid().ToString('N')
+        $base = [pscustomobject]@{kind='server';path='server:1541/База с пробелом'}
+        $workerContext = [ordered]@{
+            schemaVersion=1;observationId=$observationId;resources=@($base)
+            helpers=[pscustomobject]@{files=$helpers};scopes=@();project=$TestDrive
+            serverInspectors=@([pscustomobject]@{kind='server';path=$base.path;project=$TestDrive;provider=[pscustomobject]@{
+                schemaVersion=1;path=$provider;sha256=(Get-FileHash -LiteralPath $provider -Algorithm SHA256).Hash.ToLowerInvariant();capability='recovery-observe'}})
+        }
+        [IO.File]::WriteAllText($contextPath,($workerContext | ConvertTo-Json -Depth 12),[Text.UTF8Encoding]::new($true))
+        $worker = Join-Path $recoveryRepoRoot '.agents/skills/itl-remote-runner/scripts/Inspect-NativeRecovery.ps1'
+        $observed = Invoke-TestPowerShellFile -FilePath $worker -Arguments @('-ContextPath',$contextPath)
+        $observed.exitCode | Should -Be 0 -Because $observed.combinedText
+        $result = $observed.stdout | ConvertFrom-Json
+        @($result.samples) | Should -HaveCount 2
+        foreach ($sample in $result.samples) {
+            $sample.resources[0].kind | Should -Be 'server'
+            $sample.resources[0].sessionCount | Should -Be 0
+            $sample.resources[0].exclusive | Should -BeTrue
+            @($sample.resources[0].PSObject.Properties.Name) | Should -Not -Contain 'sessions'
+        }
     }
 
     It 'runs the archived process-enumeration worker after original library files are gone' {

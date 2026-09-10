@@ -147,17 +147,28 @@ It does not require a snapshot that normal completion already removed, replay
 initialization or report fresh verification. Pending duties, later native work,
 additional business databases and occupied/damaged service bases prevent this
 completion path. Completed rollback and smoke finalization use their own contracts.
+For a server resource, native work starts only when the configured
+`serverBaseCopyScript` advertises schema-2 capability `recovery-observe`. Its
+path and SHA are bound into the native intent. The operation accepts no session
+list or owner override: for each exact `/S` identity it returns schema-1 JSON
+with `observationId`, `infoBase`, `databasePresent`, integer `sessionCount`, and
+`exclusive`; `exclusive` is true exactly when the authoritative server inventory
+contains zero sessions. Recovery invokes it twice through the original host and
+retained provider bytes. A missing, changed, redirected, timed-out, malformed or
+nonzero-session observation keeps `needs-attention`; it never stops a foreign
+server session or steals the queue entry.
+
 During rollback, an unused reservation may remain absent only when the captured
 context proves that absence. After a committed initialization, an absent planned
 service generation must have no native launch in the indexed journal. Missing
 existing databases, surviving sessions and unsupported
-additional business-database changes retain `needs-attention`. Server and other
-operation adapters still require implementation and live qualification; do not
+additional business-database changes retain `needs-attention`. Provider-backed
+server observation still needs live server and multi-host qualification; do not
 substitute a calibration/SQLite fixture or a manual success flag.
 
 Source integration covers the portable measurement engine and the fourteen
 public lifecycle operations listed in the mutation admission route. Installed
-delivery, remaining entrypoints, server recovery and real multi-host acceptance
+delivery, remaining entrypoints, live server recovery and real multi-host acceptance
 remain pending in source plan item 4. Do not advertise exclusion against routes
 that have not been integrated and qualified.
 External user sessions never become participants automatically and are not

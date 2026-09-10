@@ -55,8 +55,22 @@ def inspect_native_work(recovery, journal):
             resources[key] = base
     if not resources or not (generations or journal['restoration']['helperGenerations'] or continuations):
         raise WorkError('NATIVE_RECOVERY_NATIVE_CONTEXT_REQUIRED')
-    if any(base['kind'] != 'file' for base in resources.values()):
-        raise WorkError('NATIVE_RECOVERY_SERVER_INSPECTION_REQUIRED')
+    server_inspectors = {}
+    for operation in journal['operations']:
+        inspector = operation.get('serverRecoveryInspector')
+        for base in operation['resources']:
+            if base['kind'] != 'server':
+                continue
+            key = recovery.coordinator.resources([base])[0]
+            if not inspector:
+                raise WorkError('NATIVE_RECOVERY_SERVER_INSPECTOR_REQUIRED')
+            candidate = {'kind': 'server', 'path': base['path'], 'project': operation['project'],
+                         'provider': inspector}
+            if key in server_inspectors and server_inspectors[key] != candidate:
+                raise WorkError('NATIVE_RECOVERY_SERVER_INSPECTOR_CHANGED')
+            server_inspectors[key] = candidate
+    if any(base['kind'] == 'server' and key not in server_inspectors for key, base in resources.items()):
+        raise WorkError('NATIVE_RECOVERY_SERVER_INSPECTOR_REQUIRED')
     # Scope matching belongs to the generation which produced it. Running one
     # worker per generation also keeps an update from interpreting old records
     # through unrelated current helper code.
@@ -80,7 +94,8 @@ def inspect_native_work(recovery, journal):
         recovery.proof()
         if recovery.cancelled():
             raise WorkError('INFOBASE_ACCESS_CANCELLED')
-        context = {'schemaVersion': 1, 'observationId': uuid.uuid4().hex, 'resources': list(resources.values()), **group}
+        context = {'schemaVersion': 1, 'observationId': uuid.uuid4().hex,
+                   'resources': list(resources.values()), 'serverInspectors': list(server_inspectors.values()), **group}
         prefix = generation + '-' + context['observationId']
         context_path = output / (prefix + '.context.json')
         log = output / (prefix + '.observation.json')

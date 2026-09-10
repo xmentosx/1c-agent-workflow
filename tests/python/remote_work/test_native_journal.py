@@ -132,6 +132,27 @@ class NativeJournalTests(unittest.TestCase):
                 with self.subTest(changed=changed), self.assertRaisesRegex(WorkError, 'IMMUTABLE_INPUT_CHANGED'):
                     journal.publish(lease, producer, other)
 
+    def test_server_recovery_inspector_is_bound_and_immutable(self):
+        with self.lease([self.second]) as lease:
+            producer = journal.register(lease)
+            value = self.payload(lease)
+            value['resources'] = [self.second]
+            value['admissions'] = [{**self.second, 'requiredSessions': 1, 'expectedChildRole': 'test-client'}]
+            value['serverRecoveryInspector'] = {'schemaVersion': 1, 'path': str(self.root / 'provider.ps1'),
+                                                'sha256': 'c' * 64, 'capability': 'recovery-observe'}
+            journal.publish(lease, producer, value)
+            changed = copy.deepcopy(value)
+            changed['serverRecoveryInspector']['sha256'] = 'd' * 64
+            with self.assertRaisesRegex(WorkError, 'IMMUTABLE_INPUT_CHANGED'):
+                journal.publish(lease, producer, changed)
+
+            missing = self.payload(lease)
+            missing['resources'] = [self.second]
+            missing['admissions'] = [{**self.second, 'requiredSessions': 1, 'expectedChildRole': 'test-client'}]
+            missing['serverRecoveryInspector'] = None
+            with self.assertRaisesRegex(WorkError, 'SERVER_RECOVERY_INSPECTOR_REQUIRED'):
+                journal.publish(lease, producer, missing)
+
     def test_unreserved_client_scope_is_rejected_before_any_record_is_indexed(self):
         with self.lease() as lease:
             producer = journal.register(lease)
