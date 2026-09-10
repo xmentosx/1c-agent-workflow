@@ -3,7 +3,7 @@ param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
-    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10")][string]$DownstreamRevision = "itl-r8",
+    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11")][string]$DownstreamRevision = "itl-r8",
     [switch]$KeepWork,
     [switch]$Force
 )
@@ -284,6 +284,12 @@ try {
     Copy-Item -LiteralPath $distributionDirectory -Destination $stageDirectory -Recurse
     Copy-Item -LiteralPath $noticePath -Destination (Join-Path $stageDirectory "ITL-NOTICE.txt")
     Copy-Item -LiteralPath $manifestPath -Destination (Join-Path $stageDirectory "ITL-PROVENANCE.json")
+    if ($manifest.PSObject.Properties['pairedExtension'] -and $manifest.pairedExtension.required) {
+        if (-not $nativeRuntimeResult.PSObject.Properties['pairedExtension']) { throw 'VANESSA_BUILD_PAIRED_EXTENSION_MISSING' }
+        $pairedExtension = $nativeRuntimeResult.pairedExtension
+        Assert-Equal (Get-Sha256 -Path $pairedExtension.path) ([string]$pairedExtension.sha256) 'Paired extension SHA-256'
+        Copy-Item -LiteralPath $pairedExtension.path -Destination (Join-Path $stageDirectory $manifest.pairedExtension.fileName)
+    }
 
     New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     if (Test-Path -LiteralPath $artifactPath) {

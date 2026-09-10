@@ -57,6 +57,47 @@
 
 AfterAll { $env:ITL_PYTHON_EXECUTABLE = $script:AdmissionFixturePythonOverride }
 
+Describe 'Paired Vanessa extension native build ownership' {
+    It 'uses the guarded Designer for the exact source and records the produced paired artifact' {
+        $result = & {
+            param($Root)
+            $script:PairedCalls = @()
+            function Invoke-Designer {
+                param($InfoBaseKind,$InfoBasePath,$User,$Password,$DesignerArgs)
+                $script:PairedCalls += [pscustomobject]@{ path=$InfoBasePath; user=$User; args=$DesignerArgs }
+                if ($DesignerArgs[0] -eq '/DumpCfg') { [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]]@(1,2,3,4)) }
+            }
+            [void][IO.Directory]::CreateDirectory($Root)
+            $spec = [pscustomobject]@{sourcePath='lib/VAExtension';fileName='VAExtension.1.29-itl-r11.cfe';protocol='itl-file-code-v1'}
+            $artifact = Invoke-VanessaBuildPairedExtension -SourceRoot (Join-Path $Root 'src') -WorkRoot $Root -InfoBasePath (Join-Path $Root 'base') -User 'service' -Specification $spec
+            [pscustomobject]@{ artifact=$artifact; calls=$script:PairedCalls }
+        } (Join-Path $TestDrive 'Расширение с пробелом')
+        $result.calls | Should -HaveCount 2
+        $result.calls[0].args[0] | Should -Be '/LoadConfigFromFiles'
+        $result.calls[0].args[1] | Should -Be (Join-Path $TestDrive 'Расширение с пробелом/src/lib/VAExtension')
+        $result.calls[0].args[-1] | Should -Be '/UpdateDBCfg'
+        $result.calls[1].args[-1] | Should -Be 'VAExtension'
+        $result.calls[0].path | Should -Be $result.calls[1].path
+        $result.artifact.sha256 | Should -Be (Get-FileHash $result.artifact.path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    It 'does not report an extension artifact after a failed or empty native build: <failure>' -TestCases @(@{failure='load'},@{failure='dump'},@{failure='missing'},@{failure='empty'}) {
+        param($failure)
+        {
+            & {
+                param($Root,$Failure)
+                function Invoke-Designer {
+                    param($InfoBaseKind,$InfoBasePath,$User,$Password,$DesignerArgs)
+                    if (($Failure -eq 'load' -and $DesignerArgs[0] -eq '/LoadConfigFromFiles') -or ($Failure -eq 'dump' -and $DesignerArgs[0] -eq '/DumpCfg')) { throw ('NATIVE_' + $Failure) }
+                    if ($Failure -eq 'empty' -and $DesignerArgs[0] -eq '/DumpCfg') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]]@()) }
+                }
+                [void][IO.Directory]::CreateDirectory($Root)
+                $spec = [pscustomobject]@{sourcePath='lib/VAExtension';fileName='VAExtension.1.29-itl-r11.cfe';protocol='itl-file-code-v1'}
+                Invoke-VanessaBuildPairedExtension -SourceRoot (Join-Path $Root 'src') -WorkRoot $Root -InfoBasePath (Join-Path $Root 'base') -User 'service' -Specification $spec
+            } (Join-Path $TestDrive ('Неудачная сборка ' + $failure)) $failure
+        } | Should -Throw
+    }
+}
+
 Describe 'Pinned upstream build execution adapters' {
     BeforeEach {
         $fixtureRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))

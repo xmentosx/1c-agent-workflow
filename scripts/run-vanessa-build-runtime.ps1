@@ -74,6 +74,10 @@ try {
             (Join-Path $buildWorkRoot 'out'), (Join-Path $buildSourceRoot 'features/Libraries'),
             [IO.Path]::GetDirectoryName([string]$buildRequest.platformExe), $buildBases[2].path) `
         -Bases @($buildBases[1], $buildBases[2]) -Purpose 'vanessa-build-single'
+    if ($buildManifest.PSObject.Properties['pairedExtension'] -and $buildManifest.pairedExtension.required) {
+        $buildRuntimeResult.pairedExtension = Invoke-VanessaBuildPairedExtension -SourceRoot $buildSourceRoot -WorkRoot $buildWorkRoot `
+            -InfoBasePath $buildBases[2].path -User $buildTemplate.user -Specification $buildManifest.pairedExtension
+    }
     $buildRuntimeResult.succeeded = $true
 } catch {
     $buildFailure = $_

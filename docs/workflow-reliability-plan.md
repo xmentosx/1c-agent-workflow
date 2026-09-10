@@ -34,8 +34,8 @@ different milestones; none implies the next one.
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
-| 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation function reproduces Structure key failure for a Cyrillic caption with spaces; r10 uses case-normalized map keys and passes real captions to navigation; 41 focused tests pass including r9/r10 nested-selection preservation; r10 native build succeeded with all service bases released; registration and installed UI acceptance remain open |
-| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
+| 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
+| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Original OpenClipboard failures and file-channel false success/lost outcomes confirmed; paired r11 producer/receiver uses correlated replies and permanent exclusive claims, with 18 executable regressions including actual clipboard contention and competing processes; initial paired native build passed, final build, registration, scoped cleanup/restart reconciliation, delivery and live BDR acceptance remain open |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
@@ -1677,3 +1677,32 @@ and its EPF SHA-256 is
 Candidate provenance is retained in the isolated source worktree under
 `build/third-party/vanessa-automation/1.2.043.28-itl-r10/`.
 The candidate is neither published nor installed by this build.
+
+## Item 10: correlated client-code outcomes
+
+See [the source diagnosis and paired protocol](vanessa-client-code-channel.md).
+The original BDR retained report confirms the nested OpenClipboard exception;
+a later zero clipboard-owner handle does not prove who held it during the failure.
+The earlier missing native clipboard object is a separate readiness failure.
+The source correction does not modify conf.cfg or replace product assertions.
+
+The paired r11 patch retains the row/nested-feature fixes and changes the actual
+Vanessa file-step producer, waiting callback and VAExtension receiver. Original
+fixtures reproduce missing-monitor false success and request deletion without a
+reply after void success or thrown client code. Native OneScript regressions
+cover correlated outcomes, multiline code, malformed requests, wrong response
+identity, uncertain completion, output-publication failure, two competing native
+processes, replay after lost response and execution while OpenClipboard is held.
+Repeated waiting must retain the original failure rather than interpreting its
+structured error response as a successful legacy value.
+
+The first paired native build completed at C:/va канал/19447ea3, releasing all
+three service bases. It precedes the repeated-wait correction and is intermediate
+build evidence only. Final candidate proof, guarded live 1C execution, scoped
+cleanup/restart reconciliation, installed guidance and normal delivery remain
+required before item 10 closes. Claims are deliberately retained while a request
+could still be consumed; deleting them to retry is not a recovery strategy.
+
+Item 9 registration is now confirmed: 16e5b840b9b111dfaf701dca5cd48767c465100c,
+Targeted 532 passed / 0 failed, ledger duration 536908 ms. This does not establish
+installed row-navigation or the original combined 49-scenario acceptance.

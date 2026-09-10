@@ -1,0 +1,12 @@
+{
+  "commit": "f3a01778a14d29b38204685deea0131274d438ff",
+  "receiverPath": "lib/VAExtension/Ext/ManagedApplicationModule.bsl",
+  "stepsPath": "features/Libraries/VAExtension/VAExtension/Forms/Форма/Ext/Form/Module.bsl",
+  "producerFirstLine": 2510,
+  "producerLastLine": 2546,
+  "waitFirstLine": 2616,
+  "waitLastLine": 2672,
+  "waitSha256": "104683a9aeb3727eb0b41c5515ee63ae9cb6be0080235fb500e1c284250c5de6",
+  "receiverSha256": "d9c3d76962a0bcb417dd83f23552012b72e76d3943ec278c6c152fe7f2e3a385",
+  "producerSha256": "f051c5970458d94e16bf3c29eb914d588d650f395b50b146e749c51d0983d9fc"
+}

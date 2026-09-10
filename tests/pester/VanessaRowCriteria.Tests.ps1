@@ -60,7 +60,10 @@
     }
 }
 
-Describe 'Vanessa row navigation with display captions' {
+Describe 'Vanessa row navigation with display captions <revision>' -ForEach @(@{revision='itl-r10'},@{revision='itl-r11'}) {
+    BeforeAll {
+        $script:RowCriteriaPatch = Join-Path $script:RowCriteriaRepo "third-party/vanessa-automation/1.2.043.28-$revision/file-operations.patch"
+    }
     It 'runs the unchanged upstream identifier case through the same UI transport double' {
         $result = Invoke-RowCriteriaProbe -Root (Join-Path $TestDrive 'Исходный обычный ключ') -Case identifier -Patched $false
         $result.exitCode | Should -Be 0 -Because $result.output

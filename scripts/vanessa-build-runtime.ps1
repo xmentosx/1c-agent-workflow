@@ -27,6 +27,26 @@
     }
 }
 
+function Invoke-VanessaBuildPairedExtension {
+    param([string]$SourceRoot, [string]$WorkRoot, [string]$InfoBasePath, [string]$User, [object]$Specification)
+    if ($Specification.sourcePath -cne 'lib/VAExtension' -or
+        $Specification.fileName -cnotmatch '^VAExtension\.1\.29-itl-r[0-9]+\.cfe$' -or
+        $Specification.protocol -cne 'itl-file-code-v1') { throw 'VANESSA_BUILD_PAIRED_EXTENSION_CONTRACT_INVALID' }
+    $extensionSource = Join-Path $SourceRoot 'lib/VAExtension'
+    $outputPath = Join-Path $WorkRoot $Specification.fileName
+    Invoke-Designer -InfoBaseKind file -InfoBasePath $InfoBasePath -User $User -Password '' `
+        -DesignerArgs @('/LoadConfigFromFiles', $extensionSource, '-Extension', 'VAExtension', '-Format', 'Hierarchical', '/UpdateDBCfg') | Out-Null
+    Invoke-Designer -InfoBaseKind file -InfoBasePath $InfoBasePath -User $User -Password '' `
+        -DesignerArgs @('/DumpCfg', $outputPath, '-Extension', 'VAExtension') | Out-Null
+    if (-not (Test-Path -LiteralPath $outputPath -PathType Leaf) -or (Get-Item -LiteralPath $outputPath).Length -eq 0) {
+        throw 'VANESSA_BUILD_PAIRED_EXTENSION_NOT_PRODUCED'
+    }
+    return [pscustomobject]@{
+        path = $outputPath; sha256 = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        protocol = $Specification.protocol
+    }
+}
+
 function Get-VanessaBuildDatabasePlan {
     param([Parameter(Mandatory = $true)][string]$WorkRoot)
     $root = [IO.Path]::GetFullPath($WorkRoot)
