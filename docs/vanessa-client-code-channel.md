@@ -64,13 +64,23 @@ interruption, stale/foreign responses, two clients and two independent channels.
 The busy-clipboard and competing-consumer OneScript regressions are protocol
 evidence; they do not establish live 1C acceptance.
 
-Requests, responses and claims are currently retained as recovery evidence.
-Do not remove a claim while its request may still be consumed, delete a shared
-monitor root, or reset unresolved context to force a repeat. Automatic scoped
+The r13 producer writes an immutable channel owner and a durable pending record
+before publishing the event. A fresh Vanessa process scans only the supplied
+monitor root, matches the exact normalized host/port/infobase identity and binds
+at most one unacknowledged request. The same target and code resume that request:
+an unpublished event is reconstructed, an unclaimed event can be consumed once,
+and a terminal response is returned. A permanent claim without a response stays
+unknown; a changed command or multiple pending requests fails closed. The result
+is acknowledged only after Vanessa continues the waiting step, so a restart can
+re-read a terminal response but cannot repeat its business effect.
+
+Requests, responses, claims and acknowledgements remain recovery evidence. Do
+not remove a claim while its request may still be consumed, delete a shared
+monitor root, or reset unresolved state to force a repeat. Automatic scoped
 cleanup must first prove the owning consumer has stopped, retain the operation
-outcome in run artifacts and remove only that generation's files. Cleanup and
-restart reconciliation, installed authoring guidance and normal delivery remain
-open parts of item 10; no candidate completion is claimed by this document.
+outcome in run artifacts and remove only that generation's files. Installed
+authoring guidance, paired native r13 acceptance, original BDR acceptance and
+normal delivery remain open parts of item 10.
 
 ## Connection identity and native evidence
 
@@ -98,8 +108,9 @@ original request. There remains one unresolved command per sequential Vanessa
 step stream; this is not a claim of concurrent waits inside that stream.
 
 Executable r11/r12 protocol and connection-identity regressions cover these paths,
-including a PID becoming known after monitor registration. Scoped cleanup and
-restart reconciliation remain separate outstanding requirements.
+including a PID becoming known after monitor registration. The r13 restart cases
+add terminal, unclaimed, unpublished, claimed-unknown, changed-command, foreign
+owner and ambiguous-state coverage. Scoped cleanup remains a separate candidate.
 
 The first native r12 two-client run (`probe-c0865302`) exposed another owning-layer
 defect before channel acceptance could pass. Its two profiles had distinct ports

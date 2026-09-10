@@ -33,7 +33,7 @@
             }
             $modules[$kind] = [IO.File]::ReadAllText($path)
         }
-        $producer = [regex]::Matches($modules.producer, '(?ms)^Функция (?:ЯВыполняюКодВстроенногоЯзыкаЧерезФайлСобытияРасширениеСлужебный|ITL\w+)\(.*?^КонецФункции[^\r\n]*') | ForEach-Object Value
+        $producer = [regex]::Matches($modules.producer, '(?ms)^(?:Функция ЯВыполняюКодВстроенногоЯзыкаЧерезФайлСобытияРасширениеСлужебный|(?:Функция|Процедура) ITL\w+)\(.*?^Конец(?:Функции|Процедуры)[^\r\n]*') | ForEach-Object Value
         $receiver = if ($Patched) { [regex]::Match($modules.receiver, '(?ms)^Процедура VAExtension_ITLОбработатьФайлКода\(.*?^КонецПроцедуры[^\r\n]*').Value } else {
             # Select the original Windows thin-client preprocessor branch; no BSL body changes.
             $originalReceiver = [regex]::Match($modules.receiver, '(?ms)^Процедура VAExtension_ПроверкаКаталогаНаНовыеСобытия\(.*?^КонецПроцедуры[^\r\n]*').Value
@@ -61,7 +61,7 @@
         $waiter += "`n" + [regex]::Match($modules.startWait, '(?ms)^Функция ЯОжидаюСекундРезультатОбработкиПоследнегоСобытияЧерезФайлИЗапоминаюРезультатВПеременнуюРасширение\(.*?^КонецФункции[^\r\n]*').Value
         $probe = $prefix + "`n" + ($producer -join "`n") + "`n" + $receiver + "`n" + $waiter + "`nСчетчикВызовов = 0;`n"
         $probe += 'КаталогФикстуры = "' + $script:ClientCodeFixture.Replace('"','""') + '";' + "`n"
-        $probe += 'ВерсияКанала = "' + $(if ($script:ClientCodePatch -match 'itl-r12') { 'itl-r12' } else { 'itl-r11' }) + '";' + "`n"
+        $probe += 'ВерсияКанала = "' + $(if ($script:ClientCodePatch -match 'itl-r13') { 'itl-r13' } elseif ($script:ClientCodePatch -match 'itl-r12') { 'itl-r12' } else { 'itl-r11' }) + '";' + "`n"
         $scenario = [IO.File]::ReadAllText((Join-Path $script:ClientCodeFixture $ScenarioFile))
         if ($Patched) {
             $scenario = [regex]::Replace($scenario, '(?ms)^Если Лев\(Сценарий, 7\) = "legacy-" Тогда.*?^КонецЕсли;\r?\n', '')
@@ -71,7 +71,7 @@
             $scenario = $scenario.Substring(0, $scenario.IndexOf('КонтекстСохраняемый._СписокPIDКлиентовСМониторингомСобытий.Вставить'))
             $scenario = [regex]::Replace($scenario, '(?ms)^Если Сценарий = "consume" Тогда.*?^КонецЕсли;\r?\n', '')
         }
-        if ($Patched -and $script:ClientCodePatch -match 'itl-r12') {
+        if ($Patched -and $script:ClientCodePatch -match 'itl-r1[23]') {
             $scenario = $scenario.Replace('КлючКлиентаДляПробы = 12345;', 'КлючКлиентаДляПробы = ITLКлючКлиентаМониторинга();')
         }
         $probe += $scenario
@@ -82,7 +82,7 @@
 
     function Invoke-ClientCodeProbe {
         param([string]$Root, [string]$Case, [bool]$Patched)
-        $scenarioFile = if ($Case -eq 'identity-legacy-foreign') { 'recovery-r11.os' } elseif ($Case.StartsWith('identity-')) { 'recovery.os' } else { 'scenario.os' }
+        $scenarioFile = if ($Case -eq 'identity-legacy-foreign') { 'recovery-r11.os' } elseif ($Case.StartsWith('identity-')) { 'recovery.os' } elseif ($Case.StartsWith('restart-')) { 'restart.os' } else { 'scenario.os' }
         $probePath = New-ClientCodeProbe -Root $Root -Patched $Patched -ScenarioFile $scenarioFile
         $eventRoot = Join-Path $Root 'Event родитель с пробелом'
         [void][IO.Directory]::CreateDirectory($eventRoot)
@@ -102,7 +102,7 @@
     }
 }
 
-Describe 'Vanessa correlated file-code execution <revision>' -ForEach @(@{revision='itl-r11'},@{revision='itl-r12'}) {
+Describe 'Vanessa correlated file-code execution <revision>' -ForEach @(@{revision='itl-r11'},@{revision='itl-r12'},@{revision='itl-r13'}) {
     BeforeAll {
         $script:ClientCodePatch = Join-Path $script:ClientCodeRepo "third-party/vanessa-automation/1.2.043.28-$revision/file-operations.patch"
     }
@@ -211,7 +211,7 @@ public static class ItlClientCodeClipboardProbe {
 
 Describe 'File-code monitor connection identity' {
     BeforeAll {
-        $script:ClientCodePatch = Join-Path $script:ClientCodeRepo 'third-party/vanessa-automation/1.2.043.28-itl-r12/file-operations.patch'
+        $script:ClientCodePatch = Join-Path $script:ClientCodeRepo 'third-party/vanessa-automation/1.2.043.28-itl-r13/file-operations.patch'
     }
     It 'reproduces r11 dispatching to the other client when both profile PIDs are zero' {
         $savedPatch = $script:ClientCodePatch
@@ -241,5 +241,41 @@ Describe 'File-code monitor connection identity' {
         $result.output | Should -Match $error
         $expectedCount = if ($case -eq 'identity-foreign-wait') { 1 } else { 0 }
         @(Get-ChildItem $result.eventRoot -Recurse -File -Filter 'Event_ITL_*.json').Count | Should -Be $expectedCount
+    }
+}
+
+Describe 'File-code restart reconciliation' {
+    BeforeAll {
+        $script:ClientCodePatch = Join-Path $script:ClientCodeRepo 'third-party/vanessa-automation/1.2.043.28-itl-r13/file-operations.patch'
+    }
+    It 'resumes the exact durable request without repeating its effect: <case>' -TestCases @(
+        @{case='restart-terminal'}, @{case='restart-unclaimed'}, @{case='restart-unpublished'}
+    ) {
+        param($case)
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive ('Перезапуск канала ' + $case)) -Case $case -Patched $true
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match ('CLIENT_RESTART_CASE_PASSED: ' + $case)
+    }
+    It 'keeps an already claimed request unresolved instead of executing it again' {
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Захваченный запрос после перезапуска') -Case 'restart-claimed-unknown' -Patched $true
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'CLIENT_RESTART_CASE_PASSED: restart-claimed-unknown'
+    }
+    It 'does not bind a foreign connection to the pending channel' {
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Чужое подключение после перезапуска') -Case 'restart-foreign-owner' -Patched $true
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match 'CLIENT_RESTART_CASE_PASSED: restart-foreign-owner'
+    }
+    It 'rejects a changed command while the recovered request is unresolved' {
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Измененная команда после перезапуска') -Case 'restart-changed-command' -Patched $true
+        $result.exitCode | Should -Not -Be 0
+        $result.output | Should -Match 'ITL_CLIENT_CODE_COMPLETION_UNKNOWN'
+        @(Get-ChildItem $result.eventRoot -Recurse -File -Filter 'Event_ITL_*.json').Count | Should -Be 1
+    }
+    It 'fails closed when one connection has more than one unacknowledged request' {
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Неоднозначный перезапуск') -Case 'restart-ambiguous' -Patched $true
+        $result.exitCode | Should -Not -Be 0
+        $result.output | Should -Match 'ITL_CLIENT_CODE_RESTART_AMBIGUOUS'
+        @(Get-ChildItem $result.eventRoot -Recurse -File -Filter 'Pending_ITL_*.json').Count | Should -Be 2
     }
 }

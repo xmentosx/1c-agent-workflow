@@ -86,7 +86,7 @@
     }
 }
 
-Describe 'Selected nested feature ownership in the Vanessa tree <revision>' -ForEach @(@{revision='itl-r9'}, @{revision='itl-r10'}, @{revision='itl-r11'}, @{revision='itl-r12'}) {
+Describe 'Selected nested feature ownership in the Vanessa tree <revision>' -ForEach @(@{revision='itl-r9'}, @{revision='itl-r10'}, @{revision='itl-r11'}, @{revision='itl-r12'}, @{revision='itl-r13'}) {
     BeforeAll {
         $script:NestedSelectionAsset = Join-Path $script:NestedSelectionRepo ('third-party/vanessa-automation/1.2.043.28-' + $revision)
     }

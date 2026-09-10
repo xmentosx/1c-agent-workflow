@@ -3,7 +3,7 @@
         $portRepo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         $portFixture = Join-Path $portRepo 'tests/fixtures/vanessa-testclient-ports'
         $portSource = Get-Content (Join-Path $portFixture 'source.json') -Raw -Encoding UTF8 | ConvertFrom-Json
-        $portPatch = [IO.File]::ReadAllText((Join-Path $portRepo 'third-party/vanessa-automation/1.2.043.28-itl-r12/file-operations.patch'))
+        $portPatch = [IO.File]::ReadAllText((Join-Path $portRepo 'third-party/vanessa-automation/1.2.043.28-itl-r13/file-operations.patch'))
         $portEngine = (Get-Command oscript -ErrorAction Stop).Source
         . (Join-Path $portRepo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
     }
