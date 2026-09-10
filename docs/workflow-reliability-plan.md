@@ -82,7 +82,7 @@ and multi-host recovery remain open.
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
-| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pair synchronization now joins aggregate database admission before lifecycle locks; public classification routing and nested-scenario source fixes are implemented. Group planning, explicit final recipients, resumable synchronization and installed acceptance remain open |
+| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes or durable successful load receipts. Unconfirmed native load recovery and installed acceptance remain open |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; immutable scenario/input/settings provenance now persists before database waiting and survives an actual engine crash. Detailed runtime stages, observed loaded-state provenance and installed acceptance remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
@@ -2577,3 +2577,43 @@ new diagnostic artifact; no runtime admission or cancellation check was removed.
 Focused execution, admission, profile-engine and collection coverage passes 31
 cases. Source registration, installed remote collection and native 1C runtime
 phase/identity acceptance remain separate milestones.
+
+## Item 6: explicit group delivery and retained recipient progress
+
+The public synchronization helper accepts a UTF-8 `BranchSyncRequestPath` with
+explicit peer and recipient arrays. It freezes the request bytes and all database
+resources before waiting, then locks those same worktrees. All source inputs are
+checkpointed and pinned before composition. Internal aggregate commits preserve
+three-way merge ancestry without joining the live branches' histories. The final
+source is validated before any propagation; every recipient gets an independent
+commit, its own dump cursor and its original non-source files. A source-only peer
+does not receive the aggregate or a database load.
+
+The atomic checksummed plan retains pinned input heads, common source fingerprint,
+pending installations, recipient commits and load status. It resumes a late
+source conflict without losing earlier peers, reconciles a durable Git ref after
+a failed plan write, and reuses a persisted successful load receipt only when
+group id, source fingerprint and current HEAD match. Final completion rechecks
+all recipients even after interruption of marker cleanup. Unexpected source
+bytes, staged blobs, unrelated changes or moved recipient heads are retained and
+reported; the installer never discards them to force progress.
+
+Sixteen focused Windows PowerShell 5.1 real-Git cases pass, using paths containing
+spaces and Cyrillic together. They cover full and selected delivery, independent
+parents/cursors, temporary-index isolation, late conflict resolution, journal
+write loss, durable load receipts, unknown native outcomes, changed final HEADs,
+foreign staged content, unrelated peer work and malformed request membership.
+The native database load and metadata validator are explicit test boundaries;
+these fixtures do not claim live 1C acceptance. Two additional real pipe-owner
+admission cases pass: a busy third participant leaves earlier databases available,
+then release admits all six resources; a changed third manager cannot be drained.
+The earlier pair/admission baseline passed all 38 cases before the group-only
+hardening. Registration owns the cumulative Targeted check.
+
+Remaining: an admitted load that started without a durable successful receipt
+requires its native phase adapter. This implementation reports
+`DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED` and does not replay possibly partial
+Enterprise updates. That diagnostic alone does not close queue recovery task 4a
+or item 6. Add supported phase reconciliation, then qualify the public installed
+group route and original multi-branch workflow; server and multi-host acceptance
+also remain open. Do not expand reset continuation 4b as a substitute.

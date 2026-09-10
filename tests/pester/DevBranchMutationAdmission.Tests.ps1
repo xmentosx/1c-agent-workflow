@@ -373,6 +373,57 @@
             { Sync-DevBranches } | Should -Throw '*MUTATION_ADMISSION_REQUIRED*'
             Should -Invoke Save-DevBranchCheckpoint -Times 0
         }
+
+        Context 'group admission' {
+            BeforeEach {
+                $script:PeerDevBranchName = ''
+                $script:thirdRoot = Join-Path $script:mutationState.worktreePath 'Третья ветка'
+                New-Item -ItemType Directory -Path $script:thirdRoot | Out-Null
+                $script:thirdState = [pscustomobject]@{devBranch='itldev/third';devBranchName='third';worktreePath=$script:thirdRoot
+                    infoBaseKind='file';devBranchInfoBasePath=(Join-Path $script:thirdRoot 'Рабочая база')
+                    vanessaServiceInfoBasePath=(Join-Path $script:thirdRoot 'Служебная база')}
+                Mock Read-DevBranchState {
+                    param($Name)
+                    switch ($Name) { 'peer' { $script:peerState }; 'third' { $script:thirdState }; default { $script:mutationState } }
+                }
+                $script:BranchSyncRequestPath = Join-Path $script:ProjectRoot '.agent-1c/group.json'
+                Write-Utf8Text -Path $script:BranchSyncRequestPath -Value (@{schemaVersion=1;peers=@('peer','third');recipients=@('update','peer','third')} | ConvertTo-Json)
+                $thirdRequest = @{schemaVersion=1;coordinator=$settings.coordinator;timeout=0
+                    bases=@(@{kind='file';path=$script:thirdState.devBranchInfoBasePath});owner=@{operation='third-measurement'}}
+            }
+            AfterEach { $script:BranchSyncRequestPath = '' }
+
+            It 'waits on the last participant without retaining earlier databases and admits all six resources after release' {
+                $holder = Start-ItlDatabaseAccessHost -Python $python -Request $thirdRequest
+                try {
+                    { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*WAIT_TIMEOUT*'
+                    foreach ($request in @($competingRequest, $peerRequest)) {
+                        $independent = Start-ItlDatabaseAccessHost -Python $python -Request $request
+                        Complete-ItlDatabaseAccessHost $independent | Out-Null
+                    }
+                    foreach ($root in @($script:mutationState.worktreePath,$script:peerRoot,$script:thirdRoot)) {
+                        Test-Path (Join-Path $root '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+                    }
+                    Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+                } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+                $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+                $script:DevBranchMutationDatabaseAdmission.plan.bases | Should -HaveCount 6
+                $script:DevBranchMutationDatabaseAdmission.plan.syncParticipants | Should -HaveCount 3
+                { Start-ItlDatabaseAccessHost -Python $python -Request $thirdRequest } | Should -Throw '*WAIT_TIMEOUT*'
+                Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission
+                $next = Start-ItlDatabaseAccessHost -Python $python -Request $thirdRequest
+                Complete-ItlDatabaseAccessHost $next | Out-Null
+            }
+
+            It 'rejects a changed manager in the last participant before draining any runtime' {
+                $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+                $script:thirdState.vanessaServiceInfoBasePath = Join-Path $script:thirdRoot 'Другой менеджер'
+                Invoke-InProjectContext -Root $script:thirdRoot -ScriptBlock {
+                    { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $script:thirdState } | Should -Throw '*MUTATION_PLAN_CHANGED*'
+                }
+                Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+            }
+        }
     }
 
     It 'includes repository locking in the same pre-lifecycle admission route' {

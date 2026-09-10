@@ -63,6 +63,50 @@ Run `sync-dev-branches -PeerDevBranchName <name>` from either ready development 
 
 The helper computes a three-way combined source tree without merging either branch into the other's Git history, creates an independent source-only commit in each branch, proves equal cursor-independent fingerprints, and loads the result into both branch infobases. Verification becomes stale in both branches. The resulting common implementation may therefore be checked and exported entirely from either branch. For a source conflict, resolve only the listed source files in the initiating worktree, run `git add`, and repeat the same command there; the helper owns both commits and propagation to the peer.
 
+### Group source synchronization
+
+For more than two branches, use `sync-dev-branches -BranchSyncRequestPath
+<absolute-json-path>` from the initiating branch. Store the UTF-8 request under
+its ignored `.agent-1c/source-sync/` directory. Example from `itldev/branch1`:
+
+```json
+{"schemaVersion":1,"peers":["branch2","branch3"],"recipients":["branch1","branch2","branch3"]}
+```
+
+Both lists must be arrays of distinct participating branch names; `recipients`
+must include the initiator. To collect all three inputs only into branch1, use
+`"recipients":["branch1"]`. This request is mutually exclusive with
+`-PeerDevBranchName`. Do not implement a group as successive pair calls: a peer
+processed early would not receive later peers' changes.
+
+The helper reserves all participant databases and recorded managers atomically
+before any lifecycle lock, validates their exact targets again after waiting,
+and rejects unrelated uncommitted paths before checkpointing any participant.
+It pins all input heads, composes every source input before propagation, validates
+the composed source, and creates each recipient's independent source commit.
+Only then does it load the explicit recipients. Each retains its own dump cursor
+and non-source tree. Source-only participants receive no source or database load.
+
+The checksummed plan in `.agent-1c/source-sync/<id>.json` records the exact
+request hash, pinned inputs, common fingerprint, pending file installation,
+recipient commits and database load receipts. Internal Git refs retain these
+objects for resumption. Repeat the original request from the original initiator.
+Resolve listed conflicts there and stage the resolution with `git add`; do not
+create the helper's commits or edit its plan. A late source conflict occurs
+before any recipient database load. An interrupted ref/plan write is reconciled
+against the planned commit; unrelated staged or working source edits are retained
+and reported instead of overwritten.
+
+A completed database load is reused only with a matching group, fingerprint and
+HEAD receipt. A load started without that receipt remains
+`DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED`, with completed recipients preserved.
+Use the database recovery diagnostics for the admitted native operation; absence
+of a receipt is not permission to repeat a potentially partly applied Enterprise
+update. Automatic continuation of every such native phase is not yet supported.
+Queue waiting remains bounded and unrelated databases can continue; do not remove
+a live or ambiguous owner's lease by age. The final report includes source and
+load status for every participant even when delivery is partial.
+
 Before either checkpoint, the helper also checks both branches for an existing helper-owned lifecycle merge. A pending `refresh-dev-branch` or `refresh-dev-branch-lite` is a recoverable prerequisite: the result identifies the exact branch, worktree, original wrapper, stage, and recorded conflict paths with `errorCategory=merge-conflict`. The agent continues that wrapper, performs progressive semantic repair when required, asks only for an evidence-backed incompatible business choice, and resumes the original source synchronization after refresh success. A different pending lifecycle operation requires an explicit user decision because completing it may invalidate the requested synchronization. An unowned or inconsistent Git operation remains fail-closed; never abort it, edit lifecycle state, or create its commit manually.
 
 For extension branches, ask in chat for Empty or CFE, the extension name, and the CFE path when applicable before launching branch creation. Branch copy and extension initialization remain separate transactional phases, but `new-extension-dev-branch` orchestrates both in one user scenario. If the values are unknown, only the second phase is deferred and persisted as pending.

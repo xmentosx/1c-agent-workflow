@@ -618,15 +618,25 @@ function Get-Agent1cLifecycleOperationLockScopes {
 
     $candidatePaths = @($script:ProjectRoot)
     if ($RequestedAction -eq "sync-dev-branches") {
-        if (-not $PeerDevBranchName) {
+        $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+        $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+        if ($null -ne $admissionVariable -and $null -ne $admissionVariable.Value -and $admissionVariable.Value.operation -eq 'sync-dev-branches') {
+            # Waiting pinned these participants before local locks. Never switch
+            # to a newly edited request or moved worktree while acquiring locks.
+            $candidatePaths = @($admissionVariable.Value.plan.syncParticipants.project)
+        } elseif ($null -ne $requestVariable -and $requestVariable.Value) {
+            $scope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name $DevBranchName)
+            $candidatePaths = @($scope.states.worktreePath)
+        } elseif (-not $PeerDevBranchName) {
             throw "sync-dev-branches requires -PeerDevBranchName."
+        } else {
+            $peerName = [string]$PeerDevBranchName
+            if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
+                $peerName = $peerName.Substring("itldev/".Length)
+            }
+            $peerState = Read-DevBranchState -Name $peerName
+            $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
         }
-        $peerName = [string]$PeerDevBranchName
-        if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
-            $peerName = $peerName.Substring("itldev/".Length)
-        }
-        $peerState = Read-DevBranchState -Name $peerName
-        $candidatePaths += Get-StateValue -State $peerState -Name "worktreePath" -Default (Get-StateValue -State $peerState -Name "stateProjectRoot" -Default "")
     }
     if ($RequestedAction -in @("fork-dev-branch", "refresh-dev-branch", "refresh-all-dev-branches", "lock-config-repository-objects", "release-e2e-config-repository-lock-roundtrip", "close-dev-branch", "sync-master")) {
         $candidatePaths += Get-MainWorktreePath

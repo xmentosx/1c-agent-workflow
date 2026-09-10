@@ -2281,33 +2281,89 @@ function Assert-ItlMasterDatabaseAdmission {
     Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
 }
 
+function Get-BranchSourceSyncScope {
+    param([object]$State)
+    $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+    $requestPath = if ($null -ne $requestVariable) { [string]$requestVariable.Value } else { '' }
+    $primaryName = [string]$State.devBranchName
+    $names = [Collections.Generic.List[string]]::new()
+    $names.Add($primaryName)
+    $hash = ''
+    if ($requestPath) {
+        if ($PeerDevBranchName) { throw 'DEV_BRANCH_SOURCE_SYNC_SCOPE_AMBIGUOUS: use either a peer or a group request.' }
+        $requestPath = Resolve-ProjectPath $requestPath
+        $requestBytes = [IO.File]::ReadAllBytes($requestPath)
+        $request = ([Text.UTF8Encoding]::new($false, $true).GetString($requestBytes).TrimStart([char]0xfeff)) | ConvertFrom-Json -ErrorAction Stop
+        if (-not $request -or -not $request.PSObject.Properties['schemaVersion'] -or
+            -not $request.PSObject.Properties['peers'] -or -not $request.PSObject.Properties['recipients'] -or
+            $request.schemaVersion -ne 1 -or $request.peers -isnot [array] -or $request.recipients -isnot [array] -or
+            @($request.peers).Count -eq 0 -or @($request.PSObject.Properties.Name | Where-Object { $_ -notin @('schemaVersion','peers','recipients') }).Count -gt 0) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: schemaVersion 1, peers and explicit recipients are required.'
+        }
+        $peers = @($request.peers)
+        $recipients = @($request.recipients)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try { $hash = ([BitConverter]::ToString($sha.ComputeHash($requestBytes))).Replace('-', '').ToLowerInvariant() }
+        finally { $sha.Dispose() }
+    } else {
+        $peers = @(Require-Value 'PeerDevBranchName' $PeerDevBranchName)
+        $recipients = @($primaryName) + $peers
+    }
+    foreach ($peer in $peers) {
+        if ($peer -isnot [string] -or [string]::IsNullOrWhiteSpace($peer)) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: peer names must be nonempty strings.' }
+        $name = $peer.Trim() -replace '^itldev/', ''
+        if (@($names | Where-Object { $_ -ieq $name }).Count -gt 0) { throw 'DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: a branch is listed more than once.' }
+        $names.Add($name)
+    }
+    $targets = @()
+    foreach ($recipient in $recipients) {
+        if ($recipient -isnot [string]) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_INVALID: recipient names must be strings.' }
+        $name = $recipient.Trim() -replace '^itldev/', ''
+        $matched = @($names | Where-Object { $_ -ieq $name })
+        if ($matched.Count -ne 1 -or $targets -icontains $matched[0]) { throw 'DEV_BRANCH_SOURCE_SYNC_RECIPIENT_INVALID: each recipient must be a distinct participating branch.' }
+        $targets += $matched[0]
+    }
+    if ($targets -inotcontains $primaryName) { throw 'DEV_BRANCH_SOURCE_SYNC_INITIATOR_REQUIRED: include the current branch among recipients.' }
+    $states = @($State)
+    foreach ($name in @($names | Select-Object -Skip 1)) { $states += Read-DevBranchState -Name $name }
+    foreach ($member in $states) {
+        $pending = [string](Get-StateValue $member 'pendingBranchSourceGroupId' '')
+        if ($pending -and (-not $requestPath -or $member.devBranchName -ine $primaryName)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_GROUP_PENDING: continue group $pending from '$($member.worktreePath)' with its original request."
+        }
+    }
+    return [pscustomobject]@{group=[bool]$requestPath;requestPath=$requestPath;requestHash=$hash;names=@($names);recipients=@($targets);states=$states}
+}
+
 function Get-ItlBranchSourceSyncDatabasePlan {
     param([object]$State)
-    $peerName = Require-Value 'PeerDevBranchName' $PeerDevBranchName
-    if ($peerName.StartsWith('itldev/', [StringComparison]::OrdinalIgnoreCase)) { $peerName = $peerName.Substring(7) }
-    if ($peerName -ieq [string]$State.devBranchName) { throw 'DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch.' }
-    $peerState = Read-DevBranchState -Name $peerName
-    Assert-DevBranchSourceSyncCompatibility -PrimaryState $State -PeerState $peerState | Out-Null
+    $scope = Get-BranchSourceSyncScope -State $State
     $access = Get-ItlDatabaseAccessSettings
-    $primary = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation update-dev-branch-base
+    $exportPath = Get-DevBranchSourceSyncExportPath -State $State
+    $bases = @(); $participants = @()
     $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
     try {
-        $peer = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
-            Assert-DevelopmentBranchWorktreeContext -State $peerState -Operation 'sync-dev-branches'
-            $peerAccess = Get-ItlDatabaseAccessSettings
-            if (-not [string]::Equals([IO.Path]::GetFullPath($access.coordinator), [IO.Path]::GetFullPath($peerAccess.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
-                throw 'INFOBASE_ACCESS_SYNC_COORDINATOR_MISMATCH: both branches must use the same database access authority.'
+        foreach ($member in $scope.states) {
+            Assert-DevBranchSourceSyncCompatibility -PrimaryState $State -PeerState $member | Out-Null
+            $memberPlan = Invoke-InProjectContext -Root $member.worktreePath -ScriptBlock {
+                Assert-DevelopmentBranchWorktreeContext -State $member -Operation 'sync-dev-branches'
+                $memberAccess = Get-ItlDatabaseAccessSettings
+                if (-not [string]::Equals([IO.Path]::GetFullPath($access.coordinator), [IO.Path]::GetFullPath($memberAccess.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'INFOBASE_ACCESS_SYNC_COORDINATOR_MISMATCH: all branches must use the same database access authority.'
+                }
+                if ((Get-DevBranchSourceSyncExportPath -State $member) -cne $exportPath) { throw 'DEV_BRANCH_SOURCE_SYNC_PATH_MISMATCH: source roots differ between projects.' }
+                Get-ItlDevBranchMutationDatabasePlan -State $member -Operation update-dev-branch-base
             }
-            Get-ItlDevBranchMutationDatabasePlan -State $peerState -Operation update-dev-branch-base
+            $bases += @($memberPlan.bases)
+            $participants += [pscustomobject]@{project=[IO.Path]::GetFullPath($member.worktreePath);branch=[string]$member.devBranch
+                name=[string]$member.devBranchName;target=$memberPlan.target;exportPath=$exportPath}
+            Restore-ItlProcessEnvironment -Snapshot $environmentBefore
         }
     } finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
     $unique = @{}
-    foreach ($base in @($primary.bases) + @($peer.bases)) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
-    return [pscustomobject]@{target=$primary.target; bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
-        syncParticipants=@(
-            [pscustomobject]@{project=[IO.Path]::GetFullPath($State.worktreePath); branch=[string]$State.devBranch; target=$primary.target},
-            [pscustomobject]@{project=[IO.Path]::GetFullPath($peerState.worktreePath); branch=[string]$peerState.devBranch; target=$peer.target})
-        coordinator=[IO.Path]::GetFullPath($access.coordinator)}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{target=$participants[0].target;bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
+        syncParticipants=$participants;coordinator=[IO.Path]::GetFullPath($access.coordinator);syncScope=$scope}
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
@@ -2520,6 +2576,9 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
             throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization coordinator changed.'
         }
         $expectedTarget = $participant[0].target
+        if ((Get-DevBranchSourceSyncExportPath -State $State) -cne $participant[0].exportPath) {
+            throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization source root changed.'
+        }
         $operation = 'update-dev-branch-base'
     }
     $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
@@ -5268,6 +5327,10 @@ function Assert-DevelopmentBranchWorktreeContext {
             throw "DEV_BRANCH_RESET_IN_PROGRESS: repeat /itl-reset-branch to resume the interrupted reset. Archive: $archivePath"
         }
         $pendingBranchSyncId = [string](Get-StateValue -State $State -Name "pendingBranchSyncId" -Default "")
+        $pendingGroup = [string](Get-StateValue -State $State -Name 'pendingBranchSourceGroupId' -Default '')
+        if ($pendingGroup -and $Operation -ne 'sync-dev-branches') {
+            throw "DEV_BRANCH_SOURCE_SYNC_GROUP_PENDING: continue source synchronization group $pendingGroup through its original helper request."
+        }
         if ($pendingBranchSyncId -and $Operation -ne "sync-dev-branches") {
             $primaryBranch = [string](Get-StateValue -State $State -Name "pendingBranchSyncPrimaryBranch" -Default "")
             throw "DEV_BRANCH_SOURCE_SYNC_IN_PROGRESS: repeat /itl-sync-branches from '$primaryBranch' to finish the interrupted source-only synchronization."
@@ -11216,6 +11279,240 @@ function Invoke-BranchSourceMergeTree {
     }
 }
 
+function New-BranchSourceSyncCommit {
+    param([string]$BaseCommit, [string]$SourceTreeish, [string]$ExportPath, [string]$Message, [string]$MergeParent = '')
+    foreach ($object in @($BaseCommit, $SourceTreeish) + @($MergeParent | Where-Object { $_ })) {
+        if ($object -cnotmatch '^[a-f0-9]{40,64}$') { throw 'DEV_BRANCH_SOURCE_SYNC_OBJECT_INVALID' }
+    }
+    Assert-ExportPathInsideProject $ExportPath | Out-Null
+    $sourceTree = Get-GitObjectIdForTreePath -Treeish $SourceTreeish -RepoPath $ExportPath
+    if ($sourceTree -eq '<missing>') { throw 'DEV_BRANCH_SOURCE_SYNC_SOURCE_MISSING' }
+    $cursorPath = "$ExportPath/ConfigDumpInfo.xml"
+    $cursor = Get-GitObjectIdForTreePath -Treeish $BaseCommit -RepoPath $cursorPath
+    $indexPath = New-TimestampedFilePath -Directory ([IO.Path]::GetTempPath()) -Prefix 'itl-source-sync-index-' -Extension '.idx'
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        $env:GIT_INDEX_FILE = $indexPath
+        Invoke-Git @('read-tree', $BaseCommit)
+        Invoke-Git @('--literal-pathspecs', 'rm', '--quiet', '-r', '--cached', '-f', '--ignore-unmatch', '--', $ExportPath)
+        Invoke-Git @('read-tree', "--prefix=$ExportPath/", $sourceTree)
+        if ($cursor -ne '<missing>') {
+            Invoke-Git @('update-index', '--add', '--cacheinfo', '100644', $cursor, $cursorPath)
+        } else {
+            Invoke-Git @('update-index', '--force-remove', '--', $cursorPath)
+        }
+        $tree = ([string](Get-GitOutput @('write-tree'))).Trim()
+        $baseTree = ([string](Get-GitOutput @('rev-parse', "$BaseCommit`^{tree}"))).Trim()
+        if (-not $MergeParent -and $tree -ceq $baseTree) { return $BaseCommit }
+        $arguments = @('commit-tree', $tree, '-p', $BaseCommit)
+        if ($MergeParent) { $arguments += @('-p', $MergeParent) }
+        $arguments += @('-m', $Message)
+        return ([string](Get-GitOutput $arguments)).Trim()
+    } finally {
+        Restore-ItlProcessEnvironment -Snapshot $environmentBefore
+        foreach ($path in @($indexPath, "$indexPath.lock")) {
+            if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
+        }
+    }
+}
+
+function Get-BranchSourceSyncTreeFiles {
+    param([string]$Commit, [string]$ExportPath)
+    $files = @{}
+    foreach ($entry in @(Get-GitPathList -Arguments @('ls-tree', '-r', '-z', "$Commit`:$ExportPath"))) {
+        if ($entry -cnotmatch '^100644 blob ([a-f0-9]{40,64})\t(.+)$') { throw 'DEV_BRANCH_SOURCE_SYNC_ENTRY_UNSUPPORTED: source entries must be regular files.' }
+        $files["$ExportPath/$($Matches[2])"] = $Matches[1]
+    }
+    return $files
+}
+
+function Install-BranchSourceSyncTree {
+    param([string]$ExpectedHead, [string]$PreviousSource, [string]$DesiredCommit, [string]$ExportPath, [switch]$CommitHead)
+    $head = Get-CurrentCommit
+    if ($head -cne $ExpectedHead -and (-not $CommitHead -or $head -cne $DesiredCommit)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_HEAD_MOVED: preserve the worktree and its saved plan.'
+    }
+    $previous = Get-BranchSourceSyncTreeFiles -Commit $PreviousSource -ExportPath $ExportPath
+    $desired = Get-BranchSourceSyncTreeFiles -Commit $DesiredCommit -ExportPath $ExportPath
+    Assert-BranchSourceSyncChangesScoped -ExportPath $ExportPath | Out-Null
+    foreach ($entry in @(Get-GitPathList -Arguments @('ls-files', '--stage', '-z', '--', $ExportPath))) {
+        if ($entry -cnotmatch '^100644 ([a-f0-9]{40,64}) 0\t(.+)$') { throw 'DEV_BRANCH_SOURCE_SYNC_INDEX_UNMERGED' }
+        $blob = $Matches[1]; $path = $Matches[2]
+        if ($blob -cne $previous[$path] -and $blob -cne $desired[$path]) {
+            throw "DEV_BRANCH_SOURCE_SYNC_FOREIGN_INDEX: $path"
+        }
+    }
+    $paths = @($previous.Keys) + @($desired.Keys) + @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard', '--', $ExportPath))
+    $paths += @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--', $ExportPath))
+    foreach ($path in @($paths | Sort-Object -Unique)) {
+        if (-not $previous.ContainsKey($path) -and -not $desired.ContainsKey($path)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_UNEXPECTED_SOURCE: $path"
+        }
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if (Test-Path -LiteralPath $absolute) {
+            $item = Get-Item -LiteralPath $absolute -Force
+            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "DEV_BRANCH_SOURCE_SYNC_UNSAFE_PATH: $path" }
+            $actual = ([string](Get-GitOutput @('hash-object', '--no-filters', '--', $path))).Trim()
+            if ($actual -cne $previous[$path] -and $actual -cne $desired[$path]) {
+                throw "DEV_BRANCH_SOURCE_SYNC_FOREIGN_EDIT: $path"
+            }
+        }
+    }
+    if ($CommitHead -and $head -ceq $DesiredCommit) {
+        # The ref update was durable but saving the following plan phase failed.
+        # A fresh source edit must not be overwritten on this recovery path.
+        Assert-CleanGit
+        return
+    }
+    Invoke-Git @('--literal-pathspecs', 'rm', '--quiet', '-r', '-f', '--ignore-unmatch', '--', $ExportPath)
+    foreach ($path in @($previous.Keys | Where-Object { -not $desired.ContainsKey($_) })) {
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if (Test-Path -LiteralPath $absolute -PathType Leaf) { Remove-Item -LiteralPath $absolute -Force }
+    }
+    Invoke-Git @('--literal-pathspecs', 'checkout', $DesiredCommit, '--', $ExportPath)
+    if ($CommitHead) {
+        Assert-OneCConfigurationSourceIntegrity -ExportPath $ExportPath
+        if (([string](Get-GitOutput @('write-tree'))).Trim() -cne ([string](Get-GitOutput @('rev-parse', "$DesiredCommit`^{tree}"))).Trim()) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_INDEX_CHANGED: staged tree differs from the planned commit.'
+        }
+        Invoke-Git @('update-ref', 'HEAD', $DesiredCommit, $ExpectedHead)
+        Assert-CleanGit
+    }
+}
+
+function Assert-BranchSourceSyncFilePath {
+    param([string]$RepoPath)
+    $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\', '/')
+    $absolute = [IO.Path]::GetFullPath((Join-Path $root $RepoPath))
+    if (-not $absolute.StartsWith(($root + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PATH_OUTSIDE_PROJECT'
+    }
+    $parent = Split-Path -Parent $absolute
+    while ($parent -and $parent.Length -ge $root.Length) {
+        if (Test-Path -LiteralPath $parent) {
+            if ((Get-Item -LiteralPath $parent -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw "DEV_BRANCH_SOURCE_SYNC_REPARSE_PATH: $RepoPath"
+            }
+        }
+        if ($parent -ieq $root) { break }
+        $parent = Split-Path -Parent $parent
+    }
+    return $absolute
+}
+
+function Invoke-BranchSourceSyncProject {
+    param([string]$Root, [scriptblock]$ScriptBlock)
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try { Invoke-InProjectContext -Root $Root -ScriptBlock $ScriptBlock }
+    finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
+}
+
+function Get-BranchSourceSyncGroupPlanPath {
+    param([string]$Id)
+    if ($Id -cnotmatch '^[a-f0-9]{32}$') { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_ID_INVALID' }
+    return Join-Path $script:ProjectRoot ".agent-1c/source-sync/$Id.json"
+}
+
+function Save-BranchSourceSyncGroupPlan {
+    param([object]$Plan)
+    if (-not [string]::Equals([IO.Path]::GetFullPath($script:ProjectRoot), $Plan.project, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_PROJECT_MISMATCH'
+    }
+    $Plan.updatedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $payload = $Plan | ConvertTo-Json -Depth 30 -Compress
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($payload)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    $envelope = [pscustomobject]@{schemaVersion=1;payload=$payload;sha256=$hash}
+    Write-Utf8TextAtomic -Path (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id) -Value ($envelope | ConvertTo-Json -Depth 4)
+}
+
+function New-BranchSourceSyncGroupPlan {
+    param([object]$Scope, [object]$Admission)
+    $id = [guid]::NewGuid().ToString('N')
+    $members = @()
+    # Checkpoints precede source transfer. If preparation is interrupted, a new
+    # preparation can retain the already-created checkpoints without replaying
+    # any source propagation or database update.
+    foreach ($state in $Scope.states) {
+        Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-BranchSourceSyncChangesScoped -ExportPath $Admission.plan.syncParticipants[0].exportPath | Out-Null
+        }
+    }
+    foreach ($state in $Scope.states) {
+        $head = Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
+            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $Admission.plan.syncParticipants[0].project
+            Save-DevBranchCheckpoint -Operation sync-dev-branches -Message "chore: checkpoint before source group $id" | Out-Null
+            Get-CurrentCommit
+        }
+        $participant = @($Admission.plan.syncParticipants | Where-Object { $_.branch -ceq $state.devBranch })[0]
+        $members += [pscustomobject]@{name=[string]$state.devBranchName;branch=[string]$state.devBranch;project=[string]$state.worktreePath
+            head=$head;target=$participant.target;recipient=($Scope.recipients -icontains [string]$state.devBranchName)
+            resultCommit='';sourceStatus='pending';loadStatus='pending';loadedHead=''}
+        Invoke-Git @('update-ref', "refs/itl/source-sync/$id/source-$($members.Count - 1)", $head)
+    }
+    $plan = [pscustomobject]@{schemaVersion=1;id=$id;project=[IO.Path]::GetFullPath($script:ProjectRoot)
+        requestPath=$Scope.requestPath;requestHash=$Scope.requestHash;names=@($Scope.names);recipients=@($Scope.recipients)
+        exportPath=$Admission.plan.syncParticipants[0].exportPath;members=$members;aggregate=$members[0].head;nextPeer=1
+        phase='aggregating';pending=$null;conflict=$null;fingerprint='';validationSource='';error='';createdAt=(Get-Date).ToUniversalTime().ToString('o');updatedAt=''}
+    Save-BranchSourceSyncGroupPlan -Plan $plan
+    Update-DevBranchState -State (Read-DevBranchState -Name $members[0].name) -Updates @{pendingBranchSourceGroupId=$id}
+    return $plan
+}
+
+function Read-BranchSourceSyncGroupPlan {
+    param([object]$State, [object]$Scope)
+    $id = [string](Get-StateValue -State $State -Name 'pendingBranchSourceGroupId' -Default '')
+    if (-not $id) { return $null }
+    $envelope = (Read-Utf8Text -Path (Get-BranchSourceSyncGroupPlanPath -Id $id)) | ConvertFrom-Json
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$envelope.payload)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    if ($envelope.schemaVersion -ne 1 -or $hash -cne $envelope.sha256) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_INTEGRITY_FAILED' }
+    $plan = $envelope.payload | ConvertFrom-Json
+    if ($plan.schemaVersion -ne 1 -or $plan.id -cne $id -or $plan.requestHash -cne $Scope.requestHash -or
+        -not [string]::Equals($plan.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -or
+        @($plan.members).Count -ne @($Scope.states).Count -or ($plan.names -join [char]0) -cne ($Scope.names -join [char]0) -or
+        ($plan.recipients -join [char]0) -cne ($Scope.recipients -join [char]0)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_SCOPE_CHANGED: resume the original request; saved work is preserved.'
+    }
+    for ($index = 0; $index -lt @($plan.members).Count; $index++) {
+        $member = $plan.members[$index]; $state = $Scope.states[$index]
+        if ($member.branch -cne $state.devBranch -or $member.target.kind -cne $state.infoBaseKind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $member.target.path -Second $state.devBranchInfoBasePath) -or
+            -not [string]::Equals($member.project, [IO.Path]::GetFullPath($state.worktreePath), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_MEMBER_CHANGED'
+        }
+        $pin = ([string](Get-GitOutput @('rev-parse', "refs/itl/source-sync/$id/source-$index"))).Trim()
+        if ($pin -cne $member.head) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_SOURCE_CHANGED' }
+    }
+    return $plan
+}
+
+function Invoke-BranchSourceSyncGroupInstall {
+    param([object]$Plan, [int]$MemberIndex, [string]$PreviousSource, [string]$DesiredCommit, [switch]$CommitHead)
+    if ($null -eq $Plan.pending) {
+        $Plan.pending = [pscustomobject]@{member=$MemberIndex;previous=$PreviousSource;desired=$DesiredCommit;commitHead=[bool]$CommitHead}
+        Invoke-Git @('update-ref', "refs/itl/source-sync/$($Plan.id)/pending", $DesiredCommit)
+        Save-BranchSourceSyncGroupPlan -Plan $Plan
+    } elseif ($Plan.pending.member -ne $MemberIndex -or $Plan.pending.previous -cne $PreviousSource -or
+        $Plan.pending.desired -cne $DesiredCommit -or [bool]$Plan.pending.commitHead -ne [bool]$CommitHead) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_PENDING_STEP_CHANGED'
+    }
+    $member = $Plan.members[$MemberIndex]
+    Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+        $state = Read-DevBranchState -Name $member.name
+        Assert-DevelopmentBranchWorktreeContext -State $state -Operation sync-dev-branches
+        Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
+        Install-BranchSourceSyncTree -ExpectedHead $member.head -PreviousSource $PreviousSource -DesiredCommit $DesiredCommit `
+            -ExportPath $Plan.exportPath -CommitHead:$CommitHead
+    }
+    if ($CommitHead) { $member.sourceStatus = 'committed' }
+    $Plan.pending = $null
+    Save-BranchSourceSyncGroupPlan -Plan $Plan
+}
+
 function Restore-BranchSourceSyncCursor {
     param([string]$Head, [string]$ExportPath)
     Restore-BranchConfigDumpInfoFromCommit -Commit $Head -RepoPaths @("$ExportPath/ConfigDumpInfo.xml")
@@ -11264,7 +11561,7 @@ function Copy-BranchSourceSyncResult {
 }
 
 function Invoke-BranchSourceSyncLoad {
-    param([object]$State, [string]$ExportPath, [string]$OtherBranch)
+    param([object]$State, [string]$ExportPath, [string]$OtherBranch, [string]$GroupId = '')
 
     $stateName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
     Sync-DevBranchContextToDotEnv -State $State
@@ -11290,6 +11587,11 @@ function Invoke-BranchSourceSyncLoad {
     }
     $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
     $updates["lastBranchSourceSyncPeer"] = $OtherBranch
+    if ($GroupId) {
+        $updates['lastBranchSourceSyncGroupId'] = $GroupId
+        $updates['lastBranchSourceSyncGroupFingerprint'] = $loadResult.sourceFingerprint
+        $updates['lastBranchSourceSyncGroupCommit'] = Get-CurrentCommit
+    }
     Add-VerificationStaleIfNeeded -State $State -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
     Update-DevBranchState -State $State -Updates $updates
     return $loadResult
@@ -11345,7 +11647,204 @@ function Assert-ItlBranchSourceSyncDatabaseAdmission {
     Assert-ItlDevBranchMutationDatabaseAdmission -Admission $variable.Value -State $State
 }
 
+function Assert-BranchSourceSyncGroupResolution {
+    param([object]$Plan)
+    if ((Get-CurrentCommit) -cne $Plan.members[0].head) { throw 'DEV_BRANCH_SOURCE_SYNC_PRIMARY_MOVED' }
+    Assert-BranchSourceSyncChangesScoped -ExportPath $Plan.exportPath | Out-Null
+    $unstaged = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', '--'))
+    $untracked = @(Get-GitPathList -Arguments @('ls-files', '-z', '--others', '--exclude-standard', '--'))
+    if ($unstaged.Count -gt 0 -or $untracked.Count -gt 0) { throw 'DEV_BRANCH_SOURCE_SYNC_RESOLUTION_NOT_STAGED: resolve source files, run git add and repeat the same group request.' }
+    foreach ($path in @($(if ($null -ne $Plan.conflict) { $Plan.conflict.paths } else { @() }))) {
+        $absolute = Assert-BranchSourceSyncFilePath -RepoPath $path
+        if ((Test-Path -LiteralPath $absolute -PathType Leaf) -and (Read-Utf8Text -Path $absolute) -match '(?m)^(<<<<<<< |>>>>>>> )') {
+            throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT_MARKERS: $path"
+        }
+    }
+    Restore-BranchSourceSyncCursor -Head $Plan.members[0].head -ExportPath $Plan.exportPath
+    Assert-OneCConfigurationSourceIntegrity -ExportPath $Plan.exportPath
+}
+
+function Show-BranchSourceSyncGroupConflict {
+    param([object]$Plan)
+    Invoke-BranchSourceSyncGroupInstall -Plan $Plan -MemberIndex 0 -PreviousSource $Plan.members[0].head -DesiredCommit $Plan.conflict.candidate
+    Invoke-Git (@('--literal-pathspecs', 'reset', '--quiet', 'HEAD', '--') + @($Plan.conflict.paths))
+    $Plan.phase = 'conflicts'
+    Save-BranchSourceSyncGroupPlan -Plan $Plan
+    Set-RunFailureContext -Category merge-conflict -RequiredAction 'Resolve only the recorded 1C source conflicts, run git add, and repeat the same sync-dev-branches group request. Do not create a commit or edit the saved plan manually.'
+    throw "DEV_BRANCH_SOURCE_SYNC_CONFLICT: $($Plan.conflict.paths -join ', ')"
+}
+
+function Write-BranchSourceSyncGroupReport {
+    param([object]$Plan)
+    $lines = [Collections.Generic.List[string]]::new()
+    $lines.Add('## Групповая синхронизация исходников')
+    Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $(if ($Plan.phase -eq 'complete' -and -not $Plan.error) { 'успешно' } else { 'не завершено' })
+    Add-RunUserReportLine -Lines $lines -Label 'План' -Value (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id)
+    Add-RunUserReportLine -Lines $lines -Label 'Этап' -Value $Plan.phase
+    Add-RunUserReportLine -Lines $lines -Label 'Получатели общего результата' -Value ($Plan.recipients -join ', ')
+    if ($Plan.fingerprint) { Add-RunUserReportLine -Lines $lines -Label 'Fingerprint результата' -Value $Plan.fingerprint }
+    foreach ($member in $Plan.members) {
+        $delivery = if ($member.recipient) { "исходники: $($member.sourceStatus); база: $($member.loadStatus); итоговый коммит: $($member.resultCommit)" } else { 'только источник; общий результат в эту ветку не доставлялся' }
+        Add-RunUserReportLine -Lines $lines -Label $member.branch -Value "источник @ $($member.head); $delivery"
+    }
+    if ($Plan.error) { Add-RunUserReportLine -Lines $lines -Label 'Причина остановки' -Value $Plan.error }
+    Add-RunUserReportLine -Lines $lines -Label 'Область переноса' -Value "$($Plan.exportPath); каждый получатель сохраняет свой ConfigDumpInfo.xml"
+    Write-AndSetRunUserReport -Lines $lines
+}
+
+function Sync-DevBranchSourceGroup {
+    $primaryState = Read-DevBranchState -Name $DevBranchName
+    Assert-DevelopmentBranchWorktreeContext -State $primaryState -Operation sync-dev-branches
+    $scope = Get-BranchSourceSyncScope -State $primaryState
+    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $admissionVariable -or $null -eq $admissionVariable.Value -or $admissionVariable.Value.operation -cne 'sync-dev-branches') {
+        throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED'
+    }
+    $admission = $admissionVariable.Value
+    if (-not $scope.group -or $scope.requestHash -cne $admission.plan.syncScope.requestHash -or
+        ($scope.names -join [char]0) -cne ($admission.plan.syncScope.names -join [char]0)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs while waiting.'
+    }
+    foreach ($state in $scope.states) {
+        Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
+            Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
+            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $primaryState.worktreePath
+            if ($null -ne (Get-PendingBranchSourceSync -State $state)) { throw 'DEV_BRANCH_SOURCE_SYNC_PAIR_PENDING: complete the saved pair synchronization first.' }
+        }
+    }
+    $plan = Read-BranchSourceSyncGroupPlan -State $primaryState -Scope $scope
+    if ($null -eq $plan) { $plan = New-BranchSourceSyncGroupPlan -Scope $scope -Admission $admission }
+    try {
+        $plan.error = ''
+        if ($null -ne $plan.pending) {
+            $pending = $plan.pending
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex $pending.member -PreviousSource $pending.previous -DesiredCommit $pending.desired -CommitHead:([bool]$pending.commitHead)
+        }
+        if ($plan.phase -eq 'conflict-materializing') { Show-BranchSourceSyncGroupConflict -Plan $plan }
+        if ($plan.phase -eq 'conflicts') {
+            Assert-BranchSourceSyncGroupResolution -Plan $plan
+            $resolvedTree = ([string](Get-GitOutput @('write-tree'))).Trim()
+            $plan.aggregate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $resolvedTree -ExportPath $plan.exportPath `
+                -MergeParent $plan.members[$plan.conflict.peer].head -Message "sync: resolved source group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/resolved-$($plan.nextPeer)", $plan.aggregate)
+            $plan.nextPeer++
+            $plan.phase = 'restoring-primary'
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'restoring-primary') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.aggregate -DesiredCommit $plan.members[0].head
+            $plan.conflict = $null; $plan.phase = 'aggregating'
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        while ($plan.phase -eq 'aggregating' -and $plan.nextPeer -lt @($plan.members).Count) {
+            $peer = $plan.members[$plan.nextPeer]
+            $merge = Invoke-BranchSourceMergeTree -PrimaryHead $plan.aggregate -PeerHead $peer.head
+            $candidate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $merge.tree -ExportPath $plan.exportPath `
+                -MergeParent $peer.head -Message "sync: aggregate $($peer.branch) for group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/aggregate-$($plan.nextPeer)", $candidate)
+            $conflicts = @($merge.conflictPaths | Where-Object { (Test-RepoPathUnderRoot -RepoPath $_ -Root $plan.exportPath) -and $_ -cne "$($plan.exportPath)/ConfigDumpInfo.xml" })
+            if ($conflicts.Count -gt 0) {
+                $plan.conflict = [pscustomobject]@{peer=$plan.nextPeer;candidate=$candidate;paths=$conflicts}
+                $plan.phase = 'conflict-materializing'; Save-BranchSourceSyncGroupPlan -Plan $plan
+                Show-BranchSourceSyncGroupConflict -Plan $plan
+            }
+            $plan.aggregate = $candidate; $plan.nextPeer++
+            Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'aggregating') {
+            $plan.validationSource = New-BranchSourceSyncCommit -BaseCommit $plan.members[0].head -SourceTreeish $plan.aggregate -ExportPath $plan.exportPath -Message "sync: validate source group $($plan.id)"
+            $plan.phase = 'validating'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'validating') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.members[0].head -DesiredCommit $plan.validationSource
+            $plan.phase = 'review'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'review') {
+            Assert-BranchSourceSyncGroupResolution -Plan $plan
+            $resolvedTree = ([string](Get-GitOutput @('write-tree'))).Trim()
+            $plan.aggregate = New-BranchSourceSyncCommit -BaseCommit $plan.aggregate -SourceTreeish $resolvedTree -ExportPath $plan.exportPath -Message "sync: validated source group $($plan.id)"
+            Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/validated", $plan.aggregate)
+            $plan.fingerprint = [string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint
+            $plan.phase = 'restoring-validation'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'restoring-validation') {
+            Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex 0 -PreviousSource $plan.aggregate -DesiredCommit $plan.members[0].head
+            $plan.phase = 'planning-recipients'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'planning-recipients') {
+            foreach ($member in $plan.members) {
+                if (-not $member.recipient) { $member.sourceStatus = 'source-only'; $member.loadStatus = 'not-requested'; continue }
+                $member.resultCommit = New-BranchSourceSyncCommit -BaseCommit $member.head -SourceTreeish $plan.aggregate -ExportPath $plan.exportPath -Message "sync: receive source group $($plan.id)"
+                Invoke-Git @('update-ref', "refs/itl/source-sync/$($plan.id)/recipient-$([array]::IndexOf($plan.members, $member))", $member.resultCommit)
+            }
+            $plan.phase = 'applying'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'applying') {
+            for ($index = 0; $index -lt @($plan.members).Count; $index++) {
+                $member = $plan.members[$index]
+                if (-not $member.recipient -or $member.sourceStatus -eq 'committed') { continue }
+                Invoke-BranchSourceSyncGroupInstall -Plan $plan -MemberIndex $index -PreviousSource $member.head -DesiredCommit $member.resultCommit -CommitHead
+            }
+            $plan.phase = 'loading'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -eq 'loading') {
+            foreach ($member in @($plan.members | Where-Object { $_.recipient })) {
+                $observation = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                    $state = Read-DevBranchState -Name $member.name
+                    Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
+                    Assert-CleanGit
+                    [pscustomobject]@{state=$state;head=(Get-CurrentCommit);fingerprint=[string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint}
+                }
+                $expectedHead = if ($member.loadStatus -eq 'loaded') { $member.loadedHead } else { $member.resultCommit }
+                if ($observation.fingerprint -cne $plan.fingerprint -or ($member.loadStatus -ne 'loading' -and $observation.head -cne $expectedHead)) {
+                    throw "DEV_BRANCH_SOURCE_SYNC_RECIPIENT_CHANGED: $($member.branch)"
+                }
+                if ($member.loadStatus -eq 'loaded') { continue }
+                if ($member.loadStatus -eq 'loading') {
+                    if ((Get-StateValue $observation.state 'lastBranchSourceSyncGroupId' '') -cne $plan.id -or
+                        (Get-StateValue $observation.state 'lastBranchSourceSyncGroupFingerprint' '') -cne $plan.fingerprint -or
+                        (Get-StateValue $observation.state 'lastBranchSourceSyncGroupCommit' '') -cne $observation.head) {
+                        throw "DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED: $($member.branch); inspect the native operation through the supported database recovery helper before continuing. Completed recipients will not be replayed."
+                    }
+                } else {
+                    $member.loadStatus = 'loading'; Save-BranchSourceSyncGroupPlan -Plan $plan
+                    $member.loadedHead = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $member.name) -ExportPath $plan.exportPath -OtherBranch ($plan.names -join ', ') -GroupId $plan.id | Out-Null
+                        Get-CurrentCommit
+                    }
+                }
+                if (-not $member.loadedHead) { $member.loadedHead = $observation.head }
+                $member.loadStatus = 'loaded'; Save-BranchSourceSyncGroupPlan -Plan $plan
+            }
+            $plan.phase = 'complete'; Save-BranchSourceSyncGroupPlan -Plan $plan
+        }
+        if ($plan.phase -ne 'complete') { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_PHASE_INVALID' }
+        foreach ($member in @($plan.members | Where-Object { $_.recipient })) {
+            Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
+                Assert-CleanGit
+                $state = Read-DevBranchState -Name $member.name
+                Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
+                if ($member.loadStatus -ne 'loaded' -or (Get-CurrentCommit) -cne $member.loadedHead -or
+                    [string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint -cne $plan.fingerprint -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupId' '') -cne $plan.id -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupCommit' '') -cne $member.loadedHead -or
+                    (Get-StateValue $state 'lastBranchSourceSyncGroupFingerprint' '') -cne $plan.fingerprint) {
+                    throw "DEV_BRANCH_SOURCE_SYNC_COMPLETION_CHANGED: $($member.branch)"
+                }
+            }
+        }
+        Update-DevBranchState -State (Read-DevBranchState -Name $plan.members[0].name) -Updates @{pendingBranchSourceGroupId=''}
+        Set-RunStage -Stage 'sync-dev-branches.complete' -Detail 'The common source result reached every explicitly selected recipient.'
+    } catch {
+        $plan.error = $_.Exception.Message
+        Save-BranchSourceSyncGroupPlan -Plan $plan
+        throw
+    } finally { Write-BranchSourceSyncGroupReport -Plan $plan }
+}
+
 function Sync-DevBranches {
+    $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
+    if ($null -ne $requestVariable -and $requestVariable.Value) { Sync-DevBranchSourceGroup; return }
     $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
     if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
         $peerName = $peerName.Substring("itldev/".Length)

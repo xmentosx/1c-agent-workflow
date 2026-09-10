@@ -7,6 +7,7 @@ param(
     [string]$ConfigPath,
     [string]$DevBranchName,
     [string]$PeerDevBranchName,
+    [string]$BranchSyncRequestPath,
     [string]$DevBranch,
     [string]$DevBranchInfoBasePath,
     [string]$DevBranchWorktreePath,
@@ -240,6 +241,7 @@ function Get-Agent1cReexecArguments {
     Add-Agent1cReexecArgument -Arguments $arguments -Name "ConfigPath" -Value (Resolve-Agent1cFullPath -Path $ConfigPath)
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchName" -Value $DevBranchName
     Add-Agent1cReexecArgument -Arguments $arguments -Name "PeerDevBranchName" -Value $PeerDevBranchName
+    Add-Agent1cReexecArgument -Arguments $arguments -Name "BranchSyncRequestPath" -Value $BranchSyncRequestPath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranch" -Value $DevBranch
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchInfoBasePath" -Value $DevBranchInfoBasePath
     Add-Agent1cReexecArgument -Arguments $arguments -Name "DevBranchWorktreePath" -Value $DevBranchWorktreePath
