@@ -14,6 +14,7 @@
                 [switch]$FailDump,
                 [switch]$FailValidate,
                 [switch]$FailRollback,
+                [switch]$FailCompletionAck,
                 [switch]$ExistingExtension,
                 [switch]$PrepopulateTarget
             )
@@ -67,6 +68,12 @@
                     function Stop-RoctupMcpForState { return $false }
                     function Stop-VanessaMcpForState { return $false }
                     function Restore-ExtensionInitMcpRuntime {}
+                    if ($FailCompletionAck) {
+                        function Complete-OneCDatabaseRestorationDuty {
+                            param($Duty,$Resolution)
+                            if ($Resolution -eq 'committed') { throw 'mock completion acknowledgement lost' }
+                        }
+                    }
                     function Invoke-ExtensionLifecycleTool {
                         param([string]$ScriptPath, [string[]]$Arguments)
                         $script:extensionLifecycleToolCalls += $ScriptPath
@@ -157,6 +164,17 @@
         $result.snapshotFiles | Should -BeNullOrEmpty
         ($result.toolCalls -join "`n") | Should -Match ([regex]::Escape(".kilo\skills\1c-metadata-manage\tools\1c-cfe-manage\scripts"))
         ($result.calls | ForEach-Object { $_ -join " " }) -join "`n" | Should -Match "/LoadConfigFromFiles.*-Extension ShipModel.*-Format Hierarchical.*\/UpdateDBCfg"
+    }
+
+    It 'preserves successful sources and the snapshot without replaying rollback after a lost completion acknowledgement' {
+        $result = Invoke-MockedExtensionInitialization -Mode Empty -FailCompletionAck
+        $result.error | Should -Match 'EXTENSION_INIT_COMPLETION_UNCONFIRMED'
+        $result.error | Should -Match 'mock completion acknowledgement lost'
+        $result.rollbackCalled | Should -BeFalse
+        $result.targetExists | Should -BeTrue
+        $result.updates.extensionInitializationStatus | Should -Be ready
+        $result.snapshotFiles.Count | Should -Be 1
+        @($result.calls | Where-Object { $_[0] -eq '/RestoreIB' }) | Should -HaveCount 0
     }
 
     It "loads CFE directly with -Extension and never unpacks it" {

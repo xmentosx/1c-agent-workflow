@@ -32,7 +32,7 @@
     }
 
     It 'reserves target, old and planned managers and all profile databases through <operation> completion' -TestCases @(
-        @{operation='check-dev-branch'}, @{operation='verify-dev-branch'}
+        @{operation='check-dev-branch'}, @{operation='verify-dev-branch'}, @{operation='release-e2e-extension-smoke'}
     ) {
         param($operation)
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation
@@ -55,11 +55,14 @@
         Complete-ItlDatabaseAccessHost $next | Out-Null
     }
 
-    It 'repairs tooling without reading test profiles and retains primary plus both service generations' {
+    It 'reserves primary and both service generations for <operation> without reading test profiles' -TestCases @(
+        @{operation='repair-dev-branch-tooling'}, @{operation='init-dev-branch-extension'}
+    ) {
+        param($operation)
         Mock Read-VanessaTestClientManifest { throw 'invalid test manifest must not block tooling repair' }
         Mock Assert-VanessaVerificationPreflight { throw 'tooling repair does not run test classification' }
-        $preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation repair-dev-branch-tooling -CheckSourcePreflight
-        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling -Preparation $preparation
+        $preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $operation -CheckSourcePreflight
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation -Preparation $preparation
         $admission = $script:DevBranchMutationDatabaseAdmission
         $admission.plan.bases | Should -HaveCount 3
         $admission.plan.bases.path | Should -Contain $checkState.devBranchInfoBasePath

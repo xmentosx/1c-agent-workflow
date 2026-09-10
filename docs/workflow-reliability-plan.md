@@ -1907,7 +1907,9 @@ test classification: those prerequisites belong to checks. Exact routing-set
 tests include the twelfth admitted operation. The 76 focused tests pass,
 including coordinator competition for each reserved database, repair success
 and extension failure without an early recovery receipt, and existing readiness
-contracts. Registration, real installed repair and server acceptance remain open.
+contracts. Registration at `a40633dab47cd5ef25ac0d5074d5b34b28e3de07`
+passes 695 Targeted tests with no failures/skips. Real installed repair and
+server acceptance remain open.
 
 The general script-owned recovery adapter and its per-operation restoration
 contracts remain open. The helper-generation layer now retains immutable copies
@@ -1936,12 +1938,207 @@ availability, not successful crash recovery or configuration rollback. The
 operation-specific recovery adapter, pinned restoration implementation and
 generation-retention cleanup remain required. Archives must not be pruned while
 an unresolved journal can still require them.
+
+Helper-generation retention is registered at
+`002d08cae444d829c26c314c0a0fc61e65876f12`: Targeted passed 696 tests with no
+failures or skips. The canonical source worktree has advanced to this commit.
+
+The ongoing recovery block now records source-cursor restoration duties through
+the existing admitted owner's private pipe, before a configuration load starts.
+The authority indexes immutable duty records and retains the original
+ConfigDumpInfo bytes and hash outside OS temporary storage. A source snapshot
+can require unconditional restoration (check/export) or rollback only on failure
+(an ordinary load); a successful load explicitly commits the latter duty. An
+intermediate restore before full fallback or verification does not close the
+outer snapshot scope. Nested snapshot duties remain independent. Missing intent
+ACK prevents native work; a lost completion ACK after a successful partial load
+does not replay the load as a full fallback. A pending duty prevents normal
+database release even when no native process remains.
+
+The same block now tracks DT rollback duties for extension initialization and
+extension smoke. It pins the existing project-owned DT path and SHA256 without
+another database-sized copy. A restore must match the original target and DT;
+the caller keeps a read lease on the DT through native completion. The native
+restore record is correlated to the duty, and a nonzero exit or surviving child
+cannot provide successful restore evidence. Intermediate restores keep the duty
+pending until the outer caller finishes. Successful initialization commits only
+its conditional duty; a lost completion ACK retains its successful sources and
+snapshot instead of replaying rollback. Failed source/runtime cleanup retains
+the pending duty. Public initialization and extension smoke now join the same
+pre-lifecycle admission route (14 operations), including the planned service
+generation; smoke also reserves profile databases.
+
+Restoration intent retains the helper generation even before any native
+operation exists. Recovery inspection resolves those archived bytes, rejects a
+changed archive and never falls back to a current installed helper. Native and
+restoration collections cannot claim another participant's journal.
+
+Earlier focused source checks passed 17 PowerShell file/DT cases, 63 initialization and
+admission cases, 15 Python restoration cases, and 16 existing native journal and
+helper-generation cases. The PowerShell evidence is retained in
+`build/diagnostics/restoration-journal/snapshots-result.json` and
+`integrated-result.json` in the restoration-journal worktree. These fixtures use
+the real private coordinator and stub native execution; they do not prove an
+actual 1C database restore. No user database or conf.cfg was changed. The
+protocol still requires a separate operation restoration contract: snapshot
+duties are not proof of complete lifecycle-state recovery. The normal restart
+adapter, lifecycle-state reconciliation and live server/two-host acceptance
+remain part of the same unfinished recovery block.
+
+Real file-database DT acceptance now passes in `C:/va канал/dt-308e6342`
+on 1C 8.3.27.2130. The guarded fixture creates its own empty database, dumps a
+DT, changes the actual configuration name from `Конфигурация` to
+`ИТЛИзмененнаяКонфигурация`, confirms that change with a fresh native dump,
+then restores the DT through the normal snapshot wrapper. A subsequent native
+dump confirms the original name. The competing owner is refused while the duty
+is pending and admitted after completion. All eight native journal records
+confirm release, ticket `72ad06a9bc6a44988ff419187c0d54da` is released, and
+the conf.cfg SHA256 is unchanged. `result.json` retains the correlated restore
+record and observations; the reproducible harness is
+`build/diagnostics/restoration-journal/run-native-dt.ps1` in the working checkout.
+This proves an actual local configuration rollback, not business-data, server,
+installed-entrypoint or crash-restart acceptance.
+
+The new `itl_remote.native_recovery` entrypoint reconciles interrupted
+preparation before any native start. A fresh process claims the original ticket
+through exclusive Recovery, verifies that every original producer has exited
+on this host, resolves retained helper generations, validates every cursor
+snapshot, restores the oldest pending scope per destination and only then
+releases admission. Original native/duty records remain immutable and the
+business outcome remains interrupted. Unknown operations, live producers,
+corrupt/ambiguous snapshots, database rollback duties and any started native
+record require their corresponding adapter; saved quiescence never bypasses
+that boundary. Seven fresh-process/negative cases pass, plus a separate exact
+operation-set comparison with the public 14-operation admission route. This is
+the first restart phase; recovery after native work, lifecycle-state
+reconciliation and installed routing are still unfinished within item 4.
+
+Native launch ownership is now persisted before process creation as an exact
+mode, target, `/Out` path and UTC lower bound on process creation time. The
+ordinary, visible and background launch helpers share this capture. The matcher
+rejects another target/output/mode or an older process with a reused PID; missing
+creation-time evidence cannot become an empty owned-process inventory. No
+credentials or full command lines enter these records. Twenty-nine directly
+owned PowerShell checks pass, including retained-journal serialization and the
+existing orphaned Vanessa client cases.
+
+Started-operation recovery now runs a fresh PowerShell inspector from each
+producer's retained helper generation. Under exclusive Recovery it takes two
+live local inventories and checks exclusive access to every file database.
+Observation files have unique correlation IDs and hashes and remain separate
+from the original failed journal. Repository capture has its own reconciliation
+rule: retain all object claims and the interrupted report, and release only the
+database admission after both observations confirm no sessions and an accessible
+database file. An independently open file handle prevents release. Other started
+operations still require their database/state restoration adapter; server
+inspection is explicitly unfinished. The ten restart cases pass; the repository
+cases use a file-access sentinel, not a real configuration repository.
+
+The original restart test exposed Windows PowerShell inheriting PowerShell 7's
+module path through OwnedProcess, making Get-FileHash unavailable. The shared
+launcher now selects the existing Windows PowerShell environment preparation,
+as the synchronous capture helper already does. The unchanged failing restart
+path passes after this implementation fix. Both the environment contract and a
+real owned Windows PowerShell process with a deliberately incompatible inherited
+module path pass their focused regressions.
+
+The actual DT roundtrip also passes with the new native scopes in
+`C:/va канал/dt-ad865ffe`. All seven process launches have their captured scope;
+the eighth record is the no-launch runtime drain. All eight are released, ticket
+`a302d5322ab148e792345323f54cf79a` is released, the configuration name is restored,
+and conf.cfg is unchanged. This is still local technical-base evidence; full
+DT/state restart reconciliation and installed/server acceptance remain open.
+
+The DT restart consumer now captures and validates a pinned lifecycle manifest
+beside the original snapshot: branch state, original environment, project
+configuration, the exact platform executable and the initially empty/absent
+`src/cfe/<extension>` directory. The coordinator stores paths/hashes rather than
+credentials. Changed snapshots, sidecars, checkout identity or redirected paths
+are rejected before native rollback. Sidecars use exclusive creation and remain
+with a pending snapshot; completed normal cleanup removes them.
+
+`native_database_restore.restore` runs the archived native helper through a new
+private inherited recovery participant, preserving the outer database admission.
+Its inheritance proof travels through stdin, never a saved context or command
+line. Original producer records remain immutable. The new completed restoration
+duty, native operation and before/after live observations form separate evidence.
+The exact archived module set now includes the session registry implementation
+(`ports`); the shared target comparison lives in `runtime-values`. Fresh-process
+acceptance exposed these previously implicit dependencies. A dependency-closure
+regression covers them, while old four-module archives remain readable for
+inspection and cannot masquerade as a qualified native rollback generation.
+
+Preliminary DT-only restart evidence is retained at `C:/va канал/dt-restart-40791dcb`:
+the producer changed Configuration Name from `Конфигурация` to
+`ИТЛИзмененнаяКонфигурация`, then exited before rollback. A new process restored
+the original DT, and an independent guarded dump confirmed `Конфигурация` again
+(`restart-restore.json`, `restart-configuration-proof.json`). The competing
+caller waited before interruption. The outer ticket deliberately remains pending
+full lifecycle reconciliation; database restoration alone does not release it.
+Subsequent complete recovery is verified at `C:/va канал/dt-restart-994fb595`
+(ticket `d2b013f2aca244e08e44f84d858b6de3`) and, with the actual initialization
+resource plan, at `C:/va канал/dt-restart-03f2dc43`
+(ticket `401781b02028497eaa5e37cf5733f321`). In both runs the producer changed the
+configuration and exited before rollback. A separate process restored the DT,
+original environment and branch state, invalidated old verification/tooling
+receipts, and preserved interrupted source bytes in a local quarantine. An
+independent guarded dump confirmed the original configuration name. The outer
+tickets were released only after full reconciliation; a subsequent competing
+caller was admitted. Each `restart-full-proof.json` records unchanged conf.cfg.
+
+The second run reserves both the main database and its planned service generation.
+An unused service path is accepted only when its original absence was captured
+before mutation and both live observations still find the entire path absent.
+A missing or damaged existing database is not treated as an unused resource.
+Another mutated business database requires its own restoration snapshot. Recovery
+also refuses a changed checkout branch or source subsequently staged/committed
+in Git. Original journal records remain immutable; completion evidence is separate.
+Snapshots, sidecars and interrupted source quarantine remain available for review.
+
+The public `access-recover-workflow` command now invokes this consumer through
+`Invoke-RemoteWork.ps1` and its managed Python runtime. Focused context checks pass
+18 PowerShell snapshot cases; retained generation and persistence groups pass
+8 each. Python restoration/lifecycle/restart checks pass 36 cases, followed by
+three focused Git/public-command checks and one additional-database regression.
+The private PowerShell input boundary passes with an incompatible inherited
+PowerShell 7 module path. Native evidence is from local technical file databases;
+it does not substitute for installed, server or two-host acceptance.
+
+The complementary interruption boundary is qualified at
+`C:/va канал/dt-restart-7b244330`, ticket `987f892b62644c0e898a46763b4dc1f9`.
+Here the producer acknowledged a successful initialization commit and removed
+its completed snapshot, then exited before admission release. Recovery preserves
+the committed result: an independent native dump still finds
+`ИТЛИзмененнаяКонфигурация`, and source/state/environment hashes are unchanged.
+Both reserved resources admit a subsequent caller; conf.cfg is unchanged.
+`completion-recovery-proof.json` records this separately from rollback evidence.
+The adapter requires an indexed commit, completed native work before that commit
+and fresh live observations. Six focused cases cover removed snapshots, pending
+cursor duties, later native work, another business database, a damaged service
+base and an independent open database handle. This does not qualify completed
+rollback or smoke finalization, or turn an interrupted command into fresh passed.
+
+The first registration attempt stopped on two documentation checks: expanded
+root guidance exceeded its existing word budget and changed a protected literal.
+Detailed batching rules now live in `docs/local-quality-gate.md`; AGENTS routes
+to them. The original hard limits and behavioral requirements are preserved.
+All 35 directly owned parser/documentation checks pass after this correction.
+The next registration reached the file-duty tests and exposed their remaining
+four-helper expectation. Native restart had already demonstrated why `ports`
+is required. That test now verifies the exact five filenames and their hashes;
+all 11 file-duty cases pass. No runtime behavior or release assertion was weakened.
+
+Verification batching: retain this connected recovery block in one working
+change, run directly affected behavior/reproducer checks during implementation,
+and register only when the block is coherent. Do not start another Targeted run
+for each intermediate journal or helper change.
 Abrupt interruption during launch, installed command
 acceptance and the remaining facade admission paths still require work.
 
-This evidence does not close item 4: durable recovery after supervisor restart,
-the remaining entrypoints, installed acceptance and two-host competition remain
-open. Live foreign-session evidence above covers the auxiliary drain on a local
+This evidence does not close item 4: the remaining operation/phase adapters,
+including later completion phases without a pending snapshot, server recovery,
+installed entrypoints and two-host competition remain open. Live foreign-session
+evidence above covers the auxiliary drain on a local
 technical file database; it does not establish server or two-host acceptance.
 No `conf.cfg` changes are part of this correction.
 

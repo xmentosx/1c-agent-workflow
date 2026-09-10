@@ -43,7 +43,7 @@
         $observedBeforeLaunch.processId | Should -Be 0
         $observedBeforeLaunch.resources[0].path | Should -Be $journalBase
         $observedBeforeLaunch.ownedProcessScopes[0].testPorts | Should -Be @(53941,53942)
-        $observedBeforeLaunch.helperInputs | Should -HaveCount 4
+        $observedBeforeLaunch.helperInputs | Should -HaveCount 5
         foreach ($helper in $observedBeforeLaunch.helperInputs) {
             $helper.path | Should -Match 'native-helper-generations[\\/][a-f0-9]{64}[\\/]agent-1c\.'
             Test-Path -LiteralPath $helper.path -PathType Leaf | Should -BeTrue
@@ -130,7 +130,7 @@ print(json.dumps({'helperGeneration': next(iter(bundle['helperGenerations'].valu
             $process.ExitCode | Should -Be 0 -Because $stderr
             $observed = $stdout | ConvertFrom-Json
             $observed.helperGeneration.generation | Should -Match '^[a-f0-9]{64}$'
-            $observed.helperGeneration.files | Should -HaveCount 4
+            $observed.helperGeneration.files | Should -HaveCount 5
             $observed.requiresLiveVerification | Should -BeTrue
         } finally { $process.Dispose() }
     }
@@ -147,6 +147,28 @@ print(json.dumps({'helperGeneration': next(iter(bundle['helperGenerations'].valu
         $saved.processId | Should -Be 5321
         $saved.ticket | Should -Be $journalOwner.proof.ticket
         $saved.resources[0].path | Should -Be $journalBase
+    }
+
+    It 'captures native output ownership before launch without persisting credentials' {
+        $script:beforeNativeLaunch = $null
+        Mock Start-Process {
+            $record = $script:OneCSessionLaunchContext.nativeOperationRecord
+            $script:beforeNativeLaunch = Get-Content -LiteralPath $record.persistedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            [pscustomobject]@{Id=4319}
+        }
+        $log = Join-Path $journalRoot 'Точный журнал запуска.log'
+        Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -Purpose designer -ScriptBlock {
+            Start-NativeProcessBackground -FilePath '1cv8.exe' -Arguments @('DESIGNER','/F',$journalBase,'/Out',$log,'/P','native-password-secret')
+        } | Out-Null
+        $beforeNativeLaunch.startAttempted | Should -BeTrue
+        $beforeNativeLaunch.ownedProcessScopes | Should -HaveCount 1
+        $scope = $beforeNativeLaunch.ownedProcessScopes[0]
+        $scope.role | Should -Be 'native-invocation'
+        $scope.mode | Should -Be DESIGNER
+        $scope.logPath | Should -Be $log
+        $scope.path | Should -Be $journalBase
+        $scope.notBeforeUtc | Should -Not -BeNullOrEmpty
+        $beforeNativeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match 'native-password-secret|CommandLine'
     }
 
     It 'keeps inherited journals separate and records withdrawn release observations atomically' {

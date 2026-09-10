@@ -42,7 +42,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 ## Verification
 
 - Read-only source maintenance does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`; use focused non-mutating evidence only.
-- During edits run only the directly owned tests. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
+- Batch directly owned tests following `docs/local-quality-gate.md`; avoid unchanged reruns. Do not run a broad gate merely because a chat is ending. `Fast` is a deprecated alias for `Smoke` and is never the normal source-development step.
 - Publish accumulated `develop` with `scripts/source-delivery.ps1 -Action PublishDevelop` and the exact fork/E2E stand. It integrates the queue, qualifies and finalizes an installable candidate; add `-RequireRelease` when master must remain unchanged. "Publish" never implies master; see `docs/local-quality-gate.md`.
 - Passed `Develop` already contains exact-tree Full/static proof. Never run separate `Full` for that tree.
 - Reuse a passed Targeted/Full Pester shard only when owner inputs, inventory, locks, checker/runtime versions, controlled-fork identity, and Vanessa build identity match; unknown ownership disables reuse.

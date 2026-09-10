@@ -21,9 +21,10 @@ def main():
     command.add_argument("--bindings", required=True, help="JSON array of explicit database connections sharing this resource")
     command = commands.add_parser("access-status")
     command.add_argument("--coordinator", required=True)
-    command = commands.add_parser("access-recovery-plan")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--ticket", required=True)
+    for name in ("access-recovery-plan", "access-recover-workflow"):
+        command = commands.add_parser(name)
+        command.add_argument("--coordinator", required=True)
+        command.add_argument("--ticket", required=True)
     for name in ("recovery-plan", "recover", "recovery-cancel"):
         command = commands.add_parser(name)
         command.add_argument("--spool", required=True)
@@ -109,6 +110,9 @@ def main():
     if args.command == "access-recovery-plan":
         from itl_remote.access_recovery import plan
         return plan(args.coordinator, args.ticket)
+    if args.command == "access-recover-workflow":
+        from itl_remote.native_recovery import recover_workflow_operation
+        return recover_workflow_operation(args.coordinator, args.ticket)
     if args.command in ("access-register", "access-status"):
         from itl_remote.access import Coordinator
         coordinator = Coordinator(args.coordinator)

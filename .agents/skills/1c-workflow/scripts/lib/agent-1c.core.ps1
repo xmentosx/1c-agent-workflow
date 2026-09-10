@@ -6498,6 +6498,7 @@ function Invoke-NativeProcessAndWaitResult {
     )
 
     $script:LastNativeProcessStarted = $false
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
     $argumentLine = if ($OneCCreateInfoBaseSyntax) {
         Join-OneCCreateInfoBaseCommandLineArguments -Arguments $Arguments
     } else {
@@ -6816,6 +6817,7 @@ function Invoke-VisibleNativeProcessAndWait {
         [string[]]$Arguments
     )
 
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         Start-Process `
@@ -6852,6 +6854,7 @@ function Start-NativeProcessBackground {
         [switch]$Visible
     )
 
+    Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
     $argumentLine = Join-NativeCommandLineArguments -Arguments $Arguments
     $startParameters = @{
         FilePath = $FilePath
@@ -6879,9 +6882,13 @@ function Invoke-Designer {
         [string]$InfoBaseKind,
         [string[]]$DesignerArgs,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
-        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD")
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [object]$RestorationDuty = $null
     )
 
+    if ($null -ne $RestorationDuty) {
+        Assert-OneCDatabaseRestoreRequest -Duty $RestorationDuty -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -DesignerArgs $DesignerArgs
+    }
     $platformPath = Get-PlatformPath
     if (-not (Test-Path -LiteralPath $platformPath)) {
         throw "1cv8.exe was not found: $platformPath"
@@ -7123,7 +7130,7 @@ function Invoke-Designer {
             -InfoBaseKind $InfoBaseKind `
             -InfoBasePath $InfoBasePath `
             -RequiredSessions 1 `
-            -Purpose "designer-$operationKind" `
+            -Purpose $(if ($null -ne $RestorationDuty) { 'designer-restore-snapshot-' + $RestorationDuty.payload.id } else { "designer-$operationKind" }) `
             -ScriptBlock {
                 $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
                 Invoke-NativeProcessAndWaitResult `
@@ -7224,6 +7231,7 @@ function Invoke-Designer {
         }
     }
 
+    if ($null -ne $RestorationDuty) { Set-OneCDatabaseRestoreEvidence -Duty $RestorationDuty -NativeRecord $nativeOperationEvidence.record }
     return $logPath
 }
 

@@ -61,7 +61,7 @@ def serve(input_stream, output_stream):
                             raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
                         messages.put(value)
                         continue
-                    if set(value) == {"event", "record"} and value["event"] == "native-operation":
+                    if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty"):
                         if not admitted.is_set():
                             raise WorkError("NATIVE_JOURNAL_BEFORE_ADMISSION")
                         messages.put(value)
@@ -106,6 +106,10 @@ def serve(input_stream, output_stream):
                 continue
             if value["event"] == "native-operation":
                 emit(native_journal.publish(lease, producer_id, value["record"]))
+                continue
+            if value["event"] == "restoration-duty":
+                from . import restoration_journal
+                emit(restoration_journal.publish(lease, producer_id, value["record"]))
                 continue
             status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,

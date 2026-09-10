@@ -107,13 +107,36 @@ infer database quiescence from a dead Python process. There is deliberately no
 CLI accepting `passed: true`, a force-unlock flag, or arbitrary cleanup command.
 The generic ticket command provides inspection only. Jobs with an original
 pinned recovery contract use the [job recovery commands](job-recovery.md).
-Live 1C recovery adapters and their evidence remain required before recovering
-those operations; a calibration/SQLite fixture does not qualify them.
+Workflow tickets have the separate `access-recover-workflow --coordinator
+<directory> --ticket <ticket>` adapter. Invoke it through
+`scripts/Invoke-RemoteWork.ps1 -Arguments @(...)` so the package resolves its
+managed Python runtime. Select the original operation's coordinator and ticket;
+this does not rerun the interrupted command. Supported local file-base paths are
+pre-native cursor recovery, repository-capture reconciliation and extension
+initialization/smoke snapshot rollback with retained lifecycle context. Native
+rollback imports the captured helper generation and uses a private recovery
+participant. It preserves interrupted source/state/environment files, restores
+the original source/environment, invalidates tooling and verification receipts,
+and releases admission only after native and lifecycle evidence is complete.
+If initialization's successful commit was already acknowledged before the crash,
+the adapter preserves the result and releases admission after live inspection.
+It does not require a snapshot that normal completion already removed, replay
+initialization or report fresh verification. Pending duties, later native work,
+additional business databases and occupied/damaged service bases prevent this
+completion path. Completed rollback and smoke finalization use their own contracts.
+During rollback, an unused reservation may remain absent only when the captured
+context proves that absence. After a committed initialization, an absent planned
+service generation must have no native launch in the indexed journal. Missing
+existing databases, surviving sessions and unsupported
+additional business-database changes retain `needs-attention`. Server and other
+operation adapters still require implementation and live qualification; do not
+substitute a calibration/SQLite fixture or a manual success flag.
 
-This implementation currently integrates the portable measurement engine.
-Installed lifecycle, persistent facade admission, live 1C recovery
-and real multi-host acceptance remain pending in source plan item 4. The queue must
-not be advertised as exclusion against those routes until they are integrated.
+Source integration covers the portable measurement engine and the fourteen
+public lifecycle operations listed in the mutation admission route. Installed
+delivery, remaining entrypoints, server recovery and real multi-host acceptance
+remain pending in source plan item 4. Do not advertise exclusion against routes
+that have not been integrated and qualified.
 External user sessions never become participants automatically and are not
 terminated by this coordinator. A database profile is not permission to update
 its configuration, install instrumentation or modify data.

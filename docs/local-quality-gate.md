@@ -21,6 +21,27 @@ closed instead of silently retesting or rewriting another range.
 последних запуска; `-StatusDetail Full` добавляет полные stage/test records
 успешных/неуспешных gate из общего Git-каталога `.git/itl/runs` со временем по режимам.
 
+## Implementation and registration batching
+
+Choose implementation and registration boundaries by a finished behavior or
+independently usable contract. Keep its connected producer, consumer, recovery,
+documentation and tests in one reviewable unit. Do not register each intermediate
+helper, schema or small correction separately merely to checkpoint progress;
+a turn or context boundary is not a delivery boundary. Separate units only when
+they are independently complete or the user requests separate delivery.
+
+During implementation, use the smallest meaningful directly owned test selection
+for changed behavior, a reproduced failure or an unresolved integration risk.
+Group related edits before checking them; do not run tests mechanically after
+each patch. Repeat passed checks only when their relevant inputs changed or new
+evidence requires it.
+
+Treat `Targeted` as a potentially expensive registration gate, not an intermediate
+development check. Run it once through `RegisterChange` after the implementation
+unit is complete; never pre-run it manually or start a broad gate merely because
+a chat is ending. After a failure, diagnose and use focused regressions before
+retrying registration. Keep the required final gates and their assertions intact.
+
 ## Уровни проверки
 
 | Режим | Когда | Цель | Hard limit |

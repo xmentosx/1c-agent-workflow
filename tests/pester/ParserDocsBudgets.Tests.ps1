@@ -171,6 +171,10 @@
         }
         $agentsText | Should -Match 'Read-only source maintenance.*does not run `Targeted`, `Smoke`, `Full`, `Develop`, or `Release`'
         $agentsText | Should -Match 'Do not run a broad gate merely because a chat is ending'
+        $agentsText | Should -Match 'Batch directly owned tests following `docs/local-quality-gate.md`; avoid unchanged reruns'
+        foreach ($marker in @('Group related edits before checking them', 'Repeat passed checks only when their relevant inputs changed', 'a turn or context boundary is not a delivery boundary', 'never pre-run it manually', 'Keep the required final gates and their assertions intact')) {
+            ($qualityText -replace '\s+', ' ') | Should -Match ([regex]::Escape($marker))
+        }
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
         $agentsText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
         $agentsText | Should -Match ([regex]::Escape('"Publish" never implies master'))

@@ -1,5 +1,6 @@
 """Public stdio protocol and owned-client lifecycle; fixtures do not qualify live 1C."""
 import os
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -17,6 +18,25 @@ def result(text="- Статус: Success\n## Шаги (1)\n**Success**"):
 
 
 class VanessaAdapterTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows PowerShell process boundary')
+    def test_owned_windows_powershell_process_reconstructs_its_module_path(self):
+        from itl_remote.common import OwnedProcess
+        shell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        with tempfile.TemporaryDirectory(prefix='Граница модулей PowerShell ') as directory:
+            log = Path(directory) / 'result.json'
+            command = "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); $proof=[Console]::In.ReadLine() | ConvertFrom-Json; @{version=$PSVersionTable.PSVersion.Major;modulePath=$env:PSModulePath;command=(Get-Command Get-FileHash -ErrorAction Stop).Name;privateInput=($proof.token.Length -eq 64)} | ConvertTo-Json -Compress"
+            private_input = (json.dumps({'token': '7' * 64}) + '\n').encode('ascii')
+            with patch.dict(os.environ, {'PSModulePath': 'PS7 incompatible modules'}):
+                with OwnedProcess([str(shell), '-NoProfile', '-Command', command], directory, log, input_data=private_input) as process:
+                    process.wait(10, lambda: False)
+                self.assertEqual('PS7 incompatible modules', os.environ['PSModulePath'])
+            observed = json.loads(log.read_text(encoding='utf-8-sig'))
+            self.assertEqual(5, observed['version'])
+            self.assertEqual('Get-FileHash', observed['command'])
+            self.assertTrue(observed['privateInput'])
+            self.assertNotIn('7' * 64, log.read_text(encoding='utf-8-sig'))
+            self.assertNotIn('PS7 incompatible modules', observed['modulePath'])
+
     def test_windows_powershell_does_not_inherit_another_editions_module_path(self):
         from itl_remote.common import native_environment
         with patch.dict(os.environ, {"PSModulePath": "PS7 incompatible modules", "ITL_KEEP": "kept"}):

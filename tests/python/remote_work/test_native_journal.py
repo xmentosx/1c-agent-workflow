@@ -121,6 +121,26 @@ class NativeJournalTests(unittest.TestCase):
                 journal.publish(lease, producer, value)
             self.assertEqual([], journal.inspect(self.coordinator, self.current(lease.record['ticket']))['operations'])
 
+    def test_native_invocation_scope_is_reserved_and_immutable_after_start(self):
+        with self.lease() as lease:
+            producer = journal.register(lease)
+            value = self.payload(lease)
+            scope = {'schemaVersion': 1, 'role': 'native-invocation', **self.base, 'mode': 'DESIGNER',
+                     'logPath': str(self.root / 'Журнал запуска.log'), 'notBeforeUtc': '2026-09-10T00:00:00Z'}
+            value['ownedProcessScopes'] = [scope]
+            journal.publish(lease, producer, value)
+            value['startAttempted'] = True
+            journal.publish(lease, producer, value)
+            changed = copy.deepcopy(value)
+            changed['ownedProcessScopes'][0]['logPath'] = str(self.root / 'Чужой журнал.log')
+            with self.assertRaisesRegex(WorkError, 'IMMUTABLE_INPUT_CHANGED'):
+                journal.publish(lease, producer, changed)
+            for change in ({'notBeforeUtc': 'unknown'}, {'logPath': 'relative.log'}, {'mode': 'SHELL'}, {'path': self.second['path'], 'kind': 'server'}):
+                invalid = self.payload(lease)
+                invalid['ownedProcessScopes'] = [{**scope, **change}]
+                with self.subTest(change=change), self.assertRaises(WorkError):
+                    journal.publish(lease, producer, invalid)
+
     def test_inherited_producers_cannot_overwrite_one_another_and_both_are_read(self):
         with self.lease() as parent:
             first = journal.register(parent)

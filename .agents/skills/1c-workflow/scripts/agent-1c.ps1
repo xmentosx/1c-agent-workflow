@@ -430,7 +430,7 @@ try {
     if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
         $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
     }
-    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')) {
+    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')) {
         # Resolve inputs without acquiring resources. An invalid source context
         # must still receive the lifecycle's conflict/continuation diagnostics,
         # then fail before any action or native call. Admission failures (wait,

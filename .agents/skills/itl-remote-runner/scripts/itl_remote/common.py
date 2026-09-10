@@ -137,20 +137,42 @@ def capture(argv, *, cwd=None, timeout=60, input_bytes=None):
     return result.stdout
 
 
+def git_path_list(project, arguments):
+    """One UTF-8/NUL boundary for Git path inventories used by Python adapters."""
+    if not isinstance(arguments, list) or '-z' not in arguments:
+        raise WorkError('GIT_PATH_LIST_REQUIRES_NUL_OUTPUT')
+    output = capture(['git', '-c', 'core.quotepath=false', '-C', str(project)] + arguments, timeout=30)
+    if output and not output.endswith(b'\0'):
+        raise WorkError('GIT_PATH_LIST_UNTERMINATED')
+    return [item.decode('utf-8') for item in output.split(b'\0') if item]
+
+
 class OwnedProcess:
     """Keep descendants in a Windows job (or POSIX process group), never kill by name."""
-    def __init__(self, argv, cwd, output, env=None):
+    def __init__(self, argv, cwd, output, env=None, *, input_data=None):
+        command = native_args(argv)
+        if input_data is not None and (not isinstance(input_data, bytes) or len(input_data) > 4096):
+            raise WorkError('OWNED_PROCESS_PRIVATE_INPUT_INVALID')
         self.log = Path(output).open("ab")
         self.job = None
-        kwargs = dict(cwd=cwd, stdout=self.log, stderr=self.log, env=native_environment(env), shell=False)
+        windows_powershell = Path(command[0]).name.lower() in ('powershell', 'powershell.exe')
+        kwargs = dict(cwd=cwd, stdout=self.log, stderr=self.log,
+                      env=native_environment(env, windows_powershell=windows_powershell), shell=False)
+        if input_data is not None:
+            kwargs['stdin'] = subprocess.PIPE
         if os.name == "nt":
             kwargs["creationflags"] = 0x00000004 | subprocess.CREATE_NO_WINDOW  # suspended until owned
         else:
             kwargs["start_new_session"] = True
         try:
-            self.process = subprocess.Popen(native_args(argv), **kwargs)
+            self.process = subprocess.Popen(command, **kwargs)
             if os.name == "nt":
                 self._own_windows_process()
+            if input_data is not None:
+                try:
+                    self.process.stdin.write(input_data)
+                finally:
+                    self.process.stdin.close()
         except BaseException:
             if hasattr(self, "process"):
                 self.process.kill()

@@ -10,7 +10,7 @@ RUNTIME = Path(__file__).resolve().parents[3] / '.agents/skills/itl-remote-runne
 sys.path.insert(0, str(RUNTIME))
 from itl_remote.access import Coordinator
 from itl_remote.common import WorkError, digest
-from itl_remote.native_recovery_helpers import resolve
+from itl_remote.native_recovery_helpers import resolve, NAMES, LEGACY_NAMES
 
 
 class NativeRecoveryHelpersTests(unittest.TestCase):
@@ -18,8 +18,7 @@ class NativeRecoveryHelpersTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix='Код восстановления с пробелом ')
         self.addCleanup(self.temp.cleanup)
         self.coordinator = Coordinator(Path(self.temp.name) / 'Общая очередь')
-        names = ('agent-1c.core.ps1', 'agent-1c.runtime-values.ps1',
-                 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1')
+        names = NAMES
         self.hashes = {name: hashlib.sha256(('# ' + name).encode()).hexdigest() for name in names}
         identity = '\n'.join(name + ':' + self.hashes[name] for name in names)
         self.generation = hashlib.sha256(identity.encode()).hexdigest()
@@ -30,6 +29,18 @@ class NativeRecoveryHelpersTests(unittest.TestCase):
             path = self.directory / name
             path.write_bytes(('# ' + name).encode())
             self.inputs.append({'path': str(path), 'sha256': digest(path)})
+
+    def test_still_reads_the_original_inspection_only_four_module_archive(self):
+        identity = '\n'.join(name + ':' + self.hashes[name] for name in LEGACY_NAMES)
+        generation = hashlib.sha256(identity.encode()).hexdigest()
+        directory = self.directory.parent / generation
+        directory.mkdir()
+        inputs = []
+        for name in LEGACY_NAMES:
+            path = directory / name
+            path.write_bytes(('# ' + name).encode())
+            inputs.append({'path': str(path), 'sha256': digest(path)})
+        self.assertEqual(inputs, resolve(self.coordinator, inputs)['files'])
 
     def test_resolves_the_complete_retained_generation_without_original_sources(self):
         observed = resolve(self.coordinator, list(reversed(self.inputs)))

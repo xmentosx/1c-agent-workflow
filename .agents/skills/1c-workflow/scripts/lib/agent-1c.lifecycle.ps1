@@ -1444,16 +1444,20 @@ function New-ConfigLoadListFile {
 }
 
 function New-ConfigDumpInfoLoadSnapshot {
-    param([string]$AbsoluteExportPath)
+    param([string]$AbsoluteExportPath, [ValidateSet('always','on-failure')][string]$RestorationPolicy = 'always')
 
     $dumpInfoPath = Join-Path $AbsoluteExportPath "ConfigDumpInfo.xml"
     $snapshot = [pscustomobject]@{
         path = $dumpInfoPath
         existed = (Test-Path -LiteralPath $dumpInfoPath -PathType Leaf)
         backupPath = ""
+        backupSha256 = ""
         preserveBackup = $false
+        restorationDuty = $null
+        restorationPolicy = $RestorationPolicy
     }
     if (-not $snapshot.existed) {
+        Register-OneCFileRestorationDuty -Snapshot $snapshot
         return $snapshot
     }
 
@@ -1463,6 +1467,8 @@ function New-ConfigDumpInfoLoadSnapshot {
         -Extension ".xml"
     Copy-Item -LiteralPath $dumpInfoPath -Destination $backupPath -Force -ErrorAction Stop
     $snapshot.backupPath = $backupPath
+    $snapshot.backupSha256 = (Get-FileHash -LiteralPath $backupPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Register-OneCFileRestorationDuty -Snapshot $snapshot
     return $snapshot
 }
 
@@ -1475,9 +1481,14 @@ function Restore-ConfigDumpInfoLoadSnapshot {
 
     if ($Snapshot.existed) {
         if (-not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
+            $Snapshot.preserveBackup = $true
             throw "ConfigDumpInfo rollback failed because the snapshot is missing: $($Snapshot.backupPath)"
         }
         try {
+            if ($Snapshot.PSObject.Properties['backupSha256'] -and $Snapshot.backupSha256 -and
+                (Get-FileHash -LiteralPath $Snapshot.backupPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Snapshot.backupSha256) {
+                throw 'ONEC_RESTORATION_SNAPSHOT_CHANGED'
+            }
             Copy-Item -LiteralPath $Snapshot.backupPath -Destination $Snapshot.path -Force -ErrorAction Stop
         } catch {
             $Snapshot.preserveBackup = $true
@@ -1494,10 +1505,18 @@ function Restore-ConfigDumpInfoLoadSnapshot {
 function Remove-ConfigDumpInfoLoadSnapshot {
     param([object]$Snapshot)
 
+    if ($Snapshot -and $Snapshot.PSObject.Properties['restorationDuty'] -and
+        $null -ne $Snapshot.restorationDuty -and $Snapshot.restorationDuty.payload.status -eq 'pending' -and
+        -not $Snapshot.preserveBackup) {
+        # Closing the snapshot scope is the completion point. An earlier
+        # restore before checks or a full fallback must not release this duty.
+        Complete-OneCFileRestorationDuty -Snapshot $Snapshot
+    }
     if (-not $Snapshot -or -not $Snapshot.backupPath -or -not (Test-Path -LiteralPath $Snapshot.backupPath -PathType Leaf)) {
         return
     }
-    if ($Snapshot.preserveBackup) {
+    if ($Snapshot.preserveBackup -or ($Snapshot.PSObject.Properties['restorationDuty'] -and
+        $null -ne $Snapshot.restorationDuty -and $Snapshot.restorationDuty.payload.status -eq 'pending')) {
         Write-Warning "ConfigDumpInfo recovery snapshot was retained after a rollback failure: $($Snapshot.backupPath)"
         return
     }
@@ -1524,7 +1543,7 @@ function Invoke-ConfigLoadWithFallback {
         [switch]$ResetConfigDumpInfo
     )
 
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $AbsoluteExportPath -RestorationPolicy 'on-failure'
     try {
         if ($ResetConfigDumpInfo -and $Mode -ne "Full") {
             throw "ConfigDumpInfo reset is valid only for a full configuration load."
@@ -1549,6 +1568,7 @@ function Invoke-ConfigLoadWithFallback {
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
                 throw
             }
+            Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
             return [pscustomobject]@{
                 loadModeUsed = "full"
                 partialLogPath = ""
@@ -1564,8 +1584,11 @@ function Invoke-ConfigLoadWithFallback {
         Write-Host "Partial config load list: $ListFilePath"
         $partialArgs = $baseArgs + @("-listFile", $ListFilePath, "-partial", "-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")
         $script:LastNativeProcessStarted = $false
+        $partialNativeSucceeded = $false
         try {
             Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs $partialArgs | Out-Null
+            $partialNativeSucceeded = $true
+            Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
             return [pscustomobject]@{
                 loadModeUsed = "partial"
                 partialLogPath = $script:LastLogPath
@@ -1576,6 +1599,9 @@ function Invoke-ConfigLoadWithFallback {
                 fullFallbackError = ""
             }
         } catch {
+            # A lost journal ACK after native success is not a failed partial
+            # load and must never trigger a second native mutation.
+            if ($partialNativeSucceeded) { throw }
             $partialException = $_
             $partialLogPath = $script:LastLogPath
             $partialMessage = $partialException.Exception.Message
@@ -1614,10 +1640,13 @@ function Invoke-ConfigLoadWithFallback {
 
             Write-Warning "Partial config load failed after Designer received -listFile. Running one full-load fallback in the same branch infobase. No infobase snapshot is available."
             Write-Warning "Partial load log: $partialLogPath"
+            $fullNativeSucceeded = $false
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
+                $fullNativeSucceeded = $true
+                Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
                 return [pscustomobject]@{
                     loadModeUsed = "full-fallback"
                     partialLogPath = $partialLogPath
@@ -1628,6 +1657,7 @@ function Invoke-ConfigLoadWithFallback {
                     fullFallbackError = ""
                 }
             } catch {
+                if ($fullNativeSucceeded) { throw }
                 $fullException = $_
                 $fullLogPath = $script:LastLogPath
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
@@ -2105,7 +2135,7 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
     }
@@ -2123,13 +2153,13 @@ function Get-ItlDevBranchMutationDatabasePlan {
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
     $servicePlan = $null
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling')) {
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')) {
         # Repairs can replace a service generation even when there is no test
         # suite. Reserve that exact new address before taking lifecycle locks.
         $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
         $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
     }
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch')) {
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'release-e2e-extension-smoke')) {
         # Only execution of tests uses their additional profile databases.
         # Tooling repair must remain available with an invalid test manifest.
         $manifest = Read-VanessaTestClientManifest
@@ -2183,7 +2213,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
@@ -2369,12 +2399,77 @@ function Restore-DevBranchInfobaseFromSnapshot {
         [string]$Reason = "infobase snapshot restore"
     )
 
-    Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
-    Reset-DevBranchToolingProof -State $State -Reason $Reason
-    Invoke-Designer `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -DesignerArgs @("/RestoreIB", $SnapshotPath) | Out-Null
+    $duty = Get-OneCDatabaseRestorationDuty -SnapshotPath $SnapshotPath
+    $arguments = @{InfoBasePath=$State.devBranchInfoBasePath;InfoBaseKind=$State.infoBaseKind;DesignerArgs=@('/RestoreIB',$SnapshotPath)}
+    if ($null -ne $duty) { $arguments.RestorationDuty = $duty }
+    # Prevent a concurrent writer from replacing the verified DT while 1C reads
+    # it. This lease does not prevent the native process from opening it to read.
+    $snapshotReadLease = $null
+    if ($null -ne $duty) { $snapshotReadLease = [IO.File]::Open($SnapshotPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read) }
+    try {
+        if ($null -ne $duty) {
+            Assert-OneCDatabaseRestoreRequest -Duty $duty -InfoBaseKind $State.infoBaseKind -InfoBasePath $State.devBranchInfoBasePath -DesignerArgs $arguments.DesignerArgs
+        }
+        Stop-DevBranchRuntimeBeforeInfobaseMutation -State $State -Reason $Reason
+        Reset-DevBranchToolingProof -State $State -Reason $Reason
+        Invoke-Designer @arguments | Out-Null
+    }
+    finally { if ($null -ne $snapshotReadLease) { $snapshotReadLease.Dispose() } }
+}
+
+function New-OneCExtensionRecoveryContext {
+    param([object]$State, [string]$SnapshotPath, [string]$SourcePath, [bool]$SourceExisted,
+        [AllowNull()][byte[]]$OriginalStateBytes = $null)
+    if ($null -eq $script:OneCNativeOperationJournal -or $null -eq $script:OneCNativeOperationJournal.owner) { return $null }
+    $source = Assert-ExportPathInsideProject -ExportPath $SourcePath
+    $SnapshotPath = [IO.Path]::GetFullPath($SnapshotPath)
+    if ([IO.Path]::GetDirectoryName($SnapshotPath) -ine (Assert-ExportPathInsideProject -ExportPath '.agent-1c/snapshots') -or
+        [IO.Path]::GetExtension($SnapshotPath) -ine '.dt' -or
+        [IO.Path]::GetDirectoryName($source) -ine (Assert-ExportPathInsideProject -ExportPath 'src/cfe')) { throw 'ONEC_RECOVERY_CONTEXT_SCOPE_INVALID' }
+    if ((Test-Path -LiteralPath $source -PathType Container) -ne $SourceExisted -or
+        (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_CHANGED' }
+    if (Test-Path -LiteralPath $source -PathType Container) {
+        if (@(Get-ChildItem -LiteralPath $source -Force).Count) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_NOT_EMPTY' }
+    } elseif ($SourceExisted) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_CHANGED' }
+    $stateRoot = [string](Get-StateValue -State $State -Name 'stateProjectRoot' -Default $script:ProjectRoot)
+    $safeName = [string](Get-StateValue -State $State -Name 'safeDevBranchName' -Default (ConvertTo-SafeName $State.devBranchName))
+    if (-not $safeName -or $safeName.IndexOfAny([char[]]@('/','\')) -ge 0 -or $safeName -in @('.','..')) { throw 'ONEC_RECOVERY_CONTEXT_SCOPE_INVALID' }
+    $statePath = Join-Path $stateRoot ('.agent-1c/dev-branches/' + $safeName + '.json')
+    $envPath = Join-Path $script:ProjectRoot '.dev.env'
+    $manifestPath = $SnapshotPath + '.recovery.json'
+    $destinations = @($manifestPath, ($SnapshotPath + '.state.json'), ($SnapshotPath + '.env'), ($SnapshotPath + '.project.json'))
+    foreach ($path in $destinations) { if (Test-Path -LiteralPath $path) { throw 'ONEC_RECOVERY_CONTEXT_ALREADY_EXISTS' } }
+    $stateBytes = if ($null -ne $OriginalStateBytes) { $OriginalStateBytes } else { [IO.File]::ReadAllBytes($statePath) }
+    $envExisted = Test-Path -LiteralPath $envPath -PathType Leaf
+    $configuration = $script:Config | ConvertTo-Json -Depth 40
+    $platform = Get-PlatformPath
+    $platformHash = (Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
+    $created = [Collections.Generic.List[string]]::new()
+    function Write-RecoveryContextFile([string]$Path,[byte[]]$Bytes) {
+        $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+        $created.Add($Path)
+        try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
+    }
+    try {
+    Write-RecoveryContextFile ($SnapshotPath + '.state.json') $stateBytes
+    if ($envExisted) { Write-RecoveryContextFile ($SnapshotPath + '.env') ([IO.File]::ReadAllBytes($envPath)) }
+    Write-RecoveryContextFile ($SnapshotPath + '.project.json') ([Text.UTF8Encoding]::new($false).GetBytes($configuration))
+    $manifest = [ordered]@{schemaVersion=1;kind='extension-initialization';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+        state=[ordered]@{destination=[IO.Path]::GetFullPath($statePath);snapshotPath=($SnapshotPath + '.state.json');sha256=(Get-FileHash -LiteralPath ($SnapshotPath + '.state.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
+        environment=[ordered]@{destination=$envPath;existed=$envExisted;snapshotPath=$(if($envExisted){$SnapshotPath + '.env'}else{''});sha256=$(if($envExisted){(Get-FileHash -LiteralPath ($SnapshotPath + '.env') -Algorithm SHA256).Hash.ToLowerInvariant()}else{''})}
+        configuration=[ordered]@{snapshotPath=($SnapshotPath + '.project.json');sha256=(Get-FileHash -LiteralPath ($SnapshotPath + '.project.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
+        source=[ordered]@{path=$source;existed=$SourceExisted}
+        platform=[ordered]@{path=$platform;sha256=$platformHash}
+        absentFileResources=@($script:OneCNativeOperationJournal.resources | Where-Object {
+            $_.kind -ceq 'file' -and -not (Test-Path -LiteralPath $_.path)
+        } | ForEach-Object { [ordered]@{kind='file';path=[string]$_.path} })
+    }
+    Write-RecoveryContextFile $manifestPath ([Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 12)))
+    return [pscustomobject]@{path=$manifestPath;sha256=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    } catch {
+        foreach ($path in $created) { if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop } }
+        throw
+    }
 }
 
 function Remove-CompletedInfobaseSnapshot {
@@ -2390,11 +2485,19 @@ function Remove-CompletedInfobaseSnapshot {
         throw "Refusing to remove an infobase snapshot outside the project snapshot directory: $SnapshotPath"
     }
 
+    if ($null -ne (Get-OneCDatabaseRestorationDuty -SnapshotPath $absoluteSnapshotPath)) {
+        throw 'ONEC_RESTORATION_SNAPSHOT_STILL_REQUIRED'
+    }
+
     if (Test-Path -LiteralPath $absoluteSnapshotPath -PathType Leaf -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $absoluteSnapshotPath -Force -ErrorAction Stop
     }
     if (Test-Path -LiteralPath $absoluteSnapshotPath -ErrorAction SilentlyContinue) {
         throw "Infobase snapshot still exists after cleanup: $absoluteSnapshotPath"
+    }
+    foreach ($suffix in @('.recovery.json','.state.json','.env','.project.json')) {
+        $contextPath = $absoluteSnapshotPath + $suffix
+        if (Test-Path -LiteralPath $contextPath -PathType Leaf) { Remove-Item -LiteralPath $contextPath -Force -ErrorAction Stop }
     }
 }
 
@@ -10362,6 +10465,8 @@ function Init-DevBranchExtension {
     $snapshotDir = ""
     $snapshotPath = ""
     $snapshotCreated = $false
+    $snapshotDuty = $null
+    $snapshotCompletionAttempted = $false
     $snapshotCleanupError = ""
     $roctupWasRunning = $false
     $vanessaWasRunning = $false
@@ -10378,7 +10483,7 @@ function Init-DevBranchExtension {
         $stagingRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/extension-init/" + [guid]::NewGuid().ToString("N"))
         New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
         $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
-        $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+        $snapshotPath = Join-Path $snapshotDir ("extension-init-{0}-{1}-{2}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"), [guid]::NewGuid().ToString('N'))
         $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
         $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
         Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "extension initialization"
@@ -10390,6 +10495,8 @@ function Init-DevBranchExtension {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "1C snapshot was not created: $snapshotPath"
         }
+        $recoveryContext = New-OneCExtensionRecoveryContext -State $state -SnapshotPath $snapshotPath -SourcePath $absoluteDumpPath -SourceExisted $targetExisted
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -Policy on-failure -RecoveryContext $recoveryContext
         $snapshotCreated = $true
 
         if ($ExtensionInitMode -eq "Empty") {
@@ -10462,6 +10569,8 @@ function Init-DevBranchExtension {
         $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
         Sync-DevBranchContextToDotEnv -State $state
 
+        $snapshotCompletionAttempted = $true
+        Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty -Resolution committed
         try {
             Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
         } catch {
@@ -10474,6 +10583,11 @@ function Init-DevBranchExtension {
         Write-Host "Run /itl-check before reporting the development task complete."
     } catch {
         $originalError = $_.Exception.Message
+        if ($snapshotCompletionAttempted) {
+            # The authority may already have committed the successful result.
+            # Do not delete its sources or replay rollback after a lost ACK.
+            throw "EXTENSION_INIT_COMPLETION_UNCONFIRMED: $originalError Snapshot retained: $snapshotPath"
+        }
         $rollbackError = ""
         if ($snapshotCreated) {
             try {
@@ -10493,12 +10607,6 @@ function Init-DevBranchExtension {
                     enterpriseNormalizationStatus = "pending"
                     enterpriseNormalizationReason = "extension-init-rollback"
                 }
-                try {
-                    Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
-                } catch {
-                    $snapshotCleanupError = $_.Exception.Message
-                    Write-Warning "Extension initialization rollback succeeded, but snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
-                }
             } catch {
                 $rollbackError = $_.Exception.Message
             }
@@ -10514,12 +10622,25 @@ function Init-DevBranchExtension {
                 }
             }
         } catch {
+            if ($null -ne $snapshotDuty -and -not $rollbackError) { $rollbackError = $_.Exception.Message }
             Write-Warning "Could not remove partial extension dump: $($_.Exception.Message)"
         }
         try {
             Restore-ExtensionInitMcpRuntime -State $state -RoctupWasRunning $roctupWasRunning -VanessaWasRunning $vanessaWasRunning
         } catch {
+            if ($null -ne $snapshotDuty -and -not $rollbackError) { $rollbackError = $_.Exception.Message }
             Write-Warning "Could not restore branch MCP runtime after extension initialization failure: $($_.Exception.Message)"
+        }
+        if ($snapshotCreated -and -not $rollbackError) {
+            try { Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty }
+            catch { $rollbackError = $_.Exception.Message }
+            if (-not $rollbackError) {
+                try { Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath }
+                catch {
+                    $snapshotCleanupError = $_.Exception.Message
+                    Write-Warning "Extension initialization rollback succeeded, but snapshot cleanup failed. Snapshot retained: $snapshotPath Detail: $snapshotCleanupError"
+                }
+            }
         }
         $failureMessage = if ($rollbackError) {
             "Extension initialization failed: $originalError Rollback also failed: $rollbackError Snapshot retained: $snapshotPath"
@@ -12536,12 +12657,13 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
     $smokeRoot = Assert-ExportPathInsideProject -ExportPath (".agent-1c/release-e2e-extension/" + [guid]::NewGuid().ToString("N"))
     $snapshotDir = Assert-ExportPathInsideProject -ExportPath ".agent-1c/snapshots"
-    $snapshotPath = Join-Path $snapshotDir ("release-e2e-extension-{0}-{1}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"))
+    $snapshotPath = Join-Path $snapshotDir ("release-e2e-extension-{0}-{1}-{2}.dt" -f (ConvertTo-SafeName $ExtensionName), (Get-Date -Format "yyyyMMdd-HHmmss"), [guid]::NewGuid().ToString('N'))
     $cfePath = Join-Path $smokeRoot ($ExtensionName + ".cfe")
     $dumpPath = Assert-ExportPathInsideProject -ExportPath (Get-ExtensionInitDumpPath -Name $ExtensionName)
     $evidencePath = Resolve-ProjectPath "build/test-results/release-e2e/extension-smoke.json"
     $snapshotCreated = $false
     $databaseRestored = $false
+    $snapshotDuty = $null
     $roctupWasRunning = [bool](Get-RoctupMcpRuntimeInfo -State $state).processAlive
     $vanessaWasRunning = [bool](Get-VanessaMcpRuntimeInfo -State $state).processAlive
     $failure = $null
@@ -12625,6 +12747,8 @@ function Invoke-ReleaseE2EExtensionSmoke {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "Release extension smoke snapshot was not created: $snapshotPath"
         }
+        $recoveryContext = New-OneCExtensionRecoveryContext -State $state -SnapshotPath $snapshotPath -SourcePath $dumpPath -SourceExisted (Test-Path -LiteralPath $dumpPath -PathType Container) -OriginalStateBytes $originalStateBytes
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -RecoveryContext $recoveryContext
         $snapshotCreated = $true
 
         Enable-ReleaseE2EExtensionState
@@ -12898,7 +13022,10 @@ function Invoke-ReleaseE2EExtensionSmoke {
         }
         if ($snapshotCreated -and $databaseRestored) {
             try {
-                Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+                if (-not $rollbackFailure) {
+                    Complete-OneCDatabaseRestorationDuty -Duty $snapshotDuty
+                    Remove-CompletedInfobaseSnapshot -SnapshotPath $snapshotPath
+                }
             } catch {
                 $snapshotCleanupFailure = $_.Exception.Message
             }

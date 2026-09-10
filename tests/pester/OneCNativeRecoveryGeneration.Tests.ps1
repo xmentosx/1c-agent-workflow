@@ -9,7 +9,7 @@
         $script:sourceCopy = Join-Path $TestDrive ('Исходники восстановления ' + [guid]::NewGuid().ToString('N'))
         $script:archiveAuthority = Join-Path $TestDrive ('Общий архив версий ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $sourceCopy | Out-Null
-        $script:helperNames = @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1','agent-1c.vanessa.ps1')
+        $script:helperNames = @('agent-1c.core.ps1','agent-1c.runtime-values.ps1','agent-1c.sessions.ps1','agent-1c.vanessa.ps1','agent-1c.ports.ps1')
         foreach ($name in $helperNames) { Copy-Item -LiteralPath (Join-Path $recoveryHelperSource $name) -Destination $sourceCopy }
         [IO.File]::WriteAllText((Join-Path $sourceCopy '.dev.env'), 'IB_PASSWORD=do-not-archive-project-secrets')
     }
@@ -17,7 +17,7 @@
     It 'retains only code and reuses one complete content generation across journals' {
         $first = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $archiveAuthority -LibraryRoot $sourceCopy)
         $second = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $archiveAuthority -LibraryRoot $sourceCopy)
-        $first | Should -HaveCount 4
+        $first | Should -HaveCount 5
         @($second.path) | Should -Be @($first.path)
         foreach ($helper in $first) {
             $original = Join-Path $sourceCopy (Split-Path -Leaf $helper.path)
@@ -27,6 +27,30 @@
         $files = @(Get-ChildItem -LiteralPath (Split-Path -Parent $first[0].path) -File)
         @($files.Name | Sort-Object) | Should -Be @($helperNames | Sort-Object)
         @(Get-ChildItem -LiteralPath (Join-Path $archiveAuthority 'native-helper-generations') -Directory) | Should -HaveCount 1
+    }
+
+    It 'retains package function dependencies needed for a native restore in a fresh process' {
+        $index = @{}
+        foreach ($file in Get-ChildItem -LiteralPath $recoveryHelperSource -Filter '*.ps1') {
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$tokens,[ref]$errors)
+            foreach ($definition in $ast.FindAll({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst]},$true)) {
+                $index[$definition.Name]=@{owner=$file.Name;ast=$definition}
+            }
+        }
+        $pending=[Collections.Generic.Queue[string]]::new()
+        foreach ($name in @('Invoke-Designer','Initialize-OneCNativeRecoveryContext','Register-OneCDatabaseRestorationDuty','Complete-OneCDatabaseRestorationDuty','New-OneCNativeOperationJournal')) { $pending.Enqueue($name) }
+        $visited=@{}; $missing=@()
+        while ($pending.Count) {
+            $name=$pending.Dequeue()
+            if ($visited.ContainsKey($name) -or -not $index.ContainsKey($name)) { continue }
+            $entry=$index[$name]; $visited[$name]=$true
+            if ($entry.owner -notin $helperNames) { $missing += ($name+' in '+$entry.owner) }
+            foreach ($command in $entry.ast.FindAll({param($node) $node -is [Management.Automation.Language.CommandAst]},$true)) {
+                $called=$command.GetCommandName(); if ($called) { $pending.Enqueue($called) }
+            }
+        }
+        $missing.Count | Should -Be 0 -Because ($missing -join '; ')
     }
 
     It 'keeps the old generation intact when installed sources change' {
@@ -98,8 +122,12 @@ param([string]$Library)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
-foreach ($name in @('core','runtime-values','sessions','vanessa')) { . (Join-Path $Library ("agent-1c.$name.ps1")) }
+foreach ($name in @('core','runtime-values','sessions','vanessa','ports')) { . (Join-Path $Library ("agent-1c.$name.ps1")) }
 Initialize-OneCNativeRecoveryContext -ProjectRoot $PSScriptRoot
+if (-not (Test-ItlOnDemandInfoBaseMatch -First (Join-Path $PSScriptRoot '.') -Second $PSScriptRoot) -or
+    (Test-ItlOnDemandInfoBaseMatch -First (Join-Path $PSScriptRoot 'foreign') -Second $PSScriptRoot)) {
+    throw 'Archived native target comparison did not preserve database identity.'
+}
 $probe = New-DesignerInvocationProbeState -LauncherProcessId 0
 $timer = [Diagnostics.Stopwatch]::StartNew()
 try {

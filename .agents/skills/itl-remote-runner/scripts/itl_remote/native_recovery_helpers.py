@@ -7,13 +7,15 @@ import re
 
 from .common import WorkError, digest
 
-NAMES = ('agent-1c.core.ps1', 'agent-1c.runtime-values.ps1',
+LEGACY_NAMES = ('agent-1c.core.ps1', 'agent-1c.runtime-values.ps1',
          'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1')
+NAMES = LEGACY_NAMES + ('agent-1c.ports.ps1',)
 
 
 def resolve(coordinator, inputs):
-    if not isinstance(inputs, list) or len(inputs) != len(NAMES):
+    if not isinstance(inputs, list) or len(inputs) not in (len(NAMES), len(LEGACY_NAMES)):
         raise WorkError('NATIVE_RECOVERY_HELPER_GENERATION_REQUIRED')
+    names = NAMES if len(inputs) == len(NAMES) else LEGACY_NAMES
     expected_root = Path(coordinator.root) / 'native-helper-generations'
     entries = {}
     generation = None
@@ -24,7 +26,7 @@ def resolve(coordinator, inputs):
             raise WorkError('NATIVE_RECOVERY_HELPER_INPUT_INVALID')
         path = Path(item['path'])
         candidate = path.parent.name
-        if (path.name not in NAMES or path.name in entries or not path.is_absolute() or
+        if (path.name not in names or path.name in entries or not path.is_absolute() or
                 not re.fullmatch('[a-f0-9]{64}', candidate) or path.parent.parent != expected_root or
                 (generation is not None and generation != candidate)):
             raise WorkError('NATIVE_RECOVERY_HELPER_GENERATION_REQUIRED')
@@ -35,7 +37,7 @@ def resolve(coordinator, inputs):
             raise WorkError('NATIVE_RECOVERY_HELPER_ARCHIVE_CHANGED')
         generation = candidate
         entries[path.name] = {'path': str(path), 'sha256': item['sha256']}
-    identity = '\n'.join(name + ':' + entries[name]['sha256'] for name in NAMES)
+    identity = '\n'.join(name + ':' + entries[name]['sha256'] for name in names)
     if hashlib.sha256(identity.encode('utf-8')).hexdigest() != generation:
         raise WorkError('NATIVE_RECOVERY_HELPER_GENERATION_CHANGED')
-    return {'generation': generation, 'files': [entries[name] for name in NAMES]}
+    return {'generation': generation, 'files': [entries[name] for name in names]}

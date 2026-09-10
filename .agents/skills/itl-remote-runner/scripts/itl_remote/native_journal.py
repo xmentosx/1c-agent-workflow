@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta
 from pathlib import Path
 import platform
 import re
@@ -23,6 +24,14 @@ def _index(record):
     if not isinstance(value, dict) or value.get("schemaVersion") != 1 or not isinstance(value.get("producers"), dict):
         raise WorkError("NATIVE_JOURNAL_INDEX_MISSING_OR_INVALID")
     return value
+
+
+def assert_journal_owner(producers, producer_id, journal_id):
+    for other_id, other in producers.items():
+        if other_id != producer_id and any(
+                key.startswith(journal_id + '/')
+                for collection in ('records', 'restorations') for key in other.get(collection, {})):
+            raise WorkError('NATIVE_JOURNAL_BELONGS_TO_ANOTHER_PRODUCER')
 
 
 def _current(lease):
@@ -47,7 +56,7 @@ def register(lease):
             "generation": identity(record["token"]), "participantId": lease.participant_id,
             "resources": lease.coordinator.resources(lease.bases), "createdAt": stamp(),
             "hostName": platform.node(), "ownerPid": lease.owner.get("parentPid"),
-            "records": {},
+            "records": {}, "restorationProtocol": 1, "restorations": {},
         }
         lease.coordinator.save(record)
         lease.record = record
@@ -98,6 +107,20 @@ def _validate(payload):
                 not helper["path"] or not isinstance(helper["sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", helper["sha256"])):
             raise WorkError("NATIVE_JOURNAL_HELPER_INPUT_INVALID")
     for scope in payload["ownedProcessScopes"]:
+        if isinstance(scope, dict) and scope.get('role') == 'native-invocation':
+            if (set(scope) != {'schemaVersion', 'role', 'kind', 'path', 'mode', 'logPath', 'notBeforeUtc'} or
+                    scope['schemaVersion'] != 1 or scope['kind'] not in ('file', 'server') or
+                    scope['mode'] not in ('DESIGNER', 'ENTERPRISE', 'CREATEINFOBASE') or
+                    any(not isinstance(scope[name], str) or not scope[name] for name in ('path', 'logPath', 'notBeforeUtc')) or
+                    not Path(scope['logPath']).is_absolute()):
+                raise WorkError('NATIVE_JOURNAL_SCOPE_INVALID')
+            try:
+                created = datetime.fromisoformat(scope['notBeforeUtc'])
+                if created.utcoffset() != timedelta(0):
+                    raise ValueError('UTC required')
+            except ValueError as error:
+                raise WorkError('NATIVE_JOURNAL_SCOPE_INVALID') from error
+            continue
         if (not isinstance(scope, dict) or set(scope) != {"schemaVersion", "role", "kind", "path", "runParamsPath", "runParamsSha256", "testPorts"} or
                 scope["schemaVersion"] != 1 or scope["role"] not in ("test-manager", "test-client") or
                 scope["kind"] not in ("file", "server") or any(not isinstance(scope[n], str) or not scope[n] for n in ("path", "runParamsPath", "runParamsSha256")) or
@@ -128,9 +151,7 @@ def publish(lease, producer_id, payload):
         value = copy.deepcopy(payload)
         value["resourceIds"] = resources
         key = value["journalId"] + "/" + value["id"]
-        if any(other_id != producer_id and any(k.startswith(value["journalId"] + "/") for k in other["records"])
-               for other_id, other in producers.items()):
-            raise WorkError("NATIVE_JOURNAL_BELONGS_TO_ANOTHER_PRODUCER")
+        assert_journal_owner(producers, producer_id, value['journalId'])
         previous = producer["records"].get(key)
         if previous:
             before = _read_operation(lease.coordinator, record["ticket"], key, previous)
@@ -217,10 +238,14 @@ def inspect(coordinator, record, *, resolve_helpers=False):
             operations.append(value)
     result = {"schemaVersion": 1, "ticket": record["ticket"], "recordRevision": identity(public(record)),
               "resources": list(record["resources"]), "operations": operations, "requiresLiveVerification": True}
+    from . import restoration_journal
+    result['restoration'] = restoration_journal.inspect(coordinator, record)
     if resolve_helpers:
         from .native_recovery_helpers import resolve
         result['helperGenerations'] = {operation['journalId'] + '/' + operation['id']:
-                                       resolve(coordinator, operation['helperInputs']) for operation in operations}
+            resolve(coordinator, operation['helperInputs']) for operation in operations}
+        result['restoration']['helperGenerations'] = {duty['journalId'] + '/' + duty['id']:
+            resolve(coordinator, duty['helperInputs']) for duty in result['restoration']['duties']}
     return result
 
 
@@ -232,4 +257,5 @@ def release_errors(lease, producer_id):
             value = _read_operation(lease.coordinator, record["ticket"], key, entry)
             if value["startAttempted"] and not value["quiescenceConfirmed"]:
                 return ["native-operation-cleanup-unconfirmed"]
-    return []
+        from . import restoration_journal
+        return restoration_journal.release_errors(lease.coordinator, record, producer_id)
