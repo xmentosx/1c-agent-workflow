@@ -131,7 +131,7 @@
     }
 
     It 'keeps the complete operation set aligned between entrypoint, start and plan validation' {
-        $expected = @('update-dev-branch-base','lock-config-repository-objects','check-dev-branch','verify-dev-branch','update-auxiliary-contour','check-auxiliary-contour','dump-auxiliary-contour','export-auxiliary-contour-result','reset-auxiliary-contour')
+        $expected = @('update-dev-branch-base','lock-config-repository-objects','check-dev-branch','verify-dev-branch','update-auxiliary-contour','check-auxiliary-contour','dump-auxiliary-contour','export-auxiliary-contour-result','reset-auxiliary-contour','export-dev-branch-result','dump-dev-branch-extension')
         foreach ($name in @('Start-ItlDevBranchMutationDatabaseAdmission','Get-ItlDevBranchMutationDatabasePlan')) {
             $values = @((Get-Command $name).Parameters['Operation'].Attributes | Where-Object { $_ -is [Management.Automation.ValidateSetAttribute] } | ForEach-Object { $_.ValidValues })
             @($values | Sort-Object) | Should -Be @($expected | Sort-Object)
