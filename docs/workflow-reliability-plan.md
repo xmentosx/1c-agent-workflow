@@ -24,12 +24,63 @@ different milestones; none implies the next one.
 
 ## Work and acceptance
 
+Scope clarification for item 4: the user requested coordinated database access
+across projects, branches, chats and hosts, including waiting instead of
+interference. Safe handling of an interrupted owner follows from that contract.
+Automatic forward continuation of `reset-dev-branch` was an implementation
+choice, not a separately requested user task. Keep it visible as subitem 4b;
+do not conflate its full automation with the core queue requirement (4a).
+Core admission, waiting, native-session ownership, truthful failure reporting
+and verified release remain the first priority. The detailed reset continuation
+work below remains open where unverified, but further expansion of 4b must not
+indefinitely displace the other unfinished numbered tasks.
+
+Item 4a acceptance clarification: a stuck or ambiguous owner must not leave
+callers waiting forever. A dead waiter can be removed automatically because it
+never entered the database. A live admitted owner has bounded waiting and an
+explicit diagnostic/cancellation route; elapsed time alone must not revoke its
+access. An interrupted admitted owner needs script-owned inspection of surviving
+work and restoration before release. Recovery failure must remain actionable,
+with the exact owner, ticket, coordinator and next diagnostic step. Unrelated
+databases must continue independently. Full acceptance includes getting a
+blocked database back into service through a supported helper, not merely
+returning `needs-attention`; unsupported recovery cases remain open.
+
+The current candidate also closes the four compatibility entrypoint omissions:
+`update1cbase`, `loadfrom1cbase`, `getconfigfiles`, and `deploy-and-test` now join
+database admission before lifecycle locking. Dumps reserve their actual target;
+deploy-and-test reserves managers and test-profile databases and uses command
+classification before admission. Eleven focused Pester cases passed (ten in the
+combined run and the corrected classification fixture separately), plus the
+Python operation-set completeness check. Terminal timeout/recovery diagnostics
+now include the owner and a structured next action without lease tokens. Four
+multi-process queue regressions passed for bounded live-owner waiting, dead
+waiter removal, dead-owner diagnostics and failed cleanup; they also exercise
+independent-database progress and admission after normal release. These are
+local protocol proofs, not installed 1C or multi-host acceptance.
+
+Read-only dump recovery now covers `loadfrom1cbase`, `getconfigfiles` and
+`dump-dev-branch-extension` only when every native journal entry is a
+`designer-dump-config-to-files` operation. Any write/unknown native purpose,
+surviving database user or unresolved database-restoration duty still prevents
+release. Seven focused recovery regressions passed, including the original
+unsupported-write and repository-capture cases. Native file-base proof at
+`C:/va канал/dump-admission-400f2c3b` used actual 1C 8.3.27.2130: the helper was
+interrupted after Designer dumped files and before installing the source tree;
+public `access-recover-workflow` released ticket
+`6e41d1e66b874e8c950ce6c7bf92d6d3` as `workflow-read-only-dump`, retaining the
+original `interrupted` outcome and staged dump. A subsequent public
+`loadfrom1cbase` succeeded and left zero active tickets. `conf.cfg` was unchanged.
+The physical 1CD hash differed after the subsequent native invocation; this
+proof does not claim byte-identical database storage across 1C sessions. Server
+and multi-host recovery remain open.
+
 | ID | Priority | Deliverable | Required acceptance | Current evidence |
 |---|---|---|---|---|
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; detached TestClient release corrected with captured run scopes and ordinary Vanessa cleanup integration; native build and Enterprise probes retain the owner until exact cleanup; durable recovery, remaining entrypoints and multi-host/installed proof remain required |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. Current unregistered candidate adds reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
@@ -2141,6 +2192,172 @@ installed entrypoints and two-host competition remain open. Live foreign-session
 evidence above covers the auxiliary drain on a local
 technical file database; it does not establish server or two-host acceptance.
 No `conf.cfg` changes are part of this correction.
+
+### Item 4: reset and refresh process continuation (in progress)
+
+The unregistered `codex/workflow-lifecycle-admission` candidate reserves the
+branch, recorded managers and a replacement service-generation address before
+`reset-dev-branch` or full/lite refresh enters lifecycle locks. Full refresh also
+reserves the main worktree's source database and the fixed file-seed database
+directory. Standalone `sync-master` reserves those master resources without
+requiring an initialized development branch or reserving its unrelated database.
+A fresh
+helper publishes its own immutable resource plan through the existing private
+owner channel. The authority checks the parent reference, ticket generation,
+operation, project, target and complete reserved resource set; a changed service
+template can select only a generation already reserved by the parent. Plans
+and retained native helper hashes remain available for restart inspection even
+if the producer never reached its first native launch.
+
+Reset now saves `git-reset-complete` before handing changed helper/template
+content to a fresh process, releases its seed reader before dispatch, and
+revalidates the original pinned seed on continuation. Legacy helpers reject the
+required protocol parameter before their action body. This does not claim an
+automatic recovery adapter for interrupted reset/refresh database mutations:
+those phases still retain admission when recovery cannot prove completion.
+Source planning restores the caller's complete process environment after reading
+master configuration, including keys introduced only by master's `.dev.env`.
+Sync repeats source identity validation after switching to master context;
+file-seed copying waits for foreign sessions before modifying the old artifact
+or manifest. Bootstrap, server and two-host acceptance remain open.
+
+Focused evidence: 43 Python coordinator/journal/recovery tests passed; the
+PowerShell admission, resource-plan inheritance and retained-helper groups
+passed after fixing the fresh-process fixture and updating operation-set
+coverage. The real-worktree reset fixture retains one archive, original master
+and seed contract across the handoff; native Designer work in that fixture is
+simulated. These are source/protocol checks, not installed-project or native
+1C reset acceptance. No Targeted registration, delivery or `conf.cfg` edit has
+been performed for this unfinished block.
+
+The additional master/seed block passes 24 focused Pester cases and the Python
+entrypoint/recovery operation-set regression. Native public `sync-master`
+acceptance passed at `C:/va канал/master-admission-34820bc4`: another owner held
+the source until the sync request was recorded waiting, with no lifecycle lock
+taken. After release, the helper copied the technical source into its seed,
+ran real Designer export, committed the configuration, published a ready seed
+whose artifact SHA matched, and released both resources on ticket
+`0785b8208e2e46de98c42bef6745677c`. The next competitor was admitted, source
+database bytes and `conf.cfg` were unchanged, and the fixture Git tree was clean.
+Evidence is `.agent-1c/native-master-proof.json` plus `sync-status.json` under
+that root; the reproducible harness is retained at
+`build/diagnostics/lifecycle-admission/native-master.ps1`. This proves the local
+technical file-source route, not repository-backed/server synchronization or
+an installed PM5 full refresh.
+
+The same candidate now acknowledges successful lifecycle completion through the
+private owner pipe for sync-master, reset and both refresh variants. The
+authority binds that immutable acknowledgement to the producer's admitted plan
+and exact journal index. Pending native work, active child participants (for
+the outer producer) and pending restoration duties prevent completion. Further
+native records, restoration duties or producers cannot be added after the outer
+completion is acknowledged. A completed child does not seal unfinished parent
+work. The ordinary helper publishes only after the action returns successfully;
+a delegating parent publishes only after its child reports terminal success.
+
+Recovery of that completed operation still checks that producers have exited
+and obtains fresh native observations for every reserved database. It preserves
+the finished result and labels the original invocation interrupted; it does not
+replay sync/reset/refresh or claim fresh verification. Unacknowledged in-flight
+phases continue to require their operation-specific recovery adapters.
+
+The connected journal/completion tests pass 63 Python and 14 PowerShell cases.
+Native interruption acceptance passed at
+`C:/va канал/master-admission-1f66ed50`: the producer completed real sync-master,
+acknowledged completion, then exited with code 19 before releasing admission.
+`access-recover-workflow` released ticket
+`ceb5dd8f3a04451fa23b1944bf8adfea` through
+`workflow-completed-lifecycle`. Two live samples covered both source and seed,
+with zero sessions and exclusive file access. The source and seed hashes and
+Git HEAD were preserved; the native journal still contains one Designer
+operation, and a subsequent competitor acquired both resources. `conf.cfg`
+remained unchanged. See `.agent-1c/native-master-proof.json`, `crash-point.json`,
+`completion-recovery.json` and the retained `recovery-observations` under that
+root. This is local sync-master completion evidence; reset/full-refresh and
+server recovery runtime acceptance remain open.
+
+The reset continuation now also pins the seed generation, source identity,
+artifact kind/path/SHA256/size and exact event-log baseline bytes in its saved
+reset inputs. A matching configuration fingerprint alone no longer permits a
+later seed containing different data. Resume validates these inputs, the
+original archive and the expected branch HEAD before restoring the database;
+dirty or newly committed user changes are preserved. An interrupted older
+reset without a recorded seed identity cannot silently adopt the current seed.
+Server seed restoration now verifies the DT hash before invoking its provider,
+matching the file restore's existing copy-hash-before-replacement contract.
+
+These guards establish the inputs required by the in-flight recovery adapter.
+Retained access to a seed replaced after interruption remains implementation
+work, along with bootstrap admission and server/two-host runtime acceptance.
+The saved local state alone is not authority to release an interrupted database
+owner; the forward-resume adapter and its qualification are described below.
+
+The focused reset checks pass nine cases across the initial run and affected
+reruns. Three real-worktree/fresh-process cases cover concurrent branches,
+helper handoff and interruption/resume. The interrupted case rejects seven
+independent changes (seed generation, database bytes with an updated manifest,
+baseline bytes, damaged archive, dirty source, committed source and a missing
+legacy pin), preserves the target and original archive, then completes with
+the original inputs despite a later master commit. Separate file/server reader
+lease and valid/corrupt server DT provider cases pass. Native database calls
+in these reset fixtures are simulated; this is not native reset recovery or
+installed-project acceptance. No additional broad gate was run for this step.
+
+Reset now publishes each saved phase through the private database-owner pipe
+before proceeding to the next mutation. The authority stores an immutable,
+hash-indexed chain from archive-pending through archive-complete,
+git-reset-complete, runtime-initializing and complete. The chain binds the
+original master/old HEAD, branch/target, seed identity and archive to the
+admitted continuation plan, including a fresh child producer. It rejects phase
+skips, regressions, changed inputs and changes to a confirmed archive or new
+HEAD. A completion acknowledgement seals this chain with the native journal.
+An unfinished chain prevents normal release or a generic preparation-recovery
+release; it requires the operation-specific forward-resume adapter below.
+
+The connected reset/continuation/native/completion/recovery suite passes 51
+Python tests. Eight focused PowerShell tests pass, including all five phase
+acknowledgements through the actual owner subprocess/private pipe, immutable
+record hashes, a competing caller blocked at every phase, final release and
+admission of that caller afterwards. Fresh-helper inheritance and the three
+real-worktree reset cases also pass. These fixtures simulate 1C operations;
+native reset/restore interruption acceptance remains open. This lifecycle
+candidate is still unregistered and has not modified `conf.cfg`.
+
+The reset recovery adapter now dispatches `Resume-NativeReset.ps1` under the
+same ticket and a new recovery fencing generation. Cross-generation plan
+inheritance is permitted only by the current recovery attempt's authorization
+for the exact indexed checkpoint and parent continuation. Ordinary inheritance
+still rejects obsolete generations. The private proof is passed through stdin;
+the context and result artifacts contain no lease credential.
+
+Before dispatch the adapter validates the Git branch/HEAD/master tree, preserves
+tracked or untracked user changes, and obtains fresh native observations for
+every reserved resource. The worker acquires lifecycle locks after joining the
+recovery owner, revalidates the saved inputs and continues from the confirmed
+phase. If local state is exactly one phase ahead of the authority (a crash
+between state persistence and acknowledgement), the helper resumes the confirmed
+phase in memory without manually rewriting state. Existing archive reuse and
+exact-master commit logic handle already-completed intermediate steps. The
+adapter releases only after the continuation producer's completion record,
+complete reset chain, exact resulting Git tree and fresh final observations
+are verified. Pending restoration duties retain ownership for further recovery.
+
+This connected increment passes 24 Python journal/inheritance/completion cases,
+eight focused PowerShell cases and two adapter/worker cases. The worker case
+runs a real Windows PowerShell process, private ownership host, Git checkout,
+archive validation and production file-seed replacement with state one phase
+ahead of its ACK. It retains the original archive/master/seed and admits the
+next competitor only after completion. Its 1C session inspection and tooling
+initialization are explicit fixtures, so it is not native 1C recovery proof.
+The separate checkout case preserves user changes and rejects a switched branch.
+Fresh-process execution exposed a missing scoped import of the checkpoint pipe
+publisher; the owning lifecycle function now loads that dependency itself.
+
+Remaining reset work includes native file-base interruption acceptance, seed
+retention if the shared seed was replaced, interrupted Git-tree replacement,
+pending nested restoration duties and server recovery/inspection. These stay
+in item 4; the successful transport/file fixture does not close them. No broad
+gate, registration, publication or installation was performed for this increment.
 
 ## Item 10: correlated client-code outcomes
 

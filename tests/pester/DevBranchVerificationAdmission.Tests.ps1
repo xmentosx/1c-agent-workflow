@@ -32,7 +32,7 @@
     }
 
     It 'reserves target, old and planned managers and all profile databases through <operation> completion' -TestCases @(
-        @{operation='check-dev-branch'}, @{operation='verify-dev-branch'}, @{operation='release-e2e-extension-smoke'}
+        @{operation='check-dev-branch'}, @{operation='verify-dev-branch'}, @{operation='release-e2e-extension-smoke'}, @{operation='deploy-and-test'}
     ) {
         param($operation)
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation
@@ -157,6 +157,23 @@
             { Start-ItlDevBranchMutationDatabaseAdmission -Operation verify-dev-branch } | Should -Throw '*INHERITANCE_INVALID*'
             Should -Invoke Invoke-Designer -Times 0
         } finally { Complete-ItlDatabaseAccessHost $parent | Out-Null }
+    }
+
+    It 'checks deploy-and-test classification as a command before reserving any database' {
+        Mock Assert-ItlVerificationRepairScope {}
+        Mock Assert-VanessaVerificationPreflight { throw 'fixture classification failure' }
+        Mock Start-ItlDatabaseAccessHost { throw 'classification must precede admission' }
+        $previousTrigger = Get-Variable -Name VerificationTrigger -Scope Script -ErrorAction SilentlyContinue
+        try {
+            $script:VerificationTrigger = 'refresh'
+            { Get-ItlDevBranchMutationAdmissionPreparation -Operation deploy-and-test -CheckSourcePreflight } | Should -Throw '*fixture classification failure*'
+            Should -Invoke Assert-VanessaVerificationPreflight -Times 1 -Exactly -ParameterFilter { $Trigger -eq 'command' }
+            Should -Invoke Start-ItlDatabaseAccessHost -Times 0
+            Should -Invoke Invoke-Designer -Times 0
+        } finally {
+            if ($null -ne $previousTrigger) { $script:VerificationTrigger = $previousTrigger.Value }
+            else { Remove-Variable -Name VerificationTrigger -Scope Script }
+        }
     }
 
     It 'routes both check entrypoints through admission before lifecycle and release after the action' {

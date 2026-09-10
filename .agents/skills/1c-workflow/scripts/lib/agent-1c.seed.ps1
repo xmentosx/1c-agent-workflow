@@ -440,6 +440,16 @@ function New-BranchSeed {
     )
 
     $paths = Get-BranchSeedPaths
+    $databaseAdmission = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $databaseAdmission -and $null -ne $databaseAdmission.Value) {
+        Assert-ItlMasterDatabaseAdmission -Admission $databaseAdmission.Value
+        # File seed copying/replacement is a database operation even though it
+        # does not launch Designer. Wait before the first artifact mutation;
+        # the existing seed lease still owns publication and readers.
+        foreach ($base in @($databaseAdmission.Value.plan.masterPlan.bases | Where-Object { $_.kind -eq 'file' })) {
+            Wait-ItlDevBranchMutationExternalSessions -Admission $databaseAdmission.Value -InfoBaseKind file -InfoBasePath $base.path
+        }
+    }
     $writerIntent = Open-BranchSeedWriterIntent
     $lease = $null
     $syncId = [guid]::NewGuid().ToString("N")

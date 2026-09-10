@@ -168,11 +168,24 @@ class AccessTests(unittest.TestCase):
 
     def test_wait_timeout_does_not_run_operation(self):
         a, pa = self.child("A", hold=True)
-        self.wait_file(a / "acquired.json")
+        acquired = self.wait_file(a / "acquired.json")
         b, pb = self.child("B", timeout=.15)
-        self.assertEqual("INFOBASE_ACCESS_WAIT_TIMEOUT", self.wait_file(b / "done.json")["error"])
+        error = self.wait_file(b / "done.json")["error"]
+        code, payload = error.split(": ", 1)
+        self.assertEqual("INFOBASE_ACCESS_WAIT_TIMEOUT", code)
+        details = json.loads(payload)
+        self.assertFalse(details["requestExecuted"])
+        self.assertEqual(acquired["ticket"], details["blockers"][0]["ticket"])
+        self.assertEqual("A", details["blockers"][0]["owner"]["jobId"])
+        self.assertEqual("access-status", details["blockers"][0]["nextAction"]["command"])
+        self.assertNotIn(acquired["proof"]["token"], error)
         self.assertFalse((b / "acquired.json").exists())
+        self.assertIsNone(pa.poll())
+        c, pc = self.child("C", bases=[self.other])
+        self.assertEqual("released", self.wait_file(c / "done.json")["status"])
         self.release(a, pa)
+        d, pd = self.child("D")
+        self.assertEqual("released", self.wait_file(d / "done.json")["status"])
 
     def test_crashed_waiter_can_be_skipped_because_it_was_never_admitted(self):
         a, pa = self.child("A", hold=True)
@@ -187,13 +200,24 @@ class AccessTests(unittest.TestCase):
 
     def test_crashed_owner_blocks_replay_even_after_os_released_its_lock(self):
         a, pa = self.child("A", crash=True)
-        self.wait_file(a / "acquired.json"); pa.wait(timeout=5)
+        acquired = self.wait_file(a / "acquired.json"); pa.wait(timeout=5)
         b, pb = self.child("B")
-        self.assertIn("INFOBASE_ACCESS_RECOVERY_REQUIRED", self.wait_file(b / "done.json")["error"])
+        error = self.wait_file(b / "done.json")["error"]
+        code, payload = error.split(": ", 1)
+        self.assertEqual("INFOBASE_ACCESS_RECOVERY_REQUIRED", code)
+        details = json.loads(payload)
+        self.assertFalse(details["requestExecuted"])
+        self.assertEqual(str(self.coordinator), details["coordinator"])
+        action = details["blockers"][0]["nextAction"]
+        self.assertEqual("access-recovery-plan", action["command"])
+        self.assertEqual(acquired["ticket"], action["ticket"])
+        self.assertNotIn(acquired["proof"]["token"], error)
         self.assertFalse((b / "acquired.json").exists())
         records = Coordinator(self.coordinator).snapshot()
         self.assertEqual("needs-attention", records[0]["status"])
         self.assertNotIn("token", records[0])
+        c, pc = self.child("C", bases=[self.other])
+        self.assertEqual("released", self.wait_file(c / "done.json")["status"])
 
     def test_failed_cleanup_keeps_database_unavailable(self):
         a, pa = self.child("A", cleanupError=True)

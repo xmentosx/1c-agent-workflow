@@ -90,14 +90,21 @@ function Save-OneCNativeRecoveryHelpers {
         if ((Get-Item -LiteralPath $destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
             throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_REDIRECTED'
         }
-        foreach ($file in $files) {
-            $path = Join-Path $destination $file.name
-            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
-            if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $file.sha256) {
-                throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_CHANGED'
+        # Use the same .NET hash boundary as the producer above. A fresh
+        # Windows PowerShell helper can inherit another host's module path;
+        # archive validation must not depend on an auto-loaded Get-FileHash
+        # function from that host's PowerShell module generation.
+        $archiveSha = [Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($file in $files) {
+                $path = Join-Path $destination $file.name
+                $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
+                    [BitConverter]::ToString($archiveSha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-', '').ToLowerInvariant() -cne $file.sha256) {
+                    throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_CHANGED'
+                }
             }
-        }
+        } finally { $archiveSha.Dispose() }
         return @($files | ForEach-Object { [pscustomobject]@{path=(Join-Path $destination $_.name);sha256=$_.sha256} })
     } finally {
         if ($staging -and (Test-Path -LiteralPath $staging -PathType Container)) {

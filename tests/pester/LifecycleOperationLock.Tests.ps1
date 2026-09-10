@@ -203,7 +203,7 @@ try {
     }
 
     It "runs reset through <Scenario> with real worktree archives and seed leases" -ForEach @(
-        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }
+        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }, @{ Scenario = "updated helper handoff" }
     ) {
         $tempRoot = Join-Path $TestDrive ("сброс " + $Scenario)
         $mainRoot = Join-Path $tempRoot "main база"
@@ -214,10 +214,22 @@ try {
         Add-Content -LiteralPath (Join-Path $mainRoot '.gitignore') -Value '.agent-1c/'
         & git -C $mainRoot add .gitignore
         & git -C $mainRoot commit --quiet -m 'ignore runtime'
+        if ($Scenario -eq 'updated helper handoff') {
+            $helperDirectory = Join-Path $mainRoot '.agents/skills/1c-workflow/scripts'
+            $templateDirectory = Join-Path $mainRoot '.agents/skills/1c-workflow/assets/vanessa-service'
+            New-Item -ItemType Directory -Path $helperDirectory,$templateDirectory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $helperDirectory 'agent-1c.ps1') -Encoding UTF8 -Value '# pinned master helper fixture'
+            Set-Content -LiteralPath (Join-Path $templateDirectory 'manifest.json') -Encoding UTF8 -Value '{"template":"new"}'
+            & git -C $mainRoot add .agents
+            & git -C $mainRoot commit --quiet -m 'master service generation'
+        }
         $masterCommit = (& git -C $mainRoot rev-parse HEAD).Trim()
         foreach ($entry in @(@{ name = 'one'; root = $branchOne }, @{ name = 'two'; root = $branchTwo })) {
             & git -C $mainRoot worktree add --quiet -b ('itldev/' + $entry.name) $entry.root master *> $null
             Set-Content -LiteralPath (Join-Path $entry.root 'изменение ветки.txt') -Encoding UTF8 -Value $entry.name
+            if ($Scenario -eq 'updated helper handoff') {
+                Set-Content -LiteralPath (Join-Path $entry.root '.agents/skills/1c-workflow/assets/vanessa-service/manifest.json') -Encoding UTF8 -Value '{"template":"old"}'
+            }
             & git -C $entry.root add .
             & git -C $entry.root commit --quiet -m 'branch work'
         }
@@ -285,6 +297,20 @@ function Sync-KiloItlCommandSurface {}
 function Invoke-AiRules1cManagedMcpConfigReconcile {}
 function Sync-DevBranchContextToDotEnv {}
 function Write-AndSetRunUserReport {}
+function Invoke-Agent1cFreshProcess {
+    param([string]$ScriptPath)
+    $state = Read-DevBranchState
+    if ($state.resetPhase -ne 'git-reset-complete') { throw 'RESET_HANDOFF_PHASE_NOT_PINNED' }
+    $writer = Open-BranchSeedLease -Mode write -TimeoutSeconds 1
+    $writer.Dispose()
+    Write-Utf8Text -Path (Join-Path $Root '.agent-1c/reset-handoff.json') -Value (([ordered]@{
+        helperPath=$ScriptPath;masterCommit=$state.resetMasterCommit;archivePath=$state.resetArchivePath
+        seedReaderReleased=$true;databaseRestored=(Test-Path -LiteralPath (Join-Path $state.devBranchInfoBasePath '1Cv8.1CD'))
+    }) | ConvertTo-Json)
+    # Stop at dispatch so the test can inspect the saved boundary and start an
+    # independent helper process against the same phase, archive and seed.
+    throw 'RESET_HANDOFF_DISPATCHED'
+}
 function Set-RunStage {
     param($Stage, $Detail)
     Update-Agent1cLifecycleOperationStage -Stage $Stage -Detail $Detail
@@ -318,6 +344,18 @@ try {
             $run.exitCode | Should -Be 0 -Because $run.combinedText
             $other = Get-Content -LiteralPath (Join-Path $branchTwo '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
             $other.resetStatus | Should -Be 'complete'
+        } elseif ($Scenario -eq 'updated helper handoff') {
+            $handoff = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $handoff.exitCode | Should -Be 1
+            $handoff.combinedText | Should -Match 'RESET_HANDOFF_DISPATCHED'
+            $boundary = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-handoff.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $boundary.helperPath | Should -Be (Join-Path $branchOne '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+            $boundary.masterCommit | Should -Be $masterCommit
+            $boundary.seedReaderReleased | Should -BeTrue
+            $boundary.databaseRestored | Should -BeFalse
+            $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
+            (Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json).resetArchivePath | Should -Be $boundary.archivePath
         } else {
             $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
             $failed.exitCode | Should -Be 1
@@ -337,6 +375,71 @@ try {
             $incompatible.combinedText | Should -Match 'BRANCH_SEED_INCOMPATIBLE'
             $manifest.configurationFingerprint = 'test-fixture'
             $manifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+            $saved.resetSeedIdentity.syncId | Should -Be $manifest.syncId
+            $saved.resetSeedIdentity.artifactSha256 | Should -Be $manifest.artifactSha256
+            # Same configuration is insufficient: an independently rebuilt
+            # seed may contain different data or a different event-log baseline.
+            foreach ($drift in @('generation', 'database', 'baseline', 'archive', 'dirty source', 'committed source', 'missing pin')) {
+                $artifactBytes = [IO.File]::ReadAllBytes($manifest.artifactPath)
+                $baselineBytes = [IO.File]::ReadAllBytes($manifest.baselinePath)
+                $archiveBytes = [IO.File]::ReadAllBytes($saved.resetArchiveDtPath)
+                $manifestBytes = [IO.File]::ReadAllBytes($manifestPath)
+                $statePath = Join-Path $branchOne '.agent-1c/reset-fixture.json'
+                $stateBytes = [IO.File]::ReadAllBytes($statePath)
+                $sourcePath = Join-Path $branchOne 'sentinel.txt'
+                $sourceBytes = [IO.File]::ReadAllBytes($sourcePath)
+                $head = (& git -C $branchOne rev-parse HEAD).Trim()
+                try {
+                    $expectedError = 'RESET_DEV_BRANCH_SEED_CHANGED'
+                    switch ($drift) {
+                        'generation' {
+                            $changedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedManifest.syncId = 'later-generation-with-identical-configuration'
+                            $changedManifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+                        }
+                        'database' {
+                            [IO.File]::WriteAllBytes($manifest.artifactPath, [byte[]](5,6,7,8))
+                            $changedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedManifest.artifactSha256 = (Get-FileHash -LiteralPath $manifest.artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
+                            $changedManifest | ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+                        }
+                        'baseline' { [IO.File]::WriteAllText($manifest.baselinePath, '{"signatures":["later"]}') }
+                        'archive' {
+                            [IO.File]::WriteAllText($saved.resetArchiveDtPath, 'damaged original archive')
+                            $expectedError = 'DEV_BRANCH_ARCHIVE_DT_VERIFY_FAILED'
+                        }
+                        'dirty source' {
+                            [IO.File]::WriteAllText($sourcePath, 'user changes after interruption')
+                            $expectedError = 'Git worktree is not clean'
+                        }
+                        'committed source' {
+                            [IO.File]::WriteAllText($sourcePath, 'committed user changes after interruption')
+                            & git -C $branchOne add sentinel.txt
+                            & git -C $branchOne commit --quiet -m 'user change after interrupted reset'
+                            $expectedError = 'RESET_DEV_BRANCH_HEAD_CHANGED'
+                        }
+                        'missing pin' {
+                            $changedState = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+                            $changedState.PSObject.Properties.Remove('resetSeedIdentity')
+                            $changedState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $statePath -Encoding UTF8
+                            $expectedError = 'RESET_DEV_BRANCH_SEED_IDENTITY_REQUIRED'
+                        }
+                    }
+                    $rejected = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+                    $rejected.exitCode | Should -Be 1 -Because $rejected.combinedText
+                    $rejected.combinedText | Should -Match $expectedError -Because $drift
+                    Test-Path -LiteralPath (Join-Path $saved.devBranchInfoBasePath '1Cv8.1CD') | Should -BeFalse
+                    @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
+                } finally {
+                    [IO.File]::WriteAllBytes($manifest.artifactPath, $artifactBytes)
+                    [IO.File]::WriteAllBytes($manifest.baselinePath, $baselineBytes)
+                    [IO.File]::WriteAllBytes($saved.resetArchiveDtPath, $archiveBytes)
+                    [IO.File]::WriteAllBytes($manifestPath, $manifestBytes)
+                    [IO.File]::WriteAllBytes($statePath, $stateBytes)
+                    & git -C $branchOne reset --quiet --hard $head
+                    [IO.File]::WriteAllBytes($sourcePath, $sourceBytes)
+                }
+            }
             $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
             $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
         }
@@ -439,8 +542,10 @@ try {
         }
     }
 
-    It "writes terminal run status when a fresh child fails before entering its body" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lifecycle-child-binding-" + [guid]::NewGuid().ToString("N"))
+    It "writes terminal run status when a fresh child rejects <Case> before entering its body" -ForEach @(
+        @{Case='argument binding'}, @{Case='database ownership protocol'}
+    ) {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Передача старому helper " + [guid]::NewGuid().ToString("N"))
         $childPath = Join-Path $tempRoot "invalid-child.ps1"
         $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
         $statusPath = Join-Path $tempRoot "status.json"
@@ -448,6 +553,7 @@ try {
         try {
             Initialize-LifecycleLockTestRepository -Path $tempRoot
             Set-Content -LiteralPath $childPath -Encoding UTF8 -Value @'
+[CmdletBinding()]
 param(
     [string]$Action,
     [string]$ProjectRoot,
@@ -467,7 +573,8 @@ param(
     [string]$ProjectRoot,
     [string]$ChildPath,
     [string]$StatusPath,
-    [string]$LogPath
+    [string]$LogPath,
+    [string]$Case
 )
 . $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
 $Action = "check-dev-branch"
@@ -480,20 +587,34 @@ $script:Agent1cReexecArguments = @(
     "-RunStatusPath", $RunStatusPath,
     "-RunLogPath", $RunLogPath
 )
+if ($Case -eq 'database ownership protocol') {
+    $base = [pscustomobject]@{kind='file';path=(Join-Path $ProjectRoot 'Общая база')}
+    $preparation = [pscustomobject]@{operation=$Action;plan=[pscustomobject]@{target=$base;bases=@($base)}
+        settings=[pscustomobject]@{coordinator=(Join-Path $ProjectRoot 'Очередь');python=(Get-Command python -CommandType Application | Select-Object -First 1).Source;waitTimeoutSeconds=0}}
+    $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $Action -Preparation $preparation
+}
 Enter-Agent1cLifecycleOperation -RequestedAction $Action
 try {
-    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", "rejected")
+    $phase = if ($Case -eq 'database ownership protocol') { 'accepted' } else { 'rejected' }
+    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", $phase)
 } finally {
-    Exit-Agent1cLifecycleOperation
+    try { Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission }
+    finally { Exit-Agent1cLifecycleOperation }
 }
 '@
 
+            # Windows PowerShell reads script literals through the ANSI code
+            # page without a BOM, even when the fixture writer is PowerShell 7.
+            foreach ($fixtureScript in @($childPath, $wrapperPath)) {
+                [IO.File]::WriteAllText($fixtureScript, [IO.File]::ReadAllText($fixtureScript), [Text.UTF8Encoding]::new($true))
+            }
             $result = Invoke-TestPowerShellFile -FilePath $wrapperPath -Arguments @(
                 "-HelperPath", $HelperPath,
                 "-ProjectRoot", $tempRoot,
                 "-ChildPath", $childPath,
                 "-StatusPath", $statusPath,
-                "-LogPath", $logPath
+                "-LogPath", $logPath,
+                "-Case", $Case
             )
 
             $result.exitCode | Should -Be 1
@@ -501,6 +622,13 @@ try {
             $result.combinedText | Should -Match "childExitCode='1'"
             $result.combinedText | Should -Match ([regex]::Escape($childPath))
             $result.combinedText | Should -Not -Match "CHILD_BODY_MUST_NOT_RUN"
+            if ($Case -eq 'database ownership protocol') {
+                $result.combinedText | Should -Match 'DatabaseContinuationProtocol'
+                $ticket = Get-ChildItem -LiteralPath (Join-Path $tempRoot 'Очередь/tickets') -Filter '*.json' |
+                    ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json }
+                $ticket.status | Should -Be 'released'
+                @($ticket.nativeJournal.producers.PSObject.Properties) | Should -HaveCount 1
+            }
 
             $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.status | Should -Be "failed"

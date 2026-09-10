@@ -50,6 +50,8 @@ def register(lease):
     with lease.coordinator.mutex(time.monotonic() + 30, lease.cancelled):
         record = _current(lease)
         record.setdefault("nativeJournal", {"schemaVersion": 1, "producers": {}})
+        from .native_completion import assert_writable
+        assert_writable(record)
         producer_id = uuid.uuid4().hex
         _index(record)["producers"][producer_id] = {
             "protocol": lease.owner.get("nativeJournalProtocol", 0),
@@ -137,6 +139,8 @@ def publish(lease, producer_id, payload):
         record = _current(lease)
         producers = _index(record)["producers"]
         producer = producers.get(producer_id)
+        from .native_completion import assert_writable
+        assert_writable(record, producer_id)
         if producer and producer.get("protocol") != 1:
             raise WorkError("NATIVE_JOURNAL_PROTOCOL_NOT_DECLARED")
         if (not producer or producer["generation"] != identity(record["token"]) or
@@ -220,11 +224,17 @@ def inspect(coordinator, record, *, resolve_helpers=False):
     if set(participants(record)) - represented:
         raise WorkError("NATIVE_JOURNAL_UNTRACKED_PARTICIPANT")
     operations, seen = [], set()
+    continuations = {}
     journals = {}
     for producer_id, producer in producers.items():
         _identifier(producer_id)
         if not isinstance(producer, dict) or not isinstance(producer.get("records"), dict):
             raise WorkError("NATIVE_JOURNAL_PRODUCER_INVALID")
+        if producer.get('continuation') is not None:
+            from . import native_continuation
+            reference = {'ticket': record['ticket'], 'producerId': producer_id,
+                         'sha256': producer['continuation'].get('sha256') if isinstance(producer['continuation'], dict) else None}
+            continuations[producer_id] = native_continuation.read(coordinator, record, reference)
         for key, entry in producer["records"].items():
             value = _read_operation(coordinator, record["ticket"], key, entry)
             journal_id = value["journalId"]
@@ -237,15 +247,23 @@ def inspect(coordinator, record, *, resolve_helpers=False):
                 raise WorkError("NATIVE_JOURNAL_RESOURCE_BINDING_CHANGED")
             operations.append(value)
     result = {"schemaVersion": 1, "ticket": record["ticket"], "recordRevision": identity(public(record)),
-              "resources": list(record["resources"]), "operations": operations, "requiresLiveVerification": True}
+              "resources": list(record["resources"]), "operations": operations,
+              "continuations": continuations, "requiresLiveVerification": True}
     from . import restoration_journal
     result['restoration'] = restoration_journal.inspect(coordinator, record)
+    from . import native_reset
+    result['resetCheckpoints'] = native_reset.inspect(coordinator, record)
+    from . import native_completion
+    result['completions'] = {key: native_completion.read(coordinator, record, key)
+        for key, producer in producers.items() if producer.get('completion') is not None}
     if resolve_helpers:
         from .native_recovery_helpers import resolve
         result['helperGenerations'] = {operation['journalId'] + '/' + operation['id']:
             resolve(coordinator, operation['helperInputs']) for operation in operations}
         result['restoration']['helperGenerations'] = {duty['journalId'] + '/' + duty['id']:
             resolve(coordinator, duty['helperInputs']) for duty in result['restoration']['duties']}
+        result['continuationHelperGenerations'] = {producer_id: resolve(coordinator, value['plan']['helperInputs'])
+            for producer_id, value in continuations.items()}
     return result
 
 
@@ -253,6 +271,18 @@ def release_errors(lease, producer_id):
     with lease.coordinator.mutex(time.monotonic() + 30, lambda: False):
         record = _current(lease)
         producer = _index(record)["producers"][producer_id]
+        from . import native_reset
+        reset = native_reset.inspect(lease.coordinator, record)
+        if reset and reset[-1]['context']['phase'] != 'complete':
+            return ['native-reset-continuation-required']
+        if producer.get('completion') is not None:
+            from .native_completion import read
+            read(lease.coordinator, record, producer_id)
+        if producer.get('continuation') is not None:
+            from . import native_continuation
+            native_continuation.read(lease.coordinator, record, {
+                'ticket': record['ticket'], 'producerId': producer_id,
+                'sha256': producer['continuation'].get('sha256') if isinstance(producer['continuation'], dict) else None})
         for key, entry in producer["records"].items():
             value = _read_operation(lease.coordinator, record["ticket"], key, entry)
             if value["startAttempted"] and not value["quiescenceConfirmed"]:

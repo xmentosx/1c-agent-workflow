@@ -78,7 +78,8 @@
     }
 
     It 'coordinates <operation> from planning through native completion' -TestCases @(
-        @{operation='export-dev-branch-result';resources=2}, @{operation='dump-dev-branch-extension';resources=1}
+        @{operation='export-dev-branch-result';resources=2}, @{operation='dump-dev-branch-extension';resources=1},
+        @{operation='update1cbase';resources=2}, @{operation='loadfrom1cbase';resources=1}, @{operation='getconfigfiles';resources=1}
     ) {
         param($operation, $resources)
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
@@ -278,7 +279,7 @@
 
     It 'includes repository locking in the same pre-lifecycle admission route' {
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
-        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')
+        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')
         $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('" + ($operations -join "', '") + "'))"))
         foreach ($command in @('Get-ItlDevBranchMutationDatabasePlan', 'Start-ItlDevBranchMutationDatabaseAdmission')) {
             $supported = (Get-Command $command).Parameters['Operation'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } | ForEach-Object ValidValues

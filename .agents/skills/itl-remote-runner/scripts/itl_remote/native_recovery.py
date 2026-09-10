@@ -27,6 +27,8 @@ WORKFLOW_OPERATIONS = frozenset({
     'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour',
     'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling',
     'init-dev-branch-extension', 'release-e2e-extension-smoke',
+    'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master',
+    'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test',
 })
 
 
@@ -44,7 +46,12 @@ def inspect_native_work(recovery, journal):
         for base in duty['resources']:
             key = recovery.coordinator.resources([base])[0]
             resources[key] = base
-    if not resources or not (generations or journal['restoration']['helperGenerations']):
+    continuations = journal.get('continuations', {})
+    for continuation in continuations.values():
+        for base in continuation['plan']['bases']:
+            key = recovery.coordinator.resources([base])[0]
+            resources[key] = base
+    if not resources or not (generations or journal['restoration']['helperGenerations'] or continuations):
         raise WorkError('NATIVE_RECOVERY_NATIVE_CONTEXT_REQUIRED')
     if any(base['kind'] != 'file' for base in resources.values()):
         raise WorkError('NATIVE_RECOVERY_SERVER_INSPECTION_REQUIRED')
@@ -59,6 +66,9 @@ def inspect_native_work(recovery, journal):
     for duty in journal['restoration']['duties']:
         helpers = journal['restoration']['helperGenerations'][duty['journalId'] + '/' + duty['id']]
         grouped.setdefault(helpers['generation'], {'helpers': helpers, 'scopes': [], 'project': duty['project']})
+    for producer_id, continuation in continuations.items():
+        helpers = journal['continuationHelperGenerations'][producer_id]
+        grouped.setdefault(helpers['generation'], {'helpers': helpers, 'scopes': [], 'project': continuation['plan']['project']})
     observations = []
     output = recovery.coordinator.root / 'recovery-observations' / recovery.ticket / recovery.attempt
     output.mkdir(parents=True, exist_ok=True)
@@ -202,12 +212,20 @@ An unsupported later phase remains needs-attention for its operation adapter.
             if journal['restoration']['protocol'] != 'available':
                 raise WorkError('NATIVE_RECOVERY_RESTORATION_CONTRACT_REQUIRED')
             producers = native_journal._index(current)['producers']
+            read_only_dump = False
             observed = []
             for producer in producers.values():
                 if str(producer.get('hostName', '')).casefold() != platform.node().casefold():
                     raise WorkError('NATIVE_RECOVERY_ORIGINAL_HOST_REQUIRED')
                 _require_process_exited(producer.get('ownerPid'))
                 observed.append({'host': producer['hostName'], 'pid': producer['ownerPid'], 'state': 'exited'})
+            if any(producer['participantId'] is None and producer.get('completion') for producer in producers.values()):
+                from .native_completion import recover_completed
+                observations = inspect_native_work(recovery, journal)
+                return recover_completed(recovery, journal, observed, observations)
+            if journal['resetCheckpoints']:
+                from .native_reset_resume import recover
+                return recover(recovery, journal, observed)
             if current['owner']['operation'] in ('init-dev-branch-extension', 'release-e2e-extension-smoke') and any(
                     duty['kind'] == 'infobase-snapshot' and duty['status'] == 'pending'
                     for duty in journal['restoration']['duties']):
@@ -229,7 +247,13 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 # unlocks objects nor pretends the interrupted report succeeded.
                 repository_capture = current['owner']['operation'] == 'lock-config-repository-objects' and all(
                     operation['purpose'] == 'designer-designer-command' for operation in journal['operations'])
-                if not repository_capture:
+                # These public routes only dump existing configuration files.
+                # Both the owning operation and every native purpose must match:
+                # a generic Designer command or a later write is not a dump.
+                read_only_dump = current['owner']['operation'] in (
+                    'loadfrom1cbase', 'getconfigfiles', 'dump-dev-branch-extension') and all(
+                    operation['purpose'] == 'designer-dump-config-to-files' for operation in journal['operations'])
+                if not repository_capture and not read_only_dump:
                     raise WorkError('NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED')
                 if not observations or any(
                         base['sessionCount'] or not base['databasePresent'] or not base['exclusive']
@@ -273,12 +297,16 @@ An unsupported later phase remains needs-attention for its operation adapter.
             if cancelled():
                 raise WorkError('INFOBASE_ACCESS_CANCELLED')
             return VerifiedRecovery(tuple(current['resources']), {
-                'adapter': 'workflow-repository-capture' if observations else 'workflow-preparation',
+                'adapter': ('workflow-read-only-dump' if read_only_dump else
+                            'workflow-repository-capture' if observations else 'workflow-preparation'),
                 'nativeStartAttempted': bool(observations),
                 'producers': observed, 'restorations': restored,
                 'originalRecordRevision': journal['recordRevision'], 'originalOutcome': 'interrupted',
                 'nativeObservations': observations,
-                'repositoryClaims': 'retained; capture report remains interrupted' if observations else 'not changed by native work',
+                'repositoryClaims': ('not changed by read-only dump' if read_only_dump else
+                                     'retained; capture report remains interrupted' if observations else 'not changed by native work'),
+                'resultAcceptance': ('dump remains interrupted; staged source and artifacts are preserved, not accepted; rerun the original helper'
+                                     if read_only_dump else 'no new success or verification claim'),
             })
         return recovery.complete(verify)
 

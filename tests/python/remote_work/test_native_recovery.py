@@ -29,6 +29,8 @@ fixture = RestorationJournalTests()
 fixture.root = root; fixture.coordinator = Coordinator(root / 'Общая очередь')
 fixture.base = {'kind': 'file', 'path': str(root / 'База проекта')}
 operation = 'unknown-operation' if kind == 'unknown-operation' else ('lock-config-repository-objects' if kind == 'repository-capture' else 'export-dev-branch-result')
+read_only = kind.startswith('read-only:')
+if read_only: operation = kind.split(':')[1]
 completion = kind.startswith('committed')
 bases = [fixture.base]
 if completion:
@@ -43,7 +45,7 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
     value = fixture.database_payload(lease, policy='on-failure') if completion else fixture.payload(lease, existed=kind != 'absent')
     if completion: value.update(operation=operation, resources=bases)
     contents = {name: ('# retained ' + name).encode() for name in NAMES}
-    if completion or kind in ('native-started', 'repository-capture'):
+    if completion or read_only or kind in ('native-started', 'repository-capture'):
         library = Path(sys.argv[1]).parent.parent / '1c-workflow/scripts/lib'
         contents = {name: (library / name).read_bytes() for name in NAMES}
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
@@ -61,14 +63,16 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
         inner['helperInputs'] = value['helperInputs']
         duties.publish(lease, producer, inner)
     if not completion: Path(value['destination']).write_bytes(b'interrupted preparation cursor')
-    if completion or kind in ('native-started', 'repository-capture'):
+    if completion or read_only or kind in ('native-started', 'repository-capture'):
         operation_record = fixture.native_restore(value)
         operation_record['helperInputs'] = value['helperInputs']
-        if completion or kind == 'repository-capture':
+        if completion or read_only or kind == 'repository-capture':
             operation_record['purpose'] = 'designer-designer-command'
             Path(fixture.base['path']).mkdir()
             (Path(fixture.base['path']) / '1Cv8.1CD').write_bytes(b'fixture database-file access sentinel; not a 1C database')
             write_json(root / 'repository-claims.json', {'objects': ['Configuration'], 'owner': 'original-owner'})
+        if read_only:
+            operation_record['purpose'] = 'designer-designer-command' if kind.endswith(':write') else 'designer-dump-config-to-files'
         native.publish(lease, producer, operation_record)
     if completion:
         (root / 'saved-source.bsl').write_bytes(b'\xef\xbb\xbfcommitted source\r\n')
@@ -216,6 +220,55 @@ class NativeRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkError, 'OPERATION_CONTRACT_REQUIRED'):
             recover_workflow_operation(self.coordinator.root, data['ticket'])
         self.assertEqual(b'interrupted preparation cursor', Path(data['value']['destination']).read_bytes())
+
+    def assert_dump_recovery(self, operation):
+        data = self.orphan('read-only:' + operation)
+        artifact = self.root / 'partial-dump.xml'
+        artifact.write_bytes(b'incomplete dump must remain unaccepted')
+        database = Path(data['base']['path']) / '1Cv8.1CD'
+        original_database = database.read_bytes()
+        result = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(RUNTIME / 'remote_work.py'),
+                                 'access-recover-workflow', '--coordinator', str(self.coordinator.root),
+                                 '--ticket', data['ticket']], cwd=RUNTIME, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, timeout=30)
+        self.assertEqual(0, result.returncode, result.stderr.decode())
+        record = json.loads(result.stdout)
+        self.assertEqual('released', record['status'])
+        evidence = record['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('workflow-read-only-dump', evidence['adapter'])
+        self.assertEqual('interrupted', evidence['originalOutcome'])
+        self.assertIn('not accepted', evidence['resultAcceptance'])
+        self.assertEqual(original_database, database.read_bytes())
+        self.assertEqual(b'incomplete dump must remain unaccepted', artifact.read_bytes())
+        self.assertEqual(Path(data['value']['snapshotPath']).read_bytes(), Path(data['value']['destination']).read_bytes())
+        with Lease(self.coordinator.root, [data['base']], {'operation': 'next-chat'}, timeout=0): pass
+
+    def test_full_source_dump_releases_through_public_recovery_without_accepting_partial_files(self):
+        self.assert_dump_recovery('loadfrom1cbase')
+
+    def test_selected_source_dump_releases_through_public_recovery(self):
+        self.assert_dump_recovery('getconfigfiles')
+
+    def test_extension_source_dump_releases_through_public_recovery(self):
+        self.assert_dump_recovery('dump-dev-branch-extension')
+
+    def test_read_only_dump_does_not_release_a_database_with_an_independent_handle(self):
+        data = self.orphan('read-only:loadfrom1cbase')
+        with (Path(data['base']['path']) / '1Cv8.1CD').open('rb'):
+            with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
+                recover_workflow_operation(self.coordinator.root, data['ticket'])
+        with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
+            with Lease(self.coordinator.root, [data['base']], {}, timeout=0): pass
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+
+    def test_dump_operation_name_does_not_authorize_recovery_of_a_native_write(self):
+        data = self.orphan('read-only:loadfrom1cbase:write')
+        with self.assertRaisesRegex(WorkError, 'STARTED_OPERATION_ADAPTER_REQUIRED'):
+            recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual(b'interrupted preparation cursor', Path(data['value']['destination']).read_bytes())
+        with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
+            with Lease(self.coordinator.root, [data['base']], {}, timeout=0): pass
 
     def test_committed_result_survives_recovery_after_snapshot_cleanup(self):
         data = self.orphan('committed-unused-service')

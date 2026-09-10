@@ -61,9 +61,19 @@ def serve(input_stream, output_stream):
                             raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
                         messages.put(value)
                         continue
-                    if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty"):
+                    if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty", "reset-checkpoint"):
                         if not admitted.is_set():
                             raise WorkError("NATIVE_JOURNAL_BEFORE_ADMISSION")
+                        messages.put(value)
+                        continue
+                    if value == {'event': 'lifecycle-complete'}:
+                        if not admitted.is_set():
+                            raise WorkError('NATIVE_LIFECYCLE_COMPLETION_BEFORE_ADMISSION')
+                        messages.put(value)
+                        continue
+                    if set(value) == {"event", "record", "parent"} and value['event'] == 'continuation-plan':
+                        if not admitted.is_set():
+                            raise WorkError('NATIVE_CONTINUATION_BEFORE_ADMISSION')
                         messages.put(value)
                         continue
                     if (set(value) != {"event", "cleanupErrors"} or value["event"] != "release" or
@@ -110,6 +120,18 @@ def serve(input_stream, output_stream):
             if value["event"] == "restoration-duty":
                 from . import restoration_journal
                 emit(restoration_journal.publish(lease, producer_id, value["record"]))
+                continue
+            if value['event'] == 'continuation-plan':
+                from . import native_continuation
+                emit(native_continuation.publish(lease, producer_id, value['record'], value['parent']))
+                continue
+            if value['event'] == 'lifecycle-complete':
+                from . import native_completion
+                emit(native_completion.publish(lease, producer_id))
+                continue
+            if value['event'] == 'reset-checkpoint':
+                from . import native_reset
+                emit(native_reset.publish(lease, producer_id, value['record']))
                 continue
             status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,

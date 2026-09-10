@@ -7,6 +7,7 @@ proves that a crashed operation's database side effects have stopped.
 from __future__ import annotations
 
 import contextlib
+import json
 import math
 import os
 from pathlib import Path
@@ -17,6 +18,26 @@ import time
 import uuid
 
 from .common import FileLock, WorkError, identity, read_json, stamp, write_json
+
+
+def admission_error(code, coordinator, blockers, elapsed):
+    """Keep the terminal error actionable even when progress output is hidden."""
+    details = {"coordinator": str(coordinator.root), "waitSeconds": round(elapsed, 3),
+               "blockers": [], "requestExecuted": False}
+    for record in blockers:
+        recovery = record["status"] == "needs-attention"
+        details["blockers"].append({
+            "ticket": record["ticket"], "status": record["status"],
+            "owner": {key: record.get("owner", {})[key] for key in
+                      ("project", "workspace", "operation", "jobId", "threadId", "host", "pid", "parentPid")
+                      if key in record.get("owner", {})},
+            "reason": record.get("reason", "owner has not released database access"),
+            "nextAction": (
+                {"command": "access-recovery-plan", "coordinator": str(coordinator.root),
+                 "ticket": record["ticket"]} if recovery else
+                {"command": "access-status", "coordinator": str(coordinator.root),
+                 "instruction": "inspect the owner on its host; cancel through its owning helper if stuck; retry after verified release"})})
+    return WorkError(code + ": " + json.dumps(details, ensure_ascii=True))
 
 
 def binding(base):
@@ -228,7 +249,8 @@ class Lease:
                             record.update(status="needs-attention", reason="owner-exited; inspect surviving work and restoration")
                             self.coordinator.save(record)
                         if record["status"] == "needs-attention":
-                            raise WorkError("INFOBASE_ACCESS_RECOVERY_REQUIRED: " + record["ticket"])
+                            raise admission_error("INFOBASE_ACCESS_RECOVERY_REQUIRED", self.coordinator,
+                                                  [record], time.monotonic() - self.started)
                         if record["status"] in ("running", "recovering") or record["sequence"] < self.record["sequence"]:
                             blockers.append(public(record, include_native_journal=False))
                     if not blockers:
@@ -240,7 +262,8 @@ class Lease:
                                "resources": resources, "waitSeconds": time.monotonic() - self.started,
                                "blockers": blockers})
                 if time.monotonic() >= deadline:
-                    raise WorkError("INFOBASE_ACCESS_WAIT_TIMEOUT")
+                    raise admission_error("INFOBASE_ACCESS_WAIT_TIMEOUT", self.coordinator,
+                                          blockers, time.monotonic() - self.started)
                 time.sleep(0.05)
         except BaseException:
             # Admission errors never mean that database work ran. A record which

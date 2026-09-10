@@ -116,6 +116,7 @@ param(
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
     [switch]$OperationContinuation,
+    [ValidateRange(0,1)][int]$DatabaseContinuationProtocol = 0,
     [ValidateSet("", "access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
@@ -430,7 +431,7 @@ try {
     if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
         $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
     }
-    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')) {
+    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')) {
         # Resolve inputs without acquiring resources. An invalid source context
         # must still receive the lifecycle's conflict/continuation diagnostics,
         # then fail before any action or native call. Admission failures (wait,
@@ -454,6 +455,9 @@ try {
     # All action preconditions run after admission with current configuration.
     Read-ProjectConfig
     if ($null -ne $databaseAdmissionPlanningError) { throw $databaseAdmissionPlanningError }
+    if ($DatabaseContinuationProtocol -ne 0 -and $null -eq $script:DevBranchMutationDatabaseAdmission) {
+        throw 'NATIVE_CONTINUATION_ADMISSION_REQUIRED: the fresh helper did not join the parent database plan.'
+    }
     if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $requestedLifecycleAction)
     }
@@ -559,6 +563,7 @@ try {
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     } }
     Complete-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission
+    Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
     Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0

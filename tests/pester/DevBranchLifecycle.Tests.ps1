@@ -2455,8 +2455,10 @@ exit 0
         }
     }
 
-    It "keeps the captured server reset seed leased through provider restore" {
-        $tempRoot = Join-Path $TestDrive 'серверный seed restore'
+    It "keeps the captured server reset seed leased and verifies <SeedCondition> before provider restore" -ForEach @(
+        @{ SeedCondition = 'valid' }, @{ SeedCondition = 'corrupted' }
+    ) {
+        $tempRoot = Join-Path $TestDrive ('серверный seed restore ' + $SeedCondition)
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
         $providerPath = Join-Path $tempRoot 'restore provider.ps1'
         Set-Content -LiteralPath $providerPath -Encoding UTF8 -Value @'
@@ -2477,9 +2479,16 @@ try {
             function Assert-BranchSeedReady { throw 'CAPTURED_SEED_MUST_NOT_BE_REREAD' }
             $artifact = Join-Path $tempRoot 'исходная база.dt'
             Write-Utf8Text -Path $artifact -Value 'captured seed'
-            $seed = [pscustomobject]@{ configurationFingerprint = 'expected'; artifactPath = $artifact }
+            $seed = [pscustomobject]@{ configurationFingerprint = 'expected'; artifactPath = $artifact; artifactSha256 = (Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant() }
+            if ($SeedCondition -eq 'corrupted') { Write-Utf8Text -Path $artifact -Value 'replaced seed' }
             $reader = [IO.File]::Open((Join-Path $tempRoot 'seed.lease'), 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
             try {
+                if ($SeedCondition -eq 'corrupted') {
+                    { Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchName = 'server'; devBranchInfoBasePath = 'server\base' }) -ExpectedConfigurationFingerprint expected -Seed $seed -ExistingLease $reader } | Should -Throw '*DEV_BRANCH_RESET_SEED_HASH_MISMATCH*'
+                    Test-Path -LiteralPath (Join-Path $tempRoot 'provider-result.txt') | Should -BeFalse
+                    $reader.CanRead | Should -BeTrue
+                    return
+                }
                 $result = Restore-ExistingDevBranchFromSeed -State ([pscustomobject]@{ devBranchName = 'server'; devBranchInfoBasePath = 'server\base' }) -ExpectedConfigurationFingerprint expected -Seed $seed -ExistingLease $reader
                 $result.configurationFingerprint | Should -Be 'expected'
                 (Read-Utf8Text -Path (Join-Path $tempRoot 'provider-result.txt')) | Should -Be 'captured seed'

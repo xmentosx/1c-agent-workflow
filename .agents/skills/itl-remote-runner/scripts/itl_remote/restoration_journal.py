@@ -151,6 +151,8 @@ def publish(lease, producer_id, payload):
         record = native._current(lease)
         producers = native._index(record)['producers']
         producer = producers.get(producer_id)
+        from .native_completion import assert_writable
+        assert_writable(record, producer_id)
         if (not producer or producer.get('protocol') != 1 or
                 producer['generation'] != identity(record['token']) or
                 producer['participantId'] != lease.participant_id or

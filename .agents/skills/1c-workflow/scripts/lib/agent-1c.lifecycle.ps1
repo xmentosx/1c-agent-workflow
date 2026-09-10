@@ -653,6 +653,19 @@ function Invoke-Agent1cFreshProcess {
         $reexecArguments.Add("-OperationContinuation") | Out-Null
     }
 
+    $databaseAdmissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $databaseAdmissionVariable -and $null -ne $databaseAdmissionVariable.Value -and
+        -not $databaseAdmissionVariable.Value.completed) {
+        if (-not $continuesLifecycleOperation -or $null -eq $databaseAdmissionVariable.Value.continuation) {
+            throw 'NATIVE_CONTINUATION_CONTEXT_REQUIRED'
+        }
+        Assert-OneCNativeOperationJournalOwner -Journal $databaseAdmissionVariable.Value.journal
+        # Old helpers must reject this argument before executing the action;
+        # accepting the inherited lease without its resource plan is unsafe.
+        $reexecArguments.Add('-DatabaseContinuationProtocol') | Out-Null
+        $reexecArguments.Add('1') | Out-Null
+    }
+
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -693,6 +706,9 @@ function Invoke-Agent1cFreshProcess {
             $script:LifecycleOperationTerminalWrittenByContinuation = $true
             if ([string]$terminal["status"] -eq "failed" -and $exitCode -eq 0) {
                 $exitCode = 1
+            }
+            if ($exitCode -eq 0 -and [string]$terminal['status'] -eq 'succeeded' -and $null -ne $databaseAdmissionVariable) {
+                Publish-ItlDevBranchLifecycleCompletion -Admission $databaseAdmissionVariable.Value
             }
         }
     }
@@ -2134,10 +2150,67 @@ function Dump-ExtensionToFiles {
     }
 }
 
+function Get-ItlSourceDatabasePlan {
+    $source = New-ItlOnDemandDatabaseConnection -Kind (Get-InfoBaseKind) -Path (Get-SourceInfoBasePath)
+    $bases = @($source)
+    if ($source.kind -eq 'file') {
+        # Seed normalization/dump runs Designer against this fixed directory.
+        # Its file-reader/writer lease still protects artifact publication.
+        $bases += New-ItlOnDemandDatabaseConnection -Kind file -Path (Split-Path -Parent (Get-BranchSeedPaths).artifactPath)
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $source.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $source)
+    }
+    return [pscustomobject]@{project=[IO.Path]::GetFullPath($script:ProjectRoot);source=$source;bases=@($bases)}
+}
+
+function Get-ItlMasterDatabasePlan {
+    $mainRoot = Get-MainWorktreePath
+    # Planning precedes lifecycle locks and must leave the calling branch's
+    # process environment intact, including keys absent from its .dev.env.
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        return Invoke-InProjectContext -Root $mainRoot -ScriptBlock { Get-ItlSourceDatabasePlan }
+    } finally {
+        foreach ($key in @([Environment]::GetEnvironmentVariables('Process').Keys)) {
+            if (-not $environmentBefore.Contains($key)) { [Environment]::SetEnvironmentVariable($key, $null, 'Process') }
+        }
+        foreach ($key in $environmentBefore.Keys) {
+            [Environment]::SetEnvironmentVariable($key, [string]$environmentBefore[$key], 'Process')
+        }
+    }
+}
+
+function Assert-ItlMasterDatabaseAdmission {
+    param([object]$Admission)
+    if ($null -eq $Admission -or $Admission.completed -or -not $Admission.plan.PSObject.Properties['masterPlan'] -or $null -eq $Admission.plan.masterPlan) {
+        throw 'INFOBASE_ACCESS_MASTER_ADMISSION_REQUIRED'
+    }
+    $planned = $Admission.plan.masterPlan
+    $current = Get-ItlSourceDatabasePlan
+    if (-not [string]::Equals($planned.project, $current.project, [StringComparison]::OrdinalIgnoreCase) -or
+        $planned.source.kind -cne $current.source.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $planned.source.path -Second $current.source.path)) {
+        throw 'INFOBASE_ACCESS_MASTER_PLAN_CHANGED: source project or database changed after admission.'
+    }
+    foreach ($base in $current.bases) {
+        if (@($Admission.plan.bases | Where-Object {
+            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
+        }).Count -eq 0) { throw 'INFOBASE_ACCESS_MASTER_PLAN_CHANGED: source or seed resource is outside the admitted plan.' }
+    }
+    Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
+}
+
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
+    }
+    if ($Operation -eq 'sync-master') {
+        $master = Get-ItlMasterDatabasePlan
+        return [pscustomobject]@{target=$master.source;bases=@($master.bases);masterPlan=$master}
     }
     if ($Operation -eq 'lock-config-repository-objects') {
         # Repository ownership changes run against the source base. Branch and
@@ -2145,21 +2218,35 @@ function Get-ItlDevBranchMutationDatabasePlan {
         $target = [pscustomobject]@{ kind = [string](Get-InfoBaseKind); path = [string](Get-SourceInfoBasePath) }
         return [pscustomobject]@{ target = $target; bases = @($target) }
     }
-    if ($Operation -eq 'dump-dev-branch-extension') {
+    if ($Operation -in @('dump-dev-branch-extension', 'loadfrom1cbase', 'getconfigfiles')) {
         # Read-only native dump does not drain or prepare a Vanessa manager.
         $target = New-ItlOnDemandDatabaseConnection -Kind ([string](Get-StateValue $State 'infoBaseKind' '')) -Path ([string]$State.devBranchInfoBasePath)
         return [pscustomobject]@{target=$target;bases=@($target)}
     }
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
+    $master = $null
+    if ($Operation -eq 'refresh-dev-branch') {
+        $master = Get-ItlMasterDatabasePlan
+        $bases += @($master.bases)
+    }
     $servicePlan = $null
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')) {
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'deploy-and-test')) {
         # Repairs can replace a service generation even when there is no test
         # suite. Reserve that exact new address before taking lifecycle locks.
         $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
         $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
     }
-    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'release-e2e-extension-smoke')) {
+    $reserve = ''
+    if ($Operation -in @('reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch')) {
+        # A fresh helper after replacing source can require a different service
+        # template. Reserve the replacement address before any database work,
+        # even when the current helper can still reuse the saved generation.
+        $reserve = if ($ServiceReserveGeneration) { $ServiceReserveGeneration } else { [guid]::NewGuid().ToString('N') }
+        if ($reserve -cnotmatch '^[a-f0-9]{32}$') { throw 'NATIVE_CONTINUATION_GENERATION_INVALID' }
+        $bases += [pscustomobject]@{kind='file';path=(Get-VanessaServiceInfoBasePath -State $State -Generation $reserve)}
+    }
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'release-e2e-extension-smoke', 'deploy-and-test')) {
         # Only execution of tests uses their additional profile databases.
         # Tooling repair must remain available with an invalid test manifest.
         $manifest = Read-VanessaTestClientManifest
@@ -2174,26 +2261,58 @@ function Get-ItlDevBranchMutationDatabasePlan {
     }
     $unique = @{}
     foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
-    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan; serviceTarget = $plan.target }
+    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan; serviceTarget = $plan.target; serviceReserveGeneration = $reserve; masterPlan = $master }
 }
 
 function Get-ItlDevBranchMutationDatabaseState {
     param([string]$Operation)
     # Standalone auxiliary maintenance resolves its own connection and does not
     # require an initialized primary development database. Auxiliary tests do.
-    if ($Operation -in @('update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
+    if ($Operation -in @('sync-master', 'update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
     return Read-DevBranchState -Name $DevBranchName
+}
+
+function Get-ItlDatabaseContinuationContext {
+    param([string]$Operation)
+    $protocol = Get-Variable -Name DatabaseContinuationProtocol -ErrorAction SilentlyContinue
+    if ($null -eq $protocol -or $protocol.Value -eq 0) { return $null }
+    $text = [Environment]::GetEnvironmentVariable('ITL_DATABASE_CONTINUATION', 'Process')
+    if (-not $OperationContinuation -or -not $text -or $text.Length -gt 65536) { throw 'NATIVE_CONTINUATION_CONTEXT_REQUIRED' }
+    try { $context = $text | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'NATIVE_CONTINUATION_CONTEXT_INVALID' }
+    if ($context.plan.schemaVersion -ne 1 -or $context.plan.operation -cne $Operation -or
+        -not [string]::Equals([IO.Path]::GetFullPath($context.plan.project),[IO.Path]::GetFullPath($script:ProjectRoot),[StringComparison]::OrdinalIgnoreCase) -or
+        @($context.plan.bases).Count -eq 0 -or $context.reference.ticket -cnotmatch '^[a-f0-9]{32}$' -or
+        $context.reference.producerId -cnotmatch '^[a-f0-9]{32}$' -or $context.reference.sha256 -cnotmatch '^[a-f0-9]{64}$') {
+        throw 'NATIVE_CONTINUATION_CONTEXT_INVALID'
+    }
+    return $context
+}
+
+function Publish-ItlDevBranchContinuationPlan {
+    param([object]$Admission, [AllowNull()][object]$Parent = $null)
+    $journal = $Admission.journal
+    if ($null -eq $journal.persistence) {
+        $journal.persistence = New-OneCNativeJournalPersistence -Resources $journal.resources -Owner $journal.owner
+    }
+    $generation = ''; $reserve = ''
+    if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = [string]$Admission.plan.servicePlan.generation }
+    if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { $reserve = [string]$Admission.plan.serviceReserveGeneration }
+    $record = [pscustomobject]@{schemaVersion=1;operation=$Admission.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
+        target=$Admission.plan.target;bases=@($Admission.plan.bases);serviceGeneration=$generation;serviceReserveGeneration=$reserve
+        helperInputs=@($journal.persistence.helperInputs)}
+    return Publish-ItlDatabaseContinuationPlan -Owner $Admission.owner -Record $record -Parent $Parent
 }
 
 function Get-ItlDevBranchMutationAdmissionPreparation {
     param([string]$Operation = 'update-dev-branch-base', [switch]$CheckSourcePreflight)
     $state = Get-ItlDevBranchMutationDatabaseState -Operation $Operation
     if ($null -ne $state) { Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation }
-    if ($CheckSourcePreflight -and $Operation -in @('check-dev-branch', 'verify-dev-branch')) {
+    if ($CheckSourcePreflight -and $Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) {
         # Source prerequisites do not need a database lease. Preserve their
         # diagnostics before planning a launch, including legacy branch state.
         # The action repeats this read-only check after waiting for admission.
-        $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { 'command' })
+        $trigger = $(if ($Operation -eq 'deploy-and-test') { 'command' } elseif ($VerificationTrigger) { $VerificationTrigger } else { 'command' })
         $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
         Assert-ItlVerificationRepairScope -Trigger $trigger
         Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
@@ -2207,13 +2326,31 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
     }
     # A profile or another backend owner keeps its lease until normal release.
     # Never stop that owner merely to make this request enter the database.
-    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation
+    $continuation = Get-ItlDatabaseContinuationContext -Operation $Operation
+    $generation = if ($null -ne $continuation) {
+        if ($continuation.plan.serviceReserveGeneration) { [string]$continuation.plan.serviceReserveGeneration } else { [string]$continuation.plan.serviceGeneration }
+    } else { '' }
+    $reserve = if ($null -ne $continuation) { [string]$continuation.plan.serviceReserveGeneration } else { '' }
+    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
+    if ($null -ne $continuation) {
+        if ($plan.target.kind -cne $continuation.plan.target.kind -or
+            -not (Test-ItlOnDemandInfoBaseMatch -First $plan.target.path -Second $continuation.plan.target.path)) {
+            throw 'NATIVE_CONTINUATION_PLAN_CHANGED: target differs from the admitted parent.'
+        }
+        foreach ($base in $plan.bases) {
+            if (@($continuation.plan.bases | Where-Object { $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path) }).Count -eq 0) {
+                throw 'NATIVE_CONTINUATION_PLAN_CHANGED: a database is outside the admitted parent plan.'
+            }
+        }
+        $plan.bases = @($continuation.plan.bases)
+        $plan | Add-Member -NotePropertyName serviceReserveGeneration -NotePropertyValue $continuation.plan.serviceReserveGeneration -Force
+    }
     $settings = Get-ItlDatabaseAccessSettings
-    return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings}
+    return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings;continuationParent=$(if($null -ne $continuation){$continuation.reference}else{$null})}
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
@@ -2225,20 +2362,31 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
         owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
     if ($previousProof) {
         try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
+        if ((Get-StateValue -State $request.inherited -Name 'purpose' -Default 'operation') -eq 'recovery') {
+            if ($Operation -cne 'reset-dev-branch' -or -not $Preparation.PSObject.Properties['continuationParent'] -or
+                $null -eq $Preparation.continuationParent) { throw 'NATIVE_RESET_RECOVERY_CONTINUATION_REQUIRED' }
+            $request.purpose = 'recovery'
+        }
     }
     $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request -CancelPath $CancelPath
     $admission = [pscustomobject]@{
         owner = $owner; plan = $plan; journal = (New-OneCNativeOperationJournal -Resources $plan.bases -Owner $owner); operation = $Operation
         previousJournal = $script:OneCNativeOperationJournal; previousProof = $previousProof
+        previousContinuation = [Environment]::GetEnvironmentVariable('ITL_DATABASE_CONTINUATION', 'Process'); continuation = $null
         completed = $false; servicePlanApplied = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
     }
     try {
+        $parent = if ($Preparation.PSObject.Properties['continuationParent']) { $Preparation.continuationParent } else { $null }
+        $admission.continuation = Publish-ItlDevBranchContinuationPlan -Admission $admission -Parent $parent
         [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
+        [Environment]::SetEnvironmentVariable('ITL_DATABASE_CONTINUATION', ($admission.continuation | ConvertTo-Json -Depth 20 -Compress), 'Process')
         $script:OneCNativeOperationJournal = $admission.journal
         return $admission
     } catch {
-        Complete-ItlDatabaseAccessHost -Owner $owner | Out-Null
-        throw
+        $admissionError = $_
+        try { Complete-ItlDatabaseAccessHost -Owner $owner | Out-Null }
+        catch { Close-ItlDatabaseAccessHost -Owner $owner }
+        throw $admissionError
     }
 }
 
@@ -2247,7 +2395,8 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
     if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
     $generation = ''
     if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = $Admission.plan.servicePlan.generation }
-    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation -ServiceGeneration $generation
+    $reserve = if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { [string]$Admission.plan.serviceReserveGeneration } else { '' }
+    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
     if ($fresh.target.kind -cne $Admission.plan.target.kind -or
         -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
         throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'
@@ -2259,6 +2408,16 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
     }
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     Assert-ItlDatabaseAccessHost -Owner $Admission.owner
+}
+
+function Publish-ItlDevBranchLifecycleCompletion {
+    param([AllowNull()][object]$Admission)
+    if ($null -eq $Admission -or $Admission.operation -notin @('sync-master','reset-dev-branch','refresh-dev-branch','refresh-dev-branch-lite')) { return }
+    if ($Admission.completed -or -not (Test-OneCNativeOperationJournalReleased -Journal $Admission.journal)) {
+        throw 'NATIVE_LIFECYCLE_COMPLETION_NATIVE_WORK_PENDING'
+    }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    Publish-ItlDatabaseLifecycleCompletion -Owner $Admission.owner | Out-Null
 }
 
 function Complete-ItlDevBranchMutationDatabaseAdmission {
@@ -2275,6 +2434,7 @@ function Complete-ItlDevBranchMutationDatabaseAdmission {
     } finally {
         $script:OneCNativeOperationJournal = $Admission.previousJournal
         [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $Admission.previousProof, 'Process')
+        [Environment]::SetEnvironmentVariable('ITL_DATABASE_CONTINUATION', $Admission.previousContinuation, 'Process')
         $Admission.completed = $true
     }
 }
@@ -7556,6 +7716,10 @@ function Sync-Master {
     Assert-CleanGit
     Checkout-Master
     Clear-DevBranchContext
+    $databaseAdmission = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $databaseAdmission -and $null -ne $databaseAdmission.Value) {
+        Assert-ItlMasterDatabaseAdmission -Admission $databaseAdmission.Value
+    }
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
@@ -11908,6 +12072,15 @@ function Restore-ExistingDevBranchFromSeed {
         if ([string]$Seed.configurationFingerprint -cne $ExpectedConfigurationFingerprint) {
             throw "BRANCH_SEED_INCOMPATIBLE: captured seed does not match the reset master fingerprint."
         }
+        if ((Get-InfoBaseKind) -eq 'server') {
+            # File restore hashes its temporary copy before replacement. The
+            # server provider must receive the same validated bytes contract.
+            $expectedHash = [string](Get-StateValue -State $Seed -Name 'artifactSha256' -Default '')
+            $actualHash = (Get-FileHash -LiteralPath ([string]$Seed.artifactPath) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($expectedHash -cnotmatch '^[a-f0-9]{64}$' -or $actualHash -cne $expectedHash) {
+                throw "DEV_BRANCH_RESET_SEED_HASH_MISMATCH: expected=$expectedHash actual=$actualHash"
+            }
+        }
         Reset-DevBranchToolingProof -State $State -Reason "branch-reset-seed"
         if ((Get-InfoBaseKind) -eq "file") {
             $infoBasePath = Resolve-Agent1cFullPath -Path ([string]$State.devBranchInfoBasePath)
@@ -11992,11 +12165,146 @@ function Add-DevBranchResetTransientStateClearUpdates {
     }
 }
 
+function Get-DevBranchResetSeedIdentity {
+    param([Parameter(Mandatory)][object]$Seed)
+
+    # A configuration fingerprint alone does not identify database contents.
+    # Keep the published generation and artifact contract, plus exact baseline
+    # bytes, while the caller owns the seed reader. The restore verifies the
+    # copied database against this pinned artifact hash before replacing it.
+    $identity = [ordered]@{ schemaVersion = 1 }
+    foreach ($field in @('sourceKey', 'syncId', 'artifactKind', 'artifactPath', 'artifactSha256',
+        'configurationFingerprint', 'baselinePath', 'baselineHash')) {
+        $identity[$field] = [string](Get-StateValue -State $Seed -Name $field -Default '')
+    }
+    if (-not $identity.sourceKey -or -not $identity.syncId -or
+        $identity.artifactKind -notin @('file-1cd', 'server-dt') -or
+        $identity.artifactSha256 -cnotmatch '^[a-f0-9]{64}$') {
+        throw 'RESET_DEV_BRANCH_SEED_IDENTITY_INVALID'
+    }
+    $identity.artifactPath = Resolve-Agent1cFullPath -Path $identity.artifactPath
+    $identity.baselinePath = Resolve-Agent1cFullPath -Path $identity.baselinePath
+    $identity.artifactBytes = [long](Get-StateValue -State $Seed -Name 'artifactBytes' -Default 0)
+    if ($identity.artifactBytes -le 0 -or (Get-Item -LiteralPath $identity.artifactPath).Length -ne $identity.artifactBytes) {
+        throw 'RESET_DEV_BRANCH_SEED_IDENTITY_INVALID: artifact size changed.'
+    }
+    $identity.baselineSha256 = (Get-FileHash -LiteralPath $identity.baselinePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    return [pscustomobject]$identity
+}
+
+function Assert-DevBranchResetResumeInputs {
+    param([Parameter(Mandatory)][object]$State, [Parameter(Mandatory)][object]$SeedIdentity)
+
+    $pinned = Get-StateValue -State $State -Name 'resetSeedIdentity' -Default $null
+    if ($null -eq $pinned) { throw 'RESET_DEV_BRANCH_SEED_IDENTITY_REQUIRED: interrupted reset has no pinned seed generation.' }
+    $pinnedFields = ConvertTo-Agent1cHashtable -Object $pinned
+    foreach ($field in $SeedIdentity.PSObject.Properties.Name) {
+        # Empty legacy baselineHash is a value, not a missing field.
+        if (-not $pinnedFields.Contains($field) -or $null -eq $pinnedFields[$field] -or
+            [string]$pinnedFields[$field] -cne [string]$SeedIdentity.$field) {
+            throw "RESET_DEV_BRANCH_SEED_CHANGED: pinned reset seed differs at $field; retain the original archive and reset state."
+        }
+    }
+    $phase = [string](Get-StateValue -State $State -Name 'resetPhase' -Default '')
+    if ($phase -notin @('archive-pending', 'archive-complete', 'git-reset-complete', 'runtime-initializing')) {
+        throw "RESET_DEV_BRANCH_PHASE_INVALID: $phase"
+    }
+    Assert-CleanGit
+    $head = Get-CurrentCommit
+    $expectedHead = if ($phase -in @('git-reset-complete', 'runtime-initializing')) { [string]$State.resetNewHead } else { [string]$State.resetOldHead }
+    # A crash can fall between the exact-master commit and saving its phase.
+    $committedBeforePhase = $phase -eq 'archive-complete' -and
+        (Get-GitOutput @('rev-parse', 'HEAD^{tree}')).Trim() -ceq [string]$State.resetMasterTree
+    if ($head -cne $expectedHead -and -not $committedBeforePhase) {
+        throw 'RESET_DEV_BRANCH_HEAD_CHANGED: preserve changes made after the interrupted reset.'
+    }
+    if ($phase -ne 'archive-pending') {
+        Assert-DevBranchResetArchiveReady -ArchivePath ([string]$State.resetArchivePath) `
+            -OldHead ([string]$State.resetOldHead) -MasterCommit ([string]$State.resetMasterCommit) | Out-Null
+    }
+}
+
+function Get-DevBranchResetCheckpointContext {
+    param([Parameter(Mandatory)][object]$State)
+    $phase = [string]$State.resetPhase
+    $manifest = if ($phase -ne 'archive-pending') {
+        $path = Join-Path ([string]$State.resetArchivePath) 'manifest.json'
+        [pscustomobject]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+    } else { $null }
+    return [pscustomobject]@{
+        schemaVersion=1;project=[IO.Path]::GetFullPath($script:ProjectRoot);mainProject=[IO.Path]::GetFullPath((Get-MainWorktreePath))
+        branch=[string]$State.devBranch;branchName=[string]$State.devBranchName
+        target=[pscustomobject]@{kind=[string]$State.infoBaseKind;path=[string]$State.devBranchInfoBasePath}
+        oldHead=[string]$State.resetOldHead;masterCommit=[string]$State.resetMasterCommit;masterTree=[string]$State.resetMasterTree
+        masterFingerprint=[string]$State.resetMasterFingerprint;masterConfigTree=[string]$State.resetMasterConfigTreeObjectId
+        archivePath=[string]$State.resetArchivePath;seed=$State.resetSeedIdentity;phase=$phase
+        newHead=[string](Get-StateValue -State $State -Name 'resetNewHead' -Default '');archiveManifest=$manifest
+    }
+}
+
+function Publish-DevBranchResetCheckpoint {
+    param([Parameter(Mandatory)][object]$State)
+    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $variable -or $null -eq $variable.Value) { return }
+    $admission = $variable.Value
+    if ($admission.operation -cne 'reset-dev-branch' -or $admission.completed) { throw 'NATIVE_RESET_ADMISSION_REQUIRED' }
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $State
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    Publish-ItlDatabaseResetCheckpoint -Owner $admission.owner -Record (Get-DevBranchResetCheckpointContext -State $State) | Out-Null
+}
+
+function Get-DevBranchResetRecoveryState {
+    param([Parameter(Mandatory)][object]$State, [Parameter(Mandatory)][object]$Context)
+    $actual = Get-DevBranchResetCheckpointContext -State $State
+    foreach ($name in @('project','mainProject','branch','branchName','oldHead','masterCommit','masterTree',
+        'masterFingerprint','masterConfigTree','archivePath')) {
+        if ([string]$actual.$name -cne [string]$Context.$name) { throw "NATIVE_RESET_RECOVERY_INPUT_CHANGED: $name" }
+    }
+    foreach ($name in @('kind','path')) {
+        if ([string]$actual.target.$name -cne [string]$Context.target.$name) { throw "NATIVE_RESET_RECOVERY_TARGET_CHANGED: $name" }
+    }
+    foreach ($name in @('schemaVersion','sourceKey','syncId','artifactKind','artifactPath','artifactSha256','artifactBytes',
+        'configurationFingerprint','baselinePath','baselineHash','baselineSha256')) {
+        if ([string]$actual.seed.$name -cne [string]$Context.seed.$name) { throw "NATIVE_RESET_RECOVERY_SEED_CHANGED: $name" }
+    }
+    $phases = @('archive-pending','archive-complete','git-reset-complete','runtime-initializing','complete')
+    $confirmed = [Array]::IndexOf($phases, [string]$Context.phase)
+    $saved = [Array]::IndexOf($phases, [string]$actual.phase)
+    if ($confirmed -lt 0 -or $saved -notin @($confirmed, ($confirmed + 1))) { throw 'NATIVE_RESET_RECOVERY_PHASE_CHANGED' }
+    if ($confirmed -ge 1 -and ($actual.archiveManifest.path -cne $Context.archiveManifest.path -or
+        $actual.archiveManifest.sha256 -cne $Context.archiveManifest.sha256)) { throw 'NATIVE_RESET_RECOVERY_ARCHIVE_CHANGED' }
+    if ($confirmed -ge 2 -and $actual.newHead -cne $Context.newHead) { throw 'NATIVE_RESET_RECOVERY_HEAD_CHANGED' }
+    # State may have reached the next phase immediately before the pipe ACK.
+    # Resume from the confirmed phase in memory. Existing idempotent lifecycle
+    # steps validate/reuse the archive and exact master commit themselves.
+    $effective = ConvertTo-Agent1cHashtable -Object $State
+    $effective['resetStatus'] = 'resetting'
+    $effective['resetPhase'] = [string]$Context.phase
+    $effective['resetNewHead'] = [string]$Context.newHead
+    return [pscustomobject]$effective
+}
+
 function Reset-DevBranch {
+    param([AllowNull()][object]$RecoveryContext = $null)
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "reset-dev-branch"
     if ((Get-DevBranchKind -State $state) -ne "configuration") {
         throw "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported."
+    }
+
+    if ($null -ne $RecoveryContext) {
+        $recoveryAdmission = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+        if ($null -eq $recoveryAdmission -or $null -eq $recoveryAdmission.Value -or
+            (Get-StateValue -State $recoveryAdmission.Value.owner.proof -Name 'purpose' -Default '') -cne 'recovery') {
+            throw 'NATIVE_RESET_RECOVERY_ADMISSION_REQUIRED'
+        }
+        $state = Get-DevBranchResetRecoveryState -State $state -Context $RecoveryContext
+        if ($RecoveryContext.phase -eq 'complete') {
+            Assert-CleanGit
+            if ((Get-CurrentCommit) -cne $RecoveryContext.newHead) { throw 'NATIVE_RESET_RECOVERY_HEAD_CHANGED' }
+            Assert-DevBranchResetArchiveReady -ArchivePath $state.resetArchivePath -OldHead $state.resetOldHead -MasterCommit $state.resetMasterCommit | Out-Null
+            return
+        }
     }
 
     $resetStatus = [string](Get-StateValue -State $state -Name "resetStatus" -Default "")
@@ -12015,7 +12323,8 @@ function Reset-DevBranch {
         $lease = Open-BranchSeedLease -Mode read
         try {
             $seed = Assert-BranchSeedReady -ExpectedConfigurationFingerprint $expected
-            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; lease = $lease }
+            $seedIdentity = Get-DevBranchResetSeedIdentity -Seed $seed
+            return [pscustomobject]@{ masterSource = $masterSource; seed = $seed; seedIdentity = $seedIdentity; lease = $lease }
         } catch {
             $lease.Dispose()
             throw
@@ -12031,22 +12340,27 @@ function Reset-DevBranch {
                 resetStatus = "resetting"; resetPhase = "archive-pending"; resetStartedAt = (Get-Date).ToString("o")
                 resetOldHead = $oldHead; resetMasterCommit = [string]$masterSource.commit; resetMasterTree = [string]$masterSource.tree
                 resetMasterFingerprint = [string]$masterSource.fingerprint
+                resetSeedIdentity = $inputs.seedIdentity
                 resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
                 resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
             }
             $state = Read-DevBranchState -Name $DevBranchName
+        } else {
+            Assert-DevBranchResetResumeInputs -State $state -SeedIdentity $inputs.seedIdentity
         }
 
         $masterCommit = [string](Get-StateValue -State $state -Name "resetMasterCommit" -Default "")
         if (-not (Test-GitCommitExists $masterCommit)) {
             throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
         }
+        Publish-DevBranchResetCheckpoint -State $state
         $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
         if ($phase -eq "archive-pending") {
             $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
             Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
             $state = Read-DevBranchState -Name $DevBranchName
             $phase = "archive-complete"
+            Publish-DevBranchResetCheckpoint -State $state
         }
         if ($phase -eq "archive-complete") {
             Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
@@ -12060,6 +12374,20 @@ function Reset-DevBranch {
             Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
             $state = Read-DevBranchState -Name $DevBranchName
             $phase = "git-reset-complete"
+            Publish-DevBranchResetCheckpoint -State $state
+            $changedRuntime = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', [string]$state.resetOldHead, 'HEAD', '--',
+                '.agents/skills/1c-workflow/scripts', '.agents/skills/1c-workflow/assets/vanessa-service', '.agents/skills/itl-remote-runner/scripts'))
+            if ($changedRuntime.Count -gt 0) {
+                $branchHelperPath = Join-Path $script:ProjectRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+                if (-not (Test-Path -LiteralPath $branchHelperPath -PathType Leaf)) { throw 'RESET_DEV_BRANCH_HELPER_MISSING' }
+                # The saved phase pins master/archive. A fresh process must
+                # load the reset tree's helper and service template before any
+                # restore. It revalidates that same seed; retaining this parent
+                # reader across the child would prevent later seed writers.
+                $seedLease.Dispose()
+                $seedLease = $null
+                Invoke-Agent1cFreshProcess -ScriptPath $branchHelperPath
+            }
         }
         if ($phase -in @("git-reset-complete", "runtime-initializing")) {
             Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "reset-dev-branch"
@@ -12086,6 +12414,7 @@ function Reset-DevBranch {
             Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
             Update-DevBranchState -State $state -Updates $clear
             $state = Read-DevBranchState -Name $DevBranchName
+            Publish-DevBranchResetCheckpoint -State $state
             $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
             # No shared seed paths are read after installing the event-log baseline.
             # Release before re-entering main: a seed writer may already own main.
@@ -12104,6 +12433,7 @@ function Reset-DevBranch {
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
             Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            Publish-DevBranchResetCheckpoint -State (Read-DevBranchState -Name $DevBranchName)
         }
 
         $completed = Read-DevBranchState -Name $DevBranchName
