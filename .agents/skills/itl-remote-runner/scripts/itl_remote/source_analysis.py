@@ -91,7 +91,7 @@ class Bindings:
         return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
-def resolve_sources(context_path, profiles, profile_paths, policy, selection, deadline, result):
+def resolve_sources(context_path, profiles, profile_paths, policy, selection, deadline, result, *, before_capture=None):
     from .source_capture import Snapshot
     from .source_index import build_manifest, apply_manifest
     context_path = Path(context_path)
@@ -124,6 +124,9 @@ def resolve_sources(context_path, profiles, profile_paths, policy, selection, de
                    (not item["sourceMatched"] or item["matchedLines"] != item["lines"])}
         if missing:
             stage = "capture"
+            if before_capture is not None:
+                resolution["quiescence"] = before_capture(deadline)
+                deadline.remaining()
             resolution["captureAttempted"] = True
             snapshot = Snapshot(context_path, deadline).run()
             result["sourceSnapshot"] = snapshot

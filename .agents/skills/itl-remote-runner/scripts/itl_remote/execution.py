@@ -220,8 +220,14 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         source_policy = scenario.get("sourceAnalysis", "none")
         if source_policy != "none" and result["profiles"]:
             from .source_analysis import resolve_sources
+            def before_source_capture(deadline):
+                if "quiesce" in commands:
+                    command("quiesce", deadline)
+                from .vanessa import quiesce
+                return quiesce(variables["context"])
             resolve_sources(variables["context"], result["profiles"], profile_paths, source_policy,
-                            scenario.get("sourceAnalysisModules"), start_phase("source-capture"), result)
+                            scenario.get("sourceAnalysisModules"), start_phase("source-capture"), result,
+                            before_capture=before_source_capture)
         elif source_policy == "required":
             raise WorkError("SOURCE_ANALYSIS_PROFILE_UNAVAILABLE")
         result["status"] = "partial" if result["limitations"] else "completed"

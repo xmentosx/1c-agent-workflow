@@ -1,5 +1,6 @@
 """Profile coverage and debugger cleanup reach the engine's final verdict."""
 import copy
+import sys
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -84,19 +85,47 @@ class ProfileEngineTests(unittest.TestCase):
         source.setUp()
         self.addCleanup(source.doCleanups)
         self.source_policy("required")
+        scenario_path = self.package / 'scenario.json'
+        scenario = read_json(scenario_path)
+        scenario['commands']['quiesce'] = [sys.executable, '-c',
+            'from pathlib import Path; import sys; Path(sys.argv[1]).write_text("released")', '{run}/quiesced.txt']
+        write_json(scenario_path, scenario)
+        request = read_json(self.package / 'request.json')
+        request['scenarioSha256'] = digest(scenario_path)
+        write_json(self.package / 'request.json', request)
         test = self
+        order = []
+        def quiesce(context_path):
+            test.assertTrue((test.run / "000-profile/verification.json").is_file())
+            test.assertEqual('released', (test.run / 'quiesced.txt').read_text())
+            order.append('quiesce')
+            return {"status": "released"}
         def captured(snapshot):
+            test.assertEqual(['quiesce'], order)
+            order.append('capture')
             test.assertEqual("source-capture", snapshot.context["phase"]["name"])
             test.assertTrue((test.run / "000-profile/verification.json").is_file())
             proof = snapshot.context["accessLease"]
             owner = read_json(Path(proof["coordinator"]) / "tickets" / (proof["ticket"] + ".json"))
             test.assertEqual("running", owner["status"])
             return {**source.snapshot, "cleanupErrors": []}
-        with patch("itl_remote.source_capture.Snapshot.run", captured):
+        with patch("itl_remote.source_capture.Snapshot.run", captured), \
+                patch("itl_remote.vanessa.quiesce", quiesce):
             state, result = self.execute()
         self.assertEqual("partial", state["status"])  # still missing the server family
         self.assertTrue(result["profiles"][0]["sourceAnalysis"]["requirementSatisfied"])
         self.assertTrue(read_json(self.run / "000-profile/profile.json")["sourceAnalysis"]["requirementSatisfied"])
+        self.assertEqual(['quiesce', 'capture'], order)
+
+    def test_unconfirmed_quiescence_keeps_raw_profile_and_never_starts_designer(self):
+        self.source_policy("optional")
+        with patch("itl_remote.vanessa.quiesce", side_effect=WorkError("ITL_PERFORMANCE_QUIESCENCE_UNPROVEN")), \
+                patch("itl_remote.source_capture.Snapshot") as snapshot:
+            state, result = self.execute()
+        snapshot.assert_not_called()
+        self.assertFalse(result['sourceResolution']['captureAttempted'])
+        self.assertTrue(result['profiles'][0]['packets'])
+        self.assertIn('SOURCE_CAPTURE_FAILED: ITL_PERFORMANCE_QUIESCENCE_UNPROVEN', result['limitations'])
 
     def test_required_capture_failure_retains_profiles_and_cleanup_errors(self):
         self.source_policy("required")

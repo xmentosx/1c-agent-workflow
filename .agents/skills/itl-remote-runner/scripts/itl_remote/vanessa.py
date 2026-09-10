@@ -110,7 +110,7 @@ class StdioMcp:
         forced = False
         try:
             # Cleanup has its own budget; an expired action never cancels cleanup.
-            timeout = self.deadline.remaining() if self.deadline and self.deadline.phase == "cleanup" else 60
+            timeout = self.deadline.remaining() if self.deadline and self.deadline.phase in ("cleanup", "source-capture") else 60
             self.process.wait(timeout=timeout)
         except (subprocess.TimeoutExpired, WorkError):
             forced = True
@@ -264,13 +264,38 @@ def wait_response(path, context, timeout=None):
     return result
 
 
-def command(operation, feature=None):
-    context_path = Path(os.environ["ITL_RUN_CONTEXT"]).resolve()
+def quiesce(context_path):
+    """Close only this measurement's adapter; never restore the measured data."""
+    context_path = Path(context_path).resolve()
+    context = read_json(context_path)
+    control = context_path.parent / "vanessa-control"
+    started = control / "started.json"
+    if not started.exists():
+        return {"adapter": "vanessa", "status": "not-used"}
+    if read_json(started).get("jobId") != context["jobId"]:
+        raise WorkError("ITL_PERFORMANCE_FOREIGN_ADAPTER")
+    stopped = command("cleanup", context_path=context_path)
+    if not isinstance(stopped, dict) or stopped.get("passed") is not True or stopped.get("errors") != []:
+        raise WorkError("ITL_PERFORMANCE_QUIESCENCE_UNPROVEN")
+    return {"adapter": "vanessa", "status": "released", "jobId": context["jobId"]}
+
+
+def wait_stopped(control, context):
+    stopped = wait_response(control / "stopped.json", context)
+    if stopped.get("passed") is not True or stopped.get("errors") != []:
+        raise WorkError("ITL_PERFORMANCE_CLEANUP_UNPROVEN")
+    return stopped
+
+
+def command(operation, feature=None, *, context_path=None):
+    context_path = Path(context_path or os.environ["ITL_RUN_CONTEXT"]).resolve()
     context = read_json(context_path)
     run = context_path.parent
     context["run"] = str(run)
     control = run / "vanessa-control"
     control.mkdir(exist_ok=True)
+    if operation == "cleanup" and (control / "stopped.json").exists():
+        return wait_stopped(control, context)
     if operation == "prepare":
         if (control / "started.json").exists():
             raise WorkError("ITL_PERFORMANCE_ADAPTER_ALREADY_STARTED")
@@ -283,9 +308,13 @@ def command(operation, feature=None):
     if operation == "cleanup" and not (control / "prepared.json").exists():
         if not (control / "started.json").exists():
             return
-        return wait_response(control / "stopped.json", context)
+        return wait_stopped(control, context)
     nonce = uuid.uuid4().hex
     request = control / ("request-" + nonce + ".json")
     write_json(request, {"jobId": context["jobId"], "operation": "cleanup" if operation == "cleanup" else "feature",
                          "feature": str(Path(feature).resolve()) if feature else None, "phase": context.get("phase")})
+    if operation == "cleanup":
+        # Another caller can already be closing the same daemon. Its terminal
+        # acknowledgement covers shutdown; a second request may never be read.
+        return wait_stopped(control, context)
     return wait_response(control / ("response-" + nonce + ".json"), context)

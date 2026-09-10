@@ -436,6 +436,22 @@ cover drift, conflicts, source removal, selected scope and engine capture routin
 This does not yet prove PM5/UFA integration or produce checkout bindings without
 existing authoritative source evidence.
 
+Source capture now has a candidate integration for releasing its own persistent
+client before requesting a Designer slot. Only a missing binding triggers early
+Vanessa shutdown; verified cache reuse skips it. Shutdown uses the run's existing
+facade ownership and source-capture deadline, checks the job identity and terminal
+acknowledgement, and leaves scenario restoration to final cleanup under the same
+database lease. Custom workloads may supply `commands.quiesce` for their owned
+clients. Final Vanessa cleanup is idempotent after the early shutdown. Twenty-four
+focused engine/source-reuse/adapter tests passed, including ordering after
+verification, retained admission, suppressed capture on shutdown failure, foreign
+ownership rejection and repeated cleanup. These are protocol fixtures; actual
+one-slot 1C/Vanessa capture and PM5/UFA acceptance remain open.
+The adapter's nine tests also passed after fixing overlapping cleanup requests:
+callers wait for the common terminal acknowledgement, even if a daemon already
+closing cannot reply to the later request. No additional scenario restoration
+is introduced by this shutdown.
+
 Items 3/4 capacity integration removes the automatic stop-all-target-sessions
 callbacks from on-demand MCP and Vanessa verification. Admission waits outside
 the allocator lock, honors cancellation and the original performance deadline,

@@ -84,10 +84,21 @@ lease and outside every timed interval. It also obeys the per-base session limit
 it never stops a foreign client to obtain a Designer slot.
 The capture process reads the target workspace's `.dev.env` session limit and
 waits for capacity within the existing capture deadline, including cancellation.
-TestManager normally runs in its separate service base; only the target client
-and Designer use the measured base. If the configured ceiling leaves no slot
-while a persistent owned client remains open, waiting can time out; automatic
-adapter quiescence remains an integration task, not permission to raise the limit.
+When a missing binding actually requires capture, the engine first closes this
+run's Vanessa facade through its existing cleanup protocol, freeing its owned
+TestClient slot. It checks the job identity and waits for confirmed shutdown.
+It does not run the scenario's data restoration at this point: final cleanup
+still follows capture under the same database lease. A later adapter cleanup
+accepts the already completed shutdown instead of sending to a stopped daemon.
+Complete source reuse skips both capture and early adapter shutdown.
+
+Custom persistent workloads can declare `commands.quiesce`, an argument array
+which closes only their owned clients without changing measured data or restoring
+snapshots. It runs after the last verification, only when capture is needed,
+inside the existing `source-capture` deadline. `commands.cleanup` still owns final
+restoration and must support already closed clients. Quiescence failure prevents
+Designer launch while retaining profiles and the original cleanup path. Foreign
+sessions can still exhaust capacity; they are never stopped to make a slot.
 
 The Windows capture step reads `/DumpDBCfg` and `/DumpDBCfgList -AllExtensions`
 from the target, including each extension's saved database configuration. It

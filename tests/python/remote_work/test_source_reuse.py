@@ -138,7 +138,8 @@ class SourceReuseTests(unittest.TestCase):
 
     def test_engine_skips_designer_when_requested_module_already_matches(self):
         fixture = self.engine([self.source.module])
-        with patch("itl_remote.source_capture.Snapshot", side_effect=AssertionError("must not launch Designer")):
+        with patch("itl_remote.source_capture.Snapshot", side_effect=AssertionError("must not launch Designer")), \
+                patch("itl_remote.vanessa.quiesce", side_effect=AssertionError("cached sources do not need client shutdown")):
             state, result = fixture.execute(native=copy.deepcopy(self.source.profile))
         self.assertEqual("partial", state["status"])  # fixture marks raw coverage partial
         self.assertFalse(result["sourceResolution"]["captureAttempted"])

@@ -37,7 +37,7 @@ def validate_scenario(scenario):
     if "verify" not in scenario["commands"]:
         raise WorkError("SCENARIO_VERIFICATION_REQUIRED")
     for name, command in scenario["commands"].items():
-        if name not in ("prepare", "update", "action", "ready", "verify", "reset", "cleanup"):
+        if name not in ("prepare", "update", "action", "ready", "verify", "reset", "quiesce", "cleanup"):
             raise WorkError("UNKNOWN_SCENARIO_PHASE: " + name)
         if not isinstance(command, list) or not command or any(not isinstance(a, str) for a in command):
             raise WorkError("COMMAND_REQUIRES_ARGUMENT_ARRAY: " + name)
