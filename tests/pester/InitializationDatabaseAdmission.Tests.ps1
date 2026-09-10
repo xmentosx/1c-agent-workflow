@@ -140,11 +140,15 @@
 
     It 'retains server target identity while keeping its manager a separate file database' {
         $script:initKind = 'server'; $script:DevBranchInfoBasePath = 'server/База новой ветки'
+        Mock Get-OneCNativeServerRecoveryInspector {
+            [pscustomobject]@{schemaVersion=1;path='provider.ps1';sha256=('a' * 64);capability='recovery-observe'}
+        }
         $admission = Start-ItlDevBranchMutationDatabaseAdmission -Operation initialize-dev-branch-runtime
         $script:DevBranchMutationDatabaseAdmission = $admission
         $admission.plan.target.kind | Should -Be server
         $admission.plan.target.path | Should -Be 'server/База новой ветки'
         @($admission.plan.bases | Where-Object kind -eq file) | Should -HaveCount 1
+        Should -Invoke Get-OneCNativeServerRecoveryInspector -Times 1 -Exactly
     }
 
     It 'uses the provider runtime root for an adopted workspace and rejects a different root' {
