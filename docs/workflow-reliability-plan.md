@@ -2657,6 +2657,25 @@ checks every persisted phase budget against the original scenario overrides.
 The original 1800-second child-action inheritance and independent prepare/cleanup
 assertions remain unchanged; no timeout, workload or precondition was relaxed.
 
+The loaded-state continuation now turns the retained runtime/profile data into a
+public hash-bound contract. Each profile packet is checked again against the owned
+job, client session, database instance, target ID and target type. The result and
+progress expose the actual native configuration versions and versioned identities
+of executed modules separately from declared source/data/environment labels.
+Time-only measurements state that loaded-state evidence is unavailable.
+
+No source dump is added to an ordinary profile. When line mapping is requested,
+verified existing bindings remain reusable; unresolved selected modules trigger
+the existing post-measurement target-base capture under the same admission lease.
+The engine verifies its artifact inventory, copies the exact used module bytes
+into the run and binds them by hash. Selective analysis is assessed against its
+requested modules. The evidence explicitly declines whole-configuration source
+and database-data claims because executed profiler packets cannot prove either.
+Focused runtime, profile, source-reuse and progress tests cover mismatched
+declarations, no-analysis, captured target source, optional failure, partial raw
+coverage and time-only behavior. Installed/UFA runtime acceptance remains part of
+the cumulative acceptance milestone.
+
 ## Items 4a and 6: retain acknowledged group load phases
 
 The group loader now writes an intent before each Designer load, Enterprise

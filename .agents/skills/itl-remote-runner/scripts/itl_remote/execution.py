@@ -100,8 +100,12 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "sourceIdentity": target.get("sourceIdentity"), "host": platform.node(),
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "declared-by-profile-and-scenario; runtime adapters own exact loaded-data/source proof",
+              "sourceAnalysisPolicy": scenario.get("sourceAnalysis", "none"),
               "readiness": scenario["readyDescription"], "mode": request["mode"],
               "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [], "iterations": [],
+              "loadedState": {"status": "unavailable", "reason": "runtime-profile-not-collected",
+                              "runtimeObserved": False, "wholeConfigurationSourceProven": False,
+                              "dataStateProven": False, "evidence": None},
               "status": "running", "limitations": [], "cleanupErrors": []}
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
@@ -112,7 +116,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         # Keep profile rows in their artifacts, not in every progress snapshot.
         snapshot = {key: result[key] for key in (
             "schemaVersion", "jobId", "scenarioId", "startedAt", "provenance",
-            "timings", "iterations", "phases", "limitations", "cleanupErrors")}
+            "timings", "iterations", "phases", "loadedState", "limitations", "cleanupErrors")}
         snapshot.update(updatedAt=stamp(), status=result["status"] if "finishedAt" in result else "running",
                         resultAvailable=(run / "result.json").is_file(), profiles=[])
         for evidence in profile_evidence:
@@ -131,6 +135,13 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             profile_evidence.append({"iteration": int(path.parent.name.split("-", 1)[0]),
                                      "path": path.relative_to(run).as_posix(), "sha256": digest(path),
                                      "complete": profile["complete"], "coverage": profile.get("coverage", {})})
+        refresh_loaded_state_evidence()
+
+    def refresh_loaded_state_evidence():
+        if not result["profiles"]:
+            return
+        from .loaded_state import write_evidence
+        result["loadedState"] = write_evidence(run, result, profile_paths, profile_evidence)
 
     def start_phase(name):
         deadline = Deadline(name, phase_budgets[name], cancel_path=context["cancelPath"])
@@ -298,6 +309,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 result["timings"].append({"iteration": index, "seconds": (end - begin) / 1e9,
                                           "profileEnabled": False, "verified": True})
             current_iteration.update(status="verified", finishedAt=stamp())
+            refresh_loaded_state_evidence()
             persist_progress()
         source_policy = scenario.get("sourceAnalysis", "none")
         if source_policy != "none" and result["profiles"]:
@@ -360,6 +372,11 @@ def report(run, result):
     lines += ["", "Median: " + str(summary["medianSeconds"]), "",
               "A small sample is diagnostic evidence, not statistical proof of a speedup.", "",
               "Profiles: %d; native PFF: not produced." % len(result["profiles"])]
+    loaded = result["loadedState"]
+    lines += ["", "Loaded-state evidence: %s; runtime configuration versions: %s; source-bound modules: %d/%d; whole configuration source proven: %s; data state proven: %s." % (
+        loaded["status"], ", ".join(loaded.get("configurationVersions", [])) or "unavailable",
+        loaded.get("sourceBoundModuleCount", 0), loaded.get("sourceRequestedModuleCount", 0),
+        str(loaded["wholeConfigurationSourceProven"]).lower(), str(loaded["dataStateProven"]).lower())]
     lines += ["", *result["limitations"]]
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]

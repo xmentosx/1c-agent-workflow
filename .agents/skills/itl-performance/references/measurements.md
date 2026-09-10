@@ -59,6 +59,16 @@ For a server base, `target.rdbg.url` names the actual server/shared `dbgs`. No l
 
 Preparation emits `{run}/runtime-proof.json` with `jobId`, `clientPid`, `infoBaseAlias`, `seanceId`, `infoBaseInstanceID`, `targetIds` and `targetTypes` established from fresh own-client startup and debugger discovery. The `runtime-proof --context <context.json> --client-pid <pid> --seance <session> --instance <instance>` helper verifies the guarded launch and live process, then discovers only that explicit session. Obtain the session/instance from the own TestClient/runtime adapter, never by choosing the first debugger target. Only when `context.rdbg` is available, use `debug: true` in the guarded client launch spec to receive `/DEBUG -http /DEBUGGERURL` with the effective endpoint. In time-only mode omit debug/proof setup. For a profiling handshake iteration establish the fresh proof before publishing `ready.json`. The collector independently compares each named target's live base/session/instance/type before attach and checks the same fields in returned packets; it never attaches all discovered targets. A full file-base profile requires the discovered native client family and its ServerEmulation context; a server-base profile requires that client family and Server. Runtime proof, engine requirements and returned packets must retain the exact Client/ManagedClient type; one does not substitute for the other. Legacy proofs without targetTypes still require ManagedClient. Other sessions and JobFileMode are not adopted. Missing collected packets are retained with `complete=false` and explicit missing families/IDs, making the engine result partial. Client inclusive time overlaps server time and must never be added to it.
 
+The engine publishes `loadedState` plus a hash-bound
+`loaded-state-evidence.json`. This evidence keeps declared identities separate and
+records the configuration version and exact versioned module identities returned
+for the actual owned session. Ordinary profiling does not require a configuration
+dump. Request `sourceAnalysis: optional|required` only when line-to-source mapping
+is needed; unresolved selected modules are then exported from the target database
+after measurement while the same admission lease is held. The report binds copied
+module bytes and the verified target snapshot inventory. It does not claim source
+coverage for unexecuted configuration modules or prove the database data state.
+
 Original `.response.bin` and decoded XML, request XML, profile summaries and debugger cleanup status are retained. `analyze --raw <paths...> --session <id>` is offline. `--source-analysis none|optional|required` separates raw coverage from source availability; `--source-map` supplies exact bindings. See [source analysis](source-analysis.md) for native identities, manifests and missing-source results. Native PFF generation is not implemented.
 
 ## Compare

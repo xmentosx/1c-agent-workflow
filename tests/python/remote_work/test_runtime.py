@@ -76,6 +76,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(result["timings"][0]["seconds"], 0.03)
         self.assertFalse(result["timings"][0]["profileEnabled"])
         self.assertEqual(1, result["summary"]["count"])
+        self.assertEqual("unavailable", result["loadedState"]["status"])
+        self.assertFalse(result["loadedState"]["runtimeObserved"])
+        self.assertIsNone(result["loadedState"]["evidence"])
 
     def test_same_id_is_never_executed_twice(self):
         request, package = self.package()

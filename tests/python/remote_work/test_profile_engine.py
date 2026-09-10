@@ -19,8 +19,14 @@ class ProfileEngineTests(unittest.TestCase):
         target["infoBase"] = {"kind": "file", "path": str(self.fixture.root / "База профиля")}
         self.target = target
         _, self.package = self.fixture.package(mode="profile")
-        proof = {"jobId": "one", "clientPid": 123, "targetIds": ["client", "server"],
-                 "seanceId": "session", "infoBaseInstanceID": "instance", "infoBaseAlias": "DefAlias"}
+        native_targets = [packet["target"] for packet in profiling.analyze_raw(
+            [FIXTURES / "client.xml", FIXTURES / "server.xml"])["packets"]]
+        proof = {"jobId": "one", "clientPid": 123,
+                 "targetIds": [item["id"] for item in native_targets],
+                 "targetTypes": {item["id"]: item["targetType"] for item in native_targets},
+                 "seanceId": native_targets[0]["seanceId"],
+                 "infoBaseInstanceID": native_targets[0]["infoBaseInstanceID"],
+                 "infoBaseAlias": native_targets[0]["infoBaseAlias"]}
         self.run = self.fixture.spool / "runs/one"
         write_json(self.run / "runtime-proof.json", proof)
         write_json(self.run / "onec-process-123.json", {"jobId": "one", "pid": 123, "infoBase": target["infoBase"]})
@@ -28,9 +34,10 @@ class ProfileEngineTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def execute(self, fail_cleanup=False, native=None, client_type="ManagedClient"):
+    def execute(self, fail_cleanup=False, native=None, client_type="ManagedClient", complete=False):
         native = native or profiling.analyze_raw([FIXTURES / "client.xml"])
-        native.update(complete=False, coverage={"missingTypes": ["ServerEmulation"]})
+        native.update(complete=complete,
+                      coverage={} if complete else {"missingTypes": ["ServerEmulation"]})
         test = self
         class Collector:
             def __init__(self, config, proof, output):
@@ -60,12 +67,45 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertNotIn("packets", evidence)
         self.assertIn("PROFILE_INCOMPLETE", (self.run / "report.md").read_text(encoding="utf-8"))
 
+    def test_loaded_state_records_actual_runtime_configuration_and_module_versions_separately_from_declarations(self):
+        state, result = self.execute()
+        loaded = result["loadedState"]
+        self.assertEqual("partial", loaded["status"])  # fixture deliberately lacks ServerEmulation
+        self.assertTrue(loaded["runtimeObserved"])
+        self.assertEqual(["e90e19e711d4e449940709b1a7b0df4500000000"], loaded["configurationVersions"])
+        self.assertEqual("not-requested", loaded["sourceBindingStatus"])
+        self.assertFalse(loaded["wholeConfigurationSourceProven"])
+        self.assertFalse(loaded["dataStateProven"])
+        evidence_path = self.run / loaded["evidence"]["path"]
+        self.assertEqual(digest(evidence_path), loaded["evidence"]["sha256"])
+        evidence = read_json(evidence_path)
+        self.assertEqual("fixture-code-v1", evidence["declarations"]["sourceIdentity"])
+        self.assertEqual("e90e19e711d4e449940709b1a7b0df4500000000",
+                         evidence["packets"][0]["target"]["configVersion"])
+        self.assertTrue(evidence["packets"][0]["modules"][0]["moduleID"]["version"])
+        self.assertEqual("not-requested", evidence["packets"][0]["modules"][0]["source"]["issue"])
+        progress = read_json(self.run / "progress.json")
+        self.assertEqual(loaded, progress["loadedState"])
+        self.assertIn("whole configuration source proven: false", (self.run / "report.md").read_text(encoding="utf-8"))
+
+    def test_complete_profile_observes_loaded_state_without_exporting_source(self):
+        native = profiling.analyze_raw([FIXTURES / "client.xml", FIXTURES / "server.xml"])
+        state, result = self.execute(native=native, complete=True)
+        self.assertEqual("completed", state["status"])
+        self.assertEqual("observed", result["loadedState"]["status"])
+        self.assertEqual(2, result["loadedState"]["moduleCount"])
+        self.assertEqual(0, result["loadedState"]["sourceRequestedModuleCount"])
+        self.assertFalse((self.run / "source-analysis").exists())
+        self.assertFalse((self.run / "loaded-source-snapshot.json").exists())
+
     def test_engine_retains_discovered_thick_client_family_and_still_requires_server_coverage(self):
         proof_path = self.run / "runtime-proof.json"
         proof = read_json(proof_path)
-        proof["targetTypes"] = {"client": "Client", "server": "ServerEmulation"}
+        proof["targetTypes"][proof["targetIds"][0]] = "Client"
         write_json(proof_path, proof)
-        state, result = self.execute(client_type="Client")
+        native = profiling.analyze_raw([FIXTURES / "client.xml"])
+        native["packets"][0]["target"]["targetType"] = "Client"
+        state, result = self.execute(native=native, client_type="Client")
         self.assertEqual("partial", state["status"], result)
         self.assertFalse(result["profiles"][0]["complete"])
 
@@ -122,6 +162,16 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertTrue(result["profiles"][0]["sourceAnalysis"]["requirementSatisfied"])
         self.assertTrue(read_json(self.run / "000-profile/profile.json")["sourceAnalysis"]["requirementSatisfied"])
         self.assertEqual(['quiesce', 'capture'], order)
+        loaded = result["loadedState"]
+        self.assertEqual("partial", loaded["status"])  # raw profile coverage is still incomplete
+        self.assertEqual(loaded["moduleCount"], loaded["sourceBoundModuleCount"])
+        evidence = read_json(self.run / loaded["evidence"]["path"])
+        self.assertEqual("complete", evidence["sourceBindingStatus"])
+        self.assertIn("sourceManifest", evidence)
+        self.assertIn("postMeasurementSourceSnapshot", evidence)
+        snapshot = evidence["postMeasurementSourceSnapshot"]
+        self.assertEqual(digest(self.run / snapshot["path"]), snapshot["sha256"])
+        self.assertTrue(all(module["source"]["matched"] for packet in evidence["packets"] for module in packet["modules"]))
 
     def test_unconfirmed_quiescence_keeps_raw_profile_and_never_starts_designer(self):
         self.source_policy("optional")
@@ -149,6 +199,10 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertEqual("partial", state["status"])
         self.assertIn("SOURCE_CAPTURE_FAILED: read denied", result["limitations"])
         self.assertEqual([], result["cleanupErrors"])
+        self.assertTrue(result["loadedState"]["runtimeObserved"])
+        self.assertEqual("partial", result["loadedState"]["status"])
+        self.assertEqual(digest(self.run / result["loadedState"]["evidence"]["path"]),
+                         result["loadedState"]["evidence"]["sha256"])
 
     def test_optional_index_failure_does_not_invalidate_intact_raw_measurements(self):
         self.source_policy("optional")
@@ -157,6 +211,9 @@ class ProfileEngineTests(unittest.TestCase):
             state, result = self.execute()
         self.assertEqual("partial", state["status"])
         self.assertIn("SOURCE_ANALYSIS_FAILED: SOURCE_CAPTURE_INDEX_CHANGED", result["limitations"])
+        evidence = read_json(self.run / result["loadedState"]["evidence"]["path"])
+        self.assertEqual("LOADED_STATE_SOURCE_SNAPSHOT_INVALID",
+                         evidence["postMeasurementSourceSnapshotIssue"])
 
     def test_cancellation_during_capture_is_not_downgraded_to_optional_failure(self):
         self.source_policy("optional")

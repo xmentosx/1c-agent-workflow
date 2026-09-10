@@ -60,4 +60,20 @@ its manifest/resolution evidence. A crash leaves the last durable snapshot;
 the interrupted iteration. Use observed job status and `resultAvailable` to
 distinguish partial evidence from a finished result.
 
-`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
+For profile runs, `loadedState` and `loaded-state-evidence.json` bind the actual
+runtime proof, packet target IDs, session/base instance, native configuration
+versions and versioned module IDs to the retained profile hashes. Declared
+`sourceIdentity`, `dataIdentity` and `environmentIdentity` remain declarations in
+that evidence and never become proof of what the 1C session loaded. A time-only
+run reports loaded state as unavailable because it has no runtime profile.
+
+`sourceAnalysis: none` records the observed runtime/module versions without
+exporting configuration source. `optional` or `required` binds the requested
+executed modules to copied source bytes by SHA256. When an exact existing binding
+is unavailable, the source adapter may capture the target database after workload
+verification under the same database lease; the resulting artifact inventory is
+verified and retained inside the run. Selection applies only to requested modules.
+Profiler packets prove executed modules, not the source of the whole configuration
+or its data state, so both claims remain explicitly false.
+
+`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, loaded-state evidence, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
