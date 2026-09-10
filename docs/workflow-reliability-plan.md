@@ -2386,6 +2386,46 @@ pending nested restoration duties and server recovery/inspection. These stay
 in item 4; the successful transport/file fixture does not close them. No broad
 gate, registration, publication or installation was performed for this increment.
 
+## Item 4a: a stalled participant must not wedge the queue
+
+The queue must bound each request's waiting time and report the blocking ticket,
+owner, operation, last progress and supported next action. A dead waiter that
+never entered the database is skipped. An admitted owner with uncertain native
+work cannot be discarded solely because its heartbeat expired: recovery first
+checks the actual sessions and any outstanding restoration duties. Unsupported
+or uncertain recovery returns actionable needs-attention within a bounded time;
+it must not leave the caller waiting forever. Independent database resources
+continue progressing. Supported recovery must permit a subsequent request after
+release, without manual edits to tickets or lock files. Live hung owners require
+bounded operation deadlines and cancellation through their owning helper.
+
+Acceptance includes a dead waiting client, a dead admitted owner, a live hung
+operation, a stuck recovery worker, a foreign surviving 1C process, and a normal
+native command failure. Verify bounded caller outcomes, preserved foreign work,
+independent-resource progress and successful subsequent admission. The remaining
+server/two-host and installed-project cases remain required; automatic reset
+continuation (4b) must not delay completing this queue contract.
+
+A real repository capture reproduced one ordinary-failure wedge on 2026-09-10:
+the launcher returned exit code 1 for an object held by owner-a before asynchronous
+owned-process enumeration completed. Ticket 57e74642591f4a4cb0c63a2ae3d7f038
+therefore retained cleanup debt. The supported repository-capture recovery
+adapter released it after two fresh observations, retaining repository claims.
+The Designer correction waits for owned release even after nonzero exit and
+does not require successful dump/log artifacts on that failure path. It preserves
+the nonzero outcome rather than converting cleanup confirmation to success.
+
+All 35 Designer completion tests pass, including four delayed-release failure
+cases covering capture, repository update, source dump and CF dump. The public
+capture rerun in C:/va канал/lock-report-e7a4d4f0 still reported owner-a's conflict
+and the missing new object, while ticket 11735d9d5a894f0b9a62389fbaf86374 released
+normally and access-status returned an empty active list. The first public run
+also confirmed the free module and the separately requested configuration root
+as captured. On repeat, the platform did not re-report those existing claims;
+they remain explicitly unconfirmed in the repeat report. conf.cfg SHA-256 stayed
+dcb4feb4560908a33ff76cef6d59a8607d66c849a417e4387ed7f25f1032f5d4.
+This is technical file-base evidence, not installed/server acceptance.
+
 ## Item 10: correlated client-code outcomes
 
 See [the source diagnosis and paired protocol](vanessa-client-code-channel.md).

@@ -1,9 +1,56 @@
-Describe "1C Designer completion evidence" {
+﻿Describe "1C Designer completion evidence" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
         $HelperPath = $context.HelperPath
+    }
+
+    It "releases a failed <family> after delayed owned processes exit without requiring an artifact" -TestCases @(
+        @{family='capture'}, @{family='repository-update'}, @{family='dump-files'}, @{family='dump-cfg'}
+    ) {
+        param($family)
+        $fixtureRoot = Join-Path $TestDrive ('Ошибка захвата ' + $family)
+        $basePath = Join-Path $fixtureRoot 'Целевая база'
+        $platformPath = Join-Path $fixtureRoot '1cv8.exe'
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath '1Cv8.1CD') | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{platformPath=$platformPath; logsPath='logs'; designerMaxWorkingSetMb=0; designerOperationTimeoutSeconds=8; designerDumpStabilitySeconds=0}
+            $script:ReleasePolls = 0
+            $script:ReleaseEvidence = $false
+            $fakeProcess = [pscustomobject]@{Id=9451;HasExited=$true;ExitCode=1}
+            $fakeProcess | Add-Member ScriptMethod Refresh { }
+            $fakeProcess | Add-Member ScriptMethod WaitForExit { param([int]$Milliseconds); return $true }
+            function Start-Process { return $fakeProcess }
+            function Test-DesignerInvocationReleased {
+                param($ProbeState)
+                $script:ReleasePolls++
+                $ProbeState.processesReleaseConfirmed = $script:ReleasePolls -ge 3
+                return $ProbeState.processesReleaseConfirmed
+            }
+            function Confirm-OneCNativeOperationRelease {
+                param($Record, [bool]$LauncherExited, [bool]$OwnedProcessesReleased, $Evidence)
+                $script:ReleaseEvidence = $LauncherExited -and $OwnedProcessesReleased
+            }
+            function Invoke-BoundedDesignerDumpArtifactState { return [pscustomobject]@{signature='';ready=$false} }
+            function Stop-NativeProcessForSafety { throw 'Unexpected process termination' }
+            $commandArgs = switch($family) {
+                capture { @('/ConfigurationRepositoryCapture','-objects', (Join-Path $fixtureRoot 'objects.xml')) }
+                repository-update { @('/ConfigurationRepositoryUpdateCfg','-force') }
+                dump-files { @('/DumpConfigToFiles', (Join-Path $fixtureRoot 'Исходники')) }
+                dump-cfg { @('/DumpCfg', (Join-Path $fixtureRoot 'Выгрузка.cf')) }
+            }
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs $commandArgs 6>$null | Out-Null
+                ''
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{message=$message;polls=$script:ReleasePolls;released=$script:ReleaseEvidence}
+        }
+        $result.message | Should -Match '^1C Designer failed with exit code 1\.'
+        $result.polls | Should -BeGreaterOrEqual 3
+        $result.released | Should -BeTrue
     }
 
     It "checks completion evidence once and stops after the launcher exits" {

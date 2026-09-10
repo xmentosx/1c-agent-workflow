@@ -6737,6 +6737,7 @@ function Invoke-NativeProcessAndWaitResult {
             if ($script:LastProcessMemoryLimitExceeded) { -2 }
             elseif ($memoryMonitorFailed) { -3 }
             elseif ($script:LastProcessTimedOut) { -1 }
+            elseif ($completedByProbe -and $RequirePostExitProbeOnFailure -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) { $launcherExitCode }
             elseif ($completedByProbe) { 0 }
             elseif ($null -ne $launcherExitCode) { $launcherExitCode }
             else { $process.ExitCode }
@@ -6942,6 +6943,8 @@ function Invoke-Designer {
                 -OperationKind $operationKind)) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -6979,6 +6982,8 @@ function Invoke-Designer {
                 -RequireInfoBaseRelease:$false)) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -7038,6 +7043,8 @@ function Invoke-Designer {
                 -RequireInfoBaseRelease:(-not $readOnlyCfgDump))) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -7072,6 +7079,8 @@ function Invoke-Designer {
                 -OperationKind $operationKind)) {
                 return $false
             }
+            # A failed invocation needs release evidence, not a successful artifact.
+            if ($probeContext.launcherExited -and [int](Get-StateValue -State $probeContext -Name 'launcherExitCode' -Default 0) -ne 0) { return $true }
             $observedAtUtc = [DateTime]::UtcNow
             if ($observedAtUtc -lt [DateTime]$artifactProbeState.nextCheckAtUtc) {
                 return $false
@@ -7141,6 +7150,7 @@ function Invoke-Designer {
                     -CompletionProbe $completionProbe `
                     -CompletionGraceSeconds $completionGraceSeconds `
                     -PostExitProbeSeconds $postExitProbeSeconds `
+                    -RequirePostExitProbeOnFailure `
                     -MaxWorkingSetMb $maxWorkingSetMb
             }
     } finally {
