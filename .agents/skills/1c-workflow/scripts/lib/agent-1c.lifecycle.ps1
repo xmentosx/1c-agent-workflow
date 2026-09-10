@@ -2105,7 +2105,10 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
+        return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
+    }
     if ($Operation -eq 'lock-config-repository-objects') {
         # Repository ownership changes run against the source base. Branch and
         # Vanessa manager databases are unrelated to this native operation.
@@ -2133,13 +2136,21 @@ function Get-ItlDevBranchMutationDatabasePlan {
     }
     $unique = @{}
     foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
-    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan }
+    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan; serviceTarget = $plan.target }
 }
 
-function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
-    $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation
+function Get-ItlDevBranchMutationDatabaseState {
+    param([string]$Operation)
+    # Standalone auxiliary maintenance resolves its own connection and does not
+    # require an initialized primary development database. Auxiliary tests do.
+    if ($Operation -in @('update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
+    return Read-DevBranchState -Name $DevBranchName
+}
+
+function Get-ItlDevBranchMutationAdmissionPreparation {
+    param([string]$Operation = 'update-dev-branch-base')
+    $state = Get-ItlDevBranchMutationDatabaseState -Operation $Operation
+    if ($null -ne $state) { Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation }
     if ($Operation -eq 'lock-config-repository-objects' -and (
         -not (Get-SourceUsesRepository) -or (Get-DevBranchKind -State $state) -ne 'configuration' -or
         (Get-DevBranchInitializationStatus -State $state) -ne 'ready')) {
@@ -2151,6 +2162,16 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     # Never stop that owner merely to make this request enter the database.
     $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation
     $settings = Get-ItlDatabaseAccessSettings
+    return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings}
+}
+
+function Start-ItlDevBranchMutationDatabaseAdmission {
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
+    if ($null -eq $Preparation) { return $null }
+    if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
+    $plan = $Preparation.plan
+    $settings = $Preparation.settings
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
     $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1
@@ -2249,7 +2270,15 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     $drainRecord = $null
     if ($null -ne $mutationAdmission) {
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $mutationAdmission -State $State
-        if (-not (Test-ItlOnDemandInfoBaseMatch -First $infoBasePath -Second $mutationAdmission.plan.target.path)) {
+        $drainTargets = @($mutationAdmission.plan.target)
+        if ($mutationAdmission.operation -eq 'check-auxiliary-contour' -and $null -ne $mutationAdmission.plan.serviceTarget) {
+            # Auxiliary verification prepares primary branch tooling through
+            # this existing path; other profile bases are not mutation targets.
+            $drainTargets += $mutationAdmission.plan.serviceTarget
+        }
+        if (@($drainTargets | Where-Object {
+            $_.kind -ceq $infoBaseKind -and (Test-ItlOnDemandInfoBaseMatch -First $infoBasePath -Second $_.path)
+        }).Count -eq 0) {
             throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
         }
         $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `

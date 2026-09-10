@@ -350,13 +350,59 @@ function Ensure-AuxiliaryManagedInfoBase {
     }
 }
 
+function Get-ItlAuxiliaryDatabasePlan {
+    param([object]$State,
+        [ValidateSet('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation,
+        [string]$ServiceGeneration = '')
+    $contour = Get-AuxiliaryContour
+    $connection = Get-AuxiliaryContourConnection -Contour $contour
+    $target = [pscustomobject]@{kind=$connection.kind;path=$connection.path}
+    $bases = @($target)
+    $servicePlan = $null; $serviceTarget = $null
+    if ($Operation -eq 'check-auxiliary-contour') {
+        # Run-DevBranchTests prepares the primary branch tooling and manager,
+        # then maps primary TestClient profiles onto the selected auxiliary base.
+        $primaryPlan = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation update-dev-branch-base
+        $bases += @($primaryPlan.bases)
+        $serviceTarget = $primaryPlan.target
+        $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
+        $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
+        $manifest = Read-VanessaTestClientManifest
+        if ($null -ne $manifest) {
+            $bases += @(Get-VanessaTestClientDatabaseResources -Topology $manifest -DefaultState $State -ForAdmission -PrimaryContourName $contour.name)
+        }
+    }
+    foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $target.path
+    })) {
+        $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $target)
+    }
+    $unique = @{}
+    foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{target=$target;bases=@($unique.Keys | Sort-Object | ForEach-Object {$unique[$_]});servicePlan=$servicePlan;serviceTarget=$serviceTarget;auxiliaryContour=$contour.name}
+}
+
 function Stop-AuxiliaryContourRuntimeBeforeMutation {
     param([Parameter(Mandatory = $true)][object]$Contour, [Parameter(Mandatory = $true)][object]$Connection, [string]$Reason)
-    Set-RunStage -Stage "auxiliary.stop-runtime" -Detail "Stopping exact auxiliary infobase runtime before $Reason."
+    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    $admission = if ($null -ne $admissionVariable) { $admissionVariable.Value } else { $null }
+    if ($null -eq $admission) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State (Get-ItlDevBranchMutationDatabaseState -Operation $admission.operation)
+    if ($Connection.kind -cne $admission.plan.target.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $Connection.path -Second $admission.plan.target.path) -or
+        $Contour.name -cne $admission.plan.auxiliaryContour) { throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: auxiliary drain target differs from the admitted operation.' }
+    $record = Add-OneCNativeOperationRecord -Journal $admission.journal -Purpose 'owned-runtime-drain' `
+        -Admissions @([pscustomobject]@{infoBaseKind=$Connection.kind;infoBasePath=$Connection.path;requiredSessions=0;expectedChildRole=''})
+    $record.startAttempted = $true
+    Save-OneCNativeOperationRecord -Record $record
+    Set-RunStage -Stage "auxiliary.stop-runtime" -Detail "Stopping owned auxiliary runtime before $Reason; foreign sessions are preserved."
     Stop-ItlOnDemandBackends -InfoBasePath $Connection.path -Strict
-    Stop-OneCInfoBaseSessionProcesses -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path -Reason $Reason | Out-Null
-    $remaining = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path)
-    if ($remaining.Count -gt 0) { throw "ITL_AUXILIARY_RUNTIME_DRAIN_FAILED: contour='$($Contour.name)' remaining=$($remaining.Count)." }
+    $remainingOwned = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $Connection.path
+    })
+    if ($remainingOwned.Count -gt 0) { throw 'ITL_AUXILIARY_RUNTIME_DRAIN_FAILED: owned backend remains after cleanup.' }
+    Confirm-OneCNativeOperationRelease -Record $record -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'strict-auxiliary-runtime-owner-cleanup'
+    Wait-ItlDevBranchMutationExternalSessions -Admission $admission -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path
 }
 
 function Get-AuxiliaryContourFingerprint {

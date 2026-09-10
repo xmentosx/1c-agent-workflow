@@ -704,12 +704,15 @@ Describe 'Vanessa service-base admission planning' {
         }
     }
 
-    It 'uses the check entrypoint service generation through creation and subsequent reuse' {
+    It 'uses the <operation> check service generation through creation and subsequent reuse' -TestCases @(
+        @{operation='primary'},@{operation='auxiliary'}
+    ) {
+        param($operation)
         $state | Add-Member -NotePropertyName devBranchInfoBasePath -NotePropertyValue (Join-Path $root 'Основная база')
         $plan = Get-VanessaServiceInfoBasePlan -State $state
         $script:DevBranchMutationDatabaseAdmission = [pscustomobject]@{
             completed=$false;servicePlanApplied=$false
-            plan=[pscustomobject]@{target=[pscustomobject]@{path=$state.devBranchInfoBasePath};servicePlan=$plan}
+            plan=[pscustomobject]@{target=[pscustomobject]@{path=$(if ($operation -eq 'primary') {$state.devBranchInfoBasePath} else {Join-Path $root 'Дополнительная база'})};serviceTarget=[pscustomobject]@{path=$state.devBranchInfoBasePath};servicePlan=$plan}
         }
         Mock Update-DevBranchState {
             param($State,$Updates)

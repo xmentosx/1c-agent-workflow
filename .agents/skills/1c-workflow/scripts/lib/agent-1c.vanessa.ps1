@@ -994,9 +994,12 @@ function Get-VanessaTestClientTopology {
 }
 
 function Get-VanessaTestClientProfileConnection {
-    param([Parameter(Mandatory = $true)][object]$Profile, [Parameter(Mandatory = $true)][object]$DefaultState)
+    param([Parameter(Mandatory = $true)][object]$Profile, [Parameter(Mandatory = $true)][object]$DefaultState,
+        [switch]$ForAdmission, [string]$PrimaryContourName = '')
     $contourName = [string](Get-StateValue -State $Profile -Name "contour" -Default "primary")
-    if ($contourName -eq "primary" -and $script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.contour) {
+    if ($contourName -eq 'primary' -and $PrimaryContourName) {
+        $contourName = $PrimaryContourName
+    } elseif ($contourName -eq "primary" -and $script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.contour) {
         $contourName = [string]$script:ActiveAuxiliaryVanessaContext.contour.name
     }
     if ([string]::IsNullOrWhiteSpace($contourName) -or $contourName -eq "primary") {
@@ -1009,23 +1012,28 @@ function Get-VanessaTestClientProfileConnection {
         }
     }
     $contour = Get-AuxiliaryContour -Name $contourName
-    $ready = Assert-AuxiliaryContourReady -Contour $contour -Operation "Vanessa TestClient profile '$([string]$Profile.name)'"
+    # Admission resolves addresses before an authorized auxiliary update. The
+    # runtime path still requires readiness before launching any TestClient.
+    $connection = if ($ForAdmission) { Get-AuxiliaryContourConnection -Contour $contour } else {
+        (Assert-AuxiliaryContourReady -Contour $contour -Operation "Vanessa TestClient profile '$([string]$Profile.name)'").connection
+    }
     $profileUser = [string](Get-StateValue -State $Profile -Name "user" -Default "")
     $profilePassword = [string](Get-StateValue -State $Profile -Name "password" -Default "")
     return [pscustomobject]@{
         contour = $contour.name
-        kind = $ready.connection.kind
-        path = $ready.connection.path
-        user = $(if ($profileUser) { $profileUser } else { $ready.connection.user })
-        password = $(if ($profilePassword) { $profilePassword } else { $ready.connection.password })
+        kind = $connection.kind
+        path = $connection.path
+        user = $(if ($profileUser) { $profileUser } else { $connection.user })
+        password = $(if ($profilePassword) { $profilePassword } else { $connection.password })
     }
 }
 
 function Get-VanessaTestClientDatabaseResources {
-    param([Parameter(Mandatory = $true)][object]$Topology, [Parameter(Mandatory = $true)][object]$DefaultState)
+    param([Parameter(Mandatory = $true)][object]$Topology, [Parameter(Mandatory = $true)][object]$DefaultState,
+        [switch]$ForAdmission, [string]$PrimaryContourName = '')
     $resources = @{}
     foreach ($profile in @($Topology.profiles)) {
-        $connection = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $DefaultState
+        $connection = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $DefaultState -ForAdmission:$ForAdmission -PrimaryContourName $PrimaryContourName
         $key = [string](Get-OneCInfoBaseIdentity -InfoBaseKind $connection.kind -InfoBasePath $connection.path).key
         $resources[$key] = [pscustomobject]@{kind=$connection.kind;path=$connection.path}
     }
@@ -3681,9 +3689,11 @@ function Ensure-VanessaServiceInfoBase {
     $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
     if ($null -ne $admissionVariable -and $null -ne $admissionVariable.Value) {
         $candidateAdmission = $admissionVariable.Value
+        $serviceTarget = if ($candidateAdmission.plan.PSObject.Properties['serviceTarget']) { $candidateAdmission.plan.serviceTarget } else { $candidateAdmission.plan.target }
         if (-not $candidateAdmission.completed -and $candidateAdmission.plan.PSObject.Properties['servicePlan'] -and
             $null -ne $candidateAdmission.plan.servicePlan -and
-            (Test-ItlOnDemandInfoBaseMatch -First ([string]$State.devBranchInfoBasePath) -Second $candidateAdmission.plan.target.path)) {
+            $null -ne $serviceTarget -and
+            (Test-ItlOnDemandInfoBaseMatch -First ([string]$State.devBranchInfoBasePath) -Second $serviceTarget.path)) {
             $checkAdmission = $candidateAdmission
             if ($null -eq $AdmissionPlan -and -not $checkAdmission.servicePlanApplied) { $AdmissionPlan = $checkAdmission.plan.servicePlan }
         }

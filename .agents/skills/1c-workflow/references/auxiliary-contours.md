@@ -63,7 +63,9 @@ ITL_AUX_EXCHANGE_PASSWORD=secret
 
 Agents route natural-language requests to `configure-auxiliary-contour`, `status-auxiliary-contours`, `update-auxiliary-contour`, `dump-auxiliary-contour`, `check-auxiliary-contour`, `export-auxiliary-contour-result`, or `reset-auxiliary-contour`. These are advanced helper actions, not a new slash-command family. Every mutating or proving action requires an exact contour name; there is no implicit active contour.
 
-Update performs a full configuration load, full declared extension loads, and Enterprise normalization. Equal source and connection fingerprints skip Designer. Before mutation, workflow-owned MCP and exact-infobase sessions are drained. Primary refresh/check/result/reset never updates a contour.
+Update performs a full configuration load, full declared extension loads, and Enterprise normalization. Equal source and connection fingerprints skip Designer. Before mutation, only confirmed workflow-owned backends are stopped; other sessions are preserved and waited for. Primary refresh/check/result/reset never updates a contour.
+
+Update, dump, check, export and reset acquire the common database owner before local lifecycle locks and retain it through cleanup. Standalone maintenance reserves the contour and any recorded backend resources; checks also reserve primary tooling, the pinned service base and every database exposed by the runner profiles. The configured coordinator must be shared for coordination across execution hosts. A wait timeout does not authorize stopping foreign sessions. Uncertain owned cleanup retains recovery debt; do not remove the reservation or replay work to bypass it.
 
 Dump is available only to a `read-write` contour and installs a validated staged dump transactionally. Reset is `managed-file` only and moves the old infobase into ignored `.agent-1c/auxiliary-archives/`. Auxiliary CF and manifest files live under `build/result/auxiliary/<id>/` and never overwrite primary evidence. Export without a fresh contour proof requires the explicit unverified override and records it.
 

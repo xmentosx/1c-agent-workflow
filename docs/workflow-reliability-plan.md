@@ -1795,8 +1795,35 @@ competition on every planned resource, unrelated-base concurrency, inherited
 subset rejection, target drift, and service-generation creation/reuse. The
 entrypoint set contract now explicitly includes both checks alongside update
 and repository locking. Registration and installed full-check acceptance remain
-open; auxiliary check entrypoints, the general recovery adapter and multi-host
-acceptance are not closed by this correction.
+open; the general recovery adapter and multi-host acceptance are not closed by
+this correction.
+
+Registration of 741a0d3 exposed four unchanged lifecycle-lock regressions:
+missing branch input was reported before conflict/continuation validation, and
+failed checks no longer wrote their normal lifecycle result. Input preparation
+is now a separate read-only phase. Its error is retained, lifecycle ownership
+and continuation are validated, and that original error is raised before any
+action. Actual admission failures (waiting, cancellation, recovery debt) remain
+before local locks. Invalid input never authorizes an unowned native call.
+
+Auxiliary update, dump, check, export and reset now join the shared admission
+route. Standalone contour maintenance retains its existing ability to operate
+without primary branch state. Auxiliary checks additionally reserve primary
+tooling, recorded and planned managers and all profile targets, mapping primary
+profiles onto the selected contour. Planning resolves addresses before the
+authorized update; runtime client launch still requires current readiness.
+
+The previous auxiliary drain unconditionally called the all-session stop helper.
+It now requires admitted ownership, records cleanup intent, stops only confirmed
+workflow backends, and waits for foreign sessions without stopping them. Failure
+to confirm owned cleanup retains recovery debt. Primary tooling cleanup during
+an auxiliary check is restricted to the separately admitted primary target;
+other profile databases do not become mutation targets. Source acceptance covers
+real pipe competition and the unchanged public managed-contour reset fixture.
+The 126 focused tests pass, including all four original lifecycle-lock failures;
+no original fixture, continuation assertion or workload was weakened. Combined
+registration, installed, live foreign-session and multi-host acceptance remain
+open.
 
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket

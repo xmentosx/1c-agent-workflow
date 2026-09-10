@@ -410,6 +410,7 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
 
 $script:VanessaCleanupDatabaseAdmission = $null
 $script:DevBranchMutationDatabaseAdmission = $null
+$databaseAdmissionPlanningError = $null
 try {
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
@@ -429,8 +430,17 @@ try {
     if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
         $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
     }
-    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch')) {
-        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction
+    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
+        # Resolve inputs without acquiring resources. An invalid source context
+        # must still receive the lifecycle's conflict/continuation diagnostics,
+        # then fail before any action or native call. Admission failures (wait,
+        # cancellation, recovery debt) are never deferred into a local lock.
+        $databaseAdmissionPreparation = $null
+        try { $databaseAdmissionPreparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $requestedLifecycleAction }
+        catch { $databaseAdmissionPlanningError = $_ }
+        if ($null -eq $databaseAdmissionPlanningError) {
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction -Preparation $databaseAdmissionPreparation
+        }
     }
     Enter-Agent1cLifecycleOperation `
         -RequestedAction $requestedLifecycleAction `
@@ -443,8 +453,9 @@ try {
     }
     # All action preconditions run after admission with current configuration.
     Read-ProjectConfig
+    if ($null -ne $databaseAdmissionPlanningError) { throw $databaseAdmissionPlanningError }
     if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
-        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Read-DevBranchState -Name $DevBranchName)
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $requestedLifecycleAction)
     }
     Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"

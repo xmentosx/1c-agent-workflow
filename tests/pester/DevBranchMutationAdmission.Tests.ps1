@@ -241,6 +241,6 @@
 
     It 'includes repository locking in the same pre-lifecycle admission route' {
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
-        $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch'))"))
+        $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour'))"))
     }
 }
