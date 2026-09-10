@@ -1857,6 +1857,17 @@ original failed result is retained, with separate exact-identity cleanup proof;
 the corrected final fixture keeps the same workload and database topology.
 Combined registration, installed command and multi-host acceptance remain open.
 
+Primary result export and extension source dump now enter the same pre-lifecycle
+admission route. Result export reserves its branch database and recorded cleanup
+resources through configuration load, native CF/CFE production, validation and
+manifest completion. Read-only extension dump reserves only the target database:
+it neither drains nor prepares a Vanessa manager. Three new coordinator-backed
+cases cover waiting behind another project, continued exclusion after native
+exit until caller completion, and an independent manager remaining available.
+The owner suite passes 20 tests, with an exact set comparison between public
+routing and both planner/admission parameter contracts. Registration and real
+installed export/ROCTUP competition remain required.
+
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket
 `92b9e49eb3e34d338498c6138a573336` in needs-attention. A fresh Python process read

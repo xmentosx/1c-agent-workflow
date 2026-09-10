@@ -2105,7 +2105,7 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
     }
@@ -2114,6 +2114,11 @@ function Get-ItlDevBranchMutationDatabasePlan {
         # Vanessa manager databases are unrelated to this native operation.
         $target = [pscustomobject]@{ kind = [string](Get-InfoBaseKind); path = [string](Get-SourceInfoBasePath) }
         return [pscustomobject]@{ target = $target; bases = @($target) }
+    }
+    if ($Operation -eq 'dump-dev-branch-extension') {
+        # Read-only native dump does not drain or prepare a Vanessa manager.
+        $target = New-ItlOnDemandDatabaseConnection -Kind ([string](Get-StateValue $State 'infoBaseKind' '')) -Path ([string]$State.devBranchInfoBasePath)
+        return [pscustomobject]@{target=$target;bases=@($target)}
     }
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
@@ -2175,7 +2180,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }

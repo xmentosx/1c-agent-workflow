@@ -77,6 +77,43 @@
         Complete-ItlDatabaseAccessHost $next | Out-Null
     }
 
+    It 'coordinates <operation> from planning through native completion' -TestCases @(
+        @{operation='export-dev-branch-result';resources=2}, @{operation='dump-dev-branch-extension';resources=1}
+    ) {
+        param($operation, $resources)
+        $holder = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
+        try {
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation } | Should -Throw '*WAIT_TIMEOUT*'
+            Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+            Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0
+        } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation
+        $admission = $script:DevBranchMutationDatabaseAdmission
+        $admission.plan.bases | Should -HaveCount $resources
+        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $script:mutationState
+        Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $script:mutationState.devBranchInfoBasePath -Purpose export-fixture -ScriptBlock {
+            Invoke-OneCSessionProcessStart -StartProcess { [pscustomobject]@{Id=9876} }
+        } | Out-Null
+        Test-OneCNativeOperationJournalReleased $admission.journal | Should -BeFalse
+        { Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest } | Should -Throw '*WAIT_TIMEOUT*'
+        Confirm-OneCNativeOperationRelease -Record $admission.journal.entries[0] -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'fixture-scoped-release'
+        # Native exit does not end the caller's export/validation/manifest scope.
+        { Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest } | Should -Throw '*WAIT_TIMEOUT*'
+        Complete-ItlDevBranchMutationDatabaseAdmission $admission
+        $next = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
+        Complete-ItlDatabaseAccessHost $next | Out-Null
+    }
+
+    It 'does not reserve an unrelated manager for a read-only extension dump' {
+        $managerRequest = @{schemaVersion=1;coordinator=$settings.coordinator;timeout=0;bases=@(@{kind='file';path=$script:mutationState.vanessaServiceInfoBasePath});owner=@{operation='independent-manager'}}
+        $holder = Start-ItlDatabaseAccessHost -Python $python -Request $managerRequest
+        try {
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation dump-dev-branch-extension
+            $script:DevBranchMutationDatabaseAdmission.plan.bases.path | Should -Be $script:mutationState.devBranchInfoBasePath
+            Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+        } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+    }
+
     It 'rejects target drift after waiting before any runtime cleanup' {
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission
         $script:mutationState.devBranchInfoBasePath = Join-Path $script:ProjectRoot 'Другая база'
@@ -241,6 +278,11 @@
 
     It 'includes repository locking in the same pre-lifecycle admission route' {
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
-        $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour'))"))
+        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension')
+        $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('" + ($operations -join "', '") + "'))"))
+        foreach ($command in @('Get-ItlDevBranchMutationDatabasePlan', 'Start-ItlDevBranchMutationDatabaseAdmission')) {
+            $supported = (Get-Command $command).Parameters['Operation'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } | ForEach-Object ValidValues
+            @($supported | Sort-Object) | Should -Be @($operations | Sort-Object)
+        }
     }
 }
