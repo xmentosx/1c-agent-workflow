@@ -46,4 +46,18 @@ Queue states are `queued`, `waiting-for-base`, `running`, `agent-running`, `comp
 
 Before database waiting, the execution host writes `provenance.json` with the request/scenario/input hashes, input file inventory, resolved parameters, repetition counts, requested operations/route, executor, host, readiness criterion and phase budgets. It retains declared data/source/environment identities separately from runtime proof. The file contains no target profile, credential configuration or inherited lease. `collect --allow-partial` can retrieve it during waiting and after cancellation or an engine crash, without a result or automatic replay. The same bytes are referenced by SHA256 in the eventual result. Keep the immutable input package for reproduction; hashes identify its files but do not replace their contents.
 
-`result.json` contains unprofiled samples, phase costs, summary, raw-profile references, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
+During execution, `progress.json` atomically retains each iteration's kind and
+status, confirmed timing samples, command and handshake phase boundaries, phase
+errors, cleanup errors and the original provenance reference. It stays `running`
+until the final result is written; a verified sample does not mean the whole job
+or cleanup succeeded. Warmups and failed verification never become timing samples.
+Handshake progress writes remain outside the measured interval. Collected
+profiles are persisted before workload verification and linked by path and SHA256
+with separate coverage and workload-verification flags, without repeating packet
+rows in progress. Source mapping refreshes those artifact references and retains
+its manifest/resolution evidence. A crash leaves the last durable snapshot;
+`collect --allow-partial` retrieves it without inventing completion or replaying
+the interrupted iteration. Use observed job status and `resultAvailable` to
+distinguish partial evidence from a finished result.
+
+`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.

@@ -138,7 +138,8 @@ Path(c['target']['workspace'], sys.argv[1]+'.done').touch()
         self.assertEqual('completed', state['status'], result)
         self.assertTrue((f.source / 'cleanup.done').exists())
         phases = read_json(f.spool / 'runs/one/progress.json')['phases']
-        self.assertEqual(['prepare', 'verify', 'cleanup'], [p['name'] for p in phases])
+        self.assertEqual(['prepare', 'ready', 'action', 'verify', 'cleanup'], [p['name'] for p in phases])
+        self.assertEqual(f.scenario['phaseTimeoutSeconds'], {p['name']: p['timeoutSeconds'] for p in phases})
         self.assertTrue(all(p['status'] == 'completed' for p in phases))
 
     def test_timeout_keeps_failed_phase_evidence_and_runs_cleanup(self):

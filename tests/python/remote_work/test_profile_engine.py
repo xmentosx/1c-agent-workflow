@@ -52,6 +52,12 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertEqual("partial", state["status"], result)
         self.assertEqual(1, len(result["profiles"]))
         self.assertFalse(result["profiles"][0]["complete"])
+        snapshot = read_json(self.run / "progress.json")
+        evidence = snapshot["profiles"][0]
+        self.assertEqual(digest(self.run / evidence["path"]), evidence["sha256"])
+        self.assertFalse(evidence["complete"])
+        self.assertTrue(evidence["workloadVerified"])
+        self.assertNotIn("packets", evidence)
         self.assertIn("PROFILE_INCOMPLETE", (self.run / "report.md").read_text(encoding="utf-8"))
 
     def test_engine_retains_discovered_thick_client_family_and_still_requires_server_coverage(self):

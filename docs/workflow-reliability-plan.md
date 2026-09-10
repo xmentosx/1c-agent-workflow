@@ -83,7 +83,7 @@ and multi-host recovery remain open.
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes or durable successful load receipts. Unconfirmed native load recovery and installed acceptance remain open |
-| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; immutable scenario/input/settings provenance now persists before database waiting and survives an actual engine crash. Detailed runtime stages, observed loaded-state provenance and installed acceptance remain open |
+| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting reproduced; r12 connection identity and captured wait ownership implemented; native two-client execution exposed occupied-port reuse in the upstream allocator, now reproduced and corrected. The combined focused protocol, port, artifact, navigation and gate contracts pass 160 tests. Native paired build and two-client A/B/A acceptance pass with three correct replies and distinct ports; r12 registered at b6f23f1 with 633 passed Targeted tests; scoped native cleanup now has a separate verified candidate, while restart reconciliation, delivery and original BDR acceptance remain open |
@@ -2617,3 +2617,42 @@ Enterprise updates. That diagnostic alone does not close queue recovery task 4a
 or item 6. Add supported phase reconciliation, then qualify the public installed
 group route and original multi-branch workflow; server and multi-host acceptance
 also remain open. Do not expand reset continuation 4b as a substitute.
+
+## Item 7: preserve completed repetitions before the series finishes
+
+Previously `progress.json` contained only command phases. Handshake readiness and
+action waits were absent, and verified timings remained solely in engine memory
+until finalization. The incremental snapshot now retains iteration kind/status,
+verified samples, handshake and command phase outcomes, source-capture progress,
+cleanup failures and the immutable provenance reference. A real engine process
+exiting 77 before starting its second repetition leaves the first verified sample
+collectable, with the series still running and no final result. A subsequent job
+execution refuses replay and preserves the original snapshot bytes.
+
+Profile output is written immediately after collection, before workload
+verification. Progress links its path and SHA256 with separate coverage and
+workload-verification fields. It does not duplicate native packet rows or copy
+private context/lease settings. Hashes are calculated only when profile artifacts
+are produced/remapped. Source-analysis completion or failure refreshes those
+references and retains the manifest/resolution information already owned by the
+source adapter; it does not invent actual loaded-state identity from declarations.
+
+The focused engine/runtime/profile/collection batch passed 63 cases; its one
+incorrect new error-text expectation was diagnosed and corrected against the
+public verify helper, then passed separately. The helper writes the failed
+business-check JSON and exits 1, so the engine correctly reports COMMAND_FAILED
+and preserves failed verification rather than reaching its later result-parser
+error. Assertions still require no accepted timing, the failed check, failed
+phase and failed iteration. Additional cases prove that warmups do not enter
+timing samples, progress writes do not overlap actual handshake measurement
+intervals, failed cleanup retains samples without completion, and command-launch
+failure leaves a failed phase. Registration, installed acceptance and detailed
+adapter-specific loaded-state evidence remain separate.
+
+The first registration exposed one stale expectation in the broader 316-case
+Python owner suite: its long-deadline regression expected only command phases,
+whereas handshake readiness and action are now deliberately retained as well.
+The exact expected sequence now includes those two phases and additionally
+checks every persisted phase budget against the original scenario overrides.
+The original 1800-second child-action inheritance and independent prepare/cleanup
+assertions remain unchanged; no timeout, workload or precondition was relaxed.

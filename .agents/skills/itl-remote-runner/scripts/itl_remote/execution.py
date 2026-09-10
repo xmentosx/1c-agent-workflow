@@ -91,6 +91,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     commands = scenario["commands"]
     processes = []
     profile_paths = []
+    profile_evidence = []
     profiler = None
     result = {"schemaVersion": 1, "jobId": request["id"], "scenarioId": scenario["id"],
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
@@ -100,11 +101,36 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "declared-by-profile-and-scenario; runtime adapters own exact loaded-data/source proof",
               "readiness": scenario["readyDescription"], "mode": request["mode"],
-              "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [],
+              "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [], "iterations": [],
               "status": "running", "limitations": [], "cleanupErrors": []}
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
+
+    def persist_progress():
+        # Public evidence is independent of the private context and final result.
+        # Keep profile rows in their artifacts, not in every progress snapshot.
+        snapshot = {key: result[key] for key in (
+            "schemaVersion", "jobId", "scenarioId", "startedAt", "provenance",
+            "timings", "iterations", "phases", "limitations", "cleanupErrors")}
+        snapshot.update(updatedAt=stamp(), status=result["status"] if "finishedAt" in result else "running",
+                        resultAvailable=(run / "result.json").is_file(), profiles=[])
+        for evidence in profile_evidence:
+            verified = any(item["iteration"] == evidence["iteration"] and item["status"] == "verified"
+                           for item in result["iterations"])
+            snapshot["profiles"].append({**evidence, "workloadVerified": verified})
+        for key in ("access", "sourceManifest", "sourceResolution", "error", "finishedAt"):
+            if key in result:
+                snapshot[key] = result[key]
+        write_json(run / "progress.json", snapshot)
+
+    def refresh_profile_evidence():
+        # Hash only when producing or remapping profiles, not at every phase.
+        profile_evidence.clear()
+        for profile, path in zip(result["profiles"], profile_paths):
+            profile_evidence.append({"iteration": int(path.parent.name.split("-", 1)[0]),
+                                     "path": path.relative_to(run).as_posix(), "sha256": digest(path),
+                                     "complete": profile["complete"], "coverage": profile.get("coverage", {})})
 
     def start_phase(name):
         deadline = Deadline(name, phase_budgets[name], cancel_path=context["cancelPath"])
@@ -113,35 +139,44 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         progress(name)
         return deadline
 
+    @contextlib.contextmanager
+    def phase(name, deadline=None):
+        deadline = deadline or start_phase(name)
+        begin = time.monotonic()
+        record = {"name": name, "startedAt": stamp(), "status": "running", "timeoutSeconds": deadline.timeout,
+                  "iteration": context.get("iterationIndex"), "iterationKind": context.get("iterationKind")}
+        result["phases"].append(record)
+        persist_progress()
+        try:
+            deadline.remaining()
+            yield deadline
+            record["status"] = "completed"
+        except Exception as error:
+            record.update(status="failed", error=str(error))
+            raise
+        finally:
+            record["seconds"] = time.monotonic() - begin
+            persist_progress()
+
     def command(name, deadline=None):
         if name not in commands:
             return
         if cancelled() and name != "cleanup":
             raise WorkError("CANCELLED")
-        deadline = deadline or start_phase(name)
-        deadline.remaining()
-        begin = time.monotonic()
-        record = {"name": name, "startedAt": stamp(), "status": "running", "timeoutSeconds": deadline.timeout}
-        result["phases"].append(record)
-        write_json(run / "progress.json", {"jobId": request["id"], "phases": result["phases"]})
-        process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                               child_environment)
-        processes.append(process)
-        try:
-            process.wait(deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
-            record["status"] = "completed"
-        except Exception as error:
-            record.update(status="failed", error=str(error))
-            # Stop this command's owned tree before starting recovery/cleanup.
-            # A persistent adapter started by prepare has its separate owner.
+        with phase(name, deadline) as active_deadline:
+            process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
+                                   child_environment)
+            processes.append(process)
             try:
-                process.close()
-            except Exception as cleanup:
-                result["cleanupErrors"].append(str(cleanup))
-            raise
-        finally:
-            record["seconds"] = time.monotonic() - begin
-            write_json(run / "progress.json", {"jobId": request["id"], "phases": result["phases"]})
+                process.wait(active_deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
+            except Exception:
+                # Stop this command's owned tree before starting recovery/cleanup.
+                # A persistent adapter started by prepare has its separate owner.
+                try:
+                    process.close()
+                except Exception as cleanup:
+                    result["cleanupErrors"].append(str(cleanup))
+                raise
 
     def open_profiler(iteration):
         proof = read_json(run / "runtime-proof.json")
@@ -163,6 +198,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         collector.open()
         return collector
 
+    current_iteration = None
+    persist_progress()
     try:
         command("update")
         if request["mode"] != "time":
@@ -191,39 +228,45 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             variables["iteration"] = iteration
             context.update(iteration=str(iteration), iterationKind=kind, iterationIndex=index)
             write_json(variables["context"], context)
+            current_iteration = {"iteration": index, "kind": kind, "status": "running", "startedAt": stamp()}
+            result["iterations"].append(current_iteration)
+            persist_progress()
             progress(kind)
             if kind == "profile":
                 if not effective_rdbg:
                     result["limitations"].append("RDBG is not configured; requested profile is unavailable.")
+                    current_iteration.update(status="skipped", reason="profile-unavailable", finishedAt=stamp())
+                    persist_progress()
                     continue
             if scenario.get("adapter", "command") == "handshake":
-                readiness_deadline = start_phase("ready")
-                process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                       iteration / "action.log", child_environment)
-                processes.append(process)
-                ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
-                if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
-                    raise WorkError("WORKLOAD_READINESS_UNPROVEN")
+                with phase("ready") as readiness_deadline:
+                    process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
+                                           iteration / "action.log", child_environment)
+                    processes.append(process)
+                    ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
+                    if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
+                        raise WorkError("WORKLOAD_READINESS_UNPROVEN")
                 if kind == "profile":
                     profiler = open_profiler(iteration)
                 if profiler:
                     profiler.start()
-                action_deadline = start_phase("action")
-                begin = time.monotonic_ns()
-                write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin, "phase": action_deadline.record()})
-                done = wait_json(iteration / "done.json", process, action_deadline, cancelled)
-                end = time.monotonic_ns()
-                if done.get("jobId") != request["id"] or done.get("ready") is not True:
-                    raise WorkError("WORKLOAD_COMPLETION_UNPROVEN")
-                process.wait(action_deadline.remaining(), cancelled)
-                command("ready")
-                if "ready" in commands:
+                # Persist action boundaries outside the measured interval.
+                with phase("action") as action_deadline:
+                    begin = time.monotonic_ns()
+                    write_json(iteration / "go.json", {"jobId": request["id"], "startedNs": begin, "phase": action_deadline.record()})
+                    done = wait_json(iteration / "done.json", process, action_deadline, cancelled)
                     end = time.monotonic_ns()
-                elif "startedNs" in done or "finishedNs" in done:
-                    a, b = done.get("startedNs"), done.get("finishedNs")
-                    if not isinstance(a, int) or not isinstance(b, int) or not begin <= a <= b <= end:
-                        raise WorkError("WORKLOAD_CLOCK_INVALID")
-                    begin, end = a, b
+                    if done.get("jobId") != request["id"] or done.get("ready") is not True:
+                        raise WorkError("WORKLOAD_COMPLETION_UNPROVEN")
+                    process.wait(action_deadline.remaining(), cancelled)
+                    command("ready")
+                    if "ready" in commands:
+                        end = time.monotonic_ns()
+                    elif "startedNs" in done or "finishedNs" in done:
+                        a, b = done.get("startedNs"), done.get("finishedNs")
+                        if not isinstance(a, int) or not isinstance(b, int) or not begin <= a <= b <= end:
+                            raise WorkError("WORKLOAD_CLOCK_INVALID")
+                        begin, end = a, b
             else:
                 if kind == "profile":
                     profiler = open_profiler(iteration)
@@ -236,10 +279,13 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             if profiler:
                 try:
                     profile_result = profiler.finish()
+                    write_json(iteration / "profile.json", profile_result)
                     result["profiles"].append(profile_result)
                     profile_paths.append(iteration / "profile.json")
+                    refresh_profile_evidence()
                     if not profile_result["complete"]:
                         result["limitations"].append("PROFILE_INCOMPLETE: " + json.dumps(profile_result.get("coverage", {}), ensure_ascii=False))
+                    persist_progress()
                 finally:
                     profiler.close()
                     profiler = None
@@ -251,6 +297,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             if kind == "time":
                 result["timings"].append({"iteration": index, "seconds": (end - begin) / 1e9,
                                           "profileEnabled": False, "verified": True})
+            current_iteration.update(status="verified", finishedAt=stamp())
+            persist_progress()
         source_policy = scenario.get("sourceAnalysis", "none")
         if source_policy != "none" and result["profiles"]:
             from .source_analysis import resolve_sources
@@ -259,13 +307,19 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                     command("quiesce", deadline)
                 from .vanessa import quiesce
                 return quiesce(variables["context"])
-            resolve_sources(variables["context"], result["profiles"], profile_paths, source_policy,
-                            scenario.get("sourceAnalysisModules"), start_phase("source-capture"), result,
-                            before_capture=before_source_capture)
+            with phase("source-capture") as source_deadline:
+                try:
+                    resolve_sources(variables["context"], result["profiles"], profile_paths, source_policy,
+                                    scenario.get("sourceAnalysisModules"), source_deadline, result,
+                                    before_capture=before_source_capture)
+                finally:
+                    refresh_profile_evidence()
         elif source_policy == "required":
             raise WorkError("SOURCE_ANALYSIS_PROFILE_UNAVAILABLE")
         result["status"] = "partial" if result["limitations"] else "completed"
     except Exception as error:
+        if current_iteration is not None and current_iteration["status"] == "running":
+            current_iteration.update(status="failed", error=str(error), finishedAt=stamp())
         result["status"] = "cancelled" if str(error) == "CANCELLED" else "needs-attention"
         result["error"] = str(error)
         result["cleanupErrors"].extend(getattr(error, "cleanup_errors", []))
@@ -291,6 +345,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         result["summary"] = {"count": len(seconds), "medianSeconds": statistics.median(seconds) if seconds else None,
                              "minSeconds": min(seconds) if seconds else None, "maxSeconds": max(seconds) if seconds else None}
         write_json(run / "result.json", result)
+        persist_progress()
         report(run, result)
     return result
 
