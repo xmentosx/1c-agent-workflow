@@ -8,5 +8,9 @@
   "waitLastLine": 2672,
   "waitSha256": "104683a9aeb3727eb0b41c5515ee63ae9cb6be0080235fb500e1c284250c5de6",
   "receiverSha256": "d9c3d76962a0bcb417dd83f23552012b72e76d3943ec278c6c152fe7f2e3a385",
-  "producerSha256": "f051c5970458d94e16bf3c29eb914d588d650f395b50b146e749c51d0983d9fc"
+  "producerSha256": "3e141d3e6c969eee1911b151dd8601683f23bc29a8396f32077453d4e3a9ce42",
+  "startWaitFirstLine": 2589,
+  "startWaitLastLine": 2613,
+  "startWaitSha256": "ff53eb878d799deb818e59ae7b57ff13c3f0cd10665502d79b01379f3c519341",
+  "producerExcerptLastLine": 2562
 }

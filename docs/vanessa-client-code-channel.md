@@ -25,12 +25,14 @@ also changes matching parent-directory text.
 
 ## Paired downstream protocol
 
-Candidate r11 changes both the Vanessa step library and VAExtension. It retains
-r10 row-caption and r9 nested-feature corrections. The existing file-code step
+Candidate r12 retains the r11 changes to both the Vanessa step library and
+VAExtension, and the r10 row-caption and r9 nested-feature corrections. The existing file-code step
 publishes a complete JSON request by moving a temporary file to
 `Event_ITL_<uuid>.json`. One unresolved command cannot be overwritten by a later
-send. Every monitor start gets a unique generation below the provided root and
-the selected TestClient PID; starting another monitor for that same client is
+send. Every monitor start gets a unique generation below the provided root,
+containing an `events` directory. The monitor registry uses the selected TestClient's host,
+port and infobase connection, independently of its reported PID. Starting another
+monitor for that same client is
 rejected until its current monitor is stopped. Stop resolves the actual recorded
 generation instead of reconstructing a path from the caller's argument.
 
@@ -69,3 +71,68 @@ cleanup must first prove the owning consumer has stopped, retain the operation
 outcome in run artifacts and remove only that generation's files. Cleanup and
 restart reconciliation, installed authoring guidance and normal delivery remain
 open parts of item 10; no candidate completion is claimed by this document.
+
+## Connection identity and native evidence
+
+The registered r11 change at `75a36db` passed 578 Targeted tests. Its paired native
+build and four real 1C file-base scenarios confirmed returned values, void success,
+the original command exception, server execution and privileged server execution.
+The negative scenario intentionally has one JUnit failure containing the original
+exception. All owned native sessions and database admissions were released.
+These server calls use file-base ServerEmulation; they do not establish remote
+server-infobase acceptance.
+
+Those runs also exposed that the selected Vanessa profile can retain PID 0 after
+connecting a real TestClient. Two such profiles collide in the r11 PID-keyed
+registry. An executable reproducer sends a selected client's command into the
+other client's directory with the actual r11 producer. The r12 correction uses
+the selected host/port/infobase in all six file-event consumers, including legacy
+equipment events, monitor start/stop, sending and waiting. Host case and surrounding
+whitespace are normalized; network aliases are not presumed equivalent. A missing
+connection identity cannot authorize sending code to another client's monitor.
+
+The wait starter captures the request and its sending connection before scheduling
+the callback. Changing the selected profile does not redirect an already started
+wait. Starting a new wait from a different client fails without consuming the
+original request. There remains one unresolved command per sequential Vanessa
+step stream; this is not a claim of concurrent waits inside that stream.
+
+Executable r11/r12 protocol and connection-identity regressions cover these paths,
+including a PID becoming known after monitor registration. Scoped cleanup and
+restart reconciliation remain separate outstanding requirements.
+
+The first native r12 two-client run (`probe-c0865302`) exposed another owning-layer
+defect before channel acceptance could pass. Its two profiles had distinct ports
+and databases, but Vanessa logged connecting both to the first port. The command
+for B raised `ITL_CLIENT_B_WRONG_DATABASE`; the scenario retained that assertion
+and stopped. Separate channel directories alone cannot establish correct targeting.
+
+The upstream allocator resets the requested port to the range start, includes
+every profile's assigned port in the busy set (including its own), then returns
+the range start when no port remains. The correction retains a free assigned
+port, excludes only the requesting profile's reservation from the busy list,
+keeps actual listeners and other profile reservations, and rejects exhaustion
+with `ITL_TESTCLIENT_NO_FREE_PORT`. The launch call passes the requesting profile
+name. Six executable cases reproduce the original occupied-port return and
+exercise the corrected allocator together with the actual Windows netstat parser.
+The native two-client scenario must also pass on the resulting paired build;
+neither widening its range nor removing its second profile establishes the fix.
+
+The corrected native paired build has patch SHA-256
+`ea92b1adfe628dd5c63ac3ac5f4efcef7dc0b1ad94002effb627d6a607a87566`
+and ZIP SHA-256 `e9ef4849a5ad4b43c035dfb5aefa54fe29bb7fc1c932ccd96c82e43f2f12d7ec`.
+Run `probe-0510e9cd` passed its one scenario with zero failures/errors: both
+monitors were started, ports 59128 and 59129 stayed distinct, commands A/B/A
+asserted their actual database connection strings, and both monitors stopped.
+Three correlated successful replies reside in two separate channel generations.
+The combined focused source group passes 160 tests.
+
+A separate process inspection contradicted the first failed run's `released=true`
+claim: PID 27584, created at `2026-09-10T06:08:21.5136980Z`, remained with that
+run's exact B database, port 53941 and `/Out` path. The existing scoped Vanessa
+cleanup helper matched it, stopped that one client under renewed database
+admission, and confirmed no remaining matching processes. The original result
+is retained unchanged; `original-probe-cleanup-audit.json` records the contradiction
+and recovery. This is an additional concrete item 4 recovery-probe defect, not
+proof that descendant cleanup is fixed by the port correction. The second run's
+own process scope was empty after completion. No foreign process was stopped.

@@ -60,7 +60,7 @@
     }
 }
 
-Describe 'Vanessa row navigation with display captions <revision>' -ForEach @(@{revision='itl-r10'},@{revision='itl-r11'}) {
+Describe 'Vanessa row navigation with display captions <revision>' -ForEach @(@{revision='itl-r10'},@{revision='itl-r11'}, @{revision='itl-r12'}) {
     BeforeAll {
         $script:RowCriteriaPatch = Join-Path $script:RowCriteriaRepo "third-party/vanessa-automation/1.2.043.28-$revision/file-operations.patch"
     }

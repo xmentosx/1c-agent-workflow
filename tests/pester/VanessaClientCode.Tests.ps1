@@ -6,12 +6,12 @@
     . (Join-Path $script:ClientCodeRepo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
 
     function New-ClientCodeProbe {
-        param([string]$Root, [bool]$Patched)
+        param([string]$Root, [bool]$Patched, [string]$ScenarioFile = 'scenario.os')
         [void][IO.Directory]::CreateDirectory($Root)
         $source = Get-Content (Join-Path $script:ClientCodeFixture 'source.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $patchText = [IO.File]::ReadAllText($script:ClientCodePatch)
         $modules = @{}
-        foreach ($kind in @('producer', 'receiver', 'wait')) {
+        foreach ($kind in @('producer', 'receiver', 'wait', 'startWait')) {
             $path = Join-Path $Root ($kind + '.bsl')
             [IO.File]::Copy((Join-Path $script:ClientCodeFixture ($kind + '-upstream.bsl')), $path, $true)
             (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $source.($kind + 'Sha256')
@@ -54,11 +54,15 @@
 КонецФункции
 Процедура ОтключитьОбработчикОжидания(Имя)
 КонецПроцедуры
+Процедура ПодключитьОбработчикОжидания(Имя, Период, Однократно)
+КонецПроцедуры
 '@
         $waiter = [regex]::Match($modules.wait, '(?ms)^Функция ЯЖдуРезультатПоследнегоСобытияЧерезФайлОбработчикОжидания\(.*?^КонецФункции[^\r\n]*').Value
+        $waiter += "`n" + [regex]::Match($modules.startWait, '(?ms)^Функция ЯОжидаюСекундРезультатОбработкиПоследнегоСобытияЧерезФайлИЗапоминаюРезультатВПеременнуюРасширение\(.*?^КонецФункции[^\r\n]*').Value
         $probe = $prefix + "`n" + ($producer -join "`n") + "`n" + $receiver + "`n" + $waiter + "`nСчетчикВызовов = 0;`n"
         $probe += 'КаталогФикстуры = "' + $script:ClientCodeFixture.Replace('"','""') + '";' + "`n"
-        $scenario = [IO.File]::ReadAllText((Join-Path $script:ClientCodeFixture 'scenario.os'))
+        $probe += 'ВерсияКанала = "' + $(if ($script:ClientCodePatch -match 'itl-r12') { 'itl-r12' } else { 'itl-r11' }) + '";' + "`n"
+        $scenario = [IO.File]::ReadAllText((Join-Path $script:ClientCodeFixture $ScenarioFile))
         if ($Patched) {
             $scenario = [regex]::Replace($scenario, '(?ms)^Если Лев\(Сценарий, 7\) = "legacy-" Тогда.*?^КонецЕсли;\r?\n', '')
         }
@@ -66,6 +70,9 @@
             # Only the original precondition reproducer runs; no revised receiver is substituted.
             $scenario = $scenario.Substring(0, $scenario.IndexOf('КонтекстСохраняемый._СписокPIDКлиентовСМониторингомСобытий.Вставить'))
             $scenario = [regex]::Replace($scenario, '(?ms)^Если Сценарий = "consume" Тогда.*?^КонецЕсли;\r?\n', '')
+        }
+        if ($Patched -and $script:ClientCodePatch -match 'itl-r12') {
+            $scenario = $scenario.Replace('КлючКлиентаДляПробы = 12345;', 'КлючКлиентаДляПробы = ITLКлючКлиентаМониторинга();')
         }
         $probe += $scenario
         $probePath = Join-Path $Root 'probe.os'
@@ -75,7 +82,8 @@
 
     function Invoke-ClientCodeProbe {
         param([string]$Root, [string]$Case, [bool]$Patched)
-        $probePath = New-ClientCodeProbe -Root $Root -Patched $Patched
+        $scenarioFile = if ($Case -eq 'identity-legacy-foreign') { 'recovery-r11.os' } elseif ($Case.StartsWith('identity-')) { 'recovery.os' } else { 'scenario.os' }
+        $probePath = New-ClientCodeProbe -Root $Root -Patched $Patched -ScenarioFile $scenarioFile
         $eventRoot = Join-Path $Root 'Event родитель с пробелом'
         [void][IO.Directory]::CreateDirectory($eventRoot)
         $start = [Diagnostics.ProcessStartInfo]::new()
@@ -94,7 +102,10 @@
     }
 }
 
-Describe 'Vanessa correlated file-code execution' {
+Describe 'Vanessa correlated file-code execution <revision>' -ForEach @(@{revision='itl-r11'},@{revision='itl-r12'}) {
+    BeforeAll {
+        $script:ClientCodePatch = Join-Path $script:ClientCodeRepo "third-party/vanessa-automation/1.2.043.28-$revision/file-operations.patch"
+    }
     It 'reproduces the original receiver losing the outcome after executing the code: <case>' -TestCases @(@{case='legacy-void'},@{case='legacy-failed'}) {
         param($case)
         $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive ('Исходный получатель ' + $case)) -Case $case -Patched $false
@@ -110,6 +121,8 @@ public static class ItlClientCodeClipboardProbe {
     [DllImport("user32.dll", SetLastError = true)] public static extern bool OpenClipboard(IntPtr owner);
     [DllImport("user32.dll", SetLastError = true)] public static extern bool CloseClipboard();
 }
+
+
 '@
         }
         $opened = [ItlClientCodeClipboardProbe]::OpenClipboard([IntPtr]::Zero)
@@ -192,5 +205,41 @@ public static class ItlClientCodeClipboardProbe {
         $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive ('Выполнение команды ' + $case)) -Case $case -Patched $true
         $result.exitCode | Should -Be 0 -Because $result.output
         $result.output | Should -Match ('CLIENT_CODE_CASE_PASSED: ' + [regex]::Escape($case))
+    }
+}
+
+
+Describe 'File-code monitor connection identity' {
+    BeforeAll {
+        $script:ClientCodePatch = Join-Path $script:ClientCodeRepo 'third-party/vanessa-automation/1.2.043.28-itl-r12/file-operations.patch'
+    }
+    It 'reproduces r11 dispatching to the other client when both profile PIDs are zero' {
+        $savedPatch = $script:ClientCodePatch
+        try {
+            $script:ClientCodePatch = Join-Path $script:ClientCodeRepo 'third-party/vanessa-automation/1.2.043.28-itl-r11/file-operations.patch'
+            $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Старый канал с нулевым PID') -Case 'identity-legacy-foreign' -Patched $true
+            $result.exitCode | Should -Be 0 -Because $result.output
+            $result.output | Should -Match 'R11_WRONG_CLIENT_DIRECTORY_REPRODUCED'
+        } finally { $script:ClientCodePatch = $savedPatch }
+    }
+    It 'keeps the selected connection and request identity stable: <case>' -TestCases @(
+        @{case='identity-selected-route'},@{case='identity-pid-becomes-known'},@{case='identity-host-case'},@{case='identity-switch-during-wait'}
+    ) {
+        param($case)
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive ('Связь с клиентом ' + $case)) -Case $case -Patched $true
+        $result.exitCode | Should -Be 0 -Because $result.output
+        $result.output | Should -Match ('CLIENT_IDENTITY_CASE_PASSED: '+$case)
+    }
+    It 'rejects operations without their own connection ownership: <case>' -TestCases @(
+        @{case='identity-foreign-send';error='ITL_CLIENT_CODE_MONITOR_NOT_STARTED_FOR_CLIENT'},
+        @{case='identity-foreign-wait';error='ITL_CLIENT_CODE_PENDING_BELONGS_TO_ANOTHER_CLIENT'},
+        @{case='identity-missing-endpoint';error='ITL_CLIENT_CODE_CONNECTION_IDENTITY_MISSING'}
+    ) {
+        param($case,$error)
+        $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive ('Чужой канал ' + $case)) -Case $case -Patched $true
+        $result.exitCode | Should -Not -Be 0
+        $result.output | Should -Match $error
+        $expectedCount = if ($case -eq 'identity-foreign-wait') { 1 } else { 0 }
+        @(Get-ChildItem $result.eventRoot -Recurse -File -Filter 'Event_ITL_*.json').Count | Should -Be $expectedCount
     }
 }

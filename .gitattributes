@@ -4,3 +4,4 @@ third-party/vanessa-automation/**/manifest.json text eol=lf
 tests/fixtures/vanessa-nested-selection/*.bsl text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-row-criteria/navigation.bsl text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-client-code/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/vanessa-testclient-ports/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
