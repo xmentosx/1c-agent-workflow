@@ -62,6 +62,14 @@ authoritative source evidence. Copying an observed version onto arbitrary local
 code is not such evidence. Hash checking protects the supplied binding from file
 drift; it cannot establish the producer's correctness on its own.
 
+Fresh capture seals the exported XML metadata and BSL bytes, including empty
+modules, before constructing bindings. The producer validates each used metadata
+file and module against that inventory. An unchanged ConfigDumpInfo.xml does not
+authorize mapping a subsequently edited module to its old native version.
+Unsealed legacy snapshots require a fresh capture for new bindings; the producer
+does not repair their evidence by hashing current files. Existing pinned binding
+manifests still use their original per-module hashes during reuse.
+
 All native identity fields are retained, including `type`, `URL`, `extensionName`
 and opaque `extId` when present. `extId` is not interpreted as an extension name.
 Platform defaults follow the official [BSLModuleIdInternal model](https://edt.1c.ru/dev/edt/2024.2/apidocs/com/_1c/g5/v8/dt/debug/model/base/data/BSLModuleIdInternal.html).
@@ -82,6 +90,11 @@ Source analysis requires profile or time+profile mode. Set a separate
 runs after scenario verification and before cleanup, under the existing database
 lease and outside every timed interval. It also obeys the per-base session limit;
 it never stops a foreign client to obtain a Designer slot.
+For a repository-bound base, the English startup notice about working without
+repository authentication is retained in snapshot diagnostics and excluded from
+the extension list. The helper fixes its language with `/L en`. Unknown log
+messages remain an invalid-list failure. This follows the documented
+[/DisableStartupDialogs behavior](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_7._Startup_command-line_options_of_1C_Enterprise/7.3._General_startup_commands/7.3.11._Other_parameters/?language=en).
 The capture process reads the target workspace's `.dev.env` session limit and
 waits for capacity within the existing capture deadline, including cancellation.
 When a missing binding actually requires capture, the engine first closes this

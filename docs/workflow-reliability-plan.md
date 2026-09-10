@@ -2426,6 +2426,36 @@ they remain explicitly unconfirmed in the repeat report. conf.cfg SHA-256 stayed
 dcb4feb4560908a33ff76cef6d59a8607d66c849a417e4387ed7f25f1032f5d4.
 This is technical file-base evidence, not installed/server acceptance.
 
+## Item 3: preserve exported module bytes before producing bindings
+
+The source producer previously pinned ConfigDumpInfo.xml but computed a new
+module hash when building a binding. A reproducer edited Module.bsl after export
+and obtained a valid binding to the unchanged index's old native version. Fresh
+capture now retains hashes for exported XML metadata and BSL files (including
+empty modules). Binding requires the original metadata and module hashes; an
+unsealed or modified snapshot cannot be repaired by hashing its current files.
+The UUID, native version, property and extension checks remain independent.
+
+Native acceptance also exposed a repository-bound target failure: Designer
+returns exit 0 and its documented offline-repository startup notice when no
+repository credentials are supplied with /DisableStartupDialogs. The fixed
+English helper output is now parsed with that exact notice retained as a
+diagnostic; unknown diagnostics remain rejected. The failed original run is
+C:/va канал/source-integrity-a65732ad. The same repository-bound target then
+captured successfully at C:/va канал/source-integrity-2f4daf3c. Its runtime
+configuration was empty, although its Designer configuration contained modules;
+that first retry proves the repository notice behavior, not module bindings.
+
+After populating only this owned technical target's runtime configuration,
+C:/va канал/source-integrity-c180243c proves both native export and a binding
+for CommonModule.CaptureProbe. Editing its exported module caused
+SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED; the harness restored the exact source
+bytes afterward. No active queue tickets remained, and conf.cfg retained its
+previous SHA-256. This source change passes 18 capture/producer cases plus 13
+selection/reuse cases. It is not a new profiler measurement, Vanessa one-slot
+quiescence proof, automatic checkout-binding production or PM5/UFA acceptance;
+those item 3 requirements remain open.
+
 ## Item 10: correlated client-code outcomes
 
 See [the source diagnosis and paired protocol](vanessa-client-code-channel.md).

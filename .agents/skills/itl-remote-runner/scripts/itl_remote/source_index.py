@@ -92,6 +92,9 @@ def build_manifest(snapshot, profiles, selection=None):
                     metadata = beneath(directory, relative)
                     if not metadata.is_file():
                         continue
+                    metadata_relative = metadata.relative_to(root).as_posix()
+                    if digest(metadata) != hashes.get(metadata_relative):
+                        raise WorkError("SOURCE_CAPTURE_METADATA_CHANGED_OR_UNSEALED")
                     metadata_root = ET.parse(metadata).getroot()
                     if not any(child.get("uuid") == module["objectID"] for child in metadata_root):
                         continue
@@ -99,8 +102,12 @@ def build_manifest(snapshot, profiles, selection=None):
                     source = beneath(directory, parent / "Ext" / property_path)
                     if not source.is_file():
                         continue
+                    source_relative = source.relative_to(root).as_posix()
+                    source_sha = hashes.get(source_relative)
+                    if digest(source) != source_sha:
+                        raise WorkError("SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED")
                     candidates.append({"moduleID": module, "path": source.relative_to(root).as_posix(),
-                                       "sha256": digest(source), "origin": "database-snapshot",
+                                       "sha256": source_sha, "origin": "database-snapshot",
                                        "snapshotId": snapshot["snapshotId"], "metadataName": obj["name"],
                                        "configurationExtension": configuration["extensionName"],
                                        "dumpIndex": index_relative, "dumpIndexSha256": hashes[index_relative]})

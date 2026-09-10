@@ -11,12 +11,18 @@ from .access import Lease
 from .common import OwnedProcess, WorkError, beneath, digest, read_json, stamp, write_json
 
 
-def extension_names(log):
+def extension_names(log, *, diagnostics=None):
     """DumpDBCfgList emits identifiers; unexpected diagnostics are never names."""
     names = []
     for line in Path(log).read_text(encoding="utf-8-sig").splitlines():
         name = line.strip()
         if not name:
+            continue
+        # /DisableStartupDialogs permits Designer to work without repository
+        # authentication. Its startup notice is not an extension identifier.
+        if name == 'Connection to the configuration repository is not established':
+            if diagnostics is not None:
+                diagnostics.append({'code': 'SOURCE_CAPTURE_REPOSITORY_OFFLINE', 'message': name, 'log': str(log)})
             continue
         if not name.isidentifier():
             raise WorkError("SOURCE_CAPTURE_EXTENSION_LIST_UNRECOGNIZED")
@@ -37,7 +43,7 @@ class Snapshot:
         (self.root / "private").mkdir()
         self.result = {"schemaVersion": 1, "snapshotId": self.identifier, "jobId": self.context["jobId"],
                        "status": "running", "startedAt": stamp(), "steps": [], "artifacts": [],
-                       "configurations": [], "cleanupErrors": [], "cleanupWarnings": [],
+                       "configurations": [], "cleanupErrors": [], "cleanupWarnings": [], "diagnostics": [],
                        "source": "database-configuration", "targetConfigurationUpdated": False}
         self.save()
 
@@ -90,10 +96,10 @@ class Snapshot:
             raise WorkError(record.get("error", "SOURCE_CAPTURE_STEP_FAILED")) from failure
         return record
 
-    def artifact(self, path):
+    def artifact(self, path, *, allow_empty=False):
         path = Path(path)
         checked = beneath(self.root, path.relative_to(self.root))
-        if not checked.is_file() or checked.stat().st_size == 0:
+        if not checked.is_file() or (not allow_empty and checked.stat().st_size == 0):
             raise WorkError("SOURCE_CAPTURE_ARTIFACT_MISSING")
         self.result["artifacts"].append({"path": path.relative_to(self.root).as_posix(),
                                          "sha256": digest(path), "bytes": path.stat().st_size})
@@ -145,13 +151,13 @@ class Snapshot:
                             timeout=self.deadline.remaining(),
                             cancelled=lambda: bool(self.context.get("cancelPath") and Path(self.context["cancelPath"]).exists())))
                 owner.callback(self.cleanup_and_release, lease)
-                initial = extension_names(self.step("list-extensions")["log"])
+                initial = extension_names(self.step("list-extensions")["log"], diagnostics=self.result['diagnostics'])
                 self.step("dump-database")
                 self.artifact(self.root / "database.cf")
                 for name in initial:
                     self.step("dump-extension", name)
                     self.artifact(self.root / "extensions" / (hashlib.sha256(name.encode("utf-8")).hexdigest() + ".cfe"))
-                final = extension_names(self.step("list-extensions")["log"])
+                final = extension_names(self.step("list-extensions")["log"], diagnostics=self.result['diagnostics'])
                 if sorted(initial) != sorted(final):
                     raise WorkError("SOURCE_CAPTURE_EXTENSIONS_CHANGED")
                 self.step("create-scratch")
@@ -161,6 +167,13 @@ class Snapshot:
                     folder = self.root / ("extension-sources/" + hashlib.sha256(name.encode("utf-8")).hexdigest() if name else "configuration")
                     self.artifact(folder / "ConfigDumpInfo.xml")
                     self.artifact(folder / "Configuration.xml")
+                    # Bind later analysis to the exact exported metadata and
+                    # source bytes, including legitimate empty BSL modules.
+                    for path in sorted(folder.rglob('*')):
+                        self.deadline.remaining()
+                        if path.is_file() and path.suffix.lower() in ('.xml', '.bsl') and path not in (
+                                folder / 'ConfigDumpInfo.xml', folder / 'Configuration.xml'):
+                            self.artifact(path, allow_empty=path.suffix.lower() == '.bsl')
                     self.result["configurations"].append({"extensionName": name or "", "path": folder.relative_to(self.root).as_posix()})
                 self.result["status"] = "captured"
         except Exception as error:

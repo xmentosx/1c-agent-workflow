@@ -43,7 +43,8 @@ class SourceIndexTests(unittest.TestCase):
                          '<Metadata name="DataProcessor.Тест.Form.Форма" id="' + self.module["objectID"] + '" configVersion="' + self.module["version"] + '"/>'
                          '<Metadata name="DataProcessor.Тест.Form.Форма.Form" id="' + self.module["objectID"] + '.0" configVersion="different-property-version"/>'
                          '</ConfigVersions></ConfigDumpInfo>', encoding="utf-8")
-        self.snapshot["artifacts"].append({"path": index.relative_to(self.root).as_posix(), "sha256": digest(index)})
+        self.snapshot["artifacts"].extend({"path": path.relative_to(self.root).as_posix(), "sha256": digest(path)}
+                                          for path in (index, metadata, source))
         self.snapshot["configurations"].append({"path": folder, "extensionName": extension})
         return index, metadata, source
 
@@ -74,6 +75,24 @@ class SourceIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkError, "SOURCE_CAPTURE_INDEX_CHANGED"):
             build_manifest(self.snapshot, [self.profile])
 
+    def test_changed_module_cannot_inherit_the_old_native_version_from_an_unchanged_index(self):
+        path = self.root / 'configuration/DataProcessors/Тест/Forms/Форма/Ext/Form/Module.bsl'
+        path.write_text('// a different revision\n', encoding='utf-8')
+        with self.assertRaisesRegex(WorkError, 'SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED'):
+            build_manifest(self.snapshot, [self.profile])
+        self.assertFalse((self.root / 'source-map.json').exists())
+
+    def test_changed_metadata_cannot_redirect_binding_under_an_unchanged_index(self):
+        path = self.root / 'configuration/DataProcessors/Тест/Forms/Форма.xml'
+        path.write_bytes(path.read_bytes() + b'\n')
+        with self.assertRaisesRegex(WorkError, 'SOURCE_CAPTURE_METADATA_CHANGED_OR_UNSEALED'):
+            build_manifest(self.snapshot, [self.profile])
+
+    def test_old_snapshot_without_module_hash_requires_recapture_instead_of_rehashing_current_bytes(self):
+        self.snapshot['artifacts'] = [item for item in self.snapshot['artifacts'] if not item['path'].endswith('.bsl')]
+        with self.assertRaisesRegex(WorkError, 'SOURCE_CAPTURE_MODULE_CHANGED_OR_UNSEALED'):
+            build_manifest(self.snapshot, [self.profile])
+
     def test_same_identity_in_base_and_extension_is_ambiguous_without_extension_evidence(self):
         self.add_configuration("extension-sources/test", "Расширение")
         manifest = build_manifest(self.snapshot, [self.profile])
@@ -89,6 +108,13 @@ class SourceIndexTests(unittest.TestCase):
     def test_wrong_metadata_uuid_or_unsupported_property_never_guesses_a_file(self):
         metadata = self.root / "configuration/DataProcessors/Тест/Forms/Форма.xml"
         metadata.write_text('<MetaDataObject><Form uuid="other"/></MetaDataObject>', encoding="utf-8")
+        with self.assertRaisesRegex(WorkError, 'SOURCE_CAPTURE_METADATA_CHANGED_OR_UNSEALED'):
+            build_manifest(self.snapshot, [self.profile])
+        # Independently exercise UUID validation on a sealed, inconsistent
+        # export; a matching file hash must not make the wrong UUID acceptable.
+        for artifact in self.snapshot['artifacts']:
+            if artifact['path'] == metadata.relative_to(self.root).as_posix():
+                artifact['sha256'] = digest(metadata)
         self.assertEqual([], build_manifest(self.snapshot, [self.profile])["modules"])
         self.profile["packets"][0]["sourceModules"][0]["moduleID"]["propertyID"] = "unknown"
         self.assertEqual("unsupported-module-property", build_manifest(self.snapshot, [self.profile])["unmatched"][0]["reason"])
@@ -136,6 +162,12 @@ class SnapshotTests(unittest.TestCase):
             folder.mkdir(parents=True)
             for name in ("ConfigDumpInfo.xml", "Configuration.xml"):
                 (folder / name).write_bytes(b"<xml/>")
+            metadata = folder / 'CommonModules/Тест.xml'
+            metadata.parent.mkdir()
+            metadata.write_bytes(b'<xml/>')
+            module = folder / 'CommonModules/Тест/Ext/Module.bsl'
+            module.parent.mkdir(parents=True)
+            module.write_bytes(b'')
         return {"status": "completed", "log": str(log), "cleanupErrors": []}
 
     def test_captures_base_and_extensions_under_inherited_lease_and_cleans_only_scratch(self):
@@ -153,6 +185,11 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual("running", record["status"])
         self.assertEqual({}, record["participants"])
         self.assertEqual([], result["cleanupErrors"])
+        sealed = {item['path']: item['sha256'] for item in result['artifacts']}
+        for configuration in result['configurations']:
+            for relative in ('CommonModules/Тест.xml', 'CommonModules/Тест/Ext/Module.bsl'):
+                path = configuration['path'] + '/' + relative
+                self.assertEqual(digest(snapshot.root / path), sealed[path])
 
     def test_missing_or_invalid_lease_cannot_launch_a_capture(self):
         self.context["accessLease"]["token"] = "wrong"
@@ -214,6 +251,17 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual("failed", result["status"])
         self.assertEqual("failed", result["steps"][0]["status"])
         self.assertEqual("SOURCE_CAPTURE_LAUNCH_FAILED", result["steps"][0]["error"])
+
+    def test_repository_offline_startup_notice_is_retained_without_becoming_an_extension(self):
+        log = self.root / 'extensions.log'
+        log.write_text('Connection to the configuration repository is not established\nVAExtension\n', encoding='utf-8-sig')
+        diagnostics = []
+        self.assertEqual(['VAExtension'], extension_names(log, diagnostics=diagnostics))
+        self.assertEqual('SOURCE_CAPTURE_REPOSITORY_OFFLINE', diagnostics[0]['code'])
+        self.assertEqual(str(log), diagnostics[0]['log'])
+        log.write_text('Connection to the configuration repository is not established\nAccess denied\n', encoding='utf-8')
+        with self.assertRaisesRegex(WorkError, 'LIST_UNRECOGNIZED'):
+            extension_names(log, diagnostics=diagnostics)
 
     def test_scratch_without_completed_ownership_is_retained_and_reported(self):
         snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
