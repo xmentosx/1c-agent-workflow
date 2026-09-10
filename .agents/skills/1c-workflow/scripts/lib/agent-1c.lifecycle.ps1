@@ -2105,7 +2105,7 @@ function Dump-ExtensionToFiles {
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects')][string]$Operation = 'update-dev-branch-base')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '')
     if ($Operation -eq 'lock-config-repository-objects') {
         # Repository ownership changes run against the source base. Branch and
         # Vanessa manager databases are unrelated to this native operation.
@@ -2114,6 +2114,18 @@ function Get-ItlDevBranchMutationDatabasePlan {
     }
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $State
     $bases = @($plan.bases)
+    $servicePlan = $null
+    if ($Operation -in @('check-dev-branch', 'verify-dev-branch')) {
+        # Resolve every address exposed to the runner before taking lifecycle
+        # locks. Capacity is still based on the selected scenarios, not on the
+        # manifest ceiling or the number of configured profiles.
+        $servicePlan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $ServiceGeneration
+        $bases += [pscustomobject]@{kind=$servicePlan.kind;path=$servicePlan.path}
+        $manifest = Read-VanessaTestClientManifest
+        if ($null -ne $manifest) {
+            $bases += @(Get-VanessaTestClientDatabaseResources -Topology $manifest -DefaultState $State)
+        }
+    }
     foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
         Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $plan.target.path
     })) {
@@ -2121,11 +2133,11 @@ function Get-ItlDevBranchMutationDatabasePlan {
     }
     $unique = @{}
     foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
-    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }) }
+    return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan }
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '')
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation
     if ($Operation -eq 'lock-config-repository-objects' -and (
@@ -2150,7 +2162,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     $admission = [pscustomobject]@{
         owner = $owner; plan = $plan; journal = (New-OneCNativeOperationJournal -Resources $plan.bases -Owner $owner); operation = $Operation
         previousJournal = $script:OneCNativeOperationJournal; previousProof = $previousProof
-        completed = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
+        completed = $false; servicePlanApplied = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
     }
     try {
         [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
@@ -2165,7 +2177,9 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
 function Assert-ItlDevBranchMutationDatabaseAdmission {
     param([object]$Admission, [object]$State)
     if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
-    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation
+    $generation = ''
+    if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = $Admission.plan.servicePlan.generation }
+    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation -ServiceGeneration $generation
     if ($fresh.target.kind -cne $Admission.plan.target.kind -or
         -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
         throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'

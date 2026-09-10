@@ -1021,6 +1021,17 @@ function Get-VanessaTestClientProfileConnection {
     }
 }
 
+function Get-VanessaTestClientDatabaseResources {
+    param([Parameter(Mandatory = $true)][object]$Topology, [Parameter(Mandatory = $true)][object]$DefaultState)
+    $resources = @{}
+    foreach ($profile in @($Topology.profiles)) {
+        $connection = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $DefaultState
+        $key = [string](Get-OneCInfoBaseIdentity -InfoBaseKind $connection.kind -InfoBasePath $connection.path).key
+        $resources[$key] = [pscustomobject]@{kind=$connection.kind;path=$connection.path}
+    }
+    return @($resources.Keys | Sort-Object | ForEach-Object { $resources[$_] })
+}
+
 function Get-VanessaTestClientAdmissionTargets {
     param([Parameter(Mandatory = $true)][object]$Topology, [Parameter(Mandatory = $true)][object]$DefaultState)
     $targets = [ordered]@{}
@@ -3660,6 +3671,18 @@ function Get-VanessaServiceInfoBasePlan {
 function Ensure-VanessaServiceInfoBase {
     param([Parameter(Mandatory = $true)][object]$State, [object]$AdmissionPlan = $null)
 
+    $checkAdmission = $null
+    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $admissionVariable -and $null -ne $admissionVariable.Value) {
+        $candidateAdmission = $admissionVariable.Value
+        if (-not $candidateAdmission.completed -and $candidateAdmission.plan.PSObject.Properties['servicePlan'] -and
+            $null -ne $candidateAdmission.plan.servicePlan -and
+            (Test-ItlOnDemandInfoBaseMatch -First ([string]$State.devBranchInfoBasePath) -Second $candidateAdmission.plan.target.path)) {
+            $checkAdmission = $candidateAdmission
+            if ($null -eq $AdmissionPlan -and -not $checkAdmission.servicePlanApplied) { $AdmissionPlan = $checkAdmission.plan.servicePlan }
+        }
+    }
+
     if ($null -ne $AdmissionPlan -and (
         [int](Get-StateValue -State $AdmissionPlan -Name 'schemaVersion' -Default 0) -ne 1 -or
         [string](Get-StateValue -State $AdmissionPlan -Name 'generation' -Default '') -cnotmatch '^[a-f0-9]{32}$' -or
@@ -3668,6 +3691,11 @@ function Ensure-VanessaServiceInfoBase {
     }
     $candidate = $(if ($null -ne $AdmissionPlan) { [string]$AdmissionPlan.generation } else { '' })
     $plan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $candidate
+    if ($null -ne $checkAdmission -and (
+        $plan.generation -cne $checkAdmission.plan.servicePlan.generation -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $plan.path -Second $checkAdmission.plan.servicePlan.path))) {
+        throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: service generation is outside the admitted check plan.'
+    }
     if ($null -ne $AdmissionPlan -and (
         [string]$AdmissionPlan.kind -cne $plan.kind -or
         [string]$AdmissionPlan.generation -cne $plan.generation -or
@@ -3771,6 +3799,7 @@ function Ensure-VanessaServiceInfoBase {
             vanessaServiceInfoBaseUpdatedAt = (Get-Date).ToString("o")
         }
     }
+    if ($null -ne $checkAdmission) { $checkAdmission.servicePlanApplied = $true }
     return [pscustomobject][ordered]@{
         kind = "file"
         path = $path
@@ -4936,6 +4965,7 @@ function Run-DevBranchTests {
         -ProfileNames @($testClientTopology.profiles | ForEach-Object { [string]$_.name })
     Write-Host "Vanessa test timeout: $timeoutSeconds seconds"
     $admissionTargets = @(Get-VanessaTestClientAdmissionTargets -Topology $testClientTopology -DefaultState $state)
+    $runDatabaseResources = @(Get-VanessaTestClientDatabaseResources -Topology $testClientTopology -DefaultState $state)
     $sessionWait = Get-OneCSessionWaitParameters -DefaultTimeoutSeconds ([math]::Min(300, $timeoutSeconds))
     try {
         Set-RunStage -Stage "vanessa.run" -Detail "Running TESTMANAGER and TESTCLIENT."
@@ -4948,6 +4978,7 @@ function Run-DevBranchTests {
             -TestClientPort $testPort `
             -ExpectedSessionCount 1 `
             -AdditionalSessionAdmissions $admissionTargets `
+            -AdditionalRunResources $runDatabaseResources `
             -RunParamsPath $paramsPath `
             -OwnedProcessCleanup { param($scopes) Stop-OwnVanessaRunScopeProcesses -Scopes $scopes } `
             @sessionWait `

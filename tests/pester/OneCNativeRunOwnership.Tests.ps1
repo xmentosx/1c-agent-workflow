@@ -65,7 +65,7 @@
     }
 
     It 'cleans every captured target through Enterprise and reconciles only after the orphan exits: <failure>' -TestCases @(
-        @{failure='none'},@{failure='exit'},@{failure='cleanup'},@{failure='parameters'},@{failure='callback'}
+        @{failure='none'},@{failure='exit'},@{failure='cleanup'},@{failure='parameters'},@{failure='callback'},@{failure='selected'}
     ) {
         param($failure)
         $script:fixtureFailure = $failure
@@ -95,11 +95,16 @@
         $admissions = @($resources | Select-Object -Skip 1 | ForEach-Object {
             [pscustomobject]@{infoBaseKind=$_.kind;infoBasePath=$_.path;requiredSessions=1;expectedChildRole='test-client';purpose='fixture'}
         })
+        $runResources = @()
+        if ($failure -eq 'selected') {
+            $admissions = @($admissions[0])
+            $runResources = @($resources[1],$resources[2])
+        }
         $errorMessage = ''
         try {
             Invoke-Enterprise -InfoBaseKind file -InfoBasePath $resources[0].path -TestClientPort 53941 `
                 -EnterpriseArgs @('/Execute','fixture.epf',('/C' + (New-VanessaStartFeaturePlayerCommand -ParamsPath $paramsPath))) `
-                -AdditionalSessionAdmissions $admissions -RunParamsPath $paramsPath `
+                -AdditionalSessionAdmissions $admissions -AdditionalRunResources $runResources -RunParamsPath $paramsPath `
                 -RequireOwnedProcessRelease:($failure -eq 'callback') `
                 -OwnedProcessCleanup {
                     param($capturedScopes)
@@ -121,11 +126,12 @@
             $errorMessage | Should -Match $(if ($failure -eq 'callback') {'callback cleanup failure'} else {'VANESSA_RUN_SCOPE_CLEANUP_UNCONFIRMED'})
             Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeFalse
         } else {
-            if ($failure -eq 'none') { $errorMessage | Should -Be '' }
+            if ($failure -in @('none','selected')) { $errorMessage | Should -Be '' }
             else { $errorMessage | Should -Match 'exit code 7' }
             Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeTrue
             $record.releaseEvidence | Should -Be 'native-run-scoped-process-release'
             Should -Invoke Stop-Process -Times 1 -ParameterFilter { $Id -eq 27584 }
+            if ($failure -eq 'selected') { $record.admissions | Should -HaveCount 2 }
         }
     }
 }

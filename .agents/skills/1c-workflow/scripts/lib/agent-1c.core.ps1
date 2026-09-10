@@ -7367,6 +7367,7 @@ function Invoke-Enterprise {
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
         [string]$RunParamsPath = '',
+        [object[]]$AdditionalRunResources = @(),
         [scriptblock]$OwnedProcessCleanup = $null
     )
 
@@ -7399,7 +7400,7 @@ function Invoke-Enterprise {
         }
         $runResources = @([pscustomobject]@{kind=$InfoBaseKind;path=$InfoBasePath}) + @($AdditionalSessionAdmissions | ForEach-Object {
             [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath}
-        })
+        }) + @($AdditionalRunResources)
         $runScopes = @(Get-OneCNativeRunProcessScopes -RunParamsPath $RunParamsPath -Resources $runResources)
     }
     if ($null -ne $OwnedProcessCleanup -and $runScopes.Count -eq 0) { throw 'ENTERPRISE_NATIVE_RUN_SCOPE_REQUIRED' }

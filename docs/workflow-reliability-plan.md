@@ -1762,6 +1762,33 @@ launch scenario passes unchanged under explicit strict mode; a separate real
 pipe case proves that unlabeled owners persist intent and retain recovery debt.
 Registration of the corrected candidate must still be recorded.
 
+The next check-admission correction connects `check-dev-branch` and
+`verify-dev-branch` to the same pre-lifecycle owner. Its plan includes the branch
+database, recorded managers, a pinned service-base generation and all database
+addresses exposed by the Vanessa profile manifest. The service initializer uses
+that exact generation on first preparation and reuses it afterwards. Changed
+targets after waiting are rejected before native work; an inherited operation
+cannot enlarge its parent's reservation. Ownership remains with the command
+through its action, postprocessing and cleanup.
+
+A focused reproducer with two profiles on different bases and `@Selected`
+previously generated both profiles in VAParams but passed only the selected
+base to native scope capture, causing `ONEC_NATIVE_RUN_CLIENT_TARGET_NOT_RESERVED`.
+The runner now passes its complete database resource set separately from session
+capacity. Both configured profiles remain available, every emitted address is
+covered, and selected scenarios still determine required session counts. This
+deliberately reserves every base exposed in that run's parameters; merely
+declaring another profile does not add a concurrent session reservation.
+
+The 111 focused checks cover the original filtered/unfiltered topology,
+Enterprise scope propagation and foreign-client preservation, real pipe-owner
+competition on every planned resource, unrelated-base concurrency, inherited
+subset rejection, target drift, and service-generation creation/reuse. The
+entrypoint set contract now explicitly includes both checks alongside update
+and repository locking. Registration and installed full-check acceptance remain
+open; auxiliary check entrypoints, the general recovery adapter and multi-host
+acceptance are not closed by this correction.
+
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket
 `92b9e49eb3e34d338498c6138a573336` in needs-attention. A fresh Python process read

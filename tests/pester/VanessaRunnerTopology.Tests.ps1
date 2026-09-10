@@ -320,6 +320,34 @@
         }
     }
 
+    It 'captures every configured database while reserving capacity only for selected clients' {
+        $tempRoot = Join-Path $TestDrive 'Профили разных баз'
+        $fixture = New-VanessaRunnerFixture -Root $tempRoot `
+            -FeatureText "# language: ru`nФункционал: Выбранная конкурентность`n@Selected`nСценарий: Один клиент`n  Дано я подключаю профиль TestClient `"Alpha`"`nСценарий: Другой клиент`n  Дано я подключаю профиль TestClient `"Beta`"" `
+            -ManifestText '{"schemaVersion":2,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta","contour":"aux"}]}'
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            function Get-AuxiliaryContour { param($Name) [pscustomobject]@{name=$Name} }
+            function Assert-AuxiliaryContourReady { [pscustomobject]@{connection=[pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'Дополнительная база');user='';password=''}} }
+            foreach ($filter in @('@Selected','')) {
+                $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath) -FilterTags $filter
+                $paramsPath = New-VanessaParamsFile -FeaturePath $fixture.featurePath -RunDirectory $fixture.runDirectory `
+                    -StatusPath (Join-Path $fixture.runDirectory 'status.json') -State $fixture.state -TestPort 48051 -TestPorts @(48051,48052) -TestClientTopology $topology -FilterTags $filter
+                $admissions = @(Get-VanessaTestClientAdmissionTargets -Topology $topology -DefaultState $fixture.state)
+                $runResources = @(Get-VanessaTestClientDatabaseResources -Topology $topology -DefaultState $fixture.state)
+                $topology.profiles | Should -HaveCount 2
+                $topology.requiredTestClientSlots | Should -Be 1
+                $runResources | Should -HaveCount 2
+                $admissions | Should -HaveCount $(if ($filter) {1} else {2})
+                foreach ($admission in $admissions) { $admission.requiredSessions | Should -Be 1 }
+                $manager = [pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'Служебная база')}
+                $scopes = @(Get-OneCNativeRunProcessScopes -RunParamsPath $paramsPath -Resources (@($manager) + $runResources))
+                $scopes | Should -HaveCount 3
+                @($scopes | Where-Object role -eq 'test-client').path | Should -Contain (Join-Path $tempRoot 'Дополнительная база')
+            }
+        }
+    }
+
     It "allocates a bounded unique port per declared profile without a separate machine-global session cap" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-va-ports-" + [guid]::NewGuid().ToString("N"))
         $oldRegistryHome = [Environment]::GetEnvironmentVariable("ITL_PORT_REGISTRY_HOME", "Process")

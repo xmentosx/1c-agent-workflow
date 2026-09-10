@@ -623,6 +623,7 @@ Describe 'Vanessa service-base admission planning' {
         . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1')
         . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
         . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
         . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
     }
     BeforeEach {
@@ -701,6 +702,26 @@ Describe 'Vanessa service-base admission planning' {
             Close-ItlDatabaseAccessHost -Owner $waiter
             Close-ItlDatabaseAccessHost -Owner $blocker
         }
+    }
+
+    It 'uses the check entrypoint service generation through creation and subsequent reuse' {
+        $state | Add-Member -NotePropertyName devBranchInfoBasePath -NotePropertyValue (Join-Path $root 'Основная база')
+        $plan = Get-VanessaServiceInfoBasePlan -State $state
+        $script:DevBranchMutationDatabaseAdmission = [pscustomobject]@{
+            completed=$false;servicePlanApplied=$false
+            plan=[pscustomobject]@{target=[pscustomobject]@{path=$state.devBranchInfoBasePath};servicePlan=$plan}
+        }
+        Mock Update-DevBranchState {
+            param($State,$Updates)
+            foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+        }
+        try {
+            (Ensure-VanessaServiceInfoBase -State $state).path | Should -Be $plan.path
+            $script:DevBranchMutationDatabaseAdmission.servicePlanApplied | Should -BeTrue
+            (Ensure-VanessaServiceInfoBase -State $state).path | Should -Be $plan.path
+            Should -Invoke Invoke-NativeProcessAndWaitResult -Times 1
+            Should -Invoke Invoke-Designer -Times 1 -ParameterFilter { $InfoBasePath -eq $plan.path }
+        } finally { $script:DevBranchMutationDatabaseAdmission = $null }
     }
 
     It 'rejects a replaced template and a redirected path before creation' {
