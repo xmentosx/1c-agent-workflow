@@ -11449,10 +11449,11 @@ function New-BranchSourceSyncGroupPlan {
         $participant = @($Admission.plan.syncParticipants | Where-Object { $_.branch -ceq $state.devBranch })[0]
         $members += [pscustomobject]@{name=[string]$state.devBranchName;branch=[string]$state.devBranch;project=[string]$state.worktreePath
             head=$head;target=$participant.target;recipient=($Scope.recipients -icontains [string]$state.devBranchName)
-            resultCommit='';sourceStatus='pending';loadStatus='pending';loadedHead=''}
+            resultCommit='';sourceStatus='pending';loadStatus='pending';loadedHead='';loadProgress=$null}
         Invoke-Git @('update-ref', "refs/itl/source-sync/$id/source-$($members.Count - 1)", $head)
     }
     $plan = [pscustomobject]@{schemaVersion=1;id=$id;project=[IO.Path]::GetFullPath($script:ProjectRoot)
+        coordinator=$Admission.plan.coordinator
         requestPath=$Scope.requestPath;requestHash=$Scope.requestHash;names=@($Scope.names);recipients=@($Scope.recipients)
         exportPath=$Admission.plan.syncParticipants[0].exportPath;members=$members;aggregate=$members[0].head;nextPeer=1
         phase='aggregating';pending=$null;conflict=$null;fingerprint='';validationSource='';error='';createdAt=(Get-Date).ToUniversalTime().ToString('o');updatedAt=''}
@@ -11471,6 +11472,10 @@ function Read-BranchSourceSyncGroupPlan {
     finally { $sha.Dispose() }
     if ($envelope.schemaVersion -ne 1 -or $hash -cne $envelope.sha256) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_INTEGRITY_FAILED' }
     $plan = $envelope.payload | ConvertFrom-Json
+    if (-not $plan.PSObject.Properties['coordinator'] -or
+        -not [string]::Equals($plan.coordinator, $script:DevBranchMutationDatabaseAdmission.plan.coordinator, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_COORDINATOR_CHANGED: resume through the original database authority; the saved admission must not be bypassed.'
+    }
     if ($plan.schemaVersion -ne 1 -or $plan.id -cne $id -or $plan.requestHash -cne $Scope.requestHash -or
         -not [string]::Equals($plan.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -or
         @($plan.members).Count -ne @($Scope.states).Count -or ($plan.names -join [char]0) -cne ($Scope.names -join [char]0) -or
@@ -11560,40 +11565,168 @@ function Copy-BranchSourceSyncResult {
     return (Get-CurrentCommit)
 }
 
+function Save-BranchSourceSyncLoadProgress {
+    param([object]$Context)
+    Invoke-BranchSourceSyncProject -Root $Context.plan.project -ScriptBlock {
+        Save-BranchSourceSyncGroupPlan -Plan $Context.plan
+    }
+}
+
+function Copy-BranchSourceSyncPhaseResult {
+    param([object]$Value)
+    return (($Value | ConvertTo-Json -Depth 30 -Compress) | ConvertFrom-Json)
+}
+
+function Invoke-BranchSourceSyncLoadPhase {
+    param([AllowNull()][object]$Context, [ValidateSet('load','normalize','runtime','cursor','state')][string]$Name,
+        [scriptblock]$Action, [switch]$ReplaySafe)
+    if ($null -eq $Context) { return (& $Action) }
+    $progress = $Context.member.loadProgress
+    $completed = @($progress.completed | Where-Object { $_.name -ceq $Name })
+    if ($completed.Count -gt 1) { throw 'SOURCE_SYNC_PHASE_DUPLICATE' }
+    if ($completed.Count -eq 1) { return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result) }
+    $order = @('load','normalize','runtime','cursor','state')
+    if (@($progress.completed).Count -ge $order.Count -or $order[@($progress.completed).Count] -cne $Name) {
+        throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED'
+    }
+    $owner = $script:DevBranchMutationDatabaseAdmission.owner
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    if ($null -ne $progress.pending) {
+        $pending = $progress.pending
+        if ($pending.record.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
+        $observation = Get-ItlDatabaseSourceSyncPhase -Owner $owner -Ticket $pending.ticket -Record $pending.record
+        if ($observation.completed) {
+            $progress.completed = @($progress.completed) + @([pscustomobject]@{
+                name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $observation.result)})
+            $progress.pending = $null
+            Save-BranchSourceSyncLoadProgress -Context $Context
+            return $observation.result
+        }
+        if (-not $observation.canStart -and -not ($ReplaySafe -and $observation.canResumeLocalSteps)) {
+            throw "DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED: $($Context.member.branch); phase=$Name; ticket=$($pending.ticket). The native phase has no completion receipt; do not replay it."
+        }
+        $progress.attempts = @($progress.attempts) + @([pscustomobject]@{
+            name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;noNativeWork=[bool]$observation.canStart})
+        $progress.pending = $null
+    }
+    $record = [pscustomobject]@{schemaVersion=1;groupId=$Context.plan.id;stepId=[guid]::NewGuid().ToString('N')
+        step=$Name;status='running';project=$Context.plan.project;member=$Context.member.name
+        members=@($Context.plan.members | ForEach-Object { [pscustomobject]@{name=$_.name;project=$_.project;target=$_.target} })
+        sourceFingerprint=$Context.plan.fingerprint;sourceCommit=$Context.member.resultCommit;exportPath=$Context.plan.exportPath;result=@{}}
+    $progress.pending = [pscustomobject]@{ticket=$owner.proof.ticket;record=$record}
+    Save-BranchSourceSyncLoadProgress -Context $Context
+    Publish-ItlDatabaseSourceSyncPhase -Owner $owner -Record $record | Out-Null
+    if ($Name -eq 'load') {
+        $cursorPath = "$($Context.plan.exportPath)/ConfigDumpInfo.xml"
+        $expectedCursor = Get-GitObjectIdForTreePath -Treeish $Context.member.resultCommit -RepoPath $cursorPath
+        $cursorAbsolute = Assert-BranchSourceSyncFilePath -RepoPath $cursorPath
+        $actualCursor = if (Test-Path -LiteralPath $cursorAbsolute -PathType Leaf) {
+            ([string](Get-GitOutput @('hash-object','--no-filters','--',$cursorPath))).Trim()
+        } else { '<missing>' }
+        if ($actualCursor -cne $expectedCursor) { throw 'SOURCE_SYNC_UNLOADED_CURSOR_CHANGED' }
+        Assert-BranchSourceSyncCursorIndex -CursorPath $cursorPath -AllowedObjectIds @($expectedCursor)
+    }
+    $result = & $Action
+    # Keep the pending intent unchanged until the authority acknowledges the
+    # successful return. If local saving fails, the next helper reads that receipt.
+    $finished = [pscustomobject](ConvertTo-Agent1cHashtable -Object $record)
+    $finished.status = 'completed'; $finished.result = $result
+    Publish-ItlDatabaseSourceSyncPhase -Owner $owner -Record $finished | Out-Null
+    $progress.completed = @($progress.completed) + @([pscustomobject]@{
+        name=$Name;ticket=$owner.proof.ticket;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
+    $progress.pending = $null
+    Save-BranchSourceSyncLoadProgress -Context $Context
+    return $result
+}
+
+function Get-BranchSourceSyncCursorHash {
+    param([string]$ExportPath)
+    $path = Assert-BranchSourceSyncFilePath -RepoPath "$ExportPath/ConfigDumpInfo.xml"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return '<missing>' }
+    if ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'SOURCE_SYNC_CURSOR_REDIRECTED'
+    }
+    return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-BranchSourceSyncCursorIndex {
+    param([string]$CursorPath, [string[]]$AllowedObjectIds)
+    $entries = @(Get-GitPathList -Arguments @('ls-files','--stage','-z','--',$CursorPath))
+    $objectId = '<missing>'
+    if ($entries.Count -gt 0) {
+        if ($entries.Count -ne 1 -or $entries[0] -cnotmatch '^100644 ([a-f0-9]{40,64}) 0\t') { throw 'SOURCE_SYNC_CURSOR_INDEX_CHANGED' }
+        $objectId = $Matches[1]
+    }
+    if ($AllowedObjectIds -cnotcontains $objectId) { throw 'SOURCE_SYNC_CURSOR_INDEX_CHANGED' }
+}
+
+function Assert-BranchSourceSyncLoadSource {
+    param([object]$Plan, [object]$Member)
+    $head = Get-CurrentCommit
+    if ($head -cne $Member.resultCommit -and ([string](Get-GitOutput @('merge-base',$Member.resultCommit,$head))).Trim() -cne $Member.resultCommit) {
+        throw 'SOURCE_SYNC_LOAD_HEAD_DIVERGED'
+    }
+    $cursorPath = "$($Plan.exportPath)/ConfigDumpInfo.xml"
+    $paths = @(Get-GitPathList -Arguments @('diff','--name-only','-z',$Member.resultCommit,$head,'--'))
+    $paths += @(Get-BranchSourceSyncChangedPaths)
+    if (@($paths | Where-Object { $_ -cne $cursorPath }).Count -gt 0) { throw 'SOURCE_SYNC_LOAD_FOREIGN_CHANGE' }
+    $originalCursor = Get-GitObjectIdForTreePath -Treeish $Member.resultCommit -RepoPath $cursorPath
+    $absolute = Assert-BranchSourceSyncFilePath -RepoPath $cursorPath
+    $currentCursor = if (Test-Path -LiteralPath $absolute -PathType Leaf) {
+        ([string](Get-GitOutput @('hash-object','--no-filters','--',$cursorPath))).Trim()
+    } else { '<missing>' }
+    Assert-BranchSourceSyncCursorIndex -CursorPath $cursorPath -AllowedObjectIds @($originalCursor,$currentCursor)
+}
+
 function Invoke-BranchSourceSyncLoad {
-    param([object]$State, [string]$ExportPath, [string]$OtherBranch, [string]$GroupId = '')
+    param([object]$State, [string]$ExportPath, [string]$OtherBranch, [string]$GroupId = '', [AllowNull()][object]$LoadContext = $null)
 
     $stateName = [string](Get-StateValue -State $State -Name "devBranchName" -Default "")
     Sync-DevBranchContextToDotEnv -State $State
-    $State = Ensure-DevBranchEventLogBaseline -State $State
-    Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
-    $State = Read-DevBranchState -Name $stateName
     $contentKind = Get-DevBranchKind -State $State
     $extensionName = if ($contentKind -eq "extension") { Require-DevBranchExtensionName -State $State } else { "" }
-    $loadResult = Load-ConfigFromFiles `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -State $State `
-        -ExportPath $ExportPath `
-        -ContentKind $contentKind `
-        -ExtensionName $extensionName `
-        -Mode $ConfigLoadMode
-    $updates = @{}
-    Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $State -LoadResult $loadResult -Updates $updates
-    Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
-    Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
-    foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
-        $updates[$entry.Key] = $entry.Value
+    $loaded = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name load -Action {
+        $State = Ensure-DevBranchEventLogBaseline -State $State
+        Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null
+        $State = Read-DevBranchState -Name $stateName
+        $value = Load-ConfigFromFiles -InfoBasePath $State.devBranchInfoBasePath -InfoBaseKind $State.infoBaseKind `
+            -State $State -ExportPath $ExportPath -ContentKind $contentKind -ExtensionName $extensionName -Mode $ConfigLoadMode
+        [pscustomobject]@{loadResult=$value;cursorSha256=$(if ($null -ne $LoadContext) { Get-BranchSourceSyncCursorHash -ExportPath $ExportPath } else { '' })}
     }
-    $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
-    $updates["lastBranchSourceSyncPeer"] = $OtherBranch
-    if ($GroupId) {
-        $updates['lastBranchSourceSyncGroupId'] = $GroupId
-        $updates['lastBranchSourceSyncGroupFingerprint'] = $loadResult.sourceFingerprint
-        $updates['lastBranchSourceSyncGroupCommit'] = Get-CurrentCommit
+    $loadResult = $loaded.loadResult
+    if ($null -ne $LoadContext -and (Get-BranchSourceSyncCursorHash -ExportPath $ExportPath) -cne $loaded.cursorSha256) { throw 'SOURCE_SYNC_CURSOR_CHANGED_AFTER_LOAD' }
+    $normalized = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name normalize -Action {
+        $values = @{}
+        Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Updates $values
+        [pscustomobject]@{loadResult=$loadResult;updates=$values}
     }
-    Add-VerificationStaleIfNeeded -State $State -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
-    Update-DevBranchState -State $State -Updates $updates
+    $loadResult = $normalized.loadResult
+    $updates = ConvertTo-Agent1cHashtable -Object $normalized.updates
+    Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name runtime -ReplaySafe -Action {
+        Invoke-DevBranchMcpRestartAfterInfobaseLoad -State (Read-DevBranchState -Name $stateName) -LoadResult $loadResult -Reason "branch source synchronization" | Out-Null
+        @{}
+    } | Out-Null
+    $cursor = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name cursor -ReplaySafe -Action {
+        Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath $ExportPath
+        [pscustomobject]@{currentCommit=(Get-CurrentCommit)}
+    }
+    $loadResult.currentCommit = $cursor.currentCommit
+    Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name state -ReplaySafe -Action {
+        foreach ($entry in (New-LoadStateUpdates -LoadResult $loadResult -ContentKind $contentKind).GetEnumerator()) {
+            $updates[$entry.Key] = $entry.Value
+        }
+        $updates["lastBranchSourceSyncAt"] = (Get-Date).ToString("o")
+        $updates["lastBranchSourceSyncPeer"] = $OtherBranch
+        if ($GroupId) {
+            $updates['lastBranchSourceSyncGroupId'] = $GroupId
+            $updates['lastBranchSourceSyncGroupFingerprint'] = $loadResult.sourceFingerprint
+            $updates['lastBranchSourceSyncGroupCommit'] = Get-CurrentCommit
+        }
+        $currentState = Read-DevBranchState -Name $stateName
+        Add-VerificationStaleIfNeeded -State $currentState -Updates $updates -Reason "1C sources were synchronized with another development branch." -CurrentCommit $loadResult.currentCommit
+        Update-DevBranchState -State $currentState -Updates $updates
+        @{}
+    } | Out-Null
     return $loadResult
 }
 
@@ -11680,12 +11813,17 @@ function Write-BranchSourceSyncGroupReport {
     $lines.Add('## Групповая синхронизация исходников')
     Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $(if ($Plan.phase -eq 'complete' -and -not $Plan.error) { 'успешно' } else { 'не завершено' })
     Add-RunUserReportLine -Lines $lines -Label 'План' -Value (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id)
+    if ($Plan.PSObject.Properties['coordinator']) { Add-RunUserReportLine -Lines $lines -Label 'Координатор баз' -Value $Plan.coordinator }
     Add-RunUserReportLine -Lines $lines -Label 'Этап' -Value $Plan.phase
     Add-RunUserReportLine -Lines $lines -Label 'Получатели общего результата' -Value ($Plan.recipients -join ', ')
     if ($Plan.fingerprint) { Add-RunUserReportLine -Lines $lines -Label 'Fingerprint результата' -Value $Plan.fingerprint }
     foreach ($member in $Plan.members) {
         $delivery = if ($member.recipient) { "исходники: $($member.sourceStatus); база: $($member.loadStatus); итоговый коммит: $($member.resultCommit)" } else { 'только источник; общий результат в эту ветку не доставлялся' }
         Add-RunUserReportLine -Lines $lines -Label $member.branch -Value "источник @ $($member.head); $delivery"
+        if ($member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress -and $null -ne $member.loadProgress.pending) {
+            $pendingPhase = $member.loadProgress.pending
+            Add-RunUserReportLine -Lines $lines -Label 'Незавершённый этап' -Value "$($pendingPhase.record.step); ticket=$($pendingPhase.ticket); step=$($pendingPhase.record.stepId)"
+        }
     }
     if ($Plan.error) { Add-RunUserReportLine -Lines $lines -Label 'Причина остановки' -Value $Plan.error }
     Add-RunUserReportLine -Lines $lines -Label 'Область переноса' -Value "$($Plan.exportPath); каждый получатель сохраняет свой ConfigDumpInfo.xml"
@@ -11792,7 +11930,9 @@ function Sync-DevBranchSourceGroup {
                 $observation = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
                     $state = Read-DevBranchState -Name $member.name
                     Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
-                    Assert-CleanGit
+                    if ($member.loadStatus -eq 'loading' -and $member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress) {
+                        Assert-BranchSourceSyncLoadSource -Plan $plan -Member $member
+                    } else { Assert-CleanGit }
                     [pscustomobject]@{state=$state;head=(Get-CurrentCommit);fingerprint=[string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint}
                 }
                 $expectedHead = if ($member.loadStatus -eq 'loaded') { $member.loadedHead } else { $member.resultCommit }
@@ -11800,16 +11940,21 @@ function Sync-DevBranchSourceGroup {
                     throw "DEV_BRANCH_SOURCE_SYNC_RECIPIENT_CHANGED: $($member.branch)"
                 }
                 if ($member.loadStatus -eq 'loaded') { continue }
-                if ($member.loadStatus -eq 'loading') {
-                    if ((Get-StateValue $observation.state 'lastBranchSourceSyncGroupId' '') -cne $plan.id -or
-                        (Get-StateValue $observation.state 'lastBranchSourceSyncGroupFingerprint' '') -cne $plan.fingerprint -or
-                        (Get-StateValue $observation.state 'lastBranchSourceSyncGroupCommit' '') -cne $observation.head) {
+                $hasReceipt = (Get-StateValue $observation.state 'lastBranchSourceSyncGroupId' '') -ceq $plan.id -and
+                    (Get-StateValue $observation.state 'lastBranchSourceSyncGroupFingerprint' '') -ceq $plan.fingerprint -and
+                    (Get-StateValue $observation.state 'lastBranchSourceSyncGroupCommit' '') -ceq $observation.head
+                if (-not $hasReceipt) {
+                    if ($member.loadStatus -eq 'loading' -and (-not $member.PSObject.Properties['loadProgress'] -or $null -eq $member.loadProgress)) {
                         throw "DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED: $($member.branch); inspect the native operation through the supported database recovery helper before continuing. Completed recipients will not be replayed."
                     }
-                } else {
-                    $member.loadStatus = 'loading'; Save-BranchSourceSyncGroupPlan -Plan $plan
+                    if ($member.loadStatus -ne 'loading') {
+                        $member | Add-Member -NotePropertyName loadProgress -NotePropertyValue ([pscustomobject]@{schemaVersion=1;completed=@();pending=$null;attempts=@()}) -Force
+                        $member.loadStatus = 'loading'
+                        Save-BranchSourceSyncGroupPlan -Plan $plan
+                    }
+                    $loadContext = [pscustomobject]@{plan=$plan;member=$member}
                     $member.loadedHead = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
-                        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $member.name) -ExportPath $plan.exportPath -OtherBranch ($plan.names -join ', ') -GroupId $plan.id | Out-Null
+                        Invoke-BranchSourceSyncLoad -State (Read-DevBranchState -Name $member.name) -ExportPath $plan.exportPath -OtherBranch ($plan.names -join ', ') -GroupId $plan.id -LoadContext $loadContext | Out-Null
                         Get-CurrentCommit
                     }
                 }

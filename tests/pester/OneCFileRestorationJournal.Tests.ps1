@@ -52,6 +52,27 @@
         } finally { $script:OneCNativeOperationJournal = $null }
     }
 
+    It 'binds a peer cursor duty to the peer checkout under the same group journal' {
+        $initiator = $script:ProjectRoot
+        # Initialize the shared journal while still in the initiating checkout.
+        $primary = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $script:restorationExport
+        Restore-ConfigDumpInfoLoadSnapshot -Snapshot $primary
+        Remove-ConfigDumpInfoLoadSnapshot -Snapshot $primary
+        $script:ProjectRoot = Join-Path $initiator 'Ветка соседа с пробелом'
+        $export = Join-Path $script:ProjectRoot 'src/cf'
+        New-Item -ItemType Directory -Path $export -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $export 'ConfigDumpInfo.xml'), $script:originalCursor)
+        $peer = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $export
+        $pending = @(Read-TestRestorationDuties | Where-Object { $_.status -eq 'pending' })
+        $pending | Should -HaveCount 1
+        $pending[0].project | Should -Be $script:ProjectRoot
+        $pending[0].destination | Should -Be (Join-Path $export 'ConfigDumpInfo.xml')
+        $script:OneCNativeOperationJournal.persistence.project | Should -Be $initiator
+        Restore-ConfigDumpInfoLoadSnapshot -Snapshot $peer
+        Remove-ConfigDumpInfoLoadSnapshot -Snapshot $peer
+        Complete-ItlDatabaseAccessHost $script:restorationOwner | Out-Null
+    }
+
     It 'indexes its retained snapshot before mutation and releases only when the outer scope ends' {
         $savedCursor = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath $script:restorationExport
         $pending = @(Read-TestRestorationDuties)

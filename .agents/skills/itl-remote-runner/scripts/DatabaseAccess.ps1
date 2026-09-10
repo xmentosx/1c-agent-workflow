@@ -187,6 +187,43 @@ function Publish-ItlDatabaseResetCheckpoint {
     return $event
 }
 
+function Publish-ItlDatabaseSourceSyncPhase {
+    param([object]$Owner, [object]$Record)
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    $payload = [pscustomobject]@{event='source-sync-phase';record=$Record} | ConvertTo-Json -Depth 30 -Compress
+    $ascii = [Text.RegularExpressions.Regex]::Replace($payload, '[^\x00-\x7f]', {
+        param($match)
+        return ('\u{0:x4}' -f [int][char]$match.Value)
+    })
+    $Owner.process.StandardInput.WriteLine($ascii)
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -cne 'source-sync-phase-recorded' -or $event.ticket -cne $Owner.proof.ticket -or
+        $event.producerId -cnotmatch '^[a-f0-9]{32}$' -or $event.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        $event.stepId -cne $Record.stepId) {
+        throw 'SOURCE_SYNC_PHASE_UNCONFIRMED'
+    }
+    return $event
+}
+
+function Get-ItlDatabaseSourceSyncPhase {
+    param([object]$Owner, [string]$Ticket, [object]$Record)
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    if ($Ticket -cnotmatch '^[a-f0-9]{32}$') { throw 'SOURCE_SYNC_PHASE_TICKET_INVALID' }
+    $payload = [pscustomobject]@{event='source-sync-phase-read';ticket=$Ticket;record=$Record} | ConvertTo-Json -Depth 30 -Compress
+    $ascii = [Text.RegularExpressions.Regex]::Replace($payload, '[^\x00-\x7f]', {
+        param($match)
+        return ('\u{0:x4}' -f [int][char]$match.Value)
+    })
+    $Owner.process.StandardInput.WriteLine($ascii)
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -cne 'source-sync-phase-observed' -or $event.ticket -cne $Ticket -or $event.stepId -cne $Record.stepId) {
+        throw 'SOURCE_SYNC_PHASE_OBSERVATION_UNCONFIRMED'
+    }
+    return $event
+}
+
 function Publish-ItlDatabaseLifecycleCompletion {
     param([object]$Owner)
     if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }

@@ -253,6 +253,8 @@ def inspect(coordinator, record, *, resolve_helpers=False):
     result['restoration'] = restoration_journal.inspect(coordinator, record)
     from . import native_reset
     result['resetCheckpoints'] = native_reset.inspect(coordinator, record)
+    from . import native_source_sync
+    result['sourceSyncPhases'] = native_source_sync.inspect(coordinator, record)
     from . import native_completion
     result['completions'] = {key: native_completion.read(coordinator, record, key)
         for key, producer in producers.items() if producer.get('completion') is not None}

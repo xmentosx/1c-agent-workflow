@@ -61,7 +61,7 @@ def serve(input_stream, output_stream):
                             raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
                         messages.put(value)
                         continue
-                    if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty", "reset-checkpoint"):
+                    if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty", "reset-checkpoint", "source-sync-phase"):
                         if not admitted.is_set():
                             raise WorkError("NATIVE_JOURNAL_BEFORE_ADMISSION")
                         messages.put(value)
@@ -69,6 +69,11 @@ def serve(input_stream, output_stream):
                     if value == {'event': 'lifecycle-complete'}:
                         if not admitted.is_set():
                             raise WorkError('NATIVE_LIFECYCLE_COMPLETION_BEFORE_ADMISSION')
+                        messages.put(value)
+                        continue
+                    if set(value) == {'event', 'ticket', 'record'} and value['event'] == 'source-sync-phase-read':
+                        if not admitted.is_set():
+                            raise WorkError('SOURCE_SYNC_PHASE_READ_BEFORE_ADMISSION')
                         messages.put(value)
                         continue
                     if set(value) == {"event", "record", "parent"} and value['event'] == 'continuation-plan':
@@ -132,6 +137,14 @@ def serve(input_stream, output_stream):
             if value['event'] == 'reset-checkpoint':
                 from . import native_reset
                 emit(native_reset.publish(lease, producer_id, value['record']))
+                continue
+            if value['event'] == 'source-sync-phase':
+                from . import native_source_sync
+                emit(native_source_sync.publish(lease, producer_id, value['record']))
+                continue
+            if value['event'] == 'source-sync-phase-read':
+                from . import native_source_sync
+                emit(native_source_sync.observe(lease, value['ticket'], value['record']))
                 continue
             status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,

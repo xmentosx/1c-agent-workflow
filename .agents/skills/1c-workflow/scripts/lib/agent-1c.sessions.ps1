@@ -249,7 +249,7 @@ function Register-OneCFileRestorationDuty {
     $payload = [ordered]@{
         schemaVersion=1;journalId=$binding.journalId;ticket=$binding.ticket;id=$id
         createdAt=[DateTime]::UtcNow.ToString('o');updatedAt=[DateTime]::UtcNow.ToString('o')
-        hostName=$binding.hostName;ownerPid=$binding.ownerPid;operation=$binding.operation;project=$binding.project
+        hostName=$binding.hostName;ownerPid=$binding.ownerPid;operation=$binding.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
         resources=@($binding.resources);resourceIds=@($binding.resourceIds);helperInputs=@($binding.helperInputs)
         kind='config-dump-info';destination=[IO.Path]::GetFullPath($Snapshot.path);existed=[bool]$Snapshot.existed
         snapshotPath=$Snapshot.backupPath;snapshotSha256=$Snapshot.backupSha256;policy=$Snapshot.restorationPolicy;status='pending'

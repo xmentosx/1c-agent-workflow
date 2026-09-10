@@ -98,11 +98,21 @@ against the planned commit; unrelated staged or working source edits are retaine
 and reported instead of overwritten.
 
 A completed database load is reused only with a matching group, fingerprint and
-HEAD receipt. A load started without that receipt remains
+HEAD receipt. The coordinator also retains intent/completion receipts separately
+for Designer load, Enterprise normalization, runtime refresh, cursor commit and
+branch state. A lost local plan write is reconciled from that authority; finished
+Designer/Enterprise phases are not repeated. Only the acknowledged cursor change
+may be committed during continuation; foreign source/index edits are preserved.
+The original coordinator is part of the saved group and cannot change on retry.
+
+After owner failure use `access-recover-workflow` for its ticket. A phase boundary
+permits release only after the original producer exits, all reserved databases
+are inspected twice as idle/exclusive, and the native journal has no later work
+or pending restoration. Then repeat the original group helper. An intent with
+no subsequent native work can start afresh; an unacknowledged native effect stays
 `DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED`, with completed recipients preserved.
-Use the database recovery diagnostics for the admitted native operation; absence
-of a receipt is not permission to repeat a potentially partly applied Enterprise
-update. Automatic continuation of every such native phase is not yet supported.
+Absence of a receipt is not permission to repeat a potentially partly applied
+Enterprise update. Recovery of such effects and server inspection remain open.
 Queue waiting remains bounded and unrelated databases can continue; do not remove
 a live or ambiguous owner's lease by age. The final report includes source and
 load status for every participant even when delivery is partial.

@@ -226,6 +226,10 @@ An unsupported later phase remains needs-attention for its operation adapter.
             if journal['resetCheckpoints']:
                 from .native_reset_resume import recover
                 return recover(recovery, journal, observed)
+            if current['owner']['operation'] == 'sync-dev-branches' and journal.get('sourceSyncPhases'):
+                from .native_source_sync import recover
+                observations = inspect_native_work(recovery, journal)
+                return recover(recovery, journal, observed, observations)
             if current['owner']['operation'] in ('init-dev-branch-extension', 'release-e2e-extension-smoke') and any(
                     duty['kind'] == 'infobase-snapshot' and duty['status'] == 'pending'
                     for duty in journal['restoration']['duties']):

@@ -2610,13 +2610,13 @@ then release admits all six resources; a changed third manager cannot be drained
 The earlier pair/admission baseline passed all 38 cases before the group-only
 hardening. Registration owns the cumulative Targeted check.
 
-Remaining: an admitted load that started without a durable successful receipt
-requires its native phase adapter. This implementation reports
-`DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED` and does not replay possibly partial
-Enterprise updates. That diagnostic alone does not close queue recovery task 4a
-or item 6. Add supported phase reconciliation, then qualify the public installed
-group route and original multi-branch workflow; server and multi-host acceptance
-also remain open. Do not expand reset continuation 4b as a substitute.
+The subsequent source-group phase unit below adds supported reconciliation at
+acknowledged boundaries. Native effects after an intent without a completion
+receipt still require their own adapter; potentially partial Enterprise updates
+must not be replayed. That remaining diagnostic does not close queue recovery
+task 4a or item 6. Qualify the public installed group route and original
+multi-branch workflow; server and multi-host acceptance also remain open. Do not
+expand reset continuation 4b as a substitute.
 
 ## Item 7: preserve completed repetitions before the series finishes
 
@@ -2656,3 +2656,48 @@ The exact expected sequence now includes those two phases and additionally
 checks every persisted phase budget against the original scenario overrides.
 The original 1800-second child-action inheritance and independent prepare/cleanup
 assertions remain unchanged; no timeout, workload or precondition was relaxed.
+
+## Items 4a and 6: retain acknowledged group load phases
+
+The group loader now writes an intent before each Designer load, Enterprise
+normalization, runtime refresh, cursor commit and branch-state update. The shared
+database coordinator acknowledges completion before the local plan records it.
+Receipts bind the group, every participant target, the canonical versioned source
+fingerprint, source commit and exact native journal snapshot. A failed local plan
+write is reconciled from that receipt. Completed Designer/Enterprise work is
+reused, including when runtime refresh failed afterwards. Cursor continuation
+permits only its acknowledged bytes and preserves foreign working/index edits.
+The saved group pins its coordinator, preventing retry through a different queue.
+
+Public workflow recovery can release a crashed group at a retained phase boundary
+after checking that the original producer exited, every reserved database is
+idle/exclusive in two live observations, and no later native records or pending
+restorations exist. Unused absent Vanessa manager directories are recognized for
+each group participant. Recovery does not change source, database or branch state;
+the original group helper reconciles and finishes the saved steps afterwards.
+No lease is stolen by age and independent databases remain available.
+
+The shared file restoration journal also now binds a peer's ConfigDumpInfo duty
+to that peer's checkout, rather than the initiating checkout. This preserves the
+destination boundary when the same admitted journal spans several projects.
+
+Validation includes real Git worktrees and the real PowerShell/Python pipe owner,
+plus an actual child-process crash and Windows process/file inspection. The
+native Designer/Enterprise calls in Git integration tests are fixture boundaries;
+the recovery test database is a file-access sentinel, not a functional 1C database.
+These results must not be reported as installed 1C or server qualification.
+
+Focused coverage passes 41 PowerShell cases across group synchronization, pair
+synchronization and cursor restoration, and 10 Python phase-protocol cases. The
+initial integration run exposed a real boundary mismatch: canonical source
+fingerprints contain the `v2|git-tree-sha256|` prefix, which the new consumer now
+validates intact. Two test-fixture issues (the saved coordinator instance used
+for failure injection and a dynamically shadowed PowerShell fixture context)
+were corrected without weakening the original scenarios. Registration owns the
+single cumulative Targeted run for this unit.
+
+Remaining: a native effect without a high-level completion receipt cannot be
+declared safely repeatable merely because its launcher exited. That case retains
+its partial report and needs operation-specific reconciliation. Bootstrap/new
+branch admission, server recovery, multi-host and installed acceptance remain in
+the original plan; this unit does not replace them with reset work.
