@@ -363,6 +363,9 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err != nil {
 		return nil, fmt.Errorf("generate replacement instance ID: %w", err)
 	}
+	if err := r.enterDatabasePreparationMode(ctx); err != nil {
+		return nil, err
+	}
 	r.databaseNativePending = r.databaseOwner != nil
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
@@ -378,6 +381,9 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	r.mismatch = nil
 	if err := r.connectLocked(ctx, info); err != nil {
 		return nil, fmt.Errorf("connect recovered backend: %w", err)
+	}
+	if err := r.restoreDatabaseRuntimeMode(ctx); err != nil {
+		return nil, err
 	}
 	return &recoveryResult{PreviousInstanceID: previousInstanceID, InstanceID: replacementInstanceID}, nil
 }
@@ -520,7 +526,10 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 		return fmt.Errorf("gateway is closed")
 	}
 	if r.session != nil {
-		return nil
+		return r.restoreDatabaseRuntimeMode(ctx)
+	}
+	if err := r.enterDatabasePreparationMode(ctx); err != nil {
+		return err
 	}
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "broker-start")
 	r.databaseNativePending = r.databaseOwner != nil
@@ -531,7 +540,10 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 	if info.URL == "" {
 		return fmt.Errorf("backend broker returned an empty URL")
 	}
-	return r.connectLocked(ctx, info)
+	if err := r.connectLocked(ctx, info); err != nil {
+		return err
+	}
+	return r.restoreDatabaseRuntimeMode(ctx)
 }
 
 func (r *runtime) connectLocked(ctx context.Context, info *backendInfo) error {

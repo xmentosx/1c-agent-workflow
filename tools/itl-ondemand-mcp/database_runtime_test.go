@@ -23,6 +23,7 @@ type databaseFixtureBroker struct {
 	plan        *facadeDatabasePlan
 	runtimeRoot string
 	statePath   string
+	ensureCheck func(context.Context) error
 }
 
 func (b *databaseFixtureBroker) DatabaseAccessPlan(context.Context) (*facadeDatabasePlan, error) {
@@ -36,7 +37,7 @@ func (b *databaseFixtureBroker) check(ctx context.Context) error {
 	}
 	child, err := acquireDatabasePipeOwner(ctx, b.plan.Python, b.runtimeRoot, databaseAccessRequest{
 		SchemaVersion: 1, Coordinator: invocation.Plan.Coordinator, Bases: invocation.Plan.Bases, Timeout: 1,
-		Owner: map[string]any{"operation": "native-broker-fixture"}, Inherited: invocation.Proof,
+		Owner: map[string]any{"operation": "native-broker-fixture"}, Inherited: invocation.Proof, AccessMode: invocation.Plan.AccessMode,
 	}, nil)
 	if err != nil {
 		return err
@@ -48,6 +49,11 @@ func (b *databaseFixtureBroker) check(ctx context.Context) error {
 func (b *databaseFixtureBroker) Ensure(ctx context.Context) (*backendInfo, error) {
 	if err := b.check(ctx); err != nil {
 		return nil, err
+	}
+	if b.ensureCheck != nil {
+		if err := b.ensureCheck(ctx); err != nil {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(b.statePath), 0700); err != nil {
 		return nil, err
@@ -71,27 +77,42 @@ func (b *databaseFixtureBroker) Stop(ctx context.Context) error {
 }
 
 func newDatabaseRuntimeFixture(t *testing.T, request databaseAccessRequest, python, runtimeRoot string, handler func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error)) (*runtime, *databaseFixtureBroker) {
+	return newDatabaseRuntimeFixtureForFamily(t, "roctup", request, python, runtimeRoot, handler)
+}
+
+func newDatabaseRuntimeFixtureForFamily(t *testing.T, family string, request databaseAccessRequest, python, runtimeRoot string, handler func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error)) (*runtime, *databaseFixtureBroker) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "Проект с пробелом")
 	id := strings.Repeat("a", 32)
 	definitions := integrationTools()
+	if family == "vanessa-ui" {
+		definitions = append(definitions, &mcp.Tool{Name: "get_environment_data", Description: "environment", InputSchema: map[string]any{"type": "object"}})
+	}
 	server := mcp.NewServer(&mcp.Implementation{Name: "database-backend", Version: "1"}, nil)
 	for _, definition := range definitions {
-		server.AddTool(definition, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		tool := definition
+		server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if handler != nil {
 				return handler(ctx, req)
+			}
+			if tool.Name == "get_environment_data" {
+				return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "VanessaExt: enabled"}}}, nil
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "complete"}}}, nil
 		})
 	}
 	backend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil))
 	t.Cleanup(backend.Close)
-	plan := &facadeDatabasePlan{SchemaVersion: 1, Family: "roctup", ProjectRoot: root, InstanceID: id, Coordinator: request.Coordinator,
+	accessMode := "shared-read"
+	if family == "vanessa-ui" {
+		accessMode = "test-run"
+	}
+	plan := &facadeDatabasePlan{SchemaVersion: 1, Family: family, ProjectRoot: root, InstanceID: id, Coordinator: request.Coordinator, AccessMode: accessMode,
 		Python: python, Bases: request.Bases, TargetBase: request.Bases[0], PrimaryBase: &request.Bases[0], WaitTimeoutSeconds: .15}
 	broker := &databaseFixtureBroker{fakeBroker: &fakeBroker{info: &backendInfo{URL: backend.URL, PID: 4242, Port: 48111, InstanceID: id}},
-		plan: plan, runtimeRoot: runtimeRoot, statePath: filepath.Join(root, ".agent-1c", "mcp", "ondemand", "roctup", id+".json")}
-	rt := &runtime{catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: "roctup", Tools: definitions}},
-		broker: broker, projectRoot: root, family: "roctup", instanceID: id, idle: time.Hour, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), progress: make(map[string]*progressRoute)}
+		plan: plan, runtimeRoot: runtimeRoot, statePath: filepath.Join(root, ".agent-1c", "mcp", "ondemand", family, id+".json")}
+	rt := &runtime{catalog: &loadedCatalog{SHA256: "catalog", Data: catalogFile{SchemaVersion: 1, Family: family, Tools: definitions}},
+		broker: broker, projectRoot: root, family: family, instanceID: id, idle: time.Hour, logger: slog.New(slog.NewTextHandler(io.Discard, nil)), progress: make(map[string]*progressRoute)}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -117,20 +138,23 @@ func requireDatabaseRuntimeCall(t *testing.T, rt *runtime, meta mcp.Meta) {
 	}
 }
 
-func TestDatabaseRuntimeRetainsIdleBackendAndAllowsUnrelatedDatabase(t *testing.T) {
+func TestDatabaseRuntimeAllowsSharedReadersAndRetainsIdleBackend(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	first, _ := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
 	second, secondBroker := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
 	requireDatabaseRuntimeCall(t, first, nil)
-	result, err := databaseRuntimeCall(context.Background(), second, nil)
-	if err != nil || !result.IsError || !strings.Contains(resultText(result), "WAIT_TIMEOUT") {
-		t.Fatalf("second owner was not excluded: %v %s", err, resultText(result))
+	requireDatabaseRuntimeCall(t, second, nil)
+	if ensures, _ := secondBroker.counts(); ensures != 1 {
+		t.Fatal("the second read-only project did not start its backend")
 	}
-	if ensures, _ := secondBroker.counts(); ensures != 0 {
-		t.Fatal("waiting project started a backend")
-	}
-	if _, err := os.Stat(filepath.Join(second.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock")); !os.IsNotExist(err) {
-		t.Fatal("global admission waiter touched the local runtime lock")
+	exclusiveRequest := request
+	exclusiveRequest.AccessMode = "exclusive"
+	exclusiveRequest.Timeout = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	blocked, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, exclusiveRequest, nil)
+	if blocked != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+		t.Fatalf("exclusive mutation entered active shared readers: owner=%t error=%v", blocked != nil, err)
 	}
 	otherRequest := request
 	otherRequest.Bases = []databaseConnection{{Kind: "file", Path: request.Bases[0].Path + " другая"}}
@@ -144,6 +168,54 @@ func TestDatabaseRuntimeRetainsIdleBackendAndAllowsUnrelatedDatabase(t *testing.
 		t.Fatal(err)
 	}
 	requireDatabaseRuntimeCall(t, second, nil)
+}
+
+func TestVanessaRuntimeUsesExclusivePreparationThenCoexistsWithRoctupReader(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	rt, broker := newDatabaseRuntimeFixtureForFamily(t, "vanessa-ui", request, python, runtimeRoot, nil)
+	broker.ensureCheck = func(ctx context.Context) error {
+		readerRequest := request
+		readerRequest.AccessMode = "shared-read"
+		readerRequest.Timeout = 0
+		reader, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, readerRequest, nil)
+		if reader != nil {
+			_ = reader.Close()
+			return fmt.Errorf("ROCTUP reader entered Vanessa preparation")
+		}
+		if err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+			return fmt.Errorf("Vanessa preparation was not exclusive: %v", err)
+		}
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	callCtx, finish, err := rt.beginDatabaseCall(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.mu.Lock()
+	err = rt.ensureLocked(callCtx)
+	rt.mu.Unlock()
+	if finishErr := finish(); err == nil {
+		err = finishErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rt.databaseOwner == nil || rt.databaseOwner.AccessMode != "test-run" {
+		t.Fatal("Vanessa runtime did not return its ticket to test-run mode")
+	}
+	readerRequest := request
+	readerRequest.AccessMode = "shared-read"
+	reader := acquireDatabaseFixture(t, python, runtimeRoot, readerRequest)
+	secondTest := request
+	secondTest.AccessMode = "test-run"
+	secondTest.Timeout = 0
+	blocked, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, secondTest, nil)
+	if blocked != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+		t.Fatalf("a second test run entered active Vanessa MCP: owner=%t error=%v", blocked != nil, err)
+	}
+	releaseDatabaseFixture(t, reader, nil)
 }
 
 func TestDatabaseRuntimeSerializesCallsWithCancellableWait(t *testing.T) {

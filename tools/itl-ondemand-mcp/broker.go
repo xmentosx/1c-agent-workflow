@@ -45,6 +45,7 @@ type facadeDatabasePlan struct {
 	Coordinator        string               `json:"coordinator"`
 	Scope              string               `json:"scope"`
 	WaitTimeoutSeconds float64              `json:"waitTimeoutSeconds"`
+	AccessMode         string               `json:"accessMode"`
 	Python             string               `json:"python"`
 	Bases              []databaseConnection `json:"bases"`
 	PrimaryBase        *databaseConnection  `json:"primaryBase"`

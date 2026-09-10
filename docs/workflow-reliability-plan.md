@@ -80,7 +80,7 @@ and multi-host recovery remain open.
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. A phase-aware candidate now permits ROCTUP reads with one test run and upgrades the same ticket for mutations; focused Python, Go and PowerShell proofs pass. Server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes or durable successful load receipts. Unconfirmed native load recovery and installed acceptance remain open |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
@@ -90,7 +90,7 @@ and multi-host recovery remain open.
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
-| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass; delivered facade/PM5, competing chats and server acceptance remain open |
+| 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass. The phase-aware candidate also removes the whole-check runtime writer and permits ROCTUP during Vanessa/YAxUnit test execution while preserving exclusive preparation. Delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings retained; 1.1 and 5.2 mechanically contradicted, 5.4 remains unresolved. Overall review stays unverified; case-based acceptance and normal workflow delivery remain open |
 | 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names now recognized with 19 focused root/report tests passing; silent repeat ownership and delivered public-command acceptance remain open |
 | 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
@@ -1582,7 +1582,7 @@ with no Python in PATH and left its target database absent/unchanged.
 
 The Go database owner/broker/environment tests pass. The unpublished 0.4.11
 facade candidate was rebuilt; the exact executable SHA is now
-`5dd2bd12721bb2cf2d0a4f7d351e56429990605c7ac32296c1d897a33c04db91`.
+`fee2d384ec13f41b5c8483f43a1a83f5bd6482439c6d24c0ce15b4b6308108bb`.
 The package lock and exact-build regression follow this candidate. This is not
 component release proof: both backend families still require the real Release
 E2E stage before the executable can be published. The Python packet was
@@ -2795,3 +2795,44 @@ the single Targeted gate for this coherent unit.
 Remaining work is unchanged: reconcile unknown native effects before releasing
 an interrupted admitted owner, and qualify actual server/two-host/installed
 routes. These front-door additions do not by themselves close item 4a.
+
+## Items 4 and 14: concurrent ROCTUP reads during verification, 2026-09-10
+
+The earlier single-mode coordinator made a persistent read-only ROCTUP facade
+exclusive for the lifetime of its backend. A branch check therefore waited even
+after preparation was complete. The project-local `runtime-mcp.lock` also held a
+coarse writer for the whole check, so changing only the database queue would not
+have restored the previously supported ROCTUP and Vanessa concurrency.
+
+The current source candidate keeps one coordinator and one ticket. Tickets now
+declare `shared-read`, `test-run` or `exclusive`. ROCTUP uses `shared-read`;
+branch verification, YAxUnit and an active Vanessa UI MCP runtime use
+`test-run`; those test modes are compatible with ROCTUP. Two test runs on the
+same database remain mutually exclusive. Measurements, configuration loads,
+extension installation and legacy clients remain exclusive. Recovery and
+`needs-attention` records block every mode.
+
+When a check discovers that source, service-base or test extensions must change,
+its existing ticket requests `exclusive`. That pending request blocks later
+readers to prevent writer starvation and waits for existing readers to release.
+After preparation it changes the same ticket back to `test-run`. Vanessa UI MCP
+does the same around backend preparation and recovery, so its editor and
+scenario calls can coexist with a ROCTUP reader after required tooling and
+manager-base mutations finish. No second queue, lease, TTL or competing
+stalled-session controller is introduced. A dead waiter is still removable; a
+dead admitted owner still requires the existing journal recovery. Inherited
+work cannot broaden shared authority into a mutation grant.
+
+For check, verify and deploy-and-test the exact database ticket replaces the
+whole-action `runtime-mcp.lock` writer. Their lifecycle lock remains held, so two
+lifecycle actions in the same worktree cannot overlap. Other actions retain the
+runtime writer. ROCTUP reads concurrent with tests are live reads and may observe
+data being changed by the tests; the contract does not promise a transactional
+snapshot.
+
+Focused protocol evidence covers shared readers with one test run, rejection of
+a second test run, writer fairness during an exclusive transition, preservation
+of the ticket ID across both transitions, Vanessa backend preparation under
+exclusive followed by ROCTUP-compatible runtime, legacy-exclusive behavior and
+the PowerShell/Go facade boundary. Installed file/server and two-host acceptance
+is still required before closing items 4 and 14.

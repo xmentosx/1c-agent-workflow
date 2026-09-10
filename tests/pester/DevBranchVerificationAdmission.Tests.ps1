@@ -55,6 +55,34 @@
         Complete-ItlDatabaseAccessHost $next | Out-Null
     }
 
+    It 'allows ROCTUP reads during one test run and requires exclusive mode before mutation' {
+        Mock Invoke-DevBranchVanessaRuntimeRelease { throw 'cleanup must follow the exclusive transition' }
+        $reader = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});accessMode='shared-read';owner=@{operation='roctup-read'};timeout=0}
+        try {
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation check-dev-branch
+            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'test-run'
+            $otherTest = @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});accessMode='test-run';owner=@{operation='other-tests'};timeout=0}
+            { Start-ItlDatabaseAccessHost -Python $python -Request $otherTest } | Should -Throw '*WAIT_TIMEOUT*'
+            { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $checkState -Reason 'fixture mutation' } | Should -Throw '*WAIT_TIMEOUT*'
+            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'test-run'
+            Should -Invoke Invoke-Designer -Times 0
+            Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0 -Exactly
+        } finally {
+            Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission
+            $script:DevBranchMutationDatabaseAdmission = $null
+            Complete-ItlDatabaseAccessHost $reader | Out-Null
+        }
+    }
+
+    It 'changes the same check ticket to exclusive preparation and back to test mode' {
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation verify-dev-branch
+        $ticket = $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket
+        (Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive).accessMode | Should -Be 'exclusive'
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket | Should -Be $ticket
+        (Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run).accessMode | Should -Be 'test-run'
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket | Should -Be $ticket
+    }
+
     It 'reserves primary and both service generations for <operation> without reading test profiles' -TestCases @(
         @{operation='repair-dev-branch-tooling'}, @{operation='init-dev-branch-extension'}
     ) {
@@ -178,9 +206,20 @@
 
     It 'routes both check entrypoints through admission before lifecycle and release after the action' {
         $entry = Get-Content -LiteralPath $context.HelperPath -Raw -Encoding UTF8
+        $core = Get-Content -LiteralPath (Join-Path $context.RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1') -Raw -Encoding UTF8
         $entry | Should -Match "requestedLifecycleAction -in @\([^\r\n]*'check-dev-branch'[^\r\n]*'verify-dev-branch'"
         $entry.IndexOf('Start-ItlDevBranchMutationDatabaseAdmission -Operation') | Should -BeLessThan $entry.IndexOf('Enter-Agent1cLifecycleOperation `')
         $entry.IndexOf('Complete-ItlDevBranchMutationDatabaseAdmission -Admission') | Should -BeGreaterThan $entry.IndexOf('"verify-dev-branch" { Verify-DevBranch }')
         $entry.IndexOf('Complete-ItlDevBranchMutationDatabaseAdmission -Admission') | Should -BeLessThan $entry.IndexOf('Complete-Agent1cLifecycleOperation -Status "succeeded"')
+        $core | Should -Match "RequestedAction -notin @\('check-dev-branch', 'verify-dev-branch', 'deploy-and-test'\)"
+    }
+
+    It 'keeps the branch lifecycle lock while omitting the coarse runtime writer for verification' {
+        Enter-Agent1cLifecycleOperation -RequestedAction 'check-dev-branch'
+        try {
+            @($script:LifecycleOperationHandles) | Should -HaveCount 1
+            $script:LifecycleOperationHandles[0].lockPath | Should -Be (Get-Agent1cLifecycleLockPath -WorktreePath $script:ProjectRoot)
+            Test-Path -LiteralPath (Get-Agent1cRuntimeMcpLockPath -WorktreePath $script:ProjectRoot) | Should -BeFalse
+        } finally { Exit-Agent1cLifecycleOperation }
     }
 }

@@ -23,12 +23,15 @@ from itl_remote.access import Lease
 from itl_remote.common import read_json, write_json
 config = read_json(sys.argv[2]); out = Path(config['output'])
 def waiting(record):
-    write_json(out / 'waiting.json', record)
+    write_json(out / ('transition-waiting.json' if record.get('status') == 'waiting-for-mode' else 'waiting.json'), record)
 try:
     with Lease(config['root'], config['bases'], {'jobId': config['name'], 'workspace': str(out)},
                timeout=config.get('timeout', 5), cancelled=lambda: (out / 'cancel').exists(),
-               progress=waiting, inherited=config.get('inherited')) as lease:
+               progress=waiting, inherited=config.get('inherited'), access_mode=config.get('accessMode', 'exclusive')) as lease:
         write_json(out / 'acquired.json', {'ticket': lease.record['ticket'], 'proof': lease.proof(), 'wait': lease.wait_seconds})
+        if config.get('transition'):
+            result = lease.transition(config['transition'])
+            write_json(out / 'transitioned.json', result)
         if config.get('crash'):
             os._exit(19)
         if config.get('hold'):
@@ -108,6 +111,36 @@ class AccessTests(unittest.TestCase):
         self.assertIsNone(pa.poll())
         self.release(a, pa)
 
+    def test_roctup_read_and_one_test_run_share_the_database(self):
+        reader, reader_process = self.child("reader", hold=True, accessMode="shared-read")
+        self.wait_file(reader / "acquired.json")
+        tests, tests_process = self.child("tests", hold=True, accessMode="test-run")
+        self.wait_file(tests / "acquired.json")
+        another, another_process = self.child("other-tests", timeout=0, accessMode="test-run")
+        result = self.wait_file(another / "done.json")
+        self.assertIn("WAIT_TIMEOUT", result["error"])
+        self.assertIsNone(reader_process.poll())
+        self.assertIsNone(tests_process.poll())
+        self.release(tests, tests_process)
+        self.release(reader, reader_process)
+
+    def test_exclusive_transition_blocks_new_readers_without_a_second_ticket(self):
+        reader, reader_process = self.child("reader", hold=True, accessMode="shared-read")
+        self.wait_file(reader / "acquired.json")
+        tests, tests_process = self.child("tests", hold=True, accessMode="test-run", transition="exclusive")
+        acquired = self.wait_file(tests / "acquired.json")
+        waiting = self.wait_file(tests / "transition-waiting.json")
+        self.assertEqual(acquired["ticket"], waiting["ticket"])
+        later, later_process = self.child("later-reader", hold=True, accessMode="shared-read")
+        blocker = self.wait_file(later / "waiting.json")["blockers"][0]
+        self.assertEqual("exclusive", blocker["requestedAccessMode"])
+        self.release(reader, reader_process)
+        self.wait_file(tests / "transitioned.json")
+        self.assertFalse((later / "acquired.json").exists())
+        self.release(tests, tests_process)
+        self.wait_file(later / "acquired.json")
+        self.release(later, later_process)
+
     def test_legacy_parent_cannot_admit_a_new_untracked_child(self):
         with Lease(self.coordinator, [self.base], {"jobId": "legacy-parent"}) as parent:
             path = self.coordinator / "tickets" / (parent.record["ticket"] + ".json")
@@ -132,6 +165,15 @@ class AccessTests(unittest.TestCase):
                     self.fail("raw legacy token admitted unversioned inheritance")
             with Lease(self.coordinator, [self.base], {}, inherited=proof):
                 self.assertEqual(1, len(read_json(self.coordinator / "tickets" / (parent.record["ticket"] + ".json"))["participants"]))
+
+    def test_inherited_work_cannot_broaden_shared_access_to_mutation(self):
+        with Lease(self.coordinator, [self.base], {}, access_mode="shared-read") as parent:
+            with self.assertRaisesRegex(WorkError, "INHERITED_MODE_INVALID"):
+                with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(), access_mode="exclusive"):
+                    self.fail("shared ownership authorized a mutation child")
+            with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(), access_mode="shared-read") as child:
+                participant = next(iter(read_json(self.coordinator / "tickets" / (parent.record["ticket"] + ".json"))["participants"].values()))
+                self.assertEqual("shared-read", participant["accessMode"])
 
     def test_registered_connection_aliases_share_one_queue(self):
         alias = {"kind": "server", "path": "192.0.2.10:1541/test"}

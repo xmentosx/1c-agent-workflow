@@ -76,6 +76,51 @@ func TestDatabaseAccessNativeExclusionAndRelease(t *testing.T) {
 	releaseDatabaseFixture(t, last, nil)
 }
 
+func TestDatabaseAccessReadOnlyFacadeCoexistsWithOneTestRun(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	request.AccessMode = "shared-read"
+	reader := acquireDatabaseFixture(t, python, runtimeRoot, request)
+	testRequest := request
+	testRequest.AccessMode = "test-run"
+	tests := acquireDatabaseFixture(t, python, runtimeRoot, testRequest)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	other, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, testRequest, nil)
+	if other != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+		t.Fatalf("a second test run entered the same database: owner=%t error=%v", other != nil, err)
+	}
+	releaseDatabaseFixture(t, tests, nil)
+	releaseDatabaseFixture(t, reader, nil)
+}
+
+func TestDatabaseAccessOwnerTransitionsTheSameTicket(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	request.AccessMode = "test-run"
+	owner := acquireDatabaseFixture(t, python, runtimeRoot, request)
+	ticket := owner.Proof.Ticket
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := owner.Transition(ctx, "exclusive", 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if owner.AccessMode != "exclusive" || owner.Proof.Ticket != ticket {
+		t.Fatal("mode transition replaced the admitted ticket")
+	}
+	readerRequest := request
+	readerRequest.AccessMode = "shared-read"
+	readerRequest.Timeout = 0
+	reader, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, readerRequest, nil)
+	if reader != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+		t.Fatalf("reader entered an exclusive preparation phase: owner=%t error=%v", reader != nil, err)
+	}
+	if err := owner.Transition(ctx, "test-run", 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	reader = acquireDatabaseFixture(t, python, runtimeRoot, readerRequest)
+	releaseDatabaseFixture(t, reader, nil)
+	releaseDatabaseFixture(t, owner, nil)
+}
+
 func TestDatabaseHostIgnoresForeignPythonHomeAndKeepsPayloadImmutable(t *testing.T) {
 	python, _, _ := databaseAccessFixture(t)
 	root := filepath.Join(t.TempDir(), "Python библиотека с пробелом")

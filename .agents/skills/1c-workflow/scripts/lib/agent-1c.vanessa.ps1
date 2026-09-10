@@ -3733,6 +3733,7 @@ function Ensure-VanessaServiceInfoBase {
     $databasePath = Join-Path $path "1Cv8.1CD"
     $created = $false
     if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive -State $State | Out-Null
         if (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
             $unexpected = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)
             if ($unexpected.Count -gt 0) {
@@ -4843,6 +4844,7 @@ function Run-DevBranchTests {
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     $state = Ensure-VanessaMcpInstalled -State $state
+    Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run -State $state | Out-Null
 
     Assert-VanessaSourceBuildArchiveMatchesActivePin
     $vanessa = Get-VanessaAutomationState

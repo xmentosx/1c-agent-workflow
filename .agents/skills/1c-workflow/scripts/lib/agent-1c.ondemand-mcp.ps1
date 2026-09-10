@@ -1109,6 +1109,7 @@ function Get-ItlOnDemandDatabaseAccessPlan {
     return [pscustomobject][ordered]@{
         schemaVersion = 1; family = $Family; projectRoot = $script:ProjectRoot; instanceId = $InstanceId
         coordinator = $access.coordinator; scope = $access.scope; waitTimeoutSeconds = $access.waitTimeoutSeconds
+        accessMode = $(if ($Family -eq 'roctup') { 'shared-read' } else { 'test-run' })
         python = $access.python
         bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
         primaryBase = $primaryBase; targetBase = $target; servicePlan = $servicePlan; auxiliaryContour = $AuxiliaryContour
@@ -1178,6 +1179,7 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
         schemaVersion = 1; coordinator = $plan.coordinator; bases = @($bases)
         owner = @{project=$script:ProjectRoot; operation=('ondemand-' + $Operation); requestId=$InstanceId}
         timeout = 30; inherited = $Invocation.proof; purpose = 'operation'
+        accessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'exclusive')
     })
     return [pscustomobject]@{owner=$owner; plan=$fresh}
 }

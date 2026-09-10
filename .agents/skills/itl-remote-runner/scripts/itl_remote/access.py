@@ -72,6 +72,7 @@ def participants(record):
             value.get("status") not in ("active", "uncertain") or
             not re.fullmatch(r"[0-9a-f]{64}", str(value.get("generation", ""))) or
             not isinstance(value.get("resources"), list) or
+            value.get("accessMode", "exclusive") not in ACCESS_MODES or
             any(not isinstance(resource, str) for resource in value["resources"]) or
             not set(value["resources"]) <= set(record["resources"])
             for key, value in entries.items())):
@@ -119,6 +120,8 @@ class Coordinator:
                         attempts[-1].get("status") != "running" or not attempts[-1].get("id")):
                     raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
             participants(record)
+            access_mode(record)
+            effective_access_mode(record)
             records.append(record)
         return sorted(records, key=lambda item: item["sequence"])
 
@@ -171,8 +174,48 @@ class Coordinator:
             return [public(record) for record in self.records() if record["status"] in ("waiting", "running", "recovering", "needs-attention")]
 
 
+ACCESS_MODES = ("exclusive", "shared-read", "test-run")
+
+
+def access_mode(record):
+    """Legacy tickets remain exclusive; only explicit new tickets may share."""
+    mode = record.get("accessMode", "exclusive")
+    if mode not in ACCESS_MODES:
+        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+    return mode
+
+
+def effective_access_mode(record):
+    if record.get("status") in ("recovering", "needs-attention"):
+        return "exclusive"
+    requested = record.get("requestedAccessMode")
+    if requested is not None:
+        if requested not in ACCESS_MODES:
+            raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+        return requested
+    return access_mode(record)
+
+
+def compatible(first, second):
+    if first == "exclusive" or second == "exclusive":
+        return False
+    if first == "test-run" and second == "test-run":
+        return False
+    return True
+
+
+def permits(parent, child):
+    if parent == "exclusive":
+        return True
+    if parent == "test-run":
+        return child in ("test-run", "shared-read")
+    return child == "shared-read"
+
+
 def public(record, *, include_native_journal=True):
-    return {key: value for key, value in record.items() if key != "token" and (include_native_journal or key != "nativeJournal")}
+    result = {key: value for key, value in record.items() if key != "token" and (include_native_journal or key != "nativeJournal")}
+    result.setdefault("accessMode", "exclusive")
+    return result
 
 
 def inheritance_token(record):
@@ -187,18 +230,21 @@ def inheritance_token(record):
 
 class Lease:
     def __init__(self, coordinator, bases, owner, *, timeout=3600, cancelled=lambda: False,
-                 progress=lambda record: None, inherited=None, purpose="operation"):
+                 progress=lambda record: None, inherited=None, purpose="operation", access_mode="exclusive"):
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 86400:
             raise WorkError("INFOBASE_ACCESS_TIMEOUT_INVALID")
         if not bases:
             raise WorkError("INFOBASE_ACCESS_IDENTITY_REQUIRED")
         if purpose not in ("operation", "recovery") or (purpose == "recovery" and not inherited):
             raise WorkError("INFOBASE_ACCESS_PURPOSE_INVALID")
+        if access_mode not in ACCESS_MODES or (purpose == "recovery" and access_mode != "exclusive"):
+            raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
         self.coordinator = Coordinator(coordinator)
         self.bases, self.owner = bases, owner
         self.timeout, self.cancelled, self.progress = timeout, cancelled, progress
         self.inherited = inherited
         self.purpose = purpose
+        self.access_mode = access_mode
         self.record = None
         self.live_lock = None
         self.started = time.monotonic()
@@ -216,7 +262,7 @@ class Lease:
                     self.participant_id = uuid.uuid4().hex
                     self.record.setdefault("participants", {})[self.participant_id] = {
                         "status": "active", "generation": identity(self.record["token"]),
-                        "resources": resources, "admittedAt": stamp(),
+                        "resources": resources, "accessMode": self.access_mode, "admittedAt": stamp(),
                         "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
                     self.coordinator.save(self.record)
                     return self
@@ -226,7 +272,8 @@ class Lease:
                 self.live_lock.__enter__()
                 self.record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket, "token": secrets.token_hex(32),
                                "sequence": max((r["sequence"] for r in records), default=0) + 1,
-                               "resources": resources, "status": "waiting", "createdAt": stamp(),
+                               "resources": resources, "accessMode": self.access_mode,
+                               "status": "waiting", "createdAt": stamp(),
                                "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
                 self.coordinator.save(self.record)
             while True:
@@ -251,7 +298,10 @@ class Lease:
                         if record["status"] == "needs-attention":
                             raise admission_error("INFOBASE_ACCESS_RECOVERY_REQUIRED", self.coordinator,
                                                   [record], time.monotonic() - self.started)
-                        if record["status"] in ("running", "recovering") or record["sequence"] < self.record["sequence"]:
+                        running_conflict = record["status"] in ("running", "recovering") and not compatible(self.access_mode, effective_access_mode(record))
+                        queued_conflict = (record["status"] == "waiting" and record["sequence"] < self.record["sequence"] and
+                                           not compatible(self.access_mode, effective_access_mode(record)))
+                        if running_conflict or queued_conflict:
                             blockers.append(public(record, include_native_journal=False))
                     if not blockers:
                         self.record.update(status="running", admittedAt=stamp())
@@ -290,6 +340,8 @@ class Lease:
                 not secrets.compare_digest(inheritance_token(record), self.inherited.get("token", "")) or
                 not set(resources) <= set(record["resources"]) or not self.coordinator.alive(ticket)):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+        if not permits(effective_access_mode(record), self.access_mode):
+            raise WorkError("INFOBASE_ACCESS_INHERITED_MODE_INVALID")
         participants(record)
         self.record = record
 
@@ -312,6 +364,75 @@ class Lease:
             if self.participant_id and entries.get(self.participant_id, {}).get("status") != "active":
                 raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
             self.record = current
+
+    def transition(self, new_mode, *, timeout=None):
+        """Change the mode of the same root ticket without creating another lock domain."""
+        if new_mode not in ACCESS_MODES or self.inherited or self.record is None or self.release_status is not None:
+            raise WorkError("INFOBASE_ACCESS_TRANSITION_INVALID")
+        wait_budget = self.timeout if timeout is None else timeout
+        if (isinstance(wait_budget, bool) or not isinstance(wait_budget, (int, float)) or
+                not math.isfinite(wait_budget) or not 0 <= wait_budget <= 86400):
+            raise WorkError("INFOBASE_ACCESS_TIMEOUT_INVALID")
+        deadline = time.monotonic() + wait_budget
+        resources = set(self.record["resources"])
+        try:
+            while True:
+                with self.coordinator.mutex(deadline, self.cancelled):
+                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    if (current.get("status") != "running" or current.get("token") != self.record["token"] or
+                            not self.coordinator.alive(current["ticket"])):
+                        raise WorkError("INFOBASE_ACCESS_TRANSITION_INVALID")
+                    if participants(current):
+                        raise WorkError("INFOBASE_ACCESS_TRANSITION_PARTICIPANTS_ACTIVE")
+                    if access_mode(current) == new_mode and "requestedAccessMode" not in current:
+                        self.record, self.access_mode = current, new_mode
+                        return {"accessMode": new_mode, "waitSeconds": 0.0}
+                    current["requestedAccessMode"] = new_mode
+                    current.setdefault("transitionRequestedAt", stamp())
+                    self.coordinator.save(current)
+                    blockers = []
+                    for record in self.coordinator.records():
+                        if record["ticket"] == current["ticket"] or record["status"] in ("released", "cancelled", "waiting"):
+                            continue
+                        if not resources.intersection(record["resources"]):
+                            continue
+                        if record["status"] in ("running", "recovering") and not self.coordinator.alive(record["ticket"]):
+                            if record["status"] == "recovering":
+                                record["recoveryAttempts"][-1].update(status="interrupted", finishedAt=stamp())
+                            record.update(status="needs-attention", reason="owner-exited; inspect surviving work and restoration")
+                            self.coordinator.save(record)
+                        if record["status"] == "needs-attention":
+                            raise admission_error("INFOBASE_ACCESS_RECOVERY_REQUIRED", self.coordinator,
+                                                  [record], time.monotonic() - (deadline - wait_budget))
+                        if record["status"] in ("running", "recovering") and not compatible(new_mode, effective_access_mode(record)):
+                            blockers.append(public(record, include_native_journal=False))
+                    if not blockers:
+                        current["accessMode"] = new_mode
+                        current.pop("requestedAccessMode", None)
+                        current.pop("transitionRequestedAt", None)
+                        current["modeChangedAt"] = stamp()
+                        self.coordinator.save(current)
+                        self.record, self.access_mode = current, new_mode
+                        return {"accessMode": new_mode, "waitSeconds": max(0.0, time.monotonic() - (deadline - wait_budget))}
+                waited = max(0.0, time.monotonic() - (deadline - wait_budget))
+                self.progress({"status": "waiting-for-mode", "ticket": self.record["ticket"],
+                               "resources": sorted(resources), "accessMode": new_mode,
+                               "waitSeconds": waited, "blockers": blockers})
+                if time.monotonic() >= deadline:
+                    raise admission_error("INFOBASE_ACCESS_WAIT_TIMEOUT", self.coordinator, blockers, waited)
+                time.sleep(0.05)
+        except BaseException:
+            try:
+                with self.coordinator.mutex(time.monotonic() + 10, lambda: False):
+                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    if current.get("token") == self.record["token"]:
+                        current.pop("requestedAccessMode", None)
+                        current.pop("transitionRequestedAt", None)
+                        self.coordinator.save(current)
+                        self.record = current
+            except BaseException:
+                pass
+            raise
 
     def release(self, *, cleanup_errors=()):
         if self.inherited:

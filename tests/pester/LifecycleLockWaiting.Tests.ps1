@@ -40,7 +40,8 @@ finally { Exit-Agent1cLifecycleOperation }
     }
 
     It 'waits for <Resource> without changing the holder and continues automatically' -ForEach @(
-        @{ Resource = 'lifecycle' }, @{ Resource = 'runtime-mcp' }
+        @{ Resource = 'lifecycle'; RequestedAction = 'check-dev-branch' },
+        @{ Resource = 'runtime-mcp'; RequestedAction = 'refresh-dev-branch' }
     ) {
         $root = Join-Path $TestDrive "ожидание $Resource"
         New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -54,7 +55,7 @@ finally { Exit-Agent1cLifecycleOperation }
             $holder = [IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'Read')
             $worker = Join-Path $root 'worker.ps1'
             Set-Content -LiteralPath $worker -Encoding UTF8 -Value $workerText
-            $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $root)
+            $job = Start-Worker $worker @('-Helper', $HelperPath, '-Root', $root, '-RequestedAction', $RequestedAction)
             try {
                 $waiter = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue | Select-Object -First 1 }
                 $first = Read-Agent1cLifecycleOperationRecord $waiter.FullName

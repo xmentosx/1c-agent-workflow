@@ -33,31 +33,34 @@ type databaseAccessRequest struct {
 	Timeout       float64              `json:"timeout"`
 	Inherited     *databaseAccessProof `json:"inherited,omitempty"`
 	Purpose       string               `json:"purpose,omitempty"`
+	AccessMode    string               `json:"accessMode,omitempty"`
 }
 
 type databaseAccessEvent struct {
-	Event     string               `json:"event"`
-	Status    string               `json:"status"`
-	Error     string               `json:"error"`
-	Proof     *databaseAccessProof `json:"proof,omitempty"`
-	Owner     json.RawMessage      `json:"owner,omitempty"`
-	Resources []string             `json:"resources,omitempty"`
-	Blockers  json.RawMessage      `json:"blockers,omitempty"`
+	Event      string               `json:"event"`
+	Status     string               `json:"status"`
+	Error      string               `json:"error"`
+	AccessMode string               `json:"accessMode,omitempty"`
+	Proof      *databaseAccessProof `json:"proof,omitempty"`
+	Owner      json.RawMessage      `json:"owner,omitempty"`
+	Resources  []string             `json:"resources,omitempty"`
+	Blockers   json.RawMessage      `json:"blockers,omitempty"`
 }
 
 // The pipes and Proof are private to the native owner. Never log this object.
 // Closing without Release leaves admitted work for recovery, not for replay.
 type databasePipeOwner struct {
-	Proof     *databaseAccessProof
-	Public    json.RawMessage
-	command   *exec.Cmd
-	input     io.WriteCloser
-	events    chan databaseAccessEvent
-	done      chan struct{}
-	abandoned chan struct{}
-	closeOnce sync.Once
-	writeMu   sync.Mutex
-	waitErr   error
+	Proof      *databaseAccessProof
+	Public     json.RawMessage
+	AccessMode string
+	command    *exec.Cmd
+	input      io.WriteCloser
+	events     chan databaseAccessEvent
+	done       chan struct{}
+	abandoned  chan struct{}
+	closeOnce  sync.Once
+	writeMu    sync.Mutex
+	waitErr    error
 }
 
 func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, request databaseAccessRequest, progress func(databaseAccessEvent)) (*databasePipeOwner, error) {
@@ -111,7 +114,10 @@ func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, r
 				_ = owner.Close()
 				return nil, errors.New("INFOBASE_ACCESS_HOST_PROOF_INVALID")
 			}
-			owner.Proof, owner.Public = event.Proof, event.Owner
+			owner.Proof, owner.Public, owner.AccessMode = event.Proof, event.Owner, request.AccessMode
+			if owner.AccessMode == "" {
+				owner.AccessMode = "exclusive"
+			}
 			if err := ctx.Err(); err != nil {
 				// No operation has received this grant yet. Confirm that no work
 				// ran, instead of manufacturing orphan debt for a known cancellation.
@@ -238,6 +244,52 @@ func (owner *databasePipeOwner) Validate(ctx context.Context) error {
 		return errors.New("INFOBASE_ACCESS_HOST_VALIDATION_UNCONFIRMED")
 	}
 	return nil
+}
+
+func (owner *databasePipeOwner) Transition(ctx context.Context, accessMode string, timeout float64, progress func(databaseAccessEvent)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if accessMode == owner.AccessMode {
+		return nil
+	}
+	if timeout < 0 {
+		return errors.New("INFOBASE_ACCESS_TIMEOUT_INVALID")
+	}
+	if err := owner.send(map[string]any{"event": "transition", "accessMode": accessMode, "timeout": timeout}); err != nil {
+		return err
+	}
+	// Once the request is sent, consume its terminal response even if the MCP
+	// request is cancelled. The coordinator has its own bounded timeout; leaving
+	// a late transition event queued would make the next validation ambiguous.
+	wait := time.Duration(timeout*float64(time.Second)) + 30*time.Second
+	if wait < 30*time.Second {
+		wait = 30 * time.Second
+	}
+	responseCtx, cancel := context.WithTimeout(context.Background(), wait)
+	defer cancel()
+	for {
+		event, err := owner.next(responseCtx)
+		if err != nil {
+			return err
+		}
+		switch event.Event {
+		case "waiting":
+			if progress != nil {
+				progress(event)
+			}
+		case "transitioned":
+			if event.AccessMode != accessMode {
+				return errors.New("INFOBASE_ACCESS_TRANSITION_UNCONFIRMED")
+			}
+			owner.AccessMode = accessMode
+			return nil
+		case "transition-error":
+			return errors.New(event.Error)
+		default:
+			return errors.New("INFOBASE_ACCESS_HOST_RESPONSE_INVALID")
+		}
+	}
 }
 
 func (owner *databasePipeOwner) Close() error {

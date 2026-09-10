@@ -965,11 +965,14 @@ function Enter-Agent1cLifecycleOperation {
             }
             [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = "lifecycle" }
         }
-        # Lifecycle is acquired first. The runtime lock then drains active MCP calls
-        # and prevents infobase refresh/close from racing with a proxied tool call.
-        foreach ($scope in $scopes) {
-            $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
-            [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; share = [IO.FileShare]::None; kind = "runtime-mcp" }
+        # Test actions coordinate the exact infobase through a phase-aware
+        # database ticket. Keeping this coarse project writer for their whole
+        # lifetime would unnecessarily stop read-only ROCTUP calls during tests.
+        if ($RequestedAction -notin @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) {
+            foreach ($scope in $scopes) {
+                $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
+                [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; share = [IO.FileShare]::None; kind = "runtime-mcp" }
+            }
         }
     }
     $handles = @($lease.handles)

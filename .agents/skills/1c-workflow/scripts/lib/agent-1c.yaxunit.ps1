@@ -388,6 +388,7 @@ function Invoke-YAxUnitVerification {
 
     try {
         $State = Ensure-YAxUnitExtensions -State $State
+        Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run -State $State | Out-Null
 
         $config = [ordered]@{
             filter = [ordered]@{ extensions = @($testsExtensionName) }

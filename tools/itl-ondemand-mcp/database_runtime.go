@@ -100,10 +100,16 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 			if threadID, ok := meta["openai/threadId"].(string); ok && threadID != "" {
 				identity["threadId"] = threadID
 			}
+			accessMode := plan.AccessMode
+			if parent != nil && r.family == "vanessa-ui" {
+				// An inherited facade cannot upgrade the outer ticket. Preserve the
+				// previous fail-closed contract: Vanessa preparation is admitted only
+				// when its caller already owns an exclusive operation lease.
+				accessMode = "exclusive"
+			}
 			owner, err := acquireDatabasePipeOwner(ctx, plan.Python, planner.DatabaseRuntimeRoot(), databaseAccessRequest{
 				SchemaVersion: 1, Coordinator: plan.Coordinator, Bases: plan.Bases, Timeout: plan.WaitTimeoutSeconds,
-				Owner:     identity,
-				Inherited: parent,
+				Owner: identity, Inherited: parent, AccessMode: accessMode,
 			}, func(event databaseAccessEvent) {
 				r.logger.Info("waiting for database access", "status", event.Status, "resources", event.Resources, "blockers", event.Blockers)
 			})
@@ -175,7 +181,8 @@ func sameDatabasePlan(first, second *facadeDatabasePlan) bool {
 	if first == nil || second == nil || first.Family != second.Family ||
 		!strings.EqualFold(filepath.Clean(first.ProjectRoot), filepath.Clean(second.ProjectRoot)) ||
 		!strings.EqualFold(filepath.Clean(first.Coordinator), filepath.Clean(second.Coordinator)) ||
-		first.AuxiliaryContour != second.AuxiliaryContour || !sameDatabaseConnection(first.TargetBase, second.TargetBase) {
+		first.AuxiliaryContour != second.AuxiliaryContour || first.AccessMode != second.AccessMode ||
+		!sameDatabaseConnection(first.TargetBase, second.TargetBase) {
 		return false
 	}
 	if (first.PrimaryBase == nil) != (second.PrimaryBase == nil) ||
@@ -227,6 +234,53 @@ func sameDatabasePlan(first, second *facadeDatabasePlan) bool {
 
 func sameDatabaseConnection(first, second databaseConnection) bool {
 	return first.Kind == second.Kind && strings.EqualFold(strings.TrimRight(first.Path, "\\/"), strings.TrimRight(second.Path, "\\/"))
+}
+
+func (r *runtime) transitionDatabaseMode(ctx context.Context, accessMode string) error {
+	if r.databaseOwner == nil || r.databasePlan == nil || r.databaseOwner.AccessMode == accessMode {
+		return nil
+	}
+	if r.databaseParent != nil {
+		if accessMode == "exclusive" && r.databaseOwner.AccessMode != "exclusive" {
+			return fmt.Errorf("INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT")
+		}
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	timeout := r.databasePlan.WaitTimeoutSeconds
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline).Seconds()
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		if timeout > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	err := r.databaseOwner.Transition(ctx, accessMode, timeout, func(event databaseAccessEvent) {
+		r.logger.Info("waiting for database access mode", "status", event.Status, "accessMode", accessMode,
+			"resources", event.Resources, "blockers", event.Blockers)
+	})
+	if err != nil {
+		return fmt.Errorf("INFOBASE_ACCESS_MODE_TRANSITION_FAILED: %w", err)
+	}
+	return nil
+}
+
+func (r *runtime) enterDatabasePreparationMode(ctx context.Context) error {
+	if r.family != "vanessa-ui" {
+		return nil
+	}
+	return r.transitionDatabaseMode(ctx, "exclusive")
+}
+
+func (r *runtime) restoreDatabaseRuntimeMode(ctx context.Context) error {
+	if r.databasePlan == nil {
+		return nil
+	}
+	return r.transitionDatabaseMode(ctx, r.databasePlan.AccessMode)
 }
 
 // Called under the database gate and r.mu, with the runtime read lock held.

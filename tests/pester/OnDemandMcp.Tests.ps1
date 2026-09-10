@@ -140,7 +140,7 @@ Describe "ITL on-demand MCP facade" {
         [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.11"
         [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.11"
         [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.11/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "5dd2bd12721bb2cf2d0a4f7d351e56429990605c7ac32296c1d897a33c04db91"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "fee2d384ec13f41b5c8483f43a1a83f5bd6482439c6d24c0ce15b4b6308108bb"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -1635,6 +1635,7 @@ Describe 'On-demand complete database admission plan' {
 
     It 'plans only the primary ROCTUP target without touching any database or coordinator' {
         $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
+        $plan.accessMode | Should -Be 'shared-read'
         @($plan.bases).Count | Should -Be 1
         $plan.bases[0].path | Should -Be $primary.devBranchInfoBasePath
         $plan.scope | Should -Be 'execution-host-only'
@@ -1655,6 +1656,7 @@ Describe 'On-demand complete database admission plan' {
 
     It 'includes primary tooling auxiliary target and the pinned new Vanessa manager atomically' {
         $plan = Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId -AuxiliaryContour aux
+        $plan.accessMode | Should -Be 'test-run'
         @($plan.bases).Count | Should -Be 3
         @($plan.bases.path) | Should -Contain $primary.devBranchInfoBasePath
         @($plan.bases.path) | Should -Contain (Join-Path $root 'внешняя база')

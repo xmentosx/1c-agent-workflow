@@ -2543,6 +2543,8 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
     } else { '' }
     $reserve = if ($null -ne $continuation) { [string]$continuation.plan.serviceReserveGeneration } else { '' }
     $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
+    $accessMode = if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) { 'test-run' } else { 'exclusive' }
+    $plan | Add-Member -NotePropertyName accessMode -NotePropertyValue $accessMode -Force
     if ($null -ne $continuation) {
         if ($plan.target.kind -cne $continuation.plan.target.kind -or
             -not (Test-ItlOnDemandInfoBaseMatch -First $plan.target.path -Second $continuation.plan.target.path)) {
@@ -2567,9 +2569,10 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
     $plan = $Preparation.plan
     $settings = $Preparation.settings
+    $planAccessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'exclusive')
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
-    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1
+    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1; accessMode = $planAccessMode
         owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
     if ($previousProof) {
         try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
@@ -2585,6 +2588,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
         previousJournal = $script:OneCNativeOperationJournal; previousProof = $previousProof
         previousContinuation = [Environment]::GetEnvironmentVariable('ITL_DATABASE_CONTINUATION', 'Process'); continuation = $null
         completed = $false; servicePlanApplied = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
+        accessMode = [string]$owner.public.accessMode; inherited = [bool]$previousProof
     }
     try {
         $parent = if ($Preparation.PSObject.Properties['continuationParent']) { $Preparation.continuationParent } else { $null }
@@ -2640,6 +2644,27 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
     }
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     Assert-ItlDatabaseAccessHost -Owner $Admission.owner
+}
+
+function Set-ItlDevBranchDatabaseAccessMode {
+    param([ValidateSet('exclusive', 'test-run')][string]$AccessMode, [object]$State = $null)
+
+    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    $admission = if ($null -ne $variable) { $variable.Value } else { $null }
+    if ($null -eq $admission -or $admission.completed) { return }
+    if ($null -eq $State) { $State = Get-ItlDevBranchMutationDatabaseState -Operation $admission.operation }
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $State
+    if ($admission.inherited) {
+        if ($AccessMode -eq 'exclusive' -and $admission.accessMode -ne 'exclusive') {
+            throw 'INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT: borrowed shared access cannot authorize database mutation.'
+        }
+        return [pscustomobject]@{accessMode=$admission.accessMode;inherited=$true}
+    }
+    if ($admission.accessMode -ceq $AccessMode) { return [pscustomobject]@{accessMode=$AccessMode;inherited=$false} }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    $changed = Set-ItlDatabaseAccessMode -Owner $admission.owner -AccessMode $AccessMode -CancelPath $admission.cancelPath
+    $admission.accessMode = [string]$changed.accessMode
+    return $changed
 }
 
 function Publish-ItlDevBranchLifecycleCompletion {
@@ -2726,6 +2751,7 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
         }).Count -eq 0) {
             throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
         }
+        Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive -State $State | Out-Null
         $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `
             -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath; requiredSessions = 0; expectedChildRole = '' })
         $drainRecord.startAttempted = $true
@@ -14448,6 +14474,7 @@ function Invoke-DevBranchCheck {
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
     Update-DevBranchBase
+    Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run -State $state | Out-Null
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `

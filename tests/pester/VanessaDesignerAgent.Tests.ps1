@@ -718,12 +718,14 @@ Describe 'Vanessa service-base admission planning' {
             param($State,$Updates)
             foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
         }
+        Mock Set-ItlDevBranchDatabaseAccessMode { [pscustomobject]@{accessMode='exclusive'} }
         try {
             (Ensure-VanessaServiceInfoBase -State $state).path | Should -Be $plan.path
             $script:DevBranchMutationDatabaseAdmission.servicePlanApplied | Should -BeTrue
             (Ensure-VanessaServiceInfoBase -State $state).path | Should -Be $plan.path
             Should -Invoke Invoke-NativeProcessAndWaitResult -Times 1
             Should -Invoke Invoke-Designer -Times 1 -ParameterFilter { $InfoBasePath -eq $plan.path }
+            Should -Invoke Set-ItlDevBranchDatabaseAccessMode -Times 1 -Exactly -ParameterFilter { $AccessMode -eq 'exclusive' -and $State -eq $state }
         } finally { $script:DevBranchMutationDatabaseAdmission = $null }
     }
 

@@ -85,7 +85,9 @@ function Start-ItlDatabaseAccessHost {
     $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
-    $owner = [pscustomobject]@{ process = $process; proof = $null; public = $null; closed = $false; stderr = $null }
+    $requestedMode = if (($Request -is [Collections.IDictionary] -and $Request.Contains('accessMode')) -or $null -ne $Request.PSObject.Properties['accessMode']) { [string]$Request.accessMode } else { 'exclusive' }
+    $owner = [pscustomobject]@{ process = $process; proof = $null; public = $null; closed = $false; stderr = $null
+        accessMode = $requestedMode; waitTimeoutSeconds = $budget }
     $started = $false
     try {
         if (-not $process.Start()) { throw 'INFOBASE_ACCESS_HOST_START_FAILED' }
@@ -138,6 +140,39 @@ function Assert-ItlDatabaseAccessHost {
     $Owner.process.StandardInput.Flush()
     $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
     if ($event.event -ne 'validated') { throw 'INFOBASE_ACCESS_HOST_VALIDATION_UNCONFIRMED' }
+}
+
+function Set-ItlDatabaseAccessMode {
+    param(
+        [Parameter(Mandatory = $true)][object]$Owner,
+        [Parameter(Mandatory = $true)][ValidateSet('exclusive', 'shared-read', 'test-run')][string]$AccessMode,
+        [string]$CancelPath = '',
+        [scriptblock]$OnProgress
+    )
+
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    $payload = [pscustomobject]@{event='transition';accessMode=$AccessMode} | ConvertTo-Json -Compress
+    $Owner.process.StandardInput.WriteLine($payload)
+    $Owner.process.StandardInput.Flush()
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $remaining = ([double]$Owner.waitTimeoutSeconds + 30) - $timer.Elapsed.TotalSeconds
+        if ($remaining -le 0) { throw 'INFOBASE_ACCESS_HOST_RESPONSE_TIMEOUT' }
+        $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds $remaining -CancelPath $CancelPath
+        if ($event.event -eq 'transition-error') { throw ([string]$event.error) }
+        if ($event.event -eq 'transitioned') {
+            if ([string]$event.accessMode -cne $AccessMode) { throw 'INFOBASE_ACCESS_TRANSITION_UNCONFIRMED' }
+            $Owner.accessMode = $AccessMode
+            $Owner.public.accessMode = $AccessMode
+            return $event
+        }
+        if ($event.event -ne 'waiting' -or [string]$event.status -cne 'waiting-for-mode') {
+            throw 'INFOBASE_ACCESS_HOST_RESPONSE_INVALID'
+        }
+        if ($OnProgress) { & $OnProgress $event | Out-Null } else {
+            Write-Host ('INFOBASE_ACCESS_WAIT ' + ($event | ConvertTo-Json -Depth 20 -Compress))
+        }
+    }
 }
 
 function Publish-ItlDatabaseNativeOperation {

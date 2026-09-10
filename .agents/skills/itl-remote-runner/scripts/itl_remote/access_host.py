@@ -31,7 +31,7 @@ def serve(input_stream, output_stream):
         if sys.version_info < (3, 11):
             raise WorkError("INFOBASE_ACCESS_PYTHON311_REQUIRED")
         request = json.loads(input_stream.readline())
-        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol"}
+        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol", "accessMode"}
         owner_fields = {"project", "operation", "threadId", "parentPid", "requestId"}
         if (not isinstance(request, dict) or request.get("schemaVersion") != 1 or set(request) - fields or
                 not isinstance(request.get("owner"), dict) or set(request["owner"]) - owner_fields or
@@ -59,6 +59,15 @@ def serve(input_stream, output_stream):
                     if value == {"event": "validate"}:
                         if not admitted.is_set():
                             raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
+                        messages.put(value)
+                        continue
+                    if (set(value) in ({"event", "accessMode"}, {"event", "accessMode", "timeout"}) and
+                            value["event"] == "transition"):
+                        if not admitted.is_set():
+                            raise WorkError("INFOBASE_ACCESS_TRANSITION_BEFORE_ADMISSION")
+                        if "timeout" in value and (type(value["timeout"]) not in (int, float) or
+                                not 0 <= value["timeout"] <= 86400):
+                            raise WorkError("INFOBASE_ACCESS_HOST_CONTROL_INVALID")
                         messages.put(value)
                         continue
                     if set(value) == {"event", "record"} and value["event"] in ("native-operation", "restoration-duty", "reset-checkpoint", "source-sync-phase"):
@@ -104,7 +113,8 @@ def serve(input_stream, output_stream):
 
         lease = Lease(request["coordinator"], request["bases"], {**request["owner"], "parentPid": os.getppid(), "nativeJournalProtocol": native_protocol},
                       timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
-                      progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"))
+                      progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"),
+                      access_mode=request.get("accessMode", "exclusive"))
         lease.__enter__()
         producer_id = native_journal.register(lease)
         admitted.set()
@@ -118,6 +128,15 @@ def serve(input_stream, output_stream):
                 # owner; retaining a private pipe is not renewed authorization.
                 lease.validate()
                 emit({"event": "validated"})
+                continue
+            if value["event"] == "transition":
+                try:
+                    result = lease.transition(value["accessMode"], timeout=value.get("timeout"))
+                    emit({"event": "transitioned", **result})
+                except WorkError as error:
+                    # A refused/expired upgrade starts no new database work and
+                    # does not invalidate the ticket's current admitted mode.
+                    emit({"event": "transition-error", "error": str(error)})
                 continue
             if value["event"] == "native-operation":
                 emit(native_journal.publish(lease, producer_id, value["record"]))

@@ -123,6 +123,18 @@ class AccessHostTests(unittest.TestCase):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             pass
 
+    def test_host_transitions_the_same_test_ticket_to_exclusive_and_back(self):
+        child, received = self.start(accessMode="test-run")
+        admitted = self.next(received, "admitted")
+        self.assertEqual("test-run", admitted["owner"]["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"exclusive", "timeout":1})
+        self.assertEqual("exclusive", self.next(received, "transitioned")["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"test-run"})
+        self.assertEqual("test-run", self.next(received, "transitioned")["accessMode"])
+        self.send(child, {"event":"release", "cleanupErrors":[]})
+        self.next(received, "released")
+        self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
     def test_portable_parent_is_inherited_and_never_released_by_native_child(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start(inherited=parent.proof())
