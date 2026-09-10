@@ -30,11 +30,11 @@ different milestones; none implies the next one.
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; live 1C recovery adapters, lifecycle/facade entrypoint integration and multi-host proof remain required |
-| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports implemented; exact original merge still identifies the three lost E2 declarations; duplicate-definition repair and retained common-Git evidence covered; registration, delivery and installed acceptance remain open |
+| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
-| 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; the old selector dropped Client and reported false ambiguity; both native client families now propagate through selection, proof and engine coverage with 29 focused tests passing; registration, delivery and fresh remote thick-client capture remain open |
-| 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
+| 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
+| 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation function reproduces Structure key failure for a Cyrillic caption with spaces; r10 uses case-normalized map keys and passes real captions to navigation; 41 focused tests pass including r9/r10 nested-selection preservation; r10 native build succeeded with all service bases released; registration and installed UI acceptance remain open |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
@@ -1628,3 +1628,52 @@ packet variant is explicitly not real thick-client profile evidence. The existin
 thin-client UFA recovery remains historical evidence; a new short remote capture
 using the delivered correction is still required. No target database, worker
 profile or remote client was changed during this source diagnosis.
+
+## Registered merge-preservation and native-client corrections
+
+`1b08129a3382608038ab6d0e53ca35deb370db97` registered successfully with 618
+Targeted tests, zero failures, clean tree
+`5a06c53a2d20c7166119d007de4ed75e99f0e78c` and ledger duration 835525 ms.
+`e00ba67d7e503f6959de282cdf40af76b8091a09` then registered with 63 Targeted
+tests, zero failures, clean tree `fce24a36987436afbf1f701e6009ae34dec22f93`
+and ledger duration 70330 ms. The canonical accumulation worktree was fast-forwarded
+to each registered head. The queue retains base `2d390d654a6dbcbaf72b4097f0e209d55b2b8582`.
+Neither registration constitutes publication, installation or live acceptance.
+
+## Item 9: display captions used as Structure identifiers
+
+Pinned upstream Vanessa commit `f3a01778a14d29b38204685deea0131274d438ff`
+implements `navigate_to_row` in MCPVA's `ПереходКСтрокеТаблицы` function.
+It parses `row_criteria` into a Structure and inserts each column caption as a
+property name. The actual caption `Дата начала` therefore fails before any row
+navigation. This is reproduced by the exact original function under OneScript,
+while the ordinary `Код` case passes using the same test transport.
+
+Candidate `1.2.043.28-itl-r10` replaces only that criteria container with a map,
+normalizes its keys for the existing case-insensitive/last-value semantics and
+retains actual discovered captions for the navigation call. Multiple criteria
+still travel together through the original two-row parameter table; values
+containing equals signs remain intact. Unknown columns, empty input and a
+navigation no-match error retain their existing error paths and do not produce
+false success.
+
+The source fixture pins the original Git blob and function hash; tests apply the
+shipping patch hunks to that exact function. Twelve native OneScript cases cover
+the original failure and corrected dispatch/error contracts. Twenty-one artifact
+checks cover r8/r9/r10, and eight nested-feature tests cover r9 and r10 without
+changing the original nested paths. The UI transport doubles and candidate build
+are not claimed as real installed UI acceptance. The installed pin remains r8;
+r10 also retains r9's original-49-scenario correction for later joint acceptance.
+
+The r10 candidate was built through the guarded official Compile/MakeVASingle
+flow on platform 8.3.27.2130 and OneScript 1.9.4.16. Retained work root:
+`C:/va строки/a2ed2e19`. The runtime result reports all three stages successful
+and all three owned service databases released; a post-build check found no 1C
+process for this root. The builder does not edit `conf.cfg`.
+Candidate ZIP SHA-256 is
+`840f501ae4118bdf0c2ae70a2fe3857e47e5e54eb18b8027be5c66b731ecd160`,
+and its EPF SHA-256 is
+`b9f09b42c4a7b5a1eeeb1ce6701b9b408c182ddbb23037d40d3b11f5d514cec6`.
+Candidate provenance is retained in the isolated source worktree under
+`build/third-party/vanessa-automation/1.2.043.28-itl-r10/`.
+The candidate is neither published nor installed by this build.

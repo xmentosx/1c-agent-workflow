@@ -1,4 +1,4 @@
-Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(@{ revision = 'itl-r8' }, @{ revision = 'itl-r9' }) {
+Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(@{ revision = 'itl-r8' }, @{ revision = 'itl-r9' }, @{ revision = 'itl-r10' }) {
     BeforeAll {
         $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
         $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-$revision"
@@ -30,7 +30,7 @@ Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(
         $managedFormPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYUF1dG9tYXRpb24vRm9ybXMv0KPQv9GA0LDQstC70Y/QtdC80LDRj9Ck0L7RgNC80LAvRXh0L0Zvcm0vTW9kdWxlLmJzbA=="))
         $manifest.patch.expectedChangedPaths[1] | Should -Be $managedFormPath
         @($manifest.patch.upstreamBackports) | Should -HaveCount 2
-        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount $(if ($revision -eq 'itl-r9') { 5 } else { 4 })
+        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount $(if ($revision -eq 'itl-r10') { 6 } elseif ($revision -eq 'itl-r9') { 5 } else { 4 })
         @($manifest.patch.removedDownstreamWorkarounds) | Should -HaveCount 2
     }
 
@@ -106,7 +106,7 @@ Describe "Controlled Vanessa Automation patched artifact <revision>" -ForEach @(
         $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
-        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9")]'))
+        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10")]'))
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
         $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'

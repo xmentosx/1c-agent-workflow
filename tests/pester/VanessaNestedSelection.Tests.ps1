@@ -86,7 +86,10 @@
     }
 }
 
-Describe 'Selected nested feature ownership in the Vanessa tree' {
+Describe 'Selected nested feature ownership in the Vanessa tree <revision>' -ForEach @(@{revision='itl-r9'}, @{revision='itl-r10'}) {
+    BeforeAll {
+        $script:NestedSelectionAsset = Join-Path $script:NestedSelectionRepo ('third-party/vanessa-automation/1.2.043.28-' + $revision)
+    }
     It 'reproduces omitted features in the unchanged pinned upstream algorithm' {
         $result = Invoke-NestedFeatureProbe -Root (Join-Path $TestDrive 'Исходный с пробелом') -Patched $false
         $result.exitCode | Should -Not -Be 0

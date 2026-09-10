@@ -3,7 +3,7 @@ param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
-    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9")][string]$DownstreamRevision = "itl-r8",
+    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10")][string]$DownstreamRevision = "itl-r8",
     [switch]$KeepWork,
     [switch]$Force
 )
