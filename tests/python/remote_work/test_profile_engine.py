@@ -27,13 +27,13 @@ class ProfileEngineTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.tearDown()
 
-    def execute(self, fail_cleanup=False, native=None):
+    def execute(self, fail_cleanup=False, native=None, client_type="ManagedClient"):
         native = native or profiling.analyze_raw([FIXTURES / "client.xml"])
         native.update(complete=False, coverage={"missingTypes": ["ServerEmulation"]})
         test = self
         class Collector:
             def __init__(self, config, proof, output):
-                test.assertEqual(["ManagedClient", "ServerEmulation"], proof["requiredTypes"])
+                test.assertEqual([client_type, "ServerEmulation"], proof["requiredTypes"])
             def open(self):
                 if fail_cleanup:
                     error = WorkError("attach failed; cleanup failed")
@@ -52,6 +52,15 @@ class ProfileEngineTests(unittest.TestCase):
         self.assertEqual(1, len(result["profiles"]))
         self.assertFalse(result["profiles"][0]["complete"])
         self.assertIn("PROFILE_INCOMPLETE", (self.run / "report.md").read_text(encoding="utf-8"))
+
+    def test_engine_retains_discovered_thick_client_family_and_still_requires_server_coverage(self):
+        proof_path = self.run / "runtime-proof.json"
+        proof = read_json(proof_path)
+        proof["targetTypes"] = {"client": "Client", "server": "ServerEmulation"}
+        write_json(proof_path, proof)
+        state, result = self.execute(client_type="Client")
+        self.assertEqual("partial", state["status"], result)
+        self.assertFalse(result["profiles"][0]["complete"])
 
     def test_failed_debugger_start_cleanup_is_not_reported_as_empty_cleanup(self):
         state, result = self.execute(fail_cleanup=True)

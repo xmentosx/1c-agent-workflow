@@ -73,6 +73,29 @@ class ProfileCoverageTests(unittest.TestCase):
         self.assertFalse(result["complete"])
         self.assertEqual(["Server"], result["coverage"]["missingTypes"])
 
+    def test_native_client_type_is_preserved_and_thin_packet_cannot_substitute_for_it(self):
+        # An explicit transport-shape variant; the original thin-client packets
+        # remain untouched and this is not claimed as a real thick-client capture.
+        tree = ET.parse(self.client)
+        for field in tree.iter("{" + profiling.DATA + "}targetType"):
+            if field.text == "ManagedClient":
+                field.text = "Client"
+        variant = self.root / "Толстый клиент.xml"
+        tree.write(variant, encoding="utf-8", xml_declaration=True)
+        proof = copy.deepcopy(self.proof)
+        for identifier, kind in proof["targetTypes"].items():
+            if kind == "ManagedClient":
+                proof["targetTypes"][identifier] = "Client"
+        proof["requiredTypes"] = profiling.required_profile_types("file", "Client")
+        complete = profiling.analyze_raw([variant, self.server], self.session, proof)
+        self.assertTrue(complete["complete"])
+        self.assertEqual(["Client", "ServerEmulation"], complete["coverage"]["observedTypes"])
+        partial = profiling.analyze_raw([variant], self.session, proof)
+        self.assertFalse(partial["complete"])
+        self.assertEqual(["ServerEmulation"], partial["coverage"]["missingTypes"])
+        with self.assertRaisesRegex(WorkError, "PROFILE_TARGET_TYPE_MISMATCH"):
+            profiling.analyze_raw([self.client, self.server], self.session, proof)
+
     def collector(self):
         return profiling.Rdbg({"url": "http://127.0.0.1:1", "infoBaseAlias": "DefAlias", "collectTimeoutSeconds": 0},
                               self.proof, self.root / "raw")

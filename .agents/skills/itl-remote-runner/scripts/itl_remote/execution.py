@@ -12,7 +12,7 @@ import time
 
 from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
 from .jobs import authorize, job_id, status, validate_package
-from .profiling import Rdbg, prepare_debug_server, required_profile_types
+from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
 from .access import Lease, target_access
 from .deadlines import Deadline, budgets
 
@@ -123,7 +123,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         from .common import capture
         capture(["powershell.exe", "-NoProfile", "-File", str(variables["runtime"] / "Test-OneCProcessRecord.ps1"),
                  "-RecordPath", str(launch_path)], timeout=20)
-        proof["requiredTypes"] = required_profile_types(target.get("infoBase", {}).get("kind"))
+        proof["requiredTypes"] = required_profile_types(target.get("infoBase", {}).get("kind"), profile_client_type(proof))
         collector = Rdbg({**effective_rdbg, "sourceAnalysis": scenario.get("sourceAnalysis", "none"),
                           "sourceAnalysisModules": scenario.get("sourceAnalysisModules")}, proof, iteration / "raw")
         collector.open()

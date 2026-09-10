@@ -33,7 +33,7 @@ different milestones; none implies the next one.
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports implemented; exact original merge still identifies the three lost E2 declarations; duplicate-definition repair and retained common-Git evidence covered; registration, delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
-| 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
+| 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; the old selector dropped Client and reported false ambiguity; both native client families now propagate through selection, proof and engine coverage with 29 focused tests passing; registration, delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Pending |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Pending |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
@@ -1595,3 +1595,36 @@ run passes 22/22 (19 new tests and the three original duplicate-repair cases) in
 `build/diagnostics/merge-preservation/focused-final.*`. Normal registration owns
 the final Targeted proof.
 Installed public-command acceptance remains required.
+
+## Item 8: native thick-client family on UFA
+
+The latest completed turn of task `01a07de3-b5ef-7922-9c35-3dccd94cdf25`
+("Проанализировать открытие формы") describes successful recovery after changing
+the profile executable from `1cv8.exe` to `1cv8c.exe`. Its retained original
+`plan-card-20260909-03` discovery response has SHA-256
+`42388d0abf75e8de38c96749fed649fc5335d7f706fcdd02277e26f9b214df9e`.
+The startup observation binds PID 76220 and its start time to session number 47;
+the response contains exactly one `Client` and one `Server` for that session and
+base instance. This was not multiple competing owned clients. The selector
+discarded the native `Client` family, retained its server, then called zero
+ManagedClient targets "ambiguous". The source runtime and engine also hardcoded
+ManagedClient in their required coverage, so changing only the selector would
+leave the measurement incomplete.
+
+The correction retains both native client families in exact session selection
+and derives required coverage from the discovered client type in runtime proof
+and engine setup. The configured executable is unchanged. A missing client is
+reported separately from multiple clients; two client targets, even of different
+families, still fail before attachment. Native packet types must match the proof,
+server or ServerEmulation coverage remains required, and foreign sessions are
+excluded. Old proofs without a type map retain their ManagedClient requirement.
+
+The committed discovery fixture preserves native types and identity relations
+from the incident, with only the database alias normalized and username removed.
+The reproducer failed on the original selector; a second new negative case also
+proved that mixing Client and ManagedClient previously hid a competing client.
+Focused identity, packet-coverage and engine suites now pass 29/29. Their synthetic
+packet variant is explicitly not real thick-client profile evidence. The existing
+thin-client UFA recovery remains historical evidence; a new short remote capture
+using the delivered correction is still required. No target database, worker
+profile or remote client was changed during this source diagnosis.

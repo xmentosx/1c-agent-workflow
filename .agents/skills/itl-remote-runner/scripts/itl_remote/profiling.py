@@ -25,11 +25,31 @@ ET.register_namespace("response", RESPONSE)
 ET.register_namespace("data", DATA)
 
 
-def required_profile_types(base_kind):
+CLIENT_PROFILE_TYPES = ("ManagedClient", "Client")
+
+
+def profile_client_type(proof):
+    """Keep the native client family; old proofs still require ManagedClient."""
+    kinds = proof.get("targetTypes")
+    if kinds is None:
+        return "ManagedClient"
+    if not isinstance(kinds, dict):
+        raise WorkError("RDBG_TARGET_TYPES_INVALID")
+    clients = [kind for kind in kinds.values() if kind in CLIENT_PROFILE_TYPES]
+    if not clients:
+        raise WorkError("RDBG_OWNED_CLIENT_NOT_DISCOVERED")
+    if len(clients) != 1:
+        raise WorkError("RDBG_OWNED_CLIENT_AMBIGUOUS")
+    return clients[0]
+
+
+def required_profile_types(base_kind, client_type="ManagedClient"):
+    if client_type not in CLIENT_PROFILE_TYPES:
+        raise WorkError("RDBG_CLIENT_TYPE_UNSUPPORTED")
     if base_kind == "file":
-        return ["ManagedClient", "ServerEmulation"]
+        return [client_type, "ServerEmulation"]
     if base_kind == "server":
-        return ["ManagedClient", "Server"]
+        return [client_type, "Server"]
     raise WorkError("RDBG_INFOBASE_KIND_REQUIRED")
 
 
@@ -102,7 +122,7 @@ def select_runtime_session(targets, alias, seance=None, instance=None, session_n
             raise WorkError("RDBG_SESSION_NUMBER_INVALID") from None
     candidates = []
     for target in targets:
-        if target.get("infoBaseAlias") != alias or target.get("targetType") not in ("ManagedClient", "Server", "ServerEmulation"):
+        if target.get("infoBaseAlias") != alias or target.get("targetType") not in (*CLIENT_PROFILE_TYPES, "Server", "ServerEmulation"):
             continue
         if seance and target.get("seanceId") != seance:
             continue
@@ -121,7 +141,10 @@ def select_runtime_session(targets, alias, seance=None, instance=None, session_n
     ids = [t.get("id") for t in candidates]
     if not all(ids) or len(ids) != len(set(ids)):
         raise WorkError("RDBG_TARGET_IDS_INVALID")
-    if sum(t["targetType"] == "ManagedClient" for t in candidates) != 1:
+    client_count = sum(t["targetType"] in CLIENT_PROFILE_TYPES for t in candidates)
+    if client_count == 0:
+        raise WorkError("RDBG_OWNED_CLIENT_NOT_DISCOVERED")
+    if client_count != 1:
         raise WorkError("RDBG_OWNED_CLIENT_AMBIGUOUS")
     return candidates
 
@@ -167,7 +190,7 @@ def runtime_proof(context_path, client_pid, seance=None, instance=None, observat
         proof["infoBaseInstanceID"] = selected[0]["infoBaseInstanceID"]
         proof["targetIds"] = [t["id"] for t in selected]
         proof["targetTypes"] = {t["id"]: t["targetType"] for t in selected}
-        proof["requiredTypes"] = required_profile_types(context["target"]["infoBase"]["kind"])
+        proof["requiredTypes"] = required_profile_types(context["target"]["infoBase"]["kind"], profile_client_type(proof))
         if observation_path is not None:
             proof["sessionObservationSha256"] = digest(observation_path)
             proof["sessionNumber"] = session_number
