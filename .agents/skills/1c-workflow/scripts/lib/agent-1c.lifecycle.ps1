@@ -2148,9 +2148,18 @@ function Get-ItlDevBranchMutationDatabaseState {
 }
 
 function Get-ItlDevBranchMutationAdmissionPreparation {
-    param([string]$Operation = 'update-dev-branch-base')
+    param([string]$Operation = 'update-dev-branch-base', [switch]$CheckSourcePreflight)
     $state = Get-ItlDevBranchMutationDatabaseState -Operation $Operation
     if ($null -ne $state) { Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation }
+    if ($CheckSourcePreflight -and $Operation -in @('check-dev-branch', 'verify-dev-branch')) {
+        # Source prerequisites do not need a database lease. Preserve their
+        # diagnostics before planning a launch, including legacy branch state.
+        # The action repeats this read-only check after waiting for admission.
+        $trigger = $(if ($VerificationTrigger) { $VerificationTrigger } else { 'command' })
+        $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
+        Assert-ItlVerificationRepairScope -Trigger $trigger
+        Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
+    }
     if ($Operation -eq 'lock-config-repository-objects' -and (
         -not (Get-SourceUsesRepository) -or (Get-DevBranchKind -State $state) -ne 'configuration' -or
         (Get-DevBranchInitializationStatus -State $state) -ne 'ready')) {

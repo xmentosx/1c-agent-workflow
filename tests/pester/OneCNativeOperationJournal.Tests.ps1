@@ -93,3 +93,89 @@
         Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeTrue
     }
 }
+
+Describe 'CREATEINFOBASE completion retains aggregate ownership through native release' {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
+    }
+    BeforeEach {
+        $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
+        $script:OneCSessionLaunchContext = $null
+        $script:createBase = Join-Path $TestDrive 'База создания с пробелом'
+        $script:createProcess = [pscustomobject]@{Id=45451;HasExited=$true;ExitCode=0}
+        $script:createProcess | Add-Member ScriptMethod Refresh {}
+        $script:createProcess | Add-Member ScriptMethod WaitForExit { param($Milliseconds) return $true }
+        Mock Start-Process { $script:createProcess }
+        Mock Invoke-OneCSessionAdmissionSet { param($Admissions, $StartProcess) & $StartProcess }
+        Mock Remove-OneCSessionReservation {}
+        Mock Publish-Agent1cLifecycleOperationProcessEvidence {}
+        Mock Get-DesignerInvocationProcessState { [pscustomobject]@{querySucceeded=$true;active=$false} }
+        Mock Stop-Process { throw 'No observed process may be stopped by a successful release probe.' }
+    }
+    AfterEach {
+        $script:OneCNativeOperationJournal = $null
+        $script:OneCSessionLaunchContext = $null
+    }
+
+    It 'records clean release while preserving native exit <Code>' -TestCases @(@{Code=0},@{Code=7}) {
+        param($Code)
+        $script:createProcess.ExitCode = $Code
+        $result = Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $createBase -Purpose vanessa-service-infobase-create -ScriptBlock {
+            Invoke-NativeProcessAndWaitResult -FilePath fake.exe -Arguments @('CREATEINFOBASE',(New-FileInfoBaseConnectionString -Path $createBase)) `
+                -OneCCreateInfoBaseSyntax -TimeoutSeconds 5 -PostExitProbeSeconds 3 -CompletionGraceSeconds 0 -CompletionProbe { $true }
+        }
+        $result.exitCode | Should -Be $Code
+        $result.launcherExitCode | Should -Be $Code
+        $result.ownedProcessesReleased | Should -BeTrue
+        $record = $script:OneCNativeOperationJournal.entries[0]
+        $record.processId | Should -Be 45451
+        $record.launcherExited | Should -BeTrue
+        $record.releaseEvidence | Should -Be 'create-infobase-owned-process-release'
+        Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeTrue
+        Should -Invoke Get-DesignerInvocationProcessState -Times 2 -Exactly:$false
+        Should -Invoke Stop-Process -Times 0
+    }
+
+    It 'does not authorize RestoreIB when the launcher exits but its child remains' {
+        Mock Get-DesignerInvocationProcessState { [pscustomobject]@{querySucceeded=$true;active=$true} }
+        $result = Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $createBase -ScriptBlock {
+            Invoke-NativeProcessAndWaitResult -FilePath fake.exe -Arguments @('CREATEINFOBASE',(New-FileInfoBaseConnectionString -Path $createBase)) `
+                -OneCCreateInfoBaseSyntax -TimeoutSeconds 5 -PostExitProbeSeconds 1
+        }
+        $result.launcherExitCode | Should -Be 0
+        $result.exitCode | Should -Not -Be 0
+        $result.ownedProcessesReleased | Should -BeFalse
+        $result.terminationError | Should -Be 'CREATEINFOBASE_OWNED_PROCESS_RELEASE_UNCONFIRMED'
+        $script:OneCNativeOperationJournal.entries[0].launcherExited | Should -BeTrue
+        Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeFalse
+        Should -Invoke Stop-Process -Times 0
+    }
+
+    It 'retains creation debt after a failed live process query' {
+        Mock Get-DesignerInvocationProcessState { throw 'live inventory unavailable' }
+        {
+            Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $createBase -ScriptBlock {
+                Invoke-NativeProcessAndWaitResult -FilePath fake.exe -Arguments @('CREATEINFOBASE',(New-FileInfoBaseConnectionString -Path $createBase)) `
+                    -OneCCreateInfoBaseSyntax -TimeoutSeconds 5 -PostExitProbeSeconds 1
+            }
+        } | Should -Throw '*live inventory unavailable*'
+        $script:OneCNativeOperationJournal.entries[0].launcherExited | Should -BeTrue
+        Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeFalse
+    }
+
+    It 'retains an uncertain creation attempt without replay or inferred release' {
+        Mock Start-Process { throw 'creation launch outcome unknown' }
+        {
+            Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $createBase -ScriptBlock {
+                Invoke-NativeProcessAndWaitResult -FilePath fake.exe -Arguments @('CREATEINFOBASE',(New-FileInfoBaseConnectionString -Path $createBase)) `
+                    -OneCCreateInfoBaseSyntax -TimeoutSeconds 5 -PostExitProbeSeconds 1
+            }
+        } | Should -Throw '*creation launch outcome unknown*'
+        Should -Invoke Start-Process -Times 1 -Exactly
+        Should -Invoke Get-DesignerInvocationProcessState -Times 0
+        $script:OneCNativeOperationJournal.entries[0].startAttempted | Should -BeTrue
+        Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeFalse
+    }
+}

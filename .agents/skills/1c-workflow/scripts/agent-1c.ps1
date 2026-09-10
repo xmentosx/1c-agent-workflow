@@ -436,7 +436,7 @@ try {
         # then fail before any action or native call. Admission failures (wait,
         # cancellation, recovery debt) are never deferred into a local lock.
         $databaseAdmissionPreparation = $null
-        try { $databaseAdmissionPreparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $requestedLifecycleAction }
+        try { $databaseAdmissionPreparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $requestedLifecycleAction -CheckSourcePreflight }
         catch { $databaseAdmissionPlanningError = $_ }
         if ($null -eq $databaseAdmissionPlanningError) {
             $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction -Preparation $databaseAdmissionPreparation

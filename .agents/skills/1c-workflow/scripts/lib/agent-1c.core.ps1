@@ -1,4 +1,4 @@
-$script:Agent1cCoreRoot = $PSScriptRoot
+﻿$script:Agent1cCoreRoot = $PSScriptRoot
 
 function Write-Section {
     param([string]$Text)
@@ -6503,6 +6503,9 @@ function Invoke-NativeProcessAndWaitResult {
     } else {
         Join-NativeCommandLineArguments -Arguments $Arguments
     }
+    $createNativeRecord = if ($OneCCreateInfoBaseSyntax) {
+        Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+    } else { $null }
     $process = Invoke-OneCSessionProcessStart -StartProcess {
         Start-Process `
             -FilePath $FilePath `
@@ -6727,7 +6730,7 @@ function Invoke-NativeProcessAndWaitResult {
             $launcherExitCode = [int]$process.ExitCode
         }
     } catch {}
-    return [pscustomobject]@{
+    $nativeResult = [pscustomobject]@{
         processId = $process.Id
         exitCode = $(
             if ($script:LastProcessMemoryLimitExceeded) { -2 }
@@ -6754,6 +6757,47 @@ function Invoke-NativeProcessAndWaitResult {
         launcherExited = $launcherExited
         launcherExitCode = $launcherExitCode
     }
+    if ($OneCCreateInfoBaseSyntax) {
+        # CREATEINFOBASE may detach its launcher just like Designer. A native
+        # exit/file alone cannot release ownership or authorize RestoreIB.
+        if ($completedByProbe -and $null -ne $launcherExitCode -and $launcherExitCode -ne 0) {
+            $nativeResult.exitCode = $launcherExitCode
+        }
+        $releaseSeconds = if ($PostExitProbeSeconds -gt 0) { $PostExitProbeSeconds } else { Get-CompletionPostExitTimeoutSeconds }
+        $released = Confirm-OneCCreateInfoBaseProcessRelease -Record $createNativeRecord -ProcessId $process.Id `
+            -LauncherExited $launcherExited -TimeoutSeconds $releaseSeconds
+        $nativeResult | Add-Member NoteProperty ownedProcessesReleased $released
+        if (-not $released) {
+            if ($nativeResult.exitCode -eq 0) { $nativeResult.exitCode = -4 }
+            $nativeResult.terminationConfirmed = $false
+            $nativeResult.terminationError = 'CREATEINFOBASE_OWNED_PROCESS_RELEASE_UNCONFIRMED'
+        }
+    }
+    return $nativeResult
+}
+
+function Confirm-OneCCreateInfoBaseProcessRelease {
+    param([AllowNull()][object]$Record, [int]$ProcessId, [bool]$LauncherExited,
+        [ValidateRange(1, 86400)][int]$TimeoutSeconds)
+    $released = $false
+    $probe = $null
+    try {
+        if (-not $LauncherExited -or $ProcessId -le 0) { return $false }
+        $probe = New-DesignerInvocationProbeState -LauncherProcessId $ProcessId
+        $context = [pscustomobject]@{processId=$ProcessId;launcherExited=$LauncherExited}
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        do {
+            if (Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $context -LogPath '') { $released = $true; break }
+            Start-Sleep -Milliseconds 100
+        } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    } finally {
+        if ($null -ne $probe -and $null -ne $probe.processScanProcess) {
+            $released = [bool](Stop-DesignerProcessEnumeration -ProbeState $probe).confirmed -and $released
+        }
+        Confirm-OneCNativeOperationRelease -Record $Record -LauncherExited $LauncherExited `
+            -OwnedProcessesReleased $released -Evidence 'create-infobase-owned-process-release'
+    }
+    return $released
 }
 
 function Invoke-NativeProcessAndWait {

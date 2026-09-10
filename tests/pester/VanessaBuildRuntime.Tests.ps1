@@ -139,6 +139,27 @@ Describe 'Pinned upstream build execution adapters' {
 }
 
 Describe 'Build native descendants and complete session admissions' {
+    It 'does not replace a later failed creation release check with earlier build evidence' {
+        $observed = & {
+            . $script:BuildRuntimeHelper -ProjectRoot $script:BuildRuntimeRepo -Action help *> $null
+            . $script:BuildRuntimeModule
+            $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
+            function Invoke-NativeProcessAndWaitResult {
+                $probe.processesReleaseConfirmed = $true
+                $script:OneCSessionLaunchContext.nativeOperationRecord.startAttempted = $true
+                return [pscustomobject]@{launcherExited=$true;launcherExitCode=0;exitCode=-4;ownedProcessesReleased=$false;timedOut=$false;completionProbeFailed=$false;postExitProbeTimedOut=$false}
+            }
+            $message = ''
+            try {
+                Invoke-VanessaBuildOwnedNative -FilePath fake.exe -Arguments @('CREATEINFOBASE','File="C:\fixture";') `
+                    -Bases @([pscustomobject]@{kind='file';path='C:\fixture'}) -Purpose create-fixture -CreateInfoBase | Out-Null
+            } catch { $message = $_.Exception.Message }
+            [pscustomobject]@{message=$message;released=(Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal)}
+        }
+        $observed.message | Should -Match 'VANESSA_BUILD_NATIVE_STAGE_FAILED'
+        $observed.released | Should -BeFalse
+    }
+
     It 'admits both single-build bases and confirms release with an unrelated client still alive' {
         $result = Invoke-BuildNativeFixture
         $result.error | Should -Be ''

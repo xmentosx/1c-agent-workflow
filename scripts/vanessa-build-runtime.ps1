@@ -91,6 +91,11 @@ function Invoke-VanessaBuildOwnedNative {
         $scanReleased = $true
         if ($null -ne $probe.processScanProcess) { $scanReleased = [bool](Stop-DesignerProcessEnumeration -ProbeState $probe).confirmed }
         $released = $scanReleased -and [bool]$probe.processesReleaseConfirmed
+        if ($CreateInfoBase -and $null -ne $result) {
+            # The native creation owner takes a later live observation. Its
+            # unresolved cleanup cannot be replaced by this earlier probe.
+            $released = $released -and [bool](Get-StateValue -State $result -Name 'ownedProcessesReleased' -Default $false)
+        }
         Confirm-OneCNativeOperationRelease -Record $evidence.record `
             -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
             -OwnedProcessesReleased $released -Evidence 'vanessa-build-owned-process-release'

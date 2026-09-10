@@ -1821,9 +1821,41 @@ an auxiliary check is restricted to the separately admitted primary target;
 other profile databases do not become mutation targets. Source acceptance covers
 real pipe competition and the unchanged public managed-contour reset fixture.
 The 126 focused tests pass, including all four original lifecycle-lock failures;
-no original fixture, continuation assertion or workload was weakened. Combined
-registration, installed, live foreign-session and multi-host acceptance remain
-open.
+no original fixture, continuation assertion or workload was weakened. Registration
+of 50d7b8a exposed two unchanged authoring regressions: database-plan resolution
+masked missing-suite diagnostics on legacy branch state. Public Check/Verify
+now runs its existing read-only source preflight during preparation, before any
+database acquisition. Preparation errors still pass through lifecycle conflict
+and continuation validation; the action repeats preflight after waiting.
+
+The first real foreign-session fixture exposed missing CREATEINFOBASE release
+evidence before its external client was launched. The database had been created
+and restored, but the creation record remained unresolved. The native creation
+path now performs bounded live launcher/descendant release verification and
+persists its result. Unconfirmed release prevents the next RestoreIB even when
+the launcher exit code is zero. A failed launcher remains failed after clean
+release. The Vanessa build wrapper cannot overwrite this later observation with
+an earlier successful probe. Five creation cases and the original authoring,
+lifecycle, Designer completion and memory regressions pass (83 total); the three
+creation caller suites pass 63 cases, including stale build-proof rejection.
+
+The initial fixture `C:/va канал/foreign-75408a08` retained its failed result and
+ticket 51244bc0ea70433d9cfb235a19b46339. Exclusive Recovery checked unchanged
+indexed helper inputs, two live empty inventories and exclusive database-file
+access before releasing it; no process was stopped. A competitor was admitted
+afterward. This fixture created only its own fresh technical database and had
+no business workload or preexisting-database rollback duty.
+
+Complete live auxiliary acceptance passes in `C:/va канал/foreign-f05bc9d4`:
+guarded fresh creation and template restore release their native records;
+an independently owned TestClient remains alive through the external-session
+wait timeout; only its fixture owner closes it; a subsequent admitted drain
+succeeds. All three leases are released and no fixture process remains. An
+intermediate fixture `foreign-97790c5d` proved preservation but hit a diagnostic
+cleanup variable collision with the helper's typed Client parameter. Its
+original failed result is retained, with separate exact-identity cleanup proof;
+the corrected final fixture keeps the same workload and database topology.
+Combined registration, installed command and multi-host acceptance remain open.
 
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket
@@ -1839,13 +1871,14 @@ rollback duty and its business scenario is still reported as failed.
 The general script-owned recovery adapter and its per-operation restoration
 contracts remain open. It must also resolve the original helper generation after
 an installed update, rather than trusting a changed file at a retained path.
-Abrupt interruption during launch, a live foreign-client case, installed command
+Abrupt interruption during launch, installed command
 acceptance and the remaining facade admission paths still require work.
 
 This evidence does not close item 4: durable recovery after supervisor restart,
 the remaining entrypoints, installed acceptance and two-host competition remain
-open. The fixture proves foreign-session isolation; a new live foreign-session
-acceptance is still required. No `conf.cfg` changes are part of this correction.
+open. Live foreign-session evidence above covers the auxiliary drain on a local
+technical file database; it does not establish server or two-host acceptance.
+No `conf.cfg` changes are part of this correction.
 
 ## Item 10: correlated client-code outcomes
 
