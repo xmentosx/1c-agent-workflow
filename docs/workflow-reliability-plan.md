@@ -80,7 +80,7 @@ and multi-host recovery remain open.
 | 1 | P0 | Include file-base ServerEmulation and validate profile coverage | Real client/server packets; missing family partial; foreign packet rejected | Source implementation and retained real-packet analysis verified; installation and new live capture pending |
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
-| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. A phase-aware candidate now permits ROCTUP reads with one test run and upgrades the same ticket for mutations; focused Python, Go and PowerShell proofs pass. Server recovery and multi-host/installed acceptance stay open |
+| 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Phase-aware admission permits ROCTUP reads with one test run and upgrades the same ticket for mutations. The current server candidate requires a bounded `recovery-observe` provider before native start and binds two zero-session observations to the original provider SHA; focused Python and PowerShell proofs pass. Live server, multi-host and installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes, durable phase receipts, or a source-bound terminal Designer outcome. Legacy unbound outcomes, server recovery and installed acceptance remain open |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
@@ -91,7 +91,7 @@ and multi-host recovery remain open.
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass. The phase-aware candidate also removes the whole-check runtime writer and permits ROCTUP during Vanessa/YAxUnit test execution while preserving exclusive preparation. Delivered facade/PM5, competing chats and server acceptance remain open |
-| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings retained; 1.1 and 5.2 mechanically contradicted, 5.4 remains unresolved. Overall review stays unverified; case-based acceptance and normal workflow delivery remain open |
+| 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings retained; 1.1 and 5.2 are mechanically contradicted, while 5.4 is a confirmed product error-handling defect whose proposed unconditional fix is unsafe. Overall review stays unverified; the separate PM5 correction, case-based acceptance and normal workflow delivery remain open |
 | 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names now recognized with 19 focused root/report tests passing; silent repeat ownership and delivered public-command acceptance remain open |
 | 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
 
@@ -2757,19 +2757,25 @@ runtime calls were made.
 Under the prepared r35 policy, findings 1.1 and 5.2 have mechanically checkable
 contradictions: the documented BSL reference-parameter semantics and the guard
 present in the exact submitted unit before both cache lookup and insertion.
-Finding 5.4 is not fully disproven. Astronomical date arithmetic does not consume
-the working calendar, but the working-time branch does, and merely retrieving a
-calendar from a map does not prove it exists. The relevant downstream calendar
-method bodies and preparation contract were not part of the original six
-methods. Its inherited provenance or an unsuitable proposed guard alone cannot
-discharge the blocker. The overall review outcome therefore stays `unverified`,
-not `adjudicated-false-positive` or a clean AI response.
+Finding 5.4 is a confirmed product error-handling defect, although the proposed
+unconditional guard is unsafe. Astronomical date arithmetic legitimately does
+not consume the working calendar. For working time, every nonempty typed calendar
+reference receives a map entry, while the producer removes empty references and
+the calculation input check does not reject a plan and element that both lack a
+calendar. `ДобавитьКДате` and `ВычестьИзДаты` then use the missing value before a
+controlled journal error can be recorded. This violates the documented contract
+that a missing inherited calendar produces a calculation error. The correct
+owner must guard the nonastronomical path before dereference, retain the
+astronomical path, write a normal calculation error and stop the calculation.
+The overall review outcome therefore stays `unverified`, not
+`adjudicated-false-positive` or a clean AI response.
 
 Product context was checked through BookStack: page 192 `Расчет сроков` and page
 236 `Календари`, both `updated_at=2025-11-25T08:56:39.000000Z`, supplied from its
-MCP cache. They distinguish astronomical units from working-calendar units and
-document plan-calendar inheritance. The cache response did not supply canonical
-page URLs; no newer product revision was asserted. The official language source
+MCP cache. They distinguish astronomical units from working-calendar units,
+document plan-calendar inheritance and explicitly require a calculation error
+when neither element nor plan calendar exists. No newer product revision was
+asserted. The official language source
 was also checked:
 https://kb.1ci.com/1C_Enterprise_Platform/FAQ/Development/Standards/1C_Enterprise_script/.
 
@@ -2777,13 +2783,14 @@ Retained report and hash-bound machine inventory:
 `C:/Users/xment/.codex/visualizations/2026/09/10/01a08571-0c9d-7981-a7bc-91a792ec45f9/review-adjudication/REVIEW.md`
 and adjacent `adjudication.json` / `validation-unit.bsl`.
 
-Remaining: establish the valid-input/preparation contract for 5.4, then resolve a
-confirmed defect in its owner or record a specific authorized risk decision if
-one is actually needed. Any additional AI call must respect the existing call
-budget and the already-used one-repeat authorization. Deliver and qualify r35's
-mixed-outcome behavior through the installed route. The workflow investigation
-must not relabel this remaining business finding as a false positive, modify PM5
-for a green response, or manufacture a host verification proof.
+Remaining: fix 5.4 in an isolated PM5 development branch without mixing with the
+uncommitted branch11 readiness work. Add a YAxUnit regression for the missing
+calendar error and a preserved astronomical-without-calendar case, then complete
+the normal branch check. No additional AI call is required or permitted by the
+already-used one-repeat authorization. Deliver and qualify r35's mixed-outcome
+behavior through the installed route. The workflow investigation must not
+relabel the confirmed finding as a false positive, apply the unsafe unconditional
+guard, or manufacture a host verification proof.
 
 ## Item 4a: initialization and fork admission, 2026-09-10
 
@@ -2859,3 +2866,32 @@ of the ticket ID across both transitions, Vanessa backend preparation under
 exclusive followed by ROCTUP-compatible runtime, legacy-exclusive behavior and
 the PowerShell/Go facade boundary. Installed file/server and two-host acceptance
 is still required before closing items 4 and 14.
+
+## Item 4: provider-bound server recovery, 2026-09-11
+
+Local process absence cannot prove that a server infobase has no surviving
+cluster session. The source candidate therefore extends the existing server
+provider contract instead of adding a second lock, TTL or stale-owner service.
+Before the first native record for any server resource, `serverBaseCopyScript`
+must finish its schema-2 capability probe within 30 seconds and advertise
+`recovery-observe`. Failure occurs before 1C starts, so the ordinary database
+owner can release without recovery debt.
+
+The provider path and SHA are stored in every new native intent. Recovery runs
+only on the original producer host, validates the retained provider before and
+after each call, and asks it twice for the exact normalized `/S` identity. The
+strict response contains no session identities or credentials: only the caller
+observation ID, exact infobase, database-presence flag, integer session count and
+an exclusive flag that must equal `sessionCount == 0`. A missing database,
+surviving session, changed provider, ambiguous binding, malformed response,
+timeout or provider failure keeps `needs-attention`. Nothing stops a foreign
+session or steals the ticket.
+
+The existing journal, fencing token, recovery attempt audit, cancellation and
+operation-specific effect adapter remain authoritative. The server observer
+only supplies the live quiescence fact which the file-base path obtained from an
+exclusive `1Cv8.1CD` handle. Focused evidence passes 14 native-journal Python
+tests, the provider-backed server recovery case, and 10 PowerShell generation /
+native-observation tests. A real provider against a server base and two execution
+hosts sharing one coordinator are still required before claiming installed
+server recovery.
