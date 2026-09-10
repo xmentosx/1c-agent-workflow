@@ -277,9 +277,107 @@
         Should -Invoke Start-ItlDatabaseAccessHost -Times 0 -Exactly
     }
 
+    Context 'source synchronization admits both participants together' {
+        BeforeEach {
+            $script:PeerDevBranchName = 'itldev/peer'
+            $script:mutationState | Add-Member -NotePropertyName devBranchName -NotePropertyValue 'update' -Force
+            $script:mutationState | Add-Member -NotePropertyName devBranch -NotePropertyValue 'itldev/update' -Force
+            $script:peerRoot = Join-Path $script:ProjectRoot 'Другая ветка'
+            New-Item -ItemType Directory -Path $script:peerRoot | Out-Null
+            $script:peerState = [pscustomobject]@{devBranch='itldev/peer';devBranchName='peer';worktreePath=$script:peerRoot
+                infoBaseKind='file';devBranchInfoBasePath=(Join-Path $script:peerRoot 'Рабочая база')
+                vanessaServiceInfoBasePath=(Join-Path $script:peerRoot 'Служебная база')}
+            $script:ConfigPath = Join-Path $script:ProjectRoot '.agent-1c/project.json'
+            $script:DependencyLockPath = Join-Path $script:ProjectRoot '.agent-1c/dependency-lock.json'
+            $script:Config = [pscustomobject]@{}
+            Mock Read-DevBranchState { param($Name) if ($Name -eq 'peer') { $script:peerState } else { $script:mutationState } }
+            Mock Assert-DevBranchSourceSyncCompatibility { 'src/cf' }
+            $peerRequest = @{schemaVersion=1;coordinator=$settings.coordinator;timeout=0
+                bases=@(@{kind='file';path=$script:peerState.devBranchInfoBasePath});owner=@{operation='peer-measurement'}}
+        }
+
+        It 'waits on the second base without keeping the first or taking local locks' {
+            $holder = Start-ItlDatabaseAccessHost -Python $python -Request $peerRequest
+            try {
+                { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*WAIT_TIMEOUT*'
+                $independent = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
+                Complete-ItlDatabaseAccessHost $independent | Out-Null
+                Test-Path (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+                Test-Path (Join-Path $script:peerRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
+                Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+            } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+            $script:DevBranchMutationDatabaseAdmission.plan.bases | Should -HaveCount 4
+            { Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDatabaseAccessHost -Python $python -Request $peerRequest } | Should -Throw '*WAIT_TIMEOUT*'
+            Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission
+            $next = Start-ItlDatabaseAccessHost -Python $python -Request $peerRequest
+            Complete-ItlDatabaseAccessHost $next | Out-Null
+        }
+
+        It 'uses one reservation when both branches point at the same database and manager' {
+            $script:peerState.devBranchInfoBasePath = $script:mutationState.devBranchInfoBasePath
+            $script:peerState.vanessaServiceInfoBasePath = $script:mutationState.vanessaServiceInfoBasePath
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+            $script:DevBranchMutationDatabaseAdmission.plan.bases | Should -HaveCount 2
+            $script:DevBranchMutationDatabaseAdmission.plan.syncParticipants | Should -HaveCount 2
+            Invoke-InProjectContext -Root $script:peerRoot -ScriptBlock {
+                Assert-ItlBranchSourceSyncDatabaseAdmission -State $script:peerState
+            }
+        }
+
+        It 'permits the peer drain but never substitutes its reserved manager as a mutation target' {
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+            Invoke-InProjectContext -Root $script:peerRoot -ScriptBlock {
+                Stop-DevBranchRuntimeBeforeInfobaseMutation -State $script:peerState
+                { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $script:peerState -InfoBasePath $script:peerState.vanessaServiceInfoBasePath } | Should -Throw '*NATIVE_TARGET_NOT_RESERVED*'
+                { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $script:peerState -InfoBasePath $script:mutationState.devBranchInfoBasePath } | Should -Throw '*NATIVE_TARGET_NOT_RESERVED*'
+            }
+            Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 1 -Exactly
+            Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0
+        }
+
+        It 'rejects peer <field> drift before cleanup' -TestCases @(
+            @{field='devBranchInfoBasePath'}, @{field='vanessaServiceInfoBasePath'}, @{field='devBranch'}
+        ) {
+            param($field)
+            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches
+            $script:peerState.$field = Join-Path $script:peerRoot 'Измененный адрес'
+            Invoke-InProjectContext -Root $script:peerRoot -ScriptBlock {
+                { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $script:peerState } | Should -Throw '*MUTATION_PLAN_CHANGED*'
+            }
+            Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+        }
+
+        It 'rejects different queue authorities and restores environment even when peer planning fails' {
+            $saved = [Environment]::GetEnvironmentVariable('ITL_SYNC_PLAN_PEER_ONLY', 'Process')
+            try {
+                [Environment]::SetEnvironmentVariable('ITL_SYNC_PLAN_PEER_ONLY', $null, 'Process')
+                [IO.File]::WriteAllText((Join-Path $script:peerRoot '.dev.env'), 'ITL_SYNC_PLAN_PEER_ONLY=peer')
+                Mock Get-ItlDatabaseAccessSettings {
+                    if ($script:ProjectRoot -eq $script:peerRoot) {
+                        return [pscustomobject]@{coordinator=(Join-Path $script:peerRoot 'Другая очередь');python=$python;waitTimeoutSeconds=0}
+                    }
+                    $settings
+                }
+                { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*SYNC_COORDINATOR_MISMATCH*'
+                $script:ProjectRoot | Should -Be $script:mutationState.worktreePath
+                [Environment]::GetEnvironmentVariable('ITL_SYNC_PLAN_PEER_ONLY', 'Process') | Should -BeNullOrEmpty
+                Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0
+            } finally { [Environment]::SetEnvironmentVariable('ITL_SYNC_PLAN_PEER_ONLY', $saved, 'Process') }
+        }
+
+        It 'requires an aggregate admission for direct synchronization before changing source' {
+            Mock Assert-DevBranchSourceSyncLifecycleReady {}
+            Mock Save-DevBranchCheckpoint { throw 'must not modify source' }
+            { Sync-DevBranches } | Should -Throw '*MUTATION_ADMISSION_REQUIRED*'
+            Should -Invoke Save-DevBranchCheckpoint -Times 0
+        }
+    }
+
     It 'includes repository locking in the same pre-lifecycle admission route' {
         $entry = Get-Content (Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8
-        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')
+        $operations = @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches')
         $entry | Should -Match ([regex]::Escape("if (`$requestedLifecycleAction -in @('" + ($operations -join "', '") + "'))"))
         foreach ($command in @('Get-ItlDevBranchMutationDatabasePlan', 'Start-ItlDevBranchMutationDatabaseAdmission')) {
             $supported = (Get-Command $command).Parameters['Operation'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } | ForEach-Object ValidValues

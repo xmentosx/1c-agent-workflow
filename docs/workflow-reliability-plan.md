@@ -82,7 +82,7 @@ and multi-host recovery remain open.
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
-| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
+| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pair synchronization now joins aggregate database admission before lifecycle locks; public classification routing and nested-scenario source fixes are implemented. Group planning, explicit final recipients, resumable synchronization and installed acceptance remain open |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
@@ -2515,3 +2515,31 @@ could still be consumed; deleting them to retry is not a recovery strategy.
 Item 9 registration is now confirmed: 16e5b840b9b111dfaf701dca5cd48767c465100c,
 Targeted 532 passed / 0 failed, ledger duration 536908 ms. This does not establish
 installed row-navigation or the original combined 49-scenario acceptance.
+
+## Items 4a and 6: pair synchronization participates in database admission
+
+The pair helper previously locked both worktrees and loaded both databases
+without joining shared database admission. It could therefore interfere with a
+measurement or wait for a database while holding a lifecycle lock needed by its
+owner. The public sync-dev-branches route now requests both participant databases
+and their recorded runtime/manager resources as one atomic resource set before
+lifecycle locking. Identical resources are deduplicated. Both projects must use
+the same coordinator; planning restores the caller's process environment.
+
+After waiting, each participant's branch, project, target, coordinator and current
+runtime resources are checked before checkpointing or loading. A changed target
+or new unreserved manager fails before mutation. Cleanup in either project may
+use only that participant's admitted target, preserving foreign sessions. An
+ordinary failure releases finished native work through the shared journal;
+uncertain native work retains explicit bounded recovery diagnostics, never a TTL
+unlock. The public admission and recovery operation sets remain aligned.
+
+The directly owned pair/admission suite passed 50 tests and the native recovery
+suite passed 21, including operation-set completeness. The pair cases cover a
+busy second database, release and subsequent admission, shared database aliases
+between the two participants, target/manager/branch drift, different coordinators,
+restored peer environment and rejection before a direct unadmitted source edit.
+These are source/protocol tests, not a new native 1C synchronization or two-host
+qualification. Group aggregation, explicit final recipients and resumable source
+propagation remain separate unfinished parts of item 6. Admission alone does not
+claim that earlier peers receive changes collected from later peers.

@@ -2281,11 +2281,41 @@ function Assert-ItlMasterDatabaseAdmission {
     Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
 }
 
+function Get-ItlBranchSourceSyncDatabasePlan {
+    param([object]$State)
+    $peerName = Require-Value 'PeerDevBranchName' $PeerDevBranchName
+    if ($peerName.StartsWith('itldev/', [StringComparison]::OrdinalIgnoreCase)) { $peerName = $peerName.Substring(7) }
+    if ($peerName -ieq [string]$State.devBranchName) { throw 'DEV_BRANCH_SOURCE_SYNC_SAME_BRANCH: choose another development branch.' }
+    $peerState = Read-DevBranchState -Name $peerName
+    Assert-DevBranchSourceSyncCompatibility -PrimaryState $State -PeerState $peerState | Out-Null
+    $access = Get-ItlDatabaseAccessSettings
+    $primary = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation update-dev-branch-base
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        $peer = Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+            Assert-DevelopmentBranchWorktreeContext -State $peerState -Operation 'sync-dev-branches'
+            $peerAccess = Get-ItlDatabaseAccessSettings
+            if (-not [string]::Equals([IO.Path]::GetFullPath($access.coordinator), [IO.Path]::GetFullPath($peerAccess.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'INFOBASE_ACCESS_SYNC_COORDINATOR_MISMATCH: both branches must use the same database access authority.'
+            }
+            Get-ItlDevBranchMutationDatabasePlan -State $peerState -Operation update-dev-branch-base
+        }
+    } finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
+    $unique = @{}
+    foreach ($base in @($primary.bases) + @($peer.bases)) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
+    return [pscustomobject]@{target=$primary.target; bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
+        syncParticipants=@(
+            [pscustomobject]@{project=[IO.Path]::GetFullPath($State.worktreePath); branch=[string]$State.devBranch; target=$primary.target},
+            [pscustomobject]@{project=[IO.Path]::GetFullPath($peerState.worktreePath); branch=[string]$peerState.devBranch; target=$peer.target})
+        coordinator=[IO.Path]::GetFullPath($access.coordinator)}
+}
+
 function Get-ItlDevBranchMutationDatabasePlan {
-    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
+    param([object]$State, [ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches')][string]$Operation = 'update-dev-branch-base', [string]$ServiceGeneration = '', [string]$ServiceReserveGeneration = '')
     if ($Operation -in @('update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) {
         return Get-ItlAuxiliaryDatabasePlan -State $State -Operation $Operation -ServiceGeneration $ServiceGeneration
     }
+    if ($Operation -eq 'sync-dev-branches') { return Get-ItlBranchSourceSyncDatabasePlan -State $State }
     if ($Operation -eq 'sync-master') {
         $master = Get-ItlMasterDatabasePlan
         return [pscustomobject]@{target=$master.source;bases=@($master.bases);masterPlan=$master}
@@ -2428,7 +2458,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
 }
 
 function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
+    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
     if ($null -eq $Preparation) { return $null }
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
@@ -2474,9 +2504,27 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
     $generation = ''
     if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = $Admission.plan.servicePlan.generation }
     $reserve = if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { [string]$Admission.plan.serviceReserveGeneration } else { '' }
-    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $Admission.operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
-    if ($fresh.target.kind -cne $Admission.plan.target.kind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
+    $operation = $Admission.operation
+    $expectedTarget = $Admission.plan.target
+    if ($operation -eq 'sync-dev-branches') {
+        # Revalidate this participant in its own project context. Manager bases
+        # are reserved for cleanup, but cannot become source-load targets.
+        $participant = @($Admission.plan.syncParticipants | Where-Object {
+            $_.branch -ceq [string]$State.devBranch -and
+            [string]::Equals($_.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -and
+            [string]::Equals($_.project, [IO.Path]::GetFullPath($State.worktreePath), [StringComparison]::OrdinalIgnoreCase)
+        })
+        if ($participant.Count -ne 1) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization participant changed.' }
+        $access = Get-ItlDatabaseAccessSettings
+        if (-not [string]::Equals($Admission.plan.coordinator, [IO.Path]::GetFullPath($access.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization coordinator changed.'
+        }
+        $expectedTarget = $participant[0].target
+        $operation = 'update-dev-branch-base'
+    }
+    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
+    if ($fresh.target.kind -cne $expectedTarget.kind -or
+        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $expectedTarget.path)) {
         throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'
     }
     foreach ($base in $fresh.bases) {
@@ -2556,6 +2604,12 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     if ($null -ne $mutationAdmission) {
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $mutationAdmission -State $State
         $drainTargets = @($mutationAdmission.plan.target)
+        if ($mutationAdmission.operation -eq 'sync-dev-branches') {
+            $drainTargets = @($mutationAdmission.plan.syncParticipants | Where-Object {
+                $_.branch -ceq [string]$State.devBranch -and
+                [string]::Equals($_.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)
+            } | ForEach-Object { $_.target })
+        }
         if ($mutationAdmission.operation -eq 'check-auxiliary-contour' -and $null -ne $mutationAdmission.plan.serviceTarget) {
             # Auxiliary verification prepares primary branch tooling through
             # this existing path; other profile bases are not mutation targets.
@@ -11282,6 +11336,15 @@ function Assert-DevBranchSourceSyncLifecycleReady {
     throw "DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage'. Source synchronization cannot replace a different helper-owned lifecycle operation."
 }
 
+function Assert-ItlBranchSourceSyncDatabaseAdmission {
+    param([object]$State)
+    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $variable -or $null -eq $variable.Value -or $variable.Value.operation -cne 'sync-dev-branches') {
+        throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED: synchronization requires both databases before lifecycle locks.'
+    }
+    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $variable.Value -State $State
+}
+
 function Sync-DevBranches {
     $peerName = Require-Value "PeerDevBranchName" $PeerDevBranchName
     if ($peerName.StartsWith("itldev/", [StringComparison]::OrdinalIgnoreCase)) {
@@ -11296,6 +11359,13 @@ function Sync-DevBranches {
     $syncWorktreePath = [string](Get-StateValue -State $primaryState -Name "worktreePath" -Default $script:ProjectRoot)
     Assert-DevBranchSourceSyncLifecycleReady -State $primaryState -Role "primary" -SyncWorktreePath $syncWorktreePath
     Assert-DevBranchSourceSyncLifecycleReady -State $peerState -Role "peer" -SyncWorktreePath $syncWorktreePath
+    Assert-ItlBranchSourceSyncDatabaseAdmission -State $primaryState
+    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
+    try {
+        Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
+            Assert-ItlBranchSourceSyncDatabaseAdmission -State $peerState
+        }
+    } finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
     $pending = Get-PendingBranchSourceSync -State $primaryState
 
     if ($null -ne $pending) {

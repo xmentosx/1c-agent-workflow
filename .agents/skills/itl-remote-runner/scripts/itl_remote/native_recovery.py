@@ -28,7 +28,7 @@ WORKFLOW_OPERATIONS = frozenset({
     'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling',
     'init-dev-branch-extension', 'release-e2e-extension-smoke',
     'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master',
-    'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test',
+    'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches',
 })
 
 
