@@ -22,11 +22,16 @@ function New-OneCNativeJournalPersistence {
             throw 'ONEC_NATIVE_JOURNAL_OWNER_INVALID'
         }
         $journalId = [guid]::NewGuid().ToString('N')
+        # The public owner can be an inherited caller with no descriptive
+        # metadata. Missing labels do not invalidate its admitted authority.
+        $operation = ''; $project = ''
+        if ($Owner.public.owner.PSObject.Properties['operation']) { $operation = [string]$Owner.public.owner.operation }
+        if ($Owner.public.owner.PSObject.Properties['project']) { $project = [string]$Owner.public.owner.project }
         $persistence = [pscustomobject]@{
             owner = $Owner
             journalId = $journalId; ticket = $Owner.proof.ticket
             createdAt = [DateTime]::UtcNow.ToString('o'); hostName = [Environment]::MachineName; ownerPid = $PID
-            operation = [string]$Owner.public.owner.operation; project = [string]$Owner.public.owner.project
+            operation = $operation; project = $project
             resources = @($Resources | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path} })
             resourceIds = @($Owner.public.resources)
             helperInputs = @('agent-1c.core.ps1','agent-1c.sessions.ps1','agent-1c.vanessa.ps1' | ForEach-Object {

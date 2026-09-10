@@ -1,5 +1,6 @@
 ﻿Describe 'Durable native intent before process creation' {
     BeforeAll {
+        Set-StrictMode -Version Latest
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
         . $context.HelperPath -ProjectRoot $context.RepoRoot -Action help *> $null
@@ -47,6 +48,25 @@
         $observedBeforeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match 'private-inheritance-secret|extra-scope-secret'
         $observedBeforeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match ([regex]::Escape($journalOwner.proof.token))
         Test-OneCNativeOperationJournalReleased $script:OneCNativeOperationJournal | Should -BeFalse
+    }
+
+    It 'persists native intent when the admitted owner omits optional operation and project labels' {
+        Complete-ItlDatabaseAccessHost -Owner $journalOwner | Out-Null
+        $request = @{schemaVersion=1;coordinator=$journalRoot;bases=@(@{kind='file';path=$journalBase});timeout=0;nativeJournalProtocol=1;owner=@{}}
+        $script:journalOwner = Start-ItlDatabaseAccessHost -Python $persistencePython -Request $request
+        $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal -Resources @([pscustomobject]@{kind='file';path=$journalBase}) -Owner $journalOwner
+        {
+            Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -ScriptBlock {
+                Invoke-OneCSessionProcessStart -StartProcess { throw 'native outcome unknown without labels' }
+            }
+        } | Should -Throw '*native outcome unknown without labels*'
+        $record = $script:OneCNativeOperationJournal.entries[0]
+        $saved = Get-Content -LiteralPath $record.persistedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $saved.operation | Should -Be ''
+        $saved.project | Should -Be ''
+        $saved.startAttempted | Should -BeTrue
+        $saved.ticket | Should -Be $journalOwner.proof.ticket
+        (Complete-ItlDatabaseAccessHost -Owner $journalOwner).status | Should -Be 'needs-attention'
     }
 
     It 'does not start a native process when durable intent cannot be written' {

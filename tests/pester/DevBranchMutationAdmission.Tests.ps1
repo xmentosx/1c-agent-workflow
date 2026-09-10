@@ -1,5 +1,6 @@
 ﻿Describe 'Development database update owns shared admission before native work' {
     BeforeAll {
+        Set-StrictMode -Version Latest
         $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
         $lib = Join-Path $repo '.agents/skills/1c-workflow/scripts/lib'
         foreach ($name in @('core', 'runtime-values', 'sessions', 'lifecycle', 'roctup-mcp', 'vanessa', 'ondemand-mcp')) {

@@ -1749,9 +1749,18 @@ release request with an unresolved native intent retains needs-attention.
 Persistence initializes at the first operation, including build journals whose
 owner is attached after construction. Runtime drain records zero new sessions
 and persists its intent before cleanup; process launches still require positive
-session admissions. The 42 PowerShell integration cases, 11 journal/index Python
+session admissions. The 43 PowerShell integration cases, 11 journal/index Python
 cases and 15 real pipe-host Python cases pass. Detailed native index data stays
 out of ordinary admission and waiting messages.
+
+Registration of b4fb92d exposed a strict-mode failure when an inherited parent's
+optional project label was absent. Reading that label failed before native
+launch and caused a secondary owner-change error during fixture cleanup. The
+producer now treats missing operation/project labels as empty descriptive
+metadata while retaining all authority checks. The original inherited-uncertain
+launch scenario passes unchanged under explicit strict mode; a separate real
+pipe case proves that unlabeled owners persist intent and retain recovery debt.
+Registration of the corrected candidate must still be recorded.
 
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket
