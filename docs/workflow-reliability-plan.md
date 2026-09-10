@@ -1868,6 +1868,18 @@ The owner suite passes 20 tests, with an exact set comparison between public
 routing and both planner/admission parameter contracts. Registration and real
 installed export/ROCTUP competition remain required.
 
+Registration of 1631abd reached an unchanged config-wait harness that copied the
+public helper and replaced Check-DevBranch with a no-native stub, but supplied
+neither a Git branch nor database state. The failure is the real admission
+planner's `git branch --show-current`, before the substituted action. Allowing
+that action to bypass admission would violate the new target-ownership contract.
+The harness now supplies a real disposable branch, suite, target identity,
+packaged admission dependencies and private coordinator. Its copied-helper path,
+waiter handshake, config/environment changes and original result assertions are
+unchanged. A third case retains the original absent-Git setup and requires
+rejection before the stub runs. All three cases pass; the two admitted cases
+also require their ticket to be released. No native 1C workload is introduced.
+
 Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
 exception before cleanup left one owned TestClient and ticket
 `92b9e49eb3e34d338498c6138a573336` in needs-attention. A fresh Python process read

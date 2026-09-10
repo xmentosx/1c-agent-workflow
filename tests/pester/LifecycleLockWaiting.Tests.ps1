@@ -233,30 +233,55 @@ try {
     }
 
     It 'checks current inputs after waiting when <InputKind> changed' -ForEach @(
-        @{ InputKind='config' }, @{ InputKind='environment' }
+        @{ InputKind='config' }, @{ InputKind='environment' }, @{ InputKind='invalid-context' }
     ) {
         $root = Join-Path $TestDrive "новые данные $InputKind"
         $scripts = Join-Path $root 'scripts'
         New-Item -ItemType Directory -Force -Path $scripts | Out-Null
         Copy-Item -LiteralPath $HelperPath -Destination $scripts
         Copy-Item -LiteralPath (Join-Path (Split-Path $HelperPath) 'lib') -Destination $scripts -Recurse
+        # Check now plans real cross-project admission before entering the
+        # lifecycle lock. The post-admission action stub does not exempt its
+        # caller from identifying a real branch and the intended database.
+        # Keep the original copied-helper path, waiter handshake, input changes
+        # and assertions. Supply only the previously absent admission inputs;
+        # retain the original invalid context as an explicit rejection case.
+        Copy-Item -LiteralPath (Join-Path (Split-Path (Split-Path $HelperPath)) 'assets') -Destination $root -Recurse
+        $remoteSource = Join-Path $context.RepoRoot '.agents/skills/itl-remote-runner'
+        $remoteDestination = Join-Path $TestDrive 'itl-remote-runner'
+        if (-not (Test-Path -LiteralPath $remoteDestination)) { Copy-Item -LiteralPath $remoteSource -Destination $remoteDestination -Recurse }
+        $fixtureConfig = [ordered]@{fixtureTarget='old';testsPath='tests/features';databaseAccess=@{coordinator=(Join-Path $root 'Координатор ожидания');python=(Get-Command python -CommandType Application | Select-Object -First 1).Source;waitTimeoutSeconds=0}}
+        if ($InputKind -ne 'invalid-context') {
+            & git -C $root init --quiet
+            & git -C $root -c user.name=Test -c user.email=test@example.com commit --allow-empty --quiet -m init
+            & git -C $root switch --quiet -c itldev/wait
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c/dev-branches'),(Join-Path $root 'tests/features') | Out-Null
+            $branchState = @{devBranchName='wait';safeDevBranchName='wait';devBranch='itldev/wait';devBranchKind='configuration';worktreePath=$root;infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'Целевая база')}
+            [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dev-branches/wait.json'),($branchState | ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root 'tests/features/config.feature'),"#language: en`nFeature: Configuration wait`nScenario: Reads current config`n Given retained fixture step`n",[Text.UTF8Encoding]::new($false))
+        }
         # Keep real entrypoint/admission/config loading; substitute only the
         # post-admission action so this regression never launches a real 1C base.
         Add-Content -LiteralPath (Join-Path $scripts 'lib/agent-1c.ai-rules-migration.ps1') -Encoding UTF8 -Value @'
 function Check-DevBranch {
     if ((Get-ConfigValue -Path 'fixtureTarget') -ne 'current') { throw 'STALE_CONFIG' }
+    if ($null -eq $script:DevBranchMutationDatabaseAdmission) { throw 'MISSING_DATABASE_ADMISSION' }
+    Assert-OneCNativeOperationJournalOwner -Journal $script:DevBranchMutationDatabaseAdmission.journal
     Write-Output 'CURRENT_CONFIG'
 }
+function Invoke-Designer { throw 'Unexpected native Designer in config-wait fixture.' }
+function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait fixture.' }
 '@
         & {
             . $HelperPath -ProjectRoot $root -Action help *> $null
             Enter-Agent1cLifecycleOperation -RequestedAction check-dev-branch
             $config = Join-Path $root '.agent-1c/project.json'
-            [IO.File]::WriteAllText($config, '{"fixtureTarget":"old"}')
+            [IO.File]::WriteAllText($config, ($fixtureConfig | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
             $job = Start-Worker (Join-Path $scripts 'agent-1c.ps1') @('-ProjectRoot', $root, '-Action', 'check-dev-branch')
             try {
                 $null = Wait-Fixture { Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/locks/lifecycle-waiters') -Filter '*.json' -ErrorAction SilentlyContinue }
-                [IO.File]::WriteAllText($config, '{"fixtureTarget":"current"}')
+                $fixtureConfig.fixtureTarget = 'current'
+                [IO.File]::WriteAllText($config, ($fixtureConfig | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
                 if ($InputKind -eq 'environment') { [IO.File]::WriteAllText((Join-Path $root '.dev.env'), 'FIXTURE_TARGET=changed') }
                 Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
                 Exit-Agent1cLifecycleOperation
@@ -264,10 +289,19 @@ function Check-DevBranch {
                 if ($InputKind -eq 'config') {
                     $result.exitCode | Should -Be 0 -Because $result.combinedText
                     $result.stdout | Should -Match CURRENT_CONFIG
-                } else {
+                } elseif ($InputKind -eq 'environment') {
                     $result.exitCode | Should -Be 1
                     $result.combinedText | Should -Match LIFECYCLE_INPUT_CHANGED
                     $result.stdout | Should -Not -Match CURRENT_CONFIG
+                } else {
+                    $result.exitCode | Should -Be 1
+                    $result.combinedText | Should -Match 'not a git repository|Git failed'
+                    $result.stdout | Should -Not -Match CURRENT_CONFIG
+                }
+                if ($InputKind -ne 'invalid-context') {
+                    $tickets = @(Get-ChildItem -LiteralPath (Join-Path $fixtureConfig.databaseAccess.coordinator 'tickets') -Filter '*.json' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
+                    $tickets | Should -HaveCount 1
+                    $tickets[0].status | Should -Be 'released'
                 }
             } finally {
                 Exit-Agent1cLifecycleOperation
