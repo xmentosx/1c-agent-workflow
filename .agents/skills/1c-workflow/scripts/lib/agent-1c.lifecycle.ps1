@@ -7778,6 +7778,8 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
             -CursorPaths $allDumpInfoPaths
     }
     Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
+    . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
+    Assert-DevBranchMergePreservation -BranchCommit $BranchCommit -TargetCommit $MasterBranch -ExcludedPaths $allDumpInfoPaths
     Invoke-Git @("commit", "--no-edit")
 }
 
@@ -7977,7 +7979,7 @@ function Invoke-NewDevBranchLifecycleMerge {
             -Stage "conflicts" `
             -AllowedPaths $allowedPaths `
             -ConflictPaths $conflictPaths
-        if ($sourceValidationFailure) {
+        if ($sourceValidationFailure -or $mergeFailure.Exception.Message -match '^LIFECYCLE_MERGE_(PRESERVATION_REVIEW_REQUIRED|REVIEW_)') {
             throw $mergeFailure
         }
         Stop-DevBranchLifecycleMergeForConflicts `
@@ -8275,6 +8277,8 @@ function Resume-DevBranchLifecycleMergeIfPresent {
 
         Sync-AiRules1cManagedIgnoredFilesFromMain -State $State | Out-Null
         Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath) -AdditionalPaths $transaction.repairPaths
+        . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
+        Assert-DevBranchMergePreservation -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit -ExcludedPaths $cursorPaths
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction

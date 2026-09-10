@@ -6749,7 +6749,10 @@ if (`$?) { exit 0 } else { exit 1 }
                 $conflictsBeforeFix = @($script:MergeState.pendingMergeConflictPaths)
                 $source = [System.IO.File]::ReadAllText($Fixture.modulePath, [System.Text.Encoding]::UTF8)
                 $pattern = '(?ms)Процедура ОбщийМетод\(\)\r?\nКонецПроцедуры\r?\n\r?\n'
-                $source = [regex]::Replace($source, $pattern, "", 1)
+                # The static fourth argument is RegexOptions, not a replacement
+                # count. Repair one duplicate; retain the shared added method.
+                $source = [regex]::new($pattern).Replace($source, "", 1)
+                if ([regex]::Matches($source, $pattern).Count -ne 1) { throw "Duplicate repair must preserve exactly one shared method." }
                 [System.IO.File]::WriteAllText($Fixture.modulePath, $source, [System.Text.UTF8Encoding]::new($false))
                 Invoke-Git @("add", "--", $Fixture.moduleRepoPath)
 

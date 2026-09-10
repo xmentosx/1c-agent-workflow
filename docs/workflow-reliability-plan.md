@@ -30,7 +30,7 @@ different milestones; none implies the next one.
 | 2 | P0 | Phase-specific deadlines propagated through engine, adapter and MCP | Action beyond 300 seconds; cancellation; bounded hang; large branch6 calculation | Source implementation and isolated engine/stdio/HTTP tests pass; exact component delivery and long live calculation remain open |
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; checkout binding production, Designer capacity integration and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, pinned recovery hooks and native pipe-owner channel implemented; live 1C recovery adapters, lifecycle/facade entrypoint integration and multi-host proof remain required |
-| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Exact losing merge e53505ccd identified: the result module equals the second parent byte for byte; E2 was subsequently restored in the product task; workflow prevention and justified replacement reporting remain pending |
+| 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports implemented; exact original merge still identifies the three lost E2 declarations; duplicate-definition repair and retained common-Git evidence covered; registration, delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pending |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Pending |
@@ -1507,5 +1507,91 @@ facade candidate was rebuilt; the exact executable SHA is now
 `5dd2bd12721bb2cf2d0a4f7d351e56429990605c7ac32296c1d897a33c04db91`.
 The package lock and exact-build regression follow this candidate. This is not
 component release proof: both backend families still require the real Release
-E2E stage before the executable can be published. This Python packet is pending
-normal RegisterChange, package delivery and installed-project acceptance.
+E2E stage before the executable can be published. The Python packet was
+registered as `3d6333a5e69e39ae14576ed41f7e5fe7d072049b`: Targeted passed 277
+tests, zero failures/skips, clean tree
+`3cb629459adfce61b111bd599045ab14cb5381a1`, ledger duration 225226 ms.
+The initial registration exposed a duplicate top-level BeforeAll in the Vanessa
+fixture; the consolidated preparation and its unchanged nine assertions passed
+through the same strict shard runner before successful registration. The
+canonical accumulation branch now contains the packet. Package delivery and
+installed-project acceptance remain pending.
+
+## Item 5: confirmed whole-parent replacement gap
+
+Read-only inspection of the original branch6 merge reconfirms its exact parents
+and result. Merge `e53505ccd39bd024cf56245b010ad1ea36ebeab4` has parents
+`a8d8312785b393348d585c508d8d6c15dada592b` and
+`77ba2ef1c135802fef6de34a92bb86307ba7f0d6`, with merge base
+`d3431bf6460fe83925f8495a785484d4e56490c6`.
+The affected common module's base, first-parent and second-parent blobs are
+`155a14808d4742ff27db094f5f7216a730b63264`,
+`8aa7f46e7ea0f4c3e1c56e5b8cd49a74349324e9` and
+`4f61dc17876e42d36af4f047988c148752933f76`. The result equals the second parent.
+The first-parent-to-result diff removes the complete functions/procedures
+`КонструкторПодготовкиСвойствОпцийТрансляцииБДРвБДДС`,
+`ДополнитьСвойстваОпцийТрансляцииБДРвБДДС` and
+`ДобавитьПотребностьЗначенийПоУмолчаниюБДДС`. No PM5 files were changed by this
+inspection.
+
+Before this correction, lifecycle recovery checked the exact parents, allowed paths, staged
+repairs and structural source integrity before its own merge commit. It had no
+comparison identifying replacement of both-sided changed content with one
+parent. The byte-preserving transition can also clear pending conflict paths
+before commit, so a prevention check cannot depend solely on the remaining
+conflict list. Prevention must inspect the actual parent/result blobs,
+retain an actionable report of discarded-side changes, and require a
+result-bound semantic decision for intentional replacement. Compatible repairs
+remain agent-owned; only evidence of incompatible business outcomes calls for
+a user decision. An unexplained whole-parent result must not become a successful
+helper-owned merge merely because XML/BSL structure is valid. This is the
+implementation boundary, not evidence of delivered prevention.
+
+The source correction now inspects actual parent/base/index blobs immediately
+before both initial and resumed helper-owned merge commits, after structural
+validation. It detects whole-parent replacement of a both-sided changed path,
+including deletion, and lost newly added BSL declarations even in mixed results.
+The guard does not depend on a surviving conflict list. It leaves source bytes,
+index and the pending lifecycle transaction intact on failure. Compatible repair
+continues through the same refresh, refresh-lite or close command; the helper
+creates the merge commit itself.
+
+Reports retain both original patches, exact blobs, missing declarations and a
+decision identity. Intentional replacements require an accountable semantic and
+verification explanation bound to the current risk report; incompatible intent
+also requires actual user authorization. This records evidence, not an automatic
+proof that the explanation is true. Reports live in common Git storage with a
+checkout-specific identity and survive linked-worktree removal.
+
+Two existing regressions exposed false positives where both parents inserted
+the exact same new metadata definition in different places. A narrow exception
+now proves equality of complete added BSL methods or XML definitions and checks
+that removing those additions restores the base. Different bodies, properties
+or existing XML order remain reviewable. The third initial failure exposed a
+fixture bug: static `Regex.Replace(input, pattern, replacement, 1)` interprets 1
+as RegexOptions.IgnoreCase and removes both copies, not just one. PS5.1 reproduced
+counts 2 -> 0 for that call and 2 -> 1 for the instance count overload. The fixture
+now removes one duplicate and asserts exactly one shared method survives. A
+separate regression retains the original all-copies-deleted failure and requires
+the guard to report loss from both parents.
+
+The nineteen focused tests cover compatible repairs, disguised loss, deletion,
+stale/malformed/authorized decisions, duplicate-addition equivalence and negative
+cases, common-Git report lifetime and actual refresh/refresh-lite/close resume.
+Read-only rerun against original merge `e53505ccd` after these exceptions still
+finds exactly the three named E2 declarations in the affected module; no PM5
+source was edited. Further negative cases exposed and corrected omission of
+identical-parent additions, a complete revert to the merge base, and attempted
+UTF-8 decoding of unrelated binary files. Binary replacement retains byte-level
+identity and an actionable report. A changed caller outside the flagged path
+also invalidates the decision: its identity includes all staged deltas without
+writing a Git tree or modifying the index.
+
+The earlier 216-test run lost its tool handle during an interruption and its
+process is no longer present; no final result artifact was requested for that
+run, so it is not counted as a full pass. The subsequent PS5.1/Pester 5.8 focused
+run passes 22/22 (19 new tests and the three original duplicate-repair cases) in
+49.74 seconds and retains JSON/XML results under the isolated worktree's
+`build/diagnostics/merge-preservation/focused-final.*`. Normal registration owns
+the final Targeted proof.
+Installed public-command acceptance remains required.
