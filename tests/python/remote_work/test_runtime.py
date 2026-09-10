@@ -85,6 +85,43 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(state, second)
         self.assertEqual(result, read_json(self.spool / "runs" / request["id"] / "result.json"))
 
+    def test_engine_crash_retains_collectable_conditions_without_a_result_or_replay(self):
+        self.scenario["phaseTimeoutSeconds"] = {"action": 900}
+        request, package = self.package(values={"delay": 0.08})
+        jobs.submit(package, self.spool)
+        script = """import os, sys
+sys.path.insert(0, sys.argv[1])
+from itl_remote import execution
+from itl_remote.common import read_json
+# Crash the actual job owner at the boundary before starting the workload.
+execution.run_measurement = lambda *args, **kwargs: os._exit(77)
+execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
+"""
+        crashed = subprocess.run([sys.executable, "-X", "utf8", "-c", script,
+                                  str(RUNTIME), str(self.spool), str(self.profile_path)],
+                                 capture_output=True, timeout=20)
+        self.assertEqual(77, crashed.returncode, crashed.stderr)
+        run = self.spool / "runs/one"
+        provenance_hash = digest(run / "provenance.json")
+        output = self.root / "Условия после сбоя"
+        collection = jobs.collect(self.spool, "one", output, allow_partial=True)
+        self.assertFalse(collection["resultAvailable"])
+        self.assertEqual("running", collection["observedJob"]["status"])
+        provenance = read_json(output / "provenance.json")
+        self.assertEqual(provenance_hash, digest(output / "provenance.json"))
+        self.assertEqual(digest(package / "scenario.json"), provenance["scenarioSha256"])
+        self.assertEqual(digest(package / "input/workload.py"), provenance["files"]["workload.py"]["sha256"])
+        self.assertEqual({"delay": 0.08}, provenance["parameters"])
+        self.assertEqual(900, provenance["phaseTimeoutSeconds"]["action"])
+        self.assertEqual(["measure"], provenance["operations"])
+        self.assertIn("declarations", provenance["identityEvidence"])
+        self.assertEqual("worker", provenance["executor"])
+        state = execution.execute_job(self.spool, "one", self.profile)
+        self.assertEqual("needs-attention", state["status"])
+        self.assertEqual(provenance_hash, digest(run / "provenance.json"))
+        self.assertFalse((run / "context.json").exists())
+        self.assertFalse((run / "result.json").exists())
+
     def test_job_id_collision_with_different_parameters_is_rejected(self):
         request, package = self.package()
         jobs.submit(package, self.spool)

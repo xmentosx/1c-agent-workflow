@@ -83,7 +83,7 @@ and multi-host recovery remain open.
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. Remaining phase/entrypoint adapters, server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
 | 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Pair synchronization now joins aggregate database admission before lifecycle locks; public classification routing and nested-scenario source fixes are implemented. Group planning, explicit final recipients, resumable synchronization and installed acceptance remain open |
-| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; full scenario provenance and detailed runtime stages remain open |
+| 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Command phase journal, asynchronous MCP progress and partial diagnostic collection implemented; immutable scenario/input/settings provenance now persists before database waiting and survives an actual engine crash. Detailed runtime stages, observed loaded-state provenance and installed acceptance remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
 | 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting reproduced; r12 connection identity and captured wait ownership implemented; native two-client execution exposed occupied-port reuse in the upstream allocator, now reproduced and corrected. The combined focused protocol, port, artifact, navigation and gate contracts pass 160 tests. Native paired build and two-client A/B/A acceptance pass with three correct replies and distinct ports; r12 registered at b6f23f1 with 633 passed Targeted tests; scoped native cleanup now has a separate verified candidate, while restart reconciliation, delivery and original BDR acceptance remain open |
@@ -2543,3 +2543,37 @@ These are source/protocol tests, not a new native 1C synchronization or two-host
 qualification. Group aggregation, explicit final recipients and resumable source
 propagation remain separate unfinished parts of item 6. Admission alone does not
 claim that earlier peers receive changes collected from later peers.
+
+## Items 4a and 7: retain conditions before waiting and release failed preflight
+
+Previously measurement conditions were written only into the final result,
+while the private context was intentionally excluded from collection. A worker
+crash before that result, or a long database wait, therefore left collected
+progress without the complete resolved scenario settings. provenance.json now
+records the validated request/scenario hashes, input hashes and sizes, parameters,
+repeats/warmups, permitted operations, requested route, executor/host, readiness,
+phase budgets, source-analysis selection and declared data/source/environment
+identities before admission. Runtime identity remains a separate proof; the
+manifest does not claim that profile declarations describe the actual loaded
+configuration. Credentials and private target/lease settings are not copied.
+
+The final result references the original manifest hash. Post-wait validation
+rejects changed manifest bytes without replacing them. Partial collection obtains
+these conditions during admission and after an actual worker process exits 77
+before starting a workload. Retrying that interrupted job retains needs-attention
+and never manufactures a result or replays its action. The immutable submitted
+package remains necessary to reproduce the actual input file contents.
+
+The regression also exposed an unnecessary queue wedge: a changed package or
+worker profile detected after admission, before any runtime work, inherited the
+generic exception cleanup debt. That bounded input-validation block now explicitly
+releases its finished admission before returning the original error. This does
+not alter failure handling after runtime starts. Tests retain unknown-cleanup
+blocking, validate subsequent admission after a preflight refusal, and verify
+that cancellation/changed inputs produce only the provenance file, with no
+context, workload or result. Existing no-runtime assertions were updated for this
+new diagnostic artifact; no runtime admission or cancellation check was removed.
+
+Focused execution, admission, profile-engine and collection coverage passes 31
+cases. Source registration, installed remote collection and native 1C runtime
+phase/identity acceptance remain separate milestones.

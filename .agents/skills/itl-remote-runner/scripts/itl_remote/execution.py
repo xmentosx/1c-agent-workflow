@@ -38,9 +38,43 @@ def wait_json(path, process, timeout, cancelled):
     return read_json(path)
 
 
-def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None, cancel_path=None):
+def capture_provenance(run, request, scenario, target, *, executor=None):
+    """Retain public input evidence before waiting or starting any runtime."""
+    path = Path(run) / "provenance.json"
+    record = {"schemaVersion": 1, "jobId": request["id"], "parentId": request.get("parentId"),
+              "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
+              "scenarioInputsSha256": identity(request["files"]), "files": request["files"],
+              "scenarioId": scenario["id"], "parameters": request["parameters"],
+              "mode": request["mode"], "repeats": request["repeats"], "warmups": request["warmups"],
+              "operations": request["operations"], "requestedRoute": request["route"],
+              "targetName": request["target"], "host": platform.node(), "pythonVersion": platform.python_version(),
+              "adapter": scenario.get("adapter", "command"), "readiness": scenario["readyDescription"],
+              "phaseTimeoutSeconds": budgets(scenario), "repeatable": scenario["repeatable"], "mutates": scenario["mutates"],
+              "sourceAnalysis": scenario.get("sourceAnalysis", "none"),
+              "sourceAnalysisModules": scenario.get("sourceAnalysisModules"),
+              "dataIdentity": scenario["dataIdentity"], "sourceIdentity": target.get("sourceIdentity"),
+              "environmentIdentity": target.get("environmentIdentity"),
+              "identityEvidence": "data/source/environment are declarations; exact loaded state requires runtime evidence"}
+    # A target profile can contain credentials, lease tokens and private adapter
+    # settings. Only the explicitly public declarations above belong here.
+    if path.exists():
+        previous = read_json(path)
+        record["recordedAt"] = previous.get("recordedAt")
+        record["executor"] = executor or previous.get("executor")
+        if record != previous:
+            raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained inputs differ; original evidence preserved")
+    else:
+        record.update(recordedAt=stamp(), executor=executor or "direct-engine")
+        write_json(path, record)
+    return {"path": path.name, "sha256": digest(path)}
+
+
+def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None, cancel_path=None, provenance_reference=None):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
+    provenance = capture_provenance(run, request, scenario, target)
+    if provenance_reference is not None and provenance != provenance_reference:
+        raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained bytes changed before runtime")
     variables = {"python": sys.executable, "runtime": Path(__file__).resolve().parent.parent,
                  "workspace": Path(target["workspace"]).resolve(), "input": Path(package) / "input",
                  "run": run, "context": run / "context.json"}
@@ -66,7 +100,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "declared-by-profile-and-scenario; runtime adapters own exact loaded-data/source proof",
               "readiness": scenario["readyDescription"], "mode": request["mode"],
-              "startedAt": stamp(), "timings": [], "profiles": [], "phases": [],
+              "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [],
               "status": "running", "limitations": [], "cleanupErrors": []}
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
@@ -317,6 +351,8 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
         access = target_access(target)
+        provenance = capture_provenance(spool / "runs" / identifier, request, scenario, target,
+                                        executor="agent" if via_agent else "worker")
         profile_path = spool / "profile.json"
         profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
         def waiting(record):
@@ -335,18 +371,27 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                        progress=waiting, inherited=inherited) as lease:
                 # Revalidate immutable inputs and target authorization after the
                 # queue. Actual loaded configuration/data checks belong to prepare.
-                request, scenario = validate_package(package)
-                if profile_fingerprint and digest(profile_path) != profile_fingerprint:
-                    raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED: worker profile changed during admission")
-                current_target = authorize(request, scenario, profile)
-                if target_access(current_target) != access:
-                    raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
+                try:
+                    request, scenario = validate_package(package)
+                    if profile_fingerprint and digest(profile_path) != profile_fingerprint:
+                        raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED: worker profile changed during admission")
+                    current_target = authorize(request, scenario, profile)
+                    if target_access(current_target) != access:
+                        raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
+                    if capture_provenance(spool / "runs" / identifier, request, scenario, current_target) != provenance:
+                        raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained bytes changed while waiting")
+                except Exception:
+                    # Only immutable-input checks ran inside this boundary.
+                    # No runtime, source capture or restoration was started;
+                    # an ordinary preflight failure must not create native debt.
+                    lease.release()
+                    raise
                 state["access"] = {"coordinator": str(lease.coordinator.root), "ticket": lease.record["ticket"],
                                    "resources": lease.record["resources"], "scope": access["scope"]}
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
                                          progress, access_lease=lease, access_scope=access["scope"],
-                                         cancel_path=spool / "control" / (identifier + ".cancel.json"))
+                                         cancel_path=spool / "control" / (identifier + ".cancel.json"), provenance_reference=provenance)
                 release_status = lease.release(cleanup_errors=result["cleanupErrors"])
                 if release_status == "needs-attention" and not result["cleanupErrors"]:
                     result["status"] = "needs-attention"

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import test_runtime
 from itl_remote import access, execution, jobs
-from itl_remote.common import read_json, write_json
+from itl_remote.common import digest, read_json, write_json
 
 
 class AccessRuntimeTests(unittest.TestCase):
@@ -44,11 +44,25 @@ class AccessRuntimeTests(unittest.TestCase):
         return access.Lease(self.config["coordinator"], self.config["bases"], {"jobId": "other-project"})
 
     def test_wait_is_outside_measurement_and_private_lease_is_not_reported(self):
-        self.package()
+        self.target["credentials"] = {"password": "never-publish-profile-secret"}
+        request = self.package()
         with self.own_base():
             pending = self.run_async()
             self.wait_for_queue()
             self.assertFalse((self.fixture.spool / "runs/one/context.json").exists())
+            provenance_path = self.fixture.spool / "runs/one/provenance.json"
+            original_hash = digest(provenance_path)
+            original = read_json(provenance_path)
+            self.assertEqual(request["files"], original["files"])
+            self.assertEqual(request["parameters"], original["parameters"])
+            self.assertEqual(1, original["repeats"])
+            self.assertEqual(0, original["warmups"])
+            output = self.fixture.root / "Диагностика ожидания"
+            collection = jobs.collect(self.fixture.spool, "one", output, allow_partial=True)
+            self.assertFalse(collection["resultAvailable"])
+            self.assertEqual("waiting-for-base", collection["observedJob"]["status"])
+            self.assertEqual(original_hash, digest(output / "provenance.json"))
+            self.assertNotIn("never-publish-profile-secret", json.dumps(original))
             time.sleep(.2)
         state = pending.result(timeout=10)
         self.assertEqual("completed", state["status"], state)
@@ -57,6 +71,9 @@ class AccessRuntimeTests(unittest.TestCase):
         self.assertGreaterEqual(result["access"]["waitSeconds"], .2)
         self.assertNotIn(context["accessLease"]["token"], json.dumps(result))
         self.assertNotIn(context["accessLease"]["token"], json.dumps(state))
+        self.assertNotIn(context["accessLease"]["token"], json.dumps(original))
+        self.assertEqual(original_hash, digest(provenance_path))
+        self.assertEqual({"path": "provenance.json", "sha256": original_hash}, result["provenance"])
         self.assertEqual([], access.Coordinator(self.config["coordinator"]).snapshot())
 
     def test_cancellation_while_waiting_does_not_create_runtime(self):
@@ -67,7 +84,31 @@ class AccessRuntimeTests(unittest.TestCase):
             jobs.cancel(self.fixture.spool, "one")
             state = pending.result(timeout=5)
             self.assertEqual("cancelled", state["status"], state)
-            self.assertFalse((self.fixture.spool / "runs").exists())
+            # Input evidence is allowed before admission; execution artifacts
+            # still prove whether any runtime was started after cancellation.
+            run = self.fixture.spool / "runs/one"
+            self.assertEqual(["provenance.json"], sorted(p.name for p in run.iterdir()))
+
+    def test_changed_provenance_is_preserved_and_rejected_before_workload(self):
+        self.package()
+        with self.own_base():
+            pending = self.run_async()
+            self.wait_for_queue()
+            path = self.fixture.spool / "runs/one/provenance.json"
+            changed = read_json(path)
+            # Even an edit outside the comparable input fields breaks the
+            # retained artifact hash; do not bless it by hashing it afresh.
+            changed["recordedAt"] = "2020-01-01T00:00:00Z"
+            write_json(path, changed)
+        state = pending.result(timeout=5)
+        self.assertIn("MEASUREMENT_PROVENANCE_CHANGED", state["error"])
+        self.assertEqual(changed, read_json(path))
+        self.assertFalse((path.parent / "context.json").exists())
+        self.assertFalse((path.parent / "result.json").exists())
+        self.assertEqual([], access.Coordinator(self.config["coordinator"]).snapshot())
+
+        with self.own_base() as subsequent:
+            self.assertEqual("running", subsequent.record["status"])
 
     def test_changed_package_is_revalidated_before_runtime_after_admission(self):
         self.package()
@@ -78,7 +119,8 @@ class AccessRuntimeTests(unittest.TestCase):
         state = pending.result(timeout=5)
         self.assertEqual("needs-attention", state["status"])
         self.assertIn("INPUT_HASH_MISMATCH", state["error"])
-        self.assertFalse((self.fixture.spool / "runs").exists())
+        self.assertEqual(["provenance.json"], sorted(p.name for p in (self.fixture.spool / "runs/one").iterdir()))
+        self.assertEqual([], access.Coordinator(self.config["coordinator"]).snapshot())
 
     def test_cleanup_error_keeps_admission_blocked_for_followup(self):
         self.package()
@@ -89,7 +131,7 @@ class AccessRuntimeTests(unittest.TestCase):
         jobs.submit(second, self.fixture.spool)
         state = execution.execute_job(self.fixture.spool, "two", self.fixture.profile)
         self.assertIn("INFOBASE_ACCESS_RECOVERY_REQUIRED", state["error"])
-        self.assertFalse((self.fixture.spool / "runs/two").exists())
+        self.assertEqual(["provenance.json"], sorted(p.name for p in (self.fixture.spool / "runs/two").iterdir()))
 
     def test_worker_profile_change_during_wait_does_not_run_stale_target(self):
         self.package()
@@ -102,7 +144,8 @@ class AccessRuntimeTests(unittest.TestCase):
             write_json(path, profile)
         state = pending.result(timeout=5)
         self.assertIn("INFOBASE_ACCESS_TARGET_CHANGED", state["error"])
-        self.assertFalse((self.fixture.spool / "runs").exists())
+        self.assertEqual(["provenance.json"], sorted(p.name for p in (self.fixture.spool / "runs/one").iterdir()))
+        self.assertEqual([], access.Coordinator(self.config["coordinator"]).snapshot())
 
     def test_owned_action_receives_a_verifiable_inherited_lease(self):
         workload = self.fixture.source / "workload.py"
