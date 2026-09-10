@@ -320,6 +320,26 @@
         }
     }
 
+    It 'reserves peak client capacity per database for <layout> scenarios' -TestCases @(
+        @{layout='sequential';separator="`nСценарий: Другой пользователь";expected=1},
+        @{layout='simultaneous';separator='';expected=2}
+    ) {
+        param($layout,$separator,$expected)
+        $tempRoot = Join-Path $TestDrive ('Пиковая вместимость ' + $layout)
+        $fixture = New-VanessaRunnerFixture -Root $tempRoot `
+            -FeatureText "# language: ru`nФункционал: Вместимость базы`nСценарий: Пользователи`n  Дано я подключаю профиль TestClient `"Alpha`"$separator`n  И я подключаю профиль TestClient `"Beta`"" `
+            -ManifestText '{"schemaVersion":1,"maxConcurrency":2,"profiles":[{"name":"Alpha"},{"name":"Beta"},{"name":"Unused"}]}'
+        & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $topology = Get-VanessaTestClientTopology -FeatureFiles @($fixture.featurePath)
+            $topology.requiredProfiles | Should -HaveCount 2
+            $topology.requiredTestClientSlots | Should -Be $expected
+            $admissions = @(Get-VanessaTestClientAdmissionTargets -Topology $topology -DefaultState $fixture.state)
+            $admissions | Should -HaveCount 1
+            $admissions[0].requiredSessions | Should -Be $expected
+        }
+    }
+
     It 'captures every configured database while reserving capacity only for selected clients' {
         $tempRoot = Join-Path $TestDrive 'Профили разных баз'
         $fixture = New-VanessaRunnerFixture -Root $tempRoot `

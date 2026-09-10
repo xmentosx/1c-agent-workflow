@@ -1057,6 +1057,12 @@ function Get-VanessaTestClientAdmissionTargets {
         }
         $targets[$key].requiredSessions = [int]$targets[$key].requiredSessions + 1
     }
+    if ($requiredSlots -gt 0) {
+        # Named profiles can occur in different sequential scenarios. Their
+        # union identifies possible targets, not simultaneous sessions in one
+        # database. No database can exceed the selected run's global peak.
+        foreach ($target in $targets.Values) { $target.requiredSessions = [Math]::Min([int]$target.requiredSessions, $requiredSlots) }
+    }
     return @($targets.Values | ForEach-Object { [pscustomobject]$_ })
 }
 

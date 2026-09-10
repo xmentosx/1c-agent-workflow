@@ -1760,7 +1760,9 @@ producer now treats missing operation/project labels as empty descriptive
 metadata while retaining all authority checks. The original inherited-uncertain
 launch scenario passes unchanged under explicit strict mode; a separate real
 pipe case proves that unlabeled owners persist intent and retain recovery debt.
-Registration of the corrected candidate must still be recorded.
+The corrected candidate is registered at a145121715144c2ed799619ea22aade8b7fbb3fc:
+993 tests passed, none failed; the Targeted ledger records 904921 ms. The
+canonical reliability worktree has advanced to this registered commit.
 
 The next check-admission correction connects `check-dev-branch` and
 `verify-dev-branch` to the same pre-lifecycle owner. Its plan includes the branch
@@ -1780,7 +1782,14 @@ covered, and selected scenarios still determine required session counts. This
 deliberately reserves every base exposed in that run's parameters; merely
 declaring another profile does not add a concurrent session reservation.
 
-The 111 focused checks cover the original filtered/unfiltered topology,
+An additional reproducer covers two named profiles on one database in separate
+scenarios. The requirement scanner correctly reported a peak of one, but the
+admission planner reserved two slots and could wait unnecessarily on a base
+whose limit was one. Per-database reservations now cannot exceed the selected
+run's known concurrency peak; two simultaneous clients still reserve two slots.
+
+The initial 111 focused checks and the 50-case affected rerun after the capacity
+correction pass. They cover the original filtered/unfiltered topology,
 Enterprise scope propagation and foreign-client preservation, real pipe-owner
 competition on every planned resource, unrelated-base concurrency, inherited
 subset rejection, target drift, and service-generation creation/reuse. The
