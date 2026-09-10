@@ -2701,3 +2701,44 @@ declared safely repeatable merely because its launcher exited. That case retains
 its partial report and needs operation-specific reconciliation. Bootstrap/new
 branch admission, server recovery, multi-host and installed acceptance remain in
 the original plan; this unit does not replace them with reset work.
+
+## Item 15: original branch11 review adjudication, 2026-09-10
+
+The retained six-method validation unit was compared mechanically with the
+current branch11 module. All six method bodies still match; module SHA256 remains
+`578DCB5A64DAA5F7BBCE239143A67DEC89B2CE752841761700437CCB1045882B`, although
+the branch HEAD is now `e3a49a8b148c9fd82dcb371fefe2fc3ab7b5b76f`. Both original
+responses remain unchanged. A complete inventory retains all 21 findings,
+including the three explicitly stated must-fix items; no new validator or 1C
+runtime calls were made.
+
+Under the prepared r35 policy, findings 1.1 and 5.2 have mechanically checkable
+contradictions: the documented BSL reference-parameter semantics and the guard
+present in the exact submitted unit before both cache lookup and insertion.
+Finding 5.4 is not fully disproven. Astronomical date arithmetic does not consume
+the working calendar, but the working-time branch does, and merely retrieving a
+calendar from a map does not prove it exists. The relevant downstream calendar
+method bodies and preparation contract were not part of the original six
+methods. Its inherited provenance or an unsuitable proposed guard alone cannot
+discharge the blocker. The overall review outcome therefore stays `unverified`,
+not `adjudicated-false-positive` or a clean AI response.
+
+Product context was checked through BookStack: page 192 `Расчет сроков` and page
+236 `Календари`, both `updated_at=2025-11-25T08:56:39.000000Z`, supplied from its
+MCP cache. They distinguish astronomical units from working-calendar units and
+document plan-calendar inheritance. The cache response did not supply canonical
+page URLs; no newer product revision was asserted. The official language source
+was also checked:
+https://kb.1ci.com/1C_Enterprise_Platform/FAQ/Development/Standards/1C_Enterprise_script/.
+
+Retained report and hash-bound machine inventory:
+`C:/Users/xment/.codex/visualizations/2026/09/10/01a08571-0c9d-7981-a7bc-91a792ec45f9/review-adjudication/REVIEW.md`
+and adjacent `adjudication.json` / `validation-unit.bsl`.
+
+Remaining: establish the valid-input/preparation contract for 5.4, then resolve a
+confirmed defect in its owner or record a specific authorized risk decision if
+one is actually needed. Any additional AI call must respect the existing call
+budget and the already-used one-repeat authorization. Deliver and qualify r35's
+mixed-outcome behavior through the installed route. The workflow investigation
+must not relabel this remaining business finding as a false positive, modify PM5
+for a green response, or manufacture a host verification proof.
