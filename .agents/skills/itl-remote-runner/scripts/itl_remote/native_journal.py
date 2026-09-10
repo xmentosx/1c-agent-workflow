@@ -70,9 +70,25 @@ def _validate(payload):
               "operation", "project", "purpose", "resources", "helperInputs", "admissions", "startAttempted",
               "processId", "launcherExited", "quiescenceConfirmed", "releaseEvidence", "ownedProcessScopes",
               "recoveryRequiresLiveVerification", "resourceIds"}
-    if (not isinstance(payload, dict) or set(payload) != fields or payload.get("schemaVersion") != 1 or
+    modern = fields | {'effectContract', 'outcome'}
+    if (not isinstance(payload, dict) or set(payload) not in (fields, modern) or payload.get("schemaVersion") != 1 or
             payload.get("recoveryRequiresLiveVerification") is not True):
         raise WorkError("NATIVE_JOURNAL_RECORD_INVALID")
+    if set(payload) == modern:
+        _validate_effect(payload['effectContract'])
+        outcome = payload['outcome']
+        if (not isinstance(outcome, dict) or set(outcome) != {'status', 'recordedAt'} or
+                outcome['status'] not in ('pending', 'succeeded', 'failed') or
+                not isinstance(outcome['recordedAt'], str) or
+                (outcome['status'] == 'pending') != (outcome['recordedAt'] == '') or
+                (outcome['status'] != 'pending' and not payload['startAttempted'])):
+            raise WorkError('NATIVE_JOURNAL_OUTCOME_INVALID')
+        if outcome['recordedAt']:
+            try:
+                if datetime.fromisoformat(outcome['recordedAt']).tzinfo is None:
+                    raise ValueError('timezone required')
+            except ValueError as error:
+                raise WorkError('NATIVE_JOURNAL_OUTCOME_INVALID') from error
     for name in ("ticket", "journalId", "id"):
         _identifier(payload[name])
     for name in ("createdAt", "updatedAt", "hostName", "operation", "project", "purpose", "releaseEvidence"):
@@ -132,6 +148,29 @@ def _validate(payload):
             raise WorkError("NATIVE_JOURNAL_SCOPE_INVALID")
 
 
+def _validate_effect(value):
+    if value is None:
+        return
+    fields = {'schemaVersion', 'kind', 'project', 'sourceFingerprint', 'sourceTreeObjectId',
+              'sourceCommit', 'exportPath', 'contentKind', 'extensionName', 'mode'}
+    if (not isinstance(value, dict) or set(value) != fields or value['schemaVersion'] != 1 or
+            value['kind'] != 'load-config-from-files' or not isinstance(value['project'], str) or
+            not Path(value['project']).is_absolute() or
+            not isinstance(value['sourceFingerprint'], str) or
+            not re.fullmatch(r'v2\|git-tree-sha256\|[a-f0-9]{64}', value['sourceFingerprint']) or
+            not isinstance(value['sourceTreeObjectId'], str) or
+            not re.fullmatch(r'[a-f0-9]{40,64}', value['sourceTreeObjectId']) or
+            not isinstance(value['sourceCommit'], str) or
+            not re.fullmatch(r'[a-f0-9]{40,64}', value['sourceCommit']) or
+            not isinstance(value['exportPath'], str) or not value['exportPath'] or
+            Path(value['exportPath']).is_absolute() or '..' in Path(value['exportPath']).parts or
+            not isinstance(value['contentKind'], str) or value['contentKind'] not in ('configuration', 'extension') or
+            not isinstance(value['extensionName'], str) or not isinstance(value['mode'], str) or
+            (value['contentKind'] == 'extension') != bool(value['extensionName']) or
+            value['mode'] not in ('partial', 'full', 'full-fallback')):
+        raise WorkError('NATIVE_JOURNAL_EFFECT_CONTRACT_INVALID')
+
+
 def publish(lease, producer_id, payload):
     _validate(payload)
     lease.validate()
@@ -160,10 +199,20 @@ def publish(lease, producer_id, payload):
         if previous:
             before = _read_operation(lease.coordinator, record["ticket"], key, previous)
             stable = ("ticket", "journalId", "id", "createdAt", "hostName", "ownerPid", "operation", "project", "purpose", "resources", "resourceIds", "helperInputs", "admissions")
+            if ('effectContract' in before) != ('effectContract' in value):
+                raise WorkError("NATIVE_JOURNAL_IMMUTABLE_INPUT_CHANGED")
+            if 'effectContract' in before:
+                stable += ('effectContract',)
             if (any(before[n] != value[n] for n in stable) or
                     (before["startAttempted"] and (not value["startAttempted"] or before["ownedProcessScopes"] != value["ownedProcessScopes"])) or
-                    (before["processId"] and before["processId"] != value["processId"])):
+                    (before["processId"] and before["processId"] != value["processId"]) or
+                    ('outcome' in before and before['outcome']['status'] != 'pending' and before['outcome'] != value.get('outcome'))):
                 raise WorkError("NATIVE_JOURNAL_IMMUTABLE_INPUT_CHANGED")
+            if ('outcome' in value and before['outcome']['status'] == 'pending' and
+                    value['outcome']['status'] == 'succeeded' and not value['quiescenceConfirmed']):
+                raise WorkError('NATIVE_JOURNAL_OUTCOME_INVALID')
+        elif 'outcome' in value and value['outcome']['status'] != 'pending':
+            raise WorkError('NATIVE_JOURNAL_OUTCOME_INTENT_REQUIRED')
         # Write an immutable snapshot first. Only the ticket's atomic index
         # update makes it authoritative; no native start is allowed before ACK.
         relative = Path("native-operations") / record["ticket"] / value["journalId"] / value["id"] / (identity(value) + ".json")

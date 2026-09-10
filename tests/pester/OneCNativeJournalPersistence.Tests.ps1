@@ -171,6 +171,26 @@ print(json.dumps({'helperGeneration': next(iter(bundle['helperGenerations'].valu
         $beforeNativeLaunch | ConvertTo-Json -Depth 12 | Should -Not -Match 'native-password-secret|CommandLine'
     }
 
+    It 'persists a source-bound terminal outcome before the phase caller resumes' {
+        $effect = [pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($journalRoot)
+            sourceFingerprint=('v2|git-tree-sha256|' + ('a' * 64));sourceTreeObjectId=('b' * 40);sourceCommit=('c' * 40)
+            exportPath='src/cf';contentKind='configuration';extensionName='';mode='full'}
+        Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -Purpose designer-process `
+            -NativeEffectContract $effect -ScriptBlock {
+                $record = $script:OneCSessionLaunchContext.nativeOperationRecord
+                $record.startAttempted = $true; $record.processId = 4331
+                Save-OneCNativeOperationRecord -Record $record
+                Confirm-OneCNativeOperationRelease -Record $record -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'fixture release'
+                Complete-OneCNativeOperationOutcome -Record $record -Status succeeded
+            }
+        $record = $script:OneCNativeOperationJournal.entries[0]
+        $saved = Get-Content -LiteralPath $record.persistedPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $saved.effectContract.sourceFingerprint | Should -Be $effect.sourceFingerprint
+        $saved.effectContract.sourceCommit | Should -Be $effect.sourceCommit
+        $saved.outcome.status | Should -Be succeeded
+        $saved.outcome.recordedAt | Should -Not -BeNullOrEmpty
+    }
+
     It 'keeps inherited journals separate and records withdrawn release observations atomically' {
         $first = $script:OneCNativeOperationJournal
         Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $journalBase -ScriptBlock {

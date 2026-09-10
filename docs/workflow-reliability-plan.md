@@ -82,7 +82,7 @@ and multi-host recovery remain open.
 | 3 | P1 | Native module mapping and on-demand target source capture | Different database/checkout configurations; matching, partial and missing sources; extensions; version drift; unchanged database and working tree | Native binding, target CF/CFE capture and export producer implemented; real scratch-base configuration drift and extension capture verified; selected-module requirements and pinned snapshot reuse implemented; automatic checkout-export catalogs and per-module reuse implemented and verified through a native technical export; persistent-adapter/Designer capacity and PM5/UFA acceptance pending |
 | 4 | P0 | Shared database admission queue and inherited operation ownership | Two projects/chats/hosts; aliases; FIFO admission; cancellation; owner crash; nested calls; truthful cleanup | Common queue, portable runtime, native pipe ownership and detached-client cleanup implemented; durable cursor/DT/state recovery and committed initialization recovery registered at 49a8a6b with 869 passed Targeted tests. c190534 adds registered reset/full/lite-refresh and sync-master admission with immutable resource-plan inheritance; public native file-base sync-master passed waiting, seed/export and release acceptance. A phase-aware candidate now permits ROCTUP reads with one test run and upgrades the same ticket for mutations; focused Python, Go and PowerShell proofs pass. Server recovery and multi-host/installed acceptance stay open |
 | 5 | P1 | Preserve both compatible semantic changes during merge recovery | Reproduce E2 loss; preserve both deltas; justified replacement report and relevant behavioral checks | Parent/base/staged-result guard and result-bound replacement reports registered at 1b08129 with 618 passed Targeted tests; original E2 loss, compatible duplicate repair and retained common-Git evidence covered; delivery and installed acceptance remain open |
-| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes or durable successful load receipts. Unconfirmed native load recovery and installed acceptance remain open |
+| 6 | P1 | Explicit multi-branch sync result and complete test classification | Three branches, final recipient trees, resumable plan; one non-runtime classification pass through public wrapper | Public classification routing and nested-scenario source fixes are implemented. Explicit group requests now compose the entire source result before delivery, reserve all participant databases together, retain per-recipient progress and reconcile interrupted Git writes, durable phase receipts, or a source-bound terminal Designer outcome. Legacy unbound outcomes, server recovery and installed acceptance remain open |
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
@@ -2714,6 +2714,26 @@ validates intact. Two test-fixture issues (the saved coordinator instance used
 for failure injection and a dynamically shadowed PowerShell fixture context)
 were corrected without weakening the original scenarios. Registration owns the
 single cumulative Targeted run for this unit.
+
+The next recovery unit closes the file-base crash window between a successful
+Designer return and the group phase receipt. Before process creation, the native
+journal now binds a load to the exact project, source commit, canonical source
+fingerprint, source tree, CF/CFE path, content kind, extension name and actual
+partial/full attempt. After exit, owned-process release, log checks and artifact
+checks, Designer records a separate terminal outcome. A failed partial attempt
+and its successful full fallback remain distinct records.
+
+If the PowerShell producer then exits before publishing the phase receipt, the
+recovery adapter still requires two live idle/exclusive observations. It accepts
+only one last successful load whose contract matches the pending phase and exact
+database, commits that load's on-failure ConfigDumpInfo duty without changing its
+current bytes, and writes the missing phase receipt with a reconstructed load
+result. The group helper then resumes at Enterprise normalization; it does not
+run Designer again. A pending outcome, changed fingerprint/commit/target,
+unsupported native operation, missing cursor duty, live session, or legacy
+record without the effect contract stays `needs-attention`. This automatic path
+currently inherits the file-base-only recovery inspector; server reconciliation
+and installed native crash acceptance remain open.
 
 Remaining: a native effect without a high-level completion receipt cannot be
 declared safely repeatable merely because its launcher exited. That case retains

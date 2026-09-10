@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import time
 
-from .common import WorkError, beneath, digest, identity, read_json, write_json
+from .common import WorkError, beneath, digest, identity, read_json, stamp, write_json
 from . import native_journal as native
 
 
@@ -198,6 +198,44 @@ def publish(lease, producer_id, payload):
         lease.record = record
         return {'event': 'restoration-duty-recorded', 'ticket': value['ticket'], 'journalId': value['journalId'],
                 'id': value['id'], 'path': str(destination), 'sha256': entry['sha256']}
+
+
+def commit_recovered_source_cursor(recovery, key, *, project, destination):
+    """Commit one on-failure cursor duty after a bound native load succeeded."""
+    with recovery.coordinator.mutex(time.monotonic() + 30, recovery.cancelled):
+        record = recovery._current()
+        matches = []
+        for producer_id, producer in native._index(record)['producers'].items():
+            entry = _entries(producer).get(key)
+            if entry is not None:
+                matches.append((producer_id, producer, entry))
+        if len(matches) != 1:
+            raise WorkError('SOURCE_SYNC_RECOVERY_CURSOR_DUTY_AMBIGUOUS')
+        producer_id, producer, entry = matches[0]
+        value = read(recovery.coordinator, record['ticket'], key, entry)
+        expected = Path(destination)
+        if (value['kind'] != 'config-dump-info' or value['policy'] != 'on-failure' or
+                value['project'] != project or Path(value['destination']) != expected or
+                value['status'] not in ('pending', 'committed')):
+            raise WorkError('SOURCE_SYNC_RECOVERY_CURSOR_DUTY_CHANGED')
+        if value['status'] == 'committed':
+            return value
+        if not expected.is_file() or expected.is_symlink() or getattr(expected, 'is_junction', lambda: False)():
+            raise WorkError('SOURCE_SYNC_RECOVERY_CURSOR_RESULT_MISSING')
+        updated = copy.deepcopy(value)
+        updated.update(status='committed', updatedAt=stamp())
+        _validate(updated)
+        relative = Path('restoration-duties') / record['ticket'] / updated['journalId'] / updated['id'] / (identity(updated) + '.json')
+        target = beneath(recovery.coordinator.root, relative.as_posix())
+        if target.exists():
+            if read_json(target) != updated:
+                raise WorkError('RESTORATION_JOURNAL_IMMUTABLE_SNAPSHOT_CHANGED')
+        else:
+            write_json(target, updated)
+        producer['restorations'][key] = {'path': relative.as_posix(), 'sha256': digest(target)}
+        recovery.coordinator.save(record)
+        recovery.record = record
+        return updated
 
 
 def inspect(coordinator, record):

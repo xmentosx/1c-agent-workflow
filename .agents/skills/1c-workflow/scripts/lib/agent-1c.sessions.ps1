@@ -162,6 +162,8 @@ function Save-OneCNativeOperationRecord {
         startAttempted = [bool]$Record.startAttempted; processId = [int]$Record.processId
         launcherExited = [bool]$Record.launcherExited; quiescenceConfirmed = [bool]$Record.quiescenceConfirmed
         releaseEvidence = $Record.releaseEvidence
+        effectContract = (Get-StateValue -State $Record -Name 'effectContract' -Default $null)
+        outcome = (Get-StateValue -State $Record -Name 'outcome' -Default ([pscustomobject]@{status='pending';recordedAt=''}))
         ownedProcessScopes = @($Record.ownedProcessScopes | ForEach-Object {
             if ($_.role -eq 'native-invocation') {
                 [pscustomobject]@{schemaVersion=$_.schemaVersion;role=$_.role;kind=$_.kind;path=$_.path;mode=$_.mode;logPath=$_.logPath;notBeforeUtc=$_.notBeforeUtc}
@@ -179,7 +181,7 @@ function Save-OneCNativeOperationRecord {
 }
 
 function Add-OneCNativeOperationRecord {
-    param([object]$Journal, [object[]]$Admissions, [string]$Purpose)
+    param([object]$Journal, [object[]]$Admissions, [string]$Purpose, [AllowNull()][object]$EffectContract = $null)
     if ($null -eq $Journal) { return $null }
     if ($null -ne $Journal.owner) {
         # Build callers attach the acquired owner after allocating the journal.
@@ -203,6 +205,8 @@ function Add-OneCNativeOperationRecord {
         launcherExited = $false
         quiescenceConfirmed = $false
         releaseEvidence = ''
+        effectContract = $EffectContract
+        outcome = [pscustomobject]@{status='pending';recordedAt=''}
         ownedProcessScopes = @()
         persistence = $Journal.persistence
         persistedPath = ''
@@ -369,6 +373,21 @@ function Confirm-OneCNativeOperationRelease {
     # The caller must supply its operation-specific owned-process proof.
     $Record.quiescenceConfirmed = [bool]($Record.startAttempted -and $LauncherExited -and $OwnedProcessesReleased -and $Evidence)
     $Record.releaseEvidence = if ($Record.quiescenceConfirmed) { $Evidence } else { '' }
+    Save-OneCNativeOperationRecord -Record $Record
+}
+
+function Complete-OneCNativeOperationOutcome {
+    param([AllowNull()][object]$Record, [ValidateSet('succeeded','failed')][string]$Status)
+    if ($null -eq $Record) { return }
+    $previous = Get-StateValue -State $Record -Name 'outcome' -Default ([pscustomobject]@{status='pending';recordedAt=''})
+    if ($previous.status -ne 'pending' -and $previous.status -ne $Status) {
+        throw 'ONEC_NATIVE_OPERATION_OUTCOME_CHANGED'
+    }
+    if ($previous.status -eq $Status) { return }
+    if ($Status -eq 'succeeded' -and -not $Record.quiescenceConfirmed) {
+        throw 'ONEC_NATIVE_OPERATION_SUCCESS_NOT_QUIESCENT'
+    }
+    $Record | Add-Member -NotePropertyName outcome -NotePropertyValue ([pscustomobject]@{status=$Status;recordedAt=[DateTime]::UtcNow.ToString('o')}) -Force
     Save-OneCNativeOperationRecord -Record $Record
 }
 
@@ -1003,6 +1022,7 @@ function Invoke-WithOneCSessionAdmissionContext {
         [ValidateRange(1, 64)][int]$RequiredSessions = 1,
         [ValidateSet("", "test-client")][string]$ExpectedChildRole = "",
         [string]$Purpose = "1c-process",
+        [AllowNull()][object]$NativeEffectContract = $null,
         [object[]]$AdditionalAdmissions = @(),
         [scriptblock]$SessionLimitRecovery = $null,
         [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
@@ -1035,7 +1055,7 @@ function Invoke-WithOneCSessionAdmissionContext {
         sessionLimitRecovery = $SessionLimitRecovery
         recoveryAttempted = $false
         nativeStartAttempted = $false
-        nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose)
+        nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose -EffectContract $NativeEffectContract)
         nativeOperationJournal = $script:OneCNativeOperationJournal
         sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
         sessionCancelPath = $SessionCancelPath

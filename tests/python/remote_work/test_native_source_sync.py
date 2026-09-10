@@ -1,5 +1,6 @@
 """Source-group acknowledgements distinguish safe continuation from unknown effects."""
 import copy
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import uuid
 
 import test_native_continuation as fixtures
 import test_native_journal as operations
-from itl_remote import native_journal as native, native_source_sync as phases
+from itl_remote import native_journal as native, native_source_sync as phases, restoration_journal as restoration
 from itl_remote.common import WorkError, read_json, write_json
 
 
@@ -20,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2])
 from itl_remote.access import Lease
 from itl_remote.common import read_json, write_json
-from itl_remote import native_journal as native, native_continuation, native_source_sync as phases
+from itl_remote import native_journal as native, native_continuation, native_source_sync as phases, restoration_journal as restoration
 from itl_remote.native_recovery_helpers import NAMES
 from test_native_journal import NativeJournalTests
 request = read_json(sys.argv[3]); plan = request['plan']
@@ -42,6 +43,29 @@ with Lease(coordinator, plan['bases'], {**request['owner'], 'parentPid': os.getp
     operation.update(operation='sync-dev-branches', helperInputs=plan['helperInputs'],
                      startAttempted=True, launcherExited=True, quiescenceConfirmed=True,
                      releaseEvidence='fixture action returned; live inspection remains required')
+    if request.get('reconcilable'):
+        cursor = Path(request['intent']['project']) / request['intent']['exportPath'] / 'ConfigDumpInfo.xml'
+        cursor.parent.mkdir(parents=True, exist_ok=True); cursor.write_text('recovered cursor', encoding='utf-8')
+        operation.update(purpose='designer-configuration-update', processId=4321,
+            ownedProcessScopes=[{'schemaVersion': 1, 'role': 'native-invocation', **plan['target'],
+                'mode': 'DESIGNER', 'logPath': str(Path(plan['project']) / 'load.log'),
+                'notBeforeUtc': '2026-09-10T00:00:00+00:00'}],
+            effectContract={'schemaVersion': 1, 'kind': 'load-config-from-files', 'project': plan['project'],
+                'sourceFingerprint': request['intent']['sourceFingerprint'], 'sourceTreeObjectId': request['sourceTreeObjectId'],
+                'sourceCommit': request['intent']['sourceCommit'], 'exportPath': request['intent']['exportPath'],
+                'contentKind': 'configuration', 'extensionName': '', 'mode': 'full'},
+            outcome={'status': 'succeeded', 'recordedAt': '2026-09-10T00:00:01+00:00'})
+        restoration.publish(lease, producer, {'schemaVersion': 1, 'journalId': operation['journalId'],
+            'ticket': lease.record['ticket'], 'id': 'd' * 32, 'createdAt': '2026-09-10T00:00:00+00:00',
+            'updatedAt': '2026-09-10T00:00:00+00:00', 'hostName': operation['hostName'],
+            'ownerPid': operation['ownerPid'], 'operation': 'sync-dev-branches', 'project': plan['project'],
+            'resources': [plan['target']], 'resourceIds': [], 'helperInputs': plan['helperInputs'],
+            'kind': 'config-dump-info', 'destination': str(cursor), 'existed': False,
+            'snapshotPath': '', 'snapshotSha256': '', 'policy': 'on-failure', 'status': 'pending'})
+        pending = {**operation, 'startAttempted': False, 'processId': 0, 'launcherExited': False,
+                   'quiescenceConfirmed': False, 'releaseEvidence': '',
+                   'outcome': {'status': 'pending', 'recordedAt': ''}}
+        native.publish(lease, producer, pending)
     native.publish(lease, producer, operation)
     if request['completed']:
         phases.publish(lease, producer, {**request['intent'], 'status': 'completed', 'result': {'loaded': True}})
@@ -58,13 +82,34 @@ class NativeSourceSyncTests(unittest.TestCase):
         self.fixture.owner['operation'] = 'sync-dev-branches'
         self.fixture.plan['operation'] = 'sync-dev-branches'
         self.coordinator = self.fixture.coordinator
-        self.intent = dict(schemaVersion=1, groupId=uuid.uuid4().hex, stepId=uuid.uuid4().hex,
+        self.intent = dict(schemaVersion=2, groupId=uuid.uuid4().hex, stepId=uuid.uuid4().hex,
                            step='load', status='running', project=str(self.fixture.root), member='primary',
                            members=[dict(name='primary', project=str(self.fixture.root), target=self.fixture.base)],
-                           sourceFingerprint='v2|git-tree-sha256|' + 'a' * 64, sourceCommit='b' * 40, exportPath='src/cf', result={})
+                           sourceFingerprint='v2|git-tree-sha256|' + 'a' * 64, sourceCommit='b' * 40, exportPath='src/cf',
+                           contentKind='configuration', extensionName='', result={})
 
     def current(self, lease):
         return read_json(self.coordinator.root / 'tickets' / (lease.record['ticket'] + '.json'))
+
+    def prepare_source(self):
+        source = self.fixture.root / 'src/cf'
+        source.mkdir(parents=True, exist_ok=True)
+        (source / 'Configuration.xml').write_text('<Configuration/>', encoding='utf-8')
+        for arguments in (['init', '--quiet'], ['config', 'user.email', 'tests@example.invalid'],
+                          ['config', 'user.name', 'ITL Tests'], ['add', '--', 'src/cf'],
+                          ['commit', '--quiet', '-m', 'source']):
+            subprocess.run(['git', '-C', str(self.fixture.root), *arguments], check=True, capture_output=True)
+        commit = subprocess.run(['git', '-C', str(self.fixture.root), 'rev-parse', 'HEAD'],
+                                check=True, capture_output=True, text=True).stdout.strip()
+        tree = subprocess.run(['git', '-C', str(self.fixture.root), 'rev-parse', 'HEAD:src/cf'],
+                              check=True, capture_output=True, text=True).stdout.strip()
+        listing = subprocess.run(['git', '-c', 'core.quotepath=false', '-C', str(self.fixture.root),
+                                  'ls-tree', '-r', '-z', 'HEAD:src/cf'], check=True, capture_output=True).stdout
+        entries = [entry for entry in listing.split(b'\0') if entry and
+                   entry.split(b'\t', 1)[1].decode('utf-8').rsplit('/', 1)[-1].casefold() != 'configdumpinfo.xml']
+        self.intent['sourceCommit'] = commit
+        self.intent['sourceFingerprint'] = 'v2|git-tree-sha256|' + hashlib.sha256(b'\0'.join(entries)).hexdigest()
+        return tree
 
     def publish(self, lease):
         producer = native.register(lease)
@@ -86,7 +131,8 @@ class NativeSourceSyncTests(unittest.TestCase):
         return [{'observation': {'samples': [{'resources': copy.deepcopy(resources)} for _ in range(2)]}}]
 
     def recover(self, record, observations=None):
-        recovery = SimpleNamespace(coordinator=self.coordinator, _current=lambda: record)
+        recovery = SimpleNamespace(coordinator=self.coordinator, cancelled=lambda: False, record=record,
+                                   _current=lambda: read_json(self.coordinator.root / 'tickets' / (record['ticket'] + '.json')))
         return phases.recover(recovery, native.inspect(self.coordinator, record), [],
                               self.observations() if observations is None else observations)
 
@@ -114,6 +160,56 @@ class NativeSourceSyncTests(unittest.TestCase):
             self.assertFalse(phases.observe(lease, lease.record['ticket'], self.intent)['canStart'])
             with self.assertRaisesRegex(WorkError, 'UNACKNOWLEDGED_NATIVE_WORK'):
                 self.recover(self.current(lease))
+
+    def test_terminal_source_bound_load_reconstructs_the_lost_phase_receipt(self):
+        tree = self.prepare_source()
+        with self.fixture.lease() as lease:
+            producer = self.publish(lease)
+            cursor = self.fixture.root / 'src/cf/ConfigDumpInfo.xml'
+            cursor.parent.mkdir(parents=True, exist_ok=True)
+            cursor.write_text('new cursor', encoding='utf-8')
+            fixture = operations.NativeJournalTests()
+            fixture.root, fixture.base = self.fixture.root, self.fixture.base
+            operation = fixture.payload(lease)
+            operation.update(operation='sync-dev-branches', purpose='designer-process', startAttempted=True,
+                             processId=1234, launcherExited=True, quiescenceConfirmed=True,
+                             releaseEvidence='fixture process exited', ownedProcessScopes=[{
+                                 'schemaVersion': 1, 'role': 'native-invocation', **self.fixture.base,
+                                 'mode': 'DESIGNER', 'logPath': str(self.fixture.root / 'load.log'),
+                                 'notBeforeUtc': '2026-09-10T00:00:00+00:00'}],
+                             effectContract={'schemaVersion': 1, 'kind': 'load-config-from-files',
+                                 'project': str(self.fixture.root), 'sourceFingerprint': self.intent['sourceFingerprint'],
+                                 'sourceTreeObjectId': tree, 'sourceCommit': self.intent['sourceCommit'],
+                                 'exportPath': self.intent['exportPath'], 'contentKind': 'configuration',
+                                 'extensionName': '', 'mode': 'full'},
+                             outcome={'status': 'succeeded', 'recordedAt': '2026-09-10T00:00:01+00:00'})
+            duty = {'schemaVersion': 1, 'journalId': operation['journalId'], 'ticket': lease.record['ticket'],
+                    'id': uuid.uuid4().hex, 'createdAt': '2026-09-10T00:00:00+00:00',
+                    'updatedAt': '2026-09-10T00:00:00+00:00', 'hostName': operation['hostName'],
+                    'ownerPid': operation['ownerPid'], 'operation': 'sync-dev-branches',
+                    'project': str(self.fixture.root), 'resources': [self.fixture.base], 'resourceIds': [],
+                    'helperInputs': operation['helperInputs'], 'kind': 'config-dump-info',
+                    'destination': str(cursor), 'existed': False, 'snapshotPath': '', 'snapshotSha256': '',
+                    'policy': 'on-failure', 'status': 'pending'}
+            restoration.publish(lease, producer, duty)
+            pending = {**operation, 'startAttempted': False, 'processId': 0, 'launcherExited': False,
+                       'quiescenceConfirmed': False, 'releaseEvidence': '',
+                       'outcome': {'status': 'pending', 'recordedAt': ''}}
+            native.publish(lease, producer, pending)
+            native.publish(lease, producer, operation)
+            recovered = self.recover(self.current(lease))
+            self.assertEqual('full', recovered.evidence['reconciledLoad']['effectContract']['mode'])
+            current = self.current(lease)
+            completed = phases.inspect(self.coordinator, current)[0]
+            self.assertEqual('completed', completed['phase']['status'])
+            self.assertEqual(self.intent['sourceFingerprint'], completed['phase']['result']['loadResult']['sourceFingerprint'])
+            self.assertEqual('committed', native.inspect(self.coordinator, current)['restoration']['duties'][0]['status'])
+
+    def test_recovery_rejects_a_source_tree_that_does_not_match_the_phase(self):
+        self.prepare_source()
+        effect = {'sourceTreeObjectId': 'd' * 40}
+        with self.assertRaisesRegex(WorkError, 'SOURCE_IDENTITY_CHANGED'):
+            phases._verify_source_commit(self.intent, effect)
 
     def test_missing_intent_after_failed_index_save_never_implies_native_work_started(self):
         with self.fixture.lease() as lease:
@@ -228,6 +324,33 @@ class NativeSourceSyncTests(unittest.TestCase):
                     retained = read_json(coordinator / 'tickets' / (ticket + '.json'))
                     self.assertEqual('needs-attention', retained['status'])
                 self.assertEqual(b'fixture file access sentinel', (base / '1Cv8.1CD').read_bytes())
+
+    def test_crashed_process_recovers_a_terminal_source_bound_load_without_replay(self):
+        tree = self.prepare_source()
+        base = Path(self.fixture.base['path'])
+        base.mkdir(); (base / '1Cv8.1CD').write_bytes(b'fixture file access sentinel')
+        from itl_remote.native_recovery import recover_workflow_operation
+        coordinator = self.fixture.root / 'Очередь восстановленной загрузки'
+        request = self.fixture.root / 'recoverable-crash-request.json'
+        ready = self.fixture.root / 'recoverable-crash-ready.json'
+        write_json(request, dict(coordinator=str(coordinator), plan=self.fixture.plan,
+                                 owner=self.fixture.owner, intent=self.intent, completed=False,
+                                 reconcilable=True, sourceTreeObjectId=tree, ready=str(ready)))
+        process = subprocess.run([sys.executable, '-B', '-X', 'utf8', '-c', CRASHED_OWNER,
+                                  str(operations.RUNTIME), str(Path(__file__).parent), str(request)],
+                                 capture_output=True, timeout=30)
+        self.assertEqual(77, process.returncode, process.stderr.decode('utf-8'))
+        ticket = read_json(ready)['ticket']
+        recovered = recover_workflow_operation(coordinator, ticket)
+        self.assertEqual('released', recovered['status'])
+        evidence = recovered['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('full', evidence['reconciledLoad']['effectContract']['mode'])
+        from itl_remote.access import Lease
+        with Lease(coordinator, self.fixture.plan['bases'], self.fixture.owner, timeout=0) as successor:
+            observed = phases.observe(successor, ticket, self.intent)
+            self.assertTrue(observed['completed'])
+            self.assertEqual('recovered-native-load', observed['result']['loadResult']['loadReason'])
+        self.assertEqual(b'fixture file access sentinel', (base / '1Cv8.1CD').read_bytes())
 
 
 if __name__ == '__main__':

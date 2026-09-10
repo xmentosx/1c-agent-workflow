@@ -38,6 +38,7 @@ class NativeJournalTests(unittest.TestCase):
                 'resources': [self.base], 'resourceIds': [], 'helperInputs': [{'path': str(RUNTIME / 'DatabaseAccess.ps1'), 'sha256': 'a' * 64}],
                 'admissions': [{**self.base, 'requiredSessions': 1, 'expectedChildRole': 'test-client'}],
                 'startAttempted': False, 'processId': 0, 'launcherExited': False, 'quiescenceConfirmed': False, 'releaseEvidence': '',
+                'effectContract': None, 'outcome': {'status': 'pending', 'recordedAt': ''},
                 'ownedProcessScopes': [], 'recoveryRequiresLiveVerification': True}
 
     def current(self, ticket):
@@ -110,6 +111,26 @@ class NativeJournalTests(unittest.TestCase):
                                                    'runParamsPath': str(self.root / 'VAParams.json'), 'runParamsSha256': 'b' * 64, 'testPorts': [53941]}]
                 with self.subTest(mutation=mutation), self.assertRaisesRegex(WorkError, 'IMMUTABLE_INPUT_CHANGED'):
                     journal.publish(lease, producer, value)
+
+    def test_effect_contract_and_terminal_outcome_are_immutable(self):
+        with self.lease() as lease:
+            producer = journal.register(lease)
+            value = self.payload(lease)
+            value['effectContract'] = {'schemaVersion': 1, 'kind': 'load-config-from-files',
+                'project': str(self.root), 'sourceFingerprint': 'v2|git-tree-sha256|' + 'a' * 64,
+                'sourceTreeObjectId': 'b' * 40, 'sourceCommit': 'c' * 40, 'exportPath': 'src/cf',
+                'contentKind': 'configuration', 'extensionName': '', 'mode': 'full'}
+            journal.publish(lease, producer, value)
+            value.update(startAttempted=True, processId=1234, launcherExited=True,
+                         quiescenceConfirmed=True, releaseEvidence='fixture release')
+            value['outcome'] = {'status': 'succeeded', 'recordedAt': '2026-09-10T00:00:01+00:00'}
+            journal.publish(lease, producer, value)
+            for changed in ('effect', 'outcome'):
+                other = copy.deepcopy(value)
+                if changed == 'effect': other['effectContract']['sourceCommit'] = 'd' * 40
+                else: other['outcome']['status'] = 'failed'
+                with self.subTest(changed=changed), self.assertRaisesRegex(WorkError, 'IMMUTABLE_INPUT_CHANGED'):
+                    journal.publish(lease, producer, other)
 
     def test_unreserved_client_scope_is_rejected_before_any_record_is_indexed(self):
         with self.lease() as lease:

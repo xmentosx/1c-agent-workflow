@@ -1551,6 +1551,11 @@ function Invoke-ConfigLoadWithFallback {
         [string]$AbsoluteExportPath,
         [string]$ListFilePath,
         [int]$FileCount,
+        [string]$SourceFingerprint = '',
+        [string]$SourceTreeObjectId = '',
+        [string]$SourceCommit = '',
+        [string]$ExportPath = '',
+        [ValidateSet('configuration','extension')][string]$ContentKind = 'configuration',
         [string]$ExtensionName = "",
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
@@ -1579,6 +1584,9 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
+                    -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                        sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                        exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full'}) `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
             } catch {
                 Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
@@ -1602,7 +1610,11 @@ function Invoke-ConfigLoadWithFallback {
         $script:LastNativeProcessStarted = $false
         $partialNativeSucceeded = $false
         try {
-            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password -DesignerArgs $partialArgs | Out-Null
+            Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind -User $User -Password $Password `
+                -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                    sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                    exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='partial'}) `
+                -DesignerArgs $partialArgs | Out-Null
             $partialNativeSucceeded = $true
             Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
             return [pscustomobject]@{
@@ -1660,6 +1672,9 @@ function Invoke-ConfigLoadWithFallback {
             try {
                 Invoke-Designer -InfoBasePath $InfoBasePath -InfoBaseKind $InfoBaseKind `
                     -User $User -Password $Password `
+                    -NativeEffectContract ([pscustomobject]@{schemaVersion=1;kind='load-config-from-files';project=[IO.Path]::GetFullPath($script:ProjectRoot)
+                        sourceFingerprint=$SourceFingerprint;sourceTreeObjectId=$SourceTreeObjectId;sourceCommit=$SourceCommit
+                        exportPath=$ExportPath;contentKind=$ContentKind;extensionName=$ExtensionName;mode='full-fallback'}) `
                     -DesignerArgs ($baseArgs + @("-updateConfigDumpInfo", "-Format", "Hierarchical", "/UpdateDBCfg")) | Out-Null
                 $fullNativeSucceeded = $true
                 Complete-OneCFileRestorationDuty -Snapshot $dumpInfoSnapshot -Resolution committed
@@ -3057,6 +3072,11 @@ function Load-ConfigFromFiles {
         -AbsoluteExportPath $changeSet.absoluteExportPath `
         -ListFilePath $listFilePath `
         -FileCount $changeSet.files.Count `
+        -SourceFingerprint $source.fingerprint `
+        -SourceTreeObjectId $sourceTreeObjectId `
+        -SourceCommit $currentCommit `
+        -ExportPath $ExportPath `
+        -ContentKind $ContentKind `
         -ExtensionName $ExtensionName `
         -Mode $Mode `
         -ResetConfigDumpInfo:($restoreInvalidated -or $Mode -eq "Full")
@@ -11750,10 +11770,11 @@ function Invoke-BranchSourceSyncLoadPhase {
             name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;noNativeWork=[bool]$observation.canStart})
         $progress.pending = $null
     }
-    $record = [pscustomobject]@{schemaVersion=1;groupId=$Context.plan.id;stepId=[guid]::NewGuid().ToString('N')
+    $record = [pscustomobject]@{schemaVersion=2;groupId=$Context.plan.id;stepId=[guid]::NewGuid().ToString('N')
         step=$Name;status='running';project=$Context.plan.project;member=$Context.member.name
         members=@($Context.plan.members | ForEach-Object { [pscustomobject]@{name=$_.name;project=$_.project;target=$_.target} })
-        sourceFingerprint=$Context.plan.fingerprint;sourceCommit=$Context.member.resultCommit;exportPath=$Context.plan.exportPath;result=@{}}
+        sourceFingerprint=$Context.plan.fingerprint;sourceCommit=$Context.member.resultCommit;exportPath=$Context.plan.exportPath
+        contentKind=$Context.contentKind;extensionName=$Context.extensionName;result=@{}}
     $progress.pending = [pscustomobject]@{ticket=$owner.proof.ticket;record=$record}
     Save-BranchSourceSyncLoadProgress -Context $Context
     Publish-ItlDatabaseSourceSyncPhase -Owner $owner -Record $record | Out-Null
@@ -11826,6 +11847,10 @@ function Invoke-BranchSourceSyncLoad {
     Sync-DevBranchContextToDotEnv -State $State
     $contentKind = Get-DevBranchKind -State $State
     $extensionName = if ($contentKind -eq "extension") { Require-DevBranchExtensionName -State $State } else { "" }
+    if ($null -ne $LoadContext) {
+        $LoadContext | Add-Member -NotePropertyName contentKind -NotePropertyValue $contentKind -Force
+        $LoadContext | Add-Member -NotePropertyName extensionName -NotePropertyValue $extensionName -Force
+    }
     $loaded = Invoke-BranchSourceSyncLoadPhase -Context $LoadContext -Name load -Action {
         $State = Ensure-DevBranchEventLogBaseline -State $State
         Ensure-DevBranchEventLogPendingCursor -State $State -Reason "sync-dev-branches" | Out-Null

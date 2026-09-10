@@ -6897,6 +6897,7 @@ function Invoke-Designer {
         [string[]]$DesignerArgs,
         [string]$User = (Get-EnvValue -Name "IB_USER"),
         [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [AllowNull()][object]$NativeEffectContract = $null,
         [object]$RestorationDuty = $null
     )
 
@@ -7146,6 +7147,7 @@ function Invoke-Designer {
     }
     $nativeArguments = @($args)
     $result = $null
+    $invocationError = $null
     $nativeOperationEvidence = [pscustomobject]@{ record = $null }
     try {
         $result = Invoke-WithOneCSessionAdmissionContext `
@@ -7153,6 +7155,7 @@ function Invoke-Designer {
             -InfoBasePath $InfoBasePath `
             -RequiredSessions 1 `
             -Purpose $(if ($null -ne $RestorationDuty) { 'designer-restore-snapshot-' + $RestorationDuty.payload.id } else { "designer-$operationKind" }) `
+            -NativeEffectContract $NativeEffectContract `
             -ScriptBlock {
                 $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
                 Invoke-NativeProcessAndWaitResult `
@@ -7166,6 +7169,8 @@ function Invoke-Designer {
                     -RequirePostExitProbeOnFailure `
                     -MaxWorkingSetMb $maxWorkingSetMb
             }
+    } catch {
+        $invocationError = $_
     } finally {
         if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.scanProcess) {
             $artifactTermination = Stop-DesignerDumpArtifactScan -ProbeState $artifactProbeState
@@ -7185,6 +7190,11 @@ function Invoke-Designer {
             -LauncherExited ([bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false)) `
             -OwnedProcessesReleased $ownedReleaseConfirmed -Evidence 'designer-owned-process-release'
     }
+    if ($null -ne $invocationError) {
+        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status failed
+        throw $invocationError
+    }
+    try {
     if ($timeoutCleanupState.error) {
         throw "DESIGNER_COMPLETION_PROBE_CLEANUP_FAILED operation=$operationKind log=$logPath detail='$(([string]$timeoutCleanupState.error) -replace '[\r\n]+', ' ')'"
     }
@@ -7253,7 +7263,12 @@ function Invoke-Designer {
             throw "1C Designer $operationKind ended without a complete output file '$operationTarget'. Log: $logPath"
         }
     }
+    } catch {
+        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status failed
+        throw
+    }
 
+    Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status succeeded
     if ($null -ne $RestorationDuty) { Set-OneCDatabaseRestoreEvidence -Duty $RestorationDuty -NativeRecord $nativeOperationEvidence.record }
     return $logPath
 }

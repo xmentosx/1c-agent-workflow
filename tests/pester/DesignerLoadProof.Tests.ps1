@@ -40,6 +40,11 @@ Describe "1C Designer load proof invalidation" {
                         [string]$AbsoluteExportPath,
                         [string]$ListFilePath,
                         [int]$FileCount,
+                        [string]$SourceFingerprint,
+                        [string]$SourceTreeObjectId,
+                        [string]$SourceCommit,
+                        [string]$ExportPath,
+                        [string]$ContentKind,
                         [string]$ExtensionName,
                         [string]$Mode,
                         [switch]$ResetConfigDumpInfo
@@ -169,8 +174,11 @@ Describe "1C Designer load proof invalidation" {
                 function Restore-ConfigDumpInfoLoadSnapshot {}
                 function Remove-ConfigDumpInfoLoadSnapshot {}
                 function Invoke-Designer {
-                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs, [object]$NativeEffectContract)
                     $script:DesignerCalls += , @($DesignerArgs)
+                    $NativeEffectContract.sourceFingerprint | Should -Be 'fingerprint-b'
+                    $NativeEffectContract.sourceCommit | Should -Be 'head'
+                    $NativeEffectContract.exportPath | Should -Be 'src/cf'
                     $script:ObservedFingerprints += [string](Get-StateValue -State (Read-DevBranchStateFile -Path $statePath) -Name "lastConfigDesignerFingerprint" -Default "")
                     $script:LastLogPath = "C:\designer-$($script:DesignerCalls.Count).log"
                     $script:LastNativeProcessStarted = $true
@@ -290,8 +298,14 @@ Describe "1C Designer load proof invalidation" {
                 function Assert-OneCConfigurationSourceIntegrity {}
                 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
                 function Invoke-ConfigLoadWithFallback {
-                    param([string]$Mode, [switch]$ResetConfigDumpInfo)
+                    param([string]$Mode, [switch]$ResetConfigDumpInfo, [string]$SourceFingerprint,
+                        [string]$SourceTreeObjectId,[string]$SourceCommit,[string]$ExportPath,[string]$ContentKind)
                     $script:LoadCalls++
+                    $SourceFingerprint | Should -Be 'fingerprint-a'
+                    $SourceTreeObjectId | Should -Be ('a' * 40)
+                    $SourceCommit | Should -Be 'head'
+                    $ExportPath | Should -Be 'src/cf'
+                    $ContentKind | Should -Be 'configuration'
                     $script:ResetConfigDumpInfo = [bool]$ResetConfigDumpInfo
                     [pscustomobject]@{
                         lastLogPath = "C:\full.log"; loadModeUsed = $Mode.ToLowerInvariant(); partialLogPath = ""
