@@ -2141,7 +2141,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     $settings = Get-ItlDatabaseAccessSettings
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
-    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds
+    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1
         owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
     if ($previousProof) {
         try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
@@ -2239,8 +2239,9 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
             throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
         }
         $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `
-            -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath })
+            -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath; requiredSessions = 0; expectedChildRole = '' })
         $drainRecord.startAttempted = $true
+        Save-OneCNativeOperationRecord -Record $drainRecord
     }
     Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping 1C sessions for the exact development branch infobase before $Reason."
     $ownedCleanupError = ""

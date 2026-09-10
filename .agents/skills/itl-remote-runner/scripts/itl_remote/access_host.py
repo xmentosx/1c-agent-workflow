@@ -15,6 +15,7 @@ import time
 
 from .access import Lease, public
 from .common import WorkError
+from . import native_journal
 
 
 def serve(input_stream, output_stream):
@@ -30,7 +31,7 @@ def serve(input_stream, output_stream):
         if sys.version_info < (3, 11):
             raise WorkError("INFOBASE_ACCESS_PYTHON311_REQUIRED")
         request = json.loads(input_stream.readline())
-        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose"}
+        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol"}
         owner_fields = {"project", "operation", "threadId", "parentPid", "requestId"}
         if (not isinstance(request, dict) or request.get("schemaVersion") != 1 or set(request) - fields or
                 not isinstance(request.get("owner"), dict) or set(request["owner"]) - owner_fields or
@@ -38,6 +39,9 @@ def serve(input_stream, output_stream):
                 any(not isinstance(base, dict) for base in request["bases"]) or
                 not isinstance(request.get("coordinator"), str) or not request["coordinator"].strip()):
             raise WorkError("INFOBASE_ACCESS_HOST_REQUEST_INVALID")
+        native_protocol = request.get("nativeJournalProtocol", 0)
+        if type(native_protocol) is not int or native_protocol not in (0, 1):
+            raise WorkError("NATIVE_JOURNAL_PROTOCOL_UNSUPPORTED")
 
         def receive():
             try:
@@ -55,6 +59,11 @@ def serve(input_stream, output_stream):
                     if value == {"event": "validate"}:
                         if not admitted.is_set():
                             raise WorkError("INFOBASE_ACCESS_VALIDATE_BEFORE_ADMISSION")
+                        messages.put(value)
+                        continue
+                    if set(value) == {"event", "record"} and value["event"] == "native-operation":
+                        if not admitted.is_set():
+                            raise WorkError("NATIVE_JOURNAL_BEFORE_ADMISSION")
                         messages.put(value)
                         continue
                     if (set(value) != {"event", "cleanupErrors"} or value["event"] != "release" or
@@ -78,12 +87,13 @@ def serve(input_stream, output_stream):
                 emit({"event": "waiting", **value})
                 last_progress = time.monotonic()
 
-        lease = Lease(request["coordinator"], request["bases"], {**request["owner"], "parentPid": os.getppid()},
+        lease = Lease(request["coordinator"], request["bases"], {**request["owner"], "parentPid": os.getppid(), "nativeJournalProtocol": native_protocol},
                       timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
                       progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"))
         lease.__enter__()
+        producer_id = native_journal.register(lease)
         admitted.set()
-        emit({"event": "admitted", "proof": lease.proof(), "owner": public(lease.record)})
+        emit({"event": "admitted", "proof": lease.proof(), "owner": public(lease.record, include_native_journal=False)})
         while True:
             value = messages.get()
             if isinstance(value, BaseException):
@@ -94,7 +104,10 @@ def serve(input_stream, output_stream):
                 lease.validate()
                 emit({"event": "validated"})
                 continue
-            status = lease.release(cleanup_errors=value["cleanupErrors"])
+            if value["event"] == "native-operation":
+                emit(native_journal.publish(lease, producer_id, value["record"]))
+                continue
+            status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,
                   "inherited": bool(lease.inherited)})
             break

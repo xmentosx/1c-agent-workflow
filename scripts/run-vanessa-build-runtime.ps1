@@ -44,7 +44,7 @@ try {
     }
     $buildSettings = Get-ItlDatabaseAccessSettings
     $buildAccessRequest = [ordered]@{
-        schemaVersion = 1; coordinator = $buildSettings.coordinator; bases = $buildBases; timeout = $buildSettings.waitTimeoutSeconds
+        schemaVersion = 1; coordinator = $buildSettings.coordinator; bases = $buildBases; timeout = $buildSettings.waitTimeoutSeconds; nativeJournalProtocol = 1
         owner = @{ project = $buildWorkRoot; operation = 'build-vanessa-automation'; requestId = [guid]::NewGuid().ToString('N') }
     }
     if ($buildSavedProof) { $buildAccessRequest.inherited = $buildSavedProof | ConvertFrom-Json -ErrorAction Stop }

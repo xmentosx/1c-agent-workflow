@@ -1728,6 +1728,48 @@ was stopped, quiescence was confirmed, and the original failed result was
 preserved. This recovery adapter is diagnostic evidence, not yet a delivered
 general recovery command.
 
+The next source candidate persists native operations through the admitted pipe
+owner. It writes immutable snapshots under
+`native-operations/<ticket>/<journal>/<operation>/<identity>.json`, then atomically
+records their paths and hashes in the ticket's authoritative index before
+acknowledging publication. Process creation requires that acknowledgement.
+Records retain the complete admitted resource plan, captured process scopes,
+owner/run identity and helper-file hashes; tokens, passwords, native process
+objects and extra scope fields are excluded by explicit serialization.
+
+Each pipe participant has its own producer identity. A producer cannot overwrite
+another participant's journal, move outside its reserved resources, or rebind an
+already-started operation's inputs. Source lifecycle and build callers explicitly
+declare native journal protocol 1; a legacy caller is not silently treated as
+fully tracked. The reader checks every indexed snapshot and rejects missing or
+changed files, unsafe paths, missing owner manifests and untracked participants.
+Saved quiescence flags remain observations, never live recovery proof. A clean
+release request with an unresolved native intent retains needs-attention.
+
+Persistence initializes at the first operation, including build journals whose
+owner is attached after construction. Runtime drain records zero new sessions
+and persists its intent before cleanup; process launches still require positive
+session admissions. The 42 PowerShell integration cases, 11 journal/index Python
+cases and 15 real pipe-host Python cases pass. Detailed native index data stays
+out of ordinary admission and waiting messages.
+
+Real parent-exit acceptance used `C:/va канал/probe-61553720`. An intentional
+exception before cleanup left one owned TestClient and ticket
+`92b9e49eb3e34d338498c6138a573336` in needs-attention. A fresh Python process read
+the authoritative index, checked the retained helper hashes and all three
+resources, then used the existing exclusive Recovery protocol with a live scoped
+PowerShell verifier. It stopped the owned client, confirmed quiescence and
+admitted a competitor only after recovery released the ticket. The original
+failed result and immutable native snapshots remain unchanged; recovery evidence
+is retained separately. The diagnostic workload has no snapshot/configuration
+rollback duty and its business scenario is still reported as failed.
+
+The general script-owned recovery adapter and its per-operation restoration
+contracts remain open. It must also resolve the original helper generation after
+an installed update, rather than trusting a changed file at a retained path.
+Abrupt interruption during launch, a live foreign-client case, installed command
+acceptance and the remaining facade admission paths still require work.
+
 This evidence does not close item 4: durable recovery after supervisor restart,
 the remaining entrypoints, installed acceptance and two-host competition remain
 open. The fixture proves foreign-session isolation; a new live foreign-session

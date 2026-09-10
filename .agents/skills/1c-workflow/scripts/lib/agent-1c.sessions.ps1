@@ -10,13 +10,72 @@ function New-OneCNativeOperationJournal {
     param([object[]]$Resources = @(), [AllowNull()][object]$Owner = $null)
     # The aggregate database admission owns this journal. Session-capacity
     # reservation removal is not proof that database work has stopped.
-    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new(); resources = @($Resources); owner = $Owner }
+    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new(); resources = @($Resources); owner = $Owner; persistence = $null }
+}
+
+function New-OneCNativeJournalPersistence {
+    param([object[]]$Resources, [object]$Owner)
+    $persistence = $null
+    if ($null -ne $Owner) {
+        if ($null -eq $Owner.proof -or $Owner.proof.ticket -notmatch '^[a-f0-9]{32}$' -or
+            -not $Owner.proof.coordinator -or $Owner.public.ticket -cne $Owner.proof.ticket) {
+            throw 'ONEC_NATIVE_JOURNAL_OWNER_INVALID'
+        }
+        $journalId = [guid]::NewGuid().ToString('N')
+        $persistence = [pscustomobject]@{
+            owner = $Owner
+            journalId = $journalId; ticket = $Owner.proof.ticket
+            createdAt = [DateTime]::UtcNow.ToString('o'); hostName = [Environment]::MachineName; ownerPid = $PID
+            operation = [string]$Owner.public.owner.operation; project = [string]$Owner.public.owner.project
+            resources = @($Resources | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path} })
+            resourceIds = @($Owner.public.resources)
+            helperInputs = @('agent-1c.core.ps1','agent-1c.sessions.ps1','agent-1c.vanessa.ps1' | ForEach-Object {
+                $helperPath = Join-Path $PSScriptRoot $_
+                [pscustomobject]@{path=$helperPath;sha256=(Get-FileHash -LiteralPath $helperPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+            })
+        }
+    }
+    return $persistence
+}
+
+function Save-OneCNativeOperationRecord {
+    param([AllowNull()][object]$Record)
+    if ($null -eq $Record -or $null -eq $Record.persistence) { return }
+    $binding = $Record.persistence
+    # Explicit fields only: never serialize process objects, passwords, native
+    # command lines, or the private inheritance proof. Every journal gets its
+    # own directory even when several participants share one admission ticket.
+    $payload = [ordered]@{
+        schemaVersion = 1; journalId = $binding.journalId; ticket = $binding.ticket; id = $Record.id
+        createdAt = $binding.createdAt; updatedAt = [DateTime]::UtcNow.ToString('o')
+        hostName = $binding.hostName; ownerPid = $binding.ownerPid
+        operation = $binding.operation; project = $binding.project; purpose = $Record.purpose
+        resources = @($binding.resources); resourceIds = @($binding.resourceIds); helperInputs = @($binding.helperInputs)
+        admissions = @($Record.admissions | ForEach-Object {
+            [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath;requiredSessions=$_.requiredSessions;expectedChildRole=$_.expectedChildRole}
+        })
+        startAttempted = [bool]$Record.startAttempted; processId = [int]$Record.processId
+        launcherExited = [bool]$Record.launcherExited; quiescenceConfirmed = [bool]$Record.quiescenceConfirmed
+        releaseEvidence = $Record.releaseEvidence
+        ownedProcessScopes = @($Record.ownedProcessScopes | ForEach-Object {
+            [pscustomobject]@{schemaVersion=$_.schemaVersion;role=$_.role;kind=$_.kind;path=$_.path;runParamsPath=$_.runParamsPath;runParamsSha256=$_.runParamsSha256;testPorts=@($_.testPorts)}
+        })
+        # A future recovery must inspect live work and the original operation's
+        # restoration duties; these saved observations never authorize release.
+        recoveryRequiresLiveVerification = $true
+    }
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
+    $ack = Publish-ItlDatabaseNativeOperation -Owner $binding.owner -Record $payload
+    $Record.persistedPath = $ack.path
 }
 
 function Add-OneCNativeOperationRecord {
     param([object]$Journal, [object[]]$Admissions, [string]$Purpose)
     if ($null -eq $Journal) { return $null }
     if ($null -ne $Journal.owner) {
+        # Build callers attach the acquired owner after allocating the journal.
+        # Defer disk binding until the first operation, inside their cleanup scope.
+        if ($null -eq $Journal.persistence) { $Journal.persistence = New-OneCNativeJournalPersistence -Resources $Journal.resources -Owner $Journal.owner }
         foreach ($admission in $Admissions) {
             $matches = @($Journal.resources | Where-Object {
                 $_.kind -ceq $admission.infoBaseKind -and
@@ -36,8 +95,11 @@ function Add-OneCNativeOperationRecord {
         quiescenceConfirmed = $false
         releaseEvidence = ''
         ownedProcessScopes = @()
+        persistence = $Journal.persistence
+        persistedPath = ''
     }
     $Journal.entries.Add($record)
+    Save-OneCNativeOperationRecord -Record $record
     return $record
 }
 
@@ -64,6 +126,7 @@ function Confirm-OneCNativeOperationRelease {
     # The caller must supply its operation-specific owned-process proof.
     $Record.quiescenceConfirmed = [bool]($Record.startAttempted -and $LauncherExited -and $OwnedProcessesReleased -and $Evidence)
     $Record.releaseEvidence = if ($Record.quiescenceConfirmed) { $Evidence } else { '' }
+    Save-OneCNativeOperationRecord -Record $Record
 }
 
 function Get-OneCMaxConcurrentSessions {
@@ -654,12 +717,17 @@ function Invoke-OneCSessionProcessStart {
                         if ($currentHash -cne $scope.runParamsSha256) { throw 'ONEC_NATIVE_RUN_PARAMETERS_CHANGED_BEFORE_LAUNCH' }
                     }
                 }
+                if ($null -ne $context.nativeOperationRecord) {
+                    $context.nativeOperationRecord.startAttempted = $true
+                    try { Save-OneCNativeOperationRecord -Record $context.nativeOperationRecord }
+                    catch { $context.nativeOperationRecord.startAttempted = $false; throw }
+                }
                 $context.nativeStartAttempted = $true
-                if ($null -ne $context.nativeOperationRecord) { $context.nativeOperationRecord.startAttempted = $true }
                 $startedProcess = & $requestedStartProcess
                 if ($null -ne $context.nativeOperationRecord -and $null -ne $startedProcess) {
                     $context.nativeOperationRecord.process = $startedProcess
                     $context.nativeOperationRecord.processId = [int]$startedProcess.Id
+                    Save-OneCNativeOperationRecord -Record $context.nativeOperationRecord
                 }
                 return $startedProcess
             })

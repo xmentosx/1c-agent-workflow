@@ -140,6 +140,23 @@ function Assert-ItlDatabaseAccessHost {
     if ($event.event -ne 'validated') { throw 'INFOBASE_ACCESS_HOST_VALIDATION_UNCONFIRMED' }
 }
 
+function Publish-ItlDatabaseNativeOperation {
+    param([Parameter(Mandatory = $true)][object]$Owner, [Parameter(Mandatory = $true)][object]$Record)
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    $payload = [pscustomobject]@{event='native-operation';record=$Record} | ConvertTo-Json -Depth 20 -Compress
+    $ascii = [Text.RegularExpressions.Regex]::Replace($payload, '[^\x00-\x7f]', {
+        param($match)
+        return ('\u{0:x4}' -f [int][char]$match.Value)
+    })
+    $Owner.process.StandardInput.WriteLine($ascii)
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -ne 'native-operation-recorded' -or $event.ticket -cne $Owner.proof.ticket -or
+        $event.journalId -cne $Record.journalId -or $event.id -cne $Record.id -or -not $event.path -or
+        $event.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'NATIVE_JOURNAL_PUBLICATION_UNCONFIRMED' }
+    return $event
+}
+
 function Complete-ItlDatabaseAccessHost {
     param([Parameter(Mandatory = $true)][object]$Owner, [string[]]$CleanupErrors = @())
 

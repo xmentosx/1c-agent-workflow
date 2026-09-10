@@ -1,6 +1,7 @@
 """Real pipe owners sharing the same authority with portable measurement leases."""
 import json
 import os
+import platform
 from pathlib import Path
 import queue
 import subprocess
@@ -8,14 +9,59 @@ import sys
 import tempfile
 import threading
 import unittest
+import uuid
 
 RUNTIME = Path(__file__).resolve().parents[3] / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
 from itl_remote.access import Coordinator, Lease
 from itl_remote.common import WorkError
+from itl_remote import native_journal
 
 
 class AccessHostTests(unittest.TestCase):
+    def native_record(self, ticket):
+        return {"schemaVersion": 1, "journalId": uuid.uuid4().hex, "ticket": ticket, "id": uuid.uuid4().hex,
+                "createdAt": "2026-09-10T00:00:00Z", "updatedAt": "2026-09-10T00:00:00Z", "hostName": platform.node(),
+                "ownerPid": os.getpid(), "operation": "native-test", "project": str(self.root), "purpose": "test-manager-run",
+                "resources": [self.base], "resourceIds": [], "helperInputs": [{"path": str(RUNTIME / "DatabaseAccess.ps1"), "sha256": "a" * 64}],
+                "admissions": [{**self.base, "requiredSessions": 1, "expectedChildRole": "test-client"}],
+                "startAttempted": True, "processId": 0, "launcherExited": False, "quiescenceConfirmed": False, "releaseEvidence": "",
+                "ownedProcessScopes": [], "recoveryRequiresLiveVerification": True}
+
+    def test_native_intent_survives_parent_disconnect_and_overrides_an_incorrect_clean_release(self):
+        for disconnect in (False, True):
+            with self.subTest(disconnect=disconnect):
+                authority = self.root / ("Native журнал " + str(disconnect))
+                child, received = self.start(coordinator=str(authority), nativeJournalProtocol=1)
+                admitted = self.next(received, "admitted")
+                self.assertNotIn("nativeJournal", admitted["owner"])
+                payload = self.native_record(admitted["proof"]["ticket"])
+                self.send(child, {"event": "native-operation", "record": payload})
+                ack = self.next(received, "native-operation-recorded")
+                self.assertTrue(Path(ack["path"]).is_file())
+                competitor, competitor_events = self.start(coordinator=str(authority), timeout=0)
+                waiting = self.next(competitor_events, "waiting")
+                self.assertTrue(waiting["blockers"])
+                self.assertTrue(all("nativeJournal" not in blocker for blocker in waiting["blockers"]))
+                self.next(competitor_events, "error")
+                competitor.wait(timeout=5)
+                if disconnect:
+                    child.stdin.close()
+                    self.next(received, "error")
+                else:
+                    self.send(child, {"event": "release", "cleanupErrors": []})
+                    self.assertEqual("needs-attention", self.next(received, "released")["status"])
+                child.wait(timeout=5)
+                coordinator = Coordinator(authority)
+                record = coordinator.records()[0]
+                self.assertEqual("needs-attention", record["status"])
+                bundle = native_journal.inspect(coordinator, record)
+                self.assertEqual([payload["id"]], [p["id"] for p in bundle["operations"]])
+                self.assertTrue(bundle["operations"][0]["startAttempted"])
+                with self.assertRaisesRegex(WorkError, "RECOVERY_REQUIRED"):
+                    with Lease(authority, [self.base], {}, timeout=0):
+                        pass
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="Общая очередь базы ")
         self.addCleanup(self.temp.cleanup)

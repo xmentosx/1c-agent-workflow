@@ -150,8 +150,8 @@ class Coordinator:
             return [public(record) for record in self.records() if record["status"] in ("waiting", "running", "recovering", "needs-attention")]
 
 
-def public(record):
-    return {key: value for key, value in record.items() if key != "token"}
+def public(record, *, include_native_journal=True):
+    return {key: value for key, value in record.items() if key != "token" and (include_native_journal or key != "nativeJournal")}
 
 
 def inheritance_token(record):
@@ -230,7 +230,7 @@ class Lease:
                         if record["status"] == "needs-attention":
                             raise WorkError("INFOBASE_ACCESS_RECOVERY_REQUIRED: " + record["ticket"])
                         if record["status"] in ("running", "recovering") or record["sequence"] < self.record["sequence"]:
-                            blockers.append(public(record))
+                            blockers.append(public(record, include_native_journal=False))
                     if not blockers:
                         self.record.update(status="running", admittedAt=stamp())
                         self.coordinator.save(self.record)
