@@ -41,7 +41,8 @@
             'function Set-VanessaMcpExtensionUnsafeMode[\s\S]*?^}',
             [Text.RegularExpressions.RegexOptions]::Multiline
         ).Value
-        $functionText | Should -Match 'Get-StateValue -State \$process -Name ''OneCNativeOperationRecord'''
+        $functionText | Should -Match 'Start-OneCProcessBackground[^\r\n]*-NativeOperationEvidence \$nativeOperationEvidence'
+        $functionText | Should -Match '\$nativeRecord = \$nativeOperationEvidence\.record'
         $functionText | Should -Match 'Confirm-OneCNativeOperationRelease -Record \$nativeRecord'
         $functionText | Should -Match '-LauncherExited \(\[bool\]\$cleanup\.confirmed\)'
         $functionText | Should -Match 'designer-agent-owned-process-release'

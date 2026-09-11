@@ -1151,10 +1151,11 @@ function Start-OneCProcessBackground {
         [ValidateRange(0, 86400)][double]$SessionWaitTimeoutSeconds = 0,
         [string]$SessionCancelPath = '',
         [long]$SessionDeadlineMonotonicNs = 0,
+        [AllowNull()][object]$NativeOperationEvidence = $null,
         [switch]$Visible
     )
 
-    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
+    $capturedNativeOperation = [pscustomobject]@{ record = $null }
     $process = Invoke-WithOneCSessionAdmissionContext `
         -InfoBaseKind $InfoBaseKind `
         -InfoBasePath $InfoBasePath `
@@ -1167,12 +1168,10 @@ function Start-OneCProcessBackground {
         -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
         -KeepReservation `
         -ScriptBlock {
-            $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
+            $capturedNativeOperation.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
             Start-NativeProcessBackground -FilePath $FilePath -Arguments $Arguments -Visible:$Visible
         }
-    if ($null -ne $process -and $null -ne $nativeOperationEvidence.record) {
-        $process | Add-Member -NotePropertyName OneCNativeOperationRecord -NotePropertyValue $nativeOperationEvidence.record -Force
-    }
+    if ($null -ne $NativeOperationEvidence) { $NativeOperationEvidence.record = $capturedNativeOperation.record }
     return $process
 }
 

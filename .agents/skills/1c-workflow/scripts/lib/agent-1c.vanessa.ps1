@@ -7648,6 +7648,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
     $platformVersion = ""
     try { $platformVersion = [string](Get-Item -LiteralPath $platformPath).VersionInfo.FileVersion } catch {}
     $process = $null
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
+    $nativeRecord = $null
     $processStartTime = [DateTime]::MinValue
     $releaseLease = $true
     $operationSucceeded = $false
@@ -7664,7 +7666,8 @@ function Set-VanessaMcpExtensionUnsafeMode {
             "/AgentBaseDir", $agentRoot
         )
         Write-Host "Starting Designer Agent for Vanessa extension property reconciliation on 127.0.0.1:$($lease.port)."
-        $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Purpose "vanessa-designer-agent-safe-mode-$Scope"
+        $process = Start-OneCProcessBackground -FilePath $platformPath -Arguments $arguments -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath -Purpose "vanessa-designer-agent-safe-mode-$Scope" -NativeOperationEvidence $nativeOperationEvidence
+        $nativeRecord = $nativeOperationEvidence.record
         $processStartTime = $process.StartTime
         Set-ItlManagedPortAllocationStatus -Family $portFamily -Key $portKey -Status "running" -ProcessId $process.Id -LeaseToken $leaseToken
         $readiness = Wait-VanessaDesignerAgentReady -Process $process -ExpectedStartTime $processStartTime -Port ([int]$lease.port) -TimeoutSeconds 30
@@ -7731,7 +7734,6 @@ function Set-VanessaMcpExtensionUnsafeMode {
             if (-not $cleanup.confirmed) {
                 $releaseLease = $false
             }
-            $nativeRecord = Get-StateValue -State $process -Name 'OneCNativeOperationRecord' -Default $null
             Confirm-OneCNativeOperationRelease -Record $nativeRecord `
                 -LauncherExited ([bool]$cleanup.confirmed) `
                 -OwnedProcessesReleased ([bool]$cleanup.confirmed) `
