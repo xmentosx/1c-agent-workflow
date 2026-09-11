@@ -7129,6 +7129,59 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "recreates the same pinned merge when cleanup removed MERGE_HEAD after a recorded conflict" {
+        $fixture = New-LifecycleMergeConflictFixture
+        try {
+            $result = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = "test"
+                $script:MergeState = [pscustomobject]@{ safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test" }
+                function Read-DevBranchState { return $script:MergeState }
+                function Update-DevBranchState {
+                    param([object]$State, [hashtable]$Updates)
+                    foreach ($key in $Updates.Keys) {
+                        if ($null -eq $script:MergeState.PSObject.Properties[$key]) {
+                            $script:MergeState | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key]
+                        } else {
+                            $script:MergeState.PSObject.Properties[$key].Value = $Updates[$key]
+                        }
+                    }
+                }
+                function Set-RunStage {}
+                function Set-RunFailureContext {}
+                function Assert-OneCConfigurationSourceIntegrity {}
+                function Restart-Agent1cAfterDevBranchMerge { throw "UNEXPECTED_RESTART" }
+
+                try {
+                    Invoke-NewDevBranchLifecycleMerge -State $script:MergeState -Operation "refresh-dev-branch" -TargetCommit $Fixture.targetCommit -ConflictStage "refresh.merge-conflicts"
+                } catch {}
+                Invoke-Git @("merge", "--abort")
+                $message = ""
+                try {
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation "refresh-dev-branch" -ConflictStage "refresh.merge-conflicts" | Out-Null
+                } catch {
+                    $message = $_.Exception.Message
+                }
+                [pscustomobject]@{
+                    message = $message
+                    mergeInProgress = Test-GitMergeInProgress
+                    head = Get-CurrentCommit
+                    target = Get-GitMergeHeadCommit
+                    pendingStage = $script:MergeState.pendingMergeStage
+                }
+            } $fixture
+
+            $result.message | Should -Match "^LIFECYCLE_MERGE_CONFLICT"
+            $result.mergeInProgress | Should -BeTrue
+            $result.head | Should -Be $fixture.branchCommit
+            $result.target | Should -Be $fixture.targetCommit
+            $result.pendingStage | Should -Be "conflicts"
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "blocks unstaged resolutions, unrelated untracked files, and unrelated staged files during resume" {
         foreach ($case in @(
             @{ kind = "unstaged"; expected = "^LIFECYCLE_MERGE_CONFLICT" },

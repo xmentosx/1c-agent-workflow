@@ -9052,6 +9052,19 @@ function Resume-DevBranchLifecycleMergeIfPresent {
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
     }
 
+    if ($head -ceq $transaction.branchCommit -and $transaction.stage -ceq "conflicts") {
+        # A supervisor or E2E cleanup may restore the exact pre-merge checkout
+        # while the durable transaction still records the interrupted conflict.
+        # Recreate only that same pinned merge, and only from a clean tree.
+        Assert-CleanGit
+        Write-Host "The recorded merge conflict no longer has an active Git merge. Recreating the same pinned merge transaction."
+        Invoke-NewDevBranchLifecycleMerge `
+            -State $State `
+            -Operation $Operation `
+            -TargetCommit $transaction.targetCommit `
+            -ConflictStage $ConflictStage
+    }
+
     if (Test-GitCommitHasExactMergeParents -Commit $head -FirstParent $transaction.branchCommit -SecondParent $transaction.targetCommit) {
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
         Restart-Agent1cAfterDevBranchMerge -Operation $Operation
