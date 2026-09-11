@@ -22,7 +22,7 @@
     "aiRules1c": {
       "repo": "https://github.com/xmentosx/itl_ai_rules_1c.git",
       "ref": "itl-main-410951e7-r35",
-      "commit": "228dede770213b627159c60de8c04cdbb9930010",
+      "commit": "25df9fdc5a27a87b96c40fc1c8ca7a63ac09ed28",
       "upstreamRepo": "https://github.com/comol/ai_rules_1c.git",
       "upstreamRef": "refs/heads/main",
       "upstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",

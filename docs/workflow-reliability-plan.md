@@ -1055,10 +1055,12 @@ installation coverage, path-ledger hashes, version pins, fork qualification and
 normal workflow registration/delivery remain required.
 
 The r35 candidate is now committed at
-`228dede770213b627159c60de8c04cdbb9930010` (tree
-`7905f33af1978790a79bea10722a2a8b0aab017d`). The normal reconstruction Verify
+`25df9fdc5a27a87b96c40fc1c8ca7a63ac09ed28` (tree
+`a2da2dd3517711641c3cf926bc5343e44ad682b8`). The normal reconstruction Verify
 passed all 197 path decisions. Actual installation/validator-policy tests passed
-16/16, and the final fork Full gate passed 99/99 with a clean tree (195193 ms).
+16/16. After the redirected qualification path exposed a missing UTF-8 console
+boundary, the fork entrypoint was corrected and the final hidden Full gate passed
+100/100 with a clean tree (209610 ms).
 The first Full run found only an empty retired opsx directory left by this
 checkout's reconstruction; its absence requirement was retained, the confirmed
 empty/untracked directory removed, and the complete gate then passed unchanged.

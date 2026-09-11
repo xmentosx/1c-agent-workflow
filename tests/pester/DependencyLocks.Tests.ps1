@@ -158,7 +158,7 @@
         $lockTemplate.dependencies.workflowPackage.commit | Should -Be ""
         $lockTemplate.dependencies.workflowPackage.source | Should -Be "template default"
         $lockTemplate.dependencies.workflowPackage.updatedAt | Should -Be ""
-        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "228dede770213b627159c60de8c04cdbb9930010"
+        $lockTemplate.dependencies.aiRules1c.commit | Should -Be "25df9fdc5a27a87b96c40fc1c8ca7a63ac09ed28"
         $lockTemplate.dependencies.aiRules1c.upstreamRef | Should -Be "refs/heads/main"
         $lockTemplate.dependencies.aiRules1c.upstreamCommit | Should -Be "410951e74fd3e6b7a763cf49757935b9a34d3f31"
         $lockTemplate.dependencies.aiRules1c.downstreamRevision | Should -Be 35
