@@ -110,7 +110,7 @@ Server and multi-host recovery remain open.
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
 | 14 | P0 | Remove export/ROCTUP mutual waiting and complete the official artifact | Check then read-only ROCTUP query then unchanged-config export completes with verified CF/CFE and manifest; nested ownership, foreign sessions, failure/cancellation and preserved fresh proof covered | Shared standalone DumpCfg completion correction implemented; 45 Designer/export regressions pass, including public manifest and fresh-proof failures; real CF/CFE exports with an open technical file-base client pass. The phase-aware candidate also removes the whole-check runtime writer and permits ROCTUP during Vanessa/YAxUnit test execution while preserving exclusive preparation. Delivered facade/PM5, competing chats and server acceptance remain open |
 | 15 | P1 | Resolve unsupported AI-review responses and demonstrably false blocking findings through an evidence-based decision | Original response and exact validation unit retained; every finding resolved or explicitly open; bounded recovery for non-analysis responses; no fabricated clean pass, harmful appeasement edits or repeated calls for a green answer | Shared evidence/decision policy prepared in r35; fork Full passes 99 tests and actual installation preserves the rule for ten clients. All 21 original findings remain retained. Findings 1.1 and 5.2 are mechanically contradicted; confirmed defect 5.4 is resolved in PM5 commit 25c19d0ac with YAxUnit 2/2, Vanessa 1/1 and zero new event-log errors. The retained outcome is `adjudicated-mixed`; normal workflow delivery remains open |
-| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names now recognized with 19 focused root/report tests passing; silent repeat ownership and delivered public-command acceptance remain open |
+| 16 | P1 | Report every repository-lock outcome, including partial failure | Every requested object has a proven captured/already-owned/conflict/absent/unknown disposition; conflicts name repository owners; full report survives failed status and compact-output limits | Main correction registered at 546aad7 with 592 passed tests; original branch11 evidence yields 24 captures, one named conflict and four absent entries; native English metadata names are recognized; exact native silent-repeat completion is reported separately as already owned by `REPOSITORY_USER`, while unknown/truncated logs remain unconfirmed; delivered public-command acceptance remains open |
 | 17 | P1 | Lock the configuration root for new top-level metadata objects | Root added once for top-level additions, without recursive whole-configuration capture; no root for new forms/attributes of existing objects; committed/dirty/untracked input and root conflicts covered | Main correction registered at 38555f5 with 604 passed tests; actual branch11 metadata identifies three new constants; root-only native capture and separate later module capture confirmed in a fresh technical repository; shared ownership across both phases implemented; installed two-chat/two-host acceptance, export reporting and delivery remain open |
 
 Implementation order: establish item 4 with the timeout and source-capture
@@ -1467,15 +1467,17 @@ only metadata type positions through the existing collection labels, preserving
 object identifiers. It handles both language variants for capture, conflict and
 absence without counting duplicate observations twice. Read-only re-parsing of
 the retained native logs now recognizes the root and module captures. The
-repeated root request contains only the general success line and remains
-unconfirmed; the report explicitly explains that a general successful exit
-cannot prove per-object capture or current ownership. Obtaining already-owned
-identity from supported read-only repository evidence remains follow-up work;
-it must not be inferred from this silent log.
+repeated root request contains only the native repository-lock success marker.
+A requested item with no other observation is now classified as `already-owned`
+only when Designer exits successfully, this exact marker is present and
+`REPOSITORY_USER` is known. New captures remain `captured`; missing, truncated,
+contradictory and unrecognized logs remain `unconfirmed`. This uses the supported
+lock result and avoids reading the repository's private storage format.
 
-The 19 focused report/root tests pass on Windows PowerShell 5.1, including the
-native language variant, preserved English-looking object identifiers, foreign
-owners, irregular type names and the exact silent repeat response. Installed
+All 21 focused report/root tests pass on Windows PowerShell 5.1, including the native
+language variant, preserved English-looking object identifiers, foreign owners,
+irregular type names, mixed new/already-owned outcomes and the exact silent
+repeat response. Installed
 delivery, a fresh partial-conflict public-command run and two-chat/two-host
 acceptance remain open.
 

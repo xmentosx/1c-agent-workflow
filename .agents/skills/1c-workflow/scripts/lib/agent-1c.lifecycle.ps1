@@ -12502,7 +12502,13 @@ function ConvertTo-ConfigRepositoryLogObjectName {
 }
 
 function Get-ConfigRepositoryLockOutcome {
-    param([object]$Plan, [string]$LogPath, [bool]$Succeeded, [object]$RootOutcome = $null)
+    param(
+        [object]$Plan,
+        [string]$LogPath,
+        [bool]$Succeeded,
+        [object]$RootOutcome = $null,
+        [string]$CurrentOwner = ''
+    )
     $byName = @{}
     $items = @(foreach ($item in @($Plan.items)) {
         $entry = [pscustomobject]@{ name = [string]$item.name; scope = [string]$item.scope; status = 'unconfirmed'; owner = ''; observations = @() }
@@ -12536,10 +12542,26 @@ function Get-ConfigRepositoryLockOutcome {
             }
         }
     }
+    $lockSuccessMarker = 'Захват объектов в хранилище успешно завершен'
+    $lockSuccessObserved = $Succeeded -and $text -match ('(?m)^\s*' + [regex]::Escape($lockSuccessMarker) + '\s*$')
+    $lockCompletionEvidenceValid = $lockSuccessObserved -and (
+        ($starts -eq 0 -and $text.Trim() -ceq $lockSuccessMarker) -or
+        ($starts -eq 1 -and $ended)
+    )
     foreach ($entry in $items) {
         $statuses = @($entry.observations | ForEach-Object { $_.status } | Sort-Object -Unique)
         $owners = @($entry.observations | ForEach-Object { $_.owner } | Where-Object { $_ } | Sort-Object -Unique)
-        if ($statuses.Count -eq 1 -and $owners.Count -le 1) { $entry.status = $statuses[0] }
+        if ($statuses.Count -eq 1 -and $owners.Count -le 1) {
+            $entry.status = $statuses[0]
+        } elseif ($statuses.Count -eq 0 -and $lockCompletionEvidenceValid -and $CurrentOwner) {
+            # Native Designer is intentionally silent for an object that is
+            # already locked by the current repository user. The exact final
+            # success marker closes that outcome only when no contradictory or
+            # partial per-object observation exists.
+            $entry.status = 'already-owned'
+            $owners = @($CurrentOwner)
+            $entry.observations = @([pscustomobject]@{ status = 'already-owned'; owner = $CurrentOwner })
+        }
         $entry.owner = $owners -join ', '
     }
     if ($null -ne $RootOutcome) {
@@ -12551,7 +12573,8 @@ function Get-ConfigRepositoryLockOutcome {
     return [pscustomobject]@{
         schemaVersion = 1; baseCommit = [string]$Plan.baseCommit
         operationStatus = $(if ($Succeeded) { 'succeeded' } else { 'failed' })
-        logPath = $LogPath; operationEndObserved = $ended; items = $items
+        logPath = $LogPath; operationEndObserved = $ended
+        lockSuccessObserved = $lockSuccessObserved; lockCompletionEvidenceValid = $lockCompletionEvidenceValid; items = $items
         rootLockRequiredBy = @($requiredBy); rootOperation = $RootOutcome
     }
 }
@@ -12561,9 +12584,12 @@ function Write-ConfigRepositoryLockOutcomeReport {
     $outcomePath = Join-Path $RunRoot 'repository-lock-result.json'
     Write-Utf8Text -Path $outcomePath -Value ($Outcome | ConvertTo-Json -Depth 12)
     $capturedCount = @($Outcome.items | Where-Object status -eq 'captured').Count
+    $alreadyOwnedCount = @($Outcome.items | Where-Object status -eq 'already-owned').Count
     $result = if ($Outcome.operationStatus -eq 'succeeded') { 'операция завершена' } else { 'операция завершилась с ошибкой; выполненные захваты сохранены' }
     Add-RunUserReportLine -Lines $Lines -Label 'Результат' -Value $result
-    Add-RunUserReportLine -Lines $Lines -Label 'Подтверждено захватов' -Value ([string]$capturedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Захвачено этой командой' -Value ([string]$capturedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Уже было захвачено текущим пользователем' -Value ([string]$alreadyOwnedCount)
+    Add-RunUserReportLine -Lines $Lines -Label 'Всего под контролем текущего пользователя' -Value ([string]($capturedCount + $alreadyOwnedCount))
     Add-RunUserReportLine -Lines $Lines -Label 'Файл объектов' -Value $ObjectListPath
     Add-RunUserReportLine -Lines $Lines -Label 'Результаты по объектам' -Value $outcomePath
     Add-RunUserReportLine -Lines $Lines -Label 'Редактированный лог' -Value $Outcome.logPath -Default '<лог 1С не создан>'
@@ -12577,7 +12603,7 @@ function Write-ConfigRepositoryLockOutcomeReport {
             Add-RunUserReportLine -Lines $Lines -Label 'Лог операции с корнем' -Value $Outcome.rootOperation.logPath
         }
     }
-    $sections = [ordered]@{ captured = 'Захваченные объекты'; conflict = 'Не захвачены: заняты другими пользователями'; absent = 'Отсутствуют в обеих конфигурациях'; unconfirmed = 'Результат захвата не подтверждён' }
+    $sections = [ordered]@{ captured = 'Захваченные этой командой объекты'; 'already-owned' = 'Уже захвачены текущим пользователем'; conflict = 'Не захвачены: заняты другими пользователями'; absent = 'Отсутствуют в обеих конфигурациях'; unconfirmed = 'Результат захвата не подтверждён' }
     foreach ($status in $sections.Keys) {
         $entries = @($Outcome.items | Where-Object status -eq $status)
         if ($entries.Count -eq 0) { continue }
@@ -12698,7 +12724,7 @@ function Lock-ConfigRepositoryObjects {
                 Move-Item -LiteralPath $rootLogPath -Destination $preservedRootLogPath
                 $rootLogPath = $preservedRootLogPath
             }
-            $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootLogPath -Succeeded $true
+            $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootLogPath -Succeeded $true -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
             $script:LastLogPath = ''
             Set-RunStage -Stage 'repository-lock.designer' -Detail 'Locking the remaining exact changed configuration objects after the root operation.'
         }
@@ -12713,7 +12739,7 @@ function Lock-ConfigRepositoryObjects {
             $redactedLogPath = ""
         }
         $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
-        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false -RootOutcome $rootOutcome
+        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false -RootOutcome $rootOutcome -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
         Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
         $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
         if ($conflictSummary) {
@@ -12731,7 +12757,7 @@ function Lock-ConfigRepositoryObjects {
 
     Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
     Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
-    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true -RootOutcome $rootOutcome
+    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true -RootOutcome $rootOutcome -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
     Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
 }
 

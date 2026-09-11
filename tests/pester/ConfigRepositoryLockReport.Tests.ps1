@@ -59,7 +59,7 @@ Describe 'Repository lock partial outcome report' {
         $outcome.items[6].status | Should -Be 'unconfirmed'
     }
 
-    It 'reports the native silent repeated lock as unconfirmed rather than a new capture' {
+    It 'reports the native silent repeated lock as already owned by the current repository user' {
         $root = Join-Path $TestDrive 'Повторный захват с пробелом'
         New-Item -ItemType Directory -Path $root | Out-Null
         $result = & {
@@ -68,16 +68,44 @@ Describe 'Repository lock partial outcome report' {
             $log = Join-Path $root 'repeat.log'
             # Exact log of a second root-only lock by the same native repository user.
             [IO.File]::WriteAllText($log, "Захват объектов в хранилище успешно завершен`r`n", [Text.UTF8Encoding]::new($false))
-            $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true
+            $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true -CurrentOwner 'TestOwner'
             function Write-AndSetRunUserReport { param($Lines) }
             $lines = [Collections.Generic.List[string]]::new()
             Write-ConfigRepositoryLockOutcomeReport -Lines $lines -Outcome $outcome -RunRoot $root -ObjectListPath 'root.xml'
             [pscustomobject]@{ outcome = $outcome; report = $lines -join "`n" }
         }
         $result.outcome.operationStatus | Should -Be 'succeeded'
-        $result.outcome.items[0].status | Should -Be 'unconfirmed'
-        $result.outcome.items[0].owner | Should -BeNullOrEmpty
-        $result.report | Should -Match 'не доказывает новый захват или текущего владельца'
+        $result.outcome.lockSuccessObserved | Should -BeTrue
+        $result.outcome.lockCompletionEvidenceValid | Should -BeTrue
+        $result.outcome.items[0].status | Should -Be 'already-owned'
+        $result.outcome.items[0].owner | Should -Be 'TestOwner'
+        $result.report | Should -Match 'Уже захвачены текущим пользователем'
+        $result.report | Should -Match 'TestOwner'
+        $result.report | Should -Match 'Всего под контролем текущего пользователя.*1'
+    }
+
+    It 'separates new captures from objects silently retained by the current repository user' {
+        $root = Join-Path $TestDrive 'Смешанный повторный захват с пробелом'
+        New-Item -ItemType Directory -Path $root | Out-Null
+        $outcome = & {
+            . $script:LockReportHelper -ProjectRoot $root -Action help *> $null
+            $plan = [pscustomobject]@{ baseCommit = 'base'; items = @(
+                [pscustomobject]@{ name = 'ОбщийМодуль.НовыйЗахват'; scope = 'partial' },
+                [pscustomobject]@{ name = 'ОбщийМодуль.РанееЗахвачен'; scope = 'partial' }
+            ) }
+            $log = Join-Path $root 'mixed.log'
+            [IO.File]::WriteAllLines($log, @(
+                '---- Начало операции с хранилищем конфигурации ----',
+                'Объект захвачен для редактирования: ОбщийМодуль.НовыйЗахват',
+                '---- Операция с хранилищем конфигурации завершена ----',
+                'Захват объектов в хранилище успешно завершен'
+            ), [Text.UTF8Encoding]::new($false))
+            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true -CurrentOwner 'TestOwner'
+        }
+        $outcome.items[0].status | Should -Be 'captured'
+        $outcome.items[0].owner | Should -BeNullOrEmpty
+        $outcome.items[1].status | Should -Be 'already-owned'
+        $outcome.items[1].owner | Should -Be 'TestOwner'
     }
 
     It 'retains 24 captures, one owner conflict and four absent objects after the native failure' {
@@ -249,12 +277,23 @@ Describe 'Repository lock partial outcome report' {
             ), [Text.UTF8Encoding]::new($false))
             Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $false
             [IO.File]::WriteAllText($log, 'Command exited zero without known object evidence', [Text.UTF8Encoding]::new($false))
-            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true
+            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true -CurrentOwner 'TestOwner'
+            [IO.File]::WriteAllLines($log, @(
+                'Unknown operation output',
+                'Захват объектов в хранилище успешно завершен'
+            ), [Text.UTF8Encoding]::new($false))
+            Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true -CurrentOwner 'TestOwner'
         }
         $outcomes[0].items[0].status | Should -Be 'unconfirmed'
         $outcomes[0].items[0].owner | Should -Be 'Владелец'
         @($outcomes[0].items[0].observations).Count | Should -Be 2
         $outcomes[1].operationStatus | Should -Be 'succeeded'
+        $outcomes[1].lockSuccessObserved | Should -BeFalse
         $outcomes[1].items[0].status | Should -Be 'unconfirmed'
+
+        $unknownWithMarker = $outcomes[2]
+        $unknownWithMarker.lockSuccessObserved | Should -BeTrue
+        $unknownWithMarker.lockCompletionEvidenceValid | Should -BeFalse
+        $unknownWithMarker.items[0].status | Should -Be 'unconfirmed'
     }
 }
