@@ -93,6 +93,23 @@ Describe 'Source delivery post-success cleanup' {
         $result.retained | Should -Be 3; $result.removed | Should -Be 1; @(Get-ChildItem $TestDrive -File -Filter 'ibases.v8i.*.bak').Count | Should -Be 4; Test-Path "$list.manual.bak" | Should -BeTrue
     }
 
+    It 'restores only tracked changes from a failed Develop E2E run that started clean' {
+        $root = Join-Path $TestDrive 'develop tracked cleanup'
+        New-CleanupRepository -Root $root
+        . (Join-Path $RepoRoot 'scripts\develop-e2e-cleanup.ps1')
+        $startHead = ((& git -C $root rev-parse HEAD) -join '').Trim()
+        Set-Content -LiteralPath (Join-Path $root 'README.md') -Encoding ASCII -Value 'failed update'
+        & git -C $root add README.md
+        Set-Content -LiteralPath (Join-Path $root 'new-runtime.log') -Encoding ASCII -Value 'keep untracked evidence'
+
+        $result = Restore-DevelopE2ETrackedState -Root $root -StartHead $startHead -ExpectedBranch 'develop'
+
+        $result.status | Should -Be 'restored'
+        (& git -C $root status --porcelain --untracked-files=no) | Should -BeNullOrEmpty
+        (Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw).Trim() | Should -Be 'fixture'
+        Test-Path -LiteralPath (Join-Path $root 'new-runtime.log') | Should -BeTrue
+    }
+
     It 'reports cleanup failures as warnings instead of changing publication success' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         Mock Remove-SourceDeliveryStaleCandidateWorktrees { throw 'candidate cleanup unavailable' }

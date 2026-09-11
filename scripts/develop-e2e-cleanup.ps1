@@ -1,6 +1,54 @@
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot "git-path-list.ps1")
 
+function Restore-DevelopE2ETrackedState {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$StartHead,
+        [string]$ExpectedBranch = "master"
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $topLevel = ((& git -C $resolvedRoot rev-parse --show-toplevel) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not [string]::Equals(([IO.Path]::GetFullPath($topLevel).TrimEnd('\', '/')), $resolvedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to restore tracked state outside the exact Develop E2E repository root: $resolvedRoot"
+    }
+    $branch = ((& git -C $resolvedRoot branch --show-current) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or ($ExpectedBranch -and $branch -cne $ExpectedBranch)) {
+        throw "Refusing to restore Develop E2E tracked state on branch '$branch'; expected '$ExpectedBranch'."
+    }
+    $head = ((& git -C $resolvedRoot rev-parse HEAD) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or $StartHead -notmatch '^[a-f0-9]{40}$') {
+        throw "Develop E2E tracked-state cleanup could not resolve its Git boundary."
+    }
+    & git -C $resolvedRoot merge-base --is-ancestor $StartHead $head
+    if ($LASTEXITCODE -ne 0) {
+        throw "Refusing to restore Develop E2E tracked state after HEAD left the started history: start=$StartHead current=$head."
+    }
+
+    & git -C $resolvedRoot diff --quiet --
+    $worktreeDiff = $LASTEXITCODE
+    & git -C $resolvedRoot diff --cached --quiet --
+    $indexDiff = $LASTEXITCODE
+    if ($worktreeDiff -notin @(0, 1) -or $indexDiff -notin @(0, 1)) {
+        throw "Develop E2E tracked-state cleanup could not inspect tracked changes."
+    }
+    if ($worktreeDiff -eq 0 -and $indexDiff -eq 0) {
+        return [pscustomobject]@{ status = "clean"; head = $head }
+    }
+
+    & git -C $resolvedRoot reset --hard HEAD *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Develop E2E tracked-state cleanup could not restore HEAD $head." }
+    & git -C $resolvedRoot diff --quiet --
+    $worktreeAfter = $LASTEXITCODE
+    & git -C $resolvedRoot diff --cached --quiet --
+    $indexAfter = $LASTEXITCODE
+    if ($worktreeAfter -ne 0 -or $indexAfter -ne 0) {
+        throw "Develop E2E tracked-state cleanup left tracked changes at HEAD $head."
+    }
+    return [pscustomobject]@{ status = "restored"; head = $head }
+}
+
 function Get-DevelopE2ELauncherListPath {
     $appData = $env:APPDATA
     if (-not $appData) { $appData = [Environment]::GetFolderPath("ApplicationData") }

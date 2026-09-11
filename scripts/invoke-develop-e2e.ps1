@@ -390,11 +390,17 @@ function Get-BranchWorktree {
 
 $previousWorkflowSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
+$projectCleanAtStart = $false
+$projectHeadAtStart = ""
+$trackedStateCleanup = $null
 try {
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
     Assert-DevelopAiRulesSourceAvailable -StandRoot $ProjectRoot -SourceRoot $AiRulesSource
     Assert-TrackedClean -Root $ProjectRoot -Label "Develop E2E master"
+    $projectHeadAtStart = ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()
+    if ($LASTEXITCODE -ne 0 -or $projectHeadAtStart -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E master HEAD is unavailable." }
+    $projectCleanAtStart = $true
     if ($requestedJourneys -contains "upgrade") {
         $activeJourney = "upgrade"
         $journeys.upgrade.status = "running"
@@ -526,6 +532,13 @@ try {
         $journeys[$activeJourney].error = $failure
     }
 } finally {
+    if ($failure -and $projectCleanAtStart) {
+        try {
+            $trackedStateCleanup = Restore-DevelopE2ETrackedState -Root $ProjectRoot -StartHead $projectHeadAtStart -ExpectedBranch "master"
+        } catch {
+            $failure = "$failure; DEVELOP_E2E_TRACKED_STATE_CLEANUP_FAILED: $($_.Exception.Message)"
+        }
+    }
     $env:ITL_WORKFLOW_SOURCE_PATH = $previousWorkflowSource
     $env:ITL_AI_RULES_SOURCE_PATH = $previousRulesSource
     $payload = [ordered]@{
@@ -540,6 +553,7 @@ try {
         freshProjectRoot = $freshRoot
         freshBranchRoot = $freshBranchRoot
         staleStandCleanup = $staleStandCleanup
+        trackedStateCleanup = $trackedStateCleanup
         startedAt = $startedAt.ToString("o")
         finishedAt = [DateTime]::UtcNow.ToString("o")
         steps = @($steps | ForEach-Object { $_ })
