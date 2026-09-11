@@ -9,7 +9,8 @@ import statistics
 import sys
 import time
 
-from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
+from .common import (FileLock, OwnedProcess, WorkError, digest, host_memory_snapshot,
+                     identity, read_json, resolve_resource_limits, stamp, write_json)
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server
 
@@ -30,6 +31,7 @@ def wait_json(path, process, timeout, cancelled):
             raise WorkError("CANCELLED")
         if process.process.poll() is not None:
             raise WorkError("WORKLOAD_EXITED_WITHOUT_SIGNAL: " + path.name)
+        process.monitor()
         if time.monotonic() >= deadline:
             raise WorkError("WORKLOAD_READY_TIMEOUT: " + path.name)
         time.sleep(0.01)
@@ -51,6 +53,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     if not 0 < timeout <= 86400:
         raise WorkError("INVALID_SCENARIO_TIMEOUT")
     processes = []
+    resource_limits = resolve_resource_limits(target, request["operations"])
+    resource_telemetry = run / "resource-telemetry.jsonl"
     profiler = None
     result = {"schemaVersion": 1, "jobId": request["id"], "scenarioId": scenario["id"],
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
@@ -61,7 +65,9 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "identityEvidence": "declared-by-profile-and-scenario; runtime adapters own exact loaded-data/source proof",
               "readiness": scenario["readyDescription"], "mode": request["mode"],
               "startedAt": stamp(), "timings": [], "profiles": [], "phases": [],
-              "status": "running", "limitations": [], "cleanupErrors": []}
+              "status": "running", "limitations": [], "cleanupErrors": [],
+              "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
+                                   "telemetry": resource_telemetry.name, "processes": []}}
 
     def command(name):
         if name not in commands:
@@ -71,7 +77,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         progress(name)
         begin = time.monotonic()
         process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                               {"ITL_RUN_CONTEXT": str(variables["context"])})
+                               {"ITL_RUN_CONTEXT": str(variables["context"])}, resource_limits, resource_telemetry)
         processes.append(process)
         process.wait(timeout, cancelled if name != "cleanup" else lambda: False)
         result["phases"].append({"name": name, "seconds": time.monotonic() - begin})
@@ -96,6 +102,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         return collector
 
     try:
+        result["resourceEvidence"]["hostBefore"] = host_memory_snapshot()
         command("update")
         if request["mode"] != "time":
             effective_rdbg = prepare_debug_server(target, run, processes, cancelled)
@@ -131,7 +138,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             workload_process = None
             if scenario.get("adapter", "command") == "handshake":
                 process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                       iteration / "action.log", {"ITL_RUN_CONTEXT": str(variables["context"])})
+                                       iteration / "action.log", {"ITL_RUN_CONTEXT": str(variables["context"])},
+                                       resource_limits, resource_telemetry)
                 processes.append(process)
                 ready = wait_json(iteration / "ready.json", process, timeout, cancelled)
                 if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
@@ -199,6 +207,12 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 process.close()
             except Exception as error:
                 result["cleanupErrors"].append(str(error))
+        result["resourceEvidence"]["processes"] = [process.resource_summary() for process in processes]
+        try:
+            result["resourceEvidence"]["hostAfter"] = host_memory_snapshot()
+        except Exception as error:
+            result["resourceEvidence"]["hostAfter"] = None
+            result["cleanupErrors"].append(str(error))
         if result["cleanupErrors"]:
             result["status"] = "needs-attention"
         result["finishedAt"] = stamp()
@@ -220,6 +234,10 @@ def report(run, result):
     lines += ["", "Median: " + str(summary["medianSeconds"]), "",
               "A small sample is diagnostic evidence, not statistical proof of a speedup.", "",
               "Profiles: %d; native PFF: not produced." % len(result["profiles"])]
+    resources = result.get("resourceEvidence", {})
+    process_peaks = [item.get("peakObservedJobMemoryBytes", 0) for item in resources.get("processes", [])]
+    lines += ["", "Resource guard: enabled; peak observed owned-job memory bytes: " +
+              str(max(process_peaks) if process_peaks else 0) + "."]
     lines += ["", *result["limitations"]]
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]

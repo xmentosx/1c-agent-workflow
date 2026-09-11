@@ -9,7 +9,7 @@ import sys
 import zipfile
 
 from . import VERSION
-from .common import WorkError, digest, read_json, stamp, write_json
+from .common import WorkError, digest, process_is_alive, read_json, resolve_resource_limits, stamp, write_json
 
 
 def inspect(spool):
@@ -21,7 +21,10 @@ def inspect(spool):
     if (spool / "worker.json").exists():
         result["worker"] = read_json(spool / "worker.json")
         # A saved heartbeat is observation, never proof of an active session.
-        result["worker"]["liveness"] = "heartbeat-only"
+        result["worker"]["liveness"] = ("process-alive-heartbeat-unverified" if
+                                         process_is_alive(result["worker"].get("pid")) else "stale")
+        if result["worker"]["liveness"] == "stale" and result["worker"].get("status") != "stopped":
+            result["worker"]["status"] = "stale"
     if (spool / "profile.json").exists():
         profile = read_json(spool / "profile.json")
         result["targets"] = [{"name": name, "workspaceExists": Path(target["workspace"]).is_dir(),
@@ -41,6 +44,7 @@ def prepare(spool, configuration):
     for target in profile["targets"].values():
         if not Path(target["workspace"]).is_dir() or not target.get("allowedOperations"):
             raise WorkError("TARGET_WORKSPACE_OR_OPERATIONS_MISSING")
+        resolve_resource_limits(target, target["allowedOperations"])
     spool.mkdir(parents=True, exist_ok=True)
     profile["profilePath"] = str(spool / "profile.json")
     write_json(spool / "profile.json", profile)
@@ -48,7 +52,7 @@ def prepare(spool, configuration):
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
     launcher = ("$ErrorActionPreference='Stop'\n$env:PYTHONUTF8='1'\n$env:PYTHONIOENCODING='utf-8'\n"
                 "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n"
-                "& " + quote(sys.executable) + " -u " + quote(script) + " worker --spool " + quote(spool) + "\n")
+                "& " + quote(sys.executable) + " -u " + quote(script) + " worker --once --spool " + quote(spool) + "\n")
     (spool / "Start-Worker.ps1").write_text(launcher, encoding="utf-8-sig")
     (spool / "Start-Worker.cmd").write_bytes(b'@echo off\r\npowershell.exe -NoProfile -File "%~dp0Start-Worker.ps1"\r\npause\r\n')
     connection = {"schemaVersion": 1, "transport": "exchange", "spool": str(spool),

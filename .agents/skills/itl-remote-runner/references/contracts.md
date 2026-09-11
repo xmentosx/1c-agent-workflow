@@ -20,6 +20,19 @@ Create a private JSON object with `targets` keyed by short aliases. Each target 
 
 Optional profile-level `agentFallback: true` enables diagnosis after `auto` failure. `agent` selects a harness adapter; read the agent reference only for that route. The prepared `profilePath` is passed to the remote agent. Store secrets in existing environment/credential references, never plaintext fields.
 
+Each target may define `resourceLimits` with numeric `pollIntervalSeconds`, `maxWorkerMemoryMb`,
+`maxProcessMemoryMb`, `maxJobMemoryMb`, `minAvailableMemoryMb`, `maxCommittedPercent`, `maxGrowthMb`, and
+`growthWindowSeconds`. `byOperation` may override those fields for `measure`, `write-data`, or `update`; when a job
+declares several operations, the worker applies the most restrictive combined policy. The runtime supplies bounded
+defaults when a legacy profile omits the section. On Windows, process and job memory are also installed as Job
+Object hard limits. Host/process/job samples are flushed to `resource-telemetry.jsonl` and summarized in
+`result.json.resourceEvidence`. A threshold breach terminates only the owned Job Object and records
+`RESOURCE_LIMIT_EXCEEDED`; external 1C server processes remain outside this boundary.
+
+Optional profile-level `workerLimits` contains `allowPersistent`, `maxJobs`, and `maxLifetimeSeconds`. Generated
+launchers are one-shot and process at most one queued job. Persistent polling requires both the explicit
+`--persistent` switch and `allowPersistent: true`; it still rotates at the configured job/lifetime limit.
+
 ## Scenario (schemaVersion 1)
 
 Required: `id`, `readyDescription`, `dataIdentity`, `repeatable` and `mutates` booleans, `commands.action`, `commands.verify`. `files` lists all relative dependency paths to include. The package rejects traversal, absolute dependency paths and content changes. `parameters` maps arbitrary names to `type` (`string`, `integer`, `number`, `boolean`, `object`, `array`), optional `default`, `enum`, `required` (default true).
@@ -38,4 +51,4 @@ The verify phase writes `{iteration}/verification.json` with the matching `jobId
 
 Queue states are `queued`, `running`, `agent-running`, `completed`, `partial`, `cancelled`, `needs-attention`. Publication is atomic after full-file verification. The OS owns worker/target locks; never delete locks as recovery. A recorded running state with no current owner becomes `needs-attention`, not a restarted update. During engine execution, all changing work uses the same exclusive owner. Agent diagnosis after failure does not authorize rerunning it.
 
-`result.json` contains unprofiled samples, phase costs, summary, raw-profile references, source/data/environment identity, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
+`result.json` contains unprofiled samples, phase costs, summary, raw-profile references, source/data/environment identity, resource evidence, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.

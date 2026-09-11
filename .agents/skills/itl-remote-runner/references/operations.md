@@ -10,7 +10,7 @@ Inspect Python, 1C, SSH and the user's permitted workspace/base. Resolve the pro
 python .\.agents\skills\itl-remote-runner\scripts\remote_work.py prepare --spool C:\ITL\worker --profile C:\ITL\private-profile.json
 ```
 
-Give the user the generated `Start-Worker.cmd`. They launch it after logging into the session that will run 1C. `worker.json` is a heartbeat, not proof of current access to an interactive desktop; the real scenario establishes usable runtime readiness. Signing out can interrupt 1C; reconnecting the controller must not replay its job.
+Give the user the generated `Start-Worker.cmd`. They launch it after logging into the session that will run 1C. The generated worker processes at most one queued job and exits; start it again for a later job. Persistent mode requires an explicit profile opt-in and remains bounded by job count and lifetime. `worker.json` records stopped/stale state and resource snapshots, but it is not proof of current access to an interactive desktop; the real scenario establishes usable runtime readiness. Signing out can interrupt 1C; reconnecting the controller must not replay its job.
 
 `connection.json` defaults to exchange transport. When connecting through SSH, set `transport: ssh` and the concrete `ssh.host` alias; existing SSH config supplies user/key and optional port. The connection records remote Python/runtime/spool paths. SSH carries structured commands through stdin with encoded PowerShell bootstrap, without exposing a new network service. Approve/trust the SSH host through the user's existing workflow before noninteractive jobs.
 
@@ -32,7 +32,7 @@ For an explicit remote agent route use the same package/transfer operations with
 
 ## Observe and collect
 
-`status --spool ... --id ...` and `remote --action status --connection ... --id ...` read state. Send `cancel` to request stopping the current phase and owned processes. Cancellation is not rollback. Inspect cleanup and operation effects before recovery.
+`status --spool ... --id ...` and `remote --action status --connection ... --id ...` read state. Send `cancel` to request stopping the current phase and owned processes. Cancellation is not rollback. Inspect cleanup and operation effects before recovery. A `RESOURCE_LIMIT_EXCEEDED` result is a safety stop: inspect `resourceEvidence` and `resource-telemetry.jsonl`, then reconcile effects in a new linked job instead of replaying the old job.
 
 `collect --spool ... --id ... --output ...` collects local results. `remote --action collect --connection ... --id ... --output ...` verifies every downloaded file. Use a new output directory; never overwrite older evidence. Repeated observation does not enqueue work. Files are content-addressed during upload; retry skips complete matching blobs and restarts an incomplete blob without executing partial input.
 
