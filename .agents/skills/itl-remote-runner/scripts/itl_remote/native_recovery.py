@@ -168,6 +168,42 @@ def _require_process_exited(pid):
     raise WorkError('NATIVE_RECOVERY_PRODUCER_STILL_RUNNING')
 
 
+def _planned_resources_quiescent(recovery, journal, observations, operation):
+    """Accept only live-quiescent databases or an exactly planned absent service generation."""
+    absent_services = set()
+    for continuation in journal.get('continuations', {}).values():
+        plan = continuation['plan']
+        if plan['operation'] != operation:
+            raise WorkError('NATIVE_RECOVERY_CONTINUATION_OPERATION_CHANGED')
+        target = recovery.coordinator.resources([plan['target']])[0]
+        for name in ('serviceGeneration', 'serviceReserveGeneration'):
+            generation = plan[name]
+            if not generation:
+                continue
+            service = {'kind': 'file', 'path': str(Path(plan['project']) / '.agent-1c' / 'infobases' /
+                                                  ('vanessa-service-' + generation))}
+            resource = recovery.coordinator.resources([service])[0]
+            if resource == target or resource not in recovery.coordinator.resources(plan['bases']):
+                raise WorkError('NATIVE_RECOVERY_CONTINUATION_RESOURCE_BINDING_CHANGED')
+            absent_services.add(resource)
+    if not observations:
+        return False
+    for observation in observations:
+        for sample in observation['observation']['samples']:
+            for base in sample['resources']:
+                resource = recovery.coordinator.resources([{'kind': base['kind'], 'path': base['path']}])[0]
+                if base['sessionCount']:
+                    return False
+                if base['databasePresent']:
+                    if not base['exclusive']:
+                        return False
+                    continue
+                if (resource not in absent_services or base['directoryPresent'] or base['exclusive'] or
+                        base.get('ownedProcessIds') or base.get('otherProcessIds')):
+                    return False
+    return True
+
+
 def _destination(value):
     root, path = Path(value['project']), Path(value['destination'])
     if not root.is_absolute() or not path.is_absolute() or not path.is_relative_to(root):
@@ -230,6 +266,8 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 raise WorkError('NATIVE_RECOVERY_RESTORATION_CONTRACT_REQUIRED')
             producers = native_journal._index(current)['producers']
             read_only_dump = False
+            verification_check = False
+            tooling_repair = False
             observed = []
             for producer in producers.values():
                 if str(producer.get('hostName', '')).casefold() != platform.node().casefold():
@@ -274,11 +312,19 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 read_only_dump = current['owner']['operation'] in (
                     'loadfrom1cbase', 'getconfigfiles', 'dump-dev-branch-extension') and all(
                     operation['purpose'] == 'designer-dump-config-to-files' for operation in journal['operations'])
-                if not repository_capture and not read_only_dump:
+                verification_check = current['owner']['operation'] == 'check-dev-branch' and all(
+                    operation['operation'] == 'check-dev-branch' for operation in journal['operations'])
+                tooling_repair = current['owner']['operation'] == 'repair-dev-branch-tooling' and all(
+                    operation['operation'] == 'repair-dev-branch-tooling' for operation in journal['operations'])
+                if not repository_capture and not read_only_dump and not verification_check and not tooling_repair:
                     raise WorkError('NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED')
-                if not observations or any(
-                        base['sessionCount'] or not base['databasePresent'] or not base['exclusive']
-                        for observation in observations for sample in observation['observation']['samples'] for base in sample['resources']):
+                quiescent = (_planned_resources_quiescent(
+                    recovery, journal, observations, current['owner']['operation'])
+                             if verification_check or tooling_repair else observations and not any(
+                                 base['sessionCount'] or not base['databasePresent'] or not base['exclusive']
+                                 for observation in observations for sample in observation['observation']['samples']
+                                 for base in sample['resources']))
+                if not quiescent:
                     raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
             else:
                 observations = []
@@ -319,6 +365,8 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 raise WorkError('INFOBASE_ACCESS_CANCELLED')
             return VerifiedRecovery(tuple(current['resources']), {
                 'adapter': ('workflow-read-only-dump' if read_only_dump else
+                            'workflow-verification-check' if verification_check else
+                            'workflow-tooling-repair' if tooling_repair else
                             'workflow-repository-capture' if observations else 'workflow-preparation'),
                 'nativeStartAttempted': bool(observations),
                 'producers': observed, 'restorations': restored,
@@ -327,7 +375,11 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 'repositoryClaims': ('not changed by read-only dump' if read_only_dump else
                                      'retained; capture report remains interrupted' if observations else 'not changed by native work'),
                 'resultAcceptance': ('dump remains interrupted; staged source and artifacts are preserved, not accepted; rerun the original helper'
-                                     if read_only_dump else 'no new success or verification claim'),
+                                     if read_only_dump else
+                                     'verification remains failed or interrupted; no passing result is accepted; rerun the canonical check'
+                                     if verification_check else
+                                     'tooling repair remains interrupted; recovery does not create a readiness result; continue through the canonical helper'
+                                     if tooling_repair else 'no new success or verification claim'),
             })
         return recovery.complete(verify)
 

@@ -22,7 +22,7 @@ sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[2])
 from test_restoration_journal import RestorationJournalTests
 from itl_remote.access import Coordinator, Lease
 from itl_remote.common import digest, read_json, write_json
-from itl_remote import native_journal as native, restoration_journal as duties
+from itl_remote import native_journal as native, native_continuation as continuation, restoration_journal as duties
 from itl_remote.native_recovery_helpers import NAMES
 c = read_json(sys.argv[3]); root = Path(c['root']); kind = c['case']
 fixture = RestorationJournalTests()
@@ -33,8 +33,16 @@ if server_case: fixture.base = {'kind': 'server', 'path': 'server:1541/База 
 operation = 'unknown-operation' if kind == 'unknown-operation' else ('lock-config-repository-objects' if kind in ('repository-capture', 'server-repository-capture') else 'export-dev-branch-result')
 read_only = kind.startswith('read-only:')
 if read_only: operation = kind.split(':')[1]
+verification_check = kind == 'verification-check'
+if verification_check: operation = 'check-dev-branch'
+tooling_repair = kind == 'tooling-repair'
+if tooling_repair: operation = 'repair-dev-branch-tooling'
 completion = kind.startswith('committed')
 bases = [fixture.base]
+service = None
+if verification_check or tooling_repair:
+    service = {'kind': 'file', 'path': str(root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}
+    bases.append(service)
 if completion:
     operation = 'init-dev-branch-extension'
     if kind in ('committed-unused-service', 'committed-damaged-service'):
@@ -42,12 +50,13 @@ if completion:
         if kind == 'committed-damaged-service': Path(bases[-1]['path']).mkdir(parents=True)
     elif kind == 'committed-other-database':
         bases.append({'kind': 'file', 'path': str(root / 'Другая рабочая база')})
-with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parentPid': os.getpid(), 'operation': operation}, timeout=0) as lease:
+with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parentPid': os.getpid(),
+        'operation': operation, 'project': str(root)}, timeout=0) as lease:
     producer = native.register(lease)
     value = fixture.database_payload(lease, policy='on-failure') if completion else fixture.payload(lease, existed=kind != 'absent')
     if completion: value.update(operation=operation, resources=bases)
     contents = {name: ('# retained ' + name).encode() for name in NAMES}
-    if completion or read_only or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
+    if completion or read_only or verification_check or tooling_repair or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
         library = Path(sys.argv[1]).parent.parent / '1c-workflow/scripts/lib'
         contents = {name: (library / name).read_bytes() for name in NAMES}
     hashes = {name: hashlib.sha256(data).hexdigest() for name, data in contents.items()}
@@ -57,6 +66,10 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
     for name, data in contents.items(): (directory / name).write_bytes(data)
     value['helperInputs'] = [{'path': str(directory / name), 'sha256': hashes[name]} for name in NAMES]
     duties.publish(lease, producer, value)
+    if verification_check or tooling_repair:
+        continuation.publish(lease, producer, {'schemaVersion': 1, 'operation': operation, 'project': str(root),
+            'target': fixture.base, 'bases': bases, 'helperInputs': value['helperInputs'],
+            'serviceGeneration': 'a' * 32, 'serviceReserveGeneration': ''})
     if kind == 'nested':
         inner = fixture.payload(lease)
         inner['createdAt'] = '2026-09-10T00:00:01Z'
@@ -65,10 +78,10 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
         inner['helperInputs'] = value['helperInputs']
         duties.publish(lease, producer, inner)
     if not completion: Path(value['destination']).write_bytes(b'interrupted preparation cursor')
-    if completion or read_only or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
+    if completion or read_only or verification_check or tooling_repair or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
         operation_record = fixture.native_restore(value)
         operation_record['helperInputs'] = value['helperInputs']
-        if completion or read_only or kind in ('repository-capture', 'server-repository-capture'):
+        if completion or read_only or verification_check or tooling_repair or kind in ('repository-capture', 'server-repository-capture'):
             operation_record['purpose'] = 'designer-designer-command'
             if fixture.base['kind'] == 'file':
                 Path(fixture.base['path']).mkdir()
@@ -88,6 +101,14 @@ if ($Operation -ne 'recovery-observe') { exit 8 }
                 'sha256': digest(provider), 'capability': 'recovery-observe'}
         if read_only:
             operation_record['purpose'] = 'designer-designer-command' if kind.endswith(':write') else 'designer-dump-config-to-files'
+        if verification_check:
+            operation_record['operation'] = operation
+            operation_record['purpose'] = 'enterprise-run'
+        if tooling_repair:
+            operation_record['operation'] = operation
+            operation_record['purpose'] = 'enterprise-run'
+            Path(service['path']).mkdir(parents=True)
+            (Path(service['path']) / '1Cv8.1CD').write_bytes(b'fixture service database-file access sentinel')
         native.publish(lease, producer, operation_record)
     if completion:
         (root / 'saved-source.bsl').write_bytes(b'\xef\xbb\xbfcommitted source\r\n')
@@ -200,6 +221,56 @@ class NativeRecoveryTests(unittest.TestCase):
             self.assertEqual(0, sample['resources'][0]['sessionCount'])
         with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
             with Lease(self.coordinator.root, [data['base']], {}, timeout=0): pass
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_failed_verification_releases_only_after_live_inspection_and_cursor_restore(self):
+        data = self.orphan('verification-check')
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        evidence = record['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('workflow-verification-check', evidence['adapter'])
+        self.assertEqual('interrupted', evidence['originalOutcome'])
+        self.assertIn('no passing result is accepted', evidence['resultAcceptance'])
+        self.assertEqual(Path(data['value']['snapshotPath']).read_bytes(), Path(data['value']['destination']).read_bytes())
+        for sample in evidence['nativeObservations'][0]['observation']['samples']:
+            resources = {Path(value['path']).name: value for value in sample['resources']}
+            self.assertEqual(0, resources['База проекта']['sessionCount'])
+            self.assertTrue(resources['База проекта']['exclusive'])
+            service = resources['vanessa-service-' + 'a' * 32]
+            self.assertFalse(service['databasePresent'])
+            self.assertFalse(service['directoryPresent'])
+            self.assertEqual(0, service['sessionCount'])
+        planned = [data['base'], {'kind': 'file', 'path': str(
+            self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}]
+        with Lease(self.coordinator.root, planned, {'operation': 'next-chat'}, timeout=0):
+            pass
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_failed_verification_does_not_discard_a_partially_created_service_database(self):
+        data = self.orphan('verification-check')
+        service = self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32)
+        service.mkdir(parents=True)
+        with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
+            recover_workflow_operation(self.coordinator.root, data['ticket'])
+        with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
+            with Lease(self.coordinator.root, [data['base'], {'kind': 'file', 'path': str(service)}], {}, timeout=0):
+                pass
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_failed_tooling_repair_releases_only_after_live_inspection(self):
+        data = self.orphan('tooling-repair')
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        evidence = record['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('workflow-tooling-repair', evidence['adapter'])
+        self.assertIn('does not create a readiness result', evidence['resultAcceptance'])
+        for sample in evidence['nativeObservations'][0]['observation']['samples']:
+            self.assertTrue(all(value['exclusive'] and value['sessionCount'] == 0
+                                for value in sample['resources']))
+        service = {'kind': 'file', 'path': str(
+            self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}
+        with Lease(self.coordinator.root, [data['base'], service], {'operation': 'next-chat'}, timeout=0):
+            pass
 
     def test_corrupt_snapshot_does_not_overwrite_the_current_file(self):
         data = self.orphan()

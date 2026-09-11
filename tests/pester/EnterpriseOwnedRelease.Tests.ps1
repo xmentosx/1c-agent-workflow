@@ -4,17 +4,22 @@
     $script:EnterpriseReleaseHelper = $context.HelperPath
 
     function Invoke-EnterpriseReleaseFixture {
-        param([string]$Failure = '', [switch]$ApplicationProbe, [switch]$Ordinary, [int]$GraceSeconds = 10)
+        param([string]$Failure = '', [switch]$ApplicationProbe, [switch]$Ordinary, [switch]$Persistent,
+            [int]$GraceSeconds = 10)
         $root = Join-Path $TestDrive (([guid]::NewGuid().ToString('N')) + '/Обновление базы с пробелом')
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         & {
-            param($Root, $Failure, $ApplicationProbe, $Ordinary, $GraceSeconds)
+            param($Root, $Failure, $ApplicationProbe, $Ordinary, $Persistent, $GraceSeconds)
             . $script:EnterpriseReleaseHelper -ProjectRoot $Root -Action help *> $null
             $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
+            if ($Persistent) {
+                $script:OneCNativeOperationJournal.persistence = [pscustomobject]@{ generation = 'fixture' }
+                function Save-OneCNativeOperationRecord {}
+            }
             $script:EnterpriseApplicationProbes = 0
             $script:EnterpriseInventoryReads = 0
             $script:Config = [pscustomobject]@{ logsPath = 'logs'; completionPostExitTimeoutSeconds = 5 }
-            function Resolve-EnterpriseClientExecutablePath { 'fake.exe' }
+            function Resolve-EnterpriseClientExecutablePath { if ($Persistent) { '1cv8c.exe' } else { 'fake.exe' } }
             function Assert-InfoBaseAvailable {}
             function Invoke-OneCSessionAdmissionSet { param($Admissions, $StartProcess) & $StartProcess }
             function Get-CompletionPostExitTimeoutSeconds { 3 }
@@ -53,7 +58,7 @@
                 inventoryReads = $script:EnterpriseInventoryReads
                 applicationProbes = $script:EnterpriseApplicationProbes
             }
-        } $root $Failure ([bool]$ApplicationProbe) ([bool]$Ordinary) $GraceSeconds
+        } $root $Failure ([bool]$ApplicationProbe) ([bool]$Ordinary) ([bool]$Persistent) $GraceSeconds
     }
 }
 
@@ -109,5 +114,11 @@ Describe 'Enterprise normalization requires its owned native processes to finish
         $result.error | Should -Be ''
         $result.inventoryReads | Should -Be 0
         $result.released | Should -BeFalse
+    }
+    It 'confirms ordinary Enterprise descendants before releasing a persistent database owner' {
+        $result = Invoke-EnterpriseReleaseFixture -Ordinary -Persistent
+        $result.error | Should -Be ''
+        $result.inventoryReads | Should -BeGreaterThan 1
+        $result.released | Should -BeTrue
     }
 }

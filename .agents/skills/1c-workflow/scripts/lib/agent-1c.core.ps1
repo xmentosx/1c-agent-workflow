@@ -7608,6 +7608,15 @@ function Invoke-Enterprise {
             $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $record
             if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
         }
+        if ($null -ne $result -and [bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false) -and
+            $null -ne $nativeOperationEvidence.record -and $null -ne $nativeOperationEvidence.record.persistence -and
+            $nativeOperationEvidence.record.startAttempted -and -not $nativeOperationEvidence.record.quiescenceConfirmed) {
+            # A persistent cross-process database lease cannot be released from
+            # launcher exit alone. Ordinary one-shot Enterprise calls also need
+            # two live scope observations when they run under that owner.
+            $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $nativeOperationEvidence.record
+            if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
+        }
         if (-not $probeCleanupConfirmed) {
             Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record -LauncherExited $false -OwnedProcessesReleased $false -Evidence ''
             throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED'
@@ -7633,6 +7642,10 @@ function Invoke-Enterprise {
     }
     if ($RequireOwnedProcessRelease -and -not $ownedReleaseConfirmed) {
         throw "ENTERPRISE_OWNED_PROCESS_RELEASE_UNCONFIRMED pid=$($result.processId) log=$logPath"
+    }
+
+    if ($null -ne $nativeOperationEvidence.record -and $null -ne $nativeOperationEvidence.record.persistence) {
+        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status succeeded
     }
 
     return $logPath
