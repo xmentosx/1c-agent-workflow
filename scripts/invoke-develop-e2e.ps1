@@ -392,7 +392,11 @@ $previousWorkflowSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
 $projectCleanAtStart = $false
 $projectHeadAtStart = ""
-$trackedStateCleanup = $null
+$standBranchRoot = ""
+$standBranchName = ""
+$standBranchCleanAtStart = $false
+$standBranchHeadAtStart = ""
+$trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
 try {
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
@@ -424,6 +428,10 @@ try {
             throw "DEVELOP_E2E_ISOLATED_STAND_REQUIRED: Develop worktree branch is '$actualDevelopBranch'; expected 'itldev/$developBranchName'."
         }
         Assert-TrackedClean -Root $standBranchRoot -Label "Develop E2E branch"
+        $standBranchName = $actualDevelopBranch
+        $standBranchHeadAtStart = ((& git -C $standBranchRoot rev-parse HEAD) -join "").Trim()
+        if ($LASTEXITCODE -ne 0 -or $standBranchHeadAtStart -notmatch '^[a-f0-9]{40}$') { throw "Develop E2E branch HEAD is unavailable." }
+        $standBranchCleanAtStart = $true
 
         [void](Invoke-InstalledAction -Name "upgrade-update-workflow" -Root $ProjectRoot -Action "update-workflow" -TimeoutSeconds 3600)
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
@@ -534,9 +542,16 @@ try {
 } finally {
     if ($failure -and $projectCleanAtStart) {
         try {
-            $trackedStateCleanup = Restore-DevelopE2ETrackedState -Root $ProjectRoot -StartHead $projectHeadAtStart -ExpectedBranch "master"
+            $trackedStateCleanup.project = Restore-DevelopE2ETrackedState -Root $ProjectRoot -StartHead $projectHeadAtStart -ExpectedBranch "master"
         } catch {
             $failure = "$failure; DEVELOP_E2E_TRACKED_STATE_CLEANUP_FAILED: $($_.Exception.Message)"
+        }
+    }
+    if ($failure -and $standBranchCleanAtStart) {
+        try {
+            $trackedStateCleanup.branch = Restore-DevelopE2ETrackedState -Root $standBranchRoot -StartHead $standBranchHeadAtStart -ExpectedBranch $standBranchName
+        } catch {
+            $failure = "$failure; DEVELOP_E2E_BRANCH_TRACKED_STATE_CLEANUP_FAILED: $($_.Exception.Message)"
         }
     }
     $env:ITL_WORKFLOW_SOURCE_PATH = $previousWorkflowSource

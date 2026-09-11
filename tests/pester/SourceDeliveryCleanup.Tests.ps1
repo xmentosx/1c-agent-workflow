@@ -110,6 +110,12 @@ Describe 'Source delivery post-success cleanup' {
         Test-Path -LiteralPath (Join-Path $root 'new-runtime.log') | Should -BeTrue
     }
 
+    It 'wires failed Develop cleanup to both the master and isolated branch worktrees' {
+        $implementation = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\invoke-develop-e2e.ps1') -Raw -Encoding UTF8
+        $implementation | Should -Match ([regex]::Escape('Restore-DevelopE2ETrackedState -Root $ProjectRoot'))
+        $implementation | Should -Match ([regex]::Escape('Restore-DevelopE2ETrackedState -Root $standBranchRoot'))
+    }
+
     It 'reports cleanup failures as warnings instead of changing publication success' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         Mock Remove-SourceDeliveryStaleCandidateWorktrees { throw 'candidate cleanup unavailable' }

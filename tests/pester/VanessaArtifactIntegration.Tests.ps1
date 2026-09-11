@@ -125,6 +125,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
     It "installs the paired VAExtension from the qualified source-build archive before its release exists" {
         $testProjectPath = Join-Path $TestDrive "$script:NonAsciiWord paired CFE with space"
         $helperPath = New-VanessaArtifactTestProject -Root $testProjectPath
+        $lockPath = Join-Path $testProjectPath ".agent-1c\dependency-lock.json"
         [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:FixtureArchivePath, "Process")
 
         $result = & {
@@ -137,6 +138,10 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $result.sha256 | Should -Be $script:FixtureVaExtensionSha256
         $result.path | Should -Match ([regex]::Escape($script:NonAsciiWord))
         [IO.File]::ReadAllText($result.path, [Text.Encoding]::UTF8) | Should -Be "qualified paired VAExtension fixture"
+        $lockEntry = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaMcp.vaExtension
+        $lockEntry.source | Should -Be "workflow-pinned"
+        $lockEntry.releaseTag | Should -Be "vanessa-automation-v1.2.043.28-itl-r13"
+        $lockEntry.protocol | Should -Be "itl-file-code-v1"
     }
 
     It "installs from a packaged no-Git workflow copy through the same exact override" {

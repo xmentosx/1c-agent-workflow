@@ -7227,15 +7227,18 @@ function Update-VanessaMcpArtifactLockEntry {
         return
     }
 
-    $values = @{}
-    $values[[string]$Artifact.key] = [ordered]@{
-        version = [string]$Artifact.version
-        assetName = [string]$Artifact.assetName
-        url = [string]$Artifact.url
-        sha256 = [string]$Artifact.sha256
-        source = [string]$Artifact.source
-        updatedAt = (Get-Date).ToString("o")
+    $definition = @(Get-VanessaMcpArtifactDefinitions | Where-Object { [string]$_.lockKey -eq [string]$Artifact.key })[0]
+    $entry = ConvertTo-Agent1cHashtable -Object (Get-VanessaMcpArtifactLockEntry -Definition $definition)
+    foreach ($name in @("version", "assetName", "url", "sha256")) {
+        $entry[$name] = [string]$Artifact.$name
     }
+    if (-not $entry.Contains("source") -or [string]::IsNullOrWhiteSpace([string]$entry["source"])) {
+        $entry["source"] = [string]$Artifact.source
+    }
+    $entry["updatedAt"] = (Get-Date).ToString("o")
+
+    $values = @{}
+    $values[[string]$Artifact.key] = $entry
     Update-DependencyLockEntry -Name "vanessaMcp" -Values $values
 }
 
