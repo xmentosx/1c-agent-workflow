@@ -437,6 +437,9 @@ try {
         if ((Get-WorkflowLockCommit -Root $ProjectRoot) -ne $candidateCommit) { throw "update-workflow did not install the exact develop candidate." }
         [void](Commit-StandUpdate -Root $ProjectRoot -Message "test: install develop journey candidate")
         [void](Invoke-InstalledAction -Name "upgrade-refresh-branch" -Root $standBranchRoot -Action "refresh-dev-branch" -TimeoutSeconds 5400)
+        if ((Get-WorkflowLockCommit -Root $standBranchRoot) -ne $candidateCommit) {
+            [void](Invoke-InstalledAction -Name "upgrade-refresh-branch-current" -Root $standBranchRoot -Action "refresh-dev-branch" -AdditionalArguments @("-ExpectedMasterCommit", ((& git -C $ProjectRoot rev-parse HEAD) -join "").Trim()) -TimeoutSeconds 5400)
+        }
         Set-DevelopStandVanessaFeature -Root $standBranchRoot
         [void](Assert-FreshVerificationResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-check" -Root $standBranchRoot -Action "check-dev-branch" -TimeoutSeconds 5400))
         $exportSummary = Assert-ExportResult -ProcessResult (Invoke-InstalledAction -Name "upgrade-export" -Root $standBranchRoot -Action "export-dev-branch-result" -TimeoutSeconds 3600)

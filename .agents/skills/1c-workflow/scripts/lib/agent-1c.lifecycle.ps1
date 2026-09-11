@@ -12389,6 +12389,7 @@ function Complete-RefreshConfigDumpInfoPostcondition {
         [Parameter(Mandatory = $true)][object]$LoadResult,
         [string]$ExportPath = (Get-ExportPath),
         [object]$TrackedKiloSnapshot = $null,
+        [switch]$AllowDependencyLockChange,
         [object]$State = $null,
         [string]$Operation = ""
     )
@@ -12399,6 +12400,9 @@ function Complete-RefreshConfigDumpInfoPostcondition {
     $allowedPaths = @($dumpInfoRepoPath)
     if ($trackedKiloChanged) {
         $allowedPaths += [string]$TrackedKiloSnapshot.repoPath
+    }
+    if ($AllowDependencyLockChange) {
+        $allowedPaths += ".agent-1c/dependency-lock.json"
     }
     $trackedPaths = @(
         @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--diff-filter=ACMRTUXBD", "--"))
@@ -12413,7 +12417,7 @@ function Complete-RefreshConfigDumpInfoPostcondition {
 
     $pathsToCommit = @($trackedPaths | Where-Object { $allowedPaths -ccontains ([string]$_ -replace "\\", "/") })
     if ($pathsToCommit.Count -gt 0) {
-        $commitMessage = if ($trackedKiloChanged) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
+        $commitMessage = if ($trackedKiloChanged -or $AllowDependencyLockChange) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
         Commit-IfChanged `
             -Message $commitMessage `
             -PathSpec $pathsToCommit `
@@ -13500,7 +13504,7 @@ function Invoke-RefreshDevBranchCore {
     }
     Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-    Sync-WorkflowManagedDependencyLockEntries | Out-Null
+    $dependencyLockSync = Sync-WorkflowManagedDependencyLockEntries
     $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
     Set-RunStage -Stage "refresh.dependencies" -Detail "Binding the branch to its workflow-pinned immutable dependency cache."
     Install-VanessaAutomation
@@ -13524,6 +13528,7 @@ function Invoke-RefreshDevBranchCore {
             -LoadResult $loadResult `
             -ExportPath (Get-ExportPath) `
             -TrackedKiloSnapshot $trackedKiloSnapshot `
+            -AllowDependencyLockChange:([bool]$dependencyLockSync.changed) `
             -State $state `
             -Operation $OperationName
         Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation $OperationName | Out-Null

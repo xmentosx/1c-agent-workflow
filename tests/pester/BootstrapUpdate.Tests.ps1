@@ -848,10 +848,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $artifactFixtureRoot = Join-Path $tempRoot "vanessa-mcp-fixtures"
             New-Item -ItemType Directory -Force -Path $artifactFixtureRoot | Out-Null
             $clientMcpFixture = Join-Path $artifactFixtureRoot "client_mcp.cfe"
-            $vaExtensionFixture = Join-Path $artifactFixtureRoot "VAExtension.1.29.cfe"
             $yaxunitFixture = Join-Path $artifactFixtureRoot "YAxUnit-25.12.cfe"
             [System.IO.File]::WriteAllBytes($clientMcpFixture, [byte[]](1, 2, 3, 4, 5))
-            [System.IO.File]::WriteAllBytes($vaExtensionFixture, [byte[]](6, 7, 8, 9, 10))
             [System.IO.File]::WriteAllBytes($yaxunitFixture, [byte[]](11, 12, 13, 14, 15))
             $sourceRoot = Join-Path $tempRoot "workflow-source"
             & git clone --quiet --shared $RepoRoot $sourceRoot
@@ -872,8 +870,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $sourceLock = Get-Content -LiteralPath $sourceLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $sourceLock.dependencies.vanessaMcp.clientMcp.url = $clientMcpFixture
             $sourceLock.dependencies.vanessaMcp.clientMcp.sha256 = (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
-            $sourceLock.dependencies.vanessaMcp.vaExtension.url = $vaExtensionFixture
-            $sourceLock.dependencies.vanessaMcp.vaExtension.sha256 = (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            $pairedVaExtensionSha256 = [string]$sourceLock.dependencies.vanessaMcp.vaExtension.sha256
             $sourceLock.dependencies.yaxunit.url = $yaxunitFixture
             $sourceLock.dependencies.yaxunit.sha256 = (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
@@ -1040,7 +1037,7 @@ local after
             $installedClientMcp | Should -Match ("^" + [regex]::Escape([System.IO.Path]::GetFullPath($artifactCacheRoot)))
             $installedVaExtension | Should -Match ("^" + [regex]::Escape([System.IO.Path]::GetFullPath($artifactCacheRoot)))
             (Get-FileHash -LiteralPath $installedClientMcp -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
-            (Get-FileHash -LiteralPath $installedVaExtension -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $vaExtensionFixture -Algorithm SHA256).Hash.ToLowerInvariant()
+            (Get-FileHash -LiteralPath $installedVaExtension -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $pairedVaExtensionSha256
             (Get-FileHash -LiteralPath $installedYAxUnit -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
 
             $userRulesText = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "USER-RULES.md")

@@ -7908,6 +7908,40 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "commits a workflow-managed dependency lock synchronization during refresh" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-sync-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"fixture":{"version":"before"}}}'
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"fixture":{"version":"after"}}}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
+                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf" -AllowDependencyLockChange
+                [pscustomobject]@{
+                    subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
+                    paths = @(& git -C $tempRoot show --format= --name-only HEAD | Where-Object { $_ })
+                    status = @(& git -C $tempRoot status --porcelain)
+                }
+            }
+
+            $result.subject | Should -Be "chore: persist branch refresh state"
+            @($result.paths).Count | Should -Be 1
+            $result.paths[0] | Should -Be ".agent-1c/dependency-lock.json"
+            @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "fails before committing when refresh changes another tracked file" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-cursor-unexpected-" + [guid]::NewGuid().ToString("N"))
         try {

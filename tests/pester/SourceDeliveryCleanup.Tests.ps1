@@ -114,6 +114,8 @@ Describe 'Source delivery post-success cleanup' {
         $implementation = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\invoke-develop-e2e.ps1') -Raw -Encoding UTF8
         $implementation | Should -Match ([regex]::Escape('Restore-DevelopE2ETrackedState -Root $ProjectRoot'))
         $implementation | Should -Match ([regex]::Escape('Restore-DevelopE2ETrackedState -Root $standBranchRoot'))
+        $implementation | Should -Match ([regex]::Escape('upgrade-refresh-branch-current'))
+        $implementation | Should -Match ([regex]::Escape('-ExpectedMasterCommit'))
     }
 
     It 'reports cleanup failures as warnings instead of changing publication success' {
