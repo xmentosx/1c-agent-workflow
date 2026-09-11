@@ -1381,11 +1381,11 @@
                           {
                               "path":  "scripts/check.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+                              "disposition":  "rewrite",
+                              "reason":  "Set an explicit UTF-8 console boundary before redirected fork qualification launches nested PowerShell checks.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "7852bd14c53e76e0fa7c443a100d1c55699760892b07242a773f13fe0fd0bd37",
-                              "resultSha256":  "7852bd14c53e76e0fa7c443a100d1c55699760892b07242a773f13fe0fd0bd37"
+                              "resultSha256":  "897d2884b5d9925a5d3058fa92d4a92094becd1fb7a2ad49156faecca3a9355c"
                           },
                           {
                               "path":  "scripts/new-upstream-upgrade.ps1",
@@ -1462,11 +1462,11 @@
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "carry-forward",
-                              "reason":  "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+                              "disposition":  "rewrite",
+                              "reason":  "Regress the explicit UTF-8 boundary required by redirected fork qualification.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "e5075157ed846e4c7f5c0bdb47550ef3c266dd20a143289fd391b9add789d1b1",
-                              "resultSha256":  "e5075157ed846e4c7f5c0bdb47550ef3c266dd20a143289fd391b9add789d1b1"
+                              "resultSha256":  "065c919a1dc6986e9437525c887f4bae1aeeddadae40bd33f5820de9b26544a2"
                           },
                           {
                               "path":  "tests/TestSupport.ps1",
