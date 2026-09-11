@@ -7388,6 +7388,9 @@ function Start-EnterpriseBackground {
         $args += @("/TESTCLIENT", "-TPort", [string]$TestClientPort)
     }
     $args += $ibArgs + @("/DisableStartupMessages")
+    if ($UseTestManager -or $UseTestClient) {
+        $args += @("/AllowExecuteScheduledJobs", "-Off")
+    }
     if (-not $UseTestClient) {
         $args += "/DisableStartupDialogs"
     }
@@ -7498,7 +7501,12 @@ function Invoke-Enterprise {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
-    $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs")
+    $args = @("ENTERPRISE") + $ibArgs + @(
+        "/DisableStartupMessages",
+        "/DisableStartupDialogs",
+        "/AllowExecuteScheduledJobs",
+        "-Off"
+    )
     $effectiveTestClientPort = 0
     if ($TestClientPort -gt 0) {
         $effectiveTestClientPort = $TestClientPort

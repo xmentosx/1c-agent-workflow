@@ -4997,6 +4997,7 @@ try {
             $captured.filePath | Should -Be $fakeThinClient
             $captured.arguments | Should -Contain "/TESTMANAGER"
             ($captured.arguments -join " ") | Should -Not -Match ([regex]::Escape("-TPort"))
+            ($captured.arguments -join " ") | Should -Match ([regex]::Escape("/AllowExecuteScheduledJobs -Off"))
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -5056,16 +5057,20 @@ try {
             $result.starts[0].arguments | Should -Contain "/TESTCLIENT"
             $result.starts[0].arguments | Should -Not -Contain "/TESTMANAGER"
             $result.starts[0].arguments | Should -Not -Contain "/DisableStartupDialogs"
+            ($result.starts[0].arguments -join " ") | Should -Match ([regex]::Escape("/AllowExecuteScheduledJobs -Off"))
             $result.starts[1].filePath | Should -Be $thickPath
             $result.starts[1].arguments | Should -Contain "/TESTMANAGER"
             $result.starts[1].arguments | Should -Not -Contain "/TESTCLIENT"
             $result.starts[1].arguments | Should -Contain "/DisableStartupDialogs"
+            ($result.starts[1].arguments -join " ") | Should -Match ([regex]::Escape("/AllowExecuteScheduledJobs -Off"))
             $result.invokes[0].filePath | Should -Be $thinPath
             $result.invokes[0].arguments | Should -Contain "/TESTMANAGER"
             $result.invokes[0].arguments | Should -Contain "/DisableStartupDialogs"
+            ($result.invokes[0].arguments -join " ") | Should -Match ([regex]::Escape("/AllowExecuteScheduledJobs -Off"))
             $result.invokes[1].filePath | Should -Be $thickPath
             $result.invokes[1].arguments | Should -Not -Contain "/TESTMANAGER"
             $result.invokes[1].arguments | Should -Contain "/DisableStartupDialogs"
+            ($result.invokes[1].arguments -join " ") | Should -Match ([regex]::Escape("/AllowExecuteScheduledJobs -Off"))
             $result.thinResultPath | Should -Be $thinPath
             $result.thickResultPath | Should -Be $thickPath
         } finally {
