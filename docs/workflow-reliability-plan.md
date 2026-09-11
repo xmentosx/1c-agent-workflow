@@ -104,7 +104,7 @@ Server and multi-host recovery remain open.
 | 7 | P1 | Incremental progress, experiment provenance and actionable waiting | Interrupted operation retains stages/settings; queue distinct from execution; user cancellation; no polling a decision blocker forever | Immutable provenance survives a pre-runtime engine crash. Incremental snapshots now retain verified repetitions, handshake/command/source-capture phases and compact hashed profile references; an actual crash between repetitions preserves the completed sample without replay. Runtime-specific loaded-state provenance and installed acceptance remain open |
 | 8 | P1 | Diagnose and correct ambiguous owned debugger client on UFA | Retained discovery/launch evidence; exact own session among foreign clients; real remote short capture | Retained UFA response proves one Client and one Server in owned session 47; correction registered at e00ba67 with 63 passed Targeted tests; both native client families propagate through selection, proof and engine coverage; delivery and fresh remote thick-client capture remain open |
 | 9 | P2 | Correct row selection for column captions containing spaces | Cyrillic plus spaces, multiple criteria, no match; owning backend delivery | Exact upstream navigation failure reproduced and corrected in r10; native build succeeded with all service bases released; 16e5b84 registered with 532 passed Targeted tests; delivery and installed UI acceptance remain open |
-| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting and occupied-port reuse were corrected in r12; native two-client A/B/A passed with distinct ports and r12 registered at b6f23f1. The r13 source candidate adds durable restart reconciliation for exact owner/request/code identity, terminal response reuse, safe unpublished/unclaimed continuation and fail-closed claimed/foreign/ambiguous cases. A platform-only form compilation defect found during r13 native acceptance is corrected, the build now rejects a missing VAExtension step cache, and paired native r13 A/B/A passes with three correlated replies, two isolated channels and all database admissions released. Real producer-process interruption now resumes the terminal response through the ordinary send/wait steps with one effect and a durable acknowledgement. Scoped native cleanup has a separate verified candidate; delivery and original BDR acceptance remain open |
+| 10 | P2 | Reliable client-code channel and diagnosed clipboard failures | Busy clipboard, explicit completion/errors, no duplicate replay, isolated files/cleanup; shared supported route | Correlated r11 producer/receiver registered at 75a36db with 578 passed Targeted tests; final paired native build and four real file-base command cases verified, including propagated failure and server modes, with all owned sessions released. PID-zero cross-client misrouting and occupied-port reuse were corrected in r12; native two-client A/B/A passed with distinct ports and r12 registered at b6f23f1. The r13 source candidate adds durable restart reconciliation for exact owner/request/code identity, terminal response reuse, safe unpublished/unclaimed continuation and fail-closed claimed/foreign/ambiguous cases. A platform-only form compilation defect found during r13 native acceptance is corrected, the build now rejects a missing VAExtension step cache, and paired native r13 A/B/A passes with three correlated replies, two isolated channels and all database admissions released. Real producer-process interruption resumes the terminal response through the ordinary send/wait steps with one effect and a durable acknowledgement. Exact-owner cleanup now removes only fully acknowledged protocol files and the empty channel generation; native restart acceptance leaves no protocol files or generation directory. Delivery and original BDR acceptance remain open |
 | 11 | P2 | Correct release snapshot ownership and cleanup | Retention respected; old ledger handled through helper; foreign paths remain protected | Shared cleanup now accepts actual current/legacy producer layouts, protects active/retained records sharing a filename, and reconciles obsolete generations after verified deletion; 32 ledger/cleanup tests pass; five real debt records checked read-only; normal delivered-supervisor cleanup remains pending |
 | 12 | P1 | Make absent/empty command-handler diagnostics advisory and prevent unsolicited dummy handlers | Notify the user without blocking refresh/check or requiring agent repair; preserve genuine structural errors; deliver the validator and agent-guidance correction through their owners; verify real project updates without dummy handlers or the local workaround | Source correction prepared in controlled fork r34; workflow exposes warnings without repair/failure; 9 validator and 10 lifecycle cases pass, five actual branch11 forms retain 14 advisory actions and unchanged sources; normal delivery/install and full branch11 acceptance remain open |
 | 13 | P1 | Distinguish accepted master changes from branch-owned changes when selecting tests | Imported master selects the existing acceptance set without invented tests/owners; own unknown changes still require classification; mixed dirty trees, CF/CFE, deletion/rename and Git failures covered | Shared selector now records pinned accepted-master provenance for CF/CFE and keeps unknown own paths blocking; 37 regressions pass including the permanent 13-path case; actual branch11 paths recognized read-only with unchanged index/proof; 6c577e9 registered successfully; delivery and installed full check pending |
@@ -2551,9 +2551,30 @@ Native run `C:/va канал/r13-restart-871eeee5` terminated the first TestMana
 after one client effect, resumed through the same public send/wait sequence in a
 new TestManager, wrote one acknowledgement and retained exactly one effect line.
 JUnit passed 1/1 and all three native operation records confirmed quiescence;
-database admission released. Scoped-cleanup integration, installed guidance,
-the original BDR scenario and normal delivery remain required before item 10
-closes.
+database admission released.
+
+The channel now removes an exact owned generation only after every pending
+request has an acknowledgement with the matching protocol, request id and owner.
+Claimed work without a terminal response, foreign ownership and incomplete
+generations remain intact for diagnosis or restart. After removing the `events`
+directory, it removes the `itl-<uuid>` parent only when that parent is empty.
+The focused channel suite passes 69/69, including retained incomplete work and
+completed-generation cleanup. Patched-artifact checks separately apply the
+shipping patch to the pinned upstream tree.
+
+Final paired build `C:/vabld-r13/1dd07882` produced candidate ZIP SHA-256
+`a96234b5a939734f2345f1e1b010b637c6c94350b8a4debfcae99945dcaf14f5`,
+EPF SHA-256
+`16190daa221760630b6d198c5eec794c3c336b38b07599deb289e22a58b43b84`
+and CFE SHA-256
+`16170f5be0529d0653cfe544e202c925a229de7a27458670b106d1bf2c3cba9f`.
+Native restart run `C:/va канал/r13-restart-c100fc9e` retained one pending,
+event, claim and terminal response after interrupting the first manager. The
+second manager reused that response, passed JUnit 1/1 and left one effect line;
+after acknowledgement it left zero pending/event/claim/response/acknowledgement
+files and zero channel-generation directories. All three native operations
+confirmed quiescence and database admission released. Installed guidance, the
+original BDR scenario and normal delivery remain required before item 10 closes.
 
 Item 9 registration is now confirmed: 16e5b840b9b111dfaf701dca5cd48767c465100c,
 Targeted 532 passed / 0 failed, ledger duration 536908 ms. This does not establish

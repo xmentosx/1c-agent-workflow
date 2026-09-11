@@ -15,7 +15,7 @@
   },
   "patch": {
     "path": "file-operations.patch",
-    "sha256": "44cf968f7360040286d288693f1131aad4f729e7bf8597e7d58512307fc28ef9",
+    "sha256": "eebbdfd2b65174c96143758bd5394c8e839c173d8b88285f71c5aaddc0852422",
     "expectedChangedPaths": [
       "VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl",
       "VanessaAutomation/Forms/УправляемаяФорма/Ext/Form/Module.bsl",
