@@ -2486,6 +2486,7 @@ function Ensure-GitIgnore {
         ".agent-1c/extension-dump/",
         ".agent-1c/extension-init/",
         ".agent-1c/snapshots/",
+        ".agent-1c/restoration-state/",
         ".agent-1c/release-e2e-roundtrip/",
         ".agent-1c/release-e2e-extension/",
         ".agent-1c/tmp/",
