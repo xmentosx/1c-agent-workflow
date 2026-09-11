@@ -10,7 +10,8 @@ import statistics
 import sys
 import time
 
-from .common import FileLock, OwnedProcess, WorkError, digest, identity, read_json, stamp, write_json
+from .common import (FileLock, OwnedProcess, WorkError, digest, host_memory_snapshot,
+                     identity, read_json, resolve_resource_limits, stamp, write_json)
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
 from .access import Lease, target_access
@@ -33,6 +34,7 @@ def wait_json(path, process, timeout, cancelled):
             raise WorkError("CANCELLED")
         if process.process.poll() is not None:
             raise WorkError("WORKLOAD_EXITED_WITHOUT_SIGNAL: " + path.name)
+        process.monitor()
         deadline.remaining()
         time.sleep(0.01)
     return read_json(path)
@@ -90,6 +92,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     write_json(variables["context"], context)
     commands = scenario["commands"]
     processes = []
+    resource_limits = resolve_resource_limits(target, request["operations"])
+    resource_telemetry = run / "resource-telemetry.jsonl"
     profile_paths = []
     profile_evidence = []
     profiler = None
@@ -103,10 +107,13 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
               "sourceAnalysisPolicy": scenario.get("sourceAnalysis", "none"),
               "readiness": scenario["readyDescription"], "mode": request["mode"],
               "startedAt": stamp(), "provenance": provenance, "timings": [], "profiles": [], "phases": [], "iterations": [],
-              "loadedState": {"status": "unavailable", "reason": "runtime-profile-not-collected",
-                              "runtimeObserved": False, "wholeConfigurationSourceProven": False,
-                              "dataStateProven": False, "evidence": None},
-              "status": "running", "limitations": [], "cleanupErrors": []}
+               "loadedState": {"status": "unavailable", "reason": "runtime-profile-not-collected",
+                               "runtimeObserved": False, "wholeConfigurationSourceProven": False,
+                               "dataStateProven": False, "evidence": None},
+               "status": "running", "limitations": [], "cleanupErrors": [],
+               "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
+                                    "hostAfter": None, "telemetry": resource_telemetry.name,
+                                    "processes": []}}
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
@@ -116,7 +123,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         # Keep profile rows in their artifacts, not in every progress snapshot.
         snapshot = {key: result[key] for key in (
             "schemaVersion", "jobId", "scenarioId", "startedAt", "provenance",
-            "timings", "iterations", "phases", "loadedState", "limitations", "cleanupErrors")}
+            "timings", "iterations", "phases", "loadedState", "limitations", "cleanupErrors",
+            "resourceEvidence")}
         snapshot.update(updatedAt=stamp(), status=result["status"] if "finishedAt" in result else "running",
                         resultAvailable=(run / "result.json").is_file(), profiles=[])
         for evidence in profile_evidence:
@@ -176,7 +184,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             raise WorkError("CANCELLED")
         with phase(name, deadline) as active_deadline:
             process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                                   child_environment)
+                                   child_environment, resource_limits, resource_telemetry)
             processes.append(process)
             try:
                 process.wait(active_deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
@@ -212,6 +220,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     current_iteration = None
     persist_progress()
     try:
+        result["resourceEvidence"]["hostBefore"] = host_memory_snapshot()
         command("update")
         if request["mode"] != "time":
             effective_rdbg = prepare_debug_server(target, run, processes, cancelled)
@@ -252,7 +261,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             if scenario.get("adapter", "command") == "handshake":
                 with phase("ready") as readiness_deadline:
                     process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                           iteration / "action.log", child_environment)
+                                           iteration / "action.log", child_environment,
+                                           resource_limits, resource_telemetry)
                     processes.append(process)
                     ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
                     if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
@@ -350,6 +360,11 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 process.close()
             except Exception as error:
                 result["cleanupErrors"].append(str(error))
+        result["resourceEvidence"]["processes"] = [process.resource_summary() for process in processes]
+        try:
+            result["resourceEvidence"]["hostAfter"] = host_memory_snapshot()
+        except Exception as error:
+            result["cleanupErrors"].append(str(error))
         if result["cleanupErrors"]:
             result["status"] = "needs-attention"
         result["finishedAt"] = stamp()
@@ -377,6 +392,10 @@ def report(run, result):
         loaded["status"], ", ".join(loaded.get("configurationVersions", [])) or "unavailable",
         loaded.get("sourceBoundModuleCount", 0), loaded.get("sourceRequestedModuleCount", 0),
         str(loaded["wholeConfigurationSourceProven"]).lower(), str(loaded["dataStateProven"]).lower())]
+    resources = result.get("resourceEvidence", {})
+    process_peaks = [item.get("peakObservedJobMemoryBytes", 0) for item in resources.get("processes", [])]
+    lines += ["", "Resource guard: enabled; peak observed owned-job memory bytes: " +
+              str(max(process_peaks) if process_peaks else 0) + "."]
     lines += ["", *result["limitations"]]
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]

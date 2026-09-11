@@ -9,7 +9,8 @@ from pathlib import Path
 import sys
 import time
 
-from itl_remote.common import FileLock, WorkError, read_json, stamp, write_json
+from itl_remote.common import (FileLock, WorkError, host_memory_snapshot, process_memory_snapshot,
+                               read_json, stamp, write_json)
 
 
 def main():
@@ -50,7 +51,11 @@ def main():
             command.add_argument("--output", required=True)
             command.add_argument("--allow-partial", action="store_true", help="Collect available diagnostics without requiring a measurement result")
         if name == "worker":
-            command.add_argument("--once", action="store_true")
+            mode = command.add_mutually_exclusive_group()
+            mode.add_argument("--once", action="store_true")
+            mode.add_argument("--persistent", action="store_true")
+            command.add_argument("--max-jobs", type=int)
+            command.add_argument("--max-lifetime-seconds", type=float)
     command = commands.add_parser("prepare")
     command.add_argument("--spool", required=True)
     command.add_argument("--profile", required=True)
@@ -174,12 +179,38 @@ def main():
         return execution.execute_job(args.spool, args.id, read_json(Path(args.spool) / "profile.json"), via_agent=args.via_agent)
     if args.command == "worker":
         spool = Path(args.spool).resolve()
+        profile = read_json(spool / "profile.json")
+        worker_limits = profile.get("workerLimits", {})
+        if not isinstance(worker_limits, dict):
+            raise WorkError("WORKER_LIMITS_INVALID")
+        if args.persistent and worker_limits.get("allowPersistent") is not True:
+            raise WorkError("PERSISTENT_WORKER_NOT_ALLOWED")
+        persistent = bool(args.persistent)
+        max_jobs = args.max_jobs if args.max_jobs is not None else (worker_limits.get("maxJobs", 10) if persistent else 1)
+        max_lifetime = (args.max_lifetime_seconds if args.max_lifetime_seconds is not None else
+                        worker_limits.get("maxLifetimeSeconds", 3600))
+        if (type(max_jobs) is not int or not 1 <= max_jobs <= 100 or isinstance(max_lifetime, bool) or
+                not isinstance(max_lifetime, (int, float)) or not 1 <= max_lifetime <= 86400):
+            raise WorkError("WORKER_LIMITS_INVALID")
+        started = time.monotonic()
+        started_at = stamp()
+        completed_jobs = 0
+        stop_reason = "one-shot-complete"
         with FileLock(spool / "service.lock"):
-            print("ITL worker ready. Stop: Ctrl+C. Spool: " + str(spool), flush=True)
+            print("ITL worker ready. Mode: " + ("persistent" if persistent else "one-shot") +
+                  ". Stop: Ctrl+C. Spool: " + str(spool), flush=True)
             try:
                 while True:
                     profile = read_json(spool / "profile.json")
-                    write_json(spool / "worker.json", {"status": "ready", "pid": os.getpid(), "updatedAt": stamp()})
+                    elapsed = time.monotonic() - started
+                    if elapsed >= max_lifetime:
+                        stop_reason = "max-lifetime"
+                        break
+                    write_json(spool / "worker.json", {"status": "ready", "pid": os.getpid(),
+                               "mode": "persistent" if persistent else "one-shot", "startedAt": started_at,
+                               "updatedAt": stamp(), "jobsProcessed": completed_jobs,
+                               "hostMemory": host_memory_snapshot(),
+                               "workerMemory": process_memory_snapshot(os.getpid())})
                     for package in sorted((spool / "jobs").glob("*")):
                         if package.name.startswith(".") or not package.is_dir():
                             continue
@@ -193,15 +224,25 @@ def main():
                                     continue
                                 write_json(spool / "state" / (package.name + ".json"),
                                            {"id": package.name, "status": "needs-attention", "error": str(error), "updatedAt": stamp()})
+                            completed_jobs += 1
+                            break
                     from itl_remote.agents import run_queued_controls
                     run_queued_controls(spool)
                     from itl_remote.recovery_job import run_queued
                     run_queued(spool)
-                    if args.once:
-                        return {"status": "stopped"}
+                    if not persistent:
+                        break
+                    if completed_jobs >= max_jobs:
+                        stop_reason = "max-jobs"
+                        break
                     time.sleep(1)
             finally:
-                write_json(spool / "worker.json", {"status": "stopped", "pid": os.getpid(), "updatedAt": stamp()})
+                write_json(spool / "worker.json", {"status": "stopped", "pid": os.getpid(),
+                           "mode": "persistent" if persistent else "one-shot", "startedAt": started_at,
+                           "updatedAt": stamp(), "jobsProcessed": completed_jobs, "reason": stop_reason,
+                           "hostMemory": host_memory_snapshot(),
+                           "workerMemory": process_memory_snapshot(os.getpid())})
+        return {"status": "stopped", "jobsProcessed": completed_jobs, "reason": stop_reason}
 
 
 if __name__ == "__main__":

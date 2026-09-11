@@ -13,8 +13,9 @@ import unittest
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
-from itl_remote import agents, bootstrap, execution, jobs, profiling, transport
-from itl_remote.common import FileLock, OwnedProcess, WorkError, digest, read_json, write_json
+from itl_remote import agents, bootstrap, common, execution, jobs, profiling, transport
+from itl_remote.common import (FileLock, OwnedProcess, WorkError, digest, read_json,
+                               resolve_resource_limits, resource_violation, write_json)
 
 
 WORKLOAD = '''import sys, time, os
@@ -79,6 +80,13 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual("unavailable", result["loadedState"]["status"])
         self.assertFalse(result["loadedState"]["runtimeObserved"])
         self.assertIsNone(result["loadedState"]["evidence"])
+        self.assertIsNotNone(result["resourceEvidence"]["hostBefore"])
+        self.assertIsNotNone(result["resourceEvidence"]["hostAfter"])
+        self.assertGreaterEqual(len(result["resourceEvidence"]["processes"]), 2)
+        self.assertTrue((self.spool / "runs/one/resource-telemetry.jsonl").is_file())
+        telemetry = [json.loads(line) for line in
+                     (self.spool / "runs/one/resource-telemetry.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertTrue(any(sample["processes"] and sample["processes"][0]["pid"] > 0 for sample in telemetry))
 
     def test_same_id_is_never_executed_twice(self):
         request, package = self.package()
@@ -216,6 +224,84 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         finally:
             other.terminate()
             other.wait()
+
+    def test_resource_policy_combines_operation_limits_conservatively(self):
+        target = {"resourceLimits": {"maxJobMemoryMb": 100, "minAvailableMemoryMb": 100,
+                                     "byOperation": {
+                                         "measure": {"maxJobMemoryMb": 20, "minAvailableMemoryMb": 200},
+                                         "update": {"maxJobMemoryMb": 40, "minAvailableMemoryMb": 300}}}}
+        policy = resolve_resource_limits(target, ["measure", "update"])
+        self.assertEqual(20, policy["maxJobMemoryMb"])
+        self.assertEqual(300, policy["minAvailableMemoryMb"])
+        update_only = resolve_resource_limits(
+            {"resourceLimits": {"maxJobMemoryMb": 100,
+                                "byOperation": {"update": {"maxJobMemoryMb": 200}}}}, ["update"])
+        self.assertEqual(200, update_only["maxJobMemoryMb"])
+
+    def test_resource_violation_names_the_exceeded_boundary(self):
+        policy = resolve_resource_limits({"resourceLimits": {"maxProcessMemoryMb": 10}}, ["measure"])
+        breach = resource_violation(
+            policy,
+            {"availablePhysicalBytes": 1024 ** 3, "committedPercent": 10},
+            {"privateBytes": 11 * 1024 * 1024},
+            {"jobMemoryBytes": 0},
+            {"privateBytes": 0})
+        self.assertEqual("RESOURCE_LIMIT_EXCEEDED", breach["code"])
+        self.assertEqual("process-memory", breach["metric"])
+
+    def test_low_host_memory_blocks_before_child_launch(self):
+        policy = resolve_resource_limits({"resourceLimits": {"minAvailableMemoryMb": 1024}}, ["measure"])
+        low_host = {"availablePhysicalBytes": 100 * 1024 * 1024, "committedPercent": 10}
+        small_worker = {"privateBytes": 10 * 1024 * 1024}
+        from unittest.mock import patch
+        log = self.root / "must-not-start.log"
+        with patch.object(common, "host_memory_snapshot", return_value=low_host), \
+                patch.object(common, "process_memory_snapshot", return_value=small_worker):
+            with self.assertRaisesRegex(WorkError, "RESOURCE_LIMIT_EXCEEDED.*host-available-memory"):
+                OwnedProcess([sys.executable, "-c", "raise SystemExit(99)"], self.root, log,
+                             resource_limits=policy)
+        self.assertFalse(log.exists())
+
+    def test_resource_preflight_marks_job_needs_attention_without_launch(self):
+        self.profile["targets"]["fixture"]["resourceLimits"] = {"minAvailableMemoryMb": 10 ** 9}
+        _, package = self.package()
+        state, result = self.execute(package)
+        self.assertEqual("needs-attention", state["status"])
+        self.assertIn("RESOURCE_LIMIT_EXCEEDED", result["error"])
+        self.assertEqual([], result["timings"])
+
+    def test_prepared_worker_launcher_is_explicitly_one_shot(self):
+        launcher = (self.spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")
+        self.assertIn(" worker --once --spool ", launcher)
+
+    def test_probe_marks_dead_worker_heartbeat_stale(self):
+        write_json(self.spool / "worker.json", {"status": "ready", "pid": 999999999})
+        worker = bootstrap.inspect(self.spool)["worker"]
+        self.assertEqual("stale", worker["status"])
+        self.assertEqual("stale", worker["liveness"])
+
+    def test_default_worker_processes_only_one_queued_job(self):
+        _, first = self.package("first")
+        _, second = self.package("second")
+        jobs.submit(first, self.spool)
+        jobs.submit(second, self.spool)
+        runtime = RUNTIME / "remote_work.py"
+        completed = subprocess.run([sys.executable, str(runtime), "worker", "--spool", str(self.spool)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=20)
+        self.assertEqual(0, completed.returncode, completed.stdout + completed.stderr)
+        self.assertEqual("completed", jobs.status(self.spool, "first")["status"])
+        self.assertEqual("queued", jobs.status(self.spool, "second")["status"])
+        worker = read_json(self.spool / "worker.json")
+        self.assertEqual("stopped", worker["status"])
+        self.assertEqual(1, worker["jobsProcessed"])
+
+    def test_persistent_worker_requires_explicit_profile_authorization(self):
+        runtime = RUNTIME / "remote_work.py"
+        completed = subprocess.run([sys.executable, str(runtime), "worker", "--persistent",
+                                    "--spool", str(self.spool)], stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, timeout=10)
+        self.assertEqual(1, completed.returncode)
+        self.assertIn("PERSISTENT_WORKER_NOT_ALLOWED", completed.stdout)
 
     def test_os_lock_is_released_after_owner_scope(self):
         with FileLock(self.root / "lock"):
