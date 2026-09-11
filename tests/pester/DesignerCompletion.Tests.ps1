@@ -1635,6 +1635,16 @@
         $result.exportEvidence[0].artifacts.Count | Should -Be 3
     }
 
+    It "keeps workflow source export evidence outside Git status" {
+        (Get-Content -LiteralPath (Join-Path $RepoRoot ".gitignore") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Test-IgnorableLocalGitStatusLine -Line '?? .agent-1c/source-exports/'
+        }
+        $result | Should -BeTrue
+    }
+
     It "keeps the successful source installation when optional catalog publication is unavailable" {
         $fixtureRoot = Join-Path $TestDrive 'Недоступный каталог исходников'
         New-Item -ItemType Directory -Force -Path (Join-Path $fixtureRoot '.agent-1c') | Out-Null

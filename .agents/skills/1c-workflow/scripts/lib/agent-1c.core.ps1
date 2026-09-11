@@ -2161,7 +2161,7 @@ function Test-IgnorableLocalGitStatusLine {
         return $true
     }
 
-    if ($normalizedPath -in @(".agent-1c/mcp/", ".agent-1c/locks/", ".agent-1c/runtime/")) {
+    if ($normalizedPath -in @(".agent-1c/mcp/", ".agent-1c/locks/", ".agent-1c/runtime/", ".agent-1c/source-exports/")) {
         return $true
     }
 
