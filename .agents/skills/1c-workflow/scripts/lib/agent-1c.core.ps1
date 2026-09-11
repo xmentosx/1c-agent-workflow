@@ -7234,7 +7234,25 @@ function Invoke-Designer {
     if ([bool](Get-StateValue -State $result -Name "postExitProbeTimedOut" -Default $false)) {
         throw "DESIGNER_POST_EXIT_PROBE_TIMEOUT operation=$operationKind timeoutSeconds=$postExitProbeSeconds pid=$($result.processId) log=$logPath"
     }
-    if ($result.exitCode -ne 0) {
+    $stableArtifactRecovered = $false
+    if ($result.exitCode -ne 0 -and
+        $operationKind -eq "build-external-processor") {
+        $recoveredArtifactState = if ($operationKind -eq "dump-config-to-files") {
+            if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+                $artifactProbeState.confirmedState
+            } else {
+                Invoke-BoundedDesignerDumpArtifactState -Path $operationTarget -TimeoutSeconds (Get-DesignerCompletionProbeTimeoutSeconds)
+            }
+        } else {
+            if ($null -ne $artifactProbeState -and $null -ne $artifactProbeState.confirmedState) {
+                $artifactProbeState.confirmedState
+            } else {
+                Get-DesignerFileArtifactState -Path $operationTarget
+            }
+        }
+        $stableArtifactRecovered = [bool]$recoveredArtifactState.ready
+    }
+    if ($result.exitCode -ne 0 -and -not $stableArtifactRecovered) {
         throw "1C Designer failed with exit code $($result.exitCode). Log: $logPath"
     }
 

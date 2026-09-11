@@ -53,6 +53,58 @@
         $result.released | Should -BeTrue
     }
 
+    It "accepts a complete external processor artifact after a nonzero launcher exit" {
+        $fixtureRoot = Join-Path $TestDrive "Восстановленная внешняя обработка"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        $targetPath = Join-Path $fixtureRoot "tool.epf"
+        New-Item -ItemType Directory -Force -Path $basePath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath "1Cv8.1CD") | Out-Null
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath
+                logsPath = "logs"
+                designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 30
+                designerDumpStabilitySeconds = 0
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param(
+                    [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
+                    [scriptblock]$OnTimeout = $null, [scriptblock]$CompletionProbe = $null,
+                    [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
+                    [switch]$RequirePostExitProbeOnFailure, [int]$MaxWorkingSetMb = 0
+                )
+                $outIndex = [Array]::IndexOf($Arguments, "/Out")
+                $logPath = [string]$Arguments[$outIndex + 1]
+                $externalIndex = [Array]::IndexOf($Arguments, "/LoadExternalDataProcessorOrReportFromFiles")
+                $target = [string]$Arguments[$externalIndex + 2]
+                [IO.File]::WriteAllText($logPath, "Загрузка завершена.", (Get-Utf8Encoding))
+                [IO.File]::WriteAllBytes($target, [byte[]](1, 2, 3))
+                return [pscustomobject]@{
+                    processId = 9452; exitCode = 1; timedOut = $false
+                    memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
+                    peakWorkingSetMb = 0; workingSetLimitMb = 0
+                    terminationConfirmed = $true; terminationError = ""
+                    completedByProbe = $true; postExitProbeTimedOut = $false
+                    completionProbeFailed = $false
+                    launcherExited = $true; launcherExitCode = 1
+                }
+            }
+
+            $message = try {
+                Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/LoadExternalDataProcessorOrReportFromFiles", (Join-Path $fixtureRoot "Tool.xml"), $targetPath) 6>$null | Out-Null
+                ""
+            } catch { $_.Exception.Message }
+            [pscustomobject]@{ message = $message; targetExists = (Test-Path -LiteralPath $targetPath -PathType Leaf) }
+        }
+
+        $result.message | Should -Be ""
+        $result.targetExists | Should -BeTrue
+    }
+
     It "checks completion evidence once and stops after the launcher exits" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
