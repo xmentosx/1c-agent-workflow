@@ -149,6 +149,14 @@ print(json.dumps({'helperGeneration': next(iter(bundle['helperGenerations'].valu
         $saved.resources[0].path | Should -Be $journalBase
     }
 
+    It 'returns the native journal record with a background process so its owner can close the operation' {
+        Mock Start-Process { [pscustomobject]@{Id=5322} }
+        $process = Start-OneCProcessBackground -FilePath '1cv8.exe' -Arguments @('ENTERPRISE','/F',$journalBase) `
+            -InfoBaseKind file -InfoBasePath $journalBase -Purpose 'background-fixture'
+        [object]::ReferenceEquals($process.OneCNativeOperationRecord, $script:OneCNativeOperationJournal.entries[0]) | Should -BeTrue
+        $process.OneCNativeOperationRecord.processId | Should -Be 5322
+    }
+
     It 'captures native output ownership before launch without persisting credentials' {
         $script:beforeNativeLaunch = $null
         Mock Start-Process {

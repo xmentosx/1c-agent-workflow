@@ -35,6 +35,19 @@
         $VanessaText | Should -Match ([regex]::Escape("log='`$logPath'"))
     }
 
+    It "closes the background native operation only after owned Designer Agent cleanup is confirmed" {
+        $functionText = [regex]::Match(
+            $VanessaText,
+            'function Set-VanessaMcpExtensionUnsafeMode[\s\S]*?^}',
+            [Text.RegularExpressions.RegexOptions]::Multiline
+        ).Value
+        $functionText | Should -Match 'Get-StateValue -State \$process -Name ''OneCNativeOperationRecord'''
+        $functionText | Should -Match 'Confirm-OneCNativeOperationRelease -Record \$nativeRecord'
+        $functionText | Should -Match '-LauncherExited \(\[bool\]\$cleanup\.confirmed\)'
+        $functionText | Should -Match 'designer-agent-owned-process-release'
+        $functionText | Should -Match 'Complete-OneCNativeOperationOutcome -Record \$nativeRecord -Status \$\(if \(\$operationSucceeded -and \$cleanup\.confirmed\) \{ ''succeeded'' \} else \{ ''failed'' \}\)'
+    }
+
     It "accepts readiness only when the expected live PID owns the listener" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

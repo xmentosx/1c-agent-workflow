@@ -7650,6 +7650,7 @@ function Set-VanessaMcpExtensionUnsafeMode {
     $process = $null
     $processStartTime = [DateTime]::MinValue
     $releaseLease = $true
+    $operationSucceeded = $false
     try {
         $infoBaseArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User "" -Password ""
         $arguments = @("DESIGNER") + $infoBaseArgs + @(
@@ -7711,6 +7712,7 @@ function Set-VanessaMcpExtensionUnsafeMode {
         if (-not (Wait-ItlOnDemandProcessExit -ProcessId $process.Id -TimeoutSeconds 30)) {
             throw "ITL_DESIGNER_AGENT_SHUTDOWN_FAILED: Designer Agent PID $($process.Id) did not exit after common shutdown."
         }
+        $operationSucceeded = $true
         return [pscustomobject][ordered]@{
             verifiedAt = (Get-Date).ToString("o")
             extensionName = $ExtensionName
@@ -7723,11 +7725,18 @@ function Set-VanessaMcpExtensionUnsafeMode {
             unsafeActionProtection = $(if ($ReconcileYAxUnitProtections) { $false } else { $null })
         }
     } finally {
-        if ($null -ne $process -and $null -ne (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+        $cleanup = $null
+        if ($null -ne $process) {
             $cleanup = Stop-VanessaDesignerAgentOwnedProcess -Process $process -ExpectedStartTime $processStartTime
             if (-not $cleanup.confirmed) {
                 $releaseLease = $false
             }
+            $nativeRecord = Get-StateValue -State $process -Name 'OneCNativeOperationRecord' -Default $null
+            Confirm-OneCNativeOperationRelease -Record $nativeRecord `
+                -LauncherExited ([bool]$cleanup.confirmed) `
+                -OwnedProcessesReleased ([bool]$cleanup.confirmed) `
+                -Evidence $(if ($cleanup.confirmed) { 'designer-agent-owned-process-release' } else { '' })
+            Complete-OneCNativeOperationOutcome -Record $nativeRecord -Status $(if ($operationSucceeded -and $cleanup.confirmed) { 'succeeded' } else { 'failed' })
         }
         if ($releaseLease) {
             Release-ItlManagedPortAllocation -Family $portFamily -Key $portKey -LeaseToken $leaseToken

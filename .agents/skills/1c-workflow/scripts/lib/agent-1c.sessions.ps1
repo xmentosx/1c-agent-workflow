@@ -1154,7 +1154,8 @@ function Start-OneCProcessBackground {
         [switch]$Visible
     )
 
-    return (Invoke-WithOneCSessionAdmissionContext `
+    $nativeOperationEvidence = [pscustomobject]@{ record = $null }
+    $process = Invoke-WithOneCSessionAdmissionContext `
         -InfoBaseKind $InfoBaseKind `
         -InfoBasePath $InfoBasePath `
         -RequiredSessions $RequiredSessions `
@@ -1166,8 +1167,13 @@ function Start-OneCProcessBackground {
         -SessionDeadlineMonotonicNs $SessionDeadlineMonotonicNs `
         -KeepReservation `
         -ScriptBlock {
+            $nativeOperationEvidence.record = Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
             Start-NativeProcessBackground -FilePath $FilePath -Arguments $Arguments -Visible:$Visible
-        })
+        }
+    if ($null -ne $process -and $null -ne $nativeOperationEvidence.record) {
+        $process | Add-Member -NotePropertyName OneCNativeOperationRecord -NotePropertyValue $nativeOperationEvidence.record -Force
+    }
+    return $process
 }
 
 function Test-OneCCommandLineOutputBelongsToRun {
