@@ -60,7 +60,7 @@
         function New-LifecyclePostMergeCursorFixture {
             param(
                 [string]$Subject = "chore: persist branch configuration synchronization cursor",
-                [ValidateSet("cursor", "foreign")][string]$ChangedPath = "cursor",
+                [ValidateSet("cursor", "dependency-lock", "foreign")][string]$ChangedPath = "cursor",
                 [ValidateSet("none", "extra", "merge")][string]$AdditionalHead = "none",
                 [switch]$SkipCursor
             )
@@ -77,6 +77,9 @@
             if (-not $SkipCursor) {
                 if ($ChangedPath -eq "cursor") {
                     Set-Content -LiteralPath (Join-Path $fixture.root "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "post-merge-cursor"
+                } elseif ($ChangedPath -eq "dependency-lock") {
+                    New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root ".agent-1c") | Out-Null
+                    Set-Content -LiteralPath (Join-Path $fixture.root ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
                 } else {
                     Set-Content -LiteralPath (Join-Path $fixture.root "unrelated.txt") -Encoding UTF8 -Value "post-merge-foreign"
                 }
@@ -3778,7 +3781,7 @@ try {
         try {
             $branchHelperPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $branchHelperPath) | Out-Null
-            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "# updated branch helper"
+            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "function Test-RefreshManagedDependencyLockChange { return `$false }"
             $result = & {
                 . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
                 $script:Agent1cScriptPath = Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1"
@@ -7430,6 +7433,29 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "accepts a helper-owned managed dependency lock commit as the refresh post-merge head" {
+        $fixture = New-LifecyclePostMergeCursorFixture `
+            -Subject "chore: persist branch refresh state" `
+            -ChangedPath "dependency-lock"
+        try {
+            $accepted = & {
+                param($Fixture)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $transaction = [pscustomobject]@{
+                    operation = "refresh-dev-branch"
+                    mergeCommit = $Fixture.mergeCommit
+                }
+                Test-DevBranchLifecycleHelperOwnedPostMergeHead `
+                    -Transaction $transaction `
+                    -CandidateHead $Fixture.cursorCommit
+            } $fixture
+
+            $accepted | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "rejects unproven post-merge descendants instead of widening cursor recovery" {
         foreach ($case in @(
             @{ name = "foreign path"; subject = "chore: persist branch configuration synchronization cursor"; changedPath = "foreign"; additionalHead = "none" },
@@ -7903,6 +7929,41 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.head | Should -Be $beforeCommit
             $result.currentCommit | Should -Be $beforeCommit
             @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps stale pending refresh recovery on the current main helper when the branch helper predates managed lock persistence" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-post-merge-stale-helper-" + [guid]::NewGuid().ToString("N"))
+        $branchRoot = Join-Path $tempRoot "branch"
+        try {
+            $branchHelperPath = Join-Path $branchRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $branchHelperPath) | Out-Null
+            Set-Content -LiteralPath $branchHelperPath -Encoding UTF8 -Value "# stale branch helper"
+            $result = & {
+                . $HelperPath -ProjectRoot $branchRoot -Action help *> $null
+                $script:Agent1cScriptPath = Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1"
+                $script:CapturedScriptPath = ""
+                $script:CapturedArguments = @()
+                function Invoke-Agent1cFreshProcess {
+                    param([string]$ScriptPath, [string[]]$AdditionalArguments)
+                    $script:CapturedScriptPath = $ScriptPath
+                    $script:CapturedArguments = @($AdditionalArguments)
+                    throw "handoff-stop"
+                }
+                try {
+                    Restart-Agent1cAfterDevBranchMerge -Operation "refresh-dev-branch"
+                } catch {
+                    if ($_.Exception.Message -ne "handoff-stop") { throw }
+                }
+                [pscustomobject]@{
+                    scriptPath = $script:CapturedScriptPath
+                    arguments = @($script:CapturedArguments)
+                }
+            }
+            $result.scriptPath | Should -Be (Join-Path $tempRoot "main\.agents\skills\1c-workflow\scripts\agent-1c.ps1")
+            $result.arguments | Should -Be @("-LifecyclePhase", "post-merge")
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

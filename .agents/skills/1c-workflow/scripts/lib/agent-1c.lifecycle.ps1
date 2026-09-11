@@ -757,8 +757,19 @@ function Restart-Agent1cAfterDevBranchMerge {
     if (-not (Test-Path -LiteralPath $branchHelperPath -PathType Leaf)) {
         throw "DEV_BRANCH_POST_MERGE_HELPER_MISSING operation='$Operation' path='$branchHelperPath'"
     }
-    Write-Host "Development branch merge completed for $Operation. Handing the post-merge phase to the helper from the updated development branch: $branchHelperPath"
-    Invoke-Agent1cFreshProcess -ScriptPath $branchHelperPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
+    $continuationHelperPath = $branchHelperPath
+    if ($Operation -in @("refresh-dev-branch", "refresh-dev-branch-lite") -and
+        (Get-FullPathNormalized $script:Agent1cScriptPath) -ne (Get-FullPathNormalized $branchHelperPath)) {
+        $branchHelperText = Read-Utf8Text -Path $branchHelperPath
+        if ($branchHelperText -notmatch '(?m)^function Test-RefreshManagedDependencyLockChange\s*\{') {
+            $continuationHelperPath = $script:Agent1cScriptPath
+            Write-Host "The merged branch helper predates managed dependency-lock refresh recovery. Continuing the recorded post-merge phase through the current main-worktree helper: $continuationHelperPath"
+        }
+    }
+    if ((Get-FullPathNormalized $continuationHelperPath) -eq (Get-FullPathNormalized $branchHelperPath)) {
+        Write-Host "Development branch merge completed for $Operation. Handing the post-merge phase to the helper from the updated development branch: $branchHelperPath"
+    }
+    Invoke-Agent1cFreshProcess -ScriptPath $continuationHelperPath -AdditionalArguments @("-LifecyclePhase", "post-merge")
 }
 
 function Write-ItlAdditionalHelperActions {
@@ -8489,9 +8500,10 @@ function Test-DevBranchLifecycleHelperOwnedPostMergeHead {
     }
     if ($LegacyCursorOnly -or $subject -cne "chore: persist branch refresh state") { return $false }
 
-    $allowedPaths = @($cursorPath, ".kilo/kilo.json")
-    return ($paths.Count -ge 1 -and $paths.Count -le 2 -and
-        $paths -ccontains ".kilo/kilo.json" -and
+    $managedStatePaths = @(".kilo/kilo.json", ".agent-1c/dependency-lock.json")
+    $allowedPaths = @($cursorPath) + $managedStatePaths
+    return ($paths.Count -ge 1 -and $paths.Count -le 3 -and
+        @($paths | Where-Object { $managedStatePaths -ccontains $_ }).Count -ge 1 -and
         @($paths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0)
 }
 
