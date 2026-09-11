@@ -1,4 +1,4 @@
-Vanessa Automation 1.2.043.28-itl-r12
+Vanessa Automation 1.2.043.28-itl-r13
 
 This binary distribution is built from Pr-Mex/vanessa-automation
 tag 1.2.043.28, commit f3a01778a14d29b38204685deea0131274d438ff,
@@ -6,7 +6,7 @@ with the source-controlled ITL MCP run-scenario and tool metadata compatibility
 patch.
 
 The upstream compatibility version remains 1.2.043.28. The downstream
-revision itl-r12 identifies the patch and is not an upstream release.
+revision itl-r13 identifies the patch and is not an upstream release.
 
 Vanessa Automation is distributed under the BSD 3-Clause License. The
 complete upstream copyright notice, license conditions, and disclaimer are
@@ -21,3 +21,4 @@ The file-code protocol correction changes the bundled step library and VAExtensi
 The paired extension must be built and qualified before installation.
 
 File-event monitors distinguish selected connections with missing or reused process IDs.
+Durable pending-request state reconciles exact unfinished commands after a Vanessa restart.

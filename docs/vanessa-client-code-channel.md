@@ -25,7 +25,7 @@ also changes matching parent-directory text.
 
 ## Paired downstream protocol
 
-Candidate r12 retains the r11 changes to both the Vanessa step library and
+Candidate r13 retains the r11 changes to both the Vanessa step library and
 VAExtension, and the r10 row-caption and r9 nested-feature corrections. The existing file-code step
 publishes a complete JSON request by moving a temporary file to
 `Event_ITL_<uuid>.json`. One unresolved command cannot be overwritten by a later
@@ -57,12 +57,13 @@ this protocol, so do not deploy the EPF alone.
 
 ## Remaining acceptance and recovery work
 
-Complete native paired build and compile/runtime checks, then run the original
-BDR scenario with its existing assertions and command boundaries. Verify the
-actual monitor start/stop UI, server and privileged-server commands, process
-interruption, stale/foreign responses, two clients and two independent channels.
-The busy-clipboard and competing-consumer OneScript regressions are protocol
-evidence; they do not establish live 1C acceptance.
+Run the original BDR scenario with its existing assertions and command boundaries.
+The paired native build now verifies actual monitor start/stop UI plus two clients
+and two independent channels; the earlier r11 run verifies server and
+privileged-server commands. Native process-interruption recovery and installed
+BDR acceptance remain open. The busy-clipboard and competing-consumer OneScript
+regressions are protocol evidence; they do not establish those remaining live 1C
+acceptance paths.
 
 The r13 producer writes an immutable channel owner and a durable pending record
 before publishing the event. A fresh Vanessa process scans only the supplied
@@ -79,8 +80,8 @@ not remove a claim while its request may still be consumed, delete a shared
 monitor root, or reset unresolved state to force a repeat. Automatic scoped
 cleanup must first prove the owning consumer has stopped, retain the operation
 outcome in run artifacts and remove only that generation's files. Installed
-authoring guidance, paired native r13 acceptance, original BDR acceptance and
-normal delivery remain open parts of item 10.
+authoring guidance, native restart-interruption acceptance, original BDR
+acceptance and normal delivery remain open parts of item 10.
 
 ## Connection identity and native evidence
 
@@ -137,6 +138,28 @@ monitors were started, ports 59128 and 59129 stayed distinct, commands A/B/A
 asserted their actual database connection strings, and both monitors stopped.
 Three correlated successful replies reside in two separate channel generations.
 The combined focused source group passes 160 tests.
+
+The first r13 native candidate exposed a platform-only syntax defect that the
+OneScript recovery fixture had accepted: `Новый Файл(Каталог).ПолноеИмя` failed
+to initialize the embedded `Тест_VAExtension` form on platform 8.3.27.2130.
+Vanessa consequently generated a cache without that library and reported its
+monitor step as unimplemented. The expression now uses a separate `Файл` object,
+and the guarded upstream build adapter rejects a cache that omits the monitor
+procedure. The exact final paired build at `C:/va канал/18ec28e6` has patch
+SHA-256 `6ca8c714e2a584eb58b0a0a95f111baf2831c754b9472fa3b3ba6ba8129acc71`,
+EPF SHA-256 `d34d3eab326821f5d174f82032558c8ed1394f186f2d861e6339a8a02fb14473`,
+CFE SHA-256 `466c7cdec3c5bb52a4b71dd38e35dec8bc6b900cdcee9abe6df602e5c1546bee`
+and ZIP SHA-256 `fc081d5bc235a9444dace37e2a00d8c81be5739e0a4ffd1eb2936664ff9ad0fa`.
+All six build-native records were released.
+
+Run `r13-probe-f1e83dd1` passed one native A/B/A scenario with zero
+failures/errors. Two client profiles retained distinct ports and databases,
+both monitor generations started and stopped, and three correlated replies
+proved two executions in A and one in B across two channel directories. Its
+manager and both client database admissions were released. The retained failed
+probe `r13-probe-9aa1bc84` used a manager base whose same-version cache had been
+populated by the earlier defective unpublished r13; it also released every
+database and led to the clean service-base rerun rather than a scenario change.
 
 A separate process inspection contradicted the first failed run's `released=true`
 claim: PID 27584, created at `2026-09-10T06:08:21.5136980Z`, remained with that

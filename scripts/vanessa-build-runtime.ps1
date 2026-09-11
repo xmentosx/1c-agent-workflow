@@ -12,6 +12,9 @@
     if ($SingleBuild) {
         $changes += ,@(' Enterprise /F""" + КаталогБазы', ' Enterprise /N""" + ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_USER") + """ /F""" + КаталогБазы')
         $changes += ,@('ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);', 'retCode = 0; // ITL: no directory window during a noninteractive build.')
+        $cacheRead = 'Стр = Текст.Прочитать();'
+        $cacheCheck = $cacheRead + [Environment]::NewLine + 'Если Найти(Стр, "ЯЗапускаюМониторингКаталогаДляВнешнихСобытийРасширение") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VAEXTENSION_STEPS_MISSING"; КонецЕсли;'
+        $changes += ,@($cacheRead, $cacheCheck)
     }
     foreach ($change in $changes) {
         if ([regex]::Matches($text, [regex]::Escape($change[0])).Count -ne 1) {

@@ -108,6 +108,7 @@ Describe 'Pinned upstream build execution adapters' {
 КаталогБазы = ПолучитьИмяВременногоФайла();
 СтрокаКоманды = "tool Enterprise /F""" + КаталогБазы;
 ЗапуститьПриложение(СтрокаКоманды, , Истина, retCode);
+Стр = Текст.Прочитать();
 ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);
 '@
         [IO.File]::WriteAllText($source, $original, [Text.UTF8Encoding]::new($true))
@@ -119,8 +120,10 @@ Describe 'Pinned upstream build execution adapters' {
         $execution = [IO.File]::ReadAllText($destination, [Text.Encoding]::UTF8)
         $expected = $original.Replace('КаталогБазы = ПолучитьИмяВременногоФайла();', ('УправлениеКонфигуратором.ПутьКПлатформе1С(ПолучитьПеременнуюСреды("PLATFORM_PATH"));' + [Environment]::NewLine + 'КаталогБазы = ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_SCRATCH_BASE");')).Replace(
             ' Enterprise /F""" + КаталогБазы', ' Enterprise /N""" + ПолучитьПеременнуюСреды("ITL_VANESSA_BUILD_USER") + """ /F""" + КаталогБазы').Replace(
-            'ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);', 'retCode = 0; // ITL: no directory window during a noninteractive build.')
+            'ЗапуститьПриложение(СтрокаКоманды, , Ложь, retCode);', 'retCode = 0; // ITL: no directory window during a noninteractive build.').Replace(
+            'Стр = Текст.Прочитать();', ('Стр = Текст.Прочитать();' + [Environment]::NewLine + 'Если Найти(Стр, "ЯЗапускаюМониторингКаталогаДляВнешнихСобытийРасширение") = 0 Тогда ВызватьИсключение "VANESSA_BUILD_VAEXTENSION_STEPS_MISSING"; КонецЕсли;'))
         $execution | Should -BeExactly $expected
+        $execution | Should -Match 'VANESSA_BUILD_VAEXTENSION_STEPS_MISSING'
         $result.sourceSha256 | Should -Be $hash
         $result.executionSha256 | Should -Be (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
     }
