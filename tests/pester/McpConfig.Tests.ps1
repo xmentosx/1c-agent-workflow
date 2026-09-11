@@ -208,8 +208,9 @@
         $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
         $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
         $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "fc557bb23371a37dbe22a7a7a83e28f6db75b57f87e8802028cf1f90c4e00605"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29-itl-r13.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "16170f5be0529d0653cfe544e202c925a229de7a27458670b106d1bf2c3cba9f"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
         $compatibility.families.roctup.serverName | Should -Be "itl-roctup-data"
@@ -1361,19 +1362,27 @@ enabled = true
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
             $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
-            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.fixture.cfe"
+            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.29-itl-r13.cfe"
             Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
             Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
-            $clientUri = ([System.Uri]$clientSource).AbsoluteUri
-            $extensionUri = ([System.Uri]$extensionSource).AbsoluteUri
             Set-Content -LiteralPath (Join-Path $masterRoot ".dev.env") -Encoding UTF8 -Value @"
 DEPENDENCY_MODE=fresh
-VANESSA_MCP_CLIENT_CFE_URL=$clientUri
-VANESSA_MCP_VA_EXTENSION_CFE_URL=$extensionUri
 "@
 
             $masterArtifacts = & {
                 . $HelperPath -ProjectRoot $masterRoot -Action help *> $null
+                function Get-VanessaMcpReleaseAssetInfo {
+                    param([object]$Definition)
+                    $isClient = [string]$Definition.lockKey -eq "clientMcp"
+                    $fixturePath = $(if ($isClient) { $clientSource } else { $extensionSource })
+                    return [pscustomobject]@{
+                        url = $fixturePath
+                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.29-itl-r13.cfe" })
+                        version = $(if ($isClient) { "v0.6.5" } else { "1.2.043.28" })
+                        expectedSha256 = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+                        source = "targeted-test"
+                    }
+                }
                 @(Install-VanessaMcpArtifacts)
             }
             $masterArtifacts.Count | Should -Be 2

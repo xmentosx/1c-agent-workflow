@@ -72,6 +72,47 @@ function Get-DeliveryExactVanessaCandidate {
     throw "The immutable Vanessa URL is absent and no exact local candidate is available. Set ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE or place the locked asset at the canonical candidate path."
 }
 
+function Copy-DeliveryVanessaPairedExtensionFromArchive {
+    param(
+        [Parameter(Mandatory = $true)][string]$ArchivePath,
+        [Parameter(Mandatory = $true)][object]$Lock,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+    foreach ($field in @("assetName", "sha256")) {
+        if ($null -eq $Lock.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$Lock.$field)) {
+            throw "Vanessa paired extension lock is missing '$field'."
+        }
+    }
+    $assetName = [string]$Lock.assetName
+    $expectedSha = ([string]$Lock.sha256).ToLowerInvariant()
+    if ([IO.Path]::GetFileName($assetName) -cne $assetName -or $assetName -cnotmatch '^VAExtension\.1\.29-itl-r[0-9]+\.cfe$') {
+        throw "Vanessa paired extension assetName is invalid: $assetName"
+    }
+    if ($expectedSha -notmatch '^[a-f0-9]{64}$') { throw "Vanessa paired extension lock has an invalid SHA256: $expectedSha" }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+        $entries = @($archive.Entries | Where-Object { [string]$_.FullName -ceq $assetName })
+        if ($entries.Count -ne 1) { throw "Vanessa archive must contain exactly one paired extension '$assetName'; actual=$($entries.Count)." }
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $DestinationPath))
+        $input = $entries[0].Open()
+        try {
+            $output = [IO.File]::Open($DestinationPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $input.CopyTo($output) } finally { $output.Dispose() }
+        } finally { $input.Dispose() }
+    } catch {
+        Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+        throw
+    } finally { $archive.Dispose() }
+    $actualSha = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha -cne $expectedSha) {
+        Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+        throw "Vanessa paired extension SHA256 mismatch. expected='$expectedSha'; actual='$actualSha'."
+    }
+    return $DestinationPath
+}
+
 function Get-DeliveryRemoteAnnotatedTagCommit {
     param([string]$CandidateRoot, [string]$Tag)
     $result = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @("ls-remote", "--tags", $script:Remote, "refs/tags/$Tag", "refs/tags/$Tag^{}") -AllowFailure
@@ -319,13 +360,22 @@ function Invoke-VanessaComponentPublicationFinalize {
     param([string]$CandidateRoot, [string]$CandidateCommit)
     $lockPath = Join-Path $CandidateRoot "templates\dependency-lock.json"
     if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { throw "Component finalization requires templates/dependency-lock.json in the exact candidate." }
-    $lock = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaAutomation
+    $dependencies = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
+    $lock = $dependencies.vanessaAutomation
+    $pairedLock = $dependencies.vanessaMcp.vaExtension
     foreach ($field in @("releaseTag", "url", "assetName", "sha256", "compatibilityVersion", "downstreamRevision")) {
         $property = if ($null -eq $lock) { $null } else { $lock.PSObject.Properties[$field] }
         if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { throw "Vanessa component lock is missing '$field'." }
     }
+    foreach ($field in @("releaseTag", "url", "assetName", "sha256", "protocol")) {
+        $property = if ($null -eq $pairedLock) { $null } else { $pairedLock.PSObject.Properties[$field] }
+        if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) { throw "Vanessa paired extension lock is missing '$field'." }
+    }
+    if ([string]$pairedLock.protocol -cne 'itl-file-code-v1') { throw "Vanessa paired extension protocol is unsupported: $($pairedLock.protocol)" }
     $expectedSha = ([string]$lock.sha256).ToLowerInvariant()
     if ($expectedSha -notmatch '^[a-f0-9]{64}$') { throw "Vanessa component lock has an invalid SHA256: $expectedSha" }
+    $pairedExpectedSha = ([string]$pairedLock.sha256).ToLowerInvariant()
+    if ($pairedExpectedSha -notmatch '^[a-f0-9]{64}$') { throw "Vanessa paired extension lock has an invalid SHA256: $pairedExpectedSha" }
     $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot
     $uri = [Uri]([string]$lock.url)
     $urlMatch = [regex]::Match($uri.AbsolutePath, '^/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/]+)$')
@@ -338,9 +388,23 @@ function Invoke-VanessaComponentPublicationFinalize {
         throw "Vanessa immutable URL owner/repo/tag/asset does not match origin, releaseTag, and assetName."
     }
 
+    $pairedUri = [Uri]([string]$pairedLock.url)
+    $pairedUrlMatch = [regex]::Match($pairedUri.AbsolutePath, '^/(?<owner>[^/]+)/(?<repo>[^/]+)/releases/download/(?<tag>[^/]+)/(?<asset>[^/]+)$')
+    if ($pairedUri.Scheme -ne "https" -or $pairedUri.Host -ne "github.com" -or -not $pairedUrlMatch.Success) { throw "Vanessa paired extension URL is not an exact GitHub release asset URL: $($pairedLock.url)" }
+    $pairedUrlOwner = [Uri]::UnescapeDataString($pairedUrlMatch.Groups["owner"].Value)
+    $pairedUrlRepo = [Uri]::UnescapeDataString($pairedUrlMatch.Groups["repo"].Value)
+    $pairedUrlTag = [Uri]::UnescapeDataString($pairedUrlMatch.Groups["tag"].Value)
+    $pairedUrlAsset = [Uri]::UnescapeDataString($pairedUrlMatch.Groups["asset"].Value)
+    if ($pairedUrlOwner -cne $repository.owner -or $pairedUrlRepo -cne $repository.repo -or
+        $pairedUrlTag -cne [string]$lock.releaseTag -or $pairedUrlTag -cne [string]$pairedLock.releaseTag -or
+        $pairedUrlAsset -cne [string]$pairedLock.assetName -or $pairedUrlAsset -ceq $urlAsset) {
+        throw "Vanessa paired extension URL owner/repo/tag/asset does not match the Vanessa release and paired lock."
+    }
+
     $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha
+    $pairedRemote = Get-DeliveryRemoteAssetState -Url ([string]$pairedLock.url) -ExpectedSha256 $pairedExpectedSha
     $mutated = $false
-    if ($remote.status -eq "missing") {
+    if ($remote.status -eq "missing" -or $pairedRemote.status -eq "missing") {
         if (-not $RequireRelease) { throw "The locked Vanessa asset is not published. Component upload requires PublishDevelop -RequireRelease so the exact candidate passes Release first." }
         $candidatePath = Get-DeliveryExactVanessaCandidate -CandidateRoot $CandidateRoot -Lock $lock
         $remoteTagCommit = Get-DeliveryRemoteAnnotatedTagCommit -CandidateRoot $CandidateRoot -Tag ([string]$lock.releaseTag)
@@ -371,24 +435,34 @@ function Invoke-VanessaComponentPublicationFinalize {
             $releaseView = Invoke-DeliveryGitHubCli -Arguments @("release", "view", [string]$lock.releaseTag, "--repo", $repository.slug, "--json", "assets")
         }
         $release = $releaseView.text | ConvertFrom-Json
-        $assetExists = @($release.assets | Where-Object { [string]$_.name -ceq [string]$lock.assetName }).Count -gt 0
-        if (-not $assetExists) {
-            $uploadRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-component-upload-" + [guid]::NewGuid().ToString("N"))
-            New-Item -ItemType Directory -Force -Path $uploadRoot | Out-Null
-            try {
+        $uploadRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-component-upload-" + [guid]::NewGuid().ToString("N"))
+        New-Item -ItemType Directory -Force -Path $uploadRoot | Out-Null
+        try {
+            $assetExists = @($release.assets | Where-Object { [string]$_.name -ceq [string]$lock.assetName }).Count -gt 0
+            if (-not $assetExists) {
                 $uploadPath = Join-Path $uploadRoot ([string]$lock.assetName)
                 Copy-Item -LiteralPath $candidatePath -Destination $uploadPath
                 [void](Invoke-DeliveryGitHubCli -Arguments @("release", "upload", [string]$lock.releaseTag, $uploadPath, "--repo", $repository.slug))
                 $mutated = $true
-            } finally { Remove-Item -LiteralPath $uploadRoot -Recurse -Force -ErrorAction SilentlyContinue }
-        }
+            }
+            $pairedAssetExists = @($release.assets | Where-Object { [string]$_.name -ceq [string]$pairedLock.assetName }).Count -gt 0
+            if (-not $pairedAssetExists) {
+                $pairedUploadPath = Join-Path $uploadRoot ([string]$pairedLock.assetName)
+                Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $candidatePath -Lock $pairedLock -DestinationPath $pairedUploadPath | Out-Null
+                [void](Invoke-DeliveryGitHubCli -Arguments @("release", "upload", [string]$lock.releaseTag, $pairedUploadPath, "--repo", $repository.slug))
+                $mutated = $true
+            }
+        } finally { Remove-Item -LiteralPath $uploadRoot -Recurse -Force -ErrorAction SilentlyContinue }
         $remote = Get-DeliveryRemoteAssetState -Url ([string]$lock.url) -ExpectedSha256 $expectedSha -AvailabilityAttempts 12
         if ($remote.status -ne "matched") { throw "The Vanessa component was finalized, but its immutable URL is still unavailable. The queue is preserved for a safe retry." }
+        $pairedRemote = Get-DeliveryRemoteAssetState -Url ([string]$pairedLock.url) -ExpectedSha256 $pairedExpectedSha -AvailabilityAttempts 12
+        if ($pairedRemote.status -ne "matched") { throw "The Vanessa paired extension was finalized, but its immutable URL is still unavailable. The queue is preserved for a safe retry." }
     }
 
     $evidence = [ordered]@{
         schemaVersion = 1; status = "passed"; component = "vanessaAutomation"; candidateCommit = $CandidateCommit
         releaseTag = [string]$lock.releaseTag; url = [string]$lock.url; assetName = [string]$lock.assetName; sha256 = $expectedSha
+        pairedExtension = [ordered]@{ url = [string]$pairedLock.url; assetName = [string]$pairedLock.assetName; sha256 = $pairedExpectedSha; protocol = [string]$pairedLock.protocol }
         githubRepository = $repository.slug; githubMutated = $mutated; verifiedAt = [DateTime]::UtcNow.ToString("o")
     }
     Save-DeliveryComponentPublicationEvidence -CandidateCommit $CandidateCommit -FileName "vanessa-automation.json" -Evidence $evidence
@@ -488,20 +562,26 @@ function Get-OwnedComponentPublicationPlan {
     }
     $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
     $vanessa = Get-DeliveryRemoteAssetState -Url ([string]$lock.vanessaAutomation.url) -ExpectedSha256 ([string]$lock.vanessaAutomation.sha256)
+    $vanessaPaired = Get-DeliveryRemoteAssetState -Url ([string]$lock.vanessaMcp.vaExtension.url) -ExpectedSha256 ([string]$lock.vanessaMcp.vaExtension.sha256)
     $onDemand = Get-DeliveryRemoteAssetState -Url ([string]$lock.itlOndemandMcp.url) -ExpectedSha256 ([string]$lock.itlOndemandMcp.sha256)
     $rulesSource = Get-DeliveryLocalAiRulesSource -Lock $lock.aiRules1c
     $rules = Get-DeliveryAiRulesRemoteState -SourceRoot $rulesSource.root -Lock $lock.aiRules1c
     if ($rules.status -in @("partial", "mismatch")) { throw "Remote ai_rules_1c release '$($lock.aiRules1c.ref)' is $($rules.status)." }
     return [pscustomobject]@{
         status = "planned"; candidateCommit = $CandidateCommit
-        requiresRelease = [bool]($vanessa.status -eq "missing" -or $onDemand.status -eq "missing")
+        requiresRelease = [bool]($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing" -or $onDemand.status -eq "missing")
         components = @(
             [pscustomobject]@{
                 name = "aiRules1c"; status = $rules.status; releaseRequired = $false
                 compatibilityStatus = [string]$lock.aiRules1c.compatibilityStatus
                 compatibilityPromotionRequired = ([string]$lock.aiRules1c.compatibilityStatus -cne "passed")
             },
-            [pscustomobject]@{ name = "vanessaAutomation"; status = $vanessa.status; releaseRequired = [bool]($vanessa.status -eq "missing") },
+            [pscustomobject]@{
+                name = "vanessaAutomation"
+                status = $(if ($vanessa.status -eq "matched" -and $vanessaPaired.status -eq "matched") { "matched" } else { "missing" })
+                releaseRequired = [bool]($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing")
+                assets = @([pscustomobject]@{ name = [string]$lock.vanessaAutomation.assetName; status = $vanessa.status }, [pscustomobject]@{ name = [string]$lock.vanessaMcp.vaExtension.assetName; status = $vanessaPaired.status })
+            },
             [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; releaseRequired = [bool]($onDemand.status -eq "missing") }
         )
     }

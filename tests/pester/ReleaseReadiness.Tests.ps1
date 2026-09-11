@@ -25,6 +25,10 @@ Describe "Deterministic Release readiness" {
             $epfPath = Join-Path $assetStage "vanessa-automation-single.epf"
             [System.IO.File]::WriteAllBytes($epfPath, [byte[]](1, 2, 3, 4, 5))
             $epfSha = (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $pairedExtensionName = "VAExtension.1.29-itl-r1.cfe"
+            $pairedExtensionPath = Join-Path $assetStage $pairedExtensionName
+            [System.IO.File]::WriteAllBytes($pairedExtensionPath, [byte[]](6, 7, 8, 9))
+            $pairedExtensionSha = (Get-FileHash -LiteralPath $pairedExtensionPath -Algorithm SHA256).Hash.ToLowerInvariant()
             $patchSha = ("3" * 64)
             $upstreamCommit = ("4" * 40)
             $provenance = [ordered]@{
@@ -33,6 +37,7 @@ Describe "Deterministic Release readiness" {
                 upstream = [ordered]@{ commit = $upstreamCommit }
                 patch = [ordered]@{ sha256 = $patchSha }
                 artifact = [ordered]@{ fileName = $assetName; entryPoint = "vanessa-automation-single.epf" }
+                pairedExtension = [ordered]@{ required = $true; fileName = $pairedExtensionName; protocol = "itl-file-code-v1" }
             }
             Write-Utf8Json -Path (Join-Path $assetStage "ITL-PROVENANCE.json") -Value $provenance
             [System.IO.File]::WriteAllText((Join-Path $assetStage "ITL-NOTICE.txt"), "fixture`n", [System.Text.UTF8Encoding]::new($false))
@@ -59,13 +64,18 @@ Describe "Deterministic Release readiness" {
                     workflowPackage = [ordered]@{ repo = "https://example.invalid/workflow.git"; ref = "master"; commit = "" }
                     aiRules1c = [ordered]@{ ref = "itl-test"; commit = ("5" * 40) }
                     vanessaAutomation = $vanessa
+                    vanessaMcp = [ordered]@{ vaExtension = [ordered]@{
+                        version = "1.2.3"; assetName = $pairedExtensionName; releaseTag = "vanessa-test"
+                        url = "https://example.invalid/$pairedExtensionName"; sha256 = $pairedExtensionSha
+                        protocol = "itl-file-code-v1"; source = "workflow-pinned"
+                    } }
                 }
             }
             Write-Utf8Json -Path (Join-Path $Root "templates\dependency-lock.json") -Value $lock
             $compatibility = [ordered]@{
                 families = [ordered]@{
                     "vanessa-ui" = [ordered]@{
-                        backendVersions = [ordered]@{ vanessaAutomation = $vanessa.compatibilityVersion }
+                        backendVersions = [ordered]@{ vanessaAutomation = $vanessa.compatibilityVersion; vaExtension = "1.2.3" }
                         backendRevisions = [ordered]@{ vanessaAutomation = $vanessa.downstreamRevision }
                         vanessaAutomationArtifact = [ordered]@{
                             archiveSha256 = $vanessa.sha256
@@ -74,6 +84,7 @@ Describe "Deterministic Release readiness" {
                             patchSha256 = $vanessa.patchSha256
                             upstreamCommit = $vanessa.upstreamCommit
                         }
+                        pairedExtensionArtifact = [ordered]@{ assetName = $pairedExtensionName; sha256 = $pairedExtensionSha; protocol = "itl-file-code-v1" }
                     }
                 }
             }
@@ -92,7 +103,7 @@ Describe "Deterministic Release readiness" {
             & git -C $Root add -- templates/dependency-lock.json
             & git -C $Root commit -m "pin fixture" | Out-Null
             & git -C $Root update-ref refs/remotes/origin/master HEAD
-            return [pscustomobject]@{ root = $Root; assetPath = $assetPath; lock = $lock; compatibility = $compatibility }
+            return [pscustomobject]@{ root = $Root; assetPath = $assetPath; pairedExtensionPath = $pairedExtensionPath; lock = $lock; compatibility = $compatibility }
         }
 
         function Invoke-ReadinessFixture {
@@ -180,6 +191,28 @@ Describe "Deterministic Release readiness" {
             $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $context.status | Should -Be "failed"
             @($context.issues.code) | Should -Contain "RELEASE_VANESSA_EPF_HASH_MISMATCH"
+        } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "rejects a paired VAExtension whose bytes differ from its immutable lock" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-release-readiness-cfe-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot "workflow")
+            $lockPath = Join-Path $fixture.root "templates\dependency-lock.json"
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.vanessaMcp.vaExtension.sha256 = ("0" * 64)
+            Write-Utf8Json -Path $lockPath -Value $lock
+            $compatibilityPath = Join-Path $fixture.root ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
+            $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $compatibility.families.'vanessa-ui'.pairedExtensionArtifact.sha256 = ("0" * 64)
+            Write-Utf8Json -Path $compatibilityPath -Value $compatibility
+            $outputPath = Join-Path $tempRoot "release-context.json"
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $context.status | Should -Be "failed"
+            @($context.issues.code) | Should -Contain "RELEASE_VANESSA_PAIRED_EXTENSION_HASH_MISMATCH"
         } finally {
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }

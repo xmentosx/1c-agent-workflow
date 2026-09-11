@@ -251,7 +251,7 @@ function Get-ZipEntrySha256 {
 }
 
 function Test-VanessaArchiveContract {
-    param([object]$ArchiveRecord, [object]$Lock)
+    param([object]$ArchiveRecord, [object]$Lock, [object]$PairedExtensionLock)
     if ($null -eq $ArchiveRecord -or $null -eq $Lock) { return }
     try {
         Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -259,10 +259,11 @@ function Test-VanessaArchiveContract {
         try {
             $epf = Get-ZipEntrySha256 -Archive $zip -EntryName "vanessa-automation-single.epf"
             $manifest = Get-ZipEntrySha256 -Archive $zip -EntryName "ITL-PROVENANCE.json"
+            $pairedExtension = if ($null -eq $PairedExtensionLock) { $null } else { Get-ZipEntrySha256 -Archive $zip -EntryName ([string]$PairedExtensionLock.assetName) }
             $notice = $zip.Entries | Where-Object { $_.FullName -ceq "ITL-NOTICE.txt" } | Select-Object -First 1
-            if ($null -eq $epf -or $null -eq $manifest -or $null -eq $notice) {
+            if ($null -eq $epf -or $null -eq $manifest -or $null -eq $notice -or $null -eq $pairedExtension) {
                 Add-ReadinessIssue -Code "RELEASE_VANESSA_ARCHIVE_STRUCTURE_INVALID" -Category "CANDIDATE_INCOMPLETE" `
-                    -Message "Vanessa Automation archive must contain vanessa-automation-single.epf, ITL-PROVENANCE.json, and ITL-NOTICE.txt." `
+                    -Message "Vanessa Automation archive must contain the EPF, paired VAExtension, ITL-PROVENANCE.json, and ITL-NOTICE.txt." `
                     -Recovery "Acquire the exact immutable workflow-pinned asset."
                 return
             }
@@ -276,6 +277,11 @@ function Test-VanessaArchiveContract {
                     -Message "Vanessa Automation provenance manifest SHA256 differs from the lock. expected=$($Lock.manifestSha256); actual=$($manifest.sha256)." `
                     -Recovery "Regenerate the lock from the exact immutable artifact manifest."
             }
+            if ([string]$pairedExtension.sha256 -cne ([string]$PairedExtensionLock.sha256).ToLowerInvariant()) {
+                Add-ReadinessIssue -Code "RELEASE_VANESSA_PAIRED_EXTENSION_HASH_MISMATCH" -Category "DEPENDENCY_DRIFT" `
+                    -Message "Vanessa paired VAExtension SHA256 differs from the lock. expected=$($PairedExtensionLock.sha256); actual=$($pairedExtension.sha256)." `
+                    -Recovery "Use the paired extension built from the same exact downstream Vanessa revision."
+            }
             $reader = [System.IO.StreamReader]::new($manifest.entry.Open(), [System.Text.Encoding]::UTF8, $true)
             try { $provenance = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             foreach ($pair in @(
@@ -284,7 +290,9 @@ function Test-VanessaArchiveContract {
                 @("upstreamCommit", [string]$provenance.upstream.commit, [string]$Lock.upstreamCommit),
                 @("patchSha256", [string]$provenance.patch.sha256, [string]$Lock.patchSha256),
                 @("artifactFileName", [string]$provenance.artifact.fileName, [string]$Lock.assetName),
-                @("artifactEntryPoint", [string]$provenance.artifact.entryPoint, "vanessa-automation-single.epf")
+                @("artifactEntryPoint", [string]$provenance.artifact.entryPoint, "vanessa-automation-single.epf"),
+                @("pairedExtensionFileName", [string]$provenance.pairedExtension.fileName, [string]$PairedExtensionLock.assetName),
+                @("pairedExtensionProtocol", [string]$provenance.pairedExtension.protocol, [string]$PairedExtensionLock.protocol)
             )) {
                 if ([string]$pair[1] -cne [string]$pair[2]) {
                     Add-ReadinessIssue -Code "RELEASE_VANESSA_PROVENANCE_DRIFT" -Category "DEPENDENCY_DRIFT" `
@@ -452,6 +460,7 @@ if ($Mode -eq "Release" -and -not $worktreeClean) {
 $templateLockPath = Join-Path $RepositoryRoot "templates\dependency-lock.json"
 $templateLock = Get-JsonFile -Path $templateLockPath -Code "RELEASE_TEMPLATE_LOCK_INVALID" -Label "Workflow dependency lock template"
 $vanessaLock = if ($null -eq $templateLock) { $null } else { $templateLock.dependencies.vanessaAutomation }
+$vanessaPairedExtensionLock = if ($null -eq $templateLock) { $null } else { $templateLock.dependencies.vanessaMcp.vaExtension }
 $compatibilityPath = Join-Path $RepositoryRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
 $compatibility = Get-JsonFile -Path $compatibilityPath -Code "RELEASE_COMPATIBILITY_INVALID" -Label "On-demand compatibility manifest"
 if ($null -ne $vanessaLock -and $null -ne $compatibility) {
@@ -475,10 +484,27 @@ if ($null -ne $vanessaLock -and $null -ne $compatibility) {
                 -Recovery "Regenerate compatibility metadata and lock expectations from one immutable artifact manifest."
         }
     }
+    if ($null -ne $vanessaPairedExtensionLock) {
+        foreach ($pair in @(
+            @("version", [string]$family.backendVersions.vaExtension),
+            @("assetName", [string]$family.pairedExtensionArtifact.assetName),
+            @("sha256", [string]$family.pairedExtensionArtifact.sha256),
+            @("protocol", [string]$family.pairedExtensionArtifact.protocol)
+        )) {
+            $field = [string]$pair[0]
+            $expected = [string]$vanessaPairedExtensionLock.PSObject.Properties[$field].Value
+            $actual = [string]$pair[1]
+            if ($actual -cne $expected) {
+                Add-ReadinessIssue -Code "RELEASE_COMPATIBILITY_PAIRED_EXTENSION_DRIFT" -Category "DEPENDENCY_DRIFT" `
+                    -Message "Compatibility manifest paired VAExtension $field differs from templates/dependency-lock.json. expected='$expected'; actual='$actual'." `
+                    -Recovery "Regenerate compatibility metadata and both Vanessa locks from one immutable paired artifact."
+            }
+        }
+    }
 }
 
 $archive = Resolve-VanessaArchive -Lock $vanessaLock
-Test-VanessaArchiveContract -ArchiveRecord $archive -Lock $vanessaLock
+Test-VanessaArchiveContract -ArchiveRecord $archive -Lock $vanessaLock -PairedExtensionLock $vanessaPairedExtensionLock
 $changedPowerShell = @(Test-PowerShellEncoding)
 $managedInventory = @(Get-ManagedPackageInventory -Root $RepositoryRoot)
 $managedInventoryText = @($managedInventory | ForEach-Object { "$($_.path)`t$($_.sha256)" }) -join "`n"

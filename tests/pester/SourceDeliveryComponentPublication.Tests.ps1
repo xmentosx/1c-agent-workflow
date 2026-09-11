@@ -18,6 +18,116 @@ Describe "Source develop queue and delivery" {
         $DeliverySourceText | Should -Match 'Remove-DeliveryPreparedAiRulesWorktree'
         $DeliverySourceText | Should -Match 'Get-DeliveryComponentFinalizerIdentity'
         $DeliverySourceText | Should -Match 'compatibilityStatus = \[string\]\$lock\.compatibilityStatus; installable = \$true'
+        $DeliverySourceText | Should -Match 'Copy-DeliveryVanessaPairedExtensionFromArchive'
+        $DeliverySourceText | Should -Match '\$lock\.vanessaMcp\.vaExtension\.url'
+    }
+
+    It "extracts the exact paired VAExtension from the qualified Vanessa archive" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Copy-DeliveryVanessaPairedExtensionFromArchive')) { Invoke-Expression $definition.Extent.Text }
+            $stage = Join-Path $TestDrive "paired archive содержимое"
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            $assetName = 'VAExtension.1.29-itl-r13.cfe'
+            $source = Join-Path $stage $assetName
+            [IO.File]::WriteAllBytes($source, [byte[]](1, 3, 5, 7, 9))
+            $sha = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+            $archive = Join-Path $TestDrive 'vanessa paired.zip'
+            Compress-Archive -LiteralPath $source -DestinationPath $archive
+            $destination = Join-Path $TestDrive "upload путь\$assetName"
+            $lock = [pscustomobject]@{ assetName = $assetName; sha256 = $sha }
+
+            Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $archive -Lock $lock -DestinationPath $destination | Should -Be $destination
+            (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $sha
+
+            Remove-Item -LiteralPath $destination -Force
+            $lock.sha256 = ('0' * 64)
+            { Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $archive -Lock $lock -DestinationPath $destination } |
+                Should -Throw '*paired extension SHA256 mismatch*'
+            Test-Path -LiteralPath $destination | Should -BeFalse
+        }
+    }
+
+    It "requires Release when only the paired Vanessa extension is unpublished" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive 'paired plan candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{
+                vanessaAutomation = [ordered]@{ url = 'https://example.invalid/vanessa.zip'; sha256 = ('1' * 64); assetName = 'vanessa.zip' }
+                vanessaMcp = [ordered]@{ vaExtension = [ordered]@{ url = 'https://example.invalid/paired.cfe'; sha256 = ('2' * 64); assetName = 'paired.cfe' } }
+                itlOndemandMcp = [ordered]@{ url = 'https://example.invalid/facade.exe'; sha256 = ('3' * 64) }
+                aiRules1c = [ordered]@{ compatibilityStatus = 'passed' }
+            } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            function Get-DeliveryRemoteAssetState {
+                param([string]$Url, [string]$ExpectedSha256)
+                return [pscustomobject]@{ status = $(if ($Url -like '*paired.cfe') { 'missing' } else { 'matched' }); sha256 = $ExpectedSha256 }
+            }
+            function Get-DeliveryLocalAiRulesSource { return [pscustomobject]@{ root = $candidateRoot } }
+            function Get-DeliveryAiRulesRemoteState { return [pscustomobject]@{ status = 'matched' } }
+            $script:ComponentFinalizerScript = ''
+
+            $plan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
+            $plan.requiresRelease | Should -BeTrue
+            $component = @($plan.components | Where-Object { $_.name -eq 'vanessaAutomation' })[0]
+            $component.status | Should -Be 'missing'
+            $component.releaseRequired | Should -BeTrue
+            @($component.assets | Where-Object { $_.name -eq 'paired.cfe' })[0].status | Should -Be 'missing'
+        }
+    }
+
+    It "uploads and verifies the Vanessa archive and its paired extension together" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Copy-DeliveryVanessaPairedExtensionFromArchive','Invoke-VanessaComponentPublicationFinalize')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive 'paired finalize candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $assetName = 'VAExtension.1.29-itl-r13.cfe'
+            $stage = Join-Path $TestDrive 'paired finalize archive'
+            New-Item -ItemType Directory -Force -Path $stage | Out-Null
+            $pairedSource = Join-Path $stage $assetName
+            [IO.File]::WriteAllBytes($pairedSource, [byte[]](2, 4, 6, 8))
+            $pairedSha = (Get-FileHash -LiteralPath $pairedSource -Algorithm SHA256).Hash.ToLowerInvariant()
+            $archivePath = Join-Path $TestDrive 'qualified-vanessa.zip'
+            Compress-Archive -LiteralPath $pairedSource -DestinationPath $archivePath
+            $archiveSha = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $tag = 'vanessa-automation-v1.2.043.28-itl-r13'
+            $lock = [ordered]@{ dependencies = [ordered]@{
+                vanessaAutomation = [ordered]@{
+                    compatibilityVersion = '1.2.043.28'; downstreamRevision = 'itl-r13'; assetName = 'vanessa-itl-r13.zip'
+                    releaseTag = $tag; url = "https://github.com/xmentosx/1c-agent-workflow/releases/download/$tag/vanessa-itl-r13.zip"; sha256 = $archiveSha
+                }
+                vanessaMcp = [ordered]@{ vaExtension = [ordered]@{
+                    assetName = $assetName; releaseTag = $tag
+                    url = "https://github.com/xmentosx/1c-agent-workflow/releases/download/$tag/$assetName"
+                    sha256 = $pairedSha; protocol = 'itl-file-code-v1'
+                } }
+            } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $script:remoteChecks = @{}
+            $script:uploads = [Collections.Generic.List[string]]::new()
+            function Get-DeliveryGitHubRepository { return [pscustomobject]@{ owner = 'xmentosx'; repo = '1c-agent-workflow'; slug = 'xmentosx/1c-agent-workflow' } }
+            function Get-DeliveryRemoteAssetState {
+                param([string]$Url, [string]$ExpectedSha256)
+                $count = 1 + [int]$script:remoteChecks[$Url]
+                $script:remoteChecks[$Url] = $count
+                return [pscustomobject]@{ status = $(if ($count -eq 1) { 'missing' } else { 'matched' }); sha256 = $(if ($count -eq 1) { '' } else { $ExpectedSha256 }) }
+            }
+            function Get-DeliveryExactVanessaCandidate { return $archivePath }
+            function Get-DeliveryRemoteAnnotatedTagCommit { return ('a' * 40) }
+            function Invoke-DeliveryGitHubCli {
+                param([string[]]$Arguments, [switch]$AllowFailure)
+                if (@($Arguments)[0] -eq 'release' -and @($Arguments)[1] -eq 'upload') { [void]$script:uploads.Add([IO.Path]::GetFileName([string]@($Arguments)[3])) }
+                return [pscustomobject]@{ exitCode = 0; text = '{"assets":[]}' }
+            }
+            function Save-DeliveryComponentPublicationEvidence {}
+            $RequireRelease = $true
+
+            $evidence = Invoke-VanessaComponentPublicationFinalize -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
+            @($script:uploads) | Should -Contain 'vanessa-itl-r13.zip'
+            @($script:uploads) | Should -Contain $assetName
+            $evidence.pairedExtension.sha256 | Should -Be $pairedSha
+            @($script:remoteChecks.Values | Where-Object { $_ -eq 2 }).Count | Should -Be 2
+        }
     }
 
     It "refuses to finalize a remotely present ai rules tag while compatibility is pending" {
