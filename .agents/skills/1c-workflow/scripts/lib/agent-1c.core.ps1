@@ -5409,10 +5409,19 @@ function Get-DesignerLogTerminalState {
         [regex]::Escape($errorsText)
     $noFailurePattern = '(?i)(?:\u043e\u0448\u0438\u0431\u043a\u0438\s+\u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442|\u043e\u0448\u0438\u0431\u043e\u043a\s+\u043d\u0435\s+\u043e\u0431\u043d\u0430\u0440\u0443\u0436\u0435\u043d\u043e|\u0431\u0435\u0437\s+\u043e\u0448\u0438\u0431\u043e\u043a|\b0\s+errors?\b|\berrors?\s*[:=]\s*0\b|\bno\s+errors?\b)'
     foreach ($line in @([string]$text -split '[\r\n]+')) {
-        if ([regex]::IsMatch($line, $noFailurePattern)) {
+        $failureCandidate = [string]$line
+        $pathField = [regex]::Match($failureCandidate, '^(?<label>\s*[^:]+:)\s*(?:[A-Za-z]:[\\/]|\\\\)')
+        if ($pathField.Success) {
+            # Designer reports source and target paths as labelled fields. A
+            # project-controlled directory such as "review-calendar-error"
+            # is data, not a terminal failure marker. Keep the label so an
+            # actual "Error: C:\..." or "Ошибка: C:\..." line still fails.
+            $failureCandidate = [string]$pathField.Groups['label'].Value
+        }
+        if ([regex]::IsMatch($failureCandidate, $noFailurePattern)) {
             continue
         }
-        $failureMatch = [regex]::Match($line, $failurePattern)
+        $failureMatch = [regex]::Match($failureCandidate, $failurePattern)
         if ($failureMatch.Success) {
             return [pscustomobject]@{
                 state = "failure"
