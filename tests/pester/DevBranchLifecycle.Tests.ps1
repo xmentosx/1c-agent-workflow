@@ -7969,6 +7969,61 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
+    It "semantically resolves the workflow dependency lock conflict and preserves a branch-only project entry" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-merge-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            $baseLock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $baseLock.dependencies.workflowPackage.commit = "base-workflow"
+            $baseLock.dependencies | Add-Member -NotePropertyName projectSpecific -NotePropertyValue ([pscustomobject]@{ value = "base" })
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($baseLock | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $baseCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            & git -C $tempRoot switch -c target *> $null
+            $targetLock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $targetLock.dependencies.workflowPackage.commit = "target-workflow"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($targetLock | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "target" *> $null
+            $targetCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+
+            & git -C $tempRoot switch -c itldev/test $baseCommit *> $null
+            $branchLock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $branchLock.dependencies.workflowPackage.commit = "branch-stale-workflow"
+            $branchLock.dependencies.projectSpecific.value = "branch-value"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($branchLock | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "branch" *> $null
+            & git -C $tempRoot merge --no-ff --no-commit $targetCommit *> $null
+            $LASTEXITCODE | Should -Not -Be 0
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $resolved = Resolve-RefreshDependencyLockMergeConflict
+                $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                [pscustomobject]@{
+                    resolved = $resolved
+                    unmerged = @(Get-DevBranchMergeUnmergedPaths)
+                    workflowCommit = $lock.dependencies.workflowPackage.commit
+                    projectValue = $lock.dependencies.projectSpecific.value
+                }
+            }
+
+            $result.resolved | Should -BeTrue
+            @($result.unmerged).Count | Should -Be 0
+            $result.workflowCommit | Should -Be "target-workflow"
+            $result.projectValue | Should -Be "branch-value"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "commits a workflow-managed dependency lock synchronization during refresh" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-sync-" + [guid]::NewGuid().ToString("N"))
         try {

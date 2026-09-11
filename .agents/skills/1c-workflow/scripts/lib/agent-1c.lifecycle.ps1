@@ -8365,6 +8365,130 @@ function Test-GitWorktreePathDiffersOnlyByCarriageReturnsAtEol {
     throw "Cannot compare the worktree path with the merge index while ignoring carriage returns at EOL: $RepoPath"
 }
 
+function Get-DependencyLockMergeValueState {
+    param(
+        [System.Collections.IDictionary]$Map,
+        [string]$Name
+    )
+
+    $exists = $Map.Contains($Name)
+    $value = if ($exists) { $Map[$Name] } else { $null }
+    $comparable = if ($exists) {
+        "present:" + (ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $value) -Depth 100 -Compress)
+    } else {
+        "absent"
+    }
+    return [pscustomobject]@{ exists = $exists; value = $value; comparable = $comparable }
+}
+
+function Select-DependencyLockThreeWayValue {
+    param(
+        [System.Collections.IDictionary]$Base,
+        [System.Collections.IDictionary]$Branch,
+        [System.Collections.IDictionary]$Target,
+        [string]$Name,
+        [string]$Path
+    )
+
+    $baseState = Get-DependencyLockMergeValueState -Map $Base -Name $Name
+    $branchState = Get-DependencyLockMergeValueState -Map $Branch -Name $Name
+    $targetState = Get-DependencyLockMergeValueState -Map $Target -Name $Name
+    if ($branchState.comparable -ceq $targetState.comparable -or
+        $branchState.comparable -ceq $baseState.comparable) {
+        return $targetState
+    }
+    if ($targetState.comparable -ceq $baseState.comparable) {
+        return $branchState
+    }
+    throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: incompatible changes at $Path."
+}
+
+function Resolve-RefreshDependencyLockMergeConflict {
+    $repoPath = ".agent-1c/dependency-lock.json"
+    if (@(Get-DevBranchMergeUnmergedPaths) -cnotcontains $repoPath) { return $false }
+
+    try {
+        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":1:$repoPath")) | ConvertFrom-Json)
+        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":2:$repoPath")) | ConvertFrom-Json)
+        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":3:$repoPath")) | ConvertFrom-Json)
+    } catch {
+        throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: the base, branch, and target lock files must all be valid JSON. $($_.Exception.Message)"
+    }
+
+    foreach ($manifest in @($base, $branch, $target)) {
+        if ([int](Get-ConfigValueFromObject -Object $manifest -Path "schemaVersion" -Default 0) -ne 1) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must use schemaVersion 1."
+        }
+        $dependencies = Get-ConfigValueFromObject -Object $manifest -Path "dependencies" -Default $null
+        if ($dependencies -isnot [System.Collections.IDictionary] -and $dependencies -isnot [pscustomobject]) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must contain a dependencies object."
+        }
+    }
+
+    $merged = ConvertTo-Agent1cHashtable -Object $target
+    $baseDependencies = ConvertTo-Agent1cHashtable -Object $base["dependencies"]
+    $branchDependencies = ConvertTo-Agent1cHashtable -Object $branch["dependencies"]
+    $targetDependencies = ConvertTo-Agent1cHashtable -Object $target["dependencies"]
+    $mergedDependencies = ConvertTo-Agent1cHashtable -Object $targetDependencies
+    $template = New-DefaultDependencyLockManifest
+    $authoritativeNames = @(
+        "workflowPackage"
+        "aiRules1c"
+        @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $template)
+    ) | Sort-Object -Unique
+    foreach ($name in $authoritativeNames) {
+        if (-not $targetDependencies.Contains($name)) {
+            throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: authoritative target entry dependencies.$name is missing."
+        }
+    }
+
+    $foreignNames = @(
+        @($baseDependencies.Keys) + @($branchDependencies.Keys) + @($targetDependencies.Keys) |
+            Where-Object { $authoritativeNames -cnotcontains [string]$_ } |
+            Sort-Object -Unique
+    )
+    foreach ($name in $foreignNames) {
+        $selection = Select-DependencyLockThreeWayValue `
+            -Base $baseDependencies `
+            -Branch $branchDependencies `
+            -Target $targetDependencies `
+            -Name $name `
+            -Path "dependencies.$name"
+        if ($selection.exists) {
+            $mergedDependencies[$name] = $selection.value
+        } else {
+            $mergedDependencies.Remove($name)
+        }
+    }
+    $merged["dependencies"] = $mergedDependencies
+
+    $topLevelNames = @(
+        @($base.Keys) + @($branch.Keys) + @($target.Keys) |
+            Where-Object { [string]$_ -ne "dependencies" } |
+            Sort-Object -Unique
+    )
+    foreach ($name in $topLevelNames) {
+        $selection = Select-DependencyLockThreeWayValue `
+            -Base $base `
+            -Branch $branch `
+            -Target $target `
+            -Name $name `
+            -Path $name
+        if ($selection.exists) {
+            $merged[$name] = $selection.value
+        } else {
+            $merged.Remove($name)
+        }
+    }
+
+    Write-Utf8Text `
+        -Path (Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json") `
+        -Value (($merged | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
+    Invoke-Git @("add", "--", $repoPath)
+    Write-Host "Resolved the workflow-owned dependency lock conflict while preserving compatible project entries."
+    return $true
+}
+
 function Merge-MasterPreservingBranchConfigDumpInfo {
     param(
         [string]$MasterBranch = (Get-MasterBranch),
@@ -8398,6 +8522,7 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
     }
 
     Restore-BranchConfigDumpInfoFromCommit -Commit $BranchCommit -RepoPaths $allDumpInfoPaths
+    Resolve-RefreshDependencyLockMergeConflict | Out-Null
     $remainingConflicts = @(Get-DevBranchMergeUnmergedPaths)
     if ($remainingConflicts.Count -gt 0) {
         throw "Master merge still has non-ConfigDumpInfo conflicts after preserving the branch synchronization cursor: $($remainingConflicts -join ', ')"
