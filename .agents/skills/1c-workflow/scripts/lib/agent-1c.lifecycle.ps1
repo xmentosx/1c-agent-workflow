@@ -12384,12 +12384,53 @@ function Restore-RefreshTrackedKiloConfigSnapshot {
     }
 }
 
+function Test-RefreshManagedDependencyLockChange {
+    $repoPath = ".agent-1c/dependency-lock.json"
+    $changedPaths = @(@(
+            @(Get-GitPathList -Arguments @("diff", "--name-only", "-z", "--", $repoPath))
+            @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z", "--", $repoPath))
+        ) | Sort-Object -Unique)
+    if ($changedPaths.Count -eq 0) { return $false }
+
+    $currentPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf -ErrorAction SilentlyContinue)) {
+        return $false
+    }
+
+    try {
+        $beforeManifest = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "HEAD:$repoPath")) | ConvertFrom-Json)
+        $currentManifest = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
+        $templateManifest = New-DefaultDependencyLockManifest
+        $templateDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $templateManifest -Path "dependencies" -Default $null)
+        $managedNames = @(Get-WorkflowManagedDependencyLockEntryNames -TemplateManifest $templateManifest)
+        $beforeDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $beforeManifest -Path "dependencies" -Default $null)
+        $currentDependencies = ConvertTo-Agent1cHashtable -Object (Get-ConfigValueFromObject -Object $currentManifest -Path "dependencies" -Default $null)
+
+        foreach ($name in $managedNames) {
+            if (-not $currentDependencies.Contains($name)) { return $false }
+            $merged = Merge-WorkflowManagedDependencyLockValue `
+                -Current $currentDependencies[$name] `
+                -Template $templateDependencies[$name]
+            if ($merged.changed) { return $false }
+            $beforeDependencies.Remove($name)
+            $currentDependencies.Remove($name)
+        }
+
+        $beforeManifest["dependencies"] = $beforeDependencies
+        $currentManifest["dependencies"] = $currentDependencies
+        $beforeComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $beforeManifest) -Depth 100 -Compress
+        $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $currentManifest) -Depth 100 -Compress
+        return $beforeComparable -ceq $currentComparable
+    } catch {
+        return $false
+    }
+}
+
 function Complete-RefreshConfigDumpInfoPostcondition {
     param(
         [Parameter(Mandatory = $true)][object]$LoadResult,
         [string]$ExportPath = (Get-ExportPath),
         [object]$TrackedKiloSnapshot = $null,
-        [switch]$AllowDependencyLockChange,
         [object]$State = $null,
         [string]$Operation = ""
     )
@@ -12397,11 +12438,12 @@ function Complete-RefreshConfigDumpInfoPostcondition {
     $normalizedExportPath = (($ExportPath -replace "\\", "/").Trim("/"))
     $dumpInfoRepoPath = "$normalizedExportPath/ConfigDumpInfo.xml"
     $trackedKiloChanged = Assert-RefreshTrackedKiloConfigChange -Snapshot $TrackedKiloSnapshot
+    $dependencyLockChanged = Test-RefreshManagedDependencyLockChange
     $allowedPaths = @($dumpInfoRepoPath)
     if ($trackedKiloChanged) {
         $allowedPaths += [string]$TrackedKiloSnapshot.repoPath
     }
-    if ($AllowDependencyLockChange) {
+    if ($dependencyLockChanged) {
         $allowedPaths += ".agent-1c/dependency-lock.json"
     }
     $trackedPaths = @(
@@ -12417,7 +12459,7 @@ function Complete-RefreshConfigDumpInfoPostcondition {
 
     $pathsToCommit = @($trackedPaths | Where-Object { $allowedPaths -ccontains ([string]$_ -replace "\\", "/") })
     if ($pathsToCommit.Count -gt 0) {
-        $commitMessage = if ($trackedKiloChanged -or $AllowDependencyLockChange) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
+        $commitMessage = if ($trackedKiloChanged -or $dependencyLockChanged) { "chore: persist branch refresh state" } else { "chore: persist branch configuration synchronization cursor" }
         Commit-IfChanged `
             -Message $commitMessage `
             -PathSpec $pathsToCommit `
@@ -13504,7 +13546,7 @@ function Invoke-RefreshDevBranchCore {
     }
     Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
-    $dependencyLockSync = Sync-WorkflowManagedDependencyLockEntries
+    Sync-WorkflowManagedDependencyLockEntries | Out-Null
     $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
     Set-RunStage -Stage "refresh.dependencies" -Detail "Binding the branch to its workflow-pinned immutable dependency cache."
     Install-VanessaAutomation
@@ -13528,7 +13570,6 @@ function Invoke-RefreshDevBranchCore {
             -LoadResult $loadResult `
             -ExportPath (Get-ExportPath) `
             -TrackedKiloSnapshot $trackedKiloSnapshot `
-            -AllowDependencyLockChange:([bool]$dependencyLockSync.changed) `
             -State $state `
             -Operation $OperationName
         Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation $OperationName | Out-Null

@@ -7916,16 +7916,19 @@ if (`$?) { exit 0 } else { exit 1 }
             & git -C $tempRoot config user.email "test@example.com"
             & git -C $tempRoot config user.name "Test User"
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"fixture":{"version":"before"}}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $tempRoot ".agent-1c\dependency-lock.json")
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "base" *> $null
             $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{"fixture":{"version":"after"}}}'
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.vanessaMcp.clientMcp.source = "compatibility-manifest"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $loadResult = [pscustomobject]@{ currentCommit = $beforeCommit }
-                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf" -AllowDependencyLockChange
+                Complete-RefreshConfigDumpInfoPostcondition -LoadResult $loadResult -ExportPath "src/cf"
                 [pscustomobject]@{
                     subject = ((& git -C $tempRoot log -1 --format=%s) -join "").Trim()
                     paths = @(& git -C $tempRoot show --format= --name-only HEAD | Where-Object { $_ })
@@ -7937,6 +7940,40 @@ if (`$?) { exit 0 } else { exit 1 }
             @($result.paths).Count | Should -Be 1
             $result.paths[0] | Should -Be ".agent-1c/dependency-lock.json"
             @($result.status).Count | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects a dependency lock change outside workflow-managed entries during refresh" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-refresh-lock-unmanaged-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot "src\cf"), (Join-Path $tempRoot ".agent-1c") | Out-Null
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "cursor"
+            $lockPath = Join-Path $tempRoot ".agent-1c\dependency-lock.json"
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination $lockPath
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base" *> $null
+            $beforeCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
+            $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.commit = "unexpected"
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
+
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try {
+                    Complete-RefreshConfigDumpInfoPostcondition -LoadResult ([pscustomobject]@{ currentCommit = $beforeCommit }) -ExportPath "src/cf"
+                } catch {
+                    $_.Exception.Message
+                }
+            }
+
+            $message | Should -Match "^REFRESH_TRACKED_STATE_UNEXPECTED:"
+            $message | Should -Match "dependency-lock.json"
+            ((& git -C $tempRoot rev-parse HEAD) -join "").Trim() | Should -Be $beforeCommit
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
