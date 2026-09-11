@@ -4070,14 +4070,18 @@ try {
         }
     }
 
-    It "reports a prohibited online update check without blocking verification" {
+    It "reports unavailable automatic update checks without blocking verification" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-warning-test-" + [guid]::NewGuid().ToString("N"))
         try {
             $logDir = Join-Path $tempRoot "ib\1Cv8Log"
             $runDir = Join-Path $tempRoot "run"
             New-Item -ItemType Directory -Force -Path $logDir, $runDir, (Join-Path $tempRoot ".agent-1c\event-log-baselines") | Out-Null
             Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
-            Set-Content -LiteralPath (Join-Path $logDir "20260703.lgp") -Encoding UTF8 -Value '{20260703120700,E,"Получение обновлений программы","","","Ошибка при обращении к https://update-api.1c.ru/. Обращение к сервисам Интернет-поддержки запрещено"}'
+            Set-Content -LiteralPath (Join-Path $logDir "20260703.lgp") -Encoding UTF8 -Value (@(
+                '{20260703120700,E,"Получение обновлений программы","","","Ошибка при обращении к https://update-api.1c.ru/update-platform/programs/update/ping. Обращение к сервисам Интернет-поддержки запрещено"}',
+                '{20260703120800,E,"Получение обновлений программы","","","Не удалось проверить доступность сервиса автоматического обновления программы: https://update-api.1c.ru/update-platform/programs/update/ping. Ошибка работы с Интернет: Превышен таймаут"}',
+                '{20260703120900,E,"Диагностика соединения","","","При обращении по URL: https://update-api.1c.ru/update-platform/programs/update/ping. Выполняется проверка доступности контрольного сервера"}'
+            ) -join [Environment]::NewLine)
             $baselinePath = Join-Path $tempRoot ".agent-1c\event-log-baselines\current-branch.json"
             Set-Content -LiteralPath $baselinePath -Encoding UTF8 -Value '{"schemaVersion":2,"signatures":[]}'
 
@@ -4100,14 +4104,27 @@ try {
 
                 $result.status | Should -Be "passed"
                 $result.newErrorCount | Should -Be 0
-                $result.warningCount | Should -Be 1
-                $result.reason | Should -Match "Non-blocking warnings: 1"
+                $result.warningCount | Should -Be 3
+                $result.reason | Should -Match "Non-blocking warnings: 3"
                 $report = Get-Content -LiteralPath $result.reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                $report.warningCount | Should -Be 1
-                $report.warnings[0].event | Should -BeExactly "Получение обновлений программы"
+                $report.warningCount | Should -Be 3
+                @($report.warnings.classification) | Should -Contain "environment-internet-support-prohibited"
+                @($report.warnings.classification) | Should -Contain "environment-automatic-update-unavailable"
+                @($report.warnings.classification) | Should -Contain "environment-automatic-update-diagnostics"
             }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "keeps unrelated connection diagnostics blocking" {
+        & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            $classification = Get-OneCEventLogNonBlockingClassification -Event ([pscustomobject]@{
+                event = "Диагностика соединения"
+                comment = "При обращении по URL: https://example.invalid/ping. Выполняется проверка доступности контрольного сервера"
+            })
+            $classification | Should -BeExactly ""
         }
     }
 

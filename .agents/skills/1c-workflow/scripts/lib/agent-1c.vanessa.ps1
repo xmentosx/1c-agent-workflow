@@ -3364,12 +3364,28 @@ function Get-OneCEventLogNonBlockingClassification {
 
     $eventName = [string](Get-StateValue -State $Event -Name "event" -Default "")
     $comment = [string](Get-StateValue -State $Event -Name "comment" -Default "")
+    $isUpdateApi = $comment -match "https://update-api\.1c\.ru/"
+    $isAutomaticUpdatePing = $comment -match "https://update-api\.1c\.ru/update-platform/programs/update/ping"
     if (
         $eventName -ceq "Получение обновлений программы" -and
-        $comment -match "https://update-api\.1c\.ru/" -and
+        $isUpdateApi -and
         $comment -match "Обращение к сервисам Интернет-поддержки запрещено"
     ) {
         return "environment-internet-support-prohibited"
+    }
+    if (
+        $eventName -ceq "Получение обновлений программы" -and
+        $isAutomaticUpdatePing -and
+        $comment -match "Не удалось проверить доступность сервиса автоматического обновления программы"
+    ) {
+        return "environment-automatic-update-unavailable"
+    }
+    if (
+        $eventName -ceq "Диагностика соединения" -and
+        $isAutomaticUpdatePing -and
+        $comment -match "Выполняется проверка доступности контрольного сервера"
+    ) {
+        return "environment-automatic-update-diagnostics"
     }
 
     return ""
