@@ -8053,15 +8053,23 @@ if (`$?) { exit 0 } else { exit 1 }
             Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value (($branchLock | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
             & git -C $tempRoot add .
             & git -C $tempRoot commit -m "branch" *> $null
+            $branchCommit = ((& git -C $tempRoot rev-parse HEAD) -join "").Trim()
             & git -C $tempRoot merge --no-ff --no-commit $targetCommit *> $null
             $LASTEXITCODE | Should -Not -Be 0
 
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $resolved = Resolve-RefreshDependencyLockMergeConflict
+                $proven = Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $branchCommit -TargetCommit $targetCommit
+                . (Join-Path (Split-Path -Parent $HelperPath) "lib\agent-1c.merge-preservation.ps1")
+                Assert-DevBranchMergePreservation `
+                    -BranchCommit $branchCommit `
+                    -TargetCommit $targetCommit `
+                    -ExcludedPaths @(".agent-1c/dependency-lock.json")
                 $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 [pscustomobject]@{
                     resolved = $resolved
+                    proven = $proven
                     unmerged = @(Get-DevBranchMergeUnmergedPaths)
                     workflowCommit = $lock.dependencies.workflowPackage.commit
                     projectValue = $lock.dependencies.projectSpecific.value
@@ -8069,6 +8077,7 @@ if (`$?) { exit 0 } else { exit 1 }
             }
 
             $result.resolved | Should -BeTrue
+            $result.proven | Should -BeTrue
             @($result.unmerged).Count | Should -Be 0
             $result.workflowCommit | Should -Be "target-workflow"
             $result.projectValue | Should -Be "branch-value"

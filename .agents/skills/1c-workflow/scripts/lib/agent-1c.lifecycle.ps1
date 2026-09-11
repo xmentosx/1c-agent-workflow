@@ -8403,19 +8403,14 @@ function Select-DependencyLockThreeWayValue {
     throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: incompatible changes at $Path."
 }
 
-function Resolve-RefreshDependencyLockMergeConflict {
-    $repoPath = ".agent-1c/dependency-lock.json"
-    if (@(Get-DevBranchMergeUnmergedPaths) -cnotcontains $repoPath) { return $false }
+function Merge-RefreshDependencyLockManifests {
+    param(
+        [System.Collections.IDictionary]$Base,
+        [System.Collections.IDictionary]$Branch,
+        [System.Collections.IDictionary]$Target
+    )
 
-    try {
-        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":1:$repoPath")) | ConvertFrom-Json)
-        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":2:$repoPath")) | ConvertFrom-Json)
-        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":3:$repoPath")) | ConvertFrom-Json)
-    } catch {
-        throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: the base, branch, and target lock files must all be valid JSON. $($_.Exception.Message)"
-    }
-
-    foreach ($manifest in @($base, $branch, $target)) {
+    foreach ($manifest in @($Base, $Branch, $Target)) {
         if ([int](Get-ConfigValueFromObject -Object $manifest -Path "schemaVersion" -Default 0) -ne 1) {
             throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: every lock side must use schemaVersion 1."
         }
@@ -8425,10 +8420,10 @@ function Resolve-RefreshDependencyLockMergeConflict {
         }
     }
 
-    $merged = ConvertTo-Agent1cHashtable -Object $target
-    $baseDependencies = ConvertTo-Agent1cHashtable -Object $base["dependencies"]
-    $branchDependencies = ConvertTo-Agent1cHashtable -Object $branch["dependencies"]
-    $targetDependencies = ConvertTo-Agent1cHashtable -Object $target["dependencies"]
+    $merged = ConvertTo-Agent1cHashtable -Object $Target
+    $baseDependencies = ConvertTo-Agent1cHashtable -Object $Base["dependencies"]
+    $branchDependencies = ConvertTo-Agent1cHashtable -Object $Branch["dependencies"]
+    $targetDependencies = ConvertTo-Agent1cHashtable -Object $Target["dependencies"]
     $mergedDependencies = ConvertTo-Agent1cHashtable -Object $targetDependencies
     $template = New-DefaultDependencyLockManifest
     $authoritativeNames = @(
@@ -8463,15 +8458,15 @@ function Resolve-RefreshDependencyLockMergeConflict {
     $merged["dependencies"] = $mergedDependencies
 
     $topLevelNames = @(
-        @($base.Keys) + @($branch.Keys) + @($target.Keys) |
+        @($Base.Keys) + @($Branch.Keys) + @($Target.Keys) |
             Where-Object { [string]$_ -ne "dependencies" } |
             Sort-Object -Unique
     )
     foreach ($name in $topLevelNames) {
         $selection = Select-DependencyLockThreeWayValue `
-            -Base $base `
-            -Branch $branch `
-            -Target $target `
+            -Base $Base `
+            -Branch $Branch `
+            -Target $Target `
             -Name $name `
             -Path $name
         if ($selection.exists) {
@@ -8481,12 +8476,51 @@ function Resolve-RefreshDependencyLockMergeConflict {
         }
     }
 
+    return $merged
+}
+
+function Resolve-RefreshDependencyLockMergeConflict {
+    $repoPath = ".agent-1c/dependency-lock.json"
+    if (@(Get-DevBranchMergeUnmergedPaths) -cnotcontains $repoPath) { return $false }
+
+    try {
+        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":1:$repoPath")) | ConvertFrom-Json)
+        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":2:$repoPath")) | ConvertFrom-Json)
+        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", ":3:$repoPath")) | ConvertFrom-Json)
+    } catch {
+        throw "DEPENDENCY_LOCK_MERGE_REVIEW_REQUIRED: the base, branch, and target lock files must all be valid JSON. $($_.Exception.Message)"
+    }
+    $merged = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target
     Write-Utf8Text `
         -Path (Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json") `
         -Value (($merged | ConvertTo-Json -Depth 100) + [Environment]::NewLine)
     Invoke-Git @("add", "--", $repoPath)
     Write-Host "Resolved the workflow-owned dependency lock conflict while preserving compatible project entries."
     return $true
+}
+
+function Test-RefreshDependencyLockSemanticMergeResult {
+    param(
+        [string]$BranchCommit,
+        [string]$TargetCommit
+    )
+
+    $repoPath = ".agent-1c/dependency-lock.json"
+    $currentPath = Join-Path $script:ProjectRoot ".agent-1c\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $currentPath -PathType Leaf -ErrorAction SilentlyContinue)) { return $false }
+    try {
+        $baseCommit = (Get-GitOutput @("merge-base", $BranchCommit, $TargetCommit)).Trim()
+        $base = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${baseCommit}:$repoPath")) | ConvertFrom-Json)
+        $branch = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${BranchCommit}:$repoPath")) | ConvertFrom-Json)
+        $target = ConvertTo-Agent1cHashtable -Object ((Get-GitOutput @("show", "${TargetCommit}:$repoPath")) | ConvertFrom-Json)
+        $expected = Merge-RefreshDependencyLockManifests -Base $base -Branch $branch -Target $target
+        $current = ConvertTo-Agent1cHashtable -Object ((Read-Utf8Text -Path $currentPath) | ConvertFrom-Json)
+        $expectedComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $expected) -Depth 100 -Compress
+        $currentComparable = ConvertTo-Json -InputObject (ConvertTo-DependencyLockComparableValue -Value $current) -Depth 100 -Compress
+        return $expectedComparable -ceq $currentComparable
+    } catch {
+        return $false
+    }
 }
 
 function Merge-MasterPreservingBranchConfigDumpInfo {
@@ -8535,7 +8569,11 @@ function Merge-MasterPreservingBranchConfigDumpInfo {
     }
     Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath)
     . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
-    Assert-DevBranchMergePreservation -BranchCommit $BranchCommit -TargetCommit $MasterBranch -ExcludedPaths $allDumpInfoPaths
+    $preservationExcludedPaths = @($allDumpInfoPaths)
+    if (Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $BranchCommit -TargetCommit $MasterBranch) {
+        $preservationExcludedPaths += ".agent-1c/dependency-lock.json"
+    }
+    Assert-DevBranchMergePreservation -BranchCommit $BranchCommit -TargetCommit $MasterBranch -ExcludedPaths $preservationExcludedPaths
     Invoke-Git @("commit", "--no-edit")
 }
 
@@ -8933,6 +8971,7 @@ function Resume-DevBranchLifecycleMergeIfPresent {
                 Sort-Object -Unique
         )
         Restore-BranchConfigDumpInfoFromCommit -Commit $transaction.branchCommit -RepoPaths $cursorPaths
+        Resolve-RefreshDependencyLockMergeConflict | Out-Null
 
         $unmergedPaths = @(Get-DevBranchMergeUnmergedPaths)
         if ($unmergedPaths.Count -gt 0) {
@@ -9035,7 +9074,11 @@ function Resume-DevBranchLifecycleMergeIfPresent {
         Sync-AiRules1cManagedIgnoredFilesFromMain -State $State | Out-Null
         Assert-OneCConfigurationSourceIntegrity -ExportPath (Get-ExportPath) -AdditionalPaths $transaction.repairPaths
         . (Join-Path $PSScriptRoot 'agent-1c.merge-preservation.ps1')
-        Assert-DevBranchMergePreservation -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit -ExcludedPaths $cursorPaths
+        $preservationExcludedPaths = @($cursorPaths)
+        if (Test-RefreshDependencyLockSemanticMergeResult -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit) {
+            $preservationExcludedPaths += ".agent-1c/dependency-lock.json"
+        }
+        Assert-DevBranchMergePreservation -BranchCommit $transaction.branchCommit -TargetCommit $transaction.targetCommit -ExcludedPaths $preservationExcludedPaths
         Invoke-Git @("commit", "--no-edit")
         $State = Read-DevBranchState -Name $DevBranchName
         Complete-DevBranchLifecycleMergeTransaction -State $State -Transaction $transaction
