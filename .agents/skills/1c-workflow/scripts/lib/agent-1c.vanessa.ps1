@@ -3359,6 +3359,22 @@ function Ensure-DevBranchEventLogBaseline {
     return (Save-DevBranchEventLogBaseline -State $State -Reason "backfill")
 }
 
+function Get-OneCEventLogNonBlockingClassification {
+    param([object]$Event)
+
+    $eventName = [string](Get-StateValue -State $Event -Name "event" -Default "")
+    $comment = [string](Get-StateValue -State $Event -Name "comment" -Default "")
+    if (
+        $eventName -ceq "Получение обновлений программы" -and
+        $comment -match "https://update-api\.1c\.ru/" -and
+        $comment -match "Обращение к сервисам Интернет-поддержки запрещено"
+    ) {
+        return "environment-internet-support-prohibited"
+    }
+
+    return ""
+}
+
 function Test-DevBranchEventLogAfterVanessa {
     param(
         [object]$State,
@@ -3391,20 +3407,29 @@ function Test-DevBranchEventLogAfterVanessa {
     $checkedUntil = Get-Date
 
     $newErrors = @()
+    $warnings = @()
     $legacyCount = 0
     foreach ($event in @($readResult.events)) {
         if ($known.ContainsKey([string]$event.signature)) {
             $legacyCount++
         } else {
-            $newErrors += $event
+            $classification = Get-OneCEventLogNonBlockingClassification -Event $event
+            if ($classification) {
+                $warnings += [pscustomobject]@{
+                    source = $event
+                    classification = $classification
+                }
+            } else {
+                $newErrors += $event
+            }
         }
     }
 
     $reportPath = ""
-    if ($newErrors.Count -gt 0) {
+    if ($newErrors.Count -gt 0 -or $warnings.Count -gt 0) {
         $reportPath = Join-Path $RunDirectory "event-log-new-errors.json"
         $payload = [ordered]@{
-            schemaVersion = 1
+            schemaVersion = 2
             startedAt = $effectiveStartTime.ToString("o")
             finishedAt = $RunFinishedAt.ToString("o")
             checkedUntil = $checkedUntil.ToString("o")
@@ -3418,6 +3443,7 @@ function Test-DevBranchEventLogAfterVanessa {
                 scanMode = $readResult.scanMode
             }
             newErrorCount = $newErrors.Count
+            warningCount = $warnings.Count
             legacyErrorCount = $legacyCount
             errors = @($newErrors | ForEach-Object {
                 [ordered]@{
@@ -3430,13 +3456,28 @@ function Test-DevBranchEventLogAfterVanessa {
                     signature = $_.signature
                 }
             })
+            warnings = @($warnings | ForEach-Object {
+                $source = $_.source
+                [ordered]@{
+                    classification = $_.classification
+                    date = $source.date.ToString("o")
+                    level = $source.level
+                    event = $source.event
+                    metadata = $source.metadata
+                    dataPresentation = $source.dataPresentation
+                    comment = $source.comment
+                    signature = $source.signature
+                }
+            })
         }
         Write-Utf8Text -Path $reportPath -Value (($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
     }
 
     $status = if ($newErrors.Count -gt 0) { "failed" } else { "passed" }
     $reason = if ($newErrors.Count -gt 0) {
-        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Scope: $CursorScope; scan mode: $($readResult.scanMode)."
+        "1C event log contains $($newErrors.Count) new error signature(s) not present in the branch baseline. Non-blocking warnings: $($warnings.Count). Scope: $CursorScope; scan mode: $($readResult.scanMode)."
+    } elseif ($warnings.Count -gt 0) {
+        "1C event log contains no blocking new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Non-blocking warnings: $($warnings.Count); report: $reportPath. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     } else {
         "1C event log contains no new error signatures in scope '$CursorScope' from '$($effectiveStartTime.ToString("o"))'. Legacy suppressed errors: $legacyCount; scan mode: $($readResult.scanMode)."
     }
@@ -3448,6 +3489,7 @@ function Test-DevBranchEventLogAfterVanessa {
         baselinePath = $baselinePath
         reportPath = $reportPath
         newErrorCount = $newErrors.Count
+        warningCount = $warnings.Count
         legacyErrorCount = $legacyCount
         checkedUntil = $checkedUntil
         checkedFrom = $effectiveStartTime

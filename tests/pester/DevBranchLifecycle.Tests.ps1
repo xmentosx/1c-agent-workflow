@@ -4014,6 +4014,7 @@ try {
             $records = @(
                 '{20260703100000,E,"_$PerformError$_","Catalog.Items","Item 1","Legacy error"}',
                 '{20260703120500,E,"_$PerformError$_","Catalog.Items","Item 1","Legacy error"}',
+                '{20260703120700,E,"Получение обновлений программы","","","Ошибка при обращении к https://update-api.1c.ru/. Обращение к сервисам Интернет-поддержки запрещено"}',
                 '{20260703121000,E,"_$PerformError$_","Catalog.Items","Item 1","New error 12345678"}',
                 '{20260703121100,W,"_$PerformError$_","Catalog.Items","Item 1","Warning only"}'
             ) -join [Environment]::NewLine
@@ -4041,7 +4042,7 @@ try {
                 $state | Add-Member -NotePropertyName eventLogBaselinePath -NotePropertyValue $baselinePath -Force
 
                 $fresh = @(Read-OneCEventLogDirect -State $state -StartTime ([datetime]"2026-07-03T12:00:00") -EndTime ([datetime]"2026-07-03T12:30:00"))
-                $fresh.Count | Should -Be 2
+                $fresh.Count | Should -Be 3
 
                 $result = Test-DevBranchEventLogAfterVanessa `
                     -State $state `
@@ -4051,14 +4052,62 @@ try {
 
                 $result.status | Should -Be "failed"
                 $result.newErrorCount | Should -Be 1
+                $result.warningCount | Should -Be 1
                 $result.legacyErrorCount | Should -Be 1
                 (Test-Path -LiteralPath $result.reportPath -PathType Leaf) | Should -Be $true
-                (Get-Content -Encoding UTF8 -Raw $result.reportPath) | Should -Match "New error"
+                $report = Get-Content -Encoding UTF8 -Raw $result.reportPath | ConvertFrom-Json
+                $report.schemaVersion | Should -Be 2
+                $report.newErrorCount | Should -Be 1
+                $report.warningCount | Should -Be 1
+                $report.errors[0].comment | Should -Match "New error"
+                $report.warnings[0].classification | Should -BeExactly "environment-internet-support-prohibited"
+                $report.warnings[0].comment | Should -Match "update-api\.1c\.ru"
             }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "reports a prohibited online update check without blocking verification" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-event-log-warning-test-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $logDir = Join-Path $tempRoot "ib\1Cv8Log"
+            $runDir = Join-Path $tempRoot "run"
+            New-Item -ItemType Directory -Force -Path $logDir, $runDir, (Join-Path $tempRoot ".agent-1c\event-log-baselines") | Out-Null
+            Set-Content -LiteralPath (Join-Path $logDir "1Cv8.lgf") -Encoding UTF8 -Value "{1}"
+            Set-Content -LiteralPath (Join-Path $logDir "20260703.lgp") -Encoding UTF8 -Value '{20260703120700,E,"Получение обновлений программы","","","Ошибка при обращении к https://update-api.1c.ru/. Обращение к сервисам Интернет-поддержки запрещено"}'
+            $baselinePath = Join-Path $tempRoot ".agent-1c\event-log-baselines\current-branch.json"
+            Set-Content -LiteralPath $baselinePath -Encoding UTF8 -Value '{"schemaVersion":2,"signatures":[]}'
+
+            & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranchName = "Current Branch"
+                    safeDevBranchName = "current-branch"
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $tempRoot "ib")
+                    stateProjectRoot = $tempRoot
+                    eventLogBaselinePath = $baselinePath
+                }
+
+                $result = Test-DevBranchEventLogAfterVanessa `
+                    -State $state `
+                    -RunStartedAt ([datetime]"2026-07-03T12:00:00") `
+                    -RunFinishedAt ([datetime]"2026-07-03T12:30:00") `
+                    -RunDirectory $runDir
+
+                $result.status | Should -Be "passed"
+                $result.newErrorCount | Should -Be 0
+                $result.warningCount | Should -Be 1
+                $result.reason | Should -Match "Non-blocking warnings: 1"
+                $report = Get-Content -LiteralPath $result.reportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $report.warningCount | Should -Be 1
+                $report.warnings[0].event | Should -BeExactly "Получение обновлений программы"
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
