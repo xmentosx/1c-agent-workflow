@@ -7108,6 +7108,58 @@ function Get-VanessaMcpReleaseAssetInfo {
     }
 }
 
+function Save-VanessaMcpPairedSourceBuildArtifact {
+    param(
+        [object]$Definition,
+        [object]$AssetInfo,
+        [string]$TargetPath
+    )
+
+    if ([string]$Definition.lockKey -ne "vaExtension") {
+        return $false
+    }
+
+    $configuredArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+    if (-not $configuredArchive) {
+        return $false
+    }
+
+    $archivePath = [IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables((ConvertFrom-FileUri -Value $configuredArchive).Trim()))
+    if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
+        throw "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE does not exist: $archivePath"
+    }
+
+    $vanessaLock = Get-DependencyLockEntry -Name "vanessaAutomation"
+    $expectedArchiveSha256 = ([string](Get-ConfigValueFromObject -Object $vanessaLock -Path "sha256" -Default "")).ToLowerInvariant()
+    $actualArchiveSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    if ($expectedArchiveSha256 -notmatch '^[a-f0-9]{64}$' -or $actualArchiveSha256 -cne $expectedArchiveSha256) {
+        throw "ITL_VANESSA_SOURCE_BUILD_SHA_MISMATCH: source-build archive does not match the active project pin. Expected $expectedArchiveSha256, got $actualArchiveSha256."
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $archive = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+    $temporaryPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-extension-" + [guid]::NewGuid().ToString("N") + ".cfe")
+    try {
+        $assetName = [string]$AssetInfo.name
+        $matches = @($archive.Entries | Where-Object { [string]$_.FullName -ceq $assetName -and -not [string]::IsNullOrEmpty([string]$_.Name) })
+        if ($matches.Count -ne 1) {
+            throw "ITL_VANESSA_SOURCE_BUILD_PAIRED_ASSET_INVALID: archive must contain exactly one root '$assetName' entry; found $($matches.Count)."
+        }
+        $inputStream = $matches[0].Open()
+        try {
+            $outputStream = [IO.File]::Open($temporaryPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+        } finally { $inputStream.Dispose() }
+
+        Write-Host "Vanessa UI MCP artifact source: $archivePath::$assetName"
+        [void](Invoke-ItlImmutableFileAcquire -Source $temporaryPath -DestinationPath $TargetPath -ExpectedSha256 ([string]$AssetInfo.expectedSha256) -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
+        return $true
+    } finally {
+        $archive.Dispose()
+        Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Save-VanessaMcpArtifact {
     param(
         [object]$Definition,
@@ -7121,8 +7173,11 @@ function Save-VanessaMcpArtifact {
     }
     $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$AssetInfo.version) -Sha256 $expected -AssetName ([string]$AssetInfo.name)
 
-    Write-Host "Vanessa UI MCP artifact source: $source"
-    [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
+    $installedFromSourceBuild = Save-VanessaMcpPairedSourceBuildArtifact -Definition $Definition -AssetInfo $AssetInfo -TargetPath $targetPath
+    if (-not $installedFromSourceBuild) {
+        Write-Host "Vanessa UI MCP artifact source: $source"
+        [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")
+    }
 
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetPath).Hash.ToLowerInvariant()
     Write-Host "Vanessa UI MCP artifact SHA256: $hash"

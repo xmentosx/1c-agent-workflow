@@ -5424,6 +5424,10 @@ try {
                 function Install-RoctupMcp {
                 }
 
+                function Install-VanessaMcpArtifacts {
+                    return @()
+                }
+
                 function Ensure-VanessaAutomationForInit {
                     param([object]$Answers)
                 }

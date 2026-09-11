@@ -13,11 +13,13 @@ Describe "Workflow-pinned Vanessa Automation integration" {
             $script:SavedVanessaEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
         }
 
-        $script:FixtureRoot = Join-Path $TestDrive "candidate"
+        $script:FixtureRoot = Join-Path $TestDrive "$script:NonAsciiWord candidate with space"
         $script:FixtureContent = Join-Path $script:FixtureRoot "content"
         New-Item -ItemType Directory -Force -Path $script:FixtureContent | Out-Null
         $script:FixtureEpfPath = Join-Path $script:FixtureContent "vanessa-automation-single.epf"
         [System.IO.File]::WriteAllBytes($script:FixtureEpfPath, [System.Text.Encoding]::UTF8.GetBytes("qualified patched EPF fixture"))
+        $script:FixtureVaExtensionPath = Join-Path $script:FixtureContent "VAExtension.1.29-itl-r13.cfe"
+        [System.IO.File]::WriteAllBytes($script:FixtureVaExtensionPath, [System.Text.Encoding]::UTF8.GetBytes("qualified paired VAExtension fixture"))
         $script:FixtureNestedPath = Join-Path $script:FixtureContent "metadata\fixture.txt"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:FixtureNestedPath) | Out-Null
         [System.IO.File]::WriteAllText($script:FixtureNestedPath, "nested fixture", [System.Text.UTF8Encoding]::new($false))
@@ -26,6 +28,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         Compress-Archive -Path (Join-Path $script:FixtureContent "*") -DestinationPath $script:FixtureArchivePath
         $script:FixtureArchiveSha256 = (Get-FileHash -LiteralPath $script:FixtureArchivePath -Algorithm SHA256).Hash.ToLowerInvariant()
         $script:FixtureEpfSha256 = (Get-FileHash -LiteralPath $script:FixtureEpfPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $script:FixtureVaExtensionSha256 = (Get-FileHash -LiteralPath $script:FixtureVaExtensionPath -Algorithm SHA256).Hash.ToLowerInvariant()
         function global:New-VanessaArtifactTestProject {
             param(
                 [string]$Root,
@@ -38,6 +41,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
             $lock = Get-Content -LiteralPath (Join-Path $script:RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $lock.dependencies.vanessaAutomation.sha256 = $script:FixtureArchiveSha256
             $lock.dependencies.vanessaAutomation.epfSha256 = $script:FixtureEpfSha256
+            $lock.dependencies.vanessaMcp.vaExtension.sha256 = $script:FixtureVaExtensionSha256
             [System.IO.File]::WriteAllText((Join-Path $Root ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
             return $HelperPath
         }
@@ -116,6 +120,23 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         (Get-Content -LiteralPath (Join-Path $installedRoot "LICENSE") -Raw -Encoding UTF8) | Should -Be "license fixture"
         (Get-Content -LiteralPath $result.epfPath -Raw -Encoding UTF8) | Should -Be "qualified patched EPF fixture"
         (Test-Path -LiteralPath (Join-Path $testProjectPath ".tx")) | Should -BeFalse
+    }
+
+    It "installs the paired VAExtension from the qualified source-build archive before its release exists" {
+        $testProjectPath = Join-Path $TestDrive "$script:NonAsciiWord paired CFE with space"
+        $helperPath = New-VanessaArtifactTestProject -Root $testProjectPath
+        [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $script:FixtureArchivePath, "Process")
+
+        $result = & {
+            . $helperPath -ProjectRoot $testProjectPath -Action help *> $null
+            $definition = @(Get-VanessaMcpArtifactDefinitions | Where-Object { [string]$_.lockKey -eq "vaExtension" })[0]
+            Install-VanessaMcpArtifact -Definition $definition -ForceDownload
+        }
+
+        $result.key | Should -Be "vaExtension"
+        $result.sha256 | Should -Be $script:FixtureVaExtensionSha256
+        $result.path | Should -Match ([regex]::Escape($script:NonAsciiWord))
+        [IO.File]::ReadAllText($result.path, [Text.Encoding]::UTF8) | Should -Be "qualified paired VAExtension fixture"
     }
 
     It "installs from a packaged no-Git workflow copy through the same exact override" {
