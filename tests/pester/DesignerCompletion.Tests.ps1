@@ -276,9 +276,10 @@
         New-Item -ItemType File -Force -Path $platformPath | Out-Null
         New-Item -ItemType File -Force -Path (Join-Path $basePath "1Cv8.1CD") | Out-Null
 
-        $message = & {
+        $result = & {
             . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
             $script:Config = [pscustomobject]@{ platformPath = $platformPath; logsPath = "logs" }
+            $script:CapturedDesignerArguments = @()
             function Invoke-NativeProcessAndWaitResult {
                 param(
                     [string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 0,
@@ -286,6 +287,7 @@
                     [int]$CompletionGraceSeconds = 10, [int]$PostExitProbeSeconds = 0,
                     [int]$MaxWorkingSetMb = 0
                 )
+                $script:CapturedDesignerArguments = @($Arguments)
                 return [pscustomobject]@{
                     processId = 4247; exitCode = 1; timedOut = $false
                     memoryLimitExceeded = $false; memoryMonitorFailed = $false; memoryMonitorError = ""
@@ -298,18 +300,21 @@
                 }
             }
 
-            try {
+            $message = try {
                 Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @("/UpdateDBCfg") 6>$null | Out-Null
                 ""
             } catch {
                 $_.Exception.Message
             }
+            [pscustomobject]@{ message = $message; arguments = @($script:CapturedDesignerArguments) }
         }
 
-        $message | Should -Match '^DESIGNER_COMPLETION_PROBE_FAILED\b'
-        $message | Should -Match "errorType='System.InvalidOperationException'"
-        $message | Should -Match "detail='artifact-enumeration-sentinel'"
-        $message | Should -Match 'terminationConfirmed=True'
+        $result.message | Should -Match '^DESIGNER_COMPLETION_PROBE_FAILED\b'
+        $result.message | Should -Match "errorType='System.InvalidOperationException'"
+        $result.message | Should -Match "detail='artifact-enumeration-sentinel'"
+        $result.message | Should -Match 'terminationConfirmed=True'
+        $result.arguments | Should -Contain '/AllowExecuteScheduledJobs'
+        $result.arguments | Should -Contain '-Off'
     }
 
     It "tracks Designer descendants and the unique out log while ignoring unrelated 1C processes" {

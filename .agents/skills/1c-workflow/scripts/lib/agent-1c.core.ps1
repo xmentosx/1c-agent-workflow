@@ -6926,7 +6926,11 @@ function Invoke-Designer {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
+    $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $args = @("DESIGNER") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs", "/Out", $logPath) + $DesignerArgs
+    if ($InfoBaseKind -eq "file" -and $updateDbIndex -ge 0 -and [Array]::IndexOf($DesignerArgs, "/AllowExecuteScheduledJobs") -lt 0) {
+        $args += @("/AllowExecuteScheduledJobs", "-Off")
+    }
 
     Write-Host "1C command: $(Format-SafeCommandLine -Command $platformPath -Arguments $args)"
     Write-Host "1C log: $logPath"
@@ -6939,7 +6943,6 @@ function Invoke-Designer {
     $artifactProbeState = $null
     $invocationProbeState = $null
     $repositoryUpdateIndex = [Array]::IndexOf($DesignerArgs, "/ConfigurationRepositoryUpdateCfg")
-    $updateDbIndex = [Array]::IndexOf($DesignerArgs, "/UpdateDBCfg")
     $dumpIndex = [Array]::IndexOf($DesignerArgs, "/DumpConfigToFiles")
     $dumpCfgIndex = [Array]::IndexOf($DesignerArgs, "/DumpCfg")
     $dumpIbIndex = [Array]::IndexOf($DesignerArgs, "/DumpIB")
@@ -7388,9 +7391,6 @@ function Start-EnterpriseBackground {
         $args += @("/TESTCLIENT", "-TPort", [string]$TestClientPort)
     }
     $args += $ibArgs + @("/DisableStartupMessages")
-    if ($UseTestManager -or $UseTestClient) {
-        $args += @("/AllowExecuteScheduledJobs", "-Off")
-    }
     if (-not $UseTestClient) {
         $args += "/DisableStartupDialogs"
     }
@@ -7501,12 +7501,7 @@ function Invoke-Enterprise {
     $script:LastLogPath = $logPath
 
     $ibArgs = New-InfobaseArgs -Kind $InfoBaseKind -Path $InfoBasePath -User $User -Password $Password
-    $args = @("ENTERPRISE") + $ibArgs + @(
-        "/DisableStartupMessages",
-        "/DisableStartupDialogs",
-        "/AllowExecuteScheduledJobs",
-        "-Off"
-    )
+    $args = @("ENTERPRISE") + $ibArgs + @("/DisableStartupMessages", "/DisableStartupDialogs")
     $effectiveTestClientPort = 0
     if ($TestClientPort -gt 0) {
         $effectiveTestClientPort = $TestClientPort

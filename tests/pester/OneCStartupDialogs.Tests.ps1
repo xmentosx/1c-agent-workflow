@@ -22,9 +22,8 @@ Describe "Non-interactive 1C startup dialogs" {
             $functionText | Should -Match ([regex]::Escape('"/DisableStartupDialogs"'))
         }
 
-        $enterprise = [string](($functions | Where-Object Name -eq "Invoke-Enterprise").Extent.Text)
-        $enterprise | Should -Match ([regex]::Escape('"/AllowExecuteScheduledJobs"'))
-        $enterprise | Should -Match ([regex]::Escape('"-Off"'))
+        $designer = [string](($functions | Where-Object Name -eq "Invoke-Designer").Extent.Text)
+        $designer | Should -Match '(?s)\$InfoBaseKind -eq "file".*?\$updateDbIndex -ge 0.*?\$args \+= @\("/AllowExecuteScheduledJobs", "-Off"\)'
 
         $backgroundEnterprise = [string](($functions | Where-Object Name -eq "Start-EnterpriseBackground").Extent.Text)
         $backgroundEnterprise | Should -Match '(?s)if \(-not \$UseTestClient\)\s*\{\s*\$args \+= "/DisableStartupDialogs"\s*\}'
@@ -42,8 +41,6 @@ Describe "Non-interactive 1C startup dialogs" {
         $additionalParams = [string](($functions | Where-Object Name -eq "New-VanessaTestClientAdditionalParams").Extent.Text)
 
         $additionalParams | Should -Match ([regex]::Escape('"/DisableStartupMessages"'))
-        $additionalParams | Should -Match ([regex]::Escape('"/AllowExecuteScheduledJobs"'))
-        $additionalParams | Should -Match ([regex]::Escape('"-Off"'))
         $additionalParams | Should -Not -Match ([regex]::Escape('"/DisableStartupDialogs"'))
     }
 

@@ -62,8 +62,10 @@ finally { Exit-Agent1cLifecycleOperation }
                 $first.resource | Should -Be $Resource
                 $first.owner | Should -Match "activeAction='fixture-owner'"
                 [IO.File]::ReadAllText($ownerPath) | Should -BeExactly $originalOwner
-                Start-Sleep -Milliseconds 1300
-                $second = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                $second = Wait-Fixture {
+                    $candidate = Read-Agent1cLifecycleOperationRecord $waiter.FullName
+                    if ($candidate.elapsedSeconds -gt $first.elapsedSeconds) { $candidate } else { $null }
+                }
                 $second.elapsedSeconds | Should -BeGreaterThan $first.elapsedSeconds
                 $status = Get-Content -LiteralPath (Join-Path $root 'wait-status.json') -Raw | ConvertFrom-Json
                 $status.status | Should -Be running
