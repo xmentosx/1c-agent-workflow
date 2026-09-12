@@ -105,15 +105,15 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\project.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\release-e2e.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
         $envPath = Join-Path $stand '.dev.env'
-        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=src/cf`nEXTENSION_NAME=FirstExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
         $script:E2EProjectRoot = $stand
         $before = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
 
-        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=`nEXTENSION_NAME=`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`n", [Text.UTF8Encoding]::new($false))
         $volatileRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
         (Get-DeliveryCanonicalJsonSha256 -Value $volatileRewrite) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
 
-        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`nROCTUP_MCP_PORT=6003`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nEXPORT_PATH=src/cfe`nEXTENSION_NAME=SecondExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`nROCTUP_MCP_PORT=6003`n", [Text.UTF8Encoding]::new($false))
         $materialRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
         (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }

@@ -165,7 +165,7 @@ function Get-DeliveryReleaseStageCatalog {
 
 function Get-DeliveryStableDotEnvSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
-    $volatilePattern = '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_.*|ROCTUP_MCP_.*|VANESSA_MCP_.*|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)='
+    $volatilePattern = '^(EXPORT_PATH|EXTENSION_NAME|INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_.*|ROCTUP_MCP_.*|VANESSA_MCP_.*|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)='
     $stableLines = @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch $volatilePattern })
     return Get-DeliveryTextSha256 -Text (($stableLines -join "`n") + "`n")
 }
