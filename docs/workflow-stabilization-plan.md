@@ -17,18 +17,26 @@ This file is the current execution checkpoint. A task is not complete merely
 because code exists: implementation, registration, publication, installed proof,
 and live proof are distinct states.
 
-## Current priorities
+## Current state
 
-| ID | Priority | Problem | State | Completion evidence |
-|---|---|---|---|---|
-| STAB-01 | P0 | Release E2E evidence can remain in a disposable candidate worktree, so cleanup makes a valid checkpoint unusable. | registered at `fa7dd9c` | Focused regressions prove restart after candidate cleanup and strict SHA rejection. |
-| STAB-02 | P1 | Delivery plan identity excludes volatile values with a reactive blacklist instead of defining semantic inputs. | registered at `0ba05bc` | Equivalent materializations have the same identity; every declared semantic input changes it. |
-| STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | registered at `ac64992` | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression pass locally; real SMB/two-host proof remains STAB-05. |
-| STAB-04 | P1 | Shared read, functional test, performance measurement, and mutation do not have sufficiently explicit compatibility semantics. | queued | Mode matrix and focused compatibility regressions exist; measurements are exclusive. |
-| STAB-05 | P1 | File/server and multi-host admission/recovery acceptance is incomplete. | queued | Two-process, two-project, server-alias, SMB two-host, owner-crash, dead-waiter, and independent-resource scenarios pass. |
-| STAB-06 | P2 | Operational ledger, stale refs, retained worktrees, and runtime metrics need bounded cleanup and a compact current-state view. | queued | Current checkpoint is concise; historical evidence remains available; cleanup is ancestry-checked. |
-| STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | registered at `a5db5a9` | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
-| STAB-08 | P1 | Any `agent-1c.ps1` edit selects the whole lifecycle inventory; the latest Targeted ran 735 tests in 637 seconds. | registered at `c8ca6f3` | Public-probe-gated AST routing ran a fresh leaf selection in 25.562 seconds: 30/30, 3 executed shards, 0 reused. |
+Snapshot boundary: this table describes only the local stabilization branch
+state recorded by this document. It does not infer publication, installation,
+or live runtime state from implementation or registration proof.
+Develop publication is on explicit user hold; every row therefore stops before
+publication even when its registration is complete. Detailed chronological
+evidence is preserved in the append-only
+[stabilization history](workflow-stabilization-history.md).
+
+| ID | Priority and problem | Implementation | Registration | Publication | Installation | Runtime |
+|---|---|---|---|---|---|---|
+| STAB-01 | P0: disposable Release evidence made a valid checkpoint unusable after cleanup. | Implemented; durable evidence and strict SHA validation have focused fixture proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | No installed/live proof; local fixture regression only. |
+| STAB-02 | P1: delivery-plan identity used a reactive volatile-value blacklist. | Implemented; the semantic-input identity contract has focused fixture proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | No installed/live proof; local fixture regression only. |
+| STAB-03 | P0: database-access lookup and retention scaled with all historical tickets. | Implemented; bounded lookup, migration, retention, and corruption isolation have local owner proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | Local process/volume proof only; real SMB/two-host proof remains STAB-05. |
+| STAB-04 | P1: access modes lacked explicit compatibility semantics. | Not present in this snapshot. | Not registered in this snapshot. | Not published; user hold. | Not installed. | Not run for this snapshot. |
+| STAB-05 | P1: file/server and multi-host admission/recovery acceptance is incomplete. | Not implemented. | Not registered. | Not published; user hold. | Not installed. | Required live acceptance not run. |
+| STAB-06 | P2: ledger, refs, worktrees, and metrics need bounded hygiene. | Batch A implemented by this change; batches B-D remain queued. | Pending review and registration. | Not published; user hold. | Not installed. | Not applicable to documentation-only batch A. |
+| STAB-07 | P1: `ResumePlan` selected a newer supervisor instead of its recorded trusted supervisor. | Implemented; recorded-supervisor and fail-closed cases have focused fixture proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | No installed/live proof; local fixture regression only. |
+| STAB-08 | P1: an entrypoint edit selected the whole lifecycle test inventory. | Implemented; semantic routing and fail-closed fallback have focused proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | Fresh local Targeted proof only; no installed/live proof. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -221,25 +229,3 @@ Hard stop: three hours.
 - Poll only on meaningful state transitions or at three-to-five-minute intervals.
 - After context compaction, resume from this file: goal, frozen scope, completed
   work, current blocker, next action, non-goals, and evidence.
-
-## Execution log
-
-| Date | Event | Evidence |
-|---|---|---|
-| 2026-09-12 | Stabilization started in an isolated worktree. | Branch `codex/workflow-stabilization`, baseline `db5acb7`. |
-| 2026-09-12 | STAB-01 implemented and its owner suite passed. | `ReleaseGate.Tests.ps1`: 13 passed, 0 failed, 175.97 seconds. Evidence is atomically copied to the persistent Release run before checkpoint publication; available legacy external evidence migrates on reuse. |
-| 2026-09-12 | STAB-01 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `fa7dd9c`. |
-| 2026-09-12 | STAB-02 implemented and its owner suite passed. | `SourceDeliveryPlan.Tests.ps1`: 10 passed, 0 failed. Semantic `.dev.env` allowlist, canonical parsing, unknown-key stability, all declared inputs, and byte-based Vanessa source-build identity are covered. |
-| 2026-09-12 | STAB-02 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `0ba05bc`. |
-| 2026-09-12 | STAB-07 implemented and its owner suite passed. | `SourceDeliveryQueue.Tests.ps1`: 9 passed, 0 failed, 225.12 seconds. Resume pins a recorded trusted master ancestor; malformed, missing, and untrusted plan inputs fail closed. |
-| 2026-09-12 | STAB-07 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `a5db5a9`. |
-| 2026-09-12 | STAB-03a implementation prepared in an isolated worktree. | Python remote-work suite: 355 passed, 0 failed. Integration was paused because the existing lifecycle waiter regression exposed a direct-launch `PSModulePath` defect before database admission. |
-| 2026-09-12 | Direct helper launch made independent of inherited Core module ordering and registered. | `LifecycleLockWaiting.Tests.ps1`: 11 passed, 0 failed. Queue head `2a908fd`; Targeted passed 735 tests in 637 seconds. |
-| 2026-09-12 | Targeted routing recorded as a separate optimization defect. | The common lifecycle owner selected 37 Pester files; Pester took 631.33 seconds against a 300-second target. Granularity may change only with explicit impact contracts and no loss of regression coverage. |
-| 2026-09-12 | STAB-03 passed final independent review after iterative fault-injection fixes. | No blocking findings remain: durable pin/ack ordering, legacy migration prevalidation, retention transaction, bounded maintenance I/O, page reclamation, orphan fail-closed behavior, and post-processing cursor checkpoints are covered. |
-| 2026-09-12 | STAB-03 exact-head local owner proof passed and was integrated. | Python remote-work: 378 passed, 0 failed, 377.13 seconds. Windows PowerShell 5.1 `BranchSourceSyncGroup.Tests.ps1`: 23 passed, 0 failed, 247.64 seconds. Owned process count: 0. Integrated head `9d3ef38`; registration pending. |
-| 2026-09-12 | STAB-03 registered after repairing one stale cross-owner lifecycle expectation. | The first Targeted failed because `LifecycleOperationLock.Tests.ps1` still searched for terminal tickets in the active directory. The repaired regression follows the exact ticket into its sharded archive and passed 14/14. The repeated Targeted then passed 768/768 in 933.157 seconds; queue head `ac64992`. |
-| 2026-09-13 | STAB-08 implemented and independently reviewed. | `LocalQualityGate.Tests.ps1`: 28/28; entrypoint/docs contract: 38/38; literal public probes: 2/2. A fresh leaf edit selected 30 tests and passed in 25.562 seconds with 3 executed and 0 reused shards. Previous false-green action/parameter reproducers now fall back to full lifecycle; no blocking review findings remain. |
-| 2026-09-13 | The first STAB-08 registration exposed a fixture compatibility regression and stopped without moving the queue. | `DevelopE2EQualification.Tests.ps1` uses minimal catalogs without semantic targeting. Validation now keeps that optional extension compatible while the production catalog remains enforced by `Agent1cEntrypoint.Tests.ps1`; the focused rerun passed 8/8. |
-| 2026-09-13 | STAB-08 registered in the local shared queue. | Targeted passed 166/166 in 425.685 seconds with 7 executed and 3 valid reused shards; queue head `c8ca6f3`. No publication followed. |
-| 2026-09-13 | Develop publication explicitly paused by the user. | Continue with local commits, focused proof, and `RegisterChange`; do not run `PublishDevelop`, promotion, or release until the follow-up problem review is complete. |

@@ -38,6 +38,41 @@
         }
     }
 
+    It "keeps stabilization current state separate from append-only narrative history" {
+        $planPath = Join-Path $RepoRoot "docs\workflow-stabilization-plan.md"
+        $historyPath = Join-Path $RepoRoot "docs\workflow-stabilization-history.md"
+        $planText = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8
+        $historyText = Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8
+        $current = [regex]::Match(
+            $planText,
+            '(?ms)^## Current state\s+(?<body>.*?)(?=^## Wave 0)'
+        )
+        $current.Success | Should -BeTrue
+        $body = $current.Groups['body'].Value
+
+        foreach ($field in @('Implementation', 'Registration', 'Publication', 'Installation', 'Runtime')) {
+            $body | Should -Match ([regex]::Escape($field))
+        }
+        $body | Should -Match 'Snapshot boundary:'
+        $body | Should -Match 'explicit user hold'
+        $body | Should -Match ([regex]::Escape('[stabilization history](workflow-stabilization-history.md)'))
+        foreach ($id in 1..8 | ForEach-Object { 'STAB-{0:d2}' -f $_ }) {
+            $rows = @($body -split '\r?\n' | Where-Object { $_ -match "^\| $([regex]::Escape($id)) \|" })
+            $rows.Count | Should -Be 1
+            @(($rows[0].Trim('|')) -split '\|').Count | Should -Be 7
+        }
+
+        $planText | Should -Not -Match '(?m)^## Execution log$'
+        $historyText | Should -Match '(?m)^## Execution log$'
+        $historyText | Should -Match 'append-only narrative ledger'
+        $historyText | Should -Match 'authoritative\s+raw registration, qualification, publication, and resource evidence'
+        $records = @($historyText -split '\r?\n' | Where-Object { $_ -match '^\| \d{4}-\d{2}-\d{2} \|' })
+        $records.Count | Should -BeGreaterOrEqual 1
+        foreach ($marker in @('Stabilization started', 'STAB-01', 'STAB-02', 'STAB-03', 'STAB-07', 'STAB-08', 'Develop publication explicitly paused')) {
+            @($records | Where-Object { $_ -match [regex]::Escape($marker) }).Count | Should -BeGreaterOrEqual 1
+        }
+    }
+
     It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
         ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 775
