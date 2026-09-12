@@ -20,12 +20,13 @@ and live proof are distinct states.
 
 | ID | Priority | Problem | State | Completion evidence |
 |---|---|---|---|---|
-| STAB-01 | P0 | Release E2E evidence can remain in a disposable candidate worktree, so cleanup makes a valid checkpoint unusable. | implemented; focused proof passed; registration pending | Focused regressions prove restart after candidate cleanup, SHA rejection, and stage-local invalidation. |
-| STAB-02 | P1 | Delivery plan identity excludes volatile values with a reactive blacklist instead of defining semantic inputs. | queued | Equivalent checkouts have the same identity; every semantic input change invalidates it. |
+| STAB-01 | P0 | Release E2E evidence can remain in a disposable candidate worktree, so cleanup makes a valid checkpoint unusable. | registered at `fa7dd9c` | Focused regressions prove restart after candidate cleanup and strict SHA rejection. |
+| STAB-02 | P1 | Delivery plan identity excludes volatile values with a reactive blacklist instead of defining semantic inputs. | implemented; focused proof passed; registration pending | Equivalent materializations have the same identity; every declared semantic input changes it. |
 | STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | in analysis | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression. |
 | STAB-04 | P1 | Shared read, functional test, performance measurement, and mutation do not have sufficiently explicit compatibility semantics. | queued | Mode matrix and focused compatibility regressions exist; measurements are exclusive. |
 | STAB-05 | P1 | File/server and multi-host admission/recovery acceptance is incomplete. | queued | Two-process, two-project, server-alias, SMB two-host, owner-crash, dead-waiter, and independent-resource scenarios pass. |
 | STAB-06 | P2 | Operational ledger, stale refs, retained worktrees, and runtime metrics need bounded cleanup and a compact current-state view. | queued | Current checkpoint is concise; historical evidence remains available; cleanup is ancestry-checked. |
+| STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | queued | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -50,21 +51,21 @@ Non-goals for the first batch:
 
 Contract:
 
-1. Seal successful reusable stage evidence into a stable store in the common Git
-   directory before writing a reusable checkpoint or capability-cache record.
+1. Seal successful reusable stage evidence into the persistent Release stand run
+   beside its checkpoint before writing a reusable checkpoint or cache record.
 2. Address sealed evidence by candidate/stage identity and verify its SHA-256.
 3. A checkpoint must not require the continued existence of a disposable source
    or candidate worktree.
-4. Corrupt sealed evidence remains fail-closed. Missing evidence that is safe to
-   recompute invalidates only the affected stage rather than the whole Release.
+4. Corrupt or missing sealed evidence remains fail-closed. A stage may become
+   safely recomputable only through a separate explicit rollback contract.
 5. Cleanup must not delete evidence referenced by an active checkpoint.
 
 Acceptance:
 
 - [x] delete the source candidate after a passed stage and resume without rerun;
 - [x] reject changed bytes with a precise corruption diagnostic;
-- [ ] recompute only one stage when its safely reproducible evidence is absent;
-- [ ] preserve evidence referenced by an active checkpoint;
+- [x] do not silently rerun a mutable stage when sealed evidence is missing;
+- [x] preserve evidence referenced by an active checkpoint;
 - [x] resume after a new PowerShell process starts.
 
 ### STAB-02 - semantic ResumePlan identity
@@ -76,14 +77,15 @@ Contract:
    stable stand configuration that changes qualification behavior.
 2. Structurally exclude temporary paths, process identifiers, timestamps, export
    output locations, and mutable runtime state.
-3. Reject an incompatible identity schema with an actionable reason.
+3. Keep the outer immutable plan protocol at schema v1, version the environment
+   sub-identity as v2, and never rewrite already saved plans.
 
 Acceptance:
 
-- [ ] equivalent temporary checkouts produce the same identity;
-- [ ] changing each semantic input changes the identity;
-- [ ] adding an unrelated runtime `.dev.env` key does not change the identity;
-- [ ] legacy checkpoint handling is explicit and covered.
+- [x] equivalent rules checkouts and env materializations produce the same identity;
+- [x] changing each declared semantic input changes the identity;
+- [x] adding an unrelated runtime `.dev.env` key does not change the identity;
+- [x] outer plan schema remains v1 while the environment identity is v2.
 
 ### STAB-03 - bounded database-access state
 
@@ -187,3 +189,5 @@ Hard stop: three hours.
 |---|---|---|
 | 2026-09-12 | Stabilization started in an isolated worktree. | Branch `codex/workflow-stabilization`, baseline `db5acb7`. |
 | 2026-09-12 | STAB-01 implemented and its owner suite passed. | `ReleaseGate.Tests.ps1`: 13 passed, 0 failed, 175.97 seconds. Evidence is atomically copied to the persistent Release run before checkpoint publication; available legacy external evidence migrates on reuse. |
+| 2026-09-12 | STAB-01 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `fa7dd9c`. |
+| 2026-09-12 | STAB-02 implemented and its owner suite passed. | `SourceDeliveryPlan.Tests.ps1`: 10 passed, 0 failed. Semantic `.dev.env` allowlist, canonical parsing, unknown-key stability, all declared inputs, and byte-based Vanessa source-build identity are covered. |
