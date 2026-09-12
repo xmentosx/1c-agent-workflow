@@ -61,11 +61,14 @@ def create_plan(spool, identifier):
                   "automaticReplay": False}
         result["planId"] = identity(result)
         path = spool / "recovery-plans" / identifier / (result["planId"] + ".json")
+        # Publish retention authority before the durable plan can escape. A
+        # crash here may leave a bounded stale pin; the reverse order could
+        # leave a valid recovery plan pointing at compacted evidence.
+        coordinator.pin(record["ticket"], "job-recovery-plan:" + result["planId"])
         if not path.exists():
             write_json(path, result)
         elif read_json(path) != result:
             raise WorkError("RECOVERY_PLAN_CONTENT_CHANGED")
-        coordinator.pin(record["ticket"], "job-recovery-plan:" + result["planId"])
         return result
 
 

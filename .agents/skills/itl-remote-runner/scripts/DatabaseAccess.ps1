@@ -259,6 +259,22 @@ function Get-ItlDatabaseSourceSyncPhase {
     return $event
 }
 
+function Confirm-ItlDatabaseSourceSyncPhaseConsumed {
+    param([object]$Owner, [string]$Ticket, [string]$StepId)
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    if ($Ticket -cnotmatch '^[a-f0-9]{32}$' -or $StepId -cnotmatch '^[a-f0-9]{32}$') {
+        throw 'SOURCE_SYNC_PHASE_CONSUMPTION_INVALID'
+    }
+    $payload = [pscustomobject]@{event='source-sync-phase-consumed';ticket=$Ticket;stepId=$StepId} | ConvertTo-Json -Compress
+    $Owner.process.StandardInput.WriteLine($payload)
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -cne 'source-sync-phase-consumed' -or $event.ticket -cne $Ticket -or $event.stepId -cne $StepId) {
+        throw 'SOURCE_SYNC_PHASE_CONSUMPTION_UNCONFIRMED'
+    }
+    return $event
+}
+
 function Publish-ItlDatabaseLifecycleCompletion {
     param([object]$Owner)
     if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }

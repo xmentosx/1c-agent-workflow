@@ -135,6 +135,36 @@ class AccessHostTests(unittest.TestCase):
         self.next(received, "released")
         self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
 
+    def test_source_sync_observation_keeps_pin_until_explicit_consume_ack(self):
+        owner = {"project": str(self.root), "operation": "sync-dev-branches", "parentPid": os.getpid()}
+        record = {"schemaVersion": 2, "groupId": uuid.uuid4().hex, "stepId": uuid.uuid4().hex,
+                  "step": "load", "status": "running", "project": str(self.root), "member": "primary",
+                  "members": [{"name": "primary", "project": str(self.root), "target": self.base}],
+                  "sourceFingerprint": "v2|git-tree-sha256|" + "a" * 64,
+                  "sourceCommit": "b" * 40, "exportPath": "src/cf",
+                  "contentKind": "configuration", "extensionName": "", "result": {}}
+        producer, producer_events = self.start(owner=owner, nativeJournalProtocol=1)
+        ticket = self.next(producer_events, "admitted")["proof"]["ticket"]
+        self.send(producer, {"event": "source-sync-phase", "record": record})
+        self.next(producer_events, "source-sync-phase-recorded")
+        self.send(producer, {"event": "release", "cleanupErrors": []})
+        self.next(producer_events, "released")
+        producer.wait(timeout=5)
+        coordinator = Coordinator(self.coordinator)
+        self.assertIn(ticket, coordinator._read_pins()["entries"])
+        consumer, consumer_events = self.start(owner=owner, nativeJournalProtocol=1)
+        self.next(consumer_events, "admitted")
+        self.send(consumer, {"event": "source-sync-phase-read", "ticket": ticket, "record": record})
+        self.next(consumer_events, "source-sync-phase-observed")
+        self.assertIn(ticket, coordinator._read_pins()["entries"])
+        self.send(consumer, {"event": "source-sync-phase-consumed", "ticket": ticket,
+                             "stepId": record["stepId"]})
+        self.next(consumer_events, "source-sync-phase-consumed")
+        self.assertNotIn(ticket, coordinator._read_pins()["entries"])
+        self.send(consumer, {"event": "release", "cleanupErrors": []})
+        self.next(consumer_events, "released")
+        consumer.wait(timeout=5)
+
     def test_portable_parent_is_inherited_and_never_released_by_native_child(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start(inherited=parent.proof())

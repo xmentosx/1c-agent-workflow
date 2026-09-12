@@ -11937,15 +11937,18 @@ function Invoke-BranchSourceSyncLoadPhase {
         [scriptblock]$Action, [switch]$ReplaySafe)
     if ($null -eq $Context) { return (& $Action) }
     $progress = $Context.member.loadProgress
+    $owner = $script:DevBranchMutationDatabaseAdmission.owner
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $completed = @($progress.completed | Where-Object { $_.name -ceq $Name })
     if ($completed.Count -gt 1) { throw 'SOURCE_SYNC_PHASE_DUPLICATE' }
-    if ($completed.Count -eq 1) { return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result) }
+    if ($completed.Count -eq 1) {
+        Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $completed[0].ticket -StepId $completed[0].stepId | Out-Null
+        return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result)
+    }
     $order = @('load','normalize','runtime','cursor','state')
     if (@($progress.completed).Count -ge $order.Count -or $order[@($progress.completed).Count] -cne $Name) {
         throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED'
     }
-    $owner = $script:DevBranchMutationDatabaseAdmission.owner
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     if ($null -ne $progress.pending) {
         $pending = $progress.pending
         if ($pending.record.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
@@ -11955,6 +11958,7 @@ function Invoke-BranchSourceSyncLoadPhase {
                 name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $observation.result)})
             $progress.pending = $null
             Save-BranchSourceSyncLoadProgress -Context $Context
+            Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $pending.ticket -StepId $pending.record.stepId | Out-Null
             return $observation.result
         }
         if (-not $observation.canStart -and -not ($ReplaySafe -and $observation.canResumeLocalSteps)) {
@@ -11992,6 +11996,7 @@ function Invoke-BranchSourceSyncLoadPhase {
         name=$Name;ticket=$owner.proof.ticket;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
     $progress.pending = $null
     Save-BranchSourceSyncLoadProgress -Context $Context
+    Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $owner.proof.ticket -StepId $record.stepId | Out-Null
     return $result
 }
 

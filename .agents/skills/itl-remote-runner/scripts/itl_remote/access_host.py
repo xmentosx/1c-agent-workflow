@@ -85,6 +85,11 @@ def serve(input_stream, output_stream):
                             raise WorkError('SOURCE_SYNC_PHASE_READ_BEFORE_ADMISSION')
                         messages.put(value)
                         continue
+                    if set(value) == {'event', 'ticket', 'stepId'} and value['event'] == 'source-sync-phase-consumed':
+                        if not admitted.is_set():
+                            raise WorkError('SOURCE_SYNC_PHASE_CONSUME_BEFORE_ADMISSION')
+                        messages.put(value)
+                        continue
                     if set(value) == {"event", "record", "parent"} and value['event'] == 'continuation-plan':
                         if not admitted.is_set():
                             raise WorkError('NATIVE_CONTINUATION_BEFORE_ADMISSION')
@@ -164,6 +169,10 @@ def serve(input_stream, output_stream):
             if value['event'] == 'source-sync-phase-read':
                 from . import native_source_sync
                 emit(native_source_sync.observe(lease, value['ticket'], value['record']))
+                continue
+            if value['event'] == 'source-sync-phase-consumed':
+                from . import native_source_sync
+                emit(native_source_sync.consume(lease, value['ticket'], value['stepId']))
                 continue
             status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,

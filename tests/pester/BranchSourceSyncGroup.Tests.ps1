@@ -334,6 +334,23 @@
             $script:groupNormalizes | Should -Be @('primary','peer-a','peer-b')
         }
 
+        It 'retries consume acknowledgement after durable phase save and pipe loss without replaying the phase' {
+            $script:groupFailRuntime = $false
+            $script:consumeImplementation = (Get-Command Confirm-ItlDatabaseSourceSyncPhaseConsumed).ScriptBlock
+            $script:consumeCalls = 0
+            Mock Confirm-ItlDatabaseSourceSyncPhaseConsumed {
+                param($Owner, $Ticket, $StepId)
+                $script:consumeCalls++
+                if ($script:consumeCalls -eq 1) { throw 'injected consume pipe loss' }
+                & $script:consumeImplementation -Owner $Owner -Ticket $Ticket -StepId $StepId
+            }
+            { Sync-DevBranches } | Should -Throw '*injected consume pipe loss*'
+            $script:groupLoads | Should -Be @('primary')
+            Sync-DevBranches
+            $script:groupLoads | Should -Be @('primary','peer-a','peer-b')
+            $script:consumeCalls | Should -BeGreaterThan 1
+        }
+
         It 'preserves a foreign cursor edit after completed load instead of absorbing it into the continuation' {
             { Sync-DevBranches } | Should -Throw '*injected runtime refresh failure*'
             Write-Utf8Text -Path (Join-Path $script:primaryRoot 'src/cf/ConfigDumpInfo.xml') -Value 'foreign cursor edit'
