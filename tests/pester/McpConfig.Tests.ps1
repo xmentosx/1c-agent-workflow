@@ -1204,9 +1204,13 @@
             Set-Content -LiteralPath (Join-Path $localHome "state.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action vibecoding1c-mcp-status 2>&1
-            $LASTEXITCODE | Should -Be 0
-            $statusText = ($output -join [Environment]::NewLine)
+            $probe = Invoke-Agent1cEntrypointProbe `
+                -ProbeId 'mcp-status-groups' `
+                -HelperPath $HelperPath `
+                -ProjectRoot $projectRoot `
+                -Action 'vibecoding1c-mcp-status'
+            $probe.exitCode | Should -Be 0
+            $statusText = $probe.combinedText
 
             $statusText | Should -Match "vibecoding1c MCP active servers: .*itl-1c-docs/local/stale"
             $statusText | Should -Match "vibecoding1c MCP skipped servers: .*templates/global/remote/missing-settings"

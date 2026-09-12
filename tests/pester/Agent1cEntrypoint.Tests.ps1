@@ -23,10 +23,17 @@ Describe "Agent 1C entrypoint semantic contract" {
         $owners | Should -Be $validateSet
     }
 
-    It "keeps every declared semantic owner tied to an existing focused test" {
+    It "keeps every selective node tied to a literal public-entrypoint probe" {
         foreach ($owner in @($Catalog.semanticTargeting.owners.PSObject.Properties)) {
             foreach ($test in @($owner.Value.tests)) {
                 Test-Path -LiteralPath (Join-Path $RepoRoot ([string]$test).Replace('/', '\')) -PathType Leaf | Should -BeTrue -Because "$($owner.Name) must remain executable"
+            }
+        }
+        $probeTests = @($Catalog.semanticTargeting.owners.PSObject.Properties | ForEach-Object { @($_.Value.tests) } | Sort-Object -Unique)
+        $probes = @(Get-Agent1cEntrypointProbeInventory -RepositoryRoot $RepoRoot -TestPaths $probeTests)
+        foreach ($action in @($Catalog.semanticTargeting.selectiveNodes.actions.PSObject.Properties)) {
+            foreach ($probeId in @($action.Value.probes)) {
+                @($probes | Where-Object { $_.id -ceq $probeId -and $_.action -ceq $action.Name }) | Should -HaveCount 1
             }
         }
     }

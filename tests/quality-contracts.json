@@ -510,6 +510,20 @@
       "Resolve-Agent1cFullPath": "core",
       "Add-Agent1cReexecArgument": "core",
       "Get-Agent1cReexecArguments": "core"
+    },
+    "selectiveNodes": {
+      "actions": {
+        "update-auxiliary-contour": {
+          "owners": ["auxiliary"],
+          "probes": ["auxiliary-update-readonly"]
+        },
+        "vibecoding1c-mcp-status": {
+          "owners": ["mcp"],
+          "probes": ["mcp-status-groups"]
+        }
+      },
+      "parameters": {},
+      "functions": {}
     }
   },
   "lifecycleActions": {

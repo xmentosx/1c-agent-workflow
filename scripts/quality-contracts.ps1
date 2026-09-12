@@ -127,19 +127,24 @@ function Resolve-Agent1cSemanticImpact {
     $tests = New-Object System.Collections.Generic.List[string]
     foreach ($test in @($semantic.commonTests)) { $tests.Add(([string]$test).Replace('\', '/')) | Out-Null }
     foreach ($definition in @(
-        [pscustomobject]@{ kind = "parameter"; plural = "parameters"; owners = $semantic.parameterOwners },
-        [pscustomobject]@{ kind = "function"; plural = "functions"; owners = $semantic.functionOwners },
-        [pscustomobject]@{ kind = "action"; plural = "actions"; owners = $semantic.actionOwners }
+        [pscustomobject]@{ kind = "parameter"; plural = "parameters"; owners = $semantic.parameterOwners; selective = $semantic.selectiveNodes.parameters },
+        [pscustomobject]@{ kind = "function"; plural = "functions"; owners = $semantic.functionOwners; selective = $semantic.selectiveNodes.functions },
+        [pscustomobject]@{ kind = "action"; plural = "actions"; owners = $semantic.actionOwners; selective = $semantic.selectiveNodes.actions }
     )) {
         foreach ($name in @($before.($definition.plural).Keys | Sort-Object)) {
             if ([string]$before.($definition.plural)[$name] -ceq [string]$after.($definition.plural)[$name]) { continue }
             $ownerProperty = $definition.owners.PSObject.Properties[[string]$name]
             if (-not $ownerProperty) { return & $fallback ("unknown-$($definition.kind)-$name") }
-            $ownerName = [string]$ownerProperty.Value
-            $owner = $semantic.owners.PSObject.Properties[$ownerName]
-            if (-not $owner) { return & $fallback ("unknown-owner-$ownerName") }
-            foreach ($test in @($owner.Value.tests)) { $tests.Add(([string]$test).Replace('\', '/')) | Out-Null }
-            $impacts.Add([pscustomobject]@{ kind = [string]$definition.kind; name = [string]$name; owner = $ownerName }) | Out-Null
+            $selectiveProperty = $definition.selective.PSObject.Properties[[string]$name]
+            if (-not $selectiveProperty) { return & $fallback ("unproven-$($definition.kind)-$name") }
+            $ownerNames = @($selectiveProperty.Value.owners | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            if ($ownerNames.Count -eq 0 -or [string]$ownerProperty.Value -notin $ownerNames) { return & $fallback ("invalid-selective-owner-$name") }
+            foreach ($ownerName in $ownerNames) {
+                $owner = $semantic.owners.PSObject.Properties[$ownerName]
+                if (-not $owner) { return & $fallback ("unknown-owner-$ownerName") }
+                foreach ($test in @($owner.Value.tests)) { $tests.Add(([string]$test).Replace('\', '/')) | Out-Null }
+                $impacts.Add([pscustomobject]@{ kind = [string]$definition.kind; name = [string]$name; owner = $ownerName }) | Out-Null
+            }
         }
     }
     if ($impacts.Count -eq 0) { return & $fallback "no-semantic-impact" }
@@ -149,6 +154,59 @@ function Resolve-Agent1cSemanticImpact {
         impacts = @($impacts | ForEach-Object { $_ })
         tests = @($tests | Sort-Object -Unique)
     }
+}
+
+function Get-Agent1cEntrypointProbeInventory {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string[]]$TestPaths
+    )
+
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($relativePath in @($TestPaths | Sort-Object -Unique)) {
+        $path = Join-Path $RepositoryRoot ([string]$relativePath).Replace('/', '\')
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+        if (@($errors).Count -gt 0) { throw "Unable to parse entrypoint probe test '$relativePath': $($errors[0].Message)" }
+        foreach ($command in @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq 'Invoke-Agent1cEntrypointProbe'
+        }, $true))) {
+            $arguments = @{}
+            for ($index = 1; $index -lt $command.CommandElements.Count; $index++) {
+                $element = $command.CommandElements[$index]
+                if ($element -isnot [Management.Automation.Language.CommandParameterAst]) { continue }
+                if ($null -ne $element.Argument -or $index + 1 -ge $command.CommandElements.Count) {
+                    throw "Entrypoint probe arguments must use separate literal values in '$relativePath'."
+                }
+                $arguments[[string]$element.ParameterName] = $command.CommandElements[++$index]
+            }
+            $probeId = $arguments['ProbeId']; $action = $arguments['Action']; $probeArguments = $arguments['Arguments']
+            if ($probeId -isnot [Management.Automation.Language.StringConstantExpressionAst] -or
+                $action -isnot [Management.Automation.Language.StringConstantExpressionAst]) {
+                throw "Entrypoint probes must declare literal ProbeId and Action in '$relativePath'."
+            }
+            $parameterNames = @()
+            if ($null -ne $probeArguments) {
+                if ($probeArguments -isnot [Management.Automation.Language.HashtableAst]) {
+                    throw "Entrypoint probe Arguments must be a literal hashtable in '$relativePath'."
+                }
+                $parameterNames = @($probeArguments.KeyValuePairs | ForEach-Object {
+                    if ($_.Item1 -isnot [Management.Automation.Language.StringConstantExpressionAst]) {
+                        throw "Entrypoint probe parameter names must be literal in '$relativePath'."
+                    }
+                    [string]$_.Item1.Value
+                } | Sort-Object -Unique)
+            }
+            $records.Add([pscustomobject]@{
+                id = [string]$probeId.Value
+                action = [string]$action.Value
+                parameters = $parameterNames
+                test = ([string]$relativePath).Replace('\', '/')
+            }) | Out-Null
+        }
+    }
+    return @($records | ForEach-Object { $_ })
 }
 
 function Test-QualityContractCatalog {
@@ -287,6 +345,41 @@ function Test-QualityContractCatalog {
     }
     foreach ($name in @($semantic.functionOwners.PSObject.Properties | ForEach-Object { [string]$_.Name })) {
         if (-not $entrypointModel.functions.ContainsKey($name)) { throw "semanticTargeting functionOwners references missing function '$name'." }
+    }
+    $selectiveNodesProperty = $semantic.PSObject.Properties['selectiveNodes']
+    if (-not $selectiveNodesProperty) { throw 'semanticTargeting must separate selectiveNodes from informational owner mappings.' }
+    foreach ($kind in @('actions', 'parameters', 'functions')) {
+        if (-not $selectiveNodesProperty.Value.PSObject.Properties[$kind]) { throw "semanticTargeting.selectiveNodes must define $kind." }
+    }
+    $probeTestPaths = @($semantic.owners.PSObject.Properties | ForEach-Object { @($_.Value.tests) } | Sort-Object -Unique)
+    $probes = @(Get-Agent1cEntrypointProbeInventory -RepositoryRoot $RepositoryRoot -TestPaths $probeTestPaths)
+    $duplicateProbeIds = @($probes | Group-Object id | Where-Object Count -ne 1 | ForEach-Object { [string]$_.Name })
+    if ($duplicateProbeIds.Count -gt 0) { throw "Entrypoint probe ids must be unique: $($duplicateProbeIds -join ', ')." }
+    foreach ($definition in @(
+        [pscustomobject]@{kind='action'; plural='actions'; mappings=$semantic.actionOwners; inventory=$entrypointModel.actions},
+        [pscustomobject]@{kind='parameter'; plural='parameters'; mappings=$semantic.parameterOwners; inventory=$entrypointModel.parameters},
+        [pscustomobject]@{kind='function'; plural='functions'; mappings=$semantic.functionOwners; inventory=$entrypointModel.functions}
+    )) {
+        foreach ($node in @($selectiveNodesProperty.Value.($definition.plural).PSObject.Properties)) {
+            $name = [string]$node.Name
+            if (-not $definition.inventory.ContainsKey($name)) { throw "Selective $($definition.kind) '$name' is missing from the entrypoint." }
+            $owners = @($node.Value.owners | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            $probeIds = @($node.Value.probes | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            if ($owners.Count -eq 0 -or $probeIds.Count -eq 0 -or $owners.Count -ne @($node.Value.owners).Count -or $probeIds.Count -ne @($node.Value.probes).Count) {
+                throw "Selective $($definition.kind) '$name' must declare unique non-empty owners and probes."
+            }
+            $classifiedOwner = $definition.mappings.PSObject.Properties[$name]
+            if (-not $classifiedOwner -or [string]$classifiedOwner.Value -notin $owners -or @($owners | Where-Object { $_ -notin $ownerNames }).Count -gt 0) {
+                throw "Selective $($definition.kind) '$name' is not covered by its classified owner."
+            }
+            $ownerTests = @($owners | ForEach-Object { $ownerName = $_; @($semantic.owners.PSObject.Properties[$ownerName].Value.tests) } | ForEach-Object { ([string]$_).Replace('\', '/') } | Sort-Object -Unique)
+            foreach ($probeId in $probeIds) {
+                $probe = @($probes | Where-Object { [string]$_.id -ceq $probeId })
+                if ($probe.Count -ne 1 -or [string]$probe[0].test -notin $ownerTests) { throw "Selective $($definition.kind) '$name' references unowned or missing probe '$probeId'." }
+                if ($definition.kind -eq 'action' -and [string]$probe[0].action -cne $name) { throw "Probe '$probeId' does not execute selective action '$name'." }
+                if ($definition.kind -eq 'parameter' -and $name -notin @($probe[0].parameters)) { throw "Probe '$probeId' does not bind selective parameter '$name'." }
+            }
+        }
     }
     }
     return $true

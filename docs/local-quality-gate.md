@@ -59,10 +59,12 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 назначить владельца — полного fallback-прогона нет.
 
 Для точного `.agents/skills/1c-workflow/scripts/agent-1c.ps1` Targeted selection
-schema v2 сравнивает baseline и current PowerShell AST. Только тело literal
-`switch ($Action)` arm, явно объявленный параметр или именованная функция могут
-выбрать common-plus-domain tests. Изменение общего startup/dispatch/completion
-кода, `Action`/`ValidateSet`, метки arm, динамический или неизвестный узел,
+schema v2 сравнивает baseline и current PowerShell AST. Common-plus-domain tests
+может выбрать только literal `switch ($Action)` arm, явно внесённый в
+`semanticTargeting.selectiveNodes` вместе с literal public-entrypoint probe из
+owner test. Информационной привязки action к owner для этого недостаточно.
+Любой недоказанный parameter/function/action, общий startup/dispatch/completion
+код, `Action`/`ValidateSet`, метка arm, динамический или неизвестный узел,
 rename, parse error и отсутствующий baseline выбирают полный `lifecycle`
 contract. Full и Develop по-прежнему используют полный inventory.
 

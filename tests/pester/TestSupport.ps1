@@ -79,6 +79,30 @@ function Invoke-TestPowerShellFile {
     }
 }
 
+function Invoke-Agent1cEntrypointProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProbeId,
+        [Parameter(Mandatory = $true)][string]$HelperPath,
+        [Parameter(Mandatory = $true)][string]$ProjectRoot,
+        [Parameter(Mandatory = $true)][string]$Action,
+        [hashtable]$Arguments = @{}
+    )
+
+    if ($ProbeId -notmatch '^[a-z0-9][a-z0-9-]{0,99}$') { throw "Invalid entrypoint probe id: $ProbeId" }
+    $commandArguments = New-Object System.Collections.Generic.List[string]
+    foreach ($value in @('-ProjectRoot', $ProjectRoot, '-Action', $Action)) { $commandArguments.Add([string]$value) | Out-Null }
+    foreach ($name in @($Arguments.Keys | Sort-Object)) {
+        $value = $Arguments[$name]
+        if ($value -is [bool]) {
+            if ($value) { $commandArguments.Add("-$name") | Out-Null }
+            continue
+        }
+        $commandArguments.Add("-$name") | Out-Null
+        foreach ($item in @($value)) { $commandArguments.Add([string]$item) | Out-Null }
+    }
+    return Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @($commandArguments)
+}
+
 function New-TestBranchSeedFixture {
     param(
         [Parameter(Mandatory = $true)][string]$ProjectRoot,
