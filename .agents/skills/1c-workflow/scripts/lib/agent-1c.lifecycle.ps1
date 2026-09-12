@@ -908,6 +908,7 @@ function Get-ConfigSourceFingerprint {
         fingerprint = "v2|git-tree-sha256|$treeHash"
         fileCount = $entries.Count
         absoluteExportPath = $absoluteExportPath
+        repoPath = $normalizedExportPath
         treeObjectId = $treeObjectId
     }
 }
@@ -3086,7 +3087,7 @@ function Load-ConfigFromFiles {
         -SourceFingerprint $source.fingerprint `
         -SourceTreeObjectId $sourceTreeObjectId `
         -SourceCommit $currentCommit `
-        -ExportPath $ExportPath `
+        -ExportPath ([string](Get-StateValue -State $source -Name "repoPath" -Default $ExportPath)) `
         -ContentKind $ContentKind `
         -ExtensionName $ExtensionName `
         -Mode $Mode `

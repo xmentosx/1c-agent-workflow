@@ -289,7 +289,7 @@ Describe "1C Designer load proof invalidation" {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $script:LoadCalls = 0
                 function Get-ConfigSourceFingerprint {
-                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\src" }
+                    [pscustomobject]@{ fingerprint = "fingerprint-a"; treeObjectId = ("a" * 40); fileCount = 1; absoluteExportPath = "C:\repo\src\cf"; repoPath = "src/cf" }
                 }
                 function Get-ConfigLoadChangeSet {
                     [pscustomobject]@{ files = @(); currentCommit = "head"; absoluteExportPath = "C:\src"; requiresFullLoad = $false }
@@ -318,7 +318,7 @@ Describe "1C Designer load proof invalidation" {
                     configLoadStatus = "passed"
                     enterpriseNormalizationStatus = "passed"
                 }
-                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "src/cf" -Mode Full 6>$null
+                $load = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State $state -ExportPath "C:\repo\src\cf" -Mode Full 6>$null
                 [pscustomobject]@{ load = $load; calls = $script:LoadCalls; resetConfigDumpInfo = $script:ResetConfigDumpInfo }
             }
 

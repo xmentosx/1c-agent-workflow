@@ -1915,6 +1915,8 @@ exit 0
             $result.stagedUnborn.fingerprint | Should -Be $result.unborn.fingerprint
             $result.clean.fingerprint | Should -Be $result.unborn.fingerprint
             $result.absolute.fingerprint | Should -Be $result.clean.fingerprint
+            $result.clean.repoPath | Should -Be "src/cf"
+            $result.absolute.repoPath | Should -Be "src/cf"
             $result.clean.fileCount | Should -Be 1
             $result.cursorOnly.fingerprint | Should -Be $result.clean.fingerprint
             $result.dirty.fingerprint | Should -Not -Be $result.clean.fingerprint

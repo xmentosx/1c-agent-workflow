@@ -67,7 +67,10 @@ finally { Exit-Agent1cLifecycleOperation }
                     if ($candidate.elapsedSeconds -gt $first.elapsedSeconds) { $candidate } else { $null }
                 }
                 $second.elapsedSeconds | Should -BeGreaterThan $first.elapsedSeconds
-                $status = Get-Content -LiteralPath (Join-Path $root 'wait-status.json') -Raw | ConvertFrom-Json
+                $status = Wait-Fixture {
+                    try { Get-Content -LiteralPath (Join-Path $root 'wait-status.json') -Raw | ConvertFrom-Json }
+                    catch [IO.IOException] { $null }
+                }
                 $status.status | Should -Be running
                 $status.liveness | Should -Be 'waiting-lock'
                 if ($Resource -eq 'runtime-mcp') { (Test-Agent1cLifecycleLockHeld $root) | Should -BeFalse }
