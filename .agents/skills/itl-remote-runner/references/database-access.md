@@ -45,9 +45,15 @@ values through a restartable policy-first transaction, so an interrupted
 shorter horizon can only retain pins too long. A compaction invocation visits
 at most 512 archive records regardless of `--shards` and configured batch size.
 Run `access-cleanup --coordinator <directory> [--shards <1-256>]` to retry at
-most 128 sharded cleanup debts per invocation. Admission and status neither
-scan nor rewrite cleanup debt. Run compaction and cleanup as maintenance; they
-never run in admission or status.
+most 128 cleanup debts per invocation. Both maintenance routes use persisted
+fixed-size queue pages and direct slot reads; they do not enumerate an archive
+or debt shard before applying the cap. Admission and status neither scan nor
+rewrite cleanup debt. Run compaction and cleanup as maintenance; they never run
+in admission or status. The unpublished intermediate `cleanup-debt.json`
+format is deliberately unsupported: its presence fails closed with
+`INFOBASE_ACCESS_CLEANUP_DEBT_LEGACY_UNSUPPORTED` instead of silently ignoring
+possible debt; use the intermediate build that created that authority to drain
+it before upgrading.
 
 A durable recovery plan pins its ticket before recovery can make it terminal
 and removes only its own pin after terminal state is reflected in the job

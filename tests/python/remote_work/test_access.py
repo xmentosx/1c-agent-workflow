@@ -559,6 +559,15 @@ class AccessTests(unittest.TestCase):
                 self.assertFalse(coordinator._archive_path(terminal["ticket"]).exists())
                 self.assertEqual({}, coordinator._read_cleanup_debt()["items"])
 
+    def test_unshipped_monolithic_cleanup_debt_fails_closed_even_beside_sharded_state(self):
+        root = self.coordinator
+        root.mkdir(parents=True)
+        (root / "cleanup-debt").mkdir()
+        write_json(root / "cleanup-debt" / "state.json", {"fixture": True})
+        write_json(root / "cleanup-debt.json", {"schemaVersion": 1, "items": {}})
+        with self.assertRaisesRegex(WorkError, "^INFOBASE_ACCESS_CLEANUP_DEBT_LEGACY_UNSUPPORTED"):
+            Coordinator(root)
+
     def test_corrupt_active_record_blocks_only_its_indexed_resources(self):
         coordinator = Coordinator(self.coordinator)
         with coordinator.mutex(time.monotonic() + 5, lambda: False):
@@ -642,8 +651,13 @@ class AccessTests(unittest.TestCase):
                                   "reason": "fixture", "owner": {}})
         for number in range(20000):
             ticket = f"{number % 256:02x}{number:030x}"
-            write_json(coordinator._cleanup_debt_item_path("alive-sidecar", ticket),
-                       {"kind": "alive-sidecar", "ticket": ticket, "attempts": 0, "createdAt": stamp()})
+            item = {"kind": "alive-sidecar", "ticket": ticket, "attempts": 0,
+                    "createdAt": stamp(), "queueId": number}
+            write_json(coordinator._cleanup_debt_item_path("alive-sidecar", ticket), item)
+            write_json(coordinator._queue_slot_path(coordinator.cleanup_queue_path, number),
+                       {"schemaVersion": 1, "id": number, "status": "active",
+                        "kind": "alive-sidecar", "ticket": ticket})
+        write_json(coordinator.cleanup_tail_path, {"schemaVersion": 1, "nextId": 20000})
         debt_reads, debt_writes = [], []
         original_read, original_write = access_module.read_json, access_module.write_json
         def observed_read(path):
@@ -675,10 +689,11 @@ class AccessTests(unittest.TestCase):
         def maintenance_write(path, value):
             maintenance_writes.append(Path(path))
             return original_write(path, value)
-        with mock.patch("itl_remote.access.write_json", side_effect=maintenance_write):
+        with mock.patch("itl_remote.access.write_json", side_effect=maintenance_write), \
+                mock.patch.object(Path, "glob", side_effect=AssertionError("unbounded directory enumeration")):
             result = coordinator.cleanup(256)
         self.assertLessEqual(result["attempted"], access_module.MAX_CLEANUP_ITEMS_PER_CALL)
-        self.assertLessEqual(len(maintenance_writes), 2)
+        self.assertLessEqual(len(maintenance_writes), access_module.MAX_CLEANUP_ITEMS_PER_CALL + 1)
         self.assertGreater(len(list(coordinator.cleanup_debt_path.glob("??/*.json"))), 19000)
 
     def test_retention_preserves_horizon_and_pins_then_compacts_to_exact_tombstone(self):
@@ -694,8 +709,6 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(old, coordinator.record(old["ticket"]))
         self.assertEqual(young, coordinator.record(young["ticket"]))
         coordinator.unpin(old["ticket"], "fixture")
-        # Restart the cursor cycle and visit the two fixture shards again.
-        write_json(coordinator.compaction_path, {"schemaVersion": 1, "nextShard": 0, "afterTicket": ""})
         result = coordinator.compact(2)
         self.assertEqual(1, result["compacted"])
         with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_TICKET_COMPACTED"):
@@ -720,6 +733,7 @@ class AccessTests(unittest.TestCase):
                                       "accessMode": "exclusive", "status": "released",
                                       "createdAt": "2020-01-01T00:00:00+00:00",
                                       "finishedAt": "2020-01-02T00:00:00+00:00", "owner": {}})
+                coordinator._queue_archive_locked(ticket)
                 injected = False
                 def crash_after_publication(actual):
                     nonlocal injected
@@ -736,8 +750,7 @@ class AccessTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_TICKET_COMPACTED"):
                         restarted.record(ticket)
-                self.assertEqual(2 if boundary == "compaction-state" else 1,
-                                 read_json(restarted.compaction_path)["nextShard"])
+                self.assertEqual(0, read_json(restarted.compaction_path)["nextId"])
 
     def test_retention_configuration_restarts_after_every_publication_boundary(self):
         boundaries = ("retention-config-transaction", "retention-config-policy",
@@ -781,10 +794,78 @@ class AccessTests(unittest.TestCase):
                         "accessMode": "exclusive", "status": "released",
                         "createdAt": "2020-01-01T00:00:00+00:00",
                         "finishedAt": "2020-01-02T00:00:00+00:00", "owner": {}})
-        result = coordinator.compact(256)
+            coordinator._queue_archive_locked(ticket)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        with mock.patch.object(Path, "glob", side_effect=AssertionError("unbounded directory enumeration")):
+            result = coordinator.compact(256)
         self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["visited"])
-        self.assertEqual(0, result["nextShard"])
-        self.assertTrue(read_json(coordinator.compaction_path)["afterTicket"])
+        self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["scanned"])
+        self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["nextId"])
+
+    def test_compaction_queue_cycles_ineligible_records_without_duplicates_and_revisits_tombstones(self):
+        class Clock(datetime):
+            current = datetime(2026, 1, 10, tzinfo=timezone.utc)
+            @classmethod
+            def now(cls, tz=None):
+                return cls.current
+        coordinator = Coordinator(self.coordinator)
+        coordinator.configure_retention(1, 1, 128)
+        tickets = [f"{number + 1:032x}" for number in range(4)]
+        records = []
+        for number, ticket in enumerate(tickets):
+            value = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                     "token": "f" * 64, "sequence": number + 1, "resources": ["base-a"],
+                     "accessMode": "exclusive", "status": "released",
+                     "createdAt": "2020-01-01T00:00:00+00:00",
+                     "finishedAt": (Clock.current if number == 0 else datetime(2020, 1, 2, tzinfo=timezone.utc)).isoformat(),
+                     "owner": {}}
+            records.append(value)
+            write_json(coordinator._archive_path(ticket), value)
+            coordinator._queue_archive_locked(ticket)
+        write_json(coordinator._archive_path(tickets[3]),
+                   {"schemaVersion": 2, "ticket": tickets[3], "status": "released",
+                    "finishedAt": "2020-01-02T00:00:00+00:00", "compactedAt": Clock.current.isoformat(),
+                    "recordIdentity": "e" * 64})
+        write_json(coordinator.pins_path, {"schemaVersion": 1, "entries": {
+            tickets[1]: {"fixture": (Clock.current + timedelta(days=1)).isoformat()}}})
+        debt_path = coordinator._cleanup_debt_item_path("alive-sidecar", tickets[2])
+        write_json(debt_path, {"kind": "alive-sidecar", "ticket": tickets[2],
+                               "attempts": 0, "createdAt": Clock.current.isoformat()})
+        with mock.patch.object(access_module, "datetime", Clock):
+            first = coordinator.compact(256)
+            second = coordinator.compact(256)
+            self.assertEqual(4, first["visited"])
+            self.assertEqual(4, second["visited"])
+            self.assertEqual(0, read_json(coordinator.compaction_path)["nextId"])
+            self.assertEqual(4, read_json(coordinator.compaction_tail_path)["nextId"])
+            Clock.current += timedelta(days=2)
+            write_json(coordinator.pins_path, {"schemaVersion": 1, "entries": {}})
+            third = coordinator.compact(256)
+        self.assertEqual(1, third["deleted"])
+        self.assertFalse(coordinator._archive_path(tickets[3]).exists())
+        self.assertEqual(4, read_json(coordinator.compaction_tail_path)["nextId"])
+        self.assertEqual(records[2], read_json(coordinator._archive_path(tickets[2])))
+
+    def test_compaction_queue_is_idempotent_and_fails_closed_on_a_gap_or_duplicate_pointer(self):
+        coordinator = Coordinator(self.coordinator)
+        ticket = "d" * 32
+        record = self.legacy_record(ticket, 1, "released")
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        self.assertEqual(1, read_json(coordinator.compaction_tail_path)["nextId"])
+        coordinator._queue_archive_locked(ticket)
+        self.assertEqual(1, read_json(coordinator.compaction_tail_path)["nextId"])
+        slot = coordinator._queue_slot_path(coordinator.compaction_queue_path, 0)
+        saved_slot = read_json(slot)
+        slot.unlink()
+        with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID"):
+            coordinator.compact()
+        write_json(slot, saved_slot)
+        write_json(coordinator._compaction_pointer_path(ticket),
+                   {"schemaVersion": 1, "ticket": ticket, "id": 1})
+        with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID"):
+            coordinator.compact()
 
     def test_terminal_ticket_is_addressable_from_archive_and_alive_sidecar_is_removed(self):
         coordinator = Coordinator(self.coordinator)

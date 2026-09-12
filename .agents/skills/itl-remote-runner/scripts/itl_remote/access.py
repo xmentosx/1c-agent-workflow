@@ -26,6 +26,7 @@ DEFAULT_TOMBSTONE_RETENTION_DAYS = 730
 DEFAULT_COMPACTION_BATCH_SIZE = 128
 MAX_COMPACTION_RECORDS_PER_CALL = 512
 MAX_CLEANUP_ITEMS_PER_CALL = 128
+MAINTENANCE_PAGE_SIZE = 128
 
 
 def admission_error(code, coordinator, blockers, elapsed):
@@ -98,12 +99,24 @@ class Coordinator:
         self.layout_path = self.tickets / "layout.json"
         self.index_path = self.root / "active-index.json"
         self.archive_root = self.root / "ticket-archive"
+        self.legacy_cleanup_debt_path = self.root / "cleanup-debt.json"
+        if self.legacy_cleanup_debt_path.exists():
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_LEGACY_UNSUPPORTED: " +
+                            str(self.legacy_cleanup_debt_path))
         self.cleanup_debt_path = self.root / "cleanup-debt"
         self.cleanup_debt_path.mkdir(exist_ok=True)
         self.cleanup_state_path = self.root / "cleanup-state.json"
+        self.cleanup_queue_path = self.root / "cleanup-queue"
+        self.cleanup_queue_path.mkdir(exist_ok=True)
+        self.cleanup_tail_path = self.root / "cleanup-tail.json"
         self.retention_path = self.root / "archive-retention.json"
         self.retention_update_path = self.root / "archive-retention-update.json"
         self.compaction_path = self.root / "archive-compaction.json"
+        self.compaction_queue_path = self.root / "archive-compaction-queue"
+        self.compaction_queue_path.mkdir(exist_ok=True)
+        self.compaction_ticket_path = self.root / "archive-compaction-tickets"
+        self.compaction_ticket_path.mkdir(exist_ok=True)
+        self.compaction_tail_path = self.root / "archive-compaction-tail.json"
         self.pins_path = self.root / "archive-pins.json"
 
     def _published(self, boundary):
@@ -213,6 +226,8 @@ class Coordinator:
                 path != self._cleanup_debt_item_path(item.get("kind", ""), item.get("ticket", "")) or
                 type(item.get("attempts")) is not int or item["attempts"] < 0 or
                 not isinstance(item.get("createdAt"), str) or
+                (item.get("queueId") is not None and
+                 (type(item["queueId"]) is not int or item["queueId"] < 0)) or
                 (item["kind"] == "terminal-record" and
                  not re.fullmatch(r"[0-9a-f]{64}", str(item.get("recordIdentity", ""))))):
             raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(path))
@@ -229,6 +244,36 @@ class Coordinator:
         return any(self._cleanup_debt_item_path(kind, ticket).exists()
                    for kind in ("terminal-record", "alive-sidecar"))
 
+    def _queue_slot_path(self, root, number):
+        return root / f"{number // MAINTENANCE_PAGE_SIZE:016x}" / f"{number % MAINTENANCE_PAGE_SIZE:03d}.json"
+
+    def _queue_tail(self, path, code):
+        value = read_json(path) if path.exists() else {"schemaVersion": 1, "nextId": 0}
+        if (not isinstance(value, dict) or value.get("schemaVersion") != 1 or
+                type(value.get("nextId")) is not int or value["nextId"] < 0):
+            raise WorkError(code + ": " + str(path))
+        return value
+
+    def _queue_cleanup_item_locked(self, path, item):
+        tail = self._queue_tail(self.cleanup_tail_path, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID")
+        queue_id = item.get("queueId")
+        if queue_id is None:
+            queue_id = tail["nextId"]
+            item["queueId"] = queue_id
+            write_json(path, item)
+        elif type(queue_id) is not int or queue_id < 0:
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(path))
+        slot = self._queue_slot_path(self.cleanup_queue_path, queue_id)
+        expected = {"schemaVersion": 1, "id": queue_id, "status": "active",
+                    "kind": item["kind"], "ticket": item["ticket"]}
+        if slot.exists() and read_json(slot) != expected:
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_CONFLICT: " + str(slot))
+        if not slot.exists():
+            write_json(slot, expected)
+        if tail["nextId"] <= queue_id:
+            tail["nextId"] = queue_id + 1
+            write_json(self.cleanup_tail_path, tail)
+
     def _schedule_cleanup_locked(self, records):
         for record in records:
             ticket = record["ticket"]
@@ -244,8 +289,10 @@ class Coordinator:
                     expected_stable = {name: expected[name] for name in fields}
                     if stable != expected_stable:
                         raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_CONFLICT: " + ticket)
+                    self._queue_cleanup_item_locked(path, existing)
                     continue
                 write_json(path, expected)
+                self._queue_cleanup_item_locked(path, expected)
                 self._published("cleanup-debt")
 
     def _cleanup_item_locked(self, item):
@@ -279,20 +326,30 @@ class Coordinator:
         if ticket is not None:
             paths = [self._cleanup_debt_item_path(kind, ticket)
                      for kind in ("terminal-record", "alive-sidecar")]
-            return [path for path in paths if path.exists()][:limit]
+            return [(None, path) for path in paths if path.exists()][:limit]
         state = read_json(self.cleanup_state_path) if self.cleanup_state_path.exists() else {
-            "schemaVersion": 1, "nextShard": 0, "afterName": ""}
-        if (not isinstance(state, dict) or set(state) != {"schemaVersion", "nextShard", "afterName"} or
-                state["schemaVersion"] != 1 or type(state["nextShard"]) is not int or
-                not 0 <= state["nextShard"] <= 255 or not isinstance(state["afterName"], str)):
+            "schemaVersion": 2, "nextId": 0}
+        if (not isinstance(state, dict) or state.get("schemaVersion") != 2 or
+                type(state.get("nextId")) is not int or state["nextId"] < 0):
             raise WorkError("INFOBASE_ACCESS_CLEANUP_STATE_INVALID: " + str(self.cleanup_state_path))
-        directory = self.cleanup_debt_path / f"{state['nextShard']:02x}"
-        paths = sorted(path for path in directory.glob("*.json") if path.name > state["afterName"]) if directory.exists() else []
-        selected = paths[:limit]
-        if len(paths) > len(selected):
-            state["afterName"] = selected[-1].name
-        else:
-            state.update(nextShard=(state["nextShard"] + 1) % 256, afterName="")
+        tail = self._queue_tail(self.cleanup_tail_path, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID")
+        selected = []
+        start = state["nextId"] if state["nextId"] < tail["nextId"] else 0
+        stop = min(tail["nextId"], start + limit)
+        for queue_id in range(start, stop):
+            slot = self._queue_slot_path(self.cleanup_queue_path, queue_id)
+            if not slot.exists():
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID: " + str(slot))
+            value = read_json(slot)
+            if value == {"schemaVersion": 1, "id": queue_id, "status": "done"}:
+                continue
+            if (not isinstance(value, dict) or value != {"schemaVersion": 1, "id": queue_id,
+                    "status": "active", "kind": value.get("kind"), "ticket": value.get("ticket")} or
+                    value["kind"] not in ("terminal-record", "alive-sidecar") or
+                    not re.fullmatch(r"[0-9a-f]{32}", str(value["ticket"]))):
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID: " + str(slot))
+            selected.append((slot, self._cleanup_debt_item_path(value["kind"], value["ticket"])))
+        state["nextId"] = 0 if stop >= tail["nextId"] else stop
         write_json(self.cleanup_state_path, state)
         return selected
 
@@ -300,7 +357,7 @@ class Coordinator:
         if type(limit) is not int or not 1 <= limit <= MAX_CLEANUP_ITEMS_PER_CALL:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_LIMIT_INVALID")
         selected = self._cleanup_selection_locked(limit, ticket)
-        for path in selected:
+        for slot, path in selected:
             item = self._validate_cleanup_item(path, read_json(path))
             completed = False
             last_error = None
@@ -316,6 +373,9 @@ class Coordinator:
                         time.sleep(0.05 * (attempt + 1))
             if completed:
                 path.unlink(missing_ok=True)
+                queue_id = item.get("queueId")
+                queue_slot = slot if slot is not None else self._queue_slot_path(self.cleanup_queue_path, queue_id)
+                write_json(queue_slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
             elif last_error is not None:
                 item["attempts"] += 1
                 item["lastAttemptAt"] = stamp()
@@ -328,15 +388,9 @@ class Coordinator:
     def cleanup(self, shards=1):
         if type(shards) is not int or not 1 <= shards <= 256:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_SHARDS_INVALID")
-        result = {"attempted": 0, "shards": 0}
         with self.mutex(time.monotonic() + 30, lambda: False):
-            for _ in range(shards):
-                if result["attempted"] >= MAX_CLEANUP_ITEMS_PER_CALL:
-                    break
-                current = self._run_cleanup_locked(
-                    limit=MAX_CLEANUP_ITEMS_PER_CALL - result["attempted"])
-                result["attempted"] += current["attempted"]
-                result["shards"] += 1
+            result = self._run_cleanup_locked(limit=MAX_CLEANUP_ITEMS_PER_CALL)
+        result["pages"] = min(shards, 1)
         return result
 
     def _archive_path(self, ticket):
@@ -466,13 +520,35 @@ class Coordinator:
 
     def _read_compaction_state(self):
         value = (read_json(self.compaction_path) if self.compaction_path.exists() else
-                 {"schemaVersion": 1, "nextShard": 0, "afterTicket": ""})
-        if (not isinstance(value, dict) or set(value) != {"schemaVersion", "nextShard", "afterTicket"} or
-                value["schemaVersion"] != 1 or type(value["nextShard"]) is not int or
-                not 0 <= value["nextShard"] <= 255 or not isinstance(value["afterTicket"], str) or
-                (value["afterTicket"] and not re.fullmatch(r"[0-9a-f]{32}", value["afterTicket"]))):
+                 {"schemaVersion": 2, "nextId": 0})
+        if (not isinstance(value, dict) or value.get("schemaVersion") != 2 or
+                type(value.get("nextId")) is not int or value["nextId"] < 0):
             raise WorkError("INFOBASE_ACCESS_COMPACTION_INVALID: " + str(self.compaction_path))
         return value
+
+    def _compaction_pointer_path(self, ticket):
+        return self.compaction_ticket_path / ticket[:2] / (ticket + ".json")
+
+    def _queue_archive_locked(self, ticket):
+        tail = self._queue_tail(self.compaction_tail_path, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID")
+        pointer_path = self._compaction_pointer_path(ticket)
+        if pointer_path.exists():
+            pointer = read_json(pointer_path)
+            queue_id = pointer.get("id") if isinstance(pointer, dict) else None
+            if pointer != {"schemaVersion": 1, "ticket": ticket, "id": queue_id} or type(queue_id) is not int:
+                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(pointer_path))
+        else:
+            queue_id = tail["nextId"]
+            write_json(pointer_path, {"schemaVersion": 1, "ticket": ticket, "id": queue_id})
+        slot = self._queue_slot_path(self.compaction_queue_path, queue_id)
+        expected = {"schemaVersion": 1, "id": queue_id, "status": "active", "ticket": ticket}
+        if slot.exists() and read_json(slot) != expected:
+            raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_CONFLICT: " + str(slot))
+        if not slot.exists():
+            write_json(slot, expected)
+        if tail["nextId"] <= queue_id:
+            tail["nextId"] = queue_id + 1
+            write_json(self.compaction_tail_path, tail)
 
     def _tombstone(self, value, path):
         if (not isinstance(value, dict) or set(value) != {"schemaVersion", "ticket", "status", "finishedAt",
@@ -503,49 +579,64 @@ class Coordinator:
         if pins_changed:
             write_json(self.pins_path, pins)
             self._published("compaction-pins")
-        result = {"visited": 0, "compacted": 0, "deleted": 0, "pinned": 0, "shards": 0}
-        remaining_budget = MAX_COMPACTION_RECORDS_PER_CALL
-        for _ in range(shards):
-            if remaining_budget <= 0:
-                break
-            shard = state["nextShard"]
-            directory = self.archive_root / f"{shard:02x}"
-            paths = sorted(path for path in directory.glob("*.json")
-                           if path.stem > state["afterTicket"]) if directory.exists() else []
-            batch = paths[:min(policy["batchSize"], remaining_budget)]
-            for path in batch:
-                result["visited"] += 1
-                value = read_json(path)
-                if isinstance(value, dict) and value.get("schemaVersion") == 2:
-                    tombstone = self._tombstone(value, path)
-                    if now - self._time(tombstone["compactedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
-                            days=policy["tombstoneRetentionDays"]):
-                        path.unlink()
-                        self._published("compaction-delete")
-                        result["deleted"] += 1
-                else:
-                    record = self._validate_record(value, path)
-                    if record["status"] not in TERMINAL_STATUSES:
-                        raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
-                    if path.stem in pins["entries"] or self._ticket_has_cleanup_debt(path.stem):
-                        result["pinned"] += 1
-                    elif now - self._time(record.get("finishedAt"), "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
-                            days=policy["recoveryHorizonDays"]):
-                        tombstone = {"schemaVersion": 2, "ticket": record["ticket"], "status": record["status"],
-                                     "finishedAt": record["finishedAt"], "compactedAt": now.isoformat(),
-                                     "recordIdentity": identity(record)}
-                        write_json(path, tombstone)
-                        self._published("compaction-tombstone")
-                        result["compacted"] += 1
-                remaining_budget -= 1
-            if len(paths) > len(batch):
-                state["afterTicket"] = batch[-1].stem
+        result = {"scanned": 0, "visited": 0, "compacted": 0, "deleted": 0, "pinned": 0}
+        tail = self._queue_tail(self.compaction_tail_path, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID")
+        start = state["nextId"] if state["nextId"] < tail["nextId"] else 0
+        budget = min(MAX_COMPACTION_RECORDS_PER_CALL, policy["batchSize"] * shards)
+        stop = min(tail["nextId"], start + budget)
+        for queue_id in range(start, stop):
+            result["scanned"] += 1
+            slot = self._queue_slot_path(self.compaction_queue_path, queue_id)
+            if not slot.exists():
+                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(slot))
+            queued = read_json(slot)
+            if queued == {"schemaVersion": 1, "id": queue_id, "status": "done"}:
+                continue
+            ticket = queued.get("ticket") if isinstance(queued, dict) else None
+            if queued != {"schemaVersion": 1, "id": queue_id, "status": "active", "ticket": ticket} or not re.fullmatch(
+                    r"[0-9a-f]{32}", str(ticket)):
+                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(slot))
+            pointer_path = self._compaction_pointer_path(ticket)
+            if (not pointer_path.exists() or read_json(pointer_path) !=
+                    {"schemaVersion": 1, "ticket": ticket, "id": queue_id}):
+                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(pointer_path))
+            path = self._archive_path(ticket)
+            if not path.exists():
+                write_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+                pointer_path.unlink(missing_ok=True)
+                continue
+            result["visited"] += 1
+            value = read_json(path)
+            completed = False
+            if isinstance(value, dict) and value.get("schemaVersion") == 2:
+                tombstone = self._tombstone(value, path)
+                if now - self._time(tombstone["compactedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
+                        days=policy["tombstoneRetentionDays"]):
+                    path.unlink()
+                    self._published("compaction-delete")
+                    result["deleted"] += 1
+                    completed = True
             else:
-                state.update(nextShard=(shard + 1) % 256, afterTicket="")
-            result["shards"] += 1
+                record = self._validate_record(value, path)
+                if record["status"] not in TERMINAL_STATUSES:
+                    raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
+                if path.stem in pins["entries"] or self._ticket_has_cleanup_debt(path.stem):
+                    result["pinned"] += 1
+                elif now - self._time(record.get("finishedAt"), "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
+                        days=policy["recoveryHorizonDays"]):
+                    tombstone = {"schemaVersion": 2, "ticket": record["ticket"], "status": record["status"],
+                                 "finishedAt": record["finishedAt"], "compactedAt": now.isoformat(),
+                                 "recordIdentity": identity(record)}
+                    write_json(path, tombstone)
+                    self._published("compaction-tombstone")
+                    result["compacted"] += 1
+            if completed:
+                write_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+                pointer_path.unlink(missing_ok=True)
+        state["nextId"] = 0 if stop >= tail["nextId"] else stop
         write_json(self.compaction_path, state)
         self._published("compaction-state")
-        result["nextShard"] = state["nextShard"]
+        result["nextId"] = state["nextId"]
         return result
 
     def compact(self, shards=1):
@@ -566,6 +657,7 @@ class Coordinator:
                 raise WorkError("INFOBASE_ACCESS_ARCHIVE_CONFLICT: " + str(path))
         else:
             write_json(path, record)
+        self._queue_archive_locked(record["ticket"])
 
     def _ensure_layout_locked(self):
         if self._layout_v2():
