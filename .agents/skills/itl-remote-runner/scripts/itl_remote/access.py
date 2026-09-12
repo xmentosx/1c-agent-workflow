@@ -25,7 +25,7 @@ def admission_error(code, coordinator, blockers, elapsed):
     details = {"coordinator": str(coordinator.root), "waitSeconds": round(elapsed, 3),
                "blockers": [], "requestExecuted": False}
     for record in blockers:
-        recovery = record["status"] == "needs-attention"
+        recovery = record["status"] == "needs-attention" and not record.get("corruptRecord")
         details["blockers"].append({
             "ticket": record["ticket"], "status": record["status"],
             "owner": {key: record.get("owner", {})[key] for key in
@@ -36,7 +36,8 @@ def admission_error(code, coordinator, blockers, elapsed):
                 {"command": "access-recovery-plan", "coordinator": str(coordinator.root),
                  "ticket": record["ticket"]} if recovery else
                 {"command": "access-status", "coordinator": str(coordinator.root),
-                 "instruction": "inspect the owner on its host; cancel through its owning helper if stuck; retry after verified release"})})
+                 "instruction": ("repair the indexed ticket record before retrying" if record.get("corruptRecord") else
+                                 "inspect the owner on its host; cancel through its owning helper if stuck; retry after verified release")})})
     return WorkError(code + ": " + json.dumps(details, ensure_ascii=True))
 
 
@@ -84,7 +85,11 @@ class Coordinator:
     def __init__(self, root):
         self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / "tickets").mkdir(exist_ok=True)
+        self.tickets = self.root / "tickets"
+        self.tickets.mkdir(exist_ok=True)
+        self.layout_path = self.tickets / "layout.json"
+        self.index_path = self.root / "active-index.json"
+        self.archive_root = self.root / "ticket-archive"
 
     @contextlib.contextmanager
     def mutex(self, deadline, cancelled):
@@ -102,31 +107,219 @@ class Coordinator:
                     raise WorkError("INFOBASE_ACCESS_WAIT_TIMEOUT") from error
                 time.sleep(0.05)
         try:
+            self._ensure_layout_locked()
             yield
         finally:
             lock.__exit__(None, None, None)
 
-    def records(self):
-        records = []
-        for path in (self.root / "tickets").glob("*.json"):
-            record = read_json(path)
-            if (record.get("schemaVersion") != 1 or record.get("ticket") != path.stem or
-                    record.get("status") not in ("waiting", "running", "recovering", "released", "cancelled", "needs-attention") or
-                    type(record.get("sequence")) is not int or not isinstance(record.get("resources"), list)):
+    def _validate_record(self, record, path):
+        if (not isinstance(record, dict) or record.get("schemaVersion") != 1 or
+                record.get("ticket") != path.stem or
+                record.get("status") not in ACTIVE_STATUSES + TERMINAL_STATUSES or
+                type(record.get("sequence")) is not int or record["sequence"] < 1 or
+                not isinstance(record.get("resources"), list) or not record["resources"] or
+                any(not isinstance(resource, str) for resource in record["resources"])):
+            raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
+        if record["status"] == "recovering":
+            attempts = record.get("recoveryAttempts")
+            if (not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict) or
+                    attempts[-1].get("status") != "running" or not attempts[-1].get("id")):
                 raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
-            if record["status"] == "recovering":
-                attempts = record.get("recoveryAttempts")
-                if (not isinstance(attempts, list) or not attempts or not isinstance(attempts[-1], dict) or
-                        attempts[-1].get("status") != "running" or not attempts[-1].get("id")):
-                    raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
-            participants(record)
-            access_mode(record)
-            effective_access_mode(record)
-            records.append(record)
+        participants(record)
+        access_mode(record)
+        effective_access_mode(record)
+        return record
+
+    def _legacy_records(self):
+        records = []
+        for path in self.tickets.glob("*.json"):
+            try:
+                records.append(self._validate_record(read_json(path), path))
+            except Exception as error:
+                if isinstance(error, WorkError):
+                    raise
+                raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path)) from error
         return sorted(records, key=lambda item: item["sequence"])
 
+    def _layout_v2(self):
+        if not self.layout_path.exists():
+            return False
+        try:
+            value = read_json(self.layout_path)
+        except Exception as error:
+            raise WorkError("INFOBASE_ACCESS_LAYOUT_INVALID: " + str(self.layout_path)) from error
+        if value != {"schemaVersion": 2}:
+            raise WorkError("INFOBASE_ACCESS_LAYOUT_INVALID: " + str(self.layout_path))
+        return True
+
+    def _read_index(self):
+        try:
+            value = read_json(self.index_path)
+        except Exception as error:
+            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path)) from error
+        entries = value.get("entries") if isinstance(value, dict) else None
+        if (value.get("schemaVersion") != 2 or type(value.get("nextSequence")) is not int or
+                value["nextSequence"] < 1 or not isinstance(entries, dict)):
+            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
+        for ticket, entry in entries.items():
+            if (not re.fullmatch(r"[0-9a-f]{32}", ticket) or not isinstance(entry, dict) or
+                    set(entry) != {"sequence", "resources"} or type(entry["sequence"]) is not int or
+                    entry["sequence"] < 1 or not isinstance(entry["resources"], list) or
+                    not entry["resources"] or any(not isinstance(resource, str) for resource in entry["resources"])):
+                raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
+        return value
+
+    def _archive_path(self, ticket):
+        return self.archive_root / ticket[:2] / (ticket + ".json")
+
+    def _archive_terminal(self, record):
+        path = self._archive_path(record["ticket"])
+        if path.exists():
+            try:
+                existing = self._validate_record(read_json(path), path)
+            except Exception as error:
+                if isinstance(error, WorkError):
+                    raise
+                raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path)) from error
+            if existing != record:
+                raise WorkError("INFOBASE_ACCESS_ARCHIVE_CONFLICT: " + str(path))
+        else:
+            write_json(path, record)
+
+    def _ensure_layout_locked(self):
+        if self._layout_v2():
+            self._repair_terminal_transitions_locked()
+            return
+        records = self._legacy_records()
+        # A legacy process updates its per-ticket JSON directly. Switching the
+        # authority while it is live would split one queue into two writers.
+        if any(record["status"] in ("waiting", "running", "recovering") and
+               self.alive(record["ticket"]) for record in records):
+            return
+        entries = {}
+        for record in records:
+            if record["status"] in TERMINAL_STATUSES:
+                self._archive_terminal(record)
+            else:
+                entries[record["ticket"]] = {"sequence": record["sequence"],
+                                              "resources": record["resources"]}
+        write_json(self.index_path, {"schemaVersion": 2,
+                                     "nextSequence": max((r["sequence"] for r in records), default=0) + 1,
+                                     "entries": entries})
+        # Publish this sentinel last. Old runtimes see it as an invalid ticket
+        # and fail closed instead of silently bypassing the indexed authority.
+        write_json(self.layout_path, {"schemaVersion": 2})
+        for record in records:
+            if record["status"] in TERMINAL_STATUSES:
+                (self.tickets / (record["ticket"] + ".json")).unlink(missing_ok=True)
+                self.cleanup_alive(record["ticket"])
+
+    def _repair_terminal_transitions_locked(self):
+        index = self._read_index()
+        changed = False
+        obsolete = []
+        for ticket in list(index["entries"]):
+            path = self.tickets / (ticket + ".json")
+            try:
+                record = self._validate_record(read_json(path), path)
+            except Exception:
+                continue
+            if record["status"] in TERMINAL_STATUSES:
+                # The indexed record is still authoritative. Re-publish its
+                # terminal copy even if an interrupted prior copy is damaged.
+                write_json(self._archive_path(ticket), record)
+                del index["entries"][ticket]
+                changed = True
+                obsolete.append(path)
+        if changed:
+            write_json(self.index_path, index)
+            for path in obsolete:
+                path.unlink(missing_ok=True)
+                self.cleanup_alive(path.stem)
+
+    def _corrupt_record(self, ticket, entry, error):
+        return {"schemaVersion": 1, "ticket": ticket, "sequence": entry["sequence"],
+                "resources": entry["resources"], "accessMode": "exclusive",
+                "status": "needs-attention", "corruptRecord": True,
+                "reason": "indexed active ticket record is missing or invalid",
+                "recordError": type(error).__name__, "owner": {}}
+
+    def records(self, resources=None):
+        if not self._layout_v2():
+            return self._legacy_records()
+        requested = set(resources) if resources is not None else None
+        index = self._read_index()
+        records = []
+        for ticket, entry in sorted(index["entries"].items(), key=lambda item: item[1]["sequence"]):
+            if requested is not None and not requested.intersection(entry["resources"]):
+                continue
+            path = self.tickets / (ticket + ".json")
+            try:
+                record = self._validate_record(read_json(path), path)
+                if record["sequence"] != entry["sequence"] or record["resources"] != entry["resources"]:
+                    raise WorkError("INFOBASE_ACCESS_RECORD_INDEX_MISMATCH: " + str(path))
+                if record["status"] not in TERMINAL_STATUSES:
+                    records.append(record)
+            except Exception as error:
+                records.append(self._corrupt_record(ticket, entry, error))
+        return records
+
+    def record(self, ticket):
+        if not isinstance(ticket, str) or not re.fullmatch(r"[0-9a-f]{32}", ticket):
+            raise WorkError("INFOBASE_ACCESS_TICKET_INVALID")
+        index = indexed = None
+        if not self._layout_v2():
+            path = self.tickets / (ticket + ".json")
+        else:
+            index = self._read_index()
+            indexed = index["entries"].get(ticket)
+            path = self.tickets / (ticket + ".json") if indexed else self._archive_path(ticket)
+        if not path.is_file():
+            raise WorkError("INFOBASE_ACCESS_TICKET_MISSING: " + ticket)
+        try:
+            record = self._validate_record(read_json(path), path)
+        except Exception as error:
+            if isinstance(error, WorkError):
+                raise
+            raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path)) from error
+        if indexed:
+            if record["sequence"] != indexed["sequence"] or record["resources"] != indexed["resources"]:
+                raise WorkError("INFOBASE_ACCESS_RECORD_INDEX_MISMATCH: " + str(path))
+        elif index is not None and record["status"] not in TERMINAL_STATUSES:
+            raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
+        return record
+
+    def take_sequence(self):
+        if not self._layout_v2():
+            return max((record["sequence"] for record in self._legacy_records()), default=0) + 1
+        index = self._read_index()
+        sequence = index["nextSequence"]
+        index["nextSequence"] += 1
+        write_json(self.index_path, index)
+        return sequence
+
     def save(self, record):
-        write_json(self.root / "tickets" / (record["ticket"] + ".json"), record)
+        path = self.tickets / (record["ticket"] + ".json")
+        self._validate_record(record, path)
+        if not self._layout_v2():
+            write_json(path, record)
+            return
+        index = self._read_index()
+        existing = index["entries"].get(record["ticket"])
+        expected = {"sequence": record["sequence"], "resources": record["resources"]}
+        if existing is not None and existing != expected:
+            raise WorkError("INFOBASE_ACCESS_RECORD_INDEX_MISMATCH: " + str(path))
+        write_json(path, record)
+        if record["status"] in TERMINAL_STATUSES:
+            self._archive_terminal(record)
+            index["entries"].pop(record["ticket"], None)
+            write_json(self.index_path, index)
+            path.unlink(missing_ok=True)
+        else:
+            index["entries"][record["ticket"]] = expected
+            if index["nextSequence"] <= record["sequence"]:
+                index["nextSequence"] = record["sequence"] + 1
+            write_json(self.index_path, index)
 
     def alive(self, ticket):
         try:
@@ -136,6 +329,14 @@ class Coordinator:
             if busy(error):
                 return True
             raise
+
+    def cleanup_alive(self, ticket):
+        try:
+            (self.tickets / (ticket + ".alive")).unlink(missing_ok=True)
+        except OSError:
+            # A scanner or remote share may retain a short-lived handle. The
+            # empty sidecar is not authority once its OS lock has been closed.
+            pass
 
     def register(self, name, bases):
         """Explicitly associate alternate connections; conflicting claims fail closed."""
@@ -155,7 +356,7 @@ class Coordinator:
             # Changing a default identity while a ticket is queued/running would
             # create two independent queues for the very same database.
             affected = {"base-" + identity(key) for key in keys}
-            for record in self.records():
+            for record in self.records(resources=affected):
                 if record["status"] in ("waiting", "running", "recovering", "needs-attention") and affected.intersection(record["resources"]):
                     raise WorkError("INFOBASE_ACCESS_REGISTRATION_BUSY")
             registry["bindings"].update({key: name for key in keys})
@@ -171,9 +372,11 @@ class Coordinator:
 
     def snapshot(self):
         with self.mutex(time.monotonic() + 30, lambda: False):
-            return [public(record) for record in self.records() if record["status"] in ("waiting", "running", "recovering", "needs-attention")]
+            return [public(record) for record in self.records()]
 
 
+ACTIVE_STATUSES = ("waiting", "running", "recovering", "needs-attention")
+TERMINAL_STATUSES = ("released", "cancelled")
 ACCESS_MODES = ("exclusive", "shared-read", "test-run")
 
 
@@ -266,12 +469,12 @@ class Lease:
                         "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
                     self.coordinator.save(self.record)
                     return self
-                records = self.coordinator.records()
+                records = self.coordinator.records(resources=resources)
                 ticket = uuid.uuid4().hex
                 self.live_lock = FileLock(self.coordinator.root / "tickets" / (ticket + ".alive"))
                 self.live_lock.__enter__()
                 self.record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket, "token": secrets.token_hex(32),
-                               "sequence": max((r["sequence"] for r in records), default=0) + 1,
+                               "sequence": self.coordinator.take_sequence(),
                                "resources": resources, "accessMode": self.access_mode,
                                "status": "waiting", "createdAt": stamp(),
                                "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
@@ -281,7 +484,7 @@ class Lease:
                     blockers = []
                     # Process records in sequence order, allowing unrelated bases
                     # to proceed without holding any subset of the requested set.
-                    for record in self.coordinator.records():
+                    for record in self.coordinator.records(resources=resources):
                         if record["ticket"] == self.record["ticket"] or record["status"] in ("released", "cancelled"):
                             continue
                         if not set(resources).intersection(record["resources"]):
@@ -289,6 +492,7 @@ class Lease:
                         if record["status"] == "waiting" and not self.coordinator.alive(record["ticket"]):
                             record.update(status="cancelled", finishedAt=stamp(), reason="waiter-exited-before-admission")
                             self.coordinator.save(record)
+                            self.coordinator.cleanup_alive(record["ticket"])
                             continue
                         if record["status"] in ("running", "recovering") and not self.coordinator.alive(record["ticket"]):
                             if record["status"] == "recovering":
@@ -326,6 +530,8 @@ class Lease:
             finally:
                 if self.live_lock:
                     self.live_lock.__exit__(None, None, None)
+                    if self.record:
+                        self.coordinator.cleanup_alive(self.record["ticket"])
                     self.live_lock = None
             raise
 
@@ -334,7 +540,7 @@ class Lease:
         if (not re.fullmatch(r"[0-9a-f]{32}", ticket) or
                 Path(self.inherited.get("coordinator", "")).resolve() != self.coordinator.root):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
-        record = read_json(self.coordinator.root / "tickets" / (ticket + ".json"))
+        record = self.coordinator.record(ticket)
         expected_status = "recovering" if self.purpose == "recovery" else "running"
         if (record["status"] != expected_status or self.inherited.get("purpose", "operation") != self.purpose or
                 not secrets.compare_digest(inheritance_token(record), self.inherited.get("token", "")) or
@@ -354,7 +560,7 @@ class Lease:
         if self.record is None or self.release_status is not None:
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
         with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
-            current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+            current = self.coordinator.record(self.record["ticket"])
             expected = "recovering" if self.purpose == "recovery" else "running"
             if (current["status"] != expected or current["token"] != self.record["token"] or
                     not self.coordinator.alive(current["ticket"]) or
@@ -378,7 +584,7 @@ class Lease:
         try:
             while True:
                 with self.coordinator.mutex(deadline, self.cancelled):
-                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    current = self.coordinator.record(self.record["ticket"])
                     if (current.get("status") != "running" or current.get("token") != self.record["token"] or
                             not self.coordinator.alive(current["ticket"])):
                         raise WorkError("INFOBASE_ACCESS_TRANSITION_INVALID")
@@ -391,7 +597,7 @@ class Lease:
                     current.setdefault("transitionRequestedAt", stamp())
                     self.coordinator.save(current)
                     blockers = []
-                    for record in self.coordinator.records():
+                    for record in self.coordinator.records(resources=resources):
                         if record["ticket"] == current["ticket"] or record["status"] in ("released", "cancelled", "waiting"):
                             continue
                         if not resources.intersection(record["resources"]):
@@ -424,7 +630,7 @@ class Lease:
         except BaseException:
             try:
                 with self.coordinator.mutex(time.monotonic() + 10, lambda: False):
-                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    current = self.coordinator.record(self.record["ticket"])
                     if current.get("token") == self.record["token"]:
                         current.pop("requestedAccessMode", None)
                         current.pop("transitionRequestedAt", None)
@@ -440,7 +646,7 @@ class Lease:
                 return self.release_status
             try:
                 with self.coordinator.mutex(time.monotonic() + 30, lambda: False):
-                    current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                    current = self.coordinator.record(self.record["ticket"])
                     if current["token"] != self.record["token"] or current["status"] not in ("running", "recovering", "needs-attention"):
                         raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
                     entries = participants(current)
@@ -460,7 +666,7 @@ class Lease:
             return self.release_status
         try:
             with self.coordinator.mutex(time.monotonic() + 30, lambda: False):
-                current = read_json(self.coordinator.root / "tickets" / (self.record["ticket"] + ".json"))
+                current = self.coordinator.record(self.record["ticket"])
                 if (current.get("status") != "running" or
                         current.get("token") != self.record["token"]):
                     raise WorkError("INFOBASE_ACCESS_RELEASE_OWNERSHIP_CHANGED")
@@ -476,6 +682,7 @@ class Lease:
                 return self.release_status
         finally:
             self.live_lock.__exit__(None, None, None)
+            self.coordinator.cleanup_alive(self.record["ticket"])
             self.live_lock = None
 
     def __exit__(self, kind, value, traceback):

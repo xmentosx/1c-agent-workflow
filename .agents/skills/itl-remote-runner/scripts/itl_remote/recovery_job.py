@@ -26,12 +26,16 @@ def _inputs(spool, identifier):
     access = target_access(target)
     coordinator = Coordinator(access["coordinator"])
     with coordinator.mutex(time.monotonic() + 30, lambda: False):
-        records = [r for r in coordinator.records() if r.get("owner", {}).get("jobId") == identifier and
-                   r["owner"].get("spool") and Path(r["owner"]["spool"]).resolve() == spool and
-                   r["owner"].get("operation") == "measure"]
-        if len(records) != 1:
+        state = status(spool, identifier)
+        ticket = state.get("access", {}).get("ticket")
+        try:
+            record = coordinator.record(ticket)
+        except WorkError as error:
+            raise WorkError("RECOVERY_ORIGINAL_OWNER_UNPROVEN") from error
+        if (record.get("owner", {}).get("jobId") != identifier or
+                not record["owner"].get("spool") or Path(record["owner"]["spool"]).resolve() != spool or
+                record["owner"].get("operation") != "measure"):
             raise WorkError("RECOVERY_ORIGINAL_OWNER_UNPROVEN")
-        record = records[0]
         if record["resources"] != coordinator.resources(access["bases"]):
             raise WorkError("RECOVERY_RESOURCE_BINDING_CHANGED")
     if record["owner"].get("host", "").casefold() != platform.node().casefold():

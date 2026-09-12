@@ -7,12 +7,14 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
+from itl_remote import access as access_module
 from itl_remote.access import Coordinator, Lease, binding, target_access
-from itl_remote.common import WorkError, read_json, write_json
+from itl_remote.common import FileLock, WorkError, read_json, write_json
 
 
 CHILD = r'''
@@ -85,6 +87,21 @@ class AccessTests(unittest.TestCase):
         process.wait(timeout=10)
         result = self.wait_file(out / "done.json")
         self.assertNotIn("error", result, result)
+
+    def legacy_record(self, ticket, sequence, status, base=None):
+        coordinator = Coordinator(self.coordinator)
+        record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                  "token": "0" * 64, "sequence": sequence,
+                  "resources": coordinator.resources([base or self.base]),
+                  "accessMode": "exclusive", "status": status,
+                  "createdAt": "2026-01-01T00:00:00+00:00", "owner": {"jobId": ticket[:4]}}
+        if status in ("released", "cancelled"):
+            record["finishedAt"] = "2026-01-01T00:01:00+00:00"
+        if status == "needs-attention":
+            record["reason"] = "fixture recovery debt"
+        path = self.coordinator / "tickets" / (ticket + ".json")
+        write_json(path, record)
+        return record
 
     def test_different_projects_wait_in_order_for_the_same_database(self):
         a, pa = self.child("A", hold=True)
@@ -305,6 +322,101 @@ class AccessTests(unittest.TestCase):
         self.assertNotEqual(binding({"kind": "file", "path": path, "host": "A"}),
                             binding({"kind": "file", "path": path, "host": "B"}))
         self.assertEqual(binding(self.base), binding({"kind": "server", "path": "SERVER:1541\\test/"}))
+
+    def test_schema_one_migration_archives_terminal_records_and_preserves_sequence(self):
+        terminal = self.legacy_record("a" * 32, 7, "released")
+        active = self.legacy_record("b" * 32, 9, "needs-attention")
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        self.assertEqual({"schemaVersion": 2}, read_json(coordinator.layout_path))
+        index = read_json(coordinator.index_path)
+        self.assertEqual(10, index["nextSequence"])
+        self.assertEqual([active["ticket"]], list(index["entries"]))
+        self.assertEqual(terminal, coordinator.record(terminal["ticket"]))
+        self.assertFalse((coordinator.tickets / (terminal["ticket"] + ".json")).exists())
+        with Lease(self.coordinator, [self.other], {"jobId": "new"}, timeout=0) as lease:
+            self.assertEqual(10, lease.record["sequence"])
+
+    def test_live_schema_one_owner_defers_migration_and_new_layout_blocks_old_reader(self):
+        ticket = "c" * 32
+        self.legacy_record(ticket, 1, "running")
+        live = FileLock(self.coordinator / "tickets" / (ticket + ".alive"))
+        live.__enter__()
+        try:
+            coordinator = Coordinator(self.coordinator)
+            with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                self.assertFalse(coordinator.layout_path.exists())
+        finally:
+            live.__exit__(None, None, None)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            self.assertTrue(coordinator.layout_path.exists())
+        with self.assertRaisesRegex(WorkError, "RECORD_INVALID"):
+            coordinator._legacy_records()
+
+    def test_terminal_transition_is_repaired_after_index_update_is_interrupted(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            sequence = coordinator.take_sequence()
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "d" * 32,
+                      "token": "1" * 64, "sequence": sequence,
+                      "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                      "status": "running", "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+            # Model a crash after the authoritative terminal record write but
+            # before archive publication and active-index removal.
+            write_json(coordinator.tickets / (record["ticket"] + ".json"), record)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        self.assertNotIn(record["ticket"], read_json(coordinator.index_path)["entries"])
+        self.assertEqual("released", coordinator.record(record["ticket"])["status"])
+
+    def test_corrupt_active_record_blocks_only_its_indexed_resources(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "e" * 32,
+                      "token": "2" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                      "status": "needs-attention", "createdAt": "2026-01-01T00:00:00+00:00",
+                      "reason": "fixture", "owner": {}}
+            coordinator.save(record)
+            (coordinator.tickets / (record["ticket"] + ".json")).write_text("{", encoding="utf-8")
+        with Lease(self.coordinator, [self.other], {"jobId": "unrelated"}, timeout=0):
+            pass
+        with self.assertRaisesRegex(WorkError, "RECOVERY_REQUIRED") as blocked:
+            with Lease(self.coordinator, [self.base], {"jobId": "blocked"}, timeout=0):
+                self.fail("corrupt indexed owner cannot be bypassed")
+        self.assertIn("repair the indexed ticket record", str(blocked.exception))
+        self.assertNotIn("access-recovery-plan", str(blocked.exception))
+
+    def test_hot_path_does_not_read_ten_thousand_corrupt_archive_records(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        archive = coordinator.archive_root / "ff"
+        archive.mkdir(parents=True)
+        for number in range(10000):
+            (archive / (f"{number:032x}.json")).write_text("{", encoding="utf-8")
+        archived_reads = []
+        original_read = access_module.read_json
+        def observed_read(path):
+            if coordinator.archive_root in Path(path).parents:
+                archived_reads.append(Path(path))
+            return original_read(path)
+        with mock.patch("itl_remote.access.read_json", side_effect=observed_read):
+            with Lease(self.coordinator, [self.base], {"jobId": "active"}, timeout=0) as lease:
+                self.assertEqual([lease.record["ticket"]], [record["ticket"] for record in coordinator.snapshot()])
+        self.assertEqual([], archived_reads)
+
+    def test_terminal_ticket_is_addressable_from_archive_and_alive_sidecar_is_removed(self):
+        coordinator = Coordinator(self.coordinator)
+        with Lease(self.coordinator, [self.base], {"jobId": "complete"}, timeout=0) as lease:
+            ticket = lease.record["ticket"]
+            self.assertTrue((coordinator.tickets / (ticket + ".alive")).exists())
+        self.assertEqual("released", coordinator.record(ticket)["status"])
+        self.assertTrue(coordinator._archive_path(ticket).exists())
+        self.assertFalse((coordinator.tickets / (ticket + ".alive")).exists())
 
     def test_zero_wait_allows_immediate_admission_and_invalid_budget_is_rejected(self):
         with Lease(self.coordinator, [self.base], {"jobId": "A"}, timeout=0):

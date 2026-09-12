@@ -306,7 +306,7 @@ function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait 
                     $result.stdout | Should -Not -Match CURRENT_CONFIG
                 }
                 if ($InputKind -ne 'invalid-context') {
-                    $tickets = @(Get-ChildItem -LiteralPath (Join-Path $fixtureConfig.databaseAccess.coordinator 'tickets') -Filter '*.json' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
+                    $tickets = @(Get-ChildItem -LiteralPath (Join-Path $fixtureConfig.databaseAccess.coordinator 'ticket-archive') -Filter '*.json' -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
                     $tickets | Should -HaveCount 1
                     $tickets[0].status | Should -Be 'released'
                 }

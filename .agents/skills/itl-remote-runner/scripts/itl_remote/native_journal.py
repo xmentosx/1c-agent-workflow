@@ -35,7 +35,7 @@ def assert_journal_owner(producers, producer_id, journal_id):
 
 
 def _current(lease):
-    record = read_json(lease.coordinator.root / "tickets" / (lease.record["ticket"] + ".json"))
+    record = lease.coordinator.record(lease.record["ticket"])
     expected = "recovering" if lease.purpose == "recovery" else "running"
     if (record["token"] != lease.record["token"] or record["status"] != expected or
             not lease.coordinator.alive(record["ticket"])):

@@ -174,7 +174,7 @@ def observe(lease, ticket, expected):
             Path(expected['project']) != Path(lease.owner.get('project', '')) or
             not set(lease.coordinator.resources([m['target'] for m in expected['members']])) <= set(lease.record['resources'])):
         raise WorkError('SOURCE_SYNC_PHASE_READER_SCOPE_CHANGED')
-    record = read_json(beneath(lease.coordinator.root, 'tickets/' + ticket + '.json'))
+    record = lease.coordinator.record(ticket)
     if (record.get('ticket') != ticket or record.get('owner', {}).get('operation') != 'sync-dev-branches' or
             Path(record['owner'].get('project', '')) != Path(expected['project']) or
             (ticket != lease.record['ticket'] and record['status'] != 'released')):

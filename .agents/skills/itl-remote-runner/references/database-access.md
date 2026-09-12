@@ -29,6 +29,11 @@ Create a UTF-8 JSON array of the authorized connections, such as two
 to split an identity currently in use. Configure the same authority on each
 project/host; do not put passwords in the registration. `access-status
 --coordinator <directory>` lists active owners and waiters without lease tokens.
+The coordinator upgrades its storage only when no legacy owner is live. Active
+tickets then remain in a small resource index, while released and cancelled
+tickets move to an exact-addressed archive and are not scanned by admission or
+status. A current runtime can still read archived evidence by ticket id. Older
+runtimes fail closed on the new layout marker instead of bypassing its queue.
 
 ## Waiting and inherited ownership
 

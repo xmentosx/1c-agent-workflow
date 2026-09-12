@@ -146,13 +146,16 @@ class AccessHostTests(unittest.TestCase):
             self.assertEqual("running", Coordinator(self.coordinator).records()[0]["status"])
 
     def test_waiter_cancel_starts_no_operation_and_does_not_keep_ownership(self):
-        with Lease(self.coordinator, [self.base], {}, timeout=0):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start()
-            self.assertNotIn("token", json.dumps(self.next(received, "waiting")))
+            waiting = self.next(received, "waiting")
+            self.assertNotIn("token", json.dumps(waiting))
             self.send(child, {"event":"cancel"})
             self.assertIn("CANCELLED", self.next(received, "error")["error"])
             self.assertEqual(1, child.wait(timeout=5))
-        self.assertEqual(["released", "cancelled"], [r["status"] for r in Coordinator(self.coordinator).records()])
+        coordinator = Coordinator(self.coordinator)
+        self.assertEqual("released", coordinator.record(parent.record["ticket"])["status"])
+        self.assertEqual("cancelled", coordinator.record(waiting["ticket"])["status"])
 
     def test_parent_disconnect_after_admission_retains_recovery_debt(self):
         child, received = self.start()
@@ -166,13 +169,15 @@ class AccessHostTests(unittest.TestCase):
                 self.fail("EOF is not proof of stopped database work")
 
     def test_parent_disconnect_while_waiting_cancels_only_waiter(self):
-        with Lease(self.coordinator, [self.base], {}, timeout=0):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start()
-            self.next(received, "waiting")
+            waiting = self.next(received, "waiting")
             child.stdin.close()
             self.next(received, "error")
             self.assertEqual(1, child.wait(timeout=5))
-            self.assertEqual(["running", "cancelled"], [r["status"] for r in Coordinator(self.coordinator).records()])
+            coordinator = Coordinator(self.coordinator)
+            self.assertEqual("running", coordinator.record(parent.record["ticket"])["status"])
+            self.assertEqual("cancelled", coordinator.record(waiting["ticket"])["status"])
 
     def test_unproven_cleanup_and_cancel_after_admission_retain_debt(self):
         for control in ({"event":"release", "cleanupErrors":["owned server work unproven"]}, {"event":"cancel"}):
@@ -204,11 +209,11 @@ class AccessHostTests(unittest.TestCase):
     def test_release_before_admission_is_rejected(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             child, received = self.start()
-            self.next(received, "waiting")
+            waiting = self.next(received, "waiting")
             self.send(child, {"event":"release", "cleanupErrors":[]})
             self.next(received, "error")
             self.assertEqual(1, child.wait(timeout=5))
-        self.assertEqual("cancelled", Coordinator(self.coordinator).records()[-1]["status"])
+        self.assertEqual("cancelled", Coordinator(self.coordinator).record(waiting["ticket"])["status"])
 
     def test_invalid_inheritance_exits_without_buffered_stdin_shutdown_failure(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:

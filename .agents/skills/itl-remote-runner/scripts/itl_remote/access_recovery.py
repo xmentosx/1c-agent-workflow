@@ -22,10 +22,12 @@ from .common import FileLock, WorkError, identity, stamp
 def _record(coordinator, ticket):
     if not isinstance(ticket, str) or not re.fullmatch(r"[0-9a-f]{32}", ticket):
         raise WorkError("INFOBASE_ACCESS_RECOVERY_TICKET_INVALID")
-    for record in coordinator.records():
-        if record["ticket"] == ticket:
-            return record
-    raise WorkError("INFOBASE_ACCESS_RECOVERY_TICKET_MISSING")
+    try:
+        return coordinator.record(ticket)
+    except WorkError as error:
+        if str(error).startswith("INFOBASE_ACCESS_TICKET_MISSING"):
+            raise WorkError("INFOBASE_ACCESS_RECOVERY_TICKET_MISSING") from error
+        raise
 
 
 def _eligible(coordinator, record):
@@ -155,6 +157,7 @@ class Recovery:
         if self.live_lock:
             self.live_lock.__exit__(None, None, None)
             self.live_lock = None
+            self.coordinator.cleanup_alive(self.ticket)
 
     def __exit__(self, kind, value, traceback):
         try:
