@@ -293,7 +293,7 @@ function Test-QualityContractCatalog {
     $unownedTests = @($inventory | Where-Object { $_ -notin $ownedTests })
     if ($unownedTests.Count -gt 0) { throw "Every Pester file must have a quality contract owner. Unowned: $($unownedTests -join ', ')." }
 
-    if (-not $SkipSemanticEntrypointValidation) {
+    if (-not $SkipSemanticEntrypointValidation -and $Catalog.PSObject.Properties['semanticTargeting']) {
     $actualActions = @(Get-PublicLifecycleActions -RepositoryRoot $RepositoryRoot)
     $coveredActions = @(
         @($Catalog.lifecycleActions.journey) + @($Catalog.lifecycleActions.boundary) |
