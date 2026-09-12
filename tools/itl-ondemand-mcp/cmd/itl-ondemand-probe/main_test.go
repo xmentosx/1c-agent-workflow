@@ -76,6 +76,69 @@ func TestCallWithFacadeHandoffKeepsPreviousWhenCallIsReady(t *testing.T) {
 	}
 }
 
+func TestValidateInstanceHistoryAllowsReleasedVanessaResourcesToBeReused(t *testing.T) {
+	states := []runtimeState{
+		{InstanceID: "first", PID: 101, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+		{InstanceID: "second", PID: 202, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+	}
+	if err := validateInstanceHistory("vanessa-ui", states, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateInstanceHistoryRejectsConcurrentPortReuse(t *testing.T) {
+	states := []runtimeState{
+		{InstanceID: "first", PID: 101, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+		{InstanceID: "second", PID: 202, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48153},
+	}
+	if err := validateInstanceHistory("vanessa-ui", states, false); err == nil {
+		t.Fatal("concurrent runtime port reuse was accepted")
+	}
+
+	states[1].Port = 9875
+	states[1].TestClientPort = 48152
+	if err := validateInstanceHistory("vanessa-ui", states, false); err == nil {
+		t.Fatal("concurrent TestClient port reuse was accepted")
+	}
+}
+
+func TestValidateInstanceHistoryRejectsDuplicateRuntimeIdentityAfterHandoff(t *testing.T) {
+	states := []runtimeState{
+		{InstanceID: "same", PID: 101, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+		{InstanceID: "same", PID: 202, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+	}
+	if err := validateInstanceHistory("vanessa-ui", states, true); err == nil {
+		t.Fatal("duplicate runtime instance ID was accepted")
+	}
+
+	states[1].InstanceID = "second"
+	states[1].PID = 101
+	if err := validateInstanceHistory("vanessa-ui", states, true); err == nil {
+		t.Fatal("duplicate runtime PID was accepted")
+	}
+}
+
+func TestValidateInstanceHistoryRejectsInvalidVanessaManagedFields(t *testing.T) {
+	state := runtimeState{InstanceID: "first", PID: 101, Port: 9874, TestClientProfile: "custom", TestClientPort: 48152}
+	if err := validateInstanceHistory("vanessa-ui", []runtimeState{state}, true); err == nil {
+		t.Fatal("unexpected TestClient profile was accepted")
+	}
+
+	state.TestClientProfile = "itl-ondemand"
+	state.TestClientPort = 0
+	if err := validateInstanceHistory("vanessa-ui", []runtimeState{state}, true); err == nil {
+		t.Fatal("non-positive TestClient port was accepted")
+	}
+
+	states := []runtimeState{
+		{InstanceID: "first", PID: 101, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPID: 202, TestClientPort: 48152},
+		{InstanceID: "second", PID: 202, Port: 9874, TestClientProfile: "itl-ondemand", TestClientPort: 48152},
+	}
+	if err := validateInstanceHistory("vanessa-ui", states, true); err == nil {
+		t.Fatal("TestClient PID colliding with a later runtime PID was accepted")
+	}
+}
+
 func newProbeGatewaySession(t *testing.T, handler func(string, map[string]any) *mcp.CallToolResult) *mcp.ClientSession {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "fake-gateway", Version: "1"}, nil)

@@ -186,7 +186,7 @@ func run() error {
 	}
 
 	runtimeRoot := filepath.Join(*projectRoot, ".agent-1c", "mcp", "ondemand", *family)
-	if err := distinctInstances(*family, initial); err != nil {
+	if err := validateInstanceHistory(*family, initial, serializedFacadeHandoffPassed); err != nil {
 		return err
 	}
 
@@ -394,23 +394,37 @@ func waitForStateCountWithReader(root string, count int, timeout time.Duration, 
 	}
 }
 
-func distinctInstances(family string, states []runtimeState) error {
-	pids := map[int]bool{}
-	ports := map[int]bool{}
+func validateInstanceHistory(family string, states []runtimeState, releasedResourceReuse bool) error {
+	instanceIDs := map[string]bool{}
+	runtimePIDs := map[int]bool{}
+	runtimePorts := map[int]bool{}
+	for _, state := range states {
+		if state.InstanceID == "" || instanceIDs[state.InstanceID] || state.PID <= 0 || runtimePIDs[state.PID] {
+			return fmt.Errorf("runtime history does not have distinct instance IDs and positive PIDs: %#v", states)
+		}
+		if state.Port <= 0 || (!releasedResourceReuse && runtimePorts[state.Port]) {
+			return fmt.Errorf("concurrent runtime instances do not have distinct positive ports: %#v", states)
+		}
+		instanceIDs[state.InstanceID] = true
+		runtimePIDs[state.PID] = true
+		runtimePorts[state.Port] = true
+	}
+	if family != "vanessa-ui" {
+		return nil
+	}
+	testClientPIDs := map[int]bool{}
 	testClientPorts := map[int]bool{}
 	for _, state := range states {
-		if state.PID <= 0 || state.Port <= 0 || pids[state.PID] || ports[state.Port] {
-			return fmt.Errorf("runtime instances do not have distinct positive PID/port values: %#v", states)
+		if state.TestClientProfile != "itl-ondemand" || state.TestClientPort <= 0 || (!releasedResourceReuse && testClientPorts[state.TestClientPort]) {
+			return fmt.Errorf("Vanessa runtime history does not have valid managed TestClient profile/ports: %#v", states)
 		}
-		pids[state.PID] = true
-		ports[state.Port] = true
-		if family == "vanessa-ui" {
-			if state.TestClientProfile != "itl-ondemand" || state.TestClientPID <= 0 || pids[state.TestClientPID] || state.TestClientPort <= 0 || testClientPorts[state.TestClientPort] {
-				return fmt.Errorf("Vanessa instances do not have distinct managed TestClient profiles/ports: %#v", states)
-			}
-			pids[state.TestClientPID] = true
-			testClientPorts[state.TestClientPort] = true
+		if state.TestClientPID > 0 && (runtimePIDs[state.TestClientPID] || testClientPIDs[state.TestClientPID]) {
+			return fmt.Errorf("Vanessa runtime history reuses a positive TestClient PID: %#v", states)
 		}
+		if state.TestClientPID > 0 {
+			testClientPIDs[state.TestClientPID] = true
+		}
+		testClientPorts[state.TestClientPort] = true
 	}
 	return nil
 }
