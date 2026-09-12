@@ -190,7 +190,7 @@ function Get-DeliveryPlanEnvironmentIdentity {
     $preparedRulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
     $requestedRulesVariable = Get-Variable -Name DeliveryRequestedAiRulesSource -Scope Script -ErrorAction SilentlyContinue
     $rulesRoot = if ($preparedRulesVariable -and [string]$preparedRulesVariable.Value) { [IO.Path]::GetFullPath([string]$preparedRulesVariable.Value) } elseif ($requestedRulesVariable -and [string]$requestedRulesVariable.Value) { [IO.Path]::GetFullPath([string]$requestedRulesVariable.Value) } else { "" }
-    $rulesIdentity = [ordered]@{ root=$rulesRoot; commit=""; tree="" }
+    $rulesIdentity = [ordered]@{ commit=""; tree="" }
     if ($rulesRoot -and (Test-Path -LiteralPath $rulesRoot -PathType Container)) {
         $rulesIdentity.commit = (Invoke-RepositoryGit -RepositoryRoot $rulesRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $rulesIdentity.tree = (Invoke-RepositoryGit -RepositoryRoot $rulesRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()

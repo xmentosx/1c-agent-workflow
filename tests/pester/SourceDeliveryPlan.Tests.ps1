@@ -55,6 +55,9 @@ Describe 'Delivery v3 immutable selective plan' {
         $script:DeliverySupervisorBootstrap = $false
         $script:ResumePlan = ''
         $script:ApproveLongPlan = ''
+        $script:E2EProjectRoot = ''
+        $script:AiRulesSource = ''
+        $script:DeliveryRequestedAiRulesSource = ''
     }
 
     It 'builds a stage DAG from changed owner inputs and reuses matching immutable evidence' {
@@ -116,6 +119,20 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nEXPORT_PATH=src/cfe`nEXTENSION_NAME=SecondExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`nROCTUP_MCP_PORT=6003`n", [Text.UTF8Encoding]::new($false))
         $materialRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
         (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+    }
+
+    It 'keys ai rules identity by commit and tree rather than temporary checkout path' {
+        $repo = New-PlanRepository
+        $clone = Join-Path $TestDrive 'equivalent rules checkout'
+        & git clone --quiet -- $repo.root $clone
+        $LASTEXITCODE | Should -Be 0
+
+        $script:AiRulesSource = $repo.root
+        $before = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+        $script:AiRulesSource = $clone
+        $after = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+
+        (Get-DeliveryCanonicalJsonSha256 -Value $after) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }
 
     It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {
