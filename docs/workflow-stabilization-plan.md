@@ -4,6 +4,7 @@ Status: active
 Owner branch: `codex/workflow-stabilization`  
 Baseline: `origin/develop` at `db5acb7db74b635c41deecb093fe965ade016c3e`  
 Master promotion: blocked until the P0 fixes and core live acceptance below pass.
+Develop publication: explicitly paused by the user after stabilization; stop at local registration until the follow-up problem review is complete.
 
 ## Goal and boundary
 
@@ -27,7 +28,7 @@ and live proof are distinct states.
 | STAB-05 | P1 | File/server and multi-host admission/recovery acceptance is incomplete. | queued | Two-process, two-project, server-alias, SMB two-host, owner-crash, dead-waiter, and independent-resource scenarios pass. |
 | STAB-06 | P2 | Operational ledger, stale refs, retained worktrees, and runtime metrics need bounded cleanup and a compact current-state view. | queued | Current checkpoint is concise; historical evidence remains available; cleanup is ancestry-checked. |
 | STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | registered at `a5db5a9` | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
-| STAB-08 | P1 | Any `agent-1c.ps1` edit selects the whole lifecycle inventory; the latest Targeted ran 735 tests in 637 seconds. | design prepared; queued after P0 | AST-based fail-closed impact routing stays below 300 seconds for a leaf change without false shard-cache reuse. |
+| STAB-08 | P1 | Any `agent-1c.ps1` edit selects the whole lifecycle inventory; the latest Targeted ran 735 tests in 637 seconds. | implemented at `6cdf635`; registration pending | Public-probe-gated AST routing ran a fresh leaf selection in 25.562 seconds: 30/30, 3 executed shards, 0 reused. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -119,10 +120,19 @@ Define and test these modes:
 
 | Mode | Compatibility rule |
 |---|---|
-| `shared-read` | May coexist only with operations that promise a stable readable state. |
+| `shared-read` | May coexist only with operations that promise availability and structurally readable state; it does not promise a transactional data snapshot. |
 | `functional-test` | May coexist only with explicitly compatible diagnostic reads. |
 | `measurement-exclusive` | Excludes tests, ROCTUP, and other background load. |
 | `mutation-exclusive` | Excludes every independently owned operation on the same resource. |
+
+STAB-04 introduces these four canonical wire values, treats `test-run` as a
+legacy alias for `functional-test`, and treats `exclusive` or a missing legacy
+mode as fail-closed `legacy-exclusive`. The compatibility matrix must be
+declarative, symmetric, and covered exhaustively. Production mode producers and
+the mode recorded in measurement evidence are machine-inventoried. Admission
+waiting stays outside measured time; the complete measured lifecycle stays under
+`measurement-exclusive`. This semantic batch is separate from the real-host and
+real-1C acceptance in STAB-05.
 
 Then complete the base admission contract before adding operation-specific
 recovery: file/server aliases, two local processes, two projects, two hosts over
@@ -131,24 +141,28 @@ unrelated database progress, and root/partial-lock contention.
 
 ### STAB-08 - semantic Targeted routing
 
-Implement only after STAB-03 is registered. The resolver compares named
-PowerShell AST nodes for the exact entrypoint path. Literal dispatch arms and
-explicitly catalogued domain parameters may select a small common-plus-domain
-contract; shared startup, module ordering, re-exec, admission, completion/error
-cleanup, parse failures, missing baselines, and unknown nodes fall back to the
-full lifecycle contract. The selection protocol must include the complete
+Implemented after STAB-03 registration. The resolver compares named PowerShell
+AST nodes for the exact entrypoint path. An informational owner mapping does not
+permit selective execution: only an explicitly allowlisted node with a literal,
+machine-validated test probe that invokes the public entrypoint may select a
+small common-plus-domain contract. All parameters/functions and all but two
+actions currently remain fail-closed. Shared startup, module ordering, re-exec,
+admission, completion/error cleanup, parse failures, missing baselines, and
+unknown or unproven nodes fall back to the full lifecycle contract. The selection
+protocol includes the complete
 changed entrypoint in `additionalInputs` for every selected shard digest, so a
 domain test cannot reuse evidence from a different entrypoint version.
 
 Acceptance:
 
-- one pure dispatch-arm edit selects only entrypoint-core plus its domain owner;
-- two arm edits select the union of their owners;
-- action `ValidateSet`, switch labels, and owner catalogue remain exactly equal;
-- unknown or shared changes select full lifecycle fail-closed;
-- every selected shard digest changes when the entrypoint changes;
-- Full and Develop keep the complete inventory;
-- a measured leaf Targeted finishes within 300 seconds.
+- [x] one proven dispatch-arm edit selects only entrypoint-core plus its domain owner;
+- [x] two proven arm edits select the union of their owners;
+- [x] action `ValidateSet`, switch labels, and owner catalogue remain exactly equal;
+- [x] unknown, shared, or merely classified changes select full lifecycle fail-closed;
+- [x] a mutation-kill regression proves the selected public probe observes dispatch;
+- [x] every selected shard digest changes when the entrypoint changes;
+- [x] Full and Develop keep the complete inventory;
+- [x] a fresh measured leaf Targeted finishes within 300 seconds.
 
 ## Wave 3 - remaining acceptance streams
 
@@ -168,13 +182,16 @@ defect becomes a separate stabilization item; the reproducer remains equivalent.
 
 ## Wave 4 - documentation and bounded hygiene
 
-- replace the long operational ledger with a compact generated/current view and
-  retain the narrative as historical evidence;
-- show implementation, registration, publication, installation, and runtime
-  acceptance as separate facts;
-- inspect ancestry/equivalence before archiving stale refs or worktrees;
-- expose active/terminal ticket counts, oldest waiter age, evidence-store size,
-  retained checkpoints, and stage-rerun reasons.
+Execute STAB-06 as four separately registered batches, never as an unbounded
+cleanup: (A) archive the narrative ledger and keep a compact current view with
+separate implementation/registration/publication/installation/runtime facts;
+(B) add read-only ref/worktree disposition, then allow deletion only with exact
+ownership, expected-SHA CAS, clean/process-free state, and published ancestry or
+tree equivalence; (C) compact hot run/resource state without deleting raw proof
+or breaking Targeted lookup; (D) add backward-compatible access summary metrics.
+Expose active/terminal counts, oldest waiter age, store sizes, retained checkpoint
+reasons, and stage-rerun reasons. Never select arbitrary `codex/*` worktrees or
+age-delete content-addressed evidence/qualifications in this item.
 
 ## Wave 5 - frozen release
 
@@ -222,3 +239,5 @@ Hard stop: three hours.
 | 2026-09-12 | STAB-03 passed final independent review after iterative fault-injection fixes. | No blocking findings remain: durable pin/ack ordering, legacy migration prevalidation, retention transaction, bounded maintenance I/O, page reclamation, orphan fail-closed behavior, and post-processing cursor checkpoints are covered. |
 | 2026-09-12 | STAB-03 exact-head local owner proof passed and was integrated. | Python remote-work: 378 passed, 0 failed, 377.13 seconds. Windows PowerShell 5.1 `BranchSourceSyncGroup.Tests.ps1`: 23 passed, 0 failed, 247.64 seconds. Owned process count: 0. Integrated head `9d3ef38`; registration pending. |
 | 2026-09-12 | STAB-03 registered after repairing one stale cross-owner lifecycle expectation. | The first Targeted failed because `LifecycleOperationLock.Tests.ps1` still searched for terminal tickets in the active directory. The repaired regression follows the exact ticket into its sharded archive and passed 14/14. The repeated Targeted then passed 768/768 in 933.157 seconds; queue head `ac64992`. |
+| 2026-09-13 | STAB-08 implemented and independently reviewed. | `LocalQualityGate.Tests.ps1`: 28/28; entrypoint/docs contract: 38/38; literal public probes: 2/2. A fresh leaf edit selected 30 tests and passed in 25.562 seconds with 3 executed and 0 reused shards. Previous false-green action/parameter reproducers now fall back to full lifecycle; no blocking review findings remain. |
+| 2026-09-13 | Develop publication explicitly paused by the user. | Continue with local commits, focused proof, and `RegisterChange`; do not run `PublishDevelop`, promotion, or release until the follow-up problem review is complete. |
