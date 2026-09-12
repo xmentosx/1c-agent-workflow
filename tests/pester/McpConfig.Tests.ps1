@@ -1354,6 +1354,45 @@ enabled = true
         }
     }
 
+    It "consults the paired Vanessa source-build archive only for the exact active VAExtension pin" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-paired-selection-" + [guid]::NewGuid().ToString("N"))
+        $archivePath = Join-Path $tempRoot "unrelated-candidate.zip"
+        $previousArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $archivePath -Encoding UTF8 -Value "not a zip because it must not be consulted"
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $archivePath, "Process")
+            $selection = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Get-VanessaMcpArtifactLockEntry {
+                    return [pscustomobject]@{
+                        assetName = "VAExtension.1.29-itl-r13.cfe"
+                        version = "1.2.043.28"
+                        sha256 = ("a" * 64)
+                    }
+                }
+                $definition = [pscustomobject]@{lockKey="vaExtension"}
+                return [pscustomobject]@{
+                    hashMismatch = Save-VanessaMcpPairedSourceBuildArtifact -Definition $definition -AssetInfo ([pscustomobject]@{
+                        name="VAExtension.1.29-itl-r13.cfe";version="1.2.043.28";expectedSha256=("b" * 64)
+                    }) -TargetPath (Join-Path $tempRoot "hash-mismatch.cfe")
+                    nameMismatch = Save-VanessaMcpPairedSourceBuildArtifact -Definition $definition -AssetInfo ([pscustomobject]@{
+                        name="VAExtension.1.29.cfe";version="1.2.043.28";expectedSha256=("a" * 64)
+                    }) -TargetPath (Join-Path $tempRoot "name-mismatch.cfe")
+                }
+            }
+            $selection.hashMismatch | Should -BeFalse
+            $selection.nameMismatch | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $tempRoot "hash-mismatch.cfe") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $tempRoot "name-mismatch.cfe") | Should -BeFalse
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $previousArchive, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "caches Vanessa UI MCP CFE artifacts, shares them with a worktree, and verifies locked hashes" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-cache-test-" + [guid]::NewGuid().ToString("N"))
         $masterRoot = Join-Path $tempRoot "master"

@@ -7177,6 +7177,19 @@ function Save-VanessaMcpPairedSourceBuildArtifact {
         return $false
     }
 
+    # The process-wide source-build archive belongs only to the active paired
+    # VAExtension pin. Tests and explicit resolvers may supply another immutable
+    # asset; in that case its own URL/source must win over the unrelated archive.
+    $pairedLock = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $pairedName = [string](Get-ConfigValueFromObject -Object $pairedLock -Path "assetName" -Default "")
+    $pairedVersion = [string](Get-ConfigValueFromObject -Object $pairedLock -Path "version" -Default "")
+    $pairedSha256 = ([string](Get-ConfigValueFromObject -Object $pairedLock -Path "sha256" -Default "")).ToLowerInvariant()
+    $requestedSha256 = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
+    if ([string]$AssetInfo.name -cne $pairedName -or [string]$AssetInfo.version -cne $pairedVersion -or
+        $requestedSha256 -notmatch '^[a-f0-9]{64}$' -or $requestedSha256 -cne $pairedSha256) {
+        return $false
+    }
+
     $configuredArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
     if (-not $configuredArchive) {
         return $false
