@@ -99,6 +99,25 @@ Describe 'Delivery v3 immutable selective plan' {
         $after | Should -Not -Be $before
     }
 
+    It 'keeps Develop evidence reusable when helpers only rewrite volatile stand context' {
+        $stand = Join-Path $TestDrive 'stand identity'
+        New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\project.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\release-e2e.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+        $envPath = Join-Path $stand '.dev.env'
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+        $script:E2EProjectRoot = $stand
+        $before = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
+
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`n", [Text.UTF8Encoding]::new($false))
+        $volatileRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
+        (Get-DeliveryCanonicalJsonSha256 -Value $volatileRewrite) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`nROCTUP_MCP_PORT=6003`n", [Text.UTF8Encoding]::new($false))
+        $materialRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
+        (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+    }
+
     It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {
         $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=3601 }
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*'

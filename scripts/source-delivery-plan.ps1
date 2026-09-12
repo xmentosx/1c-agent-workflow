@@ -163,6 +163,13 @@ function Get-DeliveryReleaseStageCatalog {
     return $catalog
 }
 
+function Get-DeliveryStableDotEnvSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $volatilePattern = '^(INFOBASE_PATH|INFOBASE_PUBLISH_URL|ITL_ACTIVE_.*|ROCTUP_MCP_.*|VANESSA_MCP_.*|VANESSA_TEST_PORT|SOURCE_INFOBASE_UNSAFE_ACTION_PROTECTION_MODE)='
+    $stableLines = @([IO.File]::ReadAllLines($Path, [Text.Encoding]::UTF8) | Where-Object { $_ -notmatch $volatilePattern })
+    return Get-DeliveryTextSha256 -Text (($stableLines -join "`n") + "`n")
+}
+
 function Get-DeliveryPlanEnvironmentIdentity {
     param([Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode)
     $standVariable = Get-Variable -Name E2EProjectRoot -Scope Script -ErrorAction SilentlyContinue
@@ -171,7 +178,13 @@ function Get-DeliveryPlanEnvironmentIdentity {
     if ($standRoot) {
         foreach ($relative in @(".agent-1c/project.json", ".agent-1c/release-e2e.json", ".dev.env")) {
             $path = Join-Path $standRoot $relative.Replace('/', '\')
-            $fileIdentity[$relative] = $(if(Test-Path -LiteralPath $path -PathType Leaf){Get-DeliveryFileSha256 -Path $path}else{"missing"})
+            $fileIdentity[$relative] = $(if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+                "missing"
+            } elseif ($relative -eq ".dev.env") {
+                Get-DeliveryStableDotEnvSha256 -Path $path
+            } else {
+                Get-DeliveryFileSha256 -Path $path
+            })
         }
     }
     $preparedRulesVariable = Get-Variable -Name AiRulesSource -Scope Script -ErrorAction SilentlyContinue
