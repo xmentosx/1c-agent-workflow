@@ -22,11 +22,11 @@ and live proof are distinct states.
 |---|---|---|---|---|
 | STAB-01 | P0 | Release E2E evidence can remain in a disposable candidate worktree, so cleanup makes a valid checkpoint unusable. | registered at `fa7dd9c` | Focused regressions prove restart after candidate cleanup and strict SHA rejection. |
 | STAB-02 | P1 | Delivery plan identity excludes volatile values with a reactive blacklist instead of defining semantic inputs. | registered at `0ba05bc` | Equivalent materializations have the same identity; every declared semantic input changes it. |
-| STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | in analysis | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression. |
+| STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | implementation prepared; integration proof pending | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression. |
 | STAB-04 | P1 | Shared read, functional test, performance measurement, and mutation do not have sufficiently explicit compatibility semantics. | queued | Mode matrix and focused compatibility regressions exist; measurements are exclusive. |
 | STAB-05 | P1 | File/server and multi-host admission/recovery acceptance is incomplete. | queued | Two-process, two-project, server-alias, SMB two-host, owner-crash, dead-waiter, and independent-resource scenarios pass. |
 | STAB-06 | P2 | Operational ledger, stale refs, retained worktrees, and runtime metrics need bounded cleanup and a compact current-state view. | queued | Current checkpoint is concise; historical evidence remains available; cleanup is ancestry-checked. |
-| STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | implemented; focused proof passed; registration pending | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
+| STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | registered at `a5db5a9` | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -193,3 +193,5 @@ Hard stop: three hours.
 | 2026-09-12 | STAB-02 implemented and its owner suite passed. | `SourceDeliveryPlan.Tests.ps1`: 10 passed, 0 failed. Semantic `.dev.env` allowlist, canonical parsing, unknown-key stability, all declared inputs, and byte-based Vanessa source-build identity are covered. |
 | 2026-09-12 | STAB-02 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `0ba05bc`. |
 | 2026-09-12 | STAB-07 implemented and its owner suite passed. | `SourceDeliveryQueue.Tests.ps1`: 9 passed, 0 failed, 225.12 seconds. Resume pins a recorded trusted master ancestor; malformed, missing, and untrusted plan inputs fail closed. |
+| 2026-09-12 | STAB-07 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `a5db5a9`. |
+| 2026-09-12 | STAB-03a implementation prepared in an isolated worktree. | Python remote-work suite: 355 passed, 0 failed. Integration was paused because the existing lifecycle waiter regression exposed a direct-launch `PSModulePath` defect before database admission. |

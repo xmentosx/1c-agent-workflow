@@ -136,6 +136,15 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$fileHashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+if ($null -eq $fileHashCommand) {
+    # Windows PowerShell can inherit a PowerShell Core module root ahead of its
+    # own built-in modules. Import the matching Utility module by absolute path
+    # so direct helper launches keep their hash boundary without depending on
+    # the caller's PSModulePath ordering.
+    $utilityModulePath = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1"
+    Import-Module -Name $utilityModulePath -ErrorAction Stop
+}
 $script:ConsoleOutputEncoding = New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding = $script:ConsoleOutputEncoding
 [Console]::OutputEncoding = $script:ConsoleOutputEncoding

@@ -292,6 +292,7 @@ function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait 
                 Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
                 Exit-Agent1cLifecycleOperation
                 $result = Receive-Worker $job
+                $result.combinedText | Should -Not -Match '\bGet-FileHash\b'
                 if ($InputKind -eq 'config') {
                     $result.exitCode | Should -Be 0 -Because $result.combinedText
                     $result.stdout | Should -Match CURRENT_CONFIG
