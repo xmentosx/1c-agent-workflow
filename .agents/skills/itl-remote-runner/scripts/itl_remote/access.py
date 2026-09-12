@@ -18,7 +18,7 @@ import secrets
 import time
 import uuid
 
-from .common import FileLock, WorkError, identity, read_json, stamp, write_json
+from .common import FileLock, WorkError, identity, publish_path, read_json, stamp, write_json
 
 
 DEFAULT_RECOVERY_HORIZON_DAYS = 90
@@ -247,12 +247,60 @@ class Coordinator:
     def _queue_slot_path(self, root, number):
         return root / f"{number // MAINTENANCE_PAGE_SIZE:016x}" / f"{number % MAINTENANCE_PAGE_SIZE:03d}.json"
 
+    @staticmethod
+    def _write_queue_json(path, value):
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".pending")
+        with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        publish_path(temporary, path, replace=True)
+
+    @staticmethod
+    def _unlink_queue_json(path):
+        path = Path(path)
+        path.unlink(missing_ok=True)
+        path.with_name(path.name + ".pending").unlink(missing_ok=True)
+
     def _queue_tail(self, path, code):
-        value = read_json(path) if path.exists() else {"schemaVersion": 1, "nextId": 0}
-        if (not isinstance(value, dict) or value.get("schemaVersion") != 1 or
-                type(value.get("nextId")) is not int or value["nextId"] < 0):
+        value = read_json(path) if path.exists() else {
+            "schemaVersion": 2, "reclaimId": 0, "headId": 0, "nextId": 0}
+        if (not isinstance(value, dict) or value.get("schemaVersion") != 2 or
+                type(value.get("reclaimId")) is not int or type(value.get("headId")) is not int or
+                type(value.get("nextId")) is not int or
+                not 0 <= value["reclaimId"] <= value["headId"] <= value["nextId"] or
+                value["reclaimId"] % MAINTENANCE_PAGE_SIZE or value["headId"] % MAINTENANCE_PAGE_SIZE):
             raise WorkError(code + ": " + str(path))
         return value
+
+    def _reclaim_queue_head_locked(self, root, tail_path, code, boundary):
+        tail = self._queue_tail(tail_path, code)
+        if tail["reclaimId"] == tail["headId"]:
+            page_end = tail["headId"] + MAINTENANCE_PAGE_SIZE
+            if page_end > tail["nextId"]:
+                return 0
+            for queue_id in range(tail["headId"], page_end):
+                slot = self._queue_slot_path(root, queue_id)
+                if not slot.exists() or read_json(slot) != {
+                        "schemaVersion": 1, "id": queue_id, "status": "done"}:
+                    return 0
+            tail["headId"] = page_end
+            self._write_queue_json(tail_path, tail)
+            self._published(boundary + "-head")
+        page_start = tail["reclaimId"]
+        page_end = min(tail["headId"], page_start + MAINTENANCE_PAGE_SIZE)
+        for queue_id in range(page_start, page_end):
+            self._unlink_queue_json(self._queue_slot_path(root, queue_id))
+        directory = self._queue_slot_path(root, page_start).parent
+        if directory.exists():
+            directory.rmdir()
+        self._published(boundary + "-delete")
+        tail["reclaimId"] = page_end
+        self._write_queue_json(tail_path, tail)
+        self._published(boundary + "-cursor")
+        return page_end - page_start
 
     def _queue_cleanup_item_locked(self, path, item):
         tail = self._queue_tail(self.cleanup_tail_path, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID")
@@ -260,7 +308,6 @@ class Coordinator:
         if queue_id is None:
             queue_id = tail["nextId"]
             item["queueId"] = queue_id
-            write_json(path, item)
         elif type(queue_id) is not int or queue_id < 0:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(path))
         slot = self._queue_slot_path(self.cleanup_queue_path, queue_id)
@@ -269,10 +316,40 @@ class Coordinator:
         if slot.exists() and read_json(slot) != expected:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_CONFLICT: " + str(slot))
         if not slot.exists():
-            write_json(slot, expected)
+            self._write_queue_json(slot, expected)
+            self._published("cleanup-queue-new-slot")
+        write_json(path, item)
+        self._published("cleanup-queue-authority")
         if tail["nextId"] <= queue_id:
             tail["nextId"] = queue_id + 1
-            write_json(self.cleanup_tail_path, tail)
+            self._write_queue_json(self.cleanup_tail_path, tail)
+            self._published("cleanup-queue-tail")
+
+    def _requeue_cleanup_item_locked(self, path, item, old_id):
+        tail = self._queue_tail(self.cleanup_tail_path, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID")
+        current_id = item["queueId"]
+        if current_id == old_id:
+            current_id = tail["nextId"]
+            slot = self._queue_slot_path(self.cleanup_queue_path, current_id)
+            self._write_queue_json(slot, {"schemaVersion": 1, "id": current_id, "status": "active",
+                                           "kind": item["kind"], "ticket": item["ticket"]})
+            self._published("cleanup-queue-new-slot")
+            item["queueId"] = current_id
+            write_json(path, item)
+            self._published("cleanup-queue-authority")
+        else:
+            slot = self._queue_slot_path(self.cleanup_queue_path, current_id)
+            expected = {"schemaVersion": 1, "id": current_id, "status": "active",
+                        "kind": item["kind"], "ticket": item["ticket"]}
+            if not slot.exists() or read_json(slot) != expected:
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID: " + str(slot))
+        if tail["nextId"] <= current_id:
+            tail["nextId"] = current_id + 1
+            self._write_queue_json(self.cleanup_tail_path, tail)
+            self._published("cleanup-queue-tail")
+        self._write_queue_json(self._queue_slot_path(self.cleanup_queue_path, old_id),
+                               {"schemaVersion": 1, "id": old_id, "status": "done"})
+        self._published("cleanup-queue-old-retired")
 
     def _schedule_cleanup_locked(self, records):
         for record in records:
@@ -326,7 +403,7 @@ class Coordinator:
         if ticket is not None:
             paths = [self._cleanup_debt_item_path(kind, ticket)
                      for kind in ("terminal-record", "alive-sidecar")]
-            return [(None, path) for path in paths if path.exists()][:limit]
+            return [(None, None, path) for path in paths if path.exists()][:limit]
         state = read_json(self.cleanup_state_path) if self.cleanup_state_path.exists() else {
             "schemaVersion": 2, "nextId": 0}
         if (not isinstance(state, dict) or state.get("schemaVersion") != 2 or
@@ -334,7 +411,7 @@ class Coordinator:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_STATE_INVALID: " + str(self.cleanup_state_path))
         tail = self._queue_tail(self.cleanup_tail_path, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID")
         selected = []
-        start = state["nextId"] if state["nextId"] < tail["nextId"] else 0
+        start = max(tail["headId"], state["nextId"] if state["nextId"] < tail["nextId"] else tail["headId"])
         stop = min(tail["nextId"], start + limit)
         for queue_id in range(start, stop):
             slot = self._queue_slot_path(self.cleanup_queue_path, queue_id)
@@ -348,7 +425,7 @@ class Coordinator:
                     value["kind"] not in ("terminal-record", "alive-sidecar") or
                     not re.fullmatch(r"[0-9a-f]{32}", str(value["ticket"]))):
                 raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID: " + str(slot))
-            selected.append((slot, self._cleanup_debt_item_path(value["kind"], value["ticket"])))
+            selected.append((queue_id, slot, self._cleanup_debt_item_path(value["kind"], value["ticket"])))
         state["nextId"] = 0 if stop >= tail["nextId"] else stop
         write_json(self.cleanup_state_path, state)
         return selected
@@ -357,7 +434,11 @@ class Coordinator:
         if type(limit) is not int or not 1 <= limit <= MAX_CLEANUP_ITEMS_PER_CALL:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_LIMIT_INVALID")
         selected = self._cleanup_selection_locked(limit, ticket)
-        for slot, path in selected:
+        for queue_id, slot, path in selected:
+            if not path.exists():
+                if slot is not None:
+                    self._write_queue_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+                continue
             item = self._validate_cleanup_item(path, read_json(path))
             completed = False
             last_error = None
@@ -375,12 +456,19 @@ class Coordinator:
                 path.unlink(missing_ok=True)
                 queue_id = item.get("queueId")
                 queue_slot = slot if slot is not None else self._queue_slot_path(self.cleanup_queue_path, queue_id)
-                write_json(queue_slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+                self._write_queue_json(queue_slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
             elif last_error is not None:
                 item["attempts"] += 1
                 item["lastAttemptAt"] = stamp()
                 item["lastError"] = str(last_error)
-                write_json(path, item)
+                if slot is None:
+                    write_json(path, item)
+                else:
+                    self._requeue_cleanup_item_locked(path, item, queue_id)
+        if ticket is None:
+            self._reclaim_queue_head_locked(
+                self.cleanup_queue_path, self.cleanup_tail_path,
+                "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID", "cleanup-queue-reclaim")
         remaining = sum(1 for kind in ("terminal-record", "alive-sidecar")
                         if ticket is not None and self._cleanup_debt_item_path(kind, ticket).exists())
         return {"remaining": remaining if ticket is not None else None, "attempted": len(selected)}
@@ -539,16 +627,45 @@ class Coordinator:
                 raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(pointer_path))
         else:
             queue_id = tail["nextId"]
-            write_json(pointer_path, {"schemaVersion": 1, "ticket": ticket, "id": queue_id})
         slot = self._queue_slot_path(self.compaction_queue_path, queue_id)
         expected = {"schemaVersion": 1, "id": queue_id, "status": "active", "ticket": ticket}
         if slot.exists() and read_json(slot) != expected:
             raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_CONFLICT: " + str(slot))
         if not slot.exists():
-            write_json(slot, expected)
+            self._write_queue_json(slot, expected)
+            self._published("compaction-queue-new-slot")
+        self._write_queue_json(pointer_path, {"schemaVersion": 1, "ticket": ticket, "id": queue_id})
+        self._published("compaction-queue-authority")
         if tail["nextId"] <= queue_id:
             tail["nextId"] = queue_id + 1
-            write_json(self.compaction_tail_path, tail)
+            self._write_queue_json(self.compaction_tail_path, tail)
+            self._published("compaction-queue-tail")
+
+    def _requeue_archive_locked(self, ticket, old_id):
+        tail = self._queue_tail(self.compaction_tail_path, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID")
+        pointer_path = self._compaction_pointer_path(ticket)
+        pointer = read_json(pointer_path) if pointer_path.exists() else None
+        if pointer == {"schemaVersion": 1, "ticket": ticket, "id": old_id}:
+            current_id = tail["nextId"]
+            slot = self._queue_slot_path(self.compaction_queue_path, current_id)
+            self._write_queue_json(slot, {"schemaVersion": 1, "id": current_id,
+                                          "status": "active", "ticket": ticket})
+            self._published("compaction-queue-new-slot")
+            self._write_queue_json(pointer_path, {"schemaVersion": 1, "ticket": ticket, "id": current_id})
+            self._published("compaction-queue-authority")
+        else:
+            current_id = pointer.get("id") if isinstance(pointer, dict) else None
+            slot = self._queue_slot_path(self.compaction_queue_path, current_id) if type(current_id) is int else None
+            expected = {"schemaVersion": 1, "id": current_id, "status": "active", "ticket": ticket}
+            if slot is None or not slot.exists() or read_json(slot) != expected:
+                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(pointer_path))
+        if tail["nextId"] <= current_id:
+            tail["nextId"] = current_id + 1
+            self._write_queue_json(self.compaction_tail_path, tail)
+            self._published("compaction-queue-tail")
+        self._write_queue_json(self._queue_slot_path(self.compaction_queue_path, old_id),
+                               {"schemaVersion": 1, "id": old_id, "status": "done"})
+        self._published("compaction-queue-old-retired")
 
     def _tombstone(self, value, path):
         if (not isinstance(value, dict) or set(value) != {"schemaVersion", "ticket", "status", "finishedAt",
@@ -581,7 +698,7 @@ class Coordinator:
             self._published("compaction-pins")
         result = {"scanned": 0, "visited": 0, "compacted": 0, "deleted": 0, "pinned": 0}
         tail = self._queue_tail(self.compaction_tail_path, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID")
-        start = state["nextId"] if state["nextId"] < tail["nextId"] else 0
+        start = max(tail["headId"], state["nextId"] if state["nextId"] < tail["nextId"] else tail["headId"])
         budget = min(MAX_COMPACTION_RECORDS_PER_CALL, policy["batchSize"] * shards)
         stop = min(tail["nextId"], start + budget)
         for queue_id in range(start, stop):
@@ -597,13 +714,14 @@ class Coordinator:
                     r"[0-9a-f]{32}", str(ticket)):
                 raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(slot))
             pointer_path = self._compaction_pointer_path(ticket)
-            if (not pointer_path.exists() or read_json(pointer_path) !=
-                    {"schemaVersion": 1, "ticket": ticket, "id": queue_id}):
-                raise WorkError("INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID: " + str(pointer_path))
             path = self._archive_path(ticket)
             if not path.exists():
-                write_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
-                pointer_path.unlink(missing_ok=True)
+                self._unlink_queue_json(pointer_path)
+                self._write_queue_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+                continue
+            pointer = read_json(pointer_path) if pointer_path.exists() else None
+            if pointer != {"schemaVersion": 1, "ticket": ticket, "id": queue_id}:
+                self._requeue_archive_locked(ticket, queue_id)
                 continue
             result["visited"] += 1
             value = read_json(path)
@@ -631,11 +749,18 @@ class Coordinator:
                     self._published("compaction-tombstone")
                     result["compacted"] += 1
             if completed:
-                write_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
-                pointer_path.unlink(missing_ok=True)
+                self._unlink_queue_json(pointer_path)
+                self._write_queue_json(slot, {"schemaVersion": 1, "id": queue_id, "status": "done"})
+            else:
+                self._requeue_archive_locked(ticket, queue_id)
         state["nextId"] = 0 if stop >= tail["nextId"] else stop
         write_json(self.compaction_path, state)
         self._published("compaction-state")
+        for _ in range((budget + MAINTENANCE_PAGE_SIZE - 1) // MAINTENANCE_PAGE_SIZE):
+            if not self._reclaim_queue_head_locked(
+                    self.compaction_queue_path, self.compaction_tail_path,
+                    "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID", "compaction-queue-reclaim"):
+                break
         result["nextId"] = state["nextId"]
         return result
 

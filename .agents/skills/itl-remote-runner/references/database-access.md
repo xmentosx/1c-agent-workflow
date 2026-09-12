@@ -47,9 +47,11 @@ at most 512 archive records regardless of `--shards` and configured batch size.
 Run `access-cleanup --coordinator <directory> [--shards <1-256>]` to retry at
 most 128 cleanup debts per invocation. Both maintenance routes use persisted
 fixed-size queue pages and direct slot reads; they do not enumerate an archive
-or debt shard before applying the cap. Admission and status neither scan nor
-rewrite cleanup debt. Run compaction and cleanup as maintenance; they never run
-in admission or status. The unpublished intermediate `cleanup-debt.json`
+or debt shard before applying the cap. Ineligible entries move once to the tail
+and completed head pages are reclaimed after a restartable checkpoint, bounding
+live queue markers to outstanding work plus one partial page. Admission and
+status neither scan nor rewrite cleanup debt. Run compaction and cleanup as
+maintenance; they never run in admission or status. The unpublished intermediate `cleanup-debt.json`
 format is deliberately unsupported: its presence fails closed with
 `INFOBASE_ACCESS_CLEANUP_DEBT_LEGACY_UNSUPPORTED` instead of silently ignoring
 possible debt; use the intermediate build that created that authority to drain

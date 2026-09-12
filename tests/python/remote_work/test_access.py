@@ -657,7 +657,8 @@ class AccessTests(unittest.TestCase):
             write_json(coordinator._queue_slot_path(coordinator.cleanup_queue_path, number),
                        {"schemaVersion": 1, "id": number, "status": "active",
                         "kind": "alive-sidecar", "ticket": ticket})
-        write_json(coordinator.cleanup_tail_path, {"schemaVersion": 1, "nextId": 20000})
+        write_json(coordinator.cleanup_tail_path,
+                   {"schemaVersion": 2, "reclaimId": 0, "headId": 0, "nextId": 20000})
         debt_reads, debt_writes = [], []
         original_read, original_write = access_module.read_json, access_module.write_json
         def observed_read(path):
@@ -693,8 +694,41 @@ class AccessTests(unittest.TestCase):
                 mock.patch.object(Path, "glob", side_effect=AssertionError("unbounded directory enumeration")):
             result = coordinator.cleanup(256)
         self.assertLessEqual(result["attempted"], access_module.MAX_CLEANUP_ITEMS_PER_CALL)
-        self.assertLessEqual(len(maintenance_writes), access_module.MAX_CLEANUP_ITEMS_PER_CALL + 1)
+        self.assertLessEqual(len(maintenance_writes), access_module.MAX_CLEANUP_ITEMS_PER_CALL + 3)
         self.assertGreater(len(list(coordinator.cleanup_debt_path.glob("??/*.json"))), 19000)
+
+    def test_cleanup_queue_page_reclamation_restarts_after_head_and_page_publication(self):
+        for boundary in ("cleanup-queue-reclaim-head", "cleanup-queue-reclaim-delete",
+                         "cleanup-queue-reclaim-cursor"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix="ITL cleanup reclaim ") as root:
+                coordinator = Coordinator(Path(root) / "координатор баз")
+                for number in range(access_module.MAINTENANCE_PAGE_SIZE):
+                    ticket = f"{number + 1:032x}"
+                    item = {"kind": "alive-sidecar", "ticket": ticket, "attempts": 0,
+                            "createdAt": stamp()}
+                    path = coordinator._cleanup_debt_item_path("alive-sidecar", ticket)
+                    write_json(path, item)
+                    coordinator._queue_cleanup_item_locked(path, item)
+                page = coordinator._queue_slot_path(coordinator.cleanup_queue_path, 0).parent
+                injected = False
+                def crash_after_publication(actual):
+                    nonlocal injected
+                    if actual == boundary and not injected:
+                        injected = True
+                        raise RuntimeError("injected crash after " + boundary)
+                coordinator._published = crash_after_publication
+                with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                    coordinator.cleanup()
+                if boundary == "cleanup-queue-reclaim-head":
+                    coordinator._queue_slot_path(coordinator.cleanup_queue_path, 0).with_name(
+                        "000.json.pending").write_bytes(b"hard-kill partial")
+                restarted = Coordinator(coordinator.root)
+                restarted.cleanup()
+                tail = read_json(restarted.cleanup_tail_path)
+                self.assertEqual(access_module.MAINTENANCE_PAGE_SIZE, tail["headId"])
+                self.assertEqual(tail["headId"], tail["reclaimId"])
+                self.assertFalse(page.exists())
+                self.assertEqual({}, restarted._read_cleanup_debt()["items"])
 
     def test_retention_preserves_horizon_and_pins_then_compacts_to_exact_tombstone(self):
         coordinator = Coordinator(self.coordinator)
@@ -802,6 +836,11 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["visited"])
         self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["scanned"])
         self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, result["nextId"])
+        tail = read_json(coordinator.compaction_tail_path)
+        self.assertEqual(access_module.MAX_COMPACTION_RECORDS_PER_CALL, tail["headId"])
+        self.assertEqual(tail["headId"], tail["reclaimId"])
+        self.assertFalse(coordinator._queue_slot_path(coordinator.compaction_queue_path, 0).parent.exists())
+        self.assertEqual(600, len(list(coordinator.compaction_queue_path.glob("*/*.json"))))
 
     def test_compaction_queue_cycles_ineligible_records_without_duplicates_and_revisits_tombstones(self):
         class Clock(datetime):
@@ -838,13 +877,13 @@ class AccessTests(unittest.TestCase):
             self.assertEqual(4, first["visited"])
             self.assertEqual(4, second["visited"])
             self.assertEqual(0, read_json(coordinator.compaction_path)["nextId"])
-            self.assertEqual(4, read_json(coordinator.compaction_tail_path)["nextId"])
+            self.assertEqual(12, read_json(coordinator.compaction_tail_path)["nextId"])
             Clock.current += timedelta(days=2)
             write_json(coordinator.pins_path, {"schemaVersion": 1, "entries": {}})
             third = coordinator.compact(256)
         self.assertEqual(1, third["deleted"])
         self.assertFalse(coordinator._archive_path(tickets[3]).exists())
-        self.assertEqual(4, read_json(coordinator.compaction_tail_path)["nextId"])
+        self.assertEqual(15, read_json(coordinator.compaction_tail_path)["nextId"])
         self.assertEqual(records[2], read_json(coordinator._archive_path(tickets[2])))
 
     def test_compaction_queue_is_idempotent_and_fails_closed_on_a_gap_or_duplicate_pointer(self):
@@ -866,6 +905,37 @@ class AccessTests(unittest.TestCase):
                    {"schemaVersion": 1, "ticket": ticket, "id": 1})
         with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID"):
             coordinator.compact()
+
+    def test_compaction_requeue_restarts_after_every_authority_publication(self):
+        boundaries = ("compaction-queue-new-slot", "compaction-queue-authority",
+                      "compaction-queue-tail", "compaction-queue-old-retired")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix="ITL queue restart ") as root:
+                coordinator = Coordinator(Path(root) / "координатор баз")
+                coordinator.configure_retention(30, 365, 128)
+                ticket = "e" * 32
+                record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                          "token": "e" * 64, "sequence": 1, "resources": ["base-a"],
+                          "accessMode": "exclusive", "status": "released",
+                          "createdAt": stamp(), "finishedAt": stamp(), "owner": {}}
+                write_json(coordinator._archive_path(ticket), record)
+                coordinator._queue_archive_locked(ticket)
+                injected = False
+                def crash_after_publication(actual):
+                    nonlocal injected
+                    if actual == boundary and not injected:
+                        injected = True
+                        raise RuntimeError("injected crash after " + boundary)
+                coordinator._published = crash_after_publication
+                with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                    coordinator.compact()
+                restarted = Coordinator(coordinator.root)
+                restarted.compact()
+                pointer = read_json(restarted._compaction_pointer_path(ticket))
+                slot = restarted._queue_slot_path(restarted.compaction_queue_path, pointer["id"])
+                self.assertEqual({"schemaVersion": 1, "id": pointer["id"],
+                                  "status": "active", "ticket": ticket}, read_json(slot))
+                self.assertEqual(record, read_json(restarted._archive_path(ticket)))
 
     def test_terminal_ticket_is_addressable_from_archive_and_alive_sidecar_is_removed(self):
         coordinator = Coordinator(self.coordinator)
