@@ -203,6 +203,19 @@ class AccessTests(unittest.TestCase):
         self.release(a, pa)
         self.assertEqual("released", self.wait_file(b / "done.json")["status"])
 
+    def test_registered_file_aliases_share_one_queue_across_projects(self):
+        canonical = {"kind": "file", "path": str(self.root / "База проекта A")}
+        alias = {"kind": "file", "path": str(self.root / "Псевдоним базы проекта B")}
+        Coordinator(self.coordinator).register("shared-file-test", [canonical, alias])
+        a, pa = self.child("file-A", bases=[canonical], hold=True)
+        acquired = self.wait_file(a / "acquired.json")
+        b, pb = self.child("file-B", bases=[alias])
+        waiting = self.wait_file(b / "waiting.json")
+        self.assertEqual(acquired["ticket"], waiting["blockers"][0]["ticket"])
+        self.assertEqual("file-A", waiting["blockers"][0]["owner"]["jobId"])
+        self.release(a, pa)
+        self.assertEqual("released", self.wait_file(b / "done.json")["status"])
+
     def test_registration_cannot_split_an_existing_waiting_or_running_identity(self):
         a, pa = self.child("A", hold=True)
         self.wait_file(a / "acquired.json")
