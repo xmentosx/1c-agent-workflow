@@ -364,28 +364,34 @@ class Coordinator:
             raise WorkError("INFOBASE_ACCESS_PIN_REASON_INVALID")
         with self.mutex(time.monotonic() + 30, lambda: False):
             self.record(ticket)
-            policy = self._retention_policy()
-            lifetime = policy["tombstoneRetentionDays"] if days is None else days
-            if type(lifetime) is not int or not 1 <= lifetime <= policy["tombstoneRetentionDays"]:
-                raise WorkError("INFOBASE_ACCESS_PIN_HORIZON_INVALID")
-            pins = self._read_pins()
-            expires = datetime.now(timezone.utc) + timedelta(days=lifetime)
-            pins["entries"].setdefault(ticket, {})[reason] = expires.isoformat()
-            write_json(self.pins_path, pins)
-            return {"reason": reason, "expiresAt": pins["entries"][ticket][reason]}
+            return self._pin_locked(ticket, reason, days=days)
+
+    def _pin_locked(self, ticket, reason, *, days=None):
+        policy = self._retention_policy()
+        lifetime = policy["tombstoneRetentionDays"] if days is None else days
+        if type(lifetime) is not int or not 1 <= lifetime <= policy["tombstoneRetentionDays"]:
+            raise WorkError("INFOBASE_ACCESS_PIN_HORIZON_INVALID")
+        pins = self._read_pins()
+        expires = datetime.now(timezone.utc) + timedelta(days=lifetime)
+        pins["entries"].setdefault(ticket, {})[reason] = expires.isoformat()
+        write_json(self.pins_path, pins)
+        return {"reason": reason, "expiresAt": pins["entries"][ticket][reason]}
 
     def unpin(self, ticket, reason=None):
         with self.mutex(time.monotonic() + 30, lambda: False):
-            pins = self._read_pins()
-            reasons = pins["entries"].get(ticket)
-            if reasons is not None and reason is None:
+            self._unpin_locked(ticket, reason)
+
+    def _unpin_locked(self, ticket, reason=None):
+        pins = self._read_pins()
+        reasons = pins["entries"].get(ticket)
+        if reasons is not None and reason is None:
+            del pins["entries"][ticket]
+            write_json(self.pins_path, pins)
+        elif reasons is not None and reason in reasons:
+            del reasons[reason]
+            if not reasons:
                 del pins["entries"][ticket]
-                write_json(self.pins_path, pins)
-            elif reasons is not None and reason in reasons:
-                del reasons[reason]
-                if not reasons:
-                    del pins["entries"][ticket]
-                write_json(self.pins_path, pins)
+            write_json(self.pins_path, pins)
 
     def _read_compaction_state(self):
         value = (read_json(self.compaction_path) if self.compaction_path.exists() else

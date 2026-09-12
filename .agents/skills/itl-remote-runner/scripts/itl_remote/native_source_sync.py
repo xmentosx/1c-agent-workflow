@@ -86,6 +86,8 @@ def publish(lease, producer_id, payload):
         if payload['stepId'] in entries:
             previous = read(lease.coordinator, record, producer_id, payload['stepId'])
             if previous['phase'] == payload and previous['nativeSnapshot'] == snapshot(record):
+                lease.coordinator._pin_locked(record['ticket'],
+                                              'source-sync-phase:' + producer_id + ':' + payload['stepId'])
                 return reference(record, producer_id, payload['stepId'], entries[payload['stepId']])
             stable = {key: value for key, value in payload.items() if key not in ('status', 'result')}
             old_stable = {key: value for key, value in previous['phase'].items() if key not in ('status', 'result')}
@@ -107,6 +109,8 @@ def publish(lease, producer_id, payload):
         entry = {'path': path.relative_to(lease.coordinator.root).as_posix(), 'sha256': sha}
         entries[payload['stepId']] = entry
         lease.coordinator.save(record)
+        lease.coordinator._pin_locked(record['ticket'],
+                                      'source-sync-phase:' + producer_id + ':' + payload['stepId'])
         lease.record = record
         return reference(record, producer_id, payload['stepId'], entry)
 
@@ -208,6 +212,8 @@ def observe(lease, ticket, expected):
             observed = native.inspect(lease.coordinator, record)
             response['canStart'] = (not any(op['startAttempted'] for op in observed['operations']) and
                                     not any(d['status'] == 'pending' for d in observed['restoration']['duties']))
+    if ticket != lease.record['ticket'] and matches:
+        lease.coordinator.unpin(ticket, 'source-sync-phase:' + matches[0]['producerId'] + ':' + expected['stepId'])
     return response
 
 

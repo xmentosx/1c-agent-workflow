@@ -45,12 +45,14 @@ values. Run compaction as maintenance; it never runs in admission or status.
 
 A durable recovery plan pins its ticket before recovery can make it terminal
 and removes only its own pin after terminal state is reflected in the job
-state. Multiple plans have independent pins. Pins expire no later than the
-configured tombstone horizon, so abandoned plans become explicit bounded
-retention debt rather than permanent archive growth. Pending terminal-record or
-`.alive` cleanup debt also prevents premature compaction. Within the recovery
-horizon (or while pinned) exact lookup returns the full record; after compaction
-it returns `INFOBASE_ACCESS_TICKET_COMPACTED`, distinct from a never-known or
+state. Source-sync phase receipts likewise pin their producer ticket until a
+successor admission has consumed that exact phase reference. Multiple plans
+and phases have independent pins. Pins expire no later than the configured
+tombstone horizon, so abandoned consumers become explicit bounded retention
+debt rather than permanent archive growth. Pending terminal-record or `.alive`
+cleanup debt also prevents premature compaction. Within the recovery horizon
+(or while pinned) exact lookup returns the full record; after compaction it
+returns `INFOBASE_ACCESS_TICKET_COMPACTED`, distinct from a never-known or
 expired ticket. Older runtimes fail closed on the new layout marker instead of
 bypassing its queue.
 

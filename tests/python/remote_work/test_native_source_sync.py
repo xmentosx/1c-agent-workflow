@@ -145,11 +145,14 @@ class NativeSourceSyncTests(unittest.TestCase):
             self.assertEqual(ack, phases.publish(lease, producer, complete))
             self.assertEqual('workflow-source-sync-phase', self.recover(self.current(lease)).evidence['adapter'])
             ticket = lease.record['ticket']
+            reason = 'source-sync-phase:' + producer + ':' + self.intent['stepId']
+            self.assertIn(reason, self.coordinator._read_pins()['entries'][ticket])
         with self.fixture.lease() as successor:
             observed = phases.observe(successor, ticket, self.intent)
             self.assertTrue(observed['completed'])
             self.assertFalse(observed['canStart'])
             self.assertEqual(complete['result'], observed['result'])
+            self.assertNotIn(ticket, self.coordinator._read_pins()['entries'])
 
     def test_intent_before_any_effect_is_restartable_but_acknowledged_native_work_is_not_completion(self):
         with self.fixture.lease() as lease:
