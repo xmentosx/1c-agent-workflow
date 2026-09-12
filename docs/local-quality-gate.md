@@ -58,6 +58,14 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 `tests/quality-contracts.json`. Неизвестный путь останавливает проверку и требует
 назначить владельца — полного fallback-прогона нет.
 
+Для точного `.agents/skills/1c-workflow/scripts/agent-1c.ps1` Targeted selection
+schema v2 сравнивает baseline и current PowerShell AST. Только тело literal
+`switch ($Action)` arm, явно объявленный параметр или именованная функция могут
+выбрать common-plus-domain tests. Изменение общего startup/dispatch/completion
+кода, `Action`/`ValidateSet`, метки arm, динамический или неизвестный узел,
+rename, parse error и отсутствующий baseline выбирают полный `lifecycle`
+contract. Full и Develop по-прежнему используют полный inventory.
+
 Каждый дочерний этап имеет hard timeout, no-progress timeout, heartbeat и запись
 длительности в `build/test-results/local/check-summary.json`. Там же сохраняются
 целевой/hard бюджет и пять самых медленных стадий. Выход за цель виден как
@@ -71,7 +79,9 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 PowerShell/Pester. Внешняя identity входит только для test-файлов, явно
 перечисленных в `pesterExternalInputs`; смена controlled fork или Vanessa build
 не сбрасывает не связанные с ними шарды. Неизвестный владелец теста отключает
-кэш для шарда. Провальные результаты не кэшируются.
+кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
+выбранного шарда; поэтому semantic routing не может переиспользовать proof от
+другой версии полного entrypoint. Провальные результаты не кэшируются.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
 ранние возможности. `tests/quality-contracts.json` объявляет пять continuation

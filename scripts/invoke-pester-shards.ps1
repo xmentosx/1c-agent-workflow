@@ -275,6 +275,7 @@ function Get-ShardTrackedFileIdentity {
 function Get-ShardInputDigest {
     param(
         [string[]]$Paths,
+        [string[]]$AdditionalInputs = @(),
         [hashtable]$ExternalIdentityOverrides,
         [switch]$IncludeLegacyGlobalExternalInputs
     )
@@ -286,7 +287,7 @@ function Get-ShardInputDigest {
     $contracts = @($catalog.contracts | Where-Object { $tests=@($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }); @($relativeTests | Where-Object { $_ -in $tests }).Count -gt 0 })
     foreach ($test in $relativeTests) { if (@($contracts | Where-Object { $test -in @($_.tests | ForEach-Object { ([string]$_).Replace('\','/') }) }).Count -eq 0) { return "" } }
     $patterns = @($contracts | ForEach-Object { @($_.paths) } | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
-    $inputs = @($relativeTests + $sharedInputs + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
+    $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
     $lines = New-Object System.Collections.Generic.List[string]
     $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $pester) { return "" }
@@ -376,8 +377,38 @@ function Save-ShardCache {
 $timingPath = Join-Path $PSScriptRoot "pester-timings.json"
 $timings = Get-Content -LiteralPath $timingPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $testRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot "tests\pester")).TrimEnd('\') + '\'
+$selectionAdditionalInputs = @()
 if ($SelectionPath) {
     $selection = Get-Content -LiteralPath ([IO.Path]::GetFullPath($SelectionPath)) -Raw -Encoding UTF8 | ConvertFrom-Json
+    $schemaProperty = $selection.PSObject.Properties["schemaVersion"]
+    if ($schemaProperty -and [int]$schemaProperty.Value -eq 2) {
+        foreach ($requiredProperty in @("paths", "contracts", "tests", "semanticImpacts", "additionalInputs")) {
+            if (-not $selection.PSObject.Properties[$requiredProperty]) { throw "Targeted selection schemaVersion 2 requires $requiredProperty." }
+        }
+        $selectionAdditionalInputs = @($selection.additionalInputs | ForEach-Object { ([string]$_).Replace('\', '/') })
+        if (@($selectionAdditionalInputs | Sort-Object -Unique).Count -ne $selectionAdditionalInputs.Count -or
+            @($selectionAdditionalInputs | Where-Object { -not $_ -or [IO.Path]::IsPathRooted($_) -or $_ -match '[*?\[]' -or $_ -match '(^|/)\.\.(/|$)' }).Count -gt 0) {
+            throw "Targeted selection additionalInputs must contain unique exact repository-relative paths."
+        }
+        foreach ($relativeInput in $selectionAdditionalInputs) {
+            $absoluteInput = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot $relativeInput.Replace('/', '\')))
+            if (-not $absoluteInput.StartsWith($RepositoryRoot.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $absoluteInput -PathType Leaf)) {
+                throw "Targeted selection additional input is missing or outside the repository: $relativeInput"
+            }
+        }
+        $semanticCatalogProperty = $catalog.PSObject.Properties["semanticTargeting"]
+        if ($semanticCatalogProperty) {
+            $semanticPath = ([string]$semanticCatalogProperty.Value.path).Replace('\', '/')
+            $semanticAbsolutePath = Join-Path $RepositoryRoot $semanticPath.Replace('/', '\')
+            if ((Test-Path -LiteralPath $semanticAbsolutePath -PathType Leaf) -and
+                ($semanticPath -in @($selection.paths | ForEach-Object { ([string]$_).Replace('\', '/') }) -or @($selection.semanticImpacts).Count -gt 0) -and
+                $semanticPath -notin $selectionAdditionalInputs) {
+                throw "Targeted semantic selection must include the complete entrypoint in additionalInputs: $semanticPath"
+            }
+        }
+    } elseif ($schemaProperty -and [int]$schemaProperty.Value -ne 1) {
+        throw "Unsupported Pester selection schemaVersion: $($schemaProperty.Value)."
+    }
     $testFiles = @($selection.tests | ForEach-Object {
         $resolved = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot ([string]$_).Replace('/','\')))
         if (-not $resolved.StartsWith($testRoot, [StringComparison]::OrdinalIgnoreCase) -or $resolved -notlike "*.Tests.ps1" -or -not (Test-Path -LiteralPath $resolved -PathType Leaf)) { throw "Selected Pester path is missing or outside tests/pester: $_" }
@@ -421,7 +452,7 @@ foreach ($item in $items) {
     $stdoutPath = Join-Path $workerRoot ("worker-{0}.stdout.log" -f $index)
     $stderrPath = Join-Path $workerRoot ("worker-{0}.stderr.log" -f $index)
     $stdinPath = Join-Path $workerRoot ("worker-{0}.stdin.txt" -f $index)
-    $digest = Get-ShardInputDigest -Paths @([string]$item.path)
+    $digest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs
     $legacyDigests = New-Object System.Collections.Generic.List[string]
     if ((Test-Path -LiteralPath $planPath -PathType Leaf) -and (Test-Path -LiteralPath $resultPath -PathType Leaf) -and (Test-Path -LiteralPath $workerJunit -PathType Leaf)) {
         try {
@@ -447,18 +478,18 @@ foreach ($item in $items) {
     $script:pesterCacheLookupMs += [int64]$lookupStopwatch.ElapsedMilliseconds
     $reuseReason = "exact owner input fingerprint"
     if (-not $cached) {
-        $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs
+        $priorGlobalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs
         if ($priorGlobalDigest -and $priorGlobalDigest -ne $digest) { $legacyDigests.Add($priorGlobalDigest) | Out-Null }
         $relativeItemPath = [string]$item.path.Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/')
         $requiredExternalInputs = $(if ($pesterExternalInputsByTest.ContainsKey($relativeItemPath)) { @($pesterExternalInputsByTest[$relativeItemPath]) } else { @() })
         if ("ITL_AI_RULES_SOURCE_PATH" -notin $requiredExternalInputs) {
-            $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+            $priorUnsetAiRulesDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
                 ITL_AI_RULES_SOURCE_PATH = "env:ITL_AI_RULES_SOURCE_PATH=<unset>"
             }
             if ($priorUnsetAiRulesDigest -and $priorUnsetAiRulesDigest -ne $digest -and -not $legacyDigests.Contains($priorUnsetAiRulesDigest)) { $legacyDigests.Add($priorUnsetAiRulesDigest) | Out-Null }
         }
         if ("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -notin $requiredExternalInputs) {
-            $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
+            $priorUnsetExternalDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -IncludeLegacyGlobalExternalInputs -ExternalIdentityOverrides @{
                 ITL_AI_RULES_SOURCE_PATH = $(if ("ITL_AI_RULES_SOURCE_PATH" -in $requiredExternalInputs) { Get-ExternalInputIdentity -Name "ITL_AI_RULES_SOURCE_PATH" } else { "env:ITL_AI_RULES_SOURCE_PATH=<unset>" })
                 ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = "env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE=<unset>"
             }
@@ -471,7 +502,7 @@ foreach ($item in $items) {
                     ITL_AI_RULES_SOURCE_PATH = $legacyAiRulesIdentity
                     ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = (Get-LegacyExternalInputIdentity -Name "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE" -Value ([string]$archiveCandidate))
                 }
-                $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs
+                $legacyDigest = Get-ShardInputDigest -Paths @([string]$item.path) -AdditionalInputs $selectionAdditionalInputs -ExternalIdentityOverrides $overrides -IncludeLegacyGlobalExternalInputs
                 if ($legacyDigest -and $legacyDigest -ne $digest -and -not $legacyDigests.Contains($legacyDigest)) { $legacyDigests.Add($legacyDigest) | Out-Null }
             }
         }
