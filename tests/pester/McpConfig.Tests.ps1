@@ -1359,9 +1359,11 @@ enabled = true
         $masterRoot = Join-Path $tempRoot "master"
         $branchRoot = Join-Path $tempRoot "branch"
         $oldArtifactCacheRoot = [Environment]::GetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", "Process")
+        $oldSourceBuildArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
 
         try {
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", (Join-Path $tempRoot "Общий кэш с пробелом"), "Process")
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $null, "Process")
             New-Item -ItemType Directory -Force -Path (Join-Path $masterRoot ".agent-1c"), (Join-Path $branchRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
@@ -1431,6 +1433,7 @@ DEPENDENCY_MODE=fresh
             } | Should -Throw "*SHA256 mismatch*"
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $oldArtifactCacheRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $oldSourceBuildArchive, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -1447,7 +1450,8 @@ DEPENDENCY_MODE=fresh
             "VANESSA_MCP_VA_EXTENSION_CFE_PATH",
             "VANESSA_MCP_VA_EXTENSION_CFE_VERSION",
             "VANESSA_MCP_VA_EXTENSION_CFE_SHA256",
-            "ITL_ARTIFACT_CACHE_ROOT"
+            "ITL_ARTIFACT_CACHE_ROOT",
+            "ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE"
         )
         $previousEnvironment = @{}
         foreach ($name in $environmentNames) {
@@ -1457,6 +1461,7 @@ DEPENDENCY_MODE=fresh
         try {
             $artifactCacheRoot = Join-Path $tempRoot "Общий кэш с пробелом"
             [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $artifactCacheRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $null, "Process")
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "fixtures") | Out-Null
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $tempRoot ".agent-1c\project.json")
             $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
