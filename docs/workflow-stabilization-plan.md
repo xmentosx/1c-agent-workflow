@@ -22,11 +22,12 @@ and live proof are distinct states.
 |---|---|---|---|---|
 | STAB-01 | P0 | Release E2E evidence can remain in a disposable candidate worktree, so cleanup makes a valid checkpoint unusable. | registered at `fa7dd9c` | Focused regressions prove restart after candidate cleanup and strict SHA rejection. |
 | STAB-02 | P1 | Delivery plan identity excludes volatile values with a reactive blacklist instead of defining semantic inputs. | registered at `0ba05bc` | Equivalent materializations have the same identity; every declared semantic input changes it. |
-| STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | implementation prepared; integration proof pending | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression. |
+| STAB-03 | P0 | Database access scans and retains all historical tickets and `.alive` files; unrelated corruption has a global blast radius. | local proof passed; registration pending | Resource-bounded lookup, crash-safe retention, corruption isolation, and a historical-volume regression pass locally; real SMB/two-host proof remains STAB-05. |
 | STAB-04 | P1 | Shared read, functional test, performance measurement, and mutation do not have sufficiently explicit compatibility semantics. | queued | Mode matrix and focused compatibility regressions exist; measurements are exclusive. |
 | STAB-05 | P1 | File/server and multi-host admission/recovery acceptance is incomplete. | queued | Two-process, two-project, server-alias, SMB two-host, owner-crash, dead-waiter, and independent-resource scenarios pass. |
 | STAB-06 | P2 | Operational ledger, stale refs, retained worktrees, and runtime metrics need bounded cleanup and a compact current-state view. | queued | Current checkpoint is concise; historical evidence remains available; cleanup is ancestry-checked. |
 | STAB-07 | P1 | `ResumePlan` bootstraps the latest `origin/master` supervisor instead of the supervisor recorded by the immutable plan. | registered at `a5db5a9` | Resume loads the recorded trusted ancestor; a new plan still uses current `origin/master`; malformed or untrusted plans fail closed. |
+| STAB-08 | P1 | Any `agent-1c.ps1` edit selects the whole lifecycle inventory; the latest Targeted ran 735 tests in 637 seconds. | design prepared; queued after P0 | AST-based fail-closed impact routing stays below 300 seconds for a leaf change without false shard-cache reuse. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -101,12 +102,12 @@ Contract:
 
 Acceptance:
 
-- [ ] active ownership and FIFO order survive migration;
-- [ ] completed tickets and matching `.alive` files are compacted safely;
-- [ ] interrupted compaction resumes without losing an active ticket;
-- [ ] an unrelated malformed historical record does not block another resource;
-- [ ] a focused volume test covers 10,000 terminal and 10 active tickets;
-- [ ] `access-status` completes within one second on the reference workstation.
+- [x] active ownership and FIFO order survive migration;
+- [x] completed tickets and matching `.alive` files are compacted safely;
+- [x] interrupted compaction resumes without losing an active ticket;
+- [x] an unrelated malformed historical record does not block another resource;
+- [x] a focused volume test covers 10,000 terminal and 10 active tickets;
+- [x] `access-status` completes within one second on the reference workstation.
 
 Each item is implemented as a coherent change, receives only its owner tests
 during development, and is registered separately with `RegisterChange` after the
@@ -127,6 +128,27 @@ Then complete the base admission contract before adding operation-specific
 recovery: file/server aliases, two local processes, two projects, two hosts over
 the shared coordinator, owner crash, live-owner protection, dead waiter cleanup,
 unrelated database progress, and root/partial-lock contention.
+
+### STAB-08 - semantic Targeted routing
+
+Implement only after STAB-03 is registered. The resolver compares named
+PowerShell AST nodes for the exact entrypoint path. Literal dispatch arms and
+explicitly catalogued domain parameters may select a small common-plus-domain
+contract; shared startup, module ordering, re-exec, admission, completion/error
+cleanup, parse failures, missing baselines, and unknown nodes fall back to the
+full lifecycle contract. The selection protocol must include the complete
+changed entrypoint in `additionalInputs` for every selected shard digest, so a
+domain test cannot reuse evidence from a different entrypoint version.
+
+Acceptance:
+
+- one pure dispatch-arm edit selects only entrypoint-core plus its domain owner;
+- two arm edits select the union of their owners;
+- action `ValidateSet`, switch labels, and owner catalogue remain exactly equal;
+- unknown or shared changes select full lifecycle fail-closed;
+- every selected shard digest changes when the entrypoint changes;
+- Full and Develop keep the complete inventory;
+- a measured leaf Targeted finishes within 300 seconds.
 
 ## Wave 3 - remaining acceptance streams
 
@@ -195,3 +217,7 @@ Hard stop: three hours.
 | 2026-09-12 | STAB-07 implemented and its owner suite passed. | `SourceDeliveryQueue.Tests.ps1`: 9 passed, 0 failed, 225.12 seconds. Resume pins a recorded trusted master ancestor; malformed, missing, and untrusted plan inputs fail closed. |
 | 2026-09-12 | STAB-07 registered in the shared develop queue. | Queue item `codex/workflow-stabilization`, base `db5acb7`, head `a5db5a9`. |
 | 2026-09-12 | STAB-03a implementation prepared in an isolated worktree. | Python remote-work suite: 355 passed, 0 failed. Integration was paused because the existing lifecycle waiter regression exposed a direct-launch `PSModulePath` defect before database admission. |
+| 2026-09-12 | Direct helper launch made independent of inherited Core module ordering and registered. | `LifecycleLockWaiting.Tests.ps1`: 11 passed, 0 failed. Queue head `2a908fd`; Targeted passed 735 tests in 637 seconds. |
+| 2026-09-12 | Targeted routing recorded as a separate optimization defect. | The common lifecycle owner selected 37 Pester files; Pester took 631.33 seconds against a 300-second target. Granularity may change only with explicit impact contracts and no loss of regression coverage. |
+| 2026-09-12 | STAB-03 passed final independent review after iterative fault-injection fixes. | No blocking findings remain: durable pin/ack ordering, legacy migration prevalidation, retention transaction, bounded maintenance I/O, page reclamation, orphan fail-closed behavior, and post-processing cursor checkpoints are covered. |
+| 2026-09-12 | STAB-03 exact-head local owner proof passed and was integrated. | Python remote-work: 378 passed, 0 failed, 377.13 seconds. Windows PowerShell 5.1 `BranchSourceSyncGroup.Tests.ps1`: 23 passed, 0 failed, 247.64 seconds. Owned process count: 0. Integrated head `9d3ef38`; registration pending. |
