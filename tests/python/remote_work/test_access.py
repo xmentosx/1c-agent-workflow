@@ -730,6 +730,28 @@ class AccessTests(unittest.TestCase):
                 self.assertFalse(page.exists())
                 self.assertEqual({}, restarted._read_cleanup_debt()["items"])
 
+    def test_unknown_queue_page_orphan_is_explicit_reclaim_debt(self):
+        coordinator = Coordinator(self.coordinator)
+        for number in range(access_module.MAINTENANCE_PAGE_SIZE):
+            ticket = f"{number + 1:032x}"
+            item = {"kind": "alive-sidecar", "ticket": ticket, "attempts": 0,
+                    "createdAt": stamp()}
+            path = coordinator._cleanup_debt_item_path("alive-sidecar", ticket)
+            write_json(path, item)
+            coordinator._queue_cleanup_item_locked(path, item)
+        page = coordinator._queue_slot_path(coordinator.cleanup_queue_path, 0).parent
+        orphan = page / "foreign-orphan.tmp"
+        orphan.write_bytes(b"unknown")
+        with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID_RECLAIM_BLOCKED"):
+            coordinator.cleanup()
+        tail = read_json(coordinator.cleanup_tail_path)
+        self.assertEqual(access_module.MAINTENANCE_PAGE_SIZE, tail["headId"])
+        self.assertEqual(0, tail["reclaimId"])
+        orphan.unlink()
+        Coordinator(self.coordinator).cleanup()
+        self.assertEqual(access_module.MAINTENANCE_PAGE_SIZE,
+                         read_json(coordinator.cleanup_tail_path)["reclaimId"])
+
     def test_retention_preserves_horizon_and_pins_then_compacts_to_exact_tombstone(self):
         coordinator = Coordinator(self.coordinator)
         old = self.legacy_record("0" * 32, 1, "released")

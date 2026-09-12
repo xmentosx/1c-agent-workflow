@@ -295,7 +295,10 @@ class Coordinator:
             self._unlink_queue_json(self._queue_slot_path(root, queue_id))
         directory = self._queue_slot_path(root, page_start).parent
         if directory.exists():
-            directory.rmdir()
+            try:
+                directory.rmdir()
+            except OSError as error:
+                raise WorkError(code + "_RECLAIM_BLOCKED: " + str(directory)) from error
         self._published(boundary + "-delete")
         tail["reclaimId"] = page_end
         self._write_queue_json(tail_path, tail)
