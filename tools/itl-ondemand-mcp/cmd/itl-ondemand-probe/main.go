@@ -122,12 +122,17 @@ func run() error {
 		}
 		var result *mcp.CallToolResult
 		if index > 0 {
-			closeStarted := time.Now()
+			previousSession := connected[len(connected)-2].session
+			releasePrevious := func() error {
+				closeStarted := time.Now()
+				closeErr := previousSession.Close()
+				observeExitWait(closeStarted)
+				return closeErr
+			}
 			var releasedPrevious bool
-			result, releasedPrevious, err = callWithFacadeHandoff(ctx, item.session, connected[len(connected)-2].session.Close, *tool, arguments, 2*time.Second)
+			result, releasedPrevious, err = callWithFacadeHandoff(ctx, item.session, releasePrevious, *tool, arguments, 2*time.Second)
 			if releasedPrevious {
 				connected = connected[1:]
-				observeExitWait(closeStarted)
 				serializedFacadeHandoffPassed = true
 				secondSurvived = true
 			}
