@@ -747,7 +747,8 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
 
             # Fail between the file and server reset capabilities. The next run
             # must resume at server-reset without repeating seed-parallel.
-            $serverFailureSummaryPath = Join-Path $tempRoot "server-reset-failure-summary.json"
+            $sourceCandidateOutputRoot = Join-Path $tempRoot "source-candidate-output"
+            $serverFailureSummaryPath = Join-Path $sourceCandidateOutputRoot "server-reset-failure-summary.json"
             $oldServerFailureFlag = $env:ITL_TEST_RELEASE_SERVER_RESET_FAILURE
             $env:ITL_TEST_RELEASE_SERVER_RESET_FAILURE = "true"
             $previousPreference = $ErrorActionPreference
@@ -767,6 +768,13 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $serverFailureSummary.stages.'seed-parallel'.status | Should -Be "passed"
             $serverFailureSummary.stages.'server-reset'.status | Should -Be "failed"
             @($serverFailureSummary.executedStages) | Should -Be @("seed-parallel", "server-reset")
+            $interruptedCheckpointPath = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\checkpoint.json"
+            $interruptedCheckpoint = Get-Content -LiteralPath $interruptedCheckpointPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $persistentEvidenceRoot = Join-Path $worktreeRoot ".agent-1c\runs\release-e2e\workflow-release-e2e\evidence"
+            [string]$interruptedCheckpoint.stages.'seed-parallel'.evidencePath | Should -Be (Join-Path $persistentEvidenceRoot "seed-parallel.json")
+            Test-Path -LiteralPath ([string]$interruptedCheckpoint.stages.'seed-parallel'.evidencePath) -PathType Leaf | Should -BeTrue
+            (Get-FileHash -LiteralPath ([string]$interruptedCheckpoint.stages.'seed-parallel'.evidencePath) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be ([string]$interruptedCheckpoint.stages.'seed-parallel'.evidenceSha256)
+            Remove-Item -LiteralPath $sourceCandidateOutputRoot -Recurse -Force
 
             # Fail once at the extension stage after the expensive configuration
             # stages have passed, then prove Auto resume reuses those checkpoints.
