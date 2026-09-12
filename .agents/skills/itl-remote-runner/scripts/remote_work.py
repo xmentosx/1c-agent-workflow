@@ -25,6 +25,9 @@ def main():
     command = commands.add_parser("access-compact")
     command.add_argument("--coordinator", required=True)
     command.add_argument("--shards", type=int, default=1)
+    command = commands.add_parser("access-cleanup")
+    command.add_argument("--coordinator", required=True)
+    command.add_argument("--shards", type=int, default=1)
     command = commands.add_parser("access-retention-configure")
     command.add_argument("--coordinator", required=True)
     command.add_argument("--recovery-horizon-days", type=int, required=True)
@@ -126,7 +129,8 @@ def main():
     if args.command == "access-recover-workflow":
         from itl_remote.native_recovery import recover_workflow_operation
         return recover_workflow_operation(args.coordinator, args.ticket)
-    if args.command in ("access-register", "access-status", "access-compact", "access-retention-configure"):
+    if args.command in ("access-register", "access-status", "access-compact", "access-cleanup",
+                        "access-retention-configure"):
         from itl_remote.access import Coordinator
         coordinator = Coordinator(args.coordinator)
         if args.command == "access-register":
@@ -135,6 +139,8 @@ def main():
             return coordinator.snapshot()
         if args.command == "access-compact":
             return coordinator.compact(args.shards)
+        if args.command == "access-cleanup":
+            return coordinator.cleanup(args.shards)
         return coordinator.configure_retention(args.recovery_horizon_days,
                                                args.tombstone_retention_days,
                                                args.batch_size)

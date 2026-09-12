@@ -202,6 +202,16 @@ class NativeSourceSyncTests(unittest.TestCase):
                        'outcome': {'status': 'pending', 'recordedAt': ''}}
             native.publish(lease, producer, pending)
             native.publish(lease, producer, operation)
+            publish_recovered = phases._publish_recovered_completion
+            def crash_after_recovered_pin(recovery, intent, result):
+                with patch.object(recovery.coordinator, 'save', side_effect=OSError('disk full')):
+                    return publish_recovered(recovery, intent, result)
+            with patch.object(phases, '_publish_recovered_completion', side_effect=crash_after_recovered_pin):
+                with self.assertRaisesRegex(OSError, 'disk full'):
+                    self.recover(self.current(lease))
+            reason = 'source-sync-phase:' + producer + ':' + self.intent['stepId']
+            self.assertIn(reason, self.coordinator._read_pins()['entries'][lease.record['ticket']])
+            self.assertEqual('running', phases.inspect(self.coordinator, self.current(lease))[0]['phase']['status'])
             recovered = self.recover(self.current(lease))
             self.assertEqual('full', recovered.evidence['reconciledLoad']['effectContract']['mode'])
             current = self.current(lease)
@@ -209,7 +219,6 @@ class NativeSourceSyncTests(unittest.TestCase):
             self.assertEqual('completed', completed['phase']['status'])
             self.assertEqual(self.intent['sourceFingerprint'], completed['phase']['result']['loadResult']['sourceFingerprint'])
             self.assertEqual('committed', native.inspect(self.coordinator, current)['restoration']['duties'][0]['status'])
-            reason = 'source-sync-phase:' + producer + ':' + self.intent['stepId']
             self.assertIn(reason, self.coordinator._read_pins()['entries'][lease.record['ticket']])
 
     def test_recovery_rejects_a_source_tree_that_does_not_match_the_phase(self):

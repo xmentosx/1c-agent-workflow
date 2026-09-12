@@ -24,6 +24,8 @@ from .common import FileLock, WorkError, identity, read_json, stamp, write_json
 DEFAULT_RECOVERY_HORIZON_DAYS = 90
 DEFAULT_TOMBSTONE_RETENTION_DAYS = 730
 DEFAULT_COMPACTION_BATCH_SIZE = 128
+MAX_COMPACTION_RECORDS_PER_CALL = 512
+MAX_CLEANUP_ITEMS_PER_CALL = 128
 
 
 def admission_error(code, coordinator, blockers, elapsed):
@@ -96,8 +98,11 @@ class Coordinator:
         self.layout_path = self.tickets / "layout.json"
         self.index_path = self.root / "active-index.json"
         self.archive_root = self.root / "ticket-archive"
-        self.cleanup_debt_path = self.root / "cleanup-debt.json"
+        self.cleanup_debt_path = self.root / "cleanup-debt"
+        self.cleanup_debt_path.mkdir(exist_ok=True)
+        self.cleanup_state_path = self.root / "cleanup-state.json"
         self.retention_path = self.root / "archive-retention.json"
+        self.retention_update_path = self.root / "archive-retention-update.json"
         self.compaction_path = self.root / "archive-compaction.json"
         self.pins_path = self.root / "archive-pins.json"
 
@@ -121,8 +126,6 @@ class Coordinator:
                 time.sleep(0.05)
         try:
             self._ensure_layout_locked()
-            if self._layout_v2():
-                self._run_cleanup_locked(limit=8)
             yield
         finally:
             lock.__exit__(None, None, None)
@@ -133,7 +136,10 @@ class Coordinator:
                 record.get("status") not in ACTIVE_STATUSES + TERMINAL_STATUSES or
                 type(record.get("sequence")) is not int or record["sequence"] < 1 or
                 not isinstance(record.get("resources"), list) or not record["resources"] or
-                any(not isinstance(resource, str) for resource in record["resources"])):
+                record["resources"] != sorted(set(record["resources"])) or
+                any(not isinstance(resource, str) or
+                    not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}", resource)
+                    for resource in record["resources"])):
             raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path))
         if record["status"] == "recovering":
             attempts = record.get("recoveryAttempts")
@@ -154,6 +160,8 @@ class Coordinator:
                 if isinstance(error, WorkError):
                     raise
                 raise WorkError("INFOBASE_ACCESS_RECORD_INVALID: " + str(path)) from error
+        if len({record["sequence"] for record in records}) != len(records):
+            raise WorkError("INFOBASE_ACCESS_MIGRATION_INVALID: duplicate ticket sequence")
         return sorted(records, key=lambda item: item["sequence"])
 
     def _layout_v2(self):
@@ -167,11 +175,7 @@ class Coordinator:
             raise WorkError("INFOBASE_ACCESS_LAYOUT_INVALID: " + str(self.layout_path))
         return True
 
-    def _read_index(self):
-        try:
-            value = read_json(self.index_path)
-        except Exception as error:
-            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path)) from error
+    def _validate_index(self, value):
         if not isinstance(value, dict):
             raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
         entries = value.get("entries")
@@ -193,49 +197,56 @@ class Coordinator:
             raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
         return value
 
-    def _read_cleanup_debt(self):
-        if not self.cleanup_debt_path.exists():
-            return {"schemaVersion": 1, "items": {}}
+    def _read_index(self):
         try:
-            value = read_json(self.cleanup_debt_path)
+            value = read_json(self.index_path)
         except Exception as error:
-            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path)) from error
-        if not isinstance(value, dict):
-            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
-        items = value.get("items")
-        if value.get("schemaVersion") != 1 or not isinstance(items, dict):
-            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
-        for key, item in items.items():
-            if (not isinstance(key, str) or not isinstance(item, dict) or
-                    item.get("kind") not in ("terminal-record", "alive-sidecar") or
-                    not re.fullmatch(r"[0-9a-f]{32}", str(item.get("ticket", ""))) or
-                    type(item.get("attempts")) is not int or item["attempts"] < 0 or
-                    not isinstance(item.get("createdAt"), str) or
-                    (item["kind"] == "terminal-record" and
-                     not re.fullmatch(r"[0-9a-f]{64}", str(item.get("recordIdentity", ""))))):
-                raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
-        return value
+            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path)) from error
+        return self._validate_index(value)
+
+    def _cleanup_debt_item_path(self, kind, ticket):
+        return self.cleanup_debt_path / ticket[:2] / (kind + "-" + ticket + ".json")
+
+    def _validate_cleanup_item(self, path, item):
+        if (not isinstance(item, dict) or item.get("kind") not in ("terminal-record", "alive-sidecar") or
+                not re.fullmatch(r"[0-9a-f]{32}", str(item.get("ticket", ""))) or
+                path != self._cleanup_debt_item_path(item.get("kind", ""), item.get("ticket", "")) or
+                type(item.get("attempts")) is not int or item["attempts"] < 0 or
+                not isinstance(item.get("createdAt"), str) or
+                (item["kind"] == "terminal-record" and
+                 not re.fullmatch(r"[0-9a-f]{64}", str(item.get("recordIdentity", ""))))):
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(path))
+        return item
+
+    def _read_cleanup_debt(self):
+        items = {}
+        for path in self.cleanup_debt_path.glob("??/*.json"):
+            item = self._validate_cleanup_item(path, read_json(path))
+            items[item["kind"] + "|" + item["ticket"]] = item
+        return {"schemaVersion": 2, "items": items}
+
+    def _ticket_has_cleanup_debt(self, ticket):
+        return any(self._cleanup_debt_item_path(kind, ticket).exists()
+                   for kind in ("terminal-record", "alive-sidecar"))
 
     def _schedule_cleanup_locked(self, records):
-        debt = self._read_cleanup_debt()
         for record in records:
             ticket = record["ticket"]
             for kind in ("terminal-record", "alive-sidecar"):
-                key = kind + "|" + ticket
+                path = self._cleanup_debt_item_path(kind, ticket)
                 expected = {"kind": kind, "ticket": ticket, "attempts": 0, "createdAt": stamp()}
                 if kind == "terminal-record":
                     expected["recordIdentity"] = identity(record)
-                existing = debt["items"].get(key)
-                if existing:
+                if path.exists():
+                    existing = self._validate_cleanup_item(path, read_json(path))
                     fields = ("kind", "ticket", "recordIdentity") if kind == "terminal-record" else ("kind", "ticket")
                     stable = {name: existing[name] for name in fields}
                     expected_stable = {name: expected[name] for name in fields}
                     if stable != expected_stable:
                         raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_CONFLICT: " + ticket)
                     continue
-                debt["items"][key] = expected
-        write_json(self.cleanup_debt_path, debt)
-        self._published("cleanup-debt")
+                write_json(path, expected)
+                self._published("cleanup-debt")
 
     def _cleanup_item_locked(self, item):
         ticket = item["ticket"]
@@ -264,12 +275,33 @@ class Coordinator:
         self._published("cleanup-alive-sidecar")
         return True
 
+    def _cleanup_selection_locked(self, limit, ticket):
+        if ticket is not None:
+            paths = [self._cleanup_debt_item_path(kind, ticket)
+                     for kind in ("terminal-record", "alive-sidecar")]
+            return [path for path in paths if path.exists()][:limit]
+        state = read_json(self.cleanup_state_path) if self.cleanup_state_path.exists() else {
+            "schemaVersion": 1, "nextShard": 0, "afterName": ""}
+        if (not isinstance(state, dict) or set(state) != {"schemaVersion", "nextShard", "afterName"} or
+                state["schemaVersion"] != 1 or type(state["nextShard"]) is not int or
+                not 0 <= state["nextShard"] <= 255 or not isinstance(state["afterName"], str)):
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_STATE_INVALID: " + str(self.cleanup_state_path))
+        directory = self.cleanup_debt_path / f"{state['nextShard']:02x}"
+        paths = sorted(path for path in directory.glob("*.json") if path.name > state["afterName"]) if directory.exists() else []
+        selected = paths[:limit]
+        if len(paths) > len(selected):
+            state["afterName"] = selected[-1].name
+        else:
+            state.update(nextShard=(state["nextShard"] + 1) % 256, afterName="")
+        write_json(self.cleanup_state_path, state)
+        return selected
+
     def _run_cleanup_locked(self, *, limit, ticket=None, retries=1):
-        debt = self._read_cleanup_debt()
-        selected = [(key, item) for key, item in debt["items"].items()
-                    if ticket is None or item["ticket"] == ticket][:limit]
-        changed = False
-        for key, item in selected:
+        if type(limit) is not int or not 1 <= limit <= MAX_CLEANUP_ITEMS_PER_CALL:
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_LIMIT_INVALID")
+        selected = self._cleanup_selection_locked(limit, ticket)
+        for path in selected:
+            item = self._validate_cleanup_item(path, read_json(path))
             completed = False
             last_error = None
             for attempt in range(retries):
@@ -283,16 +315,29 @@ class Coordinator:
                     if attempt + 1 < retries:
                         time.sleep(0.05 * (attempt + 1))
             if completed:
-                debt["items"].pop(key, None)
-                changed = True
+                path.unlink(missing_ok=True)
             elif last_error is not None:
                 item["attempts"] += 1
                 item["lastAttemptAt"] = stamp()
                 item["lastError"] = str(last_error)
-                changed = True
-        if changed:
-            write_json(self.cleanup_debt_path, debt)
-        return {"remaining": len(debt["items"]), "attempted": len(selected)}
+                write_json(path, item)
+        remaining = sum(1 for kind in ("terminal-record", "alive-sidecar")
+                        if ticket is not None and self._cleanup_debt_item_path(kind, ticket).exists())
+        return {"remaining": remaining if ticket is not None else None, "attempted": len(selected)}
+
+    def cleanup(self, shards=1):
+        if type(shards) is not int or not 1 <= shards <= 256:
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_SHARDS_INVALID")
+        result = {"attempted": 0, "shards": 0}
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            for _ in range(shards):
+                if result["attempted"] >= MAX_CLEANUP_ITEMS_PER_CALL:
+                    break
+                current = self._run_cleanup_locked(
+                    limit=MAX_CLEANUP_ITEMS_PER_CALL - result["attempted"])
+                result["attempted"] += current["attempted"]
+                result["shards"] += 1
+        return result
 
     def _archive_path(self, ticket):
         return self.archive_root / ticket[:2] / (ticket + ".json")
@@ -320,21 +365,45 @@ class Coordinator:
                  "tombstoneRetentionDays": tombstone_retention_days, "batchSize": batch_size}
         self._validate_retention(value)
         with self.mutex(time.monotonic() + 30, lambda: False):
+            self._repair_retention_update_locked()
             pins = self._read_pins()
             latest = datetime.now(timezone.utc) + timedelta(days=tombstone_retention_days)
-            pins_changed = False
             for reasons in pins["entries"].values():
                 for reason, expires_at in reasons.items():
                     if self._time(expires_at, "INFOBASE_ACCESS_PINS_INVALID", self.pins_path) > latest:
                         reasons[reason] = latest.isoformat()
-                        pins_changed = True
-            if pins_changed:
-                write_json(self.pins_path, pins)
-            write_json(self.retention_path, value)
+            update = {"schemaVersion": 1, "policy": value, "pins": pins}
+            write_json(self.retention_update_path, update)
+            self._published("retention-config-transaction")
+            self._repair_retention_update_locked()
             return value
+
+    def _repair_retention_update_locked(self):
+        if not self.retention_update_path.exists():
+            return
+        try:
+            update = read_json(self.retention_update_path)
+        except Exception as error:
+            raise WorkError("INFOBASE_ACCESS_RETENTION_UPDATE_INVALID: " + str(self.retention_update_path)) from error
+        if (not isinstance(update, dict) or set(update) != {"schemaVersion", "policy", "pins"} or
+                update["schemaVersion"] != 1):
+            raise WorkError("INFOBASE_ACCESS_RETENTION_UPDATE_INVALID: " + str(self.retention_update_path))
+        self._validate_retention(update["policy"])
+        self._validate_pins(update["pins"])
+        # Policy first is fail-safe: after a crash, existing pins may retain
+        # evidence longer than the new horizon but never expire it too early.
+        write_json(self.retention_path, update["policy"])
+        self._published("retention-config-policy")
+        write_json(self.pins_path, update["pins"])
+        self._published("retention-config-pins")
+        self.retention_update_path.unlink(missing_ok=True)
+        self._published("retention-config-complete")
 
     def _read_pins(self):
         value = read_json(self.pins_path) if self.pins_path.exists() else {"schemaVersion": 1, "entries": {}}
+        return self._validate_pins(value)
+
+    def _validate_pins(self, value):
         entries = value.get("entries") if isinstance(value, dict) else None
         if not isinstance(value, dict) or value.get("schemaVersion") != 1 or not isinstance(entries, dict):
             raise WorkError("INFOBASE_ACCESS_PINS_INVALID: " + str(self.pins_path))
@@ -367,6 +436,7 @@ class Coordinator:
             return self._pin_locked(ticket, reason, days=days)
 
     def _pin_locked(self, ticket, reason, *, days=None):
+        self._repair_retention_update_locked()
         policy = self._retention_policy()
         lifetime = policy["tombstoneRetentionDays"] if days is None else days
         if type(lifetime) is not int or not 1 <= lifetime <= policy["tombstoneRetentionDays"]:
@@ -382,6 +452,7 @@ class Coordinator:
             self._unpin_locked(ticket, reason)
 
     def _unpin_locked(self, ticket, reason=None):
+        self._repair_retention_update_locked()
         pins = self._read_pins()
         reasons = pins["entries"].get(ticket)
         if reasons is not None and reason is None:
@@ -420,7 +491,6 @@ class Coordinator:
         policy = self._retention_policy()
         state = self._read_compaction_state()
         pins = self._read_pins()
-        debt_tickets = {item["ticket"] for item in self._read_cleanup_debt()["items"].values()}
         now = datetime.now(timezone.utc)
         pins_changed = False
         for ticket, reasons in list(pins["entries"].items()):
@@ -434,12 +504,15 @@ class Coordinator:
             write_json(self.pins_path, pins)
             self._published("compaction-pins")
         result = {"visited": 0, "compacted": 0, "deleted": 0, "pinned": 0, "shards": 0}
+        remaining_budget = MAX_COMPACTION_RECORDS_PER_CALL
         for _ in range(shards):
+            if remaining_budget <= 0:
+                break
             shard = state["nextShard"]
             directory = self.archive_root / f"{shard:02x}"
             paths = sorted(path for path in directory.glob("*.json")
                            if path.stem > state["afterTicket"]) if directory.exists() else []
-            batch = paths[:policy["batchSize"]]
+            batch = paths[:min(policy["batchSize"], remaining_budget)]
             for path in batch:
                 result["visited"] += 1
                 value = read_json(path)
@@ -454,7 +527,7 @@ class Coordinator:
                     record = self._validate_record(value, path)
                     if record["status"] not in TERMINAL_STATUSES:
                         raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
-                    if path.stem in pins["entries"] or path.stem in debt_tickets:
+                    if path.stem in pins["entries"] or self._ticket_has_cleanup_debt(path.stem):
                         result["pinned"] += 1
                     elif now - self._time(record.get("finishedAt"), "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
                             days=policy["recoveryHorizonDays"]):
@@ -464,6 +537,7 @@ class Coordinator:
                         write_json(path, tombstone)
                         self._published("compaction-tombstone")
                         result["compacted"] += 1
+                remaining_budget -= 1
             if len(paths) > len(batch):
                 state["afterTicket"] = batch[-1].stem
             else:
@@ -476,6 +550,7 @@ class Coordinator:
 
     def compact(self, shards=1):
         with self.mutex(time.monotonic() + 30, lambda: False):
+            self._repair_retention_update_locked()
             return self._compact_locked(shards)
 
     def _archive_terminal(self, record):
@@ -505,23 +580,31 @@ class Coordinator:
         entries = {}
         terminal = []
         for record in records:
-            if record["status"] in TERMINAL_STATUSES:
-                self._archive_terminal(record)
-                self._published("migration-terminal-archive")
-                terminal.append(record)
-            else:
+            if record["status"] not in TERMINAL_STATUSES:
                 entries[record["ticket"]] = {"sequence": record["sequence"],
                                               "resources": record["resources"]}
+            else:
+                terminal.append(record)
+        candidate = {"schemaVersion": 2,
+                     "nextSequence": max((record["sequence"] for record in records), default=0) + 1,
+                     "entries": entries}
+        # Validate the complete candidate before the first migration write.
+        # Duplicate sequences include terminal records and are checked by
+        # _legacy_records; active entry/resource invariants use the same reader.
+        self._validate_index(candidate)
+        for record in terminal:
+            self._archive_terminal(record)
+            self._published("migration-terminal-archive")
         if terminal:
             self._schedule_cleanup_locked(terminal)
-        write_json(self.index_path, {"schemaVersion": 2,
-                                     "nextSequence": max((r["sequence"] for r in records), default=0) + 1,
-                                     "entries": entries})
+        write_json(self.index_path, candidate)
         self._published("migration-active-index")
         # Publish this sentinel last. Old runtimes see it as an invalid ticket
         # and fail closed instead of silently bypassing the indexed authority.
         write_json(self.layout_path, {"schemaVersion": 2})
         self._published("migration-layout")
+        for record in terminal:
+            self._run_cleanup_locked(limit=2, ticket=record["ticket"])
 
     def _repair_terminal_transitions_locked(self):
         index = self._read_index()

@@ -224,6 +224,7 @@ def consume(lease, ticket, step_id):
         raise WorkError('SOURCE_SYNC_PHASE_CONSUMER_SCOPE_CHANGED')
     prefix, suffix = 'source-sync-phase:', ':' + step_id
     with lease.coordinator.mutex(time.monotonic() + 30, lease.cancelled):
+        lease.coordinator._repair_retention_update_locked()
         pins = lease.coordinator._read_pins()
         reasons = pins['entries'].get(ticket, {})
         matches = [reason for reason in reasons if reason.startswith(prefix) and reason.endswith(suffix)]

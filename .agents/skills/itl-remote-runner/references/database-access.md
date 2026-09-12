@@ -41,7 +41,13 @@ pass; a crash after record or cursor publication is idempotently resumed.
 `access-retention-configure --coordinator <directory>
 --recovery-horizon-days <1-3650> --tombstone-retention-days <horizon-3650>
 --batch-size <1-10000>` atomically changes these persistent authority-wide
-values. Run compaction as maintenance; it never runs in admission or status.
+values through a restartable policy-first transaction, so an interrupted
+shorter horizon can only retain pins too long. A compaction invocation visits
+at most 512 archive records regardless of `--shards` and configured batch size.
+Run `access-cleanup --coordinator <directory> [--shards <1-256>]` to retry at
+most 128 sharded cleanup debts per invocation. Admission and status neither
+scan nor rewrite cleanup debt. Run compaction and cleanup as maintenance; they
+never run in admission or status.
 
 A durable recovery plan pins its ticket before recovery can make it terminal
 and removes only its own pin after terminal state is reflected in the job
@@ -49,10 +55,10 @@ state. Source-sync phase receipts likewise pin their producer ticket before
 publishing the record reference. A successor observes it without mutation,
 durably saves the consumed/completed lifecycle state, and only then sends an
 explicit idempotent consume acknowledgement which removes that phase pin.
-Multiple plans and phases have independent pins. Pins expire no later than the configured
-tombstone horizon, so abandoned consumers become explicit bounded retention
-debt rather than permanent archive growth. Pending terminal-record or `.alive`
-cleanup debt also prevents premature compaction. Within the recovery horizon
+Multiple plans and phases have independent pins. Pins expire no later than the
+configured tombstone horizon, so abandoned consumers become explicit bounded
+retention debt rather than permanent archive growth. Pending terminal-record
+or `.alive` cleanup debt also prevents premature compaction. Within the recovery horizon
 (or while pinned) exact lookup returns the full record; after compaction it
 returns `INFOBASE_ACCESS_TICKET_COMPACTED`, distinct from a never-known or
 expired ticket. Older runtimes fail closed on the new layout marker instead of
