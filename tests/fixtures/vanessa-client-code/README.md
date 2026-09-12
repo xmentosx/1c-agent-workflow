@@ -20,9 +20,11 @@ implementation is used as the test target.
 Paths contain Cyrillic and whitespace together, and an ancestor contains `Event`
 to expose accidental whole-path Event/Result substitution. Separate native
 processes compete for one request, then a new consumer retries after loss of the
-response; only one execution marker may exist. Another regression holds Windows
-OpenClipboard while the file command runs. It never reads or changes clipboard
-contents and releases the handle in finally.
+response; only one execution marker may exist. Another regression keeps Windows
+clipboard unavailable while the file command runs: it holds `OpenClipboard`
+itself when possible, or verifies pre-existing contention before and after the
+probe. It never reads or changes clipboard contents and releases its own handle
+in `finally`.
 
 This is executable protocol evidence, not proof of an installed 1C TestClient,
 monitor form UI, server execution or cleanup after an interrupted live scenario.

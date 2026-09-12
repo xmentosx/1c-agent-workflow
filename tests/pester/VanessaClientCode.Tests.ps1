@@ -126,13 +126,23 @@ public static class ItlClientCodeClipboardProbe {
 '@
         }
         $opened = [ItlClientCodeClipboardProbe]::OpenClipboard([IntPtr]::Zero)
-        if (-not $opened) { throw 'The busy-clipboard reproducer could not establish its own clipboard hold.' }
         try {
-            # No clipboard contents are read or changed; the held handle reproduces access contention.
+            # No clipboard contents are read or changed. When another owner already
+            # makes it unavailable, retain that precondition and verify it again
+            # after the probe instead of requiring this process to replace the owner.
             $result = Invoke-ClientCodeProbe -Root (Join-Path $TestDrive 'Занятый буфер обмена') -Case 'void' -Patched $true
             $result.exitCode | Should -Be 0 -Because $result.output
             $result.output | Should -Match 'CLIENT_CODE_CASE_PASSED: void'
-        } finally { [void][ItlClientCodeClipboardProbe]::CloseClipboard() }
+            if (-not $opened) {
+                $becameAvailable = [ItlClientCodeClipboardProbe]::OpenClipboard([IntPtr]::Zero)
+                if ($becameAvailable) {
+                    [void][ItlClientCodeClipboardProbe]::CloseClipboard()
+                    throw 'Clipboard contention ended during the file-channel probe, so the unavailable-clipboard precondition was not proven.'
+                }
+            }
+        } finally {
+            if ($opened) { [void][ItlClientCodeClipboardProbe]::CloseClipboard() }
+        }
     }
     It 'executes once across competing native processes and retains the claim after result loss' {
         $root = Join-Path $TestDrive 'Два процесса одного запроса'
