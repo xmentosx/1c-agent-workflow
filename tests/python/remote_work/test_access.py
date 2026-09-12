@@ -1,4 +1,5 @@
 """Multi-process admission regressions; these do not claim live SMB/1C proof."""
+import ast
 import json
 from datetime import datetime, timedelta, timezone
 import os
@@ -30,8 +31,9 @@ def waiting(record):
 try:
     with Lease(config['root'], config['bases'], {'jobId': config['name'], 'workspace': str(out)},
                timeout=config.get('timeout', 5), cancelled=lambda: (out / 'cancel').exists(),
-               progress=waiting, inherited=config.get('inherited'), access_mode=config.get('accessMode', 'exclusive')) as lease:
-        write_json(out / 'acquired.json', {'ticket': lease.record['ticket'], 'proof': lease.proof(), 'wait': lease.wait_seconds})
+               progress=waiting, inherited=config.get('inherited'), access_mode=config.get('accessMode', 'mutation-exclusive')) as lease:
+        write_json(out / 'acquired.json', {'ticket': lease.record['ticket'], 'proof': lease.proof(),
+                                           'accessMode': lease.access_mode, 'wait': lease.wait_seconds})
         if config.get('transition'):
             result = lease.transition(config['transition'])
             write_json(out / 'transitioned.json', result)
@@ -75,6 +77,33 @@ class AccessTests(unittest.TestCase):
         self.processes.append(process)
         return out, process
 
+    def old_runtime(self):
+        runtime = self.root / "frozen-a4a86d6-runtime"
+        package = runtime / "itl_remote"
+        if not package.exists():
+            package.mkdir(parents=True)
+            for name in ("__init__.py", "common.py", "access.py"):
+                payload = subprocess.check_output([
+                    "git", "-C", str(REPO), "show",
+                    "a4a86d6:.agents/skills/itl-remote-runner/scripts/itl_remote/" + name,
+                ])
+                (package / name).write_bytes(payload)
+        return runtime
+
+    def old_child(self, name, **options):
+        self.assertIn(options.get("accessMode"), ("shared-read", "test-run", "exclusive"))
+        out = self.root / ("старый процесс " + name)
+        out.mkdir()
+        config = {"root": str(self.coordinator), "bases": [self.base], "name": name,
+                  "output": str(out), **options}
+        path = out / "request.json"
+        write_json(path, config)
+        process = subprocess.Popen([sys.executable, "-X", "utf8", "-c", CHILD,
+                                    str(self.old_runtime()), str(path)],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        self.processes.append(process)
+        return out, process
+
     def wait_file(self, path):
         deadline = time.monotonic() + 10
         while not path.exists():
@@ -109,6 +138,7 @@ class AccessTests(unittest.TestCase):
         self.wait_file(a / "acquired.json")
         b, pb = self.child("B", hold=True)
         waiting = self.wait_file(b / "waiting.json")
+        self.assertEqual("mutation-exclusive", waiting["accessMode"])
         self.assertEqual("A", waiting["blockers"][0]["owner"]["jobId"])
         c, pc = self.child("C", hold=True)
         self.wait_file(c / "waiting.json")
@@ -129,12 +159,12 @@ class AccessTests(unittest.TestCase):
         self.assertIsNone(pa.poll())
         self.release(a, pa)
 
-    def test_roctup_read_and_one_test_run_share_the_database(self):
+    def test_roctup_read_and_one_functional_test_share_the_database(self):
         reader, reader_process = self.child("reader", hold=True, accessMode="shared-read")
         self.wait_file(reader / "acquired.json")
-        tests, tests_process = self.child("tests", hold=True, accessMode="test-run")
+        tests, tests_process = self.child("tests", hold=True, accessMode="functional-test")
         self.wait_file(tests / "acquired.json")
-        another, another_process = self.child("other-tests", timeout=0, accessMode="test-run")
+        another, another_process = self.child("other-tests", timeout=0, accessMode="functional-test")
         result = self.wait_file(another / "done.json")
         self.assertIn("WAIT_TIMEOUT", result["error"])
         self.assertIsNone(reader_process.poll())
@@ -142,16 +172,60 @@ class AccessTests(unittest.TestCase):
         self.release(tests, tests_process)
         self.release(reader, reader_process)
 
-    def test_exclusive_transition_blocks_new_readers_without_a_second_ticket(self):
+    def test_new_dual_mode_records_are_rolling_compatible_with_a4a86d6_reader(self):
+        cases = (
+            ("shared-read", "shared-read", (("test-run", True),)),
+            ("functional-test", "test-run", (("shared-read", True), ("test-run", False))),
+            ("measurement-exclusive", "exclusive", (("shared-read", False),)),
+            ("mutation-exclusive", "exclusive", (("shared-read", False),)),
+        )
+        for canonical, projection, old_attempts in cases:
+            with self.subTest(canonical=canonical):
+                current, current_process = self.child("new-" + canonical, hold=True, accessMode=canonical)
+                acquired = self.wait_file(current / "acquired.json")
+                record = read_json(self.coordinator / "tickets" / (acquired["ticket"] + ".json"))
+                self.assertEqual(projection, record["accessMode"])
+                self.assertEqual(canonical, record["accessModeV2"])
+                self.assertNotIn("accessModeV2", json.dumps(Coordinator(self.coordinator).snapshot()))
+                for number, (old_mode, coexists) in enumerate(old_attempts):
+                    old, old_process = self.old_child(
+                        f"{canonical}-{number}", accessMode=old_mode, timeout=0)
+                    result = self.wait_file(old / "done.json")
+                    if coexists:
+                        self.assertEqual("released", result.get("status"), result)
+                    else:
+                        self.assertIn("WAIT_TIMEOUT", result.get("error", ""), result)
+                    old_process.wait(timeout=10)
+                self.release(current, current_process)
+
+    def test_old_reader_honors_a_new_pending_mutation_projection(self):
+        reader, reader_process = self.child("new-reader", hold=True, accessMode="shared-read")
+        self.wait_file(reader / "acquired.json")
+        tests, tests_process = self.child(
+            "new-functional", hold=True, accessMode="functional-test", transition="mutation-exclusive")
+        acquired = self.wait_file(tests / "acquired.json")
+        self.wait_file(tests / "transition-waiting.json")
+        record = read_json(self.coordinator / "tickets" / (acquired["ticket"] + ".json"))
+        self.assertEqual("exclusive", record["requestedAccessMode"])
+        self.assertEqual("mutation-exclusive", record["requestedAccessModeV2"])
+        old, old_process = self.old_child("pending-reader", accessMode="shared-read", timeout=0)
+        result = self.wait_file(old / "done.json")
+        self.assertIn("WAIT_TIMEOUT", result.get("error", ""), result)
+        old_process.wait(timeout=10)
+        self.release(reader, reader_process)
+        self.wait_file(tests / "transitioned.json")
+        self.release(tests, tests_process)
+
+    def test_mutation_transition_blocks_new_readers_without_a_second_ticket(self):
         reader, reader_process = self.child("reader", hold=True, accessMode="shared-read")
         self.wait_file(reader / "acquired.json")
-        tests, tests_process = self.child("tests", hold=True, accessMode="test-run", transition="exclusive")
+        tests, tests_process = self.child("tests", hold=True, accessMode="functional-test", transition="mutation-exclusive")
         acquired = self.wait_file(tests / "acquired.json")
         waiting = self.wait_file(tests / "transition-waiting.json")
         self.assertEqual(acquired["ticket"], waiting["ticket"])
         later, later_process = self.child("later-reader", hold=True, accessMode="shared-read")
         blocker = self.wait_file(later / "waiting.json")["blockers"][0]
-        self.assertEqual("exclusive", blocker["requestedAccessMode"])
+        self.assertEqual("mutation-exclusive", blocker["requestedAccessMode"])
         self.release(reader, reader_process)
         self.wait_file(tests / "transitioned.json")
         self.assertFalse((later / "acquired.json").exists())
@@ -187,11 +261,82 @@ class AccessTests(unittest.TestCase):
     def test_inherited_work_cannot_broaden_shared_access_to_mutation(self):
         with Lease(self.coordinator, [self.base], {}, access_mode="shared-read") as parent:
             with self.assertRaisesRegex(WorkError, "INHERITED_MODE_INVALID"):
-                with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(), access_mode="exclusive"):
+                with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(), access_mode="mutation-exclusive"):
                     self.fail("shared ownership authorized a mutation child")
             with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(), access_mode="shared-read") as child:
                 participant = next(iter(read_json(self.coordinator / "tickets" / (parent.record["ticket"] + ".json"))["participants"].values()))
                 self.assertEqual("shared-read", participant["accessMode"])
+
+    def test_compatibility_matrix_is_declarative_symmetric_and_exhaustive(self):
+        modes = access_module.NORMALIZED_ACCESS_MODES
+        expected = {
+            ("shared-read", "shared-read"),
+            ("shared-read", "functional-test"),
+            ("functional-test", "shared-read"),
+        }
+        self.assertEqual(set(modes), set(access_module.ACCESS_COMPATIBILITY))
+        for first in modes:
+            self.assertEqual(set(access_module.ACCESS_COMPATIBILITY[first]),
+                             {second for left, second in expected if left == first})
+            for second in modes:
+                self.assertEqual((first, second) in expected, access_module.compatible(first, second))
+                self.assertEqual(access_module.compatible(first, second), access_module.compatible(second, first))
+
+    def test_legacy_modes_are_read_only_aliases_with_fail_closed_exclusive_semantics(self):
+        legacy = {"accessMode": "test-run"}
+        self.assertEqual("functional-test", access_module.access_mode(legacy))
+        self.assertEqual("functional-test", access_module.public(legacy)["accessMode"])
+        for legacy in ({"accessMode": "exclusive"}, {}):
+            self.assertEqual("legacy-exclusive", access_module.access_mode(legacy))
+            self.assertEqual("legacy-exclusive", access_module.public(legacy)["accessMode"])
+            self.assertTrue(all(not access_module.compatible("legacy-exclusive", mode)
+                                for mode in access_module.NORMALIZED_ACCESS_MODES))
+        for legacy in ("test-run", "exclusive", "legacy-exclusive"):
+            with self.assertRaisesRegex(WorkError, "MODE_INVALID"):
+                Lease(self.coordinator, [self.base], {}, access_mode=legacy)
+
+    def test_v2_modes_require_an_exact_legacy_projection_and_stay_internal(self):
+        valid = {"accessMode": "test-run", "accessModeV2": "functional-test"}
+        self.assertEqual("functional-test", access_module.access_mode(valid))
+        self.assertEqual({"accessMode": "functional-test"}, access_module.public(valid))
+        for invalid in (
+                {"accessMode": "exclusive", "accessModeV2": "functional-test"},
+                {"accessMode": "functional-test", "accessModeV2": "functional-test"},
+                {"accessModeV2": "mutation-exclusive"},
+                {"accessMode": "exclusive", "accessModeV2": "legacy-exclusive"}):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(WorkError, "MODE_INVALID"):
+                access_module.access_mode(invalid)
+        with self.assertRaisesRegex(WorkError, "MODE_INVALID"):
+            access_module.effective_access_mode({
+                "accessMode": "shared-read", "accessModeV2": "shared-read",
+                "requestedAccessMode": "test-run", "requestedAccessModeV2": "mutation-exclusive",
+            })
+
+    def test_inherited_modes_stay_within_the_root_compatibility_envelope(self):
+        expected = {
+            "shared-read": {"shared-read"},
+            "functional-test": {"shared-read", "functional-test"},
+            "measurement-exclusive": set(access_module.ACCESS_MODES),
+            "mutation-exclusive": set(access_module.ACCESS_MODES),
+            "legacy-exclusive": set(access_module.ACCESS_MODES),
+        }
+        self.assertEqual(set(expected), set(access_module.INHERITED_MODE_PERMISSIONS))
+        for parent, children in expected.items():
+            for child in access_module.ACCESS_MODES:
+                self.assertEqual(child in children, access_module.permits(parent, child), (parent, child))
+
+    def test_transition_accepts_only_canonical_modes_and_requires_no_active_participant(self):
+        with Lease(self.coordinator, [self.base], {}, access_mode="functional-test") as parent:
+            for legacy in ("test-run", "exclusive", "legacy-exclusive"):
+                with self.assertRaisesRegex(WorkError, "TRANSITION_INVALID"):
+                    parent.transition(legacy)
+            with Lease(self.coordinator, [self.base], {}, inherited=parent.proof(),
+                       access_mode="shared-read"):
+                with self.assertRaisesRegex(WorkError, "PARTICIPANTS_ACTIVE"):
+                    parent.transition("mutation-exclusive")
+            changed = parent.transition("measurement-exclusive")
+            self.assertEqual("measurement-exclusive", changed["accessMode"])
+            self.assertEqual("measurement-exclusive", Coordinator(self.coordinator).snapshot()[0]["accessMode"])
 
     def test_registered_connection_aliases_share_one_queue(self):
         alias = {"kind": "server", "path": "192.0.2.10:1541/test"}
@@ -598,6 +743,9 @@ class AccessTests(unittest.TestCase):
                 self.fail("corrupt indexed owner cannot be bypassed")
         self.assertIn("repair the indexed ticket record", str(blocked.exception))
         self.assertNotIn("access-recovery-plan", str(blocked.exception))
+        corrupt = next(item for item in coordinator.snapshot() if item["ticket"] == record["ticket"])
+        self.assertEqual("legacy-exclusive", corrupt["accessMode"])
+        self.assertTrue(corrupt["corruptRecord"])
 
     def test_hot_path_does_not_read_ten_thousand_corrupt_archive_records(self):
         coordinator = Coordinator(self.coordinator)
@@ -1018,6 +1166,69 @@ class AccessTests(unittest.TestCase):
 
     def test_unconfigured_authority_does_not_claim_cross_host_coordination(self):
         self.assertEqual("execution-host-only", target_access({"workspace": str(self.root)})["scope"])
+
+    def test_python_lease_sites_match_the_machine_inventory(self):
+        manifest = json.loads((REPO / "tests/database-access-producers.json").read_text(encoding="utf-8"))
+        expected = {(item["file"], item["function"], item["call"]): item["mode"]
+                    for item in manifest["pythonCalls"]}
+
+        class LeaseVisitor(ast.NodeVisitor):
+            def __init__(self):
+                self.scope = []
+                self.calls = []
+
+            def visit_ClassDef(self, node):
+                self.scope.append(node.name)
+                self.generic_visit(node)
+                self.scope.pop()
+
+            def visit_FunctionDef(self, node):
+                self.scope.append(node.name)
+                self.generic_visit(node)
+                self.scope.pop()
+
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def visit_Call(self, node):
+                if ((isinstance(node.func, ast.Name) and node.func.id == "Lease") or
+                        (isinstance(node.func, ast.Attribute) and node.func.attr == "Lease")):
+                    self.calls.append((".".join(self.scope), node))
+                self.generic_visit(node)
+
+        actual = []
+        aliased_imports = []
+        package = REPO / ".agents/skills/itl-remote-runner/scripts/itl_remote"
+        for path in package.glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            aliased_imports.extend(
+                (path.name, alias.name, alias.asname)
+                for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
+                for alias in node.names
+                if (alias.name == "Lease" and alias.asname is not None) or alias.asname == "Lease")
+            visitor = LeaseVisitor()
+            visitor.visit(tree)
+            relative = path.relative_to(REPO).as_posix()
+            for function, call in visitor.calls:
+                actual.append(((relative, function, "Lease"), call))
+
+        self.assertEqual([], aliased_imports)
+        actual_keys = [key for key, _ in actual]
+        self.assertEqual(len(actual_keys), len(set(actual_keys)), "duplicate Lease call in one inventoried function")
+        self.assertEqual(sorted(expected), sorted(actual_keys))
+        actual_by_key = dict(actual)
+        for key, mode in expected.items():
+            keywords = {item.arg: item.value for item in actual_by_key[key].keywords}
+            if mode == "inherit-parent":
+                self.assertIn("inherited", keywords)
+                self.assertNotIn("access_mode", keywords)
+            elif mode == "measurement-exclusive":
+                self.assertEqual(ast.dump(ast.parse('access["accessMode"]', mode="eval").body),
+                                 ast.dump(keywords["access_mode"]))
+            elif mode == "wire-canonical":
+                self.assertEqual(ast.dump(ast.parse('request.get("accessMode")', mode="eval").body),
+                                 ast.dump(keywords["access_mode"]))
+            else:
+                self.fail("Unknown Python producer mode: " + mode)
 
 
 if __name__ == "__main__":

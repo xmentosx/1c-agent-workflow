@@ -55,6 +55,9 @@ func releaseDatabaseFixture(t *testing.T, owner *databasePipeOwner, cleanupError
 func TestDatabaseAccessNativeExclusionAndRelease(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	first := acquireDatabaseFixture(t, python, runtimeRoot, request)
+	if first.AccessMode != "mutation-exclusive" || first.Proof.AccessMode != "mutation-exclusive" {
+		t.Fatalf("missing legacy mode was not normalized fail-closed: owner=%q proof=%q", first.AccessMode, first.Proof.AccessMode)
+	}
 	if strings.Contains(string(first.Public), first.Proof.Token) {
 		t.Fatal("private token escaped in public owner")
 	}
@@ -76,12 +79,32 @@ func TestDatabaseAccessNativeExclusionAndRelease(t *testing.T) {
 	releaseDatabaseFixture(t, last, nil)
 }
 
+func TestDatabaseAccessNormalizesLegacyWireModesAndRejectsLegacyTransitions(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	for legacy, canonical := range map[string]string{"exclusive": "mutation-exclusive", "test-run": "functional-test"} {
+		t.Run(legacy, func(t *testing.T) {
+			candidate := request
+			candidate.AccessMode = legacy
+			owner := acquireDatabaseFixture(t, python, runtimeRoot, candidate)
+			if owner.AccessMode != canonical || owner.Proof.AccessMode != canonical {
+				t.Fatalf("legacy mode %q normalized to owner=%q proof=%q", legacy, owner.AccessMode, owner.Proof.AccessMode)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := owner.Transition(ctx, legacy, 0, nil); err == nil || !strings.Contains(err.Error(), "MODE_INVALID") {
+				t.Fatalf("legacy transition was accepted: %v", err)
+			}
+			releaseDatabaseFixture(t, owner, nil)
+		})
+	}
+}
+
 func TestDatabaseAccessReadOnlyFacadeCoexistsWithOneTestRun(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	request.AccessMode = "shared-read"
 	reader := acquireDatabaseFixture(t, python, runtimeRoot, request)
 	testRequest := request
-	testRequest.AccessMode = "test-run"
+	testRequest.AccessMode = "functional-test"
 	tests := acquireDatabaseFixture(t, python, runtimeRoot, testRequest)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -95,17 +118,19 @@ func TestDatabaseAccessReadOnlyFacadeCoexistsWithOneTestRun(t *testing.T) {
 
 func TestDatabaseAccessOwnerTransitionsTheSameTicket(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
-	request.AccessMode = "test-run"
+	request.AccessMode = "functional-test"
 	owner := acquireDatabaseFixture(t, python, runtimeRoot, request)
 	ticket := owner.Proof.Ticket
+	token := owner.Proof.Token
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := owner.Transition(ctx, "exclusive", 1, nil); err != nil {
+	if err := owner.Transition(ctx, "mutation-exclusive", 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if owner.AccessMode != "exclusive" || owner.Proof.Ticket != ticket {
+	if owner.AccessMode != "mutation-exclusive" || owner.Proof.AccessMode != "mutation-exclusive" || owner.Proof.Ticket != ticket || owner.Proof.Token != token {
 		t.Fatal("mode transition replaced the admitted ticket")
 	}
+	assertDatabasePublicMode(t, owner.Public, "mutation-exclusive")
 	readerRequest := request
 	readerRequest.AccessMode = "shared-read"
 	readerRequest.Timeout = 0
@@ -113,12 +138,57 @@ func TestDatabaseAccessOwnerTransitionsTheSameTicket(t *testing.T) {
 	if reader != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
 		t.Fatalf("reader entered an exclusive preparation phase: owner=%t error=%v", reader != nil, err)
 	}
-	if err := owner.Transition(ctx, "test-run", 1, nil); err != nil {
+	if err := owner.Transition(ctx, "functional-test", 1, nil); err != nil {
 		t.Fatal(err)
 	}
+	if owner.AccessMode != "functional-test" || owner.Proof.AccessMode != "functional-test" || owner.Proof.Ticket != ticket || owner.Proof.Token != token {
+		t.Fatal("reverse mode transition did not update the same admitted proof")
+	}
+	assertDatabasePublicMode(t, owner.Public, "functional-test")
 	reader = acquireDatabaseFixture(t, python, runtimeRoot, readerRequest)
 	releaseDatabaseFixture(t, reader, nil)
 	releaseDatabaseFixture(t, owner, nil)
+}
+
+func assertDatabasePublicMode(t *testing.T, raw json.RawMessage, expected string) {
+	t.Helper()
+	var public map[string]any
+	if err := json.Unmarshal(raw, &public); err != nil {
+		t.Fatal(err)
+	}
+	if public["accessMode"] != expected {
+		t.Fatalf("public access mode = %v, want %q", public["accessMode"], expected)
+	}
+}
+
+func TestDatabaseTransitionConfirmationIsAtomic(t *testing.T) {
+	owner := &databasePipeOwner{
+		AccessMode: "functional-test",
+		Proof:      &databaseAccessProof{Coordinator: "coordinator", Ticket: "ticket", Token: "token", AccessMode: "functional-test"},
+		Public:     json.RawMessage(`{"ticket":"ticket","accessMode":"functional-test"}`),
+	}
+	beforePublic := string(owner.Public)
+	if err := confirmDatabaseAccessTransition(owner, databaseAccessEvent{Event: "transitioned", AccessMode: "shared-read"}, "mutation-exclusive"); err == nil || !strings.Contains(err.Error(), "TRANSITION_UNCONFIRMED") {
+		t.Fatalf("mismatched transition was accepted: %v", err)
+	}
+	if owner.AccessMode != "functional-test" || owner.Proof.AccessMode != "functional-test" || owner.Proof.Ticket != "ticket" || owner.Proof.Token != "token" || string(owner.Public) != beforePublic {
+		t.Fatal("mismatched transition partially updated owner state")
+	}
+	owner.Public = nil
+	if err := confirmDatabaseAccessTransition(owner, databaseAccessEvent{Event: "transitioned", AccessMode: "mutation-exclusive"}, "mutation-exclusive"); err == nil || !strings.Contains(err.Error(), "PUBLIC_INVALID") {
+		t.Fatalf("transition without a valid public owner was accepted: %v", err)
+	}
+	if owner.AccessMode != "functional-test" || owner.Proof.AccessMode != "functional-test" {
+		t.Fatal("invalid public owner partially updated transition state")
+	}
+	owner.Public = json.RawMessage(beforePublic)
+	if err := confirmDatabaseAccessTransition(owner, databaseAccessEvent{Event: "transitioned", AccessMode: "mutation-exclusive"}, "mutation-exclusive"); err != nil {
+		t.Fatal(err)
+	}
+	if owner.AccessMode != "mutation-exclusive" || owner.Proof.AccessMode != "mutation-exclusive" || owner.Proof.Ticket != "ticket" || owner.Proof.Token != "token" {
+		t.Fatal("confirmed transition did not update the same admitted proof")
+	}
+	assertDatabasePublicMode(t, owner.Public, "mutation-exclusive")
 }
 
 func TestDatabaseHostIgnoresForeignPythonHomeAndKeepsPayloadImmutable(t *testing.T) {

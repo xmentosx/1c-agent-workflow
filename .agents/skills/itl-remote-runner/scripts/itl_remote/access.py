@@ -28,6 +28,66 @@ MAX_COMPACTION_RECORDS_PER_CALL = 512
 MAX_CLEANUP_ITEMS_PER_CALL = 128
 MAINTENANCE_PAGE_SIZE = 128
 
+ACCESS_MODES = ("shared-read", "functional-test", "measurement-exclusive", "mutation-exclusive")
+NORMALIZED_ACCESS_MODES = ACCESS_MODES + ("legacy-exclusive",)
+LEGACY_ACCESS_MODE_PROJECTION = {
+    "shared-read": "shared-read",
+    "functional-test": "test-run",
+    "measurement-exclusive": "exclusive",
+    "mutation-exclusive": "exclusive",
+}
+
+# Compatibility is intentionally data, not branching logic. A functional test
+# may share only with a diagnostic read; measurements and mutations exclude all
+# independently owned work, including another operation of the same kind.
+ACCESS_COMPATIBILITY = {
+    "shared-read": frozenset(("shared-read", "functional-test")),
+    "functional-test": frozenset(("shared-read",)),
+    "measurement-exclusive": frozenset(),
+    "mutation-exclusive": frozenset(),
+    "legacy-exclusive": frozenset(),
+}
+
+# Access modes control compatibility between independent root tickets. Nested
+# participants are phases of the same root operation and do not change its
+# external compatibility envelope. Shared and functional roots stay limited;
+# either exclusive root may run any canonical internal phase.
+INHERITED_MODE_PERMISSIONS = {
+    "shared-read": frozenset(("shared-read",)),
+    "functional-test": frozenset(("shared-read", "functional-test")),
+    "measurement-exclusive": frozenset(ACCESS_MODES),
+    "mutation-exclusive": frozenset(ACCESS_MODES),
+    "legacy-exclusive": frozenset(ACCESS_MODES),
+}
+
+
+def normalize_stored_access_mode(value):
+    """Read pre-V2 tickets conservatively without making legacy values writable."""
+    if value is None or value == "exclusive":
+        return "legacy-exclusive"
+    if value == "test-run":
+        return "functional-test"
+    if value == "shared-read":
+        return value
+    raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+
+
+def stored_access_mode(record, legacy_field="accessMode", canonical_field="accessModeV2"):
+    """Validate a V2 mode against the projection understood by old readers."""
+    if canonical_field not in record:
+        return normalize_stored_access_mode(record.get(legacy_field))
+    canonical = record.get(canonical_field)
+    if (canonical not in ACCESS_MODES or legacy_field not in record or
+            record.get(legacy_field) != LEGACY_ACCESS_MODE_PROJECTION[canonical]):
+        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+    return canonical
+
+
+def persisted_access_mode(mode, legacy_field="accessMode", canonical_field="accessModeV2"):
+    if mode not in ACCESS_MODES:
+        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+    return {legacy_field: LEGACY_ACCESS_MODE_PROJECTION[mode], canonical_field: mode}
+
 
 def admission_error(code, coordinator, blockers, elapsed):
     """Keep the terminal error actionable even when progress output is hidden."""
@@ -82,12 +142,20 @@ def participants(record):
             value.get("status") not in ("active", "uncertain") or
             not re.fullmatch(r"[0-9a-f]{64}", str(value.get("generation", ""))) or
             not isinstance(value.get("resources"), list) or
-            value.get("accessMode", "exclusive") not in ACCESS_MODES or
+            not _stored_access_mode_valid(value) or
             any(not isinstance(resource, str) for resource in value["resources"]) or
             not set(value["resources"]) <= set(record["resources"])
             for key, value in entries.items())):
         raise WorkError("INFOBASE_ACCESS_PARTICIPANTS_INVALID")
     return entries
+
+
+def _stored_access_mode_valid(record):
+    try:
+        stored_access_mode(record)
+        return True
+    except WorkError:
+        return False
 
 
 class Coordinator:
@@ -995,47 +1063,49 @@ class Coordinator:
 
 ACTIVE_STATUSES = ("waiting", "running", "recovering", "needs-attention")
 TERMINAL_STATUSES = ("released", "cancelled")
-ACCESS_MODES = ("exclusive", "shared-read", "test-run")
 
 
 def access_mode(record):
-    """Legacy tickets remain exclusive; only explicit new tickets may share."""
-    mode = record.get("accessMode", "exclusive")
-    if mode not in ACCESS_MODES:
-        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
-    return mode
+    """Return canonical semantics while keeping old records byte-compatible."""
+    return stored_access_mode(record)
 
 
 def effective_access_mode(record):
+    requested = None
+    if "requestedAccessMode" in record or "requestedAccessModeV2" in record:
+        requested = stored_access_mode(record, "requestedAccessMode", "requestedAccessModeV2")
     if record.get("status") in ("recovering", "needs-attention"):
-        return "exclusive"
-    requested = record.get("requestedAccessMode")
+        return "legacy-exclusive"
     if requested is not None:
-        if requested not in ACCESS_MODES:
-            raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
         return requested
     return access_mode(record)
 
 
 def compatible(first, second):
-    if first == "exclusive" or second == "exclusive":
-        return False
-    if first == "test-run" and second == "test-run":
-        return False
-    return True
+    if first not in NORMALIZED_ACCESS_MODES or second not in NORMALIZED_ACCESS_MODES:
+        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+    return second in ACCESS_COMPATIBILITY[first]
 
 
 def permits(parent, child):
-    if parent == "exclusive":
-        return True
-    if parent == "test-run":
-        return child in ("test-run", "shared-read")
-    return child == "shared-read"
+    if parent not in NORMALIZED_ACCESS_MODES or child not in ACCESS_MODES:
+        raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
+    return child in INHERITED_MODE_PERMISSIONS[parent]
 
 
 def public(record, *, include_native_journal=True):
-    result = {key: value for key, value in record.items() if key != "token" and (include_native_journal or key != "nativeJournal")}
-    result.setdefault("accessMode", "exclusive")
+    result = {key: value for key, value in record.items()
+              if key not in ("token", "accessModeV2", "requestedAccessModeV2") and
+              (include_native_journal or key != "nativeJournal")}
+    result["accessMode"] = access_mode(record)
+    if "requestedAccessMode" in record or "requestedAccessModeV2" in record:
+        result["requestedAccessMode"] = stored_access_mode(record, "requestedAccessMode", "requestedAccessModeV2")
+    if "participants" in result:
+        result["participants"] = {
+            key: {**{name: item for name, item in value.items() if name != "accessModeV2"},
+                  "accessMode": stored_access_mode(value)}
+            for key, value in result["participants"].items()
+        }
     return result
 
 
@@ -1051,14 +1121,17 @@ def inheritance_token(record):
 
 class Lease:
     def __init__(self, coordinator, bases, owner, *, timeout=3600, cancelled=lambda: False,
-                 progress=lambda record: None, inherited=None, purpose="operation", access_mode="exclusive"):
+                 progress=lambda record: None, inherited=None, purpose="operation", access_mode=None):
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or not 0 <= timeout <= 86400:
             raise WorkError("INFOBASE_ACCESS_TIMEOUT_INVALID")
         if not bases:
             raise WorkError("INFOBASE_ACCESS_IDENTITY_REQUIRED")
         if purpose not in ("operation", "recovery") or (purpose == "recovery" and not inherited):
             raise WorkError("INFOBASE_ACCESS_PURPOSE_INVALID")
-        if access_mode not in ACCESS_MODES or (purpose == "recovery" and access_mode != "exclusive"):
+        if access_mode is None and not inherited:
+            access_mode = "mutation-exclusive"
+        if ((access_mode is not None and access_mode not in ACCESS_MODES) or
+                (purpose == "recovery" and access_mode not in (None, "mutation-exclusive"))):
             raise WorkError("INFOBASE_ACCESS_MODE_INVALID")
         self.coordinator = Coordinator(coordinator)
         self.bases, self.owner = bases, owner
@@ -1083,7 +1156,7 @@ class Lease:
                     self.participant_id = uuid.uuid4().hex
                     self.record.setdefault("participants", {})[self.participant_id] = {
                         "status": "active", "generation": identity(self.record["token"]),
-                        "resources": resources, "accessMode": self.access_mode, "admittedAt": stamp(),
+                        "resources": resources, **persisted_access_mode(self.access_mode), "admittedAt": stamp(),
                         "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
                     self.coordinator.save(self.record)
                     return self
@@ -1093,7 +1166,7 @@ class Lease:
                 self.live_lock.__enter__()
                 self.record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket, "token": secrets.token_hex(32),
                                "sequence": self.coordinator.take_sequence(),
-                               "resources": resources, "accessMode": self.access_mode,
+                               "resources": resources, **persisted_access_mode(self.access_mode),
                                "status": "waiting", "createdAt": stamp(),
                                "owner": {**self.owner, "host": platform.node(), "pid": os.getpid()}}
                 self.coordinator.save(self.record)
@@ -1130,7 +1203,8 @@ class Lease:
                         self.wait_seconds = time.monotonic() - self.started
                         return self
                 self.progress({"status": "waiting-for-base", "ticket": self.record["ticket"],
-                               "resources": resources, "waitSeconds": time.monotonic() - self.started,
+                               "resources": resources, "accessMode": self.access_mode,
+                               "waitSeconds": time.monotonic() - self.started,
                                "blockers": blockers})
                 if time.monotonic() >= deadline:
                     raise admission_error("INFOBASE_ACCESS_WAIT_TIMEOUT", self.coordinator,
@@ -1163,6 +1237,9 @@ class Lease:
                 not secrets.compare_digest(inheritance_token(record), self.inherited.get("token", "")) or
                 not set(resources) <= set(record["resources"]) or not self.coordinator.alive(ticket)):
             raise WorkError("INFOBASE_ACCESS_INHERITANCE_INVALID")
+        if self.access_mode is None:
+            parent_mode = effective_access_mode(record)
+            self.access_mode = "mutation-exclusive" if parent_mode == "legacy-exclusive" else parent_mode
         if not permits(effective_access_mode(record), self.access_mode):
             raise WorkError("INFOBASE_ACCESS_INHERITED_MODE_INVALID")
         participants(record)
@@ -1170,7 +1247,8 @@ class Lease:
 
     def proof(self):
         return {"coordinator": str(self.coordinator.root), "ticket": self.record["ticket"],
-                "token": inheritance_token(self.record), **({"purpose": "recovery"} if self.purpose == "recovery" else {})}
+                "token": inheritance_token(self.record), "accessMode": self.access_mode,
+                **({"purpose": "recovery"} if self.purpose == "recovery" else {})}
 
     def validate(self):
         """Check the current fencing authority without creating a work participant."""
@@ -1207,10 +1285,10 @@ class Lease:
                         raise WorkError("INFOBASE_ACCESS_TRANSITION_INVALID")
                     if participants(current):
                         raise WorkError("INFOBASE_ACCESS_TRANSITION_PARTICIPANTS_ACTIVE")
-                    if access_mode(current) == new_mode and "requestedAccessMode" not in current:
+                    if access_mode(current) == new_mode and "requestedAccessMode" not in current and "requestedAccessModeV2" not in current:
                         self.record, self.access_mode = current, new_mode
                         return {"accessMode": new_mode, "waitSeconds": 0.0}
-                    current["requestedAccessMode"] = new_mode
+                    current.update(persisted_access_mode(new_mode, "requestedAccessMode", "requestedAccessModeV2"))
                     current.setdefault("transitionRequestedAt", stamp())
                     self.coordinator.save(current)
                     blockers = []
@@ -1230,8 +1308,9 @@ class Lease:
                         if record["status"] in ("running", "recovering") and not compatible(new_mode, effective_access_mode(record)):
                             blockers.append(public(record, include_native_journal=False))
                     if not blockers:
-                        current["accessMode"] = new_mode
+                        current.update(persisted_access_mode(new_mode))
                         current.pop("requestedAccessMode", None)
+                        current.pop("requestedAccessModeV2", None)
                         current.pop("transitionRequestedAt", None)
                         current["modeChangedAt"] = stamp()
                         self.coordinator.save(current)
@@ -1250,6 +1329,7 @@ class Lease:
                     current = self.coordinator.record(self.record["ticket"])
                     if current.get("token") == self.record["token"]:
                         current.pop("requestedAccessMode", None)
+                        current.pop("requestedAccessModeV2", None)
                         current.pop("transitionRequestedAt", None)
                         self.coordinator.save(current)
                         self.record = current
@@ -1318,4 +1398,5 @@ def target_access(target):
     if manager:
         bases.append(manager)
     bases.extend(access.get("additionalBases", []))
-    return {"coordinator": root, "bases": bases, "timeout": access.get("waitTimeoutSeconds", 3600), "scope": scope}
+    return {"coordinator": root, "bases": bases, "timeout": access.get("waitTimeoutSeconds", 3600),
+            "scope": scope, "accessMode": "measurement-exclusive"}

@@ -42,6 +42,11 @@ def serve(input_stream, output_stream):
         native_protocol = request.get("nativeJournalProtocol", 0)
         if type(native_protocol) is not int or native_protocol not in (0, 1):
             raise WorkError("NATIVE_JOURNAL_PROTOCOL_UNSUPPORTED")
+        wire_mode = request.get("accessMode")
+        if wire_mode is None or wire_mode == "exclusive":
+            request["accessMode"] = "mutation-exclusive"
+        elif wire_mode == "test-run":
+            request["accessMode"] = "functional-test"
 
         def receive():
             try:
@@ -119,7 +124,7 @@ def serve(input_stream, output_stream):
         lease = Lease(request["coordinator"], request["bases"], {**request["owner"], "parentPid": os.getppid(), "nativeJournalProtocol": native_protocol},
                       timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
                       progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"),
-                      access_mode=request.get("accessMode", "exclusive"))
+                      access_mode=request.get("accessMode"))
         lease.__enter__()
         producer_id = native_journal.register(lease)
         admitted.set()
@@ -176,7 +181,7 @@ def serve(input_stream, output_stream):
                 continue
             status = lease.release(cleanup_errors=value["cleanupErrors"] + native_journal.release_errors(lease, producer_id))
             emit({"event": "released", "status": status,
-                  "inherited": bool(lease.inherited)})
+                  "inherited": bool(lease.inherited), "accessMode": lease.access_mode})
             break
     except BaseException as error:
         if lease is not None:

@@ -105,7 +105,8 @@ class Recovery:
         with self.coordinator.mutex(time.monotonic() + 30, self.cancelled):
             record = self._current()
             return {"coordinator": str(self.coordinator.root), "ticket": self.ticket,
-                    "token": inheritance_token(record), "purpose": "recovery"}
+                    "token": inheritance_token(record), "accessMode": "mutation-exclusive",
+                    "purpose": "recovery"}
 
     def _current(self):
         if not self.live_lock or self.completed:

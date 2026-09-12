@@ -105,7 +105,7 @@ func newDatabaseRuntimeFixtureForFamily(t *testing.T, family string, request dat
 	t.Cleanup(backend.Close)
 	accessMode := "shared-read"
 	if family == "vanessa-ui" {
-		accessMode = "test-run"
+		accessMode = "functional-test"
 	}
 	plan := &facadeDatabasePlan{SchemaVersion: 1, Family: family, ProjectRoot: root, InstanceID: id, Coordinator: request.Coordinator, AccessMode: accessMode,
 		Python: python, Bases: request.Bases, TargetBase: request.Bases[0], PrimaryBase: &request.Bases[0], WaitTimeoutSeconds: .15}
@@ -148,7 +148,7 @@ func TestDatabaseRuntimeAllowsSharedReadersAndRetainsIdleBackend(t *testing.T) {
 		t.Fatal("the second read-only project did not start its backend")
 	}
 	exclusiveRequest := request
-	exclusiveRequest.AccessMode = "exclusive"
+	exclusiveRequest.AccessMode = "mutation-exclusive"
 	exclusiveRequest.Timeout = 0
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -202,20 +202,66 @@ func TestVanessaRuntimeUsesExclusivePreparationThenCoexistsWithRoctupReader(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rt.databaseOwner == nil || rt.databaseOwner.AccessMode != "test-run" {
-		t.Fatal("Vanessa runtime did not return its ticket to test-run mode")
+	if rt.databaseOwner == nil || rt.databaseOwner.AccessMode != "functional-test" {
+		t.Fatal("Vanessa runtime did not return its ticket to functional-test mode")
 	}
 	readerRequest := request
 	readerRequest.AccessMode = "shared-read"
 	reader := acquireDatabaseFixture(t, python, runtimeRoot, readerRequest)
 	secondTest := request
-	secondTest.AccessMode = "test-run"
+	secondTest.AccessMode = "functional-test"
 	secondTest.Timeout = 0
 	blocked, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, secondTest, nil)
 	if blocked != nil || err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
 		t.Fatalf("a second test run entered active Vanessa MCP: owner=%t error=%v", blocked != nil, err)
 	}
 	releaseDatabaseFixture(t, reader, nil)
+}
+
+func TestInheritedVanessaRunsMutationInsideMeasurementRootEnvelope(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	measurement := request
+	measurement.AccessMode = "measurement-exclusive"
+	parent := acquireDatabaseFixture(t, python, runtimeRoot, measurement)
+	defer releaseDatabaseFixture(t, parent, nil)
+
+	rt, broker := newDatabaseRuntimeFixtureForFamily(t, "vanessa-ui", request, python, runtimeRoot, nil)
+	broker.ensureCheck = func(ctx context.Context) error {
+		readerRequest := request
+		readerRequest.AccessMode = "shared-read"
+		readerRequest.Timeout = 0
+		reader, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, readerRequest, nil)
+		if reader != nil {
+			_ = reader.Close()
+			return fmt.Errorf("reader entered an outer measurement root")
+		}
+		if err == nil || !strings.Contains(err.Error(), "WAIT_TIMEOUT") {
+			return fmt.Errorf("outer measurement was not externally exclusive: %v", err)
+		}
+		return nil
+	}
+	meta := mcp.Meta{databaseProofMetaKey: parent.Proof}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	callCtx, finish, err := rt.beginDatabaseCall(ctx, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.mu.Lock()
+	err = rt.ensureLocked(callCtx)
+	rt.mu.Unlock()
+	if rt.databaseParent == nil || rt.databaseParent.AccessMode != "measurement-exclusive" {
+		t.Fatal("Vanessa runtime lost the measurement root proof")
+	}
+	if rt.databaseOwner == nil || rt.databaseOwner.AccessMode != "mutation-exclusive" {
+		t.Fatal("Vanessa runtime did not enter its inherited mutation phase")
+	}
+	if finishErr := finish(); err == nil {
+		err = finishErr
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestDatabaseRuntimeSerializesCallsWithCancellableWait(t *testing.T) {

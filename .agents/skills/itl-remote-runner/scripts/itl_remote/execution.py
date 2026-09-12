@@ -116,7 +116,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                                     "processes": []}}
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
-                            "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
+                            "resources": access_lease.record["resources"], "accessMode": access_lease.access_mode,
+                            "waitSeconds": access_lease.wait_seconds}
 
     def persist_progress():
         # Public evidence is independent of the private context and final result.
@@ -459,7 +460,7 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                        "operation": "measure", "spool": str(spool),
                        "recoveryBinding": {"requestSha256": identity(request), "targetSha256": identity(target)}},
                        timeout=access["timeout"], cancelled=cancelled,
-                       progress=waiting, inherited=inherited) as lease:
+                       progress=waiting, inherited=inherited, access_mode=access["accessMode"]) as lease:
                 # Revalidate immutable inputs and target authorization after the
                 # queue. Actual loaded configuration/data checks belong to prepare.
                 try:
@@ -478,7 +479,8 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                     lease.release()
                     raise
                 state["access"] = {"coordinator": str(lease.coordinator.root), "ticket": lease.record["ticket"],
-                                   "resources": lease.record["resources"], "scope": access["scope"]}
+                                   "resources": lease.record["resources"], "scope": access["scope"],
+                                   "accessMode": lease.access_mode}
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
                                          progress, access_lease=lease, access_scope=access["scope"],

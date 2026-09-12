@@ -123,17 +123,34 @@ class AccessHostTests(unittest.TestCase):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             pass
 
-    def test_host_transitions_the_same_test_ticket_to_exclusive_and_back(self):
-        child, received = self.start(accessMode="test-run")
+    def test_host_transitions_the_same_functional_ticket_to_mutation_and_back(self):
+        child, received = self.start(accessMode="functional-test")
         admitted = self.next(received, "admitted")
-        self.assertEqual("test-run", admitted["owner"]["accessMode"])
-        self.send(child, {"event":"transition", "accessMode":"exclusive", "timeout":1})
-        self.assertEqual("exclusive", self.next(received, "transitioned")["accessMode"])
-        self.send(child, {"event":"transition", "accessMode":"test-run"})
-        self.assertEqual("test-run", self.next(received, "transitioned")["accessMode"])
+        self.assertEqual("functional-test", admitted["owner"]["accessMode"])
+        self.assertEqual("functional-test", admitted["proof"]["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"mutation-exclusive", "timeout":1})
+        self.assertEqual("mutation-exclusive", self.next(received, "transitioned")["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"functional-test"})
+        self.assertEqual("functional-test", self.next(received, "transitioned")["accessMode"])
         self.send(child, {"event":"release", "cleanupErrors":[]})
-        self.next(received, "released")
+        self.assertEqual("functional-test", self.next(received, "released")["accessMode"])
         self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
+    def test_host_normalizes_legacy_wire_modes_fail_closed(self):
+        for legacy, canonical in ((None, "mutation-exclusive"), ("exclusive", "mutation-exclusive"),
+                                  ("test-run", "functional-test")):
+            with self.subTest(legacy=legacy):
+                values = {} if legacy is None else {"accessMode": legacy}
+                child, received = self.start(**values)
+                admitted = self.next(received, "admitted")
+                self.assertEqual(canonical, admitted["owner"]["accessMode"])
+                self.assertEqual(canonical, admitted["proof"]["accessMode"])
+                self.send(child, {"event":"release", "cleanupErrors":[]})
+                self.assertEqual(canonical, self.next(received, "released")["accessMode"])
+                self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+        child, received = self.start(accessMode="legacy-exclusive")
+        self.assertIn("MODE_INVALID", self.next(received, "error")["error"])
+        self.assertEqual(1, child.wait(timeout=5))
 
     def test_source_sync_observation_keeps_pin_until_explicit_consume_ack(self):
         owner = {"project": str(self.root), "operation": "sync-dev-branches", "parentPid": os.getpid()}
@@ -174,6 +191,25 @@ class AccessHostTests(unittest.TestCase):
             self.assertEqual(0, child.wait(timeout=5))
             self.assertTrue(Coordinator(self.coordinator).alive(parent.record["ticket"]))
             self.assertEqual("running", Coordinator(self.coordinator).records()[0]["status"])
+
+    def test_measurement_root_runs_an_inherited_mutation_phase_and_stays_externally_exclusive(self):
+        with Lease(self.coordinator, [self.base], {}, timeout=0, access_mode="measurement-exclusive") as parent:
+            child, received = self.start(inherited=parent.proof(), accessMode="mutation-exclusive")
+            admitted = self.next(received, "admitted")
+            self.assertEqual(parent.record["ticket"], admitted["proof"]["ticket"])
+            self.assertEqual("mutation-exclusive", admitted["proof"]["accessMode"])
+            self.assertNotIn("accessModeV2", json.dumps(admitted))
+            raw_participant = next(iter(Coordinator(self.coordinator).records()[0]["participants"].values()))
+            self.assertEqual("exclusive", raw_participant["accessMode"])
+            self.assertEqual("mutation-exclusive", raw_participant["accessModeV2"])
+            competitor, competitor_events = self.start(accessMode="shared-read", timeout=0)
+            waiting = self.next(competitor_events, "waiting")
+            self.assertEqual("measurement-exclusive", waiting["blockers"][0]["accessMode"])
+            self.assertIn("WAIT_TIMEOUT", self.next(competitor_events, "error")["error"])
+            self.assertEqual(1, competitor.wait(timeout=5))
+            self.send(child, {"event":"release", "cleanupErrors":[]})
+            self.assertTrue(self.next(received, "released")["inherited"])
+            self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
 
     def test_waiter_cancel_starts_no_operation_and_does_not_keep_ownership(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:

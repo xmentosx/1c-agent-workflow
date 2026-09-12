@@ -42,6 +42,11 @@ func databaseParentProof(meta mcp.Meta) (*databaseAccessProof, error) {
 	if proof.Purpose == "" {
 		proof.Purpose = "operation"
 	}
+	mode, err := normalizeDatabaseAccessMode(proof.AccessMode)
+	if err != nil {
+		return nil, fmt.Errorf("INFOBASE_ACCESS_INHERITED_PROOF_INVALID")
+	}
+	proof.AccessMode = mode
 	return &proof, nil
 }
 
@@ -100,12 +105,17 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 			if threadID, ok := meta["openai/threadId"].(string); ok && threadID != "" {
 				identity["threadId"] = threadID
 			}
-			accessMode := plan.AccessMode
+			accessMode, err := normalizeDatabaseAccessMode(plan.AccessMode)
+			if err != nil {
+				unlock()
+				return ctx, nil, err
+			}
+			plan.AccessMode = accessMode
 			if parent != nil && r.family == "vanessa-ui" {
 				// An inherited facade cannot upgrade the outer ticket. Preserve the
 				// previous fail-closed contract: Vanessa preparation is admitted only
 				// when its caller already owns an exclusive operation lease.
-				accessMode = "exclusive"
+				accessMode = "mutation-exclusive"
 			}
 			owner, err := acquireDatabasePipeOwner(ctx, plan.Python, planner.DatabaseRuntimeRoot(), databaseAccessRequest{
 				SchemaVersion: 1, Coordinator: plan.Coordinator, Bases: plan.Bases, Timeout: plan.WaitTimeoutSeconds,
@@ -173,7 +183,7 @@ func sameDatabaseParent(first, second *databaseAccessProof) bool {
 	if first == nil || second == nil {
 		return first == second
 	}
-	return first.Ticket == second.Ticket && first.Token == second.Token && first.Purpose == second.Purpose &&
+	return first.Ticket == second.Ticket && first.Token == second.Token && first.Purpose == second.Purpose && first.AccessMode == second.AccessMode &&
 		strings.EqualFold(filepath.Clean(first.Coordinator), filepath.Clean(second.Coordinator))
 }
 
@@ -241,7 +251,7 @@ func (r *runtime) transitionDatabaseMode(ctx context.Context, accessMode string)
 		return nil
 	}
 	if r.databaseParent != nil {
-		if accessMode == "exclusive" && r.databaseOwner.AccessMode != "exclusive" {
+		if accessMode == "mutation-exclusive" && r.databaseOwner.AccessMode != "mutation-exclusive" {
 			return fmt.Errorf("INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT")
 		}
 		return nil
@@ -273,7 +283,7 @@ func (r *runtime) enterDatabasePreparationMode(ctx context.Context) error {
 	if r.family != "vanessa-ui" {
 		return nil
 	}
-	return r.transitionDatabaseMode(ctx, "exclusive")
+	return r.transitionDatabaseMode(ctx, "mutation-exclusive")
 }
 
 func (r *runtime) restoreDatabaseRuntimeMode(ctx context.Context) error {

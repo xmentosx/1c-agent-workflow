@@ -47,7 +47,7 @@ try {
     if ($manifest.environment.existed) { Import-DotEnv -Path $manifest.environment.snapshotPath -Overwrite }
     [Environment]::SetEnvironmentVariable('PLATFORM_PATH',$manifest.platform.path,'Process')
     . $context.bridge.path
-    $request = @{schemaVersion=1;coordinator=$privateProof.coordinator;bases=@($context.duty.resources);timeout=0
+    $request = @{schemaVersion=1;coordinator=$privateProof.coordinator;bases=@($context.duty.resources);timeout=0;accessMode='mutation-exclusive'
         inherited=$privateProof;purpose='recovery';nativeJournalProtocol=1
         owner=@{operation='workflow-native-restore';project=$context.duty.project}}
     $owner = Start-ItlDatabaseAccessHost -Request $request -Python $context.python

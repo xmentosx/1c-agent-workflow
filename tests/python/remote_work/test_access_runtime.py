@@ -48,7 +48,8 @@ class AccessRuntimeTests(unittest.TestCase):
         request = self.package()
         with self.own_base():
             pending = self.run_async()
-            self.wait_for_queue()
+            waiting = self.wait_for_queue()
+            self.assertEqual("measurement-exclusive", waiting["access"]["accessMode"])
             self.assertFalse((self.fixture.spool / "runs/one/context.json").exists())
             provenance_path = self.fixture.spool / "runs/one/provenance.json"
             original_hash = digest(provenance_path)
@@ -67,8 +68,12 @@ class AccessRuntimeTests(unittest.TestCase):
         state = pending.result(timeout=10)
         self.assertEqual("completed", state["status"], state)
         result = read_json(self.fixture.spool / "runs/one/result.json")
+        progress = read_json(self.fixture.spool / "runs/one/progress.json")
         context = read_json(self.fixture.spool / "runs/one/context.json")
         self.assertGreaterEqual(result["access"]["waitSeconds"], .2)
+        self.assertEqual("measurement-exclusive", result["access"]["accessMode"])
+        self.assertEqual("measurement-exclusive", progress["access"]["accessMode"])
+        self.assertEqual("measurement-exclusive", state["access"]["accessMode"])
         self.assertNotIn(context["accessLease"]["token"], json.dumps(result))
         self.assertNotIn(context["accessLease"]["token"], json.dumps(state))
         self.assertNotIn(context["accessLease"]["token"], json.dumps(original))
@@ -164,6 +169,7 @@ with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['worksp
         evidence = list((self.fixture.spool / "runs/one").glob("*/inherited.json"))
         self.assertEqual(1, len(evidence))
         self.assertEqual(state["access"]["ticket"], read_json(evidence[0])["ticket"])
+        self.assertEqual("measurement-exclusive", state["access"]["accessMode"])
 
     def test_completed_workload_cannot_hide_uncertain_nested_cleanup(self):
         workload = self.fixture.source / "workload.py"

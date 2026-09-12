@@ -6,6 +6,38 @@ the configured Vanessa manager base are acquired together with the target.
 Nothing is held partially while waiting. Older conflicting tickets run first;
 an unrelated database may proceed. A per-job claim prevents duplicate execution.
 
+Every new admission records one canonical mode:
+
+- `shared-read` may coexist with another shared read and with one diagnostic
+  `functional-test`; it promises availability and structurally readable state,
+  not a transactional snapshot;
+- `functional-test` may coexist only with `shared-read`, never with another
+  functional test;
+- `measurement-exclusive` excludes every independently owned operation so the
+  complete measured lifecycle, including preparation and cleanup, is isolated;
+- `mutation-exclusive` excludes every independently owned operation.
+
+This compatibility matrix is symmetric and applies between independent root
+tickets. Nested participants are phases inside the same root envelope: shared
+and functional roots remain limited, while either exclusive root may run any
+canonical internal phase without changing external compatibility. A mode
+transition keeps the same root ticket, requires no active nested participants,
+and an exclusive upgrade blocks newly arriving compatible work while it waits.
+New schema-1 records retain the legacy projection in `accessMode`
+(`shared-read`, `test-run`, or `exclusive`) for rolling old readers and put the
+exact canonical class in `accessModeV2`; transitions do the same with both
+requested-mode fields. New readers validate both fields and fail closed if they
+disagree, while public evidence exposes only the canonical meaning. Old persisted
+`test-run` tickets are read as `functional-test`; old `exclusive` tickets and
+tickets with no mode are read as fail-closed `legacy-exclusive`. These legacy
+records are not rewritten. At the external request boundary, missing or
+`exclusive` modes are canonicalized to `mutation-exclusive`, and `test-run` is
+canonicalized to `functional-test`, so old callers remain compatible without
+creating new legacy records. `legacy-exclusive` is never accepted for a new
+admission or transition. Ticket, waiting, progress and result evidence expose
+the effective mode. Measurement admission waiting remains outside the measured
+interval.
+
 ## One authority and database identity
 
 Every participating executor must configure the same `access.coordinator`

@@ -26,7 +26,7 @@ never extend an earlier caller deadline. HTTP transport has no separate shorter
 wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
 minute); forced shutdown remains unproven cleanup at the adapter boundary.
 
-Facade 0.4.11 reserves its target and manager databases through the shared
+Facade 0.4.12 reserves its target and manager databases through the shared
 filesystem coordinator before taking the local runtime lock. It retains that
 reservation while its native backend exists. Nested broker work inherits a
 private proof and registers its participation; conflicting projects and chats
