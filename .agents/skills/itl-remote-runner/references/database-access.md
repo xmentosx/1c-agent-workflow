@@ -49,7 +49,9 @@ most 128 cleanup debts per invocation. Both maintenance routes use persisted
 fixed-size queue pages and direct slot reads; they do not enumerate an archive
 or debt shard before applying the cap. Ineligible entries move once to the tail
 and completed head pages are reclaimed after a restartable checkpoint, bounding
-live queue markers to outstanding work plus one partial page. Admission and
+live queue markers to outstanding work plus one partial page. Cleanup advances
+its cursor only after every selected debt is retired or durably requeued, so a
+pre-item crash cannot skip work even while new debt arrives. Admission and
 status neither scan nor rewrite cleanup debt. Run compaction and cleanup as
 maintenance; they never run in admission or status. The unpublished intermediate `cleanup-debt.json`
 format is deliberately unsupported: its presence fails closed with

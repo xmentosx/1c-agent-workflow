@@ -730,6 +730,34 @@ class AccessTests(unittest.TestCase):
                 self.assertFalse(page.exists())
                 self.assertEqual({}, restarted._read_cleanup_debt()["items"])
 
+    def test_cleanup_selection_crash_cannot_skip_original_debt_under_continuous_arrivals(self):
+        coordinator = Coordinator(self.coordinator)
+        original = []
+        def append_batch(start):
+            for number in range(start, start + access_module.MAINTENANCE_PAGE_SIZE):
+                ticket = f"{number + 1:032x}"
+                item = {"kind": "alive-sidecar", "ticket": ticket, "attempts": 0,
+                        "createdAt": stamp()}
+                path = coordinator._cleanup_debt_item_path("alive-sidecar", ticket)
+                write_json(path, item)
+                coordinator._queue_cleanup_item_locked(path, item)
+                if start == 0:
+                    original.append(path)
+        append_batch(0)
+        for generation in range(1, 4):
+            coordinator._published = lambda boundary: (_ for _ in ()).throw(
+                RuntimeError("injected crash after selection")) if boundary == "cleanup-queue-selected" else None
+            with self.assertRaisesRegex(RuntimeError, "after selection"):
+                coordinator.cleanup()
+            self.assertFalse(coordinator.cleanup_state_path.exists())
+            coordinator._published = lambda boundary: None
+            append_batch(generation * access_module.MAINTENANCE_PAGE_SIZE)
+        coordinator.cleanup()
+        self.assertTrue(all(not path.exists() for path in original))
+        tail = read_json(coordinator.cleanup_tail_path)
+        self.assertEqual(access_module.MAINTENANCE_PAGE_SIZE, tail["headId"])
+        self.assertEqual(tail["headId"], tail["reclaimId"])
+
     def test_unknown_queue_page_orphan_is_explicit_reclaim_debt(self):
         coordinator = Coordinator(self.coordinator)
         for number in range(access_module.MAINTENANCE_PAGE_SIZE):

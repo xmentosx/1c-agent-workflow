@@ -406,7 +406,7 @@ class Coordinator:
         if ticket is not None:
             paths = [self._cleanup_debt_item_path(kind, ticket)
                      for kind in ("terminal-record", "alive-sidecar")]
-            return [(None, None, path) for path in paths if path.exists()][:limit]
+            return [(None, None, path) for path in paths if path.exists()][:limit], None
         state = read_json(self.cleanup_state_path) if self.cleanup_state_path.exists() else {
             "schemaVersion": 2, "nextId": 0}
         if (not isinstance(state, dict) or state.get("schemaVersion") != 2 or
@@ -430,13 +430,13 @@ class Coordinator:
                 raise WorkError("INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID: " + str(slot))
             selected.append((queue_id, slot, self._cleanup_debt_item_path(value["kind"], value["ticket"])))
         state["nextId"] = 0 if stop >= tail["nextId"] else stop
-        write_json(self.cleanup_state_path, state)
-        return selected
+        return selected, state
 
     def _run_cleanup_locked(self, *, limit, ticket=None, retries=1):
         if type(limit) is not int or not 1 <= limit <= MAX_CLEANUP_ITEMS_PER_CALL:
             raise WorkError("INFOBASE_ACCESS_CLEANUP_LIMIT_INVALID")
-        selected = self._cleanup_selection_locked(limit, ticket)
+        selected, cursor = self._cleanup_selection_locked(limit, ticket)
+        self._published("cleanup-queue-selected")
         for queue_id, slot, path in selected:
             if not path.exists():
                 if slot is not None:
@@ -468,7 +468,9 @@ class Coordinator:
                     write_json(path, item)
                 else:
                     self._requeue_cleanup_item_locked(path, item, queue_id)
-        if ticket is None:
+        if cursor is not None:
+            self._write_queue_json(self.cleanup_state_path, cursor)
+            self._published("cleanup-queue-state")
             self._reclaim_queue_head_locked(
                 self.cleanup_queue_path, self.cleanup_tail_path,
                 "INFOBASE_ACCESS_CLEANUP_QUEUE_INVALID", "cleanup-queue-reclaim")
