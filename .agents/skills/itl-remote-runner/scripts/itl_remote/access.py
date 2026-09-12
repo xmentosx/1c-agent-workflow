@@ -90,6 +90,10 @@ class Coordinator:
         self.layout_path = self.tickets / "layout.json"
         self.index_path = self.root / "active-index.json"
         self.archive_root = self.root / "ticket-archive"
+        self.cleanup_debt_path = self.root / "cleanup-debt.json"
+
+    def _published(self, boundary):
+        """Fault-injection seam after durable publication boundaries."""
 
     @contextlib.contextmanager
     def mutex(self, deadline, cancelled):
@@ -108,6 +112,8 @@ class Coordinator:
                 time.sleep(0.05)
         try:
             self._ensure_layout_locked()
+            if self._layout_v2():
+                self._run_cleanup_locked(limit=8)
             yield
         finally:
             lock.__exit__(None, None, None)
@@ -157,17 +163,127 @@ class Coordinator:
             value = read_json(self.index_path)
         except Exception as error:
             raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path)) from error
-        entries = value.get("entries") if isinstance(value, dict) else None
+        if not isinstance(value, dict):
+            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
+        entries = value.get("entries")
         if (value.get("schemaVersion") != 2 or type(value.get("nextSequence")) is not int or
                 value["nextSequence"] < 1 or not isinstance(entries, dict)):
             raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
+        sequences = []
         for ticket, entry in entries.items():
             if (not re.fullmatch(r"[0-9a-f]{32}", ticket) or not isinstance(entry, dict) or
                     set(entry) != {"sequence", "resources"} or type(entry["sequence"]) is not int or
                     entry["sequence"] < 1 or not isinstance(entry["resources"], list) or
-                    not entry["resources"] or any(not isinstance(resource, str) for resource in entry["resources"])):
+                    not entry["resources"] or entry["resources"] != sorted(set(entry["resources"])) or
+                    any(not isinstance(resource, str) or
+                        not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}", resource)
+                        for resource in entry["resources"])):
                 raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
+            sequences.append(entry["sequence"])
+        if len(sequences) != len(set(sequences)) or sequences and value["nextSequence"] <= max(sequences):
+            raise WorkError("INFOBASE_ACCESS_INDEX_INVALID: " + str(self.index_path))
         return value
+
+    def _read_cleanup_debt(self):
+        if not self.cleanup_debt_path.exists():
+            return {"schemaVersion": 1, "items": {}}
+        try:
+            value = read_json(self.cleanup_debt_path)
+        except Exception as error:
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path)) from error
+        if not isinstance(value, dict):
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
+        items = value.get("items")
+        if value.get("schemaVersion") != 1 or not isinstance(items, dict):
+            raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
+        for key, item in items.items():
+            if (not isinstance(key, str) or not isinstance(item, dict) or
+                    item.get("kind") not in ("terminal-record", "alive-sidecar") or
+                    not re.fullmatch(r"[0-9a-f]{32}", str(item.get("ticket", ""))) or
+                    type(item.get("attempts")) is not int or item["attempts"] < 0 or
+                    not isinstance(item.get("createdAt"), str) or
+                    (item["kind"] == "terminal-record" and
+                     not re.fullmatch(r"[0-9a-f]{64}", str(item.get("recordIdentity", ""))))):
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_INVALID: " + str(self.cleanup_debt_path))
+        return value
+
+    def _schedule_cleanup_locked(self, records):
+        debt = self._read_cleanup_debt()
+        for record in records:
+            ticket = record["ticket"]
+            for kind in ("terminal-record", "alive-sidecar"):
+                key = kind + "|" + ticket
+                expected = {"kind": kind, "ticket": ticket, "attempts": 0, "createdAt": stamp()}
+                if kind == "terminal-record":
+                    expected["recordIdentity"] = identity(record)
+                existing = debt["items"].get(key)
+                if existing:
+                    fields = ("kind", "ticket", "recordIdentity") if kind == "terminal-record" else ("kind", "ticket")
+                    stable = {name: existing[name] for name in fields}
+                    expected_stable = {name: expected[name] for name in fields}
+                    if stable != expected_stable:
+                        raise WorkError("INFOBASE_ACCESS_CLEANUP_DEBT_CONFLICT: " + ticket)
+                    continue
+                debt["items"][key] = expected
+        write_json(self.cleanup_debt_path, debt)
+        self._published("cleanup-debt")
+
+    def _cleanup_item_locked(self, item):
+        ticket = item["ticket"]
+        if ticket in self._read_index()["entries"]:
+            return False
+        if item["kind"] == "terminal-record":
+            path = self.tickets / (ticket + ".json")
+            if not path.exists():
+                return True
+            try:
+                record = self._validate_record(read_json(path), path)
+            except Exception as error:
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_RECORD_INVALID: " + str(path)) from error
+            if record["status"] not in TERMINAL_STATUSES or identity(record) != item["recordIdentity"]:
+                raise WorkError("INFOBASE_ACCESS_CLEANUP_RECORD_CHANGED: " + str(path))
+            path.unlink()
+            self._published("cleanup-terminal-record")
+            return True
+        path = self.tickets / (ticket + ".alive")
+        if not path.exists():
+            return True
+        lock = FileLock(path)
+        lock.__enter__()
+        lock.__exit__(None, None, None)
+        path.unlink()
+        self._published("cleanup-alive-sidecar")
+        return True
+
+    def _run_cleanup_locked(self, *, limit, ticket=None, retries=1):
+        debt = self._read_cleanup_debt()
+        selected = [(key, item) for key, item in debt["items"].items()
+                    if ticket is None or item["ticket"] == ticket][:limit]
+        changed = False
+        for key, item in selected:
+            completed = False
+            last_error = None
+            for attempt in range(retries):
+                try:
+                    completed = self._cleanup_item_locked(item)
+                    break
+                except (OSError, WorkError) as error:
+                    last_error = error
+                    if isinstance(error, WorkError) and not busy(error):
+                        break
+                    if attempt + 1 < retries:
+                        time.sleep(0.05 * (attempt + 1))
+            if completed:
+                debt["items"].pop(key, None)
+                changed = True
+            elif last_error is not None:
+                item["attempts"] += 1
+                item["lastAttemptAt"] = stamp()
+                item["lastError"] = str(last_error)
+                changed = True
+        if changed:
+            write_json(self.cleanup_debt_path, debt)
+        return {"remaining": len(debt["items"]), "attempted": len(selected)}
 
     def _archive_path(self, ticket):
         return self.archive_root / ticket[:2] / (ticket + ".json")
@@ -197,22 +313,25 @@ class Coordinator:
                self.alive(record["ticket"]) for record in records):
             return
         entries = {}
+        terminal = []
         for record in records:
             if record["status"] in TERMINAL_STATUSES:
                 self._archive_terminal(record)
+                self._published("migration-terminal-archive")
+                terminal.append(record)
             else:
                 entries[record["ticket"]] = {"sequence": record["sequence"],
                                               "resources": record["resources"]}
+        if terminal:
+            self._schedule_cleanup_locked(terminal)
         write_json(self.index_path, {"schemaVersion": 2,
                                      "nextSequence": max((r["sequence"] for r in records), default=0) + 1,
                                      "entries": entries})
+        self._published("migration-active-index")
         # Publish this sentinel last. Old runtimes see it as an invalid ticket
         # and fail closed instead of silently bypassing the indexed authority.
         write_json(self.layout_path, {"schemaVersion": 2})
-        for record in records:
-            if record["status"] in TERMINAL_STATUSES:
-                (self.tickets / (record["ticket"] + ".json")).unlink(missing_ok=True)
-                self.cleanup_alive(record["ticket"])
+        self._published("migration-layout")
 
     def _repair_terminal_transitions_locked(self):
         index = self._read_index()
@@ -228,14 +347,14 @@ class Coordinator:
                 # The indexed record is still authoritative. Re-publish its
                 # terminal copy even if an interrupted prior copy is damaged.
                 write_json(self._archive_path(ticket), record)
+                self._published("terminal-archive-repair")
                 del index["entries"][ticket]
                 changed = True
-                obsolete.append(path)
+                obsolete.append(record)
         if changed:
+            self._schedule_cleanup_locked(obsolete)
             write_json(self.index_path, index)
-            for path in obsolete:
-                path.unlink(missing_ok=True)
-                self.cleanup_alive(path.stem)
+            self._published("terminal-index-repair")
 
     def _corrupt_record(self, ticket, entry, error):
         return {"schemaVersion": 1, "ticket": ticket, "sequence": entry["sequence"],
@@ -311,10 +430,14 @@ class Coordinator:
             raise WorkError("INFOBASE_ACCESS_RECORD_INDEX_MISMATCH: " + str(path))
         write_json(path, record)
         if record["status"] in TERMINAL_STATUSES:
+            self._published("terminal-active-record")
+        if record["status"] in TERMINAL_STATUSES:
             self._archive_terminal(record)
+            self._published("terminal-archive")
+            self._schedule_cleanup_locked([record])
             index["entries"].pop(record["ticket"], None)
             write_json(self.index_path, index)
-            path.unlink(missing_ok=True)
+            self._published("terminal-index")
         else:
             index["entries"][record["ticket"]] = expected
             if index["nextSequence"] <= record["sequence"]:
@@ -331,12 +454,8 @@ class Coordinator:
             raise
 
     def cleanup_alive(self, ticket):
-        try:
-            (self.tickets / (ticket + ".alive")).unlink(missing_ok=True)
-        except OSError:
-            # A scanner or remote share may retain a short-lived handle. The
-            # empty sidecar is not authority once its OS lock has been closed.
-            pass
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            self._run_cleanup_locked(limit=2, ticket=ticket, retries=5)
 
     def register(self, name, bases):
         """Explicitly associate alternate connections; conflicting claims fail closed."""
@@ -492,7 +611,6 @@ class Lease:
                         if record["status"] == "waiting" and not self.coordinator.alive(record["ticket"]):
                             record.update(status="cancelled", finishedAt=stamp(), reason="waiter-exited-before-admission")
                             self.coordinator.save(record)
-                            self.coordinator.cleanup_alive(record["ticket"])
                             continue
                         if record["status"] in ("running", "recovering") and not self.coordinator.alive(record["ticket"]):
                             if record["status"] == "recovering":

@@ -338,6 +338,36 @@ class AccessTests(unittest.TestCase):
         with Lease(self.coordinator, [self.other], {"jobId": "new"}, timeout=0) as lease:
             self.assertEqual(10, lease.record["sequence"])
 
+    def test_schema_one_migration_restarts_after_every_publication_boundary(self):
+        boundaries = ("migration-terminal-archive", "cleanup-debt",
+                      "migration-active-index", "migration-layout")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix="ITL migration restart ") as root:
+                coordinator_path = Path(root) / "координатор баз"
+                self.coordinator = coordinator_path
+                terminal = self.legacy_record("a" * 32, 7, "released")
+                active = self.legacy_record("b" * 32, 9, "needs-attention")
+                coordinator = Coordinator(coordinator_path)
+                injected = False
+                def crash_after_publication(actual):
+                    nonlocal injected
+                    if actual == boundary and not injected:
+                        injected = True
+                        raise RuntimeError("injected crash after " + boundary)
+                coordinator._published = crash_after_publication
+                with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                    with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                        pass
+                restarted = Coordinator(coordinator_path)
+                with restarted.mutex(time.monotonic() + 5, lambda: False):
+                    pass
+                index = read_json(restarted.index_path)
+                self.assertEqual(10, index["nextSequence"])
+                self.assertEqual({active["ticket"]}, set(index["entries"]))
+                self.assertEqual(terminal, restarted.record(terminal["ticket"]))
+                self.assertFalse((restarted.tickets / (terminal["ticket"] + ".json")).exists())
+                self.assertEqual({}, restarted._read_cleanup_debt()["items"])
+
     def test_live_schema_one_owner_defers_migration_and_new_layout_blocks_old_reader(self):
         ticket = "c" * 32
         self.legacy_record(ticket, 1, "running")
@@ -371,6 +401,105 @@ class AccessTests(unittest.TestCase):
             pass
         self.assertNotIn(record["ticket"], read_json(coordinator.index_path)["entries"])
         self.assertEqual("released", coordinator.record(record["ticket"])["status"])
+
+    def test_terminal_transition_restarts_after_every_publication_boundary(self):
+        boundaries = ("terminal-active-record", "terminal-archive", "cleanup-debt", "terminal-index")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix="ITL terminal restart ") as root:
+                coordinator = Coordinator(Path(root) / "координатор баз")
+                with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                    sequence = coordinator.take_sequence()
+                    record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "d" * 32,
+                              "token": "1" * 64, "sequence": sequence,
+                              "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                              "status": "running", "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+                    coordinator.save(record)
+                    record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+                    injected = False
+                    def crash_after_publication(actual):
+                        nonlocal injected
+                        if actual == boundary and not injected:
+                            injected = True
+                            raise RuntimeError("injected crash after " + boundary)
+                    coordinator._published = crash_after_publication
+                    with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                        coordinator.save(record)
+                restarted = Coordinator(coordinator.root)
+                with restarted.mutex(time.monotonic() + 5, lambda: False):
+                    pass
+                self.assertNotIn(record["ticket"], read_json(restarted.index_path)["entries"])
+                self.assertEqual(record, restarted.record(record["ticket"]))
+                self.assertFalse((restarted.tickets / (record["ticket"] + ".json")).exists())
+                self.assertEqual({}, restarted._read_cleanup_debt()["items"])
+
+    def test_cleanup_debt_survives_unlink_publication_crash(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            sequence = coordinator.take_sequence()
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "f" * 32,
+                      "token": "3" * 64, "sequence": sequence,
+                      "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                      "status": "running", "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+            coordinator.save(record)
+            coordinator._published = lambda boundary: (_ for _ in ()).throw(
+                RuntimeError("injected crash after unlink")) if boundary == "cleanup-terminal-record" else None
+            with self.assertRaisesRegex(RuntimeError, "injected crash after unlink"):
+                coordinator._run_cleanup_locked(limit=1)
+        restarted = Coordinator(self.coordinator)
+        with restarted.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        self.assertEqual({}, restarted._read_cleanup_debt()["items"])
+        self.assertEqual(record, restarted.record(record["ticket"]))
+
+    def test_alive_sharing_violation_uses_bounded_retry_and_persists_debt(self):
+        coordinator = Coordinator(self.coordinator)
+        ticket = "9" * 32
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                      "token": "4" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                      "status": "running", "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+        live = FileLock(coordinator.tickets / (ticket + ".alive"))
+        live.__enter__()
+        try:
+            with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+                coordinator.save(record)
+                result = coordinator._run_cleanup_locked(limit=2, ticket=ticket, retries=2)
+                debt = coordinator._read_cleanup_debt()["items"]
+                alive = debt["alive-sidecar|" + ticket]
+                self.assertEqual(1, result["remaining"])
+                self.assertEqual(1, alive["attempts"])
+                self.assertIn("OWNER_BUSY", alive["lastError"])
+        finally:
+            live.__exit__(None, None, None)
+        coordinator.cleanup_alive(ticket)
+        self.assertFalse((coordinator.tickets / (ticket + ".alive")).exists())
+        self.assertEqual({}, coordinator._read_cleanup_debt()["items"])
+        self.assertEqual(record, coordinator.record(ticket))
+
+    def test_semantically_invalid_index_always_uses_index_error(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        valid = {"schemaVersion": 2, "nextSequence": 3, "entries": {
+            "1" * 32: {"sequence": 1, "resources": ["base-a"]},
+            "2" * 32: {"sequence": 2, "resources": ["base-b"]}}}
+        invalid = [
+            [],
+            {**valid, "nextSequence": 2},
+            {**valid, "entries": {**valid["entries"], "2" * 32: {"sequence": 1, "resources": ["base-b"]}}},
+            {**valid, "entries": {"1" * 32: {"sequence": 1, "resources": ["base-b", "base-a"]}}},
+            {**valid, "entries": {"1" * 32: {"sequence": 1, "resources": ["bad resource"]}}},
+        ]
+        for value in invalid:
+            with self.subTest(value=value):
+                write_json(coordinator.index_path, value)
+                with self.assertRaisesRegex(WorkError, "^INFOBASE_ACCESS_INDEX_INVALID"):
+                    coordinator._read_index()
 
     def test_corrupt_active_record_blocks_only_its_indexed_resources(self):
         coordinator = Coordinator(self.coordinator)
