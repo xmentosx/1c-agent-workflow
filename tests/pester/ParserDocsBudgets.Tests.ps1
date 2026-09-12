@@ -62,8 +62,8 @@
             @(($rows[0].Trim('|')) -split '\|').Count | Should -Be 7
         }
 
-        $planText | Should -Not -Match '(?m)^## Execution log$'
-        $historyText | Should -Match '(?m)^## Execution log$'
+        $planText | Should -Not -Match '(?m)^## Execution log\r?$'
+        $historyText | Should -Match '(?m)^## Execution log\r?$'
         $historyText | Should -Match 'append-only narrative ledger'
         $historyText | Should -Match 'authoritative\s+raw registration, qualification, publication, and resource evidence'
         $records = @($historyText -split '\r?\n' | Where-Object { $_ -match '^\| \d{4}-\d{2}-\d{2} \|' })
