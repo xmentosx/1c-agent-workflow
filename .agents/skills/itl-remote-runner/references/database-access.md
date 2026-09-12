@@ -32,8 +32,27 @@ project/host; do not put passwords in the registration. `access-status
 The coordinator upgrades its storage only when no legacy owner is live. Active
 tickets then remain in a small resource index, while released and cancelled
 tickets move to an exact-addressed archive and are not scanned by admission or
-status. A current runtime can still read archived evidence by ticket id. Older
-runtimes fail closed on the new layout marker instead of bypassing its queue.
+status. Exact full evidence remains addressable for a conservative 90-day
+recovery horizon by default. `remote_work.py access-compact --coordinator
+<directory> [--shards <1-256>]` incrementally replaces older full records with
+small identity tombstones, then removes tombstones 730 days after compaction.
+One restartable cursor and a default batch of 128 records per shard bound each
+pass; a crash after record or cursor publication is idempotently resumed.
+`access-retention-configure --coordinator <directory>
+--recovery-horizon-days <1-3650> --tombstone-retention-days <horizon-3650>
+--batch-size <1-10000>` atomically changes these persistent authority-wide
+values. Run compaction as maintenance; it never runs in admission or status.
+
+A durable recovery plan pins its ticket before recovery can make it terminal
+and removes only its own pin after terminal state is reflected in the job
+state. Multiple plans have independent pins. Pins expire no later than the
+configured tombstone horizon, so abandoned plans become explicit bounded
+retention debt rather than permanent archive growth. Pending terminal-record or
+`.alive` cleanup debt also prevents premature compaction. Within the recovery
+horizon (or while pinned) exact lookup returns the full record; after compaction
+it returns `INFOBASE_ACCESS_TICKET_COMPACTED`, distinct from a never-known or
+expired ticket. Older runtimes fail closed on the new layout marker instead of
+bypassing its queue.
 
 ## Waiting and inherited ownership
 

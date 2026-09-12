@@ -7,6 +7,7 @@ proves that a crashed operation's database side effects have stopped.
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timedelta, timezone
 import json
 import math
 import os
@@ -18,6 +19,11 @@ import time
 import uuid
 
 from .common import FileLock, WorkError, identity, read_json, stamp, write_json
+
+
+DEFAULT_RECOVERY_HORIZON_DAYS = 90
+DEFAULT_TOMBSTONE_RETENTION_DAYS = 730
+DEFAULT_COMPACTION_BATCH_SIZE = 128
 
 
 def admission_error(code, coordinator, blockers, elapsed):
@@ -91,6 +97,9 @@ class Coordinator:
         self.index_path = self.root / "active-index.json"
         self.archive_root = self.root / "ticket-archive"
         self.cleanup_debt_path = self.root / "cleanup-debt.json"
+        self.retention_path = self.root / "archive-retention.json"
+        self.compaction_path = self.root / "archive-compaction.json"
+        self.pins_path = self.root / "archive-pins.json"
 
     def _published(self, boundary):
         """Fault-injection seam after durable publication boundaries."""
@@ -288,6 +297,181 @@ class Coordinator:
     def _archive_path(self, ticket):
         return self.archive_root / ticket[:2] / (ticket + ".json")
 
+    def _retention_policy(self):
+        value = (read_json(self.retention_path) if self.retention_path.exists() else
+                 {"schemaVersion": 1, "recoveryHorizonDays": DEFAULT_RECOVERY_HORIZON_DAYS,
+                  "tombstoneRetentionDays": DEFAULT_TOMBSTONE_RETENTION_DAYS,
+                  "batchSize": DEFAULT_COMPACTION_BATCH_SIZE})
+        return self._validate_retention(value)
+
+    def _validate_retention(self, value):
+        if (not isinstance(value, dict) or value.get("schemaVersion") != 1 or
+                type(value.get("recoveryHorizonDays")) is not int or
+                type(value.get("tombstoneRetentionDays")) is not int or
+                type(value.get("batchSize")) is not int or
+                not 1 <= value["recoveryHorizonDays"] <= 3650 or
+                not value["recoveryHorizonDays"] <= value["tombstoneRetentionDays"] <= 3650 or
+                not 1 <= value["batchSize"] <= 10000):
+            raise WorkError("INFOBASE_ACCESS_RETENTION_INVALID: " + str(self.retention_path))
+        return value
+
+    def configure_retention(self, recovery_horizon_days, tombstone_retention_days, batch_size):
+        value = {"schemaVersion": 1, "recoveryHorizonDays": recovery_horizon_days,
+                 "tombstoneRetentionDays": tombstone_retention_days, "batchSize": batch_size}
+        self._validate_retention(value)
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            pins = self._read_pins()
+            latest = datetime.now(timezone.utc) + timedelta(days=tombstone_retention_days)
+            pins_changed = False
+            for reasons in pins["entries"].values():
+                for reason, expires_at in reasons.items():
+                    if self._time(expires_at, "INFOBASE_ACCESS_PINS_INVALID", self.pins_path) > latest:
+                        reasons[reason] = latest.isoformat()
+                        pins_changed = True
+            if pins_changed:
+                write_json(self.pins_path, pins)
+            write_json(self.retention_path, value)
+            return value
+
+    def _read_pins(self):
+        value = read_json(self.pins_path) if self.pins_path.exists() else {"schemaVersion": 1, "entries": {}}
+        entries = value.get("entries") if isinstance(value, dict) else None
+        if not isinstance(value, dict) or value.get("schemaVersion") != 1 or not isinstance(entries, dict):
+            raise WorkError("INFOBASE_ACCESS_PINS_INVALID: " + str(self.pins_path))
+        for ticket, reasons in entries.items():
+            if (not re.fullmatch(r"[0-9a-f]{32}", ticket) or not isinstance(reasons, dict) or not reasons or
+                    any(not isinstance(reason, str) or not reason or len(reason) > 200 or
+                        not isinstance(expires_at, str) for reason, expires_at in reasons.items())):
+                raise WorkError("INFOBASE_ACCESS_PINS_INVALID: " + str(self.pins_path))
+            for expires_at in reasons.values():
+                self._time(expires_at, "INFOBASE_ACCESS_PINS_INVALID", self.pins_path)
+        return value
+
+    @staticmethod
+    def _time(value, code, path):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise WorkError(code + ": " + str(path)) from error
+        if parsed.tzinfo is None:
+            raise WorkError(code + ": " + str(path))
+        return parsed.astimezone(timezone.utc)
+
+    def pin(self, ticket, reason, *, days=None):
+        if not isinstance(ticket, str) or not re.fullmatch(r"[0-9a-f]{32}", ticket):
+            raise WorkError("INFOBASE_ACCESS_TICKET_INVALID")
+        if not isinstance(reason, str) or not reason or len(reason) > 200:
+            raise WorkError("INFOBASE_ACCESS_PIN_REASON_INVALID")
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            self.record(ticket)
+            policy = self._retention_policy()
+            lifetime = policy["tombstoneRetentionDays"] if days is None else days
+            if type(lifetime) is not int or not 1 <= lifetime <= policy["tombstoneRetentionDays"]:
+                raise WorkError("INFOBASE_ACCESS_PIN_HORIZON_INVALID")
+            pins = self._read_pins()
+            expires = datetime.now(timezone.utc) + timedelta(days=lifetime)
+            pins["entries"].setdefault(ticket, {})[reason] = expires.isoformat()
+            write_json(self.pins_path, pins)
+            return {"reason": reason, "expiresAt": pins["entries"][ticket][reason]}
+
+    def unpin(self, ticket, reason=None):
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            pins = self._read_pins()
+            reasons = pins["entries"].get(ticket)
+            if reasons is not None and reason is None:
+                del pins["entries"][ticket]
+                write_json(self.pins_path, pins)
+            elif reasons is not None and reason in reasons:
+                del reasons[reason]
+                if not reasons:
+                    del pins["entries"][ticket]
+                write_json(self.pins_path, pins)
+
+    def _read_compaction_state(self):
+        value = (read_json(self.compaction_path) if self.compaction_path.exists() else
+                 {"schemaVersion": 1, "nextShard": 0, "afterTicket": ""})
+        if (not isinstance(value, dict) or set(value) != {"schemaVersion", "nextShard", "afterTicket"} or
+                value["schemaVersion"] != 1 or type(value["nextShard"]) is not int or
+                not 0 <= value["nextShard"] <= 255 or not isinstance(value["afterTicket"], str) or
+                (value["afterTicket"] and not re.fullmatch(r"[0-9a-f]{32}", value["afterTicket"]))):
+            raise WorkError("INFOBASE_ACCESS_COMPACTION_INVALID: " + str(self.compaction_path))
+        return value
+
+    def _tombstone(self, value, path):
+        if (not isinstance(value, dict) or set(value) != {"schemaVersion", "ticket", "status", "finishedAt",
+                                                         "compactedAt", "recordIdentity"} or
+                value["schemaVersion"] != 2 or value["ticket"] != path.stem or
+                value["status"] not in TERMINAL_STATUSES or
+                not re.fullmatch(r"[0-9a-f]{64}", str(value["recordIdentity"]))):
+            raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
+        self._time(value["finishedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path)
+        self._time(value["compactedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path)
+        return value
+
+    def _compact_locked(self, shards=1):
+        if type(shards) is not int or not 1 <= shards <= 256:
+            raise WorkError("INFOBASE_ACCESS_COMPACTION_SHARDS_INVALID")
+        policy = self._retention_policy()
+        state = self._read_compaction_state()
+        pins = self._read_pins()
+        debt_tickets = {item["ticket"] for item in self._read_cleanup_debt()["items"].values()}
+        now = datetime.now(timezone.utc)
+        pins_changed = False
+        for ticket, reasons in list(pins["entries"].items()):
+            for reason, expires_at in list(reasons.items()):
+                if self._time(expires_at, "INFOBASE_ACCESS_PINS_INVALID", self.pins_path) <= now:
+                    del reasons[reason]
+                    pins_changed = True
+            if not reasons:
+                del pins["entries"][ticket]
+        if pins_changed:
+            write_json(self.pins_path, pins)
+            self._published("compaction-pins")
+        result = {"visited": 0, "compacted": 0, "deleted": 0, "pinned": 0, "shards": 0}
+        for _ in range(shards):
+            shard = state["nextShard"]
+            directory = self.archive_root / f"{shard:02x}"
+            paths = sorted(path for path in directory.glob("*.json")
+                           if path.stem > state["afterTicket"]) if directory.exists() else []
+            batch = paths[:policy["batchSize"]]
+            for path in batch:
+                result["visited"] += 1
+                value = read_json(path)
+                if isinstance(value, dict) and value.get("schemaVersion") == 2:
+                    tombstone = self._tombstone(value, path)
+                    if now - self._time(tombstone["compactedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
+                            days=policy["tombstoneRetentionDays"]):
+                        path.unlink()
+                        self._published("compaction-delete")
+                        result["deleted"] += 1
+                else:
+                    record = self._validate_record(value, path)
+                    if record["status"] not in TERMINAL_STATUSES:
+                        raise WorkError("INFOBASE_ACCESS_ARCHIVE_INVALID: " + str(path))
+                    if path.stem in pins["entries"] or path.stem in debt_tickets:
+                        result["pinned"] += 1
+                    elif now - self._time(record.get("finishedAt"), "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
+                            days=policy["recoveryHorizonDays"]):
+                        tombstone = {"schemaVersion": 2, "ticket": record["ticket"], "status": record["status"],
+                                     "finishedAt": record["finishedAt"], "compactedAt": now.isoformat(),
+                                     "recordIdentity": identity(record)}
+                        write_json(path, tombstone)
+                        self._published("compaction-tombstone")
+                        result["compacted"] += 1
+            if len(paths) > len(batch):
+                state["afterTicket"] = batch[-1].stem
+            else:
+                state.update(nextShard=(shard + 1) % 256, afterTicket="")
+            result["shards"] += 1
+        write_json(self.compaction_path, state)
+        self._published("compaction-state")
+        result["nextShard"] = state["nextShard"]
+        return result
+
+    def compact(self, shards=1):
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            return self._compact_locked(shards)
+
     def _archive_terminal(self, record):
         path = self._archive_path(record["ticket"])
         if path.exists():
@@ -396,7 +580,11 @@ class Coordinator:
         if not path.is_file():
             raise WorkError("INFOBASE_ACCESS_TICKET_MISSING: " + ticket)
         try:
-            record = self._validate_record(read_json(path), path)
+            value = read_json(path)
+            if not indexed and value.get("schemaVersion") == 2:
+                self._tombstone(value, path)
+                raise WorkError("INFOBASE_ACCESS_TICKET_COMPACTED: " + ticket)
+            record = self._validate_record(value, path)
         except Exception as error:
             if isinstance(error, WorkError):
                 raise

@@ -14,7 +14,7 @@ RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
 from itl_remote import access as access_module
 from itl_remote.access import Coordinator, Lease, binding, target_access
-from itl_remote.common import FileLock, WorkError, read_json, write_json
+from itl_remote.common import FileLock, WorkError, read_json, stamp, write_json
 
 
 CHILD = r'''
@@ -325,14 +325,16 @@ class AccessTests(unittest.TestCase):
 
     def test_schema_one_migration_archives_terminal_records_and_preserves_sequence(self):
         terminal = self.legacy_record("a" * 32, 7, "released")
-        active = self.legacy_record("b" * 32, 9, "needs-attention")
+        first_active = self.legacy_record("c" * 32, 8, "needs-attention")
+        second_active = self.legacy_record("b" * 32, 9, "needs-attention")
         coordinator = Coordinator(self.coordinator)
         with coordinator.mutex(time.monotonic() + 5, lambda: False):
             pass
         self.assertEqual({"schemaVersion": 2}, read_json(coordinator.layout_path))
         index = read_json(coordinator.index_path)
         self.assertEqual(10, index["nextSequence"])
-        self.assertEqual([active["ticket"]], list(index["entries"]))
+        self.assertEqual({first_active["ticket"], second_active["ticket"]}, set(index["entries"]))
+        self.assertEqual([8, 9], [record["sequence"] for record in coordinator.records()])
         self.assertEqual(terminal, coordinator.record(terminal["ticket"]))
         self.assertFalse((coordinator.tickets / (terminal["ticket"] + ".json")).exists())
         with Lease(self.coordinator, [self.other], {"jobId": "new"}, timeout=0) as lease:
@@ -481,6 +483,33 @@ class AccessTests(unittest.TestCase):
         self.assertEqual({}, coordinator._read_cleanup_debt()["items"])
         self.assertEqual(record, coordinator.record(ticket))
 
+    def test_alive_cleanup_debt_survives_unlink_publication_crash(self):
+        coordinator = Coordinator(self.coordinator)
+        ticket = "8" * 32
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                      "token": "5" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": coordinator.resources([self.base]), "accessMode": "exclusive",
+                      "status": "running", "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+        live = FileLock(coordinator.tickets / (ticket + ".alive"))
+        live.__enter__()
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+            coordinator.save(record)
+            coordinator._run_cleanup_locked(limit=2, ticket=ticket)
+        live.__exit__(None, None, None)
+        coordinator._published = lambda boundary: (_ for _ in ()).throw(
+            RuntimeError("injected crash after alive unlink")) if boundary == "cleanup-alive-sidecar" else None
+        with self.assertRaisesRegex(RuntimeError, "injected crash after alive unlink"):
+            coordinator.cleanup_alive(ticket)
+        self.assertFalse((coordinator.tickets / (ticket + ".alive")).exists())
+        restarted = Coordinator(self.coordinator)
+        with restarted.mutex(time.monotonic() + 5, lambda: False):
+            pass
+        self.assertEqual({}, restarted._read_cleanup_debt()["items"])
+        self.assertEqual(record, restarted.record(ticket))
+
     def test_semantically_invalid_index_always_uses_index_error(self):
         coordinator = Coordinator(self.coordinator)
         with coordinator.mutex(time.monotonic() + 5, lambda: False):
@@ -537,6 +566,98 @@ class AccessTests(unittest.TestCase):
             with Lease(self.coordinator, [self.base], {"jobId": "active"}, timeout=0) as lease:
                 self.assertEqual([lease.record["ticket"]], [record["ticket"] for record in coordinator.snapshot()])
         self.assertEqual([], archived_reads)
+
+    def test_status_with_ten_thousand_terminal_and_ten_active_tickets_is_under_one_second(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            for number in range(10):
+                ticket = f"{number + 1:032x}"
+                record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                          "token": f"{number + 1:064x}", "sequence": coordinator.take_sequence(),
+                          "resources": [f"base-{number}"], "accessMode": "exclusive",
+                          "status": "needs-attention", "createdAt": "2026-01-01T00:00:00+00:00",
+                          "reason": "fixture", "owner": {}}
+                coordinator.save(record)
+        archived = {"schemaVersion": 1, "participantProtocol": 1, "token": "f" * 64,
+                    "sequence": 100, "resources": ["base-archive"], "accessMode": "exclusive",
+                    "status": "released", "createdAt": "2025-01-01T00:00:00+00:00",
+                    "finishedAt": "2025-01-01T00:01:00+00:00", "owner": {}}
+        for number in range(10000):
+            ticket = f"{number + 256:032x}"
+            path = coordinator._archive_path(ticket)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({**archived, "ticket": ticket}, separators=(",", ":")), encoding="utf-8")
+        archived_reads = []
+        original_read = access_module.read_json
+        def observed_read(path):
+            if coordinator.archive_root in Path(path).parents:
+                archived_reads.append(Path(path))
+            return original_read(path)
+        started = time.monotonic()
+        with mock.patch("itl_remote.access.read_json", side_effect=observed_read):
+            status = coordinator.snapshot()
+        elapsed = time.monotonic() - started
+        self.assertEqual(10, len(status))
+        self.assertEqual([], archived_reads)
+        self.assertLess(elapsed, 1.0, f"status took {elapsed:.3f}s")
+
+    def test_retention_preserves_horizon_and_pins_then_compacts_to_exact_tombstone(self):
+        coordinator = Coordinator(self.coordinator)
+        old = self.legacy_record("0" * 32, 1, "released")
+        young = self.legacy_record("1" * 32, 2, "released")
+        young["createdAt"] = stamp()
+        young["finishedAt"] = stamp()
+        write_json(coordinator.tickets / (young["ticket"] + ".json"), young)
+        coordinator.configure_retention(30, 365, 100)
+        coordinator.pin(old["ticket"], "fixture", days=1)
+        coordinator.compact(2)
+        self.assertEqual(old, coordinator.record(old["ticket"]))
+        self.assertEqual(young, coordinator.record(young["ticket"]))
+        coordinator.unpin(old["ticket"], "fixture")
+        # Restart the cursor cycle and visit the two fixture shards again.
+        write_json(coordinator.compaction_path, {"schemaVersion": 1, "nextShard": 0, "afterTicket": ""})
+        result = coordinator.compact(2)
+        self.assertEqual(1, result["compacted"])
+        with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_TICKET_COMPACTED"):
+            coordinator.record(old["ticket"])
+        self.assertEqual(young, coordinator.record(young["ticket"]))
+
+    def test_compaction_restarts_after_each_publication_boundary(self):
+        for boundary in ("compaction-tombstone", "compaction-delete", "compaction-state"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(prefix="ITL compaction restart ") as root:
+                coordinator = Coordinator(Path(root) / "координатор баз")
+                coordinator.configure_retention(1, 1, 10)
+                ticket = "0" * 32
+                path = coordinator._archive_path(ticket)
+                if boundary == "compaction-delete":
+                    write_json(path, {"schemaVersion": 2, "ticket": ticket, "status": "released",
+                                      "finishedAt": "2020-01-01T00:00:00+00:00",
+                                      "compactedAt": "2020-01-02T00:00:00+00:00",
+                                      "recordIdentity": "f" * 64})
+                else:
+                    write_json(path, {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                                      "token": "f" * 64, "sequence": 1, "resources": ["base-a"],
+                                      "accessMode": "exclusive", "status": "released",
+                                      "createdAt": "2020-01-01T00:00:00+00:00",
+                                      "finishedAt": "2020-01-02T00:00:00+00:00", "owner": {}})
+                injected = False
+                def crash_after_publication(actual):
+                    nonlocal injected
+                    if actual == boundary and not injected:
+                        injected = True
+                        raise RuntimeError("injected crash after " + boundary)
+                coordinator._published = crash_after_publication
+                with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                    coordinator.compact()
+                restarted = Coordinator(coordinator.root)
+                restarted.compact()
+                if boundary == "compaction-delete":
+                    self.assertFalse(path.exists())
+                else:
+                    with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_TICKET_COMPACTED"):
+                        restarted.record(ticket)
+                self.assertEqual(2 if boundary == "compaction-state" else 1,
+                                 read_json(restarted.compaction_path)["nextShard"])
 
     def test_terminal_ticket_is_addressable_from_archive_and_alive_sidecar_is_removed(self):
         coordinator = Coordinator(self.coordinator)

@@ -169,6 +169,19 @@ class JobRecoveryTests(unittest.TestCase):
         self.assertTrue(any("recovery/" in f["path"] for f in inventory["files"]))
         self.assertFalse(any(f["path"].endswith("context.json") for f in inventory["files"]))
 
+    def test_multiple_recovery_plans_keep_independent_archive_pins_until_state_is_reconciled(self):
+        first = self.failed_measurement()
+        second = recovery_job.create_plan(self.spool, "one")
+        coordinator = access.Coordinator(first["coordinator"])
+        pins = coordinator._read_pins()["entries"][first["ticket"]]
+        self.assertEqual({"job-recovery-plan:" + first["planId"],
+                          "job-recovery-plan:" + second["planId"]}, set(pins))
+        self.assertTrue(self.run_plan(first)["baseReleased"])
+        self.assertEqual({"job-recovery-plan:" + second["planId"]},
+                         set(coordinator._read_pins()["entries"][first["ticket"]]))
+        self.assertTrue(self.run_plan(second)["baseReleased"])
+        self.assertNotIn(first["ticket"], coordinator._read_pins()["entries"])
+
     def test_owned_work_is_quiesced_before_restoration(self):
         plan = self.failed_measurement()
         process = self.start_work()

@@ -65,6 +65,7 @@ def create_plan(spool, identifier):
             write_json(path, result)
         elif read_json(path) != result:
             raise WorkError("RECOVERY_PLAN_CONTENT_CHANGED")
+        coordinator.pin(record["ticket"], "job-recovery-plan:" + result["planId"])
         return result
 
 
@@ -126,6 +127,7 @@ def run(spool, identifier, plan_id):
             value = {"status": "completed", "planId": plan_id, "attemptId": completed[0]["id"],
                      "baseReleased": True, "measurementReplayed": False}
             save_state(value)
+            coordinator.unpin(original["ticket"], "job-recovery-plan:" + plan_id)
             return value
         try:
             with Recovery(coordinator.root, original["ticket"], expected["revision"],
@@ -149,6 +151,7 @@ def run(spool, identifier, plan_id):
                 value = {"status": "completed", "planId": plan_id, "attemptId": owner.attempt,
                          "output": str(output), "baseReleased": True, "measurementReplayed": False}
                 save_state(value)
+                coordinator.unpin(original["ticket"], "job-recovery-plan:" + plan_id)
                 return value
         except Exception as error:
             save_state({"status": "cancelled" if cancelled() else "needs-attention", "planId": plan_id,
