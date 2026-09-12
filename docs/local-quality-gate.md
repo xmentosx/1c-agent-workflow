@@ -106,7 +106,10 @@ Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит D
 `execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
-`-ResumePlan <planId>`. Если сумма выполняемых стадий больше 60 минут, нужно явно
+`-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который
+записан в immutable plan, и принимает его только как предка текущего
+`origin/master`; новый plan без `-ResumePlan` всегда использует текущий master.
+Если сумма выполняемых стадий больше 60 минут, нужно явно
 передать `-ApproveLongPlan <planId>`. Исправление delivery/test harness меняет
 его собственный static proof, но не fingerprint независимой runtime capability.
 `verification-refresh` и `result-cleanup` намеренно всегда свежие.
