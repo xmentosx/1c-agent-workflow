@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -103,6 +102,9 @@ func run() error {
 	vanessaFileAuthoringOutcome := ""
 	var vanessaFileAuthoringCalls []string
 	vanessaScenarioEvidencePassed := false
+	serializedFacadeHandoffPassed := false
+	secondSurvived := false
+	initial := make([]runtimeState, 0, *instances)
 	defer func() {
 		for _, item := range connected {
 			_ = item.session.Close()
@@ -118,27 +120,34 @@ func run() error {
 		if item.count != 2 {
 			return fmt.Errorf("facade gateway tools/list count=%d, expected=2; internal catalog count=%d", item.count, expectedCount)
 		}
-		stopHeartbeat := keepSessionsAlive(ctx, connected[:len(connected)-1], *idleTimeout, *tool, arguments)
-		result, err := callInnerTool(ctx, item.session, *tool, arguments)
+		var result *mcp.CallToolResult
+		if index > 0 {
+			closeStarted := time.Now()
+			var releasedPrevious bool
+			result, releasedPrevious, err = callWithFacadeHandoff(ctx, item.session, connected[len(connected)-2].session.Close, *tool, arguments, 2*time.Second)
+			if releasedPrevious {
+				connected = connected[1:]
+				observeExitWait(closeStarted)
+				serializedFacadeHandoffPassed = true
+				secondSurvived = true
+			}
+		} else {
+			result, err = callInnerTool(ctx, item.session, *tool, arguments)
+		}
 		if err != nil {
-			stopHeartbeat()
 			return fmt.Errorf("call %s: %w", *tool, err)
 		}
 		if result.IsError {
-			stopHeartbeat()
 			return fmt.Errorf("call %s returned a tool error: %#v", *tool, result.StructuredContent)
 		}
 		runtimeRoot := filepath.Join(*projectRoot, ".agent-1c", "mcp", "ondemand", *family)
-		states, err := waitForStateCount(runtimeRoot, index+1, 30*time.Second)
+		states, err := waitForStateCount(runtimeRoot, len(connected), 30*time.Second)
 		if err != nil {
-			stopHeartbeat()
 			return err
 		}
 		known := map[string]bool{}
-		for _, connectedItem := range connected[:len(connected)-1] {
-			if connectedItem.state != nil {
-				known[connectedItem.state.InstanceID] = true
-			}
+		for _, state := range initial {
+			known[state.InstanceID] = true
 		}
 		for stateIndex := range states {
 			if !known[states[stateIndex].InstanceID] {
@@ -147,9 +156,9 @@ func run() error {
 			}
 		}
 		if item.state == nil {
-			stopHeartbeat()
 			return fmt.Errorf("could not bind facade session to its runtime state")
 		}
+		initial = append(initial, *item.state)
 		if *vanessaSmoke {
 			if *family != "vanessa-ui" {
 				return fmt.Errorf("--vanessa-ui-smoke requires --family vanessa-ui")
@@ -159,11 +168,9 @@ func run() error {
 				observeConcurrency()
 			})
 			if err != nil {
-				stopHeartbeat()
 				return err
 			}
 			if err := validateVanessaScenarioEvidence(*projectRoot, item.state.InstanceID, *vanessaFeature, *vanessaSecondaryFeature); err != nil {
-				stopHeartbeat()
 				return err
 			}
 			vanessaScenarioEvidencePassed = true
@@ -176,21 +183,14 @@ func run() error {
 				}
 			}
 		}
-		stopHeartbeat()
 	}
 
 	runtimeRoot := filepath.Join(*projectRoot, ".agent-1c", "mcp", "ondemand", *family)
-	states, err := waitForStateCount(runtimeRoot, *instances, 30*time.Second)
-	if err != nil {
+	if err := distinctInstances(*family, initial); err != nil {
 		return err
 	}
-	if err := distinctInstances(*family, states); err != nil {
-		return err
-	}
-	initial := append([]runtimeState(nil), states...)
 
-	secondSurvived := false
-	if *instances == 2 {
+	if *instances == 2 && !secondSurvived {
 		closeStarted := time.Now()
 		if err := connected[0].session.Close(); err != nil {
 			return fmt.Errorf("close first facade: %w", err)
@@ -235,7 +235,8 @@ func run() error {
 	evidence := map[string]any{
 		"schemaVersion": 2, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
-		"cleanupPassed": true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
+		"serializedFacadeHandoffPassed": serializedFacadeHandoffPassed,
+		"cleanupPassed":                 true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
 		"maxConcurrentSessions": maxConcurrentSessions, "ownedProcessExitWaitMs": ownedProcessExitWait.Milliseconds(),
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
@@ -259,38 +260,33 @@ func run() error {
 	return nil
 }
 
-func keepSessionsAlive(ctx context.Context, sessions []*probeSession, idleTimeout time.Duration, tool string, arguments any) func() {
-	if len(sessions) == 0 || idleTimeout <= 0 {
-		return func() {}
+func callWithFacadeHandoff(ctx context.Context, session *mcp.ClientSession, releasePrevious func() error, name string, arguments any, wait time.Duration) (*mcp.CallToolResult, bool, error) {
+	type outcome struct {
+		result *mcp.CallToolResult
+		err    error
 	}
-	interval := idleTimeout / 3
-	if interval < 250*time.Millisecond {
-		interval = 250 * time.Millisecond
-	}
-	stop := make(chan struct{})
-	var workers sync.WaitGroup
-	for _, item := range sessions {
-		workers.Add(1)
-		go func(session *mcp.ClientSession) {
-			defer workers.Done()
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-stop:
-					return
-				case <-ticker.C:
-					_, _ = callInnerTool(ctx, session, tool, arguments)
-				}
-			}
-		}(item.session)
-	}
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(stop) })
-		workers.Wait()
+	completed := make(chan outcome, 1)
+	go func() {
+		result, err := callInnerTool(ctx, session, name, arguments)
+		completed <- outcome{result: result, err: err}
+	}()
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case value := <-completed:
+		return value.result, false, value.err
+	case <-timer.C:
+		if err := releasePrevious(); err != nil {
+			return nil, false, fmt.Errorf("close first facade for queued handoff: %w", err)
+		}
+		select {
+		case value := <-completed:
+			return value.result, true, value.err
+		case <-ctx.Done():
+			return nil, true, ctx.Err()
+		}
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
 	}
 }
 

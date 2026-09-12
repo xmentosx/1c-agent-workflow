@@ -39,6 +39,43 @@ func TestFirstOSWindowTitleUsesVanessaListResult(t *testing.T) {
 	}
 }
 
+func TestCallWithFacadeHandoffReleasesPreviousBeforeQueuedCallContinues(t *testing.T) {
+	released := make(chan struct{})
+	session := newProbeGatewaySession(t, func(name string, _ map[string]any) *mcp.CallToolResult {
+		<-released
+		return successfulProbeResult(name)
+	})
+	releaseCalls := 0
+	result, handedOff, err := callWithFacadeHandoff(context.Background(), session, func() error {
+		releaseCalls++
+		close(released)
+		return nil
+	}, "get_VanessaAutomation_state", map[string]any{}, 10*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !handedOff || releaseCalls != 1 || result == nil || result.IsError {
+		t.Fatalf("handedOff=%v releaseCalls=%d result=%#v", handedOff, releaseCalls, result)
+	}
+}
+
+func TestCallWithFacadeHandoffKeepsPreviousWhenCallIsReady(t *testing.T) {
+	session := newProbeGatewaySession(t, func(name string, _ map[string]any) *mcp.CallToolResult {
+		return successfulProbeResult(name)
+	})
+	releaseCalls := 0
+	result, handedOff, err := callWithFacadeHandoff(context.Background(), session, func() error {
+		releaseCalls++
+		return nil
+	}, "get_VanessaAutomation_state", map[string]any{}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if handedOff || releaseCalls != 0 || result == nil || result.IsError {
+		t.Fatalf("handedOff=%v releaseCalls=%d result=%#v", handedOff, releaseCalls, result)
+	}
+}
+
 func newProbeGatewaySession(t *testing.T, handler func(string, map[string]any) *mcp.CallToolResult) *mcp.ClientSession {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "fake-gateway", Version: "1"}, nil)

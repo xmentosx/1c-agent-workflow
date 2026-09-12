@@ -25,7 +25,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match "runner-fallback-required"
         $e2eText | Should -Match "run_scenario:cold.*get_VanessaAutomation_state:cold.*get_test_results:cold.*run_scenario:hot.*run_scenario:from-line-cold.*open_feature_file:secondary.*select_scenario:secondary.*run_scenario:selected"
         $e2eText | Should -Match 'vanessa-secondary-feature'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 3'
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 4'
         $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
         $e2eText | Should -Match "vaExtensionSafeMode"
@@ -871,6 +871,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $summary.onDemandVanessaPublicToolCount | Should -Be 2
             $summary.onDemandVanessaInstances | Should -Be 2
             $summary.onDemandVanessaSecondSurvived | Should -BeTrue
+            $summary.onDemandVanessaSerializedHandoff | Should -BeTrue
             $summary.maxConcurrentSessions | Should -Be 3
             $summary.ownedProcessExitWaitMs | Should -BeLessOrEqual 15000
             $summary.onDemandMcpTestFixture | Should -BeTrue
