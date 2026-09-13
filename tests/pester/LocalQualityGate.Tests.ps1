@@ -347,12 +347,12 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
         $worker | Should -Match 'SpecialFolder\]::MyDocuments'
         $worker | Should -Match 'Invoke-Pester -Configuration'
-        $worker | Should -Match '\$env:ITL_INFOBASE_ACCESS_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "infobase-access"'
+        $worker | Should -Match '\$env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "infobase-access"'
         $localRunner | Should -Match '& powershell\.exe @runnerArguments'
         $localRunner | Should -Match 'itl-pester-local-'
-        $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_INFOBASE_ACCESS_ROOT", \$originalInfobaseAccessRoot, "Process"\)'
+        $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", \$originalInfobaseAccessFallbackRoot, "Process"\)'
     }
-    It "replaces an inherited database coordinator with a private Pester worker root" {
+    It "preserves an explicit coordinator while isolating the Pester worker fallback" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl gate isolation Тест " + [guid]::NewGuid().ToString("N"))
         $testRoot = Join-Path $root "tests\pester"
         $poisonRoot = Join-Path $root "Внешний coordinator"
@@ -369,8 +369,9 @@ Get-PesterShardFileSha256 -Path `$Path
             [IO.File]::WriteAllText($testPath, @'
 Describe "Pester worker database coordinator isolation" {
     It "uses a worker-private coordinator" {
-        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Not -Be $env:ITL_TEST_POISON_ACCESS_ROOT
-        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]infobase-access$'
+        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Be $env:ITL_TEST_POISON_ACCESS_ROOT
+        $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT | Should -Not -Be $env:ITL_TEST_POISON_ACCESS_ROOT
+        $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]infobase-access$'
     }
 }
 '@, [Text.UTF8Encoding]::new($false))

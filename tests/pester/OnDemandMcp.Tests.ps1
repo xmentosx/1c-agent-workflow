@@ -1641,6 +1641,7 @@ Describe 'On-demand complete database admission plan' {
         $plan.accessMode | Should -Be 'shared-read'
         @($plan.bases).Count | Should -Be 1
         $plan.bases[0].path | Should -Be $primary.devBranchInfoBasePath
+        $plan.coordinator | Should -Be $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT
         $plan.scope | Should -Be 'execution-host-only'
         $plan.servicePlan | Should -BeNullOrEmpty
         (Test-Path -LiteralPath $root) | Should -BeFalse
@@ -1690,6 +1691,7 @@ Describe 'On-demand complete database admission plan' {
         Mock Get-Setting { param($EnvName, $ConfigName, $Default) if ($EnvName -eq 'ITL_INFOBASE_ACCESS_ROOT') { $authority } else { $Default } }
         $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
         $plan.coordinator | Should -Be $authority
+        $plan.coordinator | Should -Not -Be $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT
         $plan.scope | Should -Be 'configured-authority'
         (Test-Path -LiteralPath $authority) | Should -BeFalse
         Mock Get-Setting { param($EnvName, $ConfigName, $Default) if ($EnvName -eq 'ITL_INFOBASE_ACCESS_WAIT_TIMEOUT_SECONDS') { 'NaN' } else { $Default } }

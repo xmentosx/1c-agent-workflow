@@ -24,7 +24,7 @@ if ($env:OS -eq "Windows_NT" -and [string]$PSVersionTable.PSEdition -eq "Desktop
 $plan = Get-Content -LiteralPath $PlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-worker-{0}-{1}" -f [int]$plan.worker, [guid]::NewGuid().ToString("N"))
 $env:ITL_ONDEMAND_MCP_INSTALL_ROOT = Join-Path $fixtureRuntimeRoot "ondemand"
-$env:ITL_INFOBASE_ACCESS_ROOT = Join-Path $fixtureRuntimeRoot "infobase-access"
+$env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT = Join-Path $fixtureRuntimeRoot "infobase-access"
 $startedAt = [DateTime]::UtcNow
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $result = $null
@@ -55,7 +55,7 @@ try {
     $failure = $_.Exception.Message
 } finally {
     [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $null, "Process")
-    [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $null, "Process")
+    [Environment]::SetEnvironmentVariable("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", $null, "Process")
     if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
         Remove-Item -LiteralPath $fixtureRuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
