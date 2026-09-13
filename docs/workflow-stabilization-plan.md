@@ -191,13 +191,15 @@ defect becomes a separate stabilization item; the reproducer remains equivalent.
 
 ## Wave 4 - documentation and bounded hygiene
 
-Execute STAB-06 as four separately registered batches, never as an unbounded
+Execute STAB-06 as five separately registered batches, never as an unbounded
 cleanup: (A) archive the narrative ledger and keep a compact current view with
 separate implementation/registration/publication/installation/runtime facts;
-(B) add read-only ref/worktree disposition, then allow deletion only with exact
-ownership, expected-SHA CAS, clean/process-free state, and published ancestry or
-tree equivalence; (C) compact hot run/resource state without deleting raw proof
-or breaking Targeted lookup; (D) add backward-compatible access summary metrics.
+(B) add read-only ref/worktree disposition; (C) compact hot run/resource state
+without deleting raw proof or breaking Targeted lookup; (D) add backward-compatible
+access summary metrics; (E) allow only exact published ref deletion through one
+case-sensitive, no-dereference, expected-SHA transaction under the manual Cleanup
+lease. Worktree/resource deletion still requires a separate complete clean/process/
+handle/cwd-free proof and is not enabled by E.
 Expose active/terminal counts, oldest waiter age, store sizes, retained checkpoint
 reasons, and stage-rerun reasons. Never select arbitrary `codex/*` worktrees or
 age-delete content-addressed evidence/qualifications in this item.
@@ -228,5 +230,10 @@ Hard stop: three hours.
 - More than three distinct Release blockers, or more than 90 minutes of fixes
   after a passed Develop, moves the blockers into another stabilization batch.
 - Poll only on meaningful state transitions or at three-to-five-minute intervals.
+- Before the first `RegisterChange`, run the Windows PowerShell 5.1 encoding
+  preflight whenever the unit adds or changes a PowerShell file; owner Pester
+  success alone does not prove default-decoding safety.
+- A delegated implementation handoff must state exact base/head, changed files,
+  owner tests, encoding-preflight result, review findings, and unresolved limits.
 - After context compaction, resume from this file: goal, frozen scope, completed
   work, current blocker, next action, non-goals, and evidence.
