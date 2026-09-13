@@ -920,9 +920,11 @@ function Get-DeliveryQualificationTimingSummary {
     $earliestHot = @($history.lastRuns | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt } | Select-Object -First 1)
     $historyComplete = [string]$history.indexStatus -eq "ready" -and (-not [bool]$history.truncated -or
         ($earliestHot.Count -gt 0 -and (ConvertTo-DeliveryUtcDateTime -Value $earliestHot[0].startedAt) -le $NotBefore.AddSeconds(-2)))
+    $gateDurationMs = [int64]0
+    foreach ($run in $runs) { $gateDurationMs += [int64]$run.durationMs }
     return [pscustomobject]@{
         operationDurationMs = [int64]($finishedAt - $OperationStartedAt).TotalMilliseconds
-        gateDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum)
+        gateDurationMs = $gateDurationMs
         historyStatus = [string]$history.indexStatus
         historyComplete = $historyComplete
         gates = @($runs | ForEach-Object { [pscustomobject]@{ mode=$_.mode; status=$_.status; durationMs=$_.durationMs; stages=$_.stages; releaseE2E=$(if ($_.PSObject.Properties["releaseE2E"]) { $_.releaseE2E } else { $null }) } })

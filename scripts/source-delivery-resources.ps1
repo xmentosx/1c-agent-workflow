@@ -292,9 +292,13 @@ function Get-DeliveryResourceLedgerSummary {
     $oldestAgeSeconds = if ($oldest.Count) {
         [int64][Math]::Max(0, ([DateTime]::UtcNow - (ConvertFrom-DeliveryUtcTimestamp -Value $oldest[0].createdAt)).TotalSeconds)
     } else { 0 }
+    $archived = [int64]0
+    if ($ledger.PSObject.Properties['archives']) {
+        foreach ($archive in @($ledger.archives)) { $archived += [int64]$archive.count }
+    }
     return [pscustomobject][ordered]@{
         path=(Get-DeliveryResourceLedgerPath); total=@($ledger.resources).Count
-        archived=$(if($ledger.PSObject.Properties['archives']){[int64](($ledger.archives | Measure-Object count -Sum).Sum)}else{0})
+        archived=$archived
         pending=@($pending | Where-Object state -eq "cleanup-pending").Count; retained=@($pending | Where-Object state -eq "retained").Count
         bytes=$bytes; oldestAt=$(if($oldest.Count){[string]$oldest[0].createdAt}else{""}); oldestAgeSeconds=$oldestAgeSeconds
         nextAttempt="next PublishDevelop, PromoteRelease, ReleaseMaster, or Cleanup"
