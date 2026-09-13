@@ -913,6 +913,10 @@ function Test-ItlRoutineEnabledForCommand {
     param([string]$FileName)
 
     if ($FileName -notin (Get-ItlRoutineCommandNames)) { return $false }
+    # The current-dialog agent owns task-level response composition after export.
+    # Keep this one final action direct so an isolated routine cannot replace the
+    # task summary with the artifact-only helper report.
+    if ($FileName -eq "itl-result.md") { return $false }
     $mode = Get-ItlRoutineMode
     if ($mode -eq "off") { return $false }
 
