@@ -112,6 +112,7 @@ try {
                 activeOperation = (Get-DeliveryOperationStatus)
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
+                disposition = (Get-DeliveryDispositionReport)
                 runHistory = $history
             }
         }

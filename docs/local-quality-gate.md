@@ -311,6 +311,68 @@ reparse point ниже worktree не даёт права удалить пере
 совпадающей записи старые записи исчезнувшего файла закрываются в том же
 проходе. Несовпадение SHA само по себе никогда не разрешает удаление.
 
+`Status.disposition` is a read-only, compact inventory of only the
+source-delivery namespaces and ledger identities. It classifies records as
+`keep`, `eligible`, or `not-owned`, explains the reason, and never deletes or
+prunes anything. User branches and arbitrary `codex/*` worktrees are outside
+the inventory. The public `-Action Status` route uses the checked-out supervisor
+directly and does not create or remove a bootstrap worktree. Exact ledger
+ownership includes recomputing both `identitySha256` and `resourceId` from
+`planId|kind|owner|identitySha256`.
+
+Published ancestry or exact tree equivalence is proved only against the exact
+`develop`/`master` tips returned by a bounded, non-interactive, read-only
+`git ls-remote`; local remote-tracking refs are not publication evidence. The
+probe disables Git/GCM/SSH credential prompts and has a fixed timeout. Timeout,
+authentication failure, an unavailable remote, or a remote commit object that
+cannot be inspected locally leaves the item `keep`.
+Its native stdout/stderr boundary is explicitly UTF-8, including repository
+paths containing spaces and non-ASCII text. Timeout teardown bounds both
+`taskkill /T` and the direct-kill fallback, so descendant cleanup cannot turn
+the probe into an unbounded Status call. The same deadline covers both async
+stdout/stderr readers: if an already exited Git root leaves a descendant holding
+an inherited pipe, reader expiry is a timeout and triggers best-effort descendant
+cleanup instead of waiting without a deadline.
+`taskkill /T` is used only while the root PID still has its exact creation
+identity. If the root already exited, cleanup considers only descendants
+captured while that root identity was live, rejects creation times after the
+root exit, and rechecks each PID plus creation time immediately before stopping
+it. An unknown pipe holder is reported as a timeout and may leak; PID reuse never
+authorizes killing an unproven process.
+`eligible` remains advisory until a separate cleanup implementation revalidates
+all guards against the same snapshot and performs expected-SHA compare-and-swap.
+
+The current CIM command-line scan is only an advisory active-process signal. A
+clear scan does not prove absence of open handles, a process cwd, or an
+unobservable process, so candidate worktrees stay `keep/process-free-proof-required`.
+An unavailable advisory probe is also `keep`, not a Status failure. A later
+mutating implementation must add a complete process-free proof before treating
+that deletion guard as satisfied. Qualification and content-addressed evidence
+are always retained by this disposition batch.
+
+Status brackets that remote probe with snapshots of the publication-attempt
+file and the exact owned ref namespaces, then re-reads both. If the attempt
+appears, disappears, or changes during the probe, every promotion ref remains
+`keep`. If the owned ref snapshot changes, no ref from that unstable snapshot is
+eligible. `Status.snapshot` exposes this validation result; it is a bounded
+observation, not a cleanup lease.
+
+A later mutating batch may consume a reported ref only after recomputing every
+guard against the same expected SHA. Queue base/head refs must be deleted in one
+`git update-ref --stdin` transaction with an old-value SHA for each ref; a single
+ref uses `git update-ref -d <ref> <expectedSha>`. A moved ref makes the CAS fail
+and leaves the target untouched. Worktree removal additionally requires the
+reported branch SHA still to equal `expectedSha` while the delivery-operation
+lock is held. A bare ref delete, name-only worktree match, or age-based decision
+is never allowed.
+
+An exact `publication-attempts/develop.json` `promotionRef` remains `keep` while
+the attempt exists, even when its commit is already published. Its
+`promotionCommit` is the expected SHA. A missing field, changed ref SHA,
+unsupported schema, or unreadable attempt is fail-closed and cannot produce an
+eligible promotion disposition; the promotion ref may still be required by
+`Restore-DevelopCompatibilityPromotion` after interruption.
+
 ## Release уже опубликованного develop в master
 
 ```powershell

@@ -43,14 +43,60 @@ function Get-SourceGateHardBudgetSeconds {
     return [int]$property.Value + 300
 }
 
-function Stop-DeliveryProcessTree {
-    param([AllowNull()][object]$Process)
-    if (-not $Process) { return }
-    try { if ($Process.HasExited) { return } } catch { return }
-
-    $processId = [int]$Process.Id
+function Test-DeliveryProcessCreationIdentity {
+    param([int]$ProcessId, [datetime]$CreatedAt)
     try {
-        if ($env:OS -eq "Windows_NT") {
+        $current = Get-Process -Id $ProcessId -ErrorAction Stop
+        return -not $current.HasExited -and $current.StartTime.ToUniversalTime().Ticks -eq $CreatedAt.ToUniversalTime().Ticks
+    } catch { return $false }
+}
+
+function Get-DeliveryDescendantProcessIdentities {
+    param([int]$RootProcessId, [datetime]$RootCreatedAt)
+    if ($env:OS -ne 'Windows_NT' -or -not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+    try {
+        $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 1 -ErrorAction Stop)
+        $knownParents = [Collections.Generic.HashSet[int]]::new()
+        [void]$knownParents.Add($RootProcessId)
+        $descendantIds = [Collections.Generic.List[int]]::new()
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            foreach ($row in $rows) {
+                $childId = [int]$row.ProcessId
+                if ($knownParents.Contains([int]$row.ParentProcessId) -and $knownParents.Add($childId)) {
+                    $descendantIds.Add($childId) | Out-Null
+                    $changed = $true
+                }
+            }
+        }
+        if (-not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+        return @($descendantIds | ForEach-Object {
+            $childId = [int]$_
+            try {
+                $child = Get-Process -Id $childId -ErrorAction Stop
+                $createdAt = $child.StartTime.ToUniversalTime()
+                if (-not $child.HasExited -and $createdAt -ge $RootCreatedAt.ToUniversalTime()) {
+                    [pscustomobject]@{ processId=$childId; createdAt=$createdAt }
+                }
+            } catch {}
+        })
+    } catch { return @() }
+}
+
+function Stop-DeliveryProcessTree {
+    param([AllowNull()][object]$Process, [int]$TimeoutMilliseconds = 5000, [object[]]$CapturedDescendants = @())
+    if (-not $Process) { return }
+    try {
+        $processId = [int]$Process.Id
+        $processStartedAt = $Process.StartTime.ToUniversalTime()
+        $processExited = [bool]$Process.HasExited
+        $processExitedAt = if ($processExited) { $Process.ExitTime.ToUniversalTime() } else { [DateTime]::MaxValue }
+    } catch { return }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+    $rootIdentityLive = -not $processExited -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)
+    try {
+        if ($env:OS -eq "Windows_NT" -and $rootIdentityLive -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)) {
             # Use the .NET launcher instead of a PowerShell native-command
             # pipeline: Ctrl+C stops that pipeline, while finally still needs
             # to run taskkill for every descendant owned by the gate.
@@ -66,17 +112,39 @@ function Stop-DeliveryProcessTree {
             try {
                 $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
                 $stderrTask = $killer.StandardError.ReadToEndAsync()
-                $killer.WaitForExit()
-                [void]$stdoutTask.GetAwaiter().GetResult()
-                [void]$stderrTask.GetAwaiter().GetResult()
+                $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                if (-not $killer.WaitForExit($remaining)) {
+                    try { $killer.Kill() } catch {}
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$killer.WaitForExit($remaining) } catch {}
+                }
+                foreach ($reader in @($stdoutTask, $stderrTask)) {
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$reader.Wait($remaining) } catch {}
+                }
             } finally { $killer.Dispose() }
-        } else {
+        } elseif ($env:OS -ne "Windows_NT" -and $rootIdentityLive) {
             $Process.Kill()
         }
-    } catch {
+    } catch {}
+    try {
+        if ($Process.HasExited) { $processExitedAt = $Process.ExitTime.ToUniversalTime() }
+    } catch {}
+    foreach ($descendant in @($CapturedDescendants | Sort-Object processId -Descending)) {
+        try {
+            $descendantId = [int]$descendant.processId
+            $descendantCreatedAt = ([DateTime]$descendant.createdAt).ToUniversalTime()
+            if ($descendantCreatedAt -lt $processStartedAt -or $descendantCreatedAt -gt $processExitedAt) { continue }
+            if (Test-DeliveryProcessCreationIdentity -ProcessId $descendantId -CreatedAt $descendantCreatedAt) {
+                Stop-Process -Id $descendantId -Force -ErrorAction Stop
+            }
+        } catch {}
+    }
+    if (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt) {
         try { $Process.Kill() } catch {}
     }
-    try { [void]$Process.WaitForExit(15000) } catch {}
+    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    try { [void]$Process.WaitForExit($remaining) } catch {}
 }
 
 function Start-DeliveryProcess {

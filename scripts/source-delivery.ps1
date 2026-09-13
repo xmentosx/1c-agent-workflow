@@ -33,6 +33,28 @@ $candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 $localSupervisor = Join-Path $PSScriptRoot "source-delivery-supervisor.ps1"
 if (-not (Test-Path -LiteralPath $localSupervisor -PathType Leaf)) { throw "Delivery supervisor is missing: $localSupervisor" }
 
+# Status reports the current source checkout and must not bootstrap a detached
+# supervisor worktree. Besides being unnecessary for diagnostics, that
+# bootstrap performs worktree add/remove mutations in the repository being
+# inspected.
+if ($Action -eq "Status") {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $statusSupervisorCommit = @(& git -C $candidateRoot rev-parse HEAD 2>$null) | Select-Object -First 1
+    $statusHeadExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($statusHeadExitCode -ne 0 -or [string]$statusSupervisorCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "Unable to resolve the inspected repository HEAD for read-only delivery status."
+    }
+    $statusArguments = @{}
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) { $statusArguments[$entry.Key] = $entry.Value }
+    $statusArguments["RepositoryRoot"] = $candidateRoot
+    $statusArguments["SupervisorCommit"] = [string]$statusSupervisorCommit
+    $statusArguments["BootstrapSupervisor"] = $true
+    & $localSupervisor @statusArguments
+    return
+}
+
 function Resolve-DeliveryBootstrapCommonGitDirectory {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
