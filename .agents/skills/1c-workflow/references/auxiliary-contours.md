@@ -65,12 +65,16 @@ Agents route natural-language requests to `configure-auxiliary-contour`, `status
 
 Update performs a full configuration load, full declared extension loads, and Enterprise normalization. Equal source and connection fingerprints skip Designer. Before mutation, only confirmed workflow-owned backends are stopped; other sessions are preserved and waited for. Primary refresh/check/result/reset never updates a contour.
 
+Before the first Enterprise EPF execution in a managed file contour, update requires interactive unsafe-action confirmation for that exact auxiliary infobase and user. The ignored contour state stores only the connection and user identity hashes; a changed target or user invalidates the proof. A non-interactive run fails before EPF execution with the explicit action to repeat the update interactively. It never reuses primary-base confirmation or changes `conf.cfg` automatically.
+
 Update, dump, check, export and reset acquire the common database owner before local lifecycle locks and retain it through cleanup. Standalone maintenance reserves the contour and any recorded backend resources; checks also reserve primary tooling, the pinned service base and every database exposed by the runner profiles. The configured coordinator must be shared for coordination across execution hosts. A wait timeout does not authorize stopping foreign sessions. Uncertain owned cleanup retains recovery debt; do not remove the reservation or replay work to bypass it.
 
 Dump is available only to a `read-write` contour and installs a validated staged dump transactionally. Reset is `managed-file` only and moves the old infobase into ignored `.agent-1c/auxiliary-archives/`. Auxiliary CF and manifest files live under `build/result/auxiliary/<id>/` and never overwrite primary evidence. Export without a fresh contour proof requires the explicit unverified override and records it.
 
 `tests.includePrimary=true` reruns the primary feature suite against the contour. `tests.path` adds a contour-owned suite. Suites run sequentially with cleanup between them; when both are configured, only `all` creates canonical contour proof. `primary` or `contour` alone is diagnostic. Results live under `build/test-results/vanessa/auxiliary/<id>/<suite>/`.
 Suite roots must be disjoint; do not put the contour suite inside `tests/features` when that is the primary root.
+
+Before auxiliary suites start, the runner verifies the pinned `VAExtension` in the exact mutable contour, installs it when absent or stale, disables safe mode through the existing tooling contract, and re-probes runtime readiness. Its proof is contour-local and bound to the connection and artifact hashes. TestClient monitoring, process evidence, diagnostics, and cleanup use an ephemeral auxiliary runtime identity while the shared TestManager remains primary tooling. An implicitly redirected primary profile uses the auxiliary connection credentials; an explicitly named auxiliary profile keeps its own configured credentials. Auxiliary event-log verification is currently unavailable, so the result records an explicit skip and never substitutes primary event-log evidence.
 
 For exchange scenarios that open clients in different bases, use TestClient manifest schema 2:
 

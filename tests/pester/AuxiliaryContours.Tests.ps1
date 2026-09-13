@@ -13,7 +13,12 @@
             Set-Content -LiteralPath (Join-Path $root "src\configs\exchange\cf\Configuration.xml") -Encoding UTF8 -Value "auxiliary"
             Set-Content -LiteralPath (Join-Path $root "tests\features\smoke.feature") -Encoding UTF8 -Value "Функционал: smoke"
             Set-Content -LiteralPath (Join-Path $root "tests\auxiliary\exchange\smoke.feature") -Encoding UTF8 -Value "Функционал: auxiliary smoke"
-            $config = [ordered]@{ schemaVersion = 1; auxiliaryContours = $AuxiliaryContours; aiRules = [ordered]@{ tools = @("codex") } }
+            $config = [ordered]@{
+                schemaVersion = 1
+                auxiliaryContours = $AuxiliaryContours
+                aiRules = [ordered]@{ tools = @("codex") }
+                databaseAccess = [ordered]@{ coordinator = ".agent-1c/infobase-access" }
+            }
             Set-Content -LiteralPath (Join-Path $root ".agent-1c\project.json") -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 12) + "`n")
             & git -C $root init *> $null
             & git -C $root config user.email "test@example.com"
@@ -158,6 +163,205 @@
             $result.path | Should -Match 'infobases[\\/]auxiliary'
             $result.path | Should -Match 'exchange$'
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "projects auxiliary Vanessa runtime identity without inheriting primary credentials or process state" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{
+            exchange = [ordered]@{ baseMode = "managed-file"; configurationPath = "src/cf" }
+        })
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $contour = Get-AuxiliaryContour -Name exchange
+                $connection = Get-AuxiliaryContourConnection -Contour $contour
+                $source = Get-AuxiliaryContourFingerprint -Contour $contour
+                Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined } | Out-Null
+                $primary = [pscustomobject]@{
+                    devBranchName = "auxiliary-fixture"
+                    safeDevBranchName = "auxiliary-fixture"
+                    worktreePath = $root
+                    stateProjectRoot = $root
+                    infoBaseKind = "file"
+                    devBranchInfoBasePath = (Join-Path $root "primary")
+                    vanessaServiceInfoBasePath = (Join-Path $root "manager")
+                    vanessaTestPort = 48100
+                    vanessaTestPorts = @(48100)
+                    vanessaMcpPid = 12345
+                }
+                $script:ActiveAuxiliaryVanessaContext = $null
+                $normal = Get-VanessaVerificationRuntimeState -State $primary
+                $script:ActiveAuxiliaryVanessaContext = [pscustomobject]@{ contour = $contour }
+                $runtime = Get-VanessaVerificationRuntimeState -State $primary
+                $profile = [pscustomobject]@{ name = "Admin"; contour = "primary"; user = "PrimaryAdmin"; password = "primary-secret" }
+                $redirected = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $primary
+                $profile.contour = "exchange"
+                $explicit = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $primary
+                $script:ActiveAuxiliaryVanessaContext = $null
+                $profile.contour = "primary"
+                $original = Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState $primary
+                [pscustomobject]@{ normal = $normal; primary = $primary; runtime = $runtime; connection = $connection; redirected = $redirected; explicit = $explicit; original = $original }
+            }
+
+            [object]::ReferenceEquals($result.normal, $result.primary) | Should -BeTrue
+            $result.runtime.devBranchInfoBasePath | Should -BeExactly $result.connection.path
+            $result.runtime.vanessaServiceInfoBasePath | Should -BeExactly $result.primary.vanessaServiceInfoBasePath
+            $result.runtime.worktreePath | Should -BeExactly $result.primary.worktreePath
+            (Get-Member -InputObject $result.runtime -Name vanessaMcpPid) | Should -BeNullOrEmpty
+            $result.redirected.user | Should -BeExactly $result.connection.user
+            $result.redirected.password | Should -BeExactly $result.connection.password
+            $result.explicit.user | Should -BeExactly "PrimaryAdmin"
+            $result.explicit.password | Should -BeExactly "primary-secret"
+            $result.original.user | Should -BeExactly "PrimaryAdmin"
+            $result.original.password | Should -BeExactly "primary-secret"
+            $result.primary.devBranchInfoBasePath | Should -Match 'primary$'
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "requires exact auxiliary unsafe-action confirmation before a managed-base EPF and reuses only matching proof" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{
+            exchange = [ordered]@{ baseMode = "managed-file"; configurationPath = "src/cf" }
+        })
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $contour = Get-AuxiliaryContour -Name exchange
+                $connection = Get-AuxiliaryContourConnection -Contour $contour
+                $script:proofState = $null
+                $script:interactive = $false
+                $script:confirmations = 0
+                function Read-AuxiliaryContourState { param($Contour) $script:proofState }
+                function Save-AuxiliaryContourState { param($Contour, $Updates) $script:proofState = [pscustomobject]$Updates; $script:proofState }
+                function Test-InteractiveInputAvailable { $script:interactive }
+                function Confirm-DevBranchUnsafeActionProtection {
+                    param($InfoBaseKind, $InfoBasePath, $DevBranchName, $SetupModeOverride, $InfoBaseUserOverride, $InfoBasePasswordOverride)
+                    $script:confirmations++
+                    if ($InfoBasePath -cne $connection.path -or $InfoBaseUserOverride -cne $connection.user -or $InfoBasePasswordOverride -cne $connection.password) { throw "wrong confirmation target" }
+                    [pscustomobject]@{ mode = "manual-confirm"; confirmed = $true; confirmedAt = "2026-09-13T00:00:00Z"; user = $InfoBaseUserOverride }
+                }
+                $blocked = try { Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection; "not-blocked" } catch { $_.Exception.Message }
+                $script:interactive = $true
+                Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
+                Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
+                [pscustomobject]@{ blocked = $blocked; confirmations = $script:confirmations; proof = $script:proofState.unsafeActionProtectionProof }
+            }
+
+            $result.blocked | Should -Match '^ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED:'
+            $result.blocked | Should -Match 'requiredAction=rerun-update-auxiliary-contour-interactively'
+            $result.confirmations | Should -Be 1
+            $result.proof.schemaVersion | Should -Be 1
+            $result.proof.connectionIdentityHash | Should -Match '^[a-f0-9]{64}$'
+            $result.proof.userIdentityHash | Should -Match '^[a-f0-9]{64}$'
+            ($result.proof | ConvertTo-Json -Depth 8) | Should -Not -Match 'primary-secret|password'
+            $auxiliary = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.auxiliary.ps1") -Raw -Encoding UTF8
+            $update = [regex]::Match($auxiliary, '(?s)function Update-AuxiliaryContour \{(?<body>.*?)(?=\nfunction Invoke-AuxiliaryConfigurationDump)').Groups['body'].Value
+            $update.IndexOf('Ensure-AuxiliaryContourUnsafeActionProtection') | Should -BeGreaterThan -1
+            $update.IndexOf('Ensure-AuxiliaryContourUnsafeActionProtection') | Should -BeLessThan $update.IndexOf('Invoke-Enterprise')
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "passes explicit auxiliary credentials through the shared unsafe-action prompt" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:answers = [Collections.Generic.Queue[string]]::new()
+            $script:answers.Enqueue("no")
+            $script:answers.Enqueue("ДА")
+            $script:designer = $null
+            function Read-Host { param($Prompt) $script:answers.Dequeue() }
+            function Show-DevBranchUnsafeActionProtectionAttention {}
+            function Write-Section { param($Title) }
+            function Invoke-DesignerInteractive {
+                param($InfoBasePath, $InfoBaseKind, $User, $Password)
+                $script:designer = [pscustomobject]@{ path = $InfoBasePath; kind = $InfoBaseKind; user = $User; password = $Password }
+            }
+            $confirmation = Confirm-DevBranchUnsafeActionProtection `
+                -InfoBaseKind file `
+                -InfoBasePath "C:\auxiliary\Приёмник" `
+                -DevBranchName "aux-exchange" `
+                -SetupModeOverride manual-confirm `
+                -InfoBaseUserOverride "AuxiliaryAdmin" `
+                -InfoBasePasswordOverride "aux-secret"
+            [pscustomobject]@{ confirmation = $confirmation; designer = $script:designer }
+        }
+
+        $result.confirmation.confirmed | Should -BeTrue
+        $result.confirmation.user | Should -BeExactly "AuxiliaryAdmin"
+        $result.designer.path | Should -BeExactly "C:\auxiliary\Приёмник"
+        $result.designer.user | Should -BeExactly "AuxiliaryAdmin"
+        $result.designer.password | Should -BeExactly "aux-secret"
+    }
+
+    It "installs and revalidates VAExtension only in the exact mutable auxiliary target" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{
+            exchange = [ordered]@{ baseMode = "managed-file"; configurationPath = "src/cf" }
+        })
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $contour = Get-AuxiliaryContour -Name exchange
+                $connection = Get-AuxiliaryContourConnection -Contour $contour
+                $script:probePresent = $false
+                $script:probeCount = 0
+                $script:installCount = 0
+                $script:proofState = $null
+                $script:targets = [Collections.Generic.List[string]]::new()
+                function Install-VanessaMcpArtifacts { [pscustomobject]@{ key = "vaExtension"; sha256 = "artifact-sha"; path = "artifact.cfe" } }
+                function Read-AuxiliaryContourState { param($Contour) $script:proofState }
+                function Get-ToolingRuntimeExtensions {
+                    param($State, $Names, $User, $Password)
+                    $script:probeCount++
+                    $script:targets.Add([string]$State.devBranchInfoBasePath)
+                    [pscustomobject]@{ name = "VAExtension"; present = $script:probePresent; active = $true; safeMode = $false; serverCodeObject = $true; contentHash = "runtime-sha" }
+                }
+                function Stop-AuxiliaryContourRuntimeBeforeMutation { param($Contour, $Connection, $Reason) $script:targets.Add([string]$Connection.path) }
+                function Install-VanessaMcpExtensionCfe {
+                    param($State, $CfePath, $ExtensionName, $InfoBaseKind, $InfoBasePath, $User, $Password)
+                    $script:targets.Add([string]$InfoBasePath)
+                    $script:installCount++
+                    $script:probePresent = $true
+                }
+                function Set-VanessaMcpExtensionUnsafeMode {
+                    param($State, $InfoBaseKind, $InfoBasePath, $ExtensionName, $Artifact, $User, $Password, $Scope)
+                    $script:targets.Add([string]$InfoBasePath)
+                    [pscustomobject]@{ verified = $true; safeMode = $false }
+                }
+                function Test-ToolingRuntimeExtensionReady { param($Runtime, $Name, $ExpectedHash, [switch]$RequireUnsafeMode) [bool]$Runtime.present -and [bool]$Runtime.active -and -not [bool]$Runtime.safeMode -and [bool]$Runtime.serverCodeObject -and (-not $ExpectedHash -or $Runtime.contentHash -ceq $ExpectedHash) }
+                function Assert-ToolingRuntimeExtensionReady { param($Runtime, $Name, [switch]$RequireUnsafeMode) if (-not (Test-ToolingRuntimeExtensionReady -Runtime $Runtime -Name $Name -RequireUnsafeMode:$RequireUnsafeMode)) { throw "runtime not ready" } }
+                function Save-AuxiliaryContourState { param($Contour, $Updates) $script:proofState = [pscustomobject]$Updates; $script:proofState }
+                function Update-DevBranchState { throw "primary state must not be written" }
+                $ready = [pscustomobject]@{ contour = $contour; connection = $connection }
+                Ensure-AuxiliaryContourVanessaExtension -ReadyContext $ready
+                Ensure-AuxiliaryContourVanessaExtension -ReadyContext $ready
+                $script:probePresent = $false
+                Ensure-AuxiliaryContourVanessaExtension -ReadyContext $ready
+                $mutable = [pscustomobject]@{ installs = $script:installCount; probes = $script:probeCount; targets = @($script:targets); proof = $script:proofState.vanessaExtensionProof }
+                $contour.baseMode = "attached-readonly"
+                $beforeProbe = $script:probeCount
+                $readonly = try { Ensure-AuxiliaryContourVanessaExtension -ReadyContext ([pscustomobject]@{ contour = $contour; connection = $connection }); "not-blocked" } catch { $_.Exception.Message }
+                [pscustomobject]@{ mutable = $mutable; readonly = $readonly; readonlyProbeDelta = $script:probeCount - $beforeProbe }
+            }
+
+            $result.mutable.installs | Should -Be 2
+            $result.mutable.probes | Should -Be 5
+            @($result.mutable.targets | Where-Object { $_ -cne $result.mutable.targets[0] }).Count | Should -Be 0
+            $result.mutable.proof.connectionIdentityHash | Should -Match '^[a-f0-9]{64}$'
+            $result.mutable.proof.artifactSha256 | Should -BeExactly "artifact-sha"
+            $result.mutable.proof.runtimeHash | Should -BeExactly "runtime-sha"
+            $result.readonly | Should -Match 'ITL_AUXILIARY_READONLY_MUTATION_FORBIDDEN'
+            $result.readonlyProbeDelta | Should -Be 0
+            $auxiliary = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.auxiliary.ps1") -Raw -Encoding UTF8
+            $invoke = [regex]::Match($auxiliary, '(?s)function Invoke-AuxiliaryContourVanessaTests \{(?<body>.*?)(?=\nfunction|\z)').Groups['body'].Value
+            $invoke | Should -Match 'Ensure-AuxiliaryContourVanessaExtension\s+-ReadyContext \$ReadyContext'
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "routes auxiliary monitor evidence diagnostics and cleanup through the projected runtime state" {
+        $vanessa = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1") -Raw -Encoding UTF8
+        $run = [regex]::Match($vanessa, '(?s)function Run-DevBranchTests \{(?<body>.*?)(?=\nfunction ConvertTo-IntOrDefault)').Groups['body'].Value
+        $run | Should -Match '\$runtimeState\s*=\s*Get-VanessaVerificationRuntimeState'
+        foreach ($call in @("Invoke-ForeignVanessaTestProcessPolicy", "Publish-Agent1cVanessaRunEvidence", "Test-VanessaTestClientStartupMonitor", "Stop-OwnHungVanessaTestClients", "Write-OneCVanessaProcessDiagnostics", "Stop-OwnVanessaTestProcessesAndAssert")) {
+            $run | Should -Match ("(?s)" + [regex]::Escape($call) + '.{0,350}-State \$runtimeState')
+        }
+        $run | Should -Match 'Auxiliary event-log verification is unavailable; primary event-log evidence was not used'
     }
 
     It "invalidates the composite proof when an included feature changes" {

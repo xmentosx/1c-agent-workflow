@@ -6371,7 +6371,7 @@ if (`$?) { exit 0 } else { exit 1 }
         $successStart = $text.IndexOf('$verification = Get-VanessaVerificationStatus')
         $successStart | Should -BeGreaterThan -1
         $successBlock = $text.Substring($successStart)
-        $cleanupIndex = $successBlock.IndexOf('Stop-OwnVanessaTestProcessesAndAssert -State $state')
+        $cleanupIndex = $successBlock.IndexOf('Stop-OwnVanessaTestProcessesAndAssert -State $runtimeState')
         $eventLogIndex = $successBlock.IndexOf('Test-DevBranchEventLogAfterVanessa')
         $cleanupIndex | Should -BeGreaterThan -1
         $eventLogIndex | Should -BeGreaterThan -1

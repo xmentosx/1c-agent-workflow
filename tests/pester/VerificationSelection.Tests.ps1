@@ -403,6 +403,53 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "treats ConfigDumpInfo as a cursor while retaining full root metadata and unknown-product safeguards" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Read-VerificationSuiteCatalog {
+                [pscustomobject]@{
+                    available = $true
+                    valid = $true
+                    classificationComplete = $true
+                    fingerprint = "catalog"
+                    catalogPaths = @()
+                    assignments = @([pscustomobject]@{ purpose = "acceptance"; fullPath = "test.feature"; path = "tests/features/test.feature"; suiteId = "test" })
+                    suiteFingerprints = @([pscustomobject]@{ purpose = "acceptance"; id = "test"; fingerprint = "suite" })
+                    suites = @([pscustomobject]@{ id = "test"; purpose = "acceptance"; always = $false; ownerPaths = @("src/cf/CommonModules/Known/**") })
+                }
+            }
+            function Get-VerificationSelectionEffectiveTree { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+            function Read-VerificationSelectionProof { [pscustomobject]@{ schemaVersion = 1; tree = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"; acceptanceSuites = @([pscustomobject]@{ id = "test"; fingerprint = "suite" }) } }
+            function Get-VerificationSelectionChangedPaths { @($script:changedPaths) }
+            function Get-VerificationAcceptedMasterInput { param($ChangedPaths, $CurrentTree) [pscustomobject]@{ available = $false; importedPaths = @(); branchPaths = @($ChangedPaths); reason = "fixture" } }
+            function Get-YAxUnitTestsPath { "tests/yaxunit" }
+            function Get-YAxUnitSuiteCatalogPaths { @() }
+            function Get-VanessaFeaturesPath { "tests/features" }
+            function Get-AuxiliaryContourDefinitions { @([pscustomobject]@{ configurationPath = "src/configs/exchange/cf"; extensions = @([pscustomobject]@{ path = "src/configs/exchange/cfe/Support" }) }) }
+            $plans = [ordered]@{}
+            foreach ($case in @("src/cf/ConfigDumpInfo.xml", "src/cfe/Extension/ConfigDumpInfo.xml", "src/configs/exchange/cf/ConfigDumpInfo.xml", "src/configs/exchange/cfe/Support/ConfigDumpInfo.xml")) {
+                $script:changedPaths = @($case)
+                $plans[$case] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            }
+            $script:changedPaths = @("src/cf/Configuration.xml")
+            $plans["configuration"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $script:changedPaths = @("src/cf/ConfigDumpInfo.xml", "src/cf/CommonModules/Unknown/Ext/Module.bsl")
+            $plans["unknown"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $script:changedPaths = @("docs/ConfigDumpInfo.xml")
+            $plans["unrecognizedCursor"] = New-VerificationSelectionPlan -ApplicationFeatureFiles @("test.feature")
+            $plans
+        }
+
+        $result["src/cf/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/cfe/Extension/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/configs/exchange/cf/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result["src/configs/exchange/cfe/Support/ConfigDumpInfo.xml"].mode | Should -Be "reuse"
+        $result.configuration.mode | Should -Be "full"
+        $result.unknown.mode | Should -Be "classification-required"
+        $result.unknown.reason | Should -Match 'Unknown/Ext/Module.bsl'
+        $result.unrecognizedCursor.mode | Should -Be "classification-required"
+    }
+
     It "does not start Vanessa when only explicit suites changed" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
