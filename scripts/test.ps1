@@ -11,6 +11,9 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$originalInfobaseAccessRoot = [Environment]::GetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", "Process")
+$fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-local-" + [guid]::NewGuid().ToString("N"))
+[Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", (Join-Path $fixtureRuntimeRoot "infobase-access"), "Process")
 Push-Location $repoRoot
 try {
     if ($Path.Count -gt 0) {
@@ -82,4 +85,8 @@ try {
     }
 } finally {
     Pop-Location
+    [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $originalInfobaseAccessRoot, "Process")
+    if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
+        Remove-Item -LiteralPath $fixtureRuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

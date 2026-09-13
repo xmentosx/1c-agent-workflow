@@ -319,6 +319,7 @@ Get-PesterShardFileSha256 -Path `$Path
     }
     It "runs complete Pester as individually checkpointed files with bounded workers" {
         $runner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8; $worker = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Raw -Encoding UTF8
+        $localRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8
         $runner | Should -Match '\*\.Tests\.ps1'; $runner | Should -Match 'Get-ShardInputDigest -Paths @\(\[string\]\$item\.path\)'; $runner | Should -Match 'stopScheduling'
         $runner | Should -Match 'pendingParallel'; $runner | Should -Match 'pendingSerial'; $runner | Should -Match 'exact owner input fingerprint'; $runner | Should -Match 'CreateElement\("testsuites"\)'
         $runner | Should -Match 'Pester shard heartbeat:'; $runner | Should -Match 'Save-ShardCache -Digest \$digest -ResultPath \$resultPath -JunitPath \$workerJunit'
@@ -346,7 +347,48 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
         $worker | Should -Match 'SpecialFolder\]::MyDocuments'
         $worker | Should -Match 'Invoke-Pester -Configuration'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8) | Should -Match '& powershell\.exe @runnerArguments'
+        $worker | Should -Match '\$env:ITL_INFOBASE_ACCESS_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "infobase-access"'
+        $localRunner | Should -Match '& powershell\.exe @runnerArguments'
+        $localRunner | Should -Match 'itl-pester-local-'
+        $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_INFOBASE_ACCESS_ROOT", \$originalInfobaseAccessRoot, "Process"\)'
+    }
+    It "replaces an inherited database coordinator with a private Pester worker root" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl gate isolation Тест " + [guid]::NewGuid().ToString("N"))
+        $testRoot = Join-Path $root "tests\pester"
+        $poisonRoot = Join-Path $root "Внешний coordinator"
+        $ticketRoot = Join-Path $poisonRoot "tickets"
+        $planPath = Join-Path $root "plan.json"
+        $junitPath = Join-Path $root "pester.xml"
+        $resultPath = Join-Path $root "result.json"
+        $testPath = Join-Path $testRoot "Isolation.Tests.ps1"
+        $originalAccessRoot = [Environment]::GetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", "Process")
+        $originalPoisonRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $testRoot, $ticketRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $ticketRoot "layout.json"), '{"schemaVersion":2}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($testPath, @'
+Describe "Pester worker database coordinator isolation" {
+    It "uses a worker-private coordinator" {
+        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Not -Be $env:ITL_TEST_POISON_ACCESS_ROOT
+        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]infobase-access$'
+    }
+}
+'@, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($planPath, (([ordered]@{ worker=7; paths=@($testPath) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $poisonHash = (Get-FileHash -LiteralPath (Join-Path $ticketRoot "layout.json") -Algorithm SHA256).Hash
+            [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $poisonRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", $poisonRoot, "Process")
+
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath)
+
+            $result.exitCode | Should -Be 0 -Because $result.combinedText
+            (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
+            (Get-FileHash -LiteralPath (Join-Path $ticketRoot "layout.json") -Algorithm SHA256).Hash | Should -Be $poisonHash
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $originalAccessRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", $originalPoisonRoot, "Process")
+            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
     It "reuses a focused dirty proof after the identical files are committed" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl focused путь " + [guid]::NewGuid().ToString("N")); $testRoot = Join-Path $root "tests\pester"; $fixtureRoot = Join-Path $root "fixture"
