@@ -80,6 +80,9 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateFacadeCatalog(catalog); err != nil {
+		return err
+	}
 	instanceID, err := randomID()
 	if err != nil {
 		return err
@@ -106,6 +109,7 @@ func run(args []string) error {
 	if *surface == "gateway" {
 		addGatewayTools(server, rt)
 	} else {
+		addDatabaseAccessControlTool(server, rt)
 		for _, definition := range catalog.Data.Tools {
 			tool := definition
 			server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

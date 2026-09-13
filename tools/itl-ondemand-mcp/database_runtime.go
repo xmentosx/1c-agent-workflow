@@ -21,6 +21,8 @@ type databasePlanningBroker interface {
 
 const databaseProofMetaKey = "itlDatabaseAccess"
 
+const finishDatabaseAccessTool = "finish_database_access"
+
 func databaseParentProof(meta mcp.Meta) (*databaseAccessProof, error) {
 	var raw []byte
 	if value, ok := meta[databaseProofMetaKey]; ok {
@@ -78,11 +80,25 @@ func (r *runtime) lockDatabaseCalls(ctx context.Context) (func(), error) {
 }
 
 // Ordering: per-backend serialization -> global database admission -> local
-// runtime read lock. finish retains the read lock through inherited cleanup.
+// runtime read lock. A top-level facade retains the runtime read lock between
+// calls until an explicit finish or terminal close proves cleanup.
 func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context.Context, func() error, error) {
+	r.mu.Lock()
+	finishing := r.databaseFinishing
+	r.mu.Unlock()
+	if finishing {
+		return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
+	}
 	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return ctx, nil, err
+	}
+	r.mu.Lock()
+	finishing = r.databaseFinishing
+	r.mu.Unlock()
+	if finishing {
+		unlock()
+		return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
 	}
 	planner, coordinated := r.broker.(databasePlanningBroker)
 	if coordinated {
@@ -101,7 +117,7 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 				unlock()
 				return ctx, nil, err
 			}
-			identity := map[string]any{"project": r.projectRoot, "operation": "ondemand-" + r.family, "requestId": r.instanceID}
+			identity := r.databaseOwnerIdentity()
 			if threadID, ok := meta["openai/threadId"].(string); ok && threadID != "" {
 				identity["threadId"] = threadID
 			}
@@ -150,7 +166,13 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 		}
 		ctx = withDatabaseInvocation(ctx, r.databaseOwner.Proof, r.databasePlan)
 	}
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	retainPhase := coordinated && (r.databaseParent == nil || r.databaseRetainInherited)
+	var callLock *runtimeReadLock
+	if retainPhase {
+		err = r.ensureDatabasePhaseLock()
+	} else {
+		callLock, err = acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	}
 	if err != nil {
 		if coordinated && !r.databaseNativePending {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -164,7 +186,9 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 	}
 	return ctx, func() error {
 		defer unlock()
-		defer lock.Close()
+		if callLock != nil {
+			defer callLock.Close()
+		}
 		if !coordinated {
 			return nil
 		}
@@ -173,10 +197,71 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 		if (r.databaseParent != nil && !r.databaseRetainInherited) || r.session == nil {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
-			return r.stopDatabaseBackendLocked(cleanupCtx)
+			if err := r.stopDatabaseBackendLocked(cleanupCtx, true); err != nil {
+				return err
+			}
+			if retainPhase {
+				return r.releaseDatabasePhaseLocked()
+			}
 		}
 		return nil
 	}, nil
+}
+
+func (r *runtime) databaseOwnerIdentity() map[string]any {
+	return map[string]any{
+		"project": r.projectRoot, "operation": "ondemand-" + r.family, "requestId": r.instanceID,
+		"lifecycle": "on-demand", "releaseAction": databaseReleaseAction(r.family, r.instanceID),
+	}
+}
+
+// Called without r.mu. The database gate serializes production admissions;
+// r.mu protects the retained handle from finish/close and test-only brokers.
+func (r *runtime) ensureDatabasePhaseLock() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.databaseFinishing {
+		return fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
+	}
+	if r.databasePhaseLock != nil {
+		return nil
+	}
+	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
+	if err != nil {
+		return err
+	}
+	r.databasePhaseLock = lock
+	return nil
+}
+
+// Called with r.mu held, after owned native/database cleanup was proven.
+func (r *runtime) releaseDatabasePhaseLocked() error {
+	if r.databasePhaseLock == nil {
+		return nil
+	}
+	if err := r.databasePhaseLock.Close(); err != nil {
+		return err
+	}
+	r.databasePhaseLock = nil
+	return nil
+}
+
+func (r *runtime) finishDatabaseAccess(ctx context.Context) (bool, error) {
+	r.databaseFinishMu.Lock()
+	defer r.databaseFinishMu.Unlock()
+	r.mu.Lock()
+	alreadyReleased := r.databasePhaseLock == nil && r.databaseOwner == nil && r.backend == nil && r.session == nil && !r.databaseNativePending
+	r.databaseFinishing = true
+	r.mu.Unlock()
+	if err := r.stop(ctx); err != nil {
+		// Keep the facade fenced after an unproven finish. A repeated finish may
+		// retry exact owned cleanup; ordinary database calls remain rejected.
+		return false, err
+	}
+	r.mu.Lock()
+	r.databaseFinishing = false
+	r.mu.Unlock()
+	return alreadyReleased, nil
 }
 
 func sameDatabaseParent(first, second *databaseAccessProof) bool {
@@ -294,7 +379,7 @@ func (r *runtime) restoreDatabaseRuntimeMode(ctx context.Context) error {
 }
 
 // Called under the database gate and r.mu, with the runtime read lock held.
-func (r *runtime) stopDatabaseBackendLocked(ctx context.Context) error {
+func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, releaseOwner bool) error {
 	if r.databaseOwner != nil {
 		if err := r.databaseOwner.Validate(ctx); err != nil {
 			return err
@@ -317,7 +402,10 @@ func (r *runtime) stopDatabaseBackendLocked(ctx context.Context) error {
 		r.timer.Stop()
 		r.timer = nil
 	}
-	return r.releaseDatabaseOwner(ctx)
+	if releaseOwner {
+		return r.releaseDatabaseOwner(ctx)
+	}
+	return nil
 }
 
 func (r *runtime) releaseDatabaseOwner(ctx context.Context) error {

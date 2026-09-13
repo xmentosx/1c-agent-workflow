@@ -38,9 +38,12 @@ type runtime struct {
 	progressWriteMu         sync.Mutex
 	databaseGateOnce        sync.Once
 	databaseGate            chan struct{}
+	databaseFinishMu        sync.Mutex
 	databaseOwner           *databasePipeOwner
 	databasePlan            *facadeDatabasePlan
 	databaseParent          *databaseAccessProof
+	databasePhaseLock       *runtimeReadLock
+	databaseFinishing       bool
 	databaseNativePending   bool
 	databaseRetainInherited bool
 
@@ -797,7 +800,7 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 		return nil
 	}
 	r.stopping = true
-	err = r.stopDatabaseBackendLocked(ctx)
+	err = r.stopDatabaseBackendLocked(ctx, false)
 	r.stopping = false
 	if err != nil {
 		r.armIdleLocked()
@@ -831,7 +834,10 @@ func (r *runtime) stop(ctx context.Context) error {
 		r.timer.Stop()
 		r.timer = nil
 	}
-	return r.stopDatabaseBackendLocked(ctx)
+	if err := r.stopDatabaseBackendLocked(ctx, true); err != nil {
+		return err
+	}
+	return r.releaseDatabasePhaseLocked()
 }
 
 func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) *mcp.CallToolResult {

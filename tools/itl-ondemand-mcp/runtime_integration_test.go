@@ -207,6 +207,7 @@ func newFacadeSessionForFamily(t *testing.T, family string, tools []*mcp.Tool, b
 		idle: idle, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute),
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: version}, nil)
+	addDatabaseAccessControlTool(server, rt)
 	for _, definition := range tools {
 		tool := definition
 		server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -358,7 +359,7 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 2 {
+	if len(listed.Tools) != 3 {
 		t.Fatalf("facade list has %d tools", len(listed.Tools))
 	}
 	if ensures, _ := broker.counts(); ensures != 0 {
@@ -625,7 +626,7 @@ func TestRuntimeConcurrentStaleCallsShareOneRecovery(t *testing.T) {
 	}
 }
 
-func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
+func TestGatewayListsControlToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 	tools := integrationTools()
 	broker := &fakeBroker{info: &backendInfo{}}
 	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
@@ -639,7 +640,7 @@ func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	sort.Strings(names)
-	if len(names) != 2 || names[0] != gatewayCallTool || names[1] != gatewayResolveTool {
+	if len(names) != 3 || names[0] != gatewayCallTool || names[1] != finishDatabaseAccessTool || names[2] != gatewayResolveTool {
 		t.Fatalf("unexpected gateway surface: %#v", listed.Tools)
 	}
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayResolveTool, Arguments: map[string]any{"query": "echo", "limit": 1}})
@@ -654,19 +655,87 @@ func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 	}
 }
 
+func TestFinishDatabaseAccessIsPublicIdempotentAndAllowsRestart(t *testing.T) {
+	for _, surface := range []string{"full", "gateway"} {
+		t.Run(surface, func(t *testing.T) {
+			tools := integrationTools()
+			_, backend := newBackend(t, tools, false)
+			broker := &fakeBroker{info: &backendInfo{URL: backend.URL}}
+			var session *mcp.ClientSession
+			if surface == "gateway" {
+				_, session = newGatewayFacadeSession(t, "roctup", tools, broker, nil)
+			} else {
+				_, session = newFacadeSession(t, tools, broker, time.Minute, nil)
+			}
+			call := func() {
+				name, arguments := "echo", map[string]any{"value": "x"}
+				if surface == "gateway" {
+					name, arguments = gatewayCallTool, map[string]any{"name": "echo", "arguments": arguments}
+				}
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("database call failed: %v %s", err, resultText(result))
+				}
+			}
+			finish := func(wantAlready bool) {
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: finishDatabaseAccessTool, Arguments: map[string]any{}})
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("finish failed: %v %s", err, resultText(result))
+				}
+				payload, ok := result.StructuredContent.(map[string]any)
+				if !ok || payload["status"] != "released" || payload["alreadyReleased"] != wantAlready || payload["family"] != "roctup" {
+					t.Fatalf("unexpected finish result: %#v", result.StructuredContent)
+				}
+			}
+
+			call()
+			finish(false)
+			if ensures, stops := broker.counts(); ensures != 1 || stops != 1 {
+				t.Fatalf("first phase counts: ensures=%d stops=%d", ensures, stops)
+			}
+			finish(true)
+			if _, stops := broker.counts(); stops != 1 {
+				t.Fatalf("idempotent finish stopped again: %d", stops)
+			}
+			call()
+			if ensures, stops := broker.counts(); ensures != 2 || stops != 1 {
+				t.Fatalf("restart counts: ensures=%d stops=%d", ensures, stops)
+			}
+		})
+	}
+}
+
 func TestGatewayDefinitionsStayCompactAndDoNotEmbedInnerCatalog(t *testing.T) {
-	definitions := []*mcp.Tool{gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui")}
+	definitions := []*mcp.Tool{
+		gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), finishDatabaseAccessDefinition("roctup"),
+		gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui"), finishDatabaseAccessDefinition("vanessa-ui"),
+	}
 	raw, err := json.Marshal(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(raw) > 6000 {
-		t.Fatalf("four gateway definitions are too large: %d bytes", len(raw))
+		t.Fatalf("six gateway definitions are too large: %d bytes", len(raw))
 	}
 	for _, innerName := range []string{"get_metadata", "execute_query", "run_scenario", "get_test_results"} {
 		if strings.Contains(string(raw), innerName) {
 			t.Fatalf("gateway surface embeds inner tool %q", innerName)
 		}
+	}
+}
+
+func TestFinishDatabaseAccessDefinitionIsSafeAndReserved(t *testing.T) {
+	definition := finishDatabaseAccessDefinition("roctup")
+	if definition.Name != finishDatabaseAccessTool || definition.Annotations == nil ||
+		definition.Annotations.DestructiveHint == nil || *definition.Annotations.DestructiveHint ||
+		!definition.Annotations.IdempotentHint {
+		t.Fatalf("unexpected finish definition: %#v", definition)
+	}
+	catalog := &loadedCatalog{Data: catalogFile{Tools: []*mcp.Tool{{
+		Name: finishDatabaseAccessTool, InputSchema: map[string]any{"type": "object"},
+	}}}}
+	if err := validateFacadeCatalog(catalog); err == nil || !strings.Contains(err.Error(), "reserved facade tool") {
+		t.Fatalf("full surface accepted a colliding upstream tool: %v", err)
 	}
 }
 

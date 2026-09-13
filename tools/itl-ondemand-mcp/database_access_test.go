@@ -79,6 +79,74 @@ func TestDatabaseAccessNativeExclusionAndRelease(t *testing.T) {
 	releaseDatabaseFixture(t, last, nil)
 }
 
+func TestOnDemandReleaseActionIsVisibleButNotReleaseAuthority(t *testing.T) {
+	python, err := exec.LookPath("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRoot := t.TempDir()
+	moduleRoot := filepath.Join(runtimeRoot, "itl_remote")
+	if err := os.MkdirAll(moduleRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleRoot, "__init__.py"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	host := `import json, sys
+request = json.loads(sys.stdin.readline())
+owner = request["owner"]
+mode = request.get("accessMode", "shared-read")
+print(json.dumps({"event":"waiting", "status":"waiting", "blockers":[{"owner":owner}]}), flush=True)
+proof = {"coordinator":request["coordinator"], "ticket":"a"*32, "token":"private-release-proof", "accessMode":mode}
+public = {"ticket":"a"*32, "owner":owner, "accessMode":mode}
+print(json.dumps({"event":"admitted", "proof":proof, "owner":public}), flush=True)
+for line in sys.stdin:
+    event = json.loads(line).get("event")
+    if event == "validate":
+        print(json.dumps({"event":"validated"}), flush=True)
+    elif event == "release":
+        print(json.dumps({"event":"released", "status":"released"}), flush=True)
+        break
+`
+	if err := os.WriteFile(filepath.Join(moduleRoot, "access_host.py"), []byte(host), 0600); err != nil {
+		t.Fatal(err)
+	}
+	instanceID := strings.Repeat("b", 32)
+	rt := &runtime{projectRoot: filepath.Join(t.TempDir(), "Проект с пробелом"), family: "vanessa-ui", instanceID: instanceID}
+	request := databaseAccessRequest{
+		SchemaVersion: 1, Coordinator: filepath.Join(t.TempDir(), "координатор"),
+		Bases: []databaseConnection{{Kind: "file", Path: filepath.Join(t.TempDir(), "База с пробелом")}},
+		Owner: rt.databaseOwnerIdentity(), AccessMode: "functional-test", Timeout: 1,
+	}
+	var blockers json.RawMessage
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	owner, err := acquireDatabasePipeOwner(ctx, python, runtimeRoot, request, func(event databaseAccessEvent) {
+		blockers = append(json.RawMessage(nil), event.Blockers...)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer owner.Close()
+	for label, raw := range map[string]json.RawMessage{"public owner": owner.Public, "blocker": blockers} {
+		text := string(raw)
+		for _, expected := range []string{`"lifecycle": "on-demand"`, `"kind": "finish-owned-on-demand"`, `"family": "vanessa-ui"`, `"tool": "finish_database_access"`, `"instanceId": "` + instanceID + `"`} {
+			if !strings.Contains(text, expected) {
+				t.Fatalf("%s lacks %s: %s", label, expected, text)
+			}
+		}
+		if strings.Contains(text, "private-release-proof") || strings.Contains(text, `"token"`) || strings.Contains(text, `"project"`) && strings.Contains(text, `"releaseAction":{"project"`) {
+			t.Fatalf("%s exposed release authority: %s", label, text)
+		}
+	}
+	if err := owner.Validate(ctx); err != nil {
+		t.Fatalf("reading the public action released its owner: %v", err)
+	}
+	if got := releaseDatabaseFixture(t, owner, nil); got != "released" {
+		t.Fatal(got)
+	}
+}
+
 func TestDatabaseAccessNormalizesLegacyWireModesAndRejectsLegacyTransitions(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	for legacy, canonical := range map[string]string{"exclusive": "mutation-exclusive", "test-run": "functional-test"} {

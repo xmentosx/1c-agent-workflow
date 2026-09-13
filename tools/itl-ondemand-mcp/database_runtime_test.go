@@ -138,6 +138,170 @@ func requireDatabaseRuntimeCall(t *testing.T, rt *runtime, meta mcp.Meta) {
 	}
 }
 
+func TestOnDemandDatabaseOwnerPublishesSafeReleaseAction(t *testing.T) {
+	rt := &runtime{projectRoot: `C:\Проект с пробелом`, family: "roctup", instanceID: strings.Repeat("a", 32)}
+	identity := rt.databaseOwnerIdentity()
+	if identity["lifecycle"] != "on-demand" {
+		t.Fatalf("unexpected lifecycle: %#v", identity)
+	}
+	action, ok := identity["releaseAction"].(map[string]any)
+	if !ok || action["kind"] != "finish-owned-on-demand" || action["family"] != "roctup" ||
+		action["tool"] != finishDatabaseAccessTool || action["instanceId"] != rt.instanceID {
+		t.Fatalf("unexpected release action: %#v", identity["releaseAction"])
+	}
+	if _, found := action["project"]; found {
+		t.Fatal("release action duplicated project scope")
+	}
+	encoded, err := json.Marshal(identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "token") || strings.Contains(string(encoded), "coordinator") {
+		t.Fatalf("public release action became release authority: %s", encoded)
+	}
+}
+
+func TestDatabaseRuntimeIdleRetainsPhaseAndTicketUntilExplicitFinish(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	rt, broker := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
+	requireDatabaseRuntimeCall(t, rt, nil)
+	ticket := rt.databaseOwner.Proof.Ticket
+	rt.mu.Lock()
+	rt.idleDeadline = time.Now().Add(-time.Second)
+	generation := rt.generation
+	rt.mu.Unlock()
+	if err := rt.stopIdle(context.Background(), generation); err != nil {
+		t.Fatal(err)
+	}
+	if rt.databaseOwner == nil || rt.databaseOwner.Proof.Ticket != ticket || rt.databasePhaseLock == nil || rt.backend != nil {
+		t.Fatal("idle cleanup released the database phase or retained the backend")
+	}
+	if ensures, stops := broker.counts(); ensures != 1 || stops != 1 {
+		t.Fatalf("idle counts: ensures=%d stops=%d", ensures, stops)
+	}
+	requireDatabaseRuntimeCall(t, rt, nil)
+	if rt.databaseOwner == nil || rt.databaseOwner.Proof.Ticket != ticket {
+		t.Fatal("post-idle restart replaced the retained ticket")
+	}
+	if ensures, _ := broker.counts(); ensures != 2 {
+		t.Fatalf("post-idle backend was not restarted: %d", ensures)
+	}
+	if already, err := rt.finishDatabaseAccess(context.Background()); err != nil || already {
+		t.Fatalf("explicit finish: already=%t err=%v", already, err)
+	}
+	if rt.databaseOwner != nil || rt.databasePhaseLock != nil || rt.backend != nil || rt.session != nil {
+		t.Fatal("explicit finish retained owned database state")
+	}
+}
+
+func TestDatabaseRuntimeFinishRejectsNewCallsWhileDraining(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	rt, _ := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		close(entered)
+		select {
+		case <-release:
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "complete"}}}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	})
+	callDone := make(chan error, 1)
+	go func() {
+		result, err := databaseRuntimeCall(context.Background(), rt, nil)
+		if err == nil && result != nil && result.IsError {
+			err = fmt.Errorf("%s", resultText(result))
+		}
+		callDone <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first call did not enter")
+	}
+	finishDone := make(chan error, 1)
+	go func() {
+		_, err := rt.finishDatabaseAccess(context.Background())
+		finishDone <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rt.mu.Lock()
+		finishing := rt.databaseFinishing
+		rt.mu.Unlock()
+		if finishing {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("finish did not fence the facade")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	result, err := databaseRuntimeCall(context.Background(), rt, nil)
+	if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result), "FINISH_IN_PROGRESS") {
+		t.Fatalf("call entered after finish began: %v %s", err, resultText(result))
+	}
+	close(release)
+	if err := <-callDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-finishDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDatabaseRuntimeFailedFinishKeepsFenceUntilConfirmedRetry(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	rt, broker := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
+	requireDatabaseRuntimeCall(t, rt, nil)
+	broker.mu.Lock()
+	broker.stopFailures = 1
+	broker.mu.Unlock()
+	if _, err := rt.finishDatabaseAccess(context.Background()); err == nil {
+		t.Fatal("failed cleanup reported a finished database phase")
+	}
+	if rt.databaseOwner == nil || rt.databasePhaseLock == nil || !rt.databaseFinishing {
+		t.Fatal("failed finish released or unfenced the database phase")
+	}
+	result, err := databaseRuntimeCall(context.Background(), rt, nil)
+	if err != nil || result == nil || !result.IsError || !strings.Contains(resultText(result), "FINISH_IN_PROGRESS") {
+		t.Fatalf("failed finish allowed more work: %v %s", err, resultText(result))
+	}
+	if already, err := rt.finishDatabaseAccess(context.Background()); err != nil || already {
+		t.Fatalf("finish retry: already=%t err=%v", already, err)
+	}
+	if already, err := rt.finishDatabaseAccess(context.Background()); err != nil || !already {
+		t.Fatalf("idempotent finish: already=%t err=%v", already, err)
+	}
+	requireDatabaseRuntimeCall(t, rt, nil)
+}
+
+func TestDatabaseRuntimeEOFFailureRetainsPhaseUntilCleanupProof(t *testing.T) {
+	python, runtimeRoot, request := databaseAccessFixture(t)
+	rt, broker := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
+	requireDatabaseRuntimeCall(t, rt, nil)
+	broker.mu.Lock()
+	broker.stopFailures = 3
+	broker.mu.Unlock()
+	if err := rt.close(context.Background()); err == nil {
+		t.Fatal("unproven EOF cleanup reported success")
+	}
+	if rt.databasePhaseLock == nil || rt.databaseOwner == nil {
+		t.Fatal("unproven EOF cleanup released database ownership")
+	}
+	// Real EOF now terminates the facade process and the OS closes its handle.
+	// This in-process fixture must model only that terminal handle disposal; its
+	// private coordinator pipe was deliberately abandoned and cannot prove a
+	// second release attempt.
+	rt.mu.Lock()
+	if err := rt.databasePhaseLock.Close(); err != nil {
+		rt.mu.Unlock()
+		t.Fatal("dispose terminal fixture phase:", err)
+	}
+	rt.databasePhaseLock = nil
+	rt.mu.Unlock()
+}
+
 func TestDatabaseRuntimeAllowsSharedReadersAndRetainsIdleBackend(t *testing.T) {
 	python, runtimeRoot, request := databaseAccessFixture(t)
 	first, _ := newDatabaseRuntimeFixture(t, request, python, runtimeRoot, nil)
