@@ -148,6 +148,24 @@
         }
     }
 
+    It "requires an explicit owned database access handoff before incompatible phases" {
+        $skillTexts = @{}
+        foreach ($skillId in @('itl-roctup-1c-data', 'itl-vanessa-ui-mcp', 'itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
+            $skillTexts[$skillId] | Should -Match '## Database Access Handoff'
+            $skillTexts[$skillId] | Should -Match 'finish_database_access'
+            $skillTexts[$skillId] | Should -Match 'Never (finish or stop|release) a foreign holder'
+            $skillTexts[$skillId] | Should -Match 'Idle timeout( or client exit)? is an abandonment fallback, not a normal handoff'
+        }
+
+        $skillTexts['itl-roctup-1c-data'] | Should -Match 'continue this task''s current ROCTUP phase and postpone the next phase.*finish the phase'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'continue this task''s current UI phase and postpone the next phase.*finish the UI phase'
+        foreach ($skillId in @('itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*status.*cancel.*recovery contract'
+            $skillTexts[$skillId] | Should -Match 'do not call `finish_database_access`.*live job'
+        }
+    }
+
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
             @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
