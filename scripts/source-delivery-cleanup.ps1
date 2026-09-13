@@ -47,8 +47,7 @@ function Remove-SourceDeliveryStaleVanessaBuildWork {
     foreach ($directory in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction Stop)) {
         $path = [IO.Path]::GetFullPath($directory.FullName).TrimEnd('\')
         if (-not [string]::Equals((Split-Path -Parent $path), $root, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe Vanessa build work path: $path" }
-        if ($directory.Name -notmatch '^[0-9a-f]{8}$' -or
-            (Test-Path -LiteralPath (Join-Path $path '.git')) -or
+        if ((Test-Path -LiteralPath (Join-Path $path '.git')) -or
             -not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or
             (Test-SourceDeliveryPathInUse -Path $path) -or
             (Test-SourceDeliveryTreeHasReparsePoint -Path $path)) { $retained++; continue }
@@ -88,8 +87,10 @@ function Remove-SourceDeliveryStaleReleaseRecoveryArtifacts {
         foreach ($child in @(Get-ChildItem -LiteralPath $preservedRoot.FullName -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -in @('.agent-1c', 'build') -or $_.Name -match '^broken-ai-rules-cache-[0-9]{8}-[0-9]{4}$' })) {
             $childPath = [IO.Path]::GetFullPath($child.FullName).TrimEnd('\')
             $protectedByJunction = @($manifest.moved | Where-Object {
-                [bool]$_.junction -and [string]$_.destination -and
-                ([IO.Path]::GetFullPath([string]$_.destination).TrimEnd('\') + '\').StartsWith($childPath + '\', [StringComparison]::OrdinalIgnoreCase)
+                $junctionProperty = $_.PSObject.Properties['junction']
+                $destinationProperty = $_.PSObject.Properties['destination']
+                $junctionProperty -and [bool]$junctionProperty.Value -and $destinationProperty -and [string]$destinationProperty.Value -and
+                ([IO.Path]::GetFullPath([string]$destinationProperty.Value).TrimEnd('\') + '\').StartsWith($childPath + '\', [StringComparison]::OrdinalIgnoreCase)
             }).Count -gt 0
             if ($protectedByJunction -or (Test-SourceDeliveryTreeHasReparsePoint -Path $childPath)) { $retained++; continue }
             $bytes = Get-SourceDeliveryTreeBytes -Path $childPath
@@ -113,7 +114,7 @@ function Remove-SourceDeliveryOldAiRulesMigrationSnapshots {
         if ([string]$report.status -cne 'passed') { $retained++; continue }
         $passed.Add($directory) | Out-Null
     }
-    $ordered = @($passed | Sort-Object LastWriteTimeUtc -Descending)
+    $ordered = @($passed | Sort-Object Name -Descending)
     $retained += [Math]::Min([Math]::Max(0, $Keep), $ordered.Count)
     foreach ($directory in @($ordered | Select-Object -Skip ([Math]::Max(0, $Keep)))) {
         if (-not (Test-SourceDeliveryArtifactExpired -Item $directory -MinimumAgeHours $MinimumAgeHours) -or

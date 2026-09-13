@@ -87,16 +87,16 @@ Describe 'Source delivery post-success cleanup' {
     }
 
     It 'removes expired non-Git Vanessa build work under a whitespace and non-ASCII root' {
-        $root = Join-Path $TestDrive ("build with space-{0}" -f [char]0x0416); $owned = Join-Path $root 'deadbeef'; $git = Join-Path $root '1234abcd'; $unknown = Join-Path $root 'source-copy'
+        $root = Join-Path $TestDrive ("build with space-{0}" -f [char]0x0416); $owned = Join-Path $root 'deadbeef'; $legacy = Join-Path $root 'legacy-diagnostic'; $git = Join-Path $root '1234abcd'
         New-Item -ItemType Directory -Force -Path $owned | Out-Null; Set-Content -LiteralPath (Join-Path $owned 'result.bin') -Value 'owned'
+        New-Item -ItemType Directory -Force -Path $legacy | Out-Null; Set-Content -LiteralPath (Join-Path $legacy 'result.bin') -Value 'legacy'
         New-CleanupRepository -Root $git
-        New-Item -ItemType Directory -Force -Path $unknown | Out-Null
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
 
         $result = Remove-SourceDeliveryStaleVanessaBuildWork -WorkRoot $root -MinimumAgeHours 0
 
-        $result.removedDirectories | Should -Be 1; $result.freedBytes | Should -BeGreaterThan 0
-        Test-Path -LiteralPath $owned | Should -BeFalse; Test-Path -LiteralPath $git | Should -BeTrue; Test-Path -LiteralPath $unknown | Should -BeTrue
+        $result.removedDirectories | Should -Be 2; $result.freedBytes | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $owned | Should -BeFalse; Test-Path -LiteralPath $legacy | Should -BeFalse; Test-Path -LiteralPath $git | Should -BeTrue
     }
 
     It 'removes only exact release quarantine and disposable preserved evidence' {
@@ -112,7 +112,11 @@ Describe 'Source delivery post-success cleanup' {
         }
         Set-Content -LiteralPath (Join-Path $quarantine 'release-e2e-extension-run.dt') -Value 'snapshot'; Set-Content -LiteralPath (Join-Path $quarantine 'release-e2e-extension-run.dt.state.json') -Value '{}'
         Set-Content -LiteralPath (Join-Path $near 'release-e2e-extension-run.dt') -Value 'keep'; Set-Content -LiteralPath (Join-Path $agent 'old.bin') -Value 'agent'; Set-Content -LiteralPath (Join-Path $build 'old.bin') -Value 'build'; Set-Content -LiteralPath (Join-Path $relocated 'live.bin') -Value 'live'
-        [IO.File]::WriteAllText((Join-Path $preserved 'manifest.json'), (@{ moved = @(@{ junction = $true; destination = (Join-Path $relocated 'live') }) } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        $manifest = @{ moved = @(
+            @{ source = 'old-source'; destination = (Join-Path $agent 'old.bin') }
+            @{ junction = $true; destination = (Join-Path $relocated 'live') }
+        ) }
+        [IO.File]::WriteAllText((Join-Path $preserved 'manifest.json'), ($manifest | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
 
         $result = Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -TempRoot $temp -MinimumAgeHours 0

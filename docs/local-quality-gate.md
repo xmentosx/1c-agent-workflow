@@ -292,7 +292,8 @@ Vanessa из `C:\itlvabld`, старые passed-снимки миграции `a
 `Cleanup` удаляет их сразу. Dirty Git, активные процессы, reparse/junction,
 последний passed migration snapshot, текущие capability/rollback-каталоги и
 неизвестная форма артефакта всегда сохраняются. В build work root распознаются
-только восьмизначные hex-каталоги, создаваемые штатным builder.
+только непосредственные не-Git каталоги выделенного `C:\itlvabld`; содержимое
+за его пределами sweep не рассматривает.
 
 Для release-снимков распознаются текущий путь
 `.agent-1c/runs/release-e2e/<run>/snapshots/{baseline,post-config}.dt`,
