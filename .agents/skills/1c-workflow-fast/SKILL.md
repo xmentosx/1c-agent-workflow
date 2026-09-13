@@ -29,7 +29,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 - refresh from source: `refresh-dev-branch`
 - synchronize master and rebuild the latest-only seed: `sync-master`
 - refresh only from the current master without source/seed access: `refresh-dev-branch-lite`
-- export CF/CFE: `export-dev-branch-result`
+- export CF/CFE: `export-dev-branch-result`; verbatim report + known-context `## Итог задачи`, else report only; no tools/inference
 - explicit advanced close: `close-dev-branch`
 
 ## Command Template
@@ -40,7 +40,7 @@ From the project root, run mutations and long checks with `timeout_ms >= 3900000
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <action>
 ```
 
-Use it for `init-*`, `update-*`, `check-*`, `verify-*`, `refresh-*`, `export-*`, and client switching. Short read-only `status`, `help`, and MCP status/catalog actions may call `agent-1c.ps1` directly; honor the exit code.
+Short read-only `status`, `help`, and MCP status/catalog actions may call `agent-1c.ps1` directly; honor its exit code.
 
 Branch creation and advanced close use the same runner with `-Windowed` so safety confirmation remains visible:
 
@@ -51,7 +51,7 @@ powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\ru
 
 For CFE, use `Cfe` plus `-ExtensionSourcePath`. Unknown extension values may be omitted for pending first-entry setup.
 
-On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown, including for refresh. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
+On `status=succeeded`, the final response must be exactly the non-empty `userReport` Markdown. It includes MCP/Browser state and advice. Do not translate it, use a code fence, convert it to a table, rename or merge fields, reorder or omit lines, summarize, substitute `requiredAction`, or read `console.log`. `-UseCurrentWorktree` is explicit-only.
 
 `classify-tests-after-refresh:*`: follow `advanced-actions.md` in the same task;
 split oversized/mixed feature files yourself. Do not ask the developer to classify.

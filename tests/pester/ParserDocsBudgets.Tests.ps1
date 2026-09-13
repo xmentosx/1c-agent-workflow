@@ -572,6 +572,7 @@
         $configBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-config-branch.md.template")
         $extensionBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master\itl-new-extension-branch.md.template")
         $refreshBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-refresh.md.template")
+        $resultBranch = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev\itl-result.md.template")
 
         foreach ($text in @($installText, $workflowSkill, $fastSkill, $configBranch, $extensionBranch, $refreshBranch)) {
             $text | Should -Match "userReport"
@@ -609,6 +610,25 @@
         $refreshLite | Should -Match "repairPaths"
         $refreshLite | Should -Match "Ask the user only when evidence leaves incompatible business outcomes"
         $refreshLite | Should -Match "repeat this same command"
+        foreach ($text in @($fastSkill, $resultBranch)) {
+            $text | Should -Match '## Итог задачи'
+            $text | Should -Match 'known-context|reliable context from the preceding task'
+            $text | Should -Match 'else report only|stop after the verbatim `userReport`'
+            $text | Should -Match 'no tools|Do not make.*tool'
+        }
+        $workflowSkill | Should -Match "explicit wrapper's verbatim-report plus context-only task-summary contract"
+        $resultBranch | Should -Match 'verbatim as one uninterrupted block'
+    }
+
+    It "documents that itl-result stays direct for task-level response composition" {
+        $installText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENT-INSTALL.md")
+        $modesText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\MODES-AND-SETTINGS.ru.md")
+        $envReference = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "docs\itl-workflow\DEV-ENV-REFERENCE.ru.md")
+
+        foreach ($text in @($installText, $modesText, $envReference)) {
+            $text | Should -Match '(?s)/itl-result.*direct|/itl-result.*оста.*агент'
+        }
+        $installText | Should -Match 'This exception does not change the exact-only response contract of any other `/itl\*` command'
     }
 
     It "reports exact repository object lock conflicts without a console-log hop" {

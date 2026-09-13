@@ -261,12 +261,14 @@
     It "preserves the output format contracts across native command adapters" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\common"
         $masterTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\master"
+        $devTemplateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates\dev"
         $templates = [ordered]@{
             "itl.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl.md.template") -Raw -Encoding UTF8
             "itl-status.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-status.md.template") -Raw -Encoding UTF8
             "itl-litemode.md" = Get-Content -LiteralPath (Join-Path $templateRoot "itl-litemode.md.template") -Raw -Encoding UTF8
             "itl-new-config-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-config-branch.md.template") -Raw -Encoding UTF8
             "itl-new-extension-branch.md" = Get-Content -LiteralPath (Join-Path $masterTemplateRoot "itl-new-extension-branch.md.template") -Raw -Encoding UTF8
+            "itl-result.md" = Get-Content -LiteralPath (Join-Path $devTemplateRoot "itl-result.md.template") -Raw -Encoding UTF8
         }
         $previousMode = [Environment]::GetEnvironmentVariable("ITL_ROUTINE_MODE", "Process")
         try {
@@ -310,6 +312,11 @@
                     $adapted[$client][$fileName] | Should -Match 'full absolute `userReportPath`'
                     $adapted[$client][$fileName] | Should -Match 'userReportSource=status-json'
                 }
+                $adapted[$client]["itl-result.md"] | Should -Match 'verbatim as one uninterrupted block'
+                $adapted[$client]["itl-result.md"] | Should -Match '## Итог задачи'
+                $adapted[$client]["itl-result.md"] | Should -Match 'reliable context from the preceding task'
+                $adapted[$client]["itl-result.md"] | Should -Match 'Do not make another tool call to build that summary'
+                $adapted[$client]["itl-result.md"] | Should -Match 'stop after the verbatim `userReport`'
             }
             $adapted.codex["itl.md"] | Should -Match '(?m)^name:\s*itl$'
             $adapted["opencode"]["itl-new-config-branch.md"] | Should -Match '(?m)^description:\s*Создать ветку конфигурации ITL'
@@ -736,6 +743,15 @@
                 if ($client -eq "kilocode") {
                     (Get-Content -LiteralPath (Join-Path $tempRoot ".kilo\kilo.json") -Raw | ConvertFrom-Json).snapshot | Should -BeFalse
                 }
+
+                & git -C $tempRoot branch -M "itldev/routine-result"
+                & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-ItlClientSurface -SourceRoot $RepoRoot *> $null }
+                $resultText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-result.md") -Raw -Encoding UTF8
+                $checkText = Get-Content -LiteralPath (Join-Path $commandRoot "itl-check.md") -Raw -Encoding UTF8
+                $resultText | Should -Match $primaryAgent
+                $resultText | Should -Not -Match '(?m)^agent:\s*itl-routine\s*$'
+                $resultText | Should -Match '## Итог задачи'
+                $checkText | Should -Match $(if ($case.longRoutine) { 'agent: itl-routine' } else { $primaryAgent })
             } finally {
                 [Environment]::SetEnvironmentVariable("ITL_ROUTINE_MODE", $null, "Process")
                 [Environment]::SetEnvironmentVariable("SUBAGENT_MODEL_LIGHT", $null, "Process")
