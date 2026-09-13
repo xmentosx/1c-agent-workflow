@@ -186,9 +186,186 @@ class Coordinator:
         self.compaction_ticket_path.mkdir(exist_ok=True)
         self.compaction_tail_path = self.root / "archive-compaction-tail.json"
         self.pins_path = self.root / "archive-pins.json"
+        self.summary_path = self.root / "access-summary.json"
+        self.summary_update_path = self.root / "access-summary-update.json"
+        self.summary_unavailable_path = self.root / "access-summary-unavailable.json"
 
     def _published(self, boundary):
         """Fault-injection seam after durable publication boundaries."""
+
+    @staticmethod
+    def _json_size(value):
+        return len(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"))
+
+    def _summary_capable_layout(self):
+        return read_json(self.layout_path) == {"schemaVersion": 2, "terminalSummary": 1}
+
+    def _read_summary(self, allow_pending=False):
+        """Return optional derived metrics without making them admission authority."""
+        if (not self.summary_path.exists() or self.summary_unavailable_path.exists() or
+                not self._summary_capable_layout() or
+                (self.summary_update_path.exists() and not allow_pending)):
+            return None
+        try:
+            value = read_json(self.summary_path)
+            if (not isinstance(value, dict) or set(value) != {
+                    "schemaVersion", "complete", "terminalStoredCount",
+                    "terminalArchiveBytes", "lastEventId", "updatedAt"} or
+                    value.get("schemaVersion") != 1 or value.get("complete") is not True or
+                    type(value.get("terminalStoredCount")) is not int or
+                    value["terminalStoredCount"] < 0 or
+                    type(value.get("terminalArchiveBytes")) is not int or
+                    value["terminalArchiveBytes"] < 0 or
+                    not isinstance(value.get("lastEventId"), str) or
+                    not isinstance(value.get("updatedAt"), str)):
+                return None
+            self._time(value["updatedAt"], "INFOBASE_ACCESS_SUMMARY_INVALID", self.summary_path)
+            return value
+        except Exception:
+            return None
+
+    def _discard_summary_locked(self):
+        safe = False
+        try:
+            write_json(self.summary_unavailable_path,
+                       {"schemaVersion": 1, "complete": False})
+            safe = True
+        except Exception:
+            pass
+        if not safe:
+            try:
+                self.summary_path.unlink(missing_ok=True)
+                safe = True
+            except OSError:
+                pass
+        if not safe:
+            try:
+                # Dropping the capability is a final independent fallback: the
+                # stale baseline then becomes unreadable and older writers may
+                # continue only with terminal metrics explicitly unavailable.
+                write_json(self.layout_path, {"schemaVersion": 2})
+                safe = True
+            except Exception:
+                pass
+        if safe:
+            try:
+                self.summary_update_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return safe
+
+    def _write_initial_summary_locked(self, terminal_records):
+        try:
+            paths = [self._archive_path(record["ticket"]) for record in terminal_records]
+            value = {"schemaVersion": 1, "complete": True,
+                     "terminalStoredCount": len(paths),
+                     "terminalArchiveBytes": sum(path.stat().st_size for path in paths),
+                     "lastEventId": "", "updatedAt": stamp()}
+            write_json(self.summary_path, value)
+            self.summary_update_path.unlink(missing_ok=True)
+            self.summary_unavailable_path.unlink(missing_ok=True)
+        except Exception:
+            self._discard_summary_locked()
+            return False
+        self._published("access-summary-initial")
+        return True
+
+    def _archive_metric_state(self, path):
+        path = Path(path)
+        if not path.exists():
+            return {"exists": False, "identity": "", "bytes": 0}
+        value = read_json(path)
+        return {"exists": True, "identity": identity(value), "bytes": path.stat().st_size}
+
+    def _prepare_summary_event_locked(self, kind, ticket, path, after):
+        self._repair_summary_update_locked()
+        if self._read_summary() is None:
+            return None
+        try:
+            before = self._archive_metric_state(path)
+            after_state = ({"exists": False, "identity": "", "bytes": 0} if after is None else
+                           {"exists": True, "identity": identity(after), "bytes": self._json_size(after)})
+            stable = {"schemaVersion": 1, "kind": kind, "ticket": ticket,
+                      "before": before, "after": after_state}
+            event = {**stable, "eventId": identity(stable)}
+            write_json(self.summary_update_path, event)
+        except Exception:
+            # Observability must not become admission or retention authority.
+            # If intent cannot be made durable, discard the exact baseline.
+            self._discard_summary_locked()
+            return None
+        self._published("access-summary-event-intent")
+        return event
+
+    def _validate_summary_event(self, value):
+        if (not isinstance(value, dict) or set(value) != {
+                "schemaVersion", "kind", "ticket", "before", "after", "eventId"} or
+                value.get("schemaVersion") != 1 or
+                value.get("kind") not in ("archive-created", "archive-compacted", "archive-deleted") or
+                not re.fullmatch(r"[0-9a-f]{32}", str(value.get("ticket", ""))) or
+                not re.fullmatch(r"[0-9a-f]{64}", str(value.get("eventId", "")))):
+            return None
+        for state in (value.get("before"), value.get("after")):
+            if (not isinstance(state, dict) or set(state) != {"exists", "identity", "bytes"} or
+                    type(state.get("exists")) is not bool or
+                    not isinstance(state.get("identity"), str) or
+                    (state["exists"] and not re.fullmatch(r"[0-9a-f]{64}", state["identity"])) or
+                    (not state["exists"] and state["identity"] != "") or
+                    type(state.get("bytes")) is not int or state["bytes"] < 0 or
+                    (not state["exists"] and state["bytes"] != 0)):
+                return None
+        stable = {key: value[key] for key in ("schemaVersion", "kind", "ticket", "before", "after")}
+        return value if identity(stable) == value["eventId"] else None
+
+    def _apply_summary_event_locked(self, event):
+        summary = self._read_summary(allow_pending=True)
+        if summary is None:
+            return False
+        if summary["lastEventId"] != event["eventId"]:
+            count = (1 if event["after"]["exists"] else 0) - (1 if event["before"]["exists"] else 0)
+            summary["terminalStoredCount"] += count
+            summary["terminalArchiveBytes"] += event["after"]["bytes"] - event["before"]["bytes"]
+            if summary["terminalStoredCount"] < 0 or summary["terminalArchiveBytes"] < 0:
+                return False
+            summary["lastEventId"] = event["eventId"]
+            summary["updatedAt"] = stamp()
+            try:
+                write_json(self.summary_path, summary)
+            except Exception:
+                return False
+            self._published("access-summary-event-applied")
+        try:
+            self.summary_update_path.unlink(missing_ok=True)
+        except OSError:
+            return False
+        self._published("access-summary-event-complete")
+        return True
+
+    def _repair_summary_update_locked(self):
+        """Repair derived metrics opportunistically; never reject database access."""
+        if not self.summary_update_path.exists() or self._read_summary(allow_pending=True) is None:
+            return
+        try:
+            event = self._validate_summary_event(read_json(self.summary_update_path))
+            if event is None:
+                return
+            current = self._archive_metric_state(self._archive_path(event["ticket"]))
+            if current == event["after"]:
+                self._apply_summary_event_locked(event)
+            elif current == event["before"]:
+                self.summary_update_path.unlink(missing_ok=True)
+        except WorkError:
+            return
+        except RuntimeError:
+            raise
+        except Exception:
+            return
+
+    def _finish_summary_event_locked(self, event):
+        if event is None:
+            return
+        self._published("access-summary-archive-mutated")
+        self._apply_summary_event_locked(event)
 
     @contextlib.contextmanager
     def mutex(self, deadline, cancelled):
@@ -252,7 +429,7 @@ class Coordinator:
             value = read_json(self.layout_path)
         except Exception as error:
             raise WorkError("INFOBASE_ACCESS_LAYOUT_INVALID: " + str(self.layout_path)) from error
-        if value != {"schemaVersion": 2}:
+        if value not in ({"schemaVersion": 2}, {"schemaVersion": 2, "terminalSummary": 1}):
             raise WorkError("INFOBASE_ACCESS_LAYOUT_INVALID: " + str(self.layout_path))
         return True
 
@@ -803,8 +980,11 @@ class Coordinator:
                 tombstone = self._tombstone(value, path)
                 if now - self._time(tombstone["compactedAt"], "INFOBASE_ACCESS_ARCHIVE_INVALID", path) >= timedelta(
                         days=policy["tombstoneRetentionDays"]):
+                    summary_event = self._prepare_summary_event_locked(
+                        "archive-deleted", ticket, path, None)
                     path.unlink()
                     self._published("compaction-delete")
+                    self._finish_summary_event_locked(summary_event)
                     result["deleted"] += 1
                     completed = True
             else:
@@ -818,8 +998,11 @@ class Coordinator:
                     tombstone = {"schemaVersion": 2, "ticket": record["ticket"], "status": record["status"],
                                  "finishedAt": record["finishedAt"], "compactedAt": now.isoformat(),
                                  "recordIdentity": identity(record)}
+                    summary_event = self._prepare_summary_event_locked(
+                        "archive-compacted", ticket, path, tombstone)
                     write_json(path, tombstone)
                     self._published("compaction-tombstone")
+                    self._finish_summary_event_locked(summary_event)
                     result["compacted"] += 1
             if completed:
                 self._unlink_queue_json(pointer_path)
@@ -854,11 +1037,15 @@ class Coordinator:
             if existing != record:
                 raise WorkError("INFOBASE_ACCESS_ARCHIVE_CONFLICT: " + str(path))
         else:
+            summary_event = self._prepare_summary_event_locked(
+                "archive-created", record["ticket"], path, record)
             write_json(path, record)
+            self._finish_summary_event_locked(summary_event)
         self._queue_archive_locked(record["ticket"])
 
     def _ensure_layout_locked(self):
         if self._layout_v2():
+            self._repair_summary_update_locked()
             self._repair_terminal_transitions_locked()
             return
         records = self._legacy_records()
@@ -909,8 +1096,13 @@ class Coordinator:
             if record["status"] in TERMINAL_STATUSES:
                 # The indexed record is still authoritative. Re-publish its
                 # terminal copy even if an interrupted prior copy is damaged.
-                write_json(self._archive_path(ticket), record)
+                archive_path = self._archive_path(ticket)
+                summary_event = self._prepare_summary_event_locked(
+                    "archive-created", ticket, archive_path, record)
+                write_json(archive_path, record)
                 self._published("terminal-archive-repair")
+                self._finish_summary_event_locked(summary_event)
+                self._queue_archive_locked(ticket)
                 del index["entries"][ticket]
                 changed = True
                 obsolete.append(record)
@@ -1059,6 +1251,99 @@ class Coordinator:
     def snapshot(self):
         with self.mutex(time.monotonic() + 30, lambda: False):
             return [public(record) for record in self.records()]
+
+    def summary(self):
+        """Return bounded, aggregate-only observability without scanning cold stores."""
+        now = datetime.now(timezone.utc)
+        with self.mutex(time.monotonic() + 30, lambda: False):
+            generated_at = now.isoformat()
+            if not self._layout_v2():
+                return {"schemaVersion": 1, "generatedAt": generated_at, "complete": False,
+                        "active": {"count": None, "complete": False, "byStatus": {},
+                                   "oldestWaiterAt": None, "oldestWaiterAgeSeconds": None},
+                        "terminal": {"storedCount": None, "complete": False},
+                        "stores": {},
+                        "retainedCheckpoints": {"tickets": None, "reasons": None,
+                                                "byReason": [], "expired": None,
+                                                "complete": False}}
+
+            if not self._summary_capable_layout():
+                index = self._read_index()
+                tail = self._queue_tail(
+                    self.compaction_tail_path, "INFOBASE_ACCESS_COMPACTION_QUEUE_INVALID")
+                # Opt-in may establish an exact zero baseline only while the
+                # authority is quiescent and its append-only archive queue proves
+                # that no terminal record has ever been published. Publishing
+                # the capability last makes older V2 writers fail closed.
+                if not index["entries"] and tail["nextId"] == 0:
+                    if self._write_initial_summary_locked([]):
+                        write_json(self.layout_path, {"schemaVersion": 2, "terminalSummary": 1})
+                        self._published("access-summary-layout")
+
+            records = self.records()
+            by_status = {status: 0 for status in ACTIVE_STATUSES}
+            waiters = []
+            active_complete = True
+            active_bytes = self.index_path.stat().st_size + self.layout_path.stat().st_size
+            for record in records:
+                if record.get("corruptRecord"):
+                    active_complete = False
+                status = record["status"]
+                by_status[status] += 1
+                path = self.tickets / (record["ticket"] + ".json")
+                if path.exists():
+                    active_bytes += path.stat().st_size
+                if status == "waiting":
+                    try:
+                        waiters.append(self._time(record.get("createdAt"),
+                                                  "INFOBASE_ACCESS_RECORD_INVALID", path))
+                    except WorkError:
+                        active_complete = False
+            oldest = min(waiters) if waiters else None
+
+            pins = self._read_pins()
+            reason_counts = {"job-recovery-plan": 0, "source-sync-phase": 0, "other": 0}
+            retained_tickets = set()
+            expired = 0
+            for ticket, reasons in pins["entries"].items():
+                for reason, expires_at in reasons.items():
+                    if self._time(expires_at, "INFOBASE_ACCESS_PINS_INVALID", self.pins_path) <= now:
+                        expired += 1
+                        continue
+                    retained_tickets.add(ticket)
+                    category = ("job-recovery-plan" if reason.startswith("job-recovery-plan:") else
+                                "source-sync-phase" if reason.startswith("source-sync-phase:") else "other")
+                    reason_counts[category] += 1
+            retained_count = sum(reason_counts.values())
+            pin_bytes = self.pins_path.stat().st_size if self.pins_path.exists() else 0
+
+            terminal = self._read_summary()
+            terminal_complete = terminal is not None
+            stores = {
+                "active-tickets": {"records": len(records), "bytes": active_bytes,
+                                   "complete": active_complete},
+                "terminal-archive": {
+                    "records": terminal["terminalStoredCount"] if terminal_complete else None,
+                    "bytes": terminal["terminalArchiveBytes"] if terminal_complete else None,
+                    "complete": terminal_complete},
+                "retained-checkpoints": {"records": retained_count, "bytes": pin_bytes, "complete": True}}
+            return {
+                "schemaVersion": 1,
+                "generatedAt": generated_at,
+                "complete": terminal_complete and active_complete,
+                "active": {
+                    "count": len(records), "complete": active_complete, "byStatus": by_status,
+                    "oldestWaiterAt": oldest.isoformat() if oldest else None,
+                    "oldestWaiterAgeSeconds": max(0, int((now - oldest).total_seconds())) if oldest else None},
+                "terminal": {
+                    "storedCount": terminal["terminalStoredCount"] if terminal_complete else None,
+                    "complete": terminal_complete},
+                "stores": stores,
+                "retainedCheckpoints": {
+                    "tickets": len(retained_tickets), "reasons": retained_count,
+                    "byReason": [{"reason": reason, "count": reason_counts[reason]}
+                                 for reason in ("job-recovery-plan", "source-sync-phase", "other")],
+                    "expired": expired, "complete": True}}
 
 
 ACTIVE_STATUSES = ("waiting", "running", "recovering", "needs-attention")

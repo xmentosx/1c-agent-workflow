@@ -61,6 +61,20 @@ Create a UTF-8 JSON array of the authorized connections, such as two
 to split an identity currently in use. Configure the same authority on each
 project/host; do not put passwords in the registration. `access-status
 --coordinator <directory>` lists active owners and waiters without lease tokens.
+Its legacy JSON array is unchanged. Add `--summary` for an aggregate-only schema
+with active counts by status, oldest waiter age, terminal archive count/bytes and
+retained-checkpoint reason categories. The summary never includes tickets,
+tokens, owners, database identities, paths or embedded checkpoint identifiers.
+It reads active records through `active-index.json`, the small pin ledger and a
+derived terminal summary; it never enumerates the terminal archive or cleanup
+debt. On an empty, quiescent authority the first opt-in summary can establish an
+exact zero baseline from the append-only archive-queue tail, then publishes a
+layout capability marker last so older writers fail closed instead of silently
+bypassing the idempotent metrics journal. An indexed authority with active work
+or terminal history but no derived baseline reports terminal values as `null`
+with `complete=false` instead of scanning or inventing a count. Derived metrics
+are not admission or recovery authority; a metrics I/O failure invalidates the
+summary but does not stop the authoritative transition.
 The coordinator upgrades its storage only when no legacy owner is live. Active
 tickets then remain in a small resource index, while released and cancelled
 tickets move to an exact-addressed archive and are not scanned by admission or

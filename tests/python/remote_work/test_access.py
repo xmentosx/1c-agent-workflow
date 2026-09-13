@@ -90,6 +90,19 @@ class AccessTests(unittest.TestCase):
                 (package / name).write_bytes(payload)
         return runtime
 
+    def v2_runtime_before_summary(self):
+        runtime = self.root / "frozen-v2-runtime-before-summary"
+        package = runtime / "itl_remote"
+        if not package.exists():
+            package.mkdir(parents=True)
+            for name in ("__init__.py", "common.py", "access.py"):
+                payload = subprocess.check_output([
+                    "git", "-C", str(REPO), "show",
+                    "4e51e016b2b7a5870acfcba73b1ac6eb9628aa69:.agents/skills/itl-remote-runner/scripts/itl_remote/" + name,
+                ])
+                (package / name).write_bytes(payload)
+        return runtime
+
     def old_child(self, name, **options):
         self.assertIn(options.get("accessMode"), ("shared-read", "test-run", "exclusive"))
         out = self.root / ("старый процесс " + name)
@@ -594,6 +607,10 @@ class AccessTests(unittest.TestCase):
                 self.assertEqual(record, restarted.record(record["ticket"]))
                 self.assertFalse((restarted.tickets / (record["ticket"] + ".json")).exists())
                 self.assertEqual({}, restarted._read_cleanup_debt()["items"])
+                summary = restarted.summary()
+                self.assertIsNone(summary["terminal"]["storedCount"])
+                self.assertFalse(summary["terminal"]["complete"])
+                self.assertGreater(read_json(restarted.compaction_tail_path)["nextId"], 0)
 
     def test_cleanup_debt_survives_unlink_publication_crash(self):
         coordinator = Coordinator(self.coordinator)
@@ -800,6 +817,254 @@ class AccessTests(unittest.TestCase):
         self.assertEqual([], archived_reads)
         self.assertLess(elapsed, 1.0, f"status took {elapsed:.3f}s")
 
+        # An authority created by an older V2 runtime has no exact derived
+        # terminal baseline. Summary must stay bounded and report that gap.
+        coordinator.summary_path.unlink(missing_ok=True)
+        archived_reads.clear()
+        started = time.monotonic()
+        with mock.patch("itl_remote.access.read_json", side_effect=observed_read):
+            summary = coordinator.summary()
+        elapsed = time.monotonic() - started
+        self.assertEqual(10, summary["active"]["count"])
+        self.assertIsNone(summary["terminal"]["storedCount"])
+        self.assertFalse(summary["terminal"]["complete"])
+        self.assertFalse(summary["complete"])
+        self.assertEqual([], archived_reads)
+        self.assertLess(elapsed, 1.0, f"summary took {elapsed:.3f}s")
+
+    def test_opt_in_summary_is_aggregate_bounded_and_legacy_status_stays_an_array(self):
+        coordinator = Coordinator(self.coordinator)
+        self.assertTrue(coordinator.summary()["terminal"]["complete"])
+        records = []
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            for number, status in enumerate(("waiting", "running", "needs-attention"), start=1):
+                ticket = f"{number:032x}"
+                record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": ticket,
+                          "token": f"{number:064x}", "sequence": coordinator.take_sequence(),
+                          "resources": [f"base-private-{number}"], "accessMode": "exclusive",
+                          "status": status, "createdAt": f"2026-01-01T0{number}:00:00+00:00",
+                          "owner": {"project": "C:/секретный проект", "jobId": "secret-job"}}
+                if status == "needs-attention":
+                    record["reason"] = "private recovery detail"
+                coordinator.save(record)
+                records.append(record)
+            terminal = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "f" * 32,
+                        "token": "f" * 64, "sequence": coordinator.take_sequence(),
+                        "resources": ["base-terminal"], "accessMode": "exclusive",
+                        "status": "running", "createdAt": "2026-01-01T04:00:00+00:00",
+                        "owner": {"project": "C:/секретный проект"}}
+            coordinator.save(terminal)
+            terminal.update(status="released", finishedAt="2026-01-01T04:01:00+00:00")
+            coordinator.save(terminal)
+        coordinator.pin(terminal["ticket"], "job-recovery-plan:" + "a" * 64)
+        coordinator.pin(terminal["ticket"], "source-sync-phase:" + "b" * 32 + ":step-secret")
+        coordinator.pin(terminal["ticket"], "private-checkpoint-id")
+
+        summary = coordinator.summary()
+        self.assertEqual(1, summary["schemaVersion"])
+        self.assertTrue(summary["complete"])
+        self.assertEqual(3, summary["active"]["count"])
+        self.assertEqual({"waiting": 1, "running": 1, "recovering": 0, "needs-attention": 1},
+                         summary["active"]["byStatus"])
+        self.assertEqual("2026-01-01T01:00:00+00:00", summary["active"]["oldestWaiterAt"])
+        self.assertGreater(summary["active"]["oldestWaiterAgeSeconds"], 0)
+        self.assertEqual(1, summary["terminal"]["storedCount"])
+        self.assertEqual(1, summary["stores"]["terminal-archive"]["records"])
+        self.assertGreater(summary["stores"]["terminal-archive"]["bytes"], 0)
+        self.assertEqual(
+            [{"reason": "job-recovery-plan", "count": 1},
+             {"reason": "source-sync-phase", "count": 1},
+             {"reason": "other", "count": 1}],
+            summary["retainedCheckpoints"]["byReason"])
+        serialized = json.dumps(summary, ensure_ascii=False)
+        for secret in (terminal["ticket"], "секретный проект", "secret-job", "step-secret",
+                       "private-checkpoint-id", "base-private"):
+            self.assertNotIn(secret, serialized)
+
+        cli = RUNTIME / "remote_work.py"
+        legacy = json.loads(subprocess.check_output(
+            [sys.executable, "-X", "utf8", str(cli), "access-status",
+             "--coordinator", str(self.coordinator)], text=True))
+        opt_in = json.loads(subprocess.check_output(
+            [sys.executable, "-X", "utf8", str(cli), "access-status",
+             "--coordinator", str(self.coordinator), "--summary"], text=True))
+        self.assertIsInstance(legacy, list)
+        self.assertEqual(3, len(legacy))
+        self.assertIsInstance(opt_in, dict)
+        self.assertEqual(summary["active"]["count"], opt_in["active"]["count"])
+
+    def test_terminal_summary_journal_replays_each_crash_boundary_once(self):
+        boundaries = ("access-summary-event-intent", "access-summary-archive-mutated",
+                      "access-summary-event-applied", "access-summary-event-complete")
+        for boundary in boundaries:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory(
+                    prefix="ITL метрики доступа ") as root:
+                coordinator = Coordinator(Path(root) / "координатор с пробелом")
+                self.assertTrue(coordinator.summary()["terminal"]["complete"])
+                with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                    record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "d" * 32,
+                              "token": "d" * 64, "sequence": coordinator.take_sequence(),
+                              "resources": ["base-a"], "accessMode": "exclusive",
+                              "status": "running", "createdAt": "2026-01-01T00:00:00+00:00",
+                              "owner": {}}
+                    coordinator.save(record)
+                    record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+                    injected = False
+                    def crash_after_publication(actual):
+                        nonlocal injected
+                        if actual == boundary and not injected:
+                            injected = True
+                            raise RuntimeError("injected crash after " + boundary)
+                    coordinator._published = crash_after_publication
+                    with self.assertRaisesRegex(RuntimeError, "injected crash"):
+                        coordinator.save(record)
+                restarted = Coordinator(coordinator.root)
+                with restarted.mutex(time.monotonic() + 5, lambda: False):
+                    pass
+                first = restarted.summary()
+                second = Coordinator(coordinator.root).summary()
+                self.assertEqual(1, first["terminal"]["storedCount"])
+                self.assertEqual(first["terminal"], second["terminal"])
+                self.assertEqual(restarted._archive_path(record["ticket"]).stat().st_size,
+                                 first["stores"]["terminal-archive"]["bytes"])
+                self.assertFalse(restarted.summary_update_path.exists())
+
+    def test_terminal_summary_io_failure_never_blocks_authoritative_release(self):
+        for failed_path in ("intent", "summary"):
+            with self.subTest(failed_path=failed_path), tempfile.TemporaryDirectory(
+                    prefix="ITL отказ метрик ") as root:
+                coordinator = Coordinator(Path(root) / "координатор с пробелом")
+                self.assertTrue(coordinator.summary()["terminal"]["complete"])
+                with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                    record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "e" * 32,
+                              "token": "e" * 64, "sequence": coordinator.take_sequence(),
+                              "resources": ["base-a"], "accessMode": "exclusive",
+                              "status": "running", "createdAt": "2026-01-01T00:00:00+00:00",
+                              "owner": {}}
+                    coordinator.save(record)
+                    record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+
+                real_write_json = access_module.write_json
+                target = (coordinator.summary_update_path if failed_path == "intent" else
+                          coordinator.summary_path)
+                def fail_only_derived(path, value):
+                    if Path(path) == target:
+                        raise OSError("injected derived metrics failure")
+                    return real_write_json(path, value)
+                with mock.patch("itl_remote.access.write_json", side_effect=fail_only_derived):
+                    with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                        coordinator.save(record)
+                    incomplete = coordinator.summary()
+
+                self.assertEqual("released", coordinator.record(record["ticket"])["status"])
+                self.assertEqual([], coordinator.records())
+                self.assertIsNone(incomplete["terminal"]["storedCount"])
+                self.assertFalse(incomplete["terminal"]["complete"])
+                healed = coordinator.summary()
+                if failed_path == "intent":
+                    self.assertIsNone(healed["terminal"]["storedCount"])
+                    self.assertFalse(healed["terminal"]["complete"])
+                else:
+                    self.assertEqual(1, healed["terminal"]["storedCount"])
+                    self.assertTrue(healed["terminal"]["complete"])
+
+    def test_summary_capability_blocks_an_older_v2_writer(self):
+        coordinator = Coordinator(self.coordinator)
+        self.assertTrue(coordinator.summary()["terminal"]["complete"])
+        self.assertEqual({"schemaVersion": 2, "terminalSummary": 1},
+                         read_json(coordinator.layout_path))
+        out = self.root / "старый V2 writer"
+        out.mkdir()
+        config = {"root": str(self.coordinator), "bases": [self.base], "name": "old-v2",
+                  "output": str(out), "timeout": 0}
+        request = out / "запрос с пробелом.json"
+        write_json(request, config)
+        result = subprocess.run(
+            [sys.executable, "-X", "utf8", "-c", CHILD,
+             str(self.v2_runtime_before_summary()), str(request)],
+            capture_output=True, text=True, timeout=10, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        failure = self.wait_file(out / "done.json")
+        self.assertIn("INFOBASE_ACCESS_LAYOUT_INVALID", failure["error"])
+        self.assertEqual(0, coordinator.summary()["terminal"]["storedCount"])
+
+    def test_failed_intent_keeps_summary_incomplete_when_stale_baseline_cannot_be_removed(self):
+        coordinator = Coordinator(self.coordinator)
+        self.assertTrue(coordinator.summary()["terminal"]["complete"])
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "b" * 32,
+                      "token": "b" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": ["base-a"], "accessMode": "exclusive", "status": "running",
+                      "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+
+        real_write_json = access_module.write_json
+        real_unlink = Path.unlink
+        def fail_intent(path, value):
+            if Path(path) == coordinator.summary_update_path:
+                raise OSError("injected intent failure")
+            return real_write_json(path, value)
+        def keep_stale_summary(path, *args, **kwargs):
+            if Path(path) == coordinator.summary_path:
+                raise OSError("injected summary unlink failure")
+            return real_unlink(path, *args, **kwargs)
+        with mock.patch("itl_remote.access.write_json", side_effect=fail_intent), \
+                mock.patch.object(Path, "unlink", new=keep_stale_summary):
+            with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                coordinator.save(record)
+            summary = coordinator.summary()
+        self.assertEqual("released", coordinator.record(record["ticket"])["status"])
+        self.assertIsNone(summary["terminal"]["storedCount"])
+        self.assertFalse(summary["terminal"]["complete"])
+        self.assertTrue(coordinator.summary_unavailable_path.exists())
+
+    def test_failed_marker_and_baseline_removal_downgrade_summary_capability(self):
+        coordinator = Coordinator(self.coordinator)
+        self.assertTrue(coordinator.summary()["terminal"]["complete"])
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "a" * 32,
+                      "token": "a" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": ["base-a"], "accessMode": "exclusive", "status": "running",
+                      "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+
+        real_write_json = access_module.write_json
+        real_unlink = Path.unlink
+        def fail_derived_markers(path, value):
+            if Path(path) in (coordinator.summary_update_path, coordinator.summary_unavailable_path):
+                raise OSError("injected derived marker failure")
+            return real_write_json(path, value)
+        def keep_stale_summary(path, *args, **kwargs):
+            if Path(path) == coordinator.summary_path:
+                raise OSError("injected summary unlink failure")
+            return real_unlink(path, *args, **kwargs)
+        with mock.patch("itl_remote.access.write_json", side_effect=fail_derived_markers), \
+                mock.patch.object(Path, "unlink", new=keep_stale_summary):
+            with coordinator.mutex(time.monotonic() + 5, lambda: False):
+                coordinator.save(record)
+
+        self.assertEqual({"schemaVersion": 2}, read_json(coordinator.layout_path))
+        self.assertEqual("released", coordinator.record(record["ticket"])["status"])
+        summary = coordinator.summary()
+        self.assertIsNone(summary["terminal"]["storedCount"])
+        self.assertFalse(summary["terminal"]["complete"])
+
+    def test_corrupt_indexed_record_marks_active_summary_incomplete(self):
+        coordinator = Coordinator(self.coordinator)
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "c" * 32,
+                      "token": "c" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": ["base-a"], "accessMode": "exclusive", "status": "waiting",
+                      "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+        write_json(coordinator.tickets / (record["ticket"] + ".json"), {"damaged": True})
+        summary = coordinator.summary()
+        self.assertEqual(1, summary["active"]["count"])
+        self.assertFalse(summary["active"]["complete"])
+        self.assertFalse(summary["complete"])
+
     def test_twenty_thousand_cleanup_debts_do_not_touch_status_and_maintenance_writes_are_bounded(self):
         coordinator = Coordinator(self.coordinator)
         with coordinator.mutex(time.monotonic() + 5, lambda: False):
@@ -959,6 +1224,27 @@ class AccessTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_TICKET_COMPACTED"):
             coordinator.record(old["ticket"])
         self.assertEqual(young, coordinator.record(young["ticket"]))
+
+    def test_terminal_summary_tracks_archive_compaction(self):
+        coordinator = Coordinator(self.coordinator)
+        self.assertTrue(coordinator.summary()["terminal"]["complete"])
+        with coordinator.mutex(time.monotonic() + 5, lambda: False):
+            record = {"schemaVersion": 1, "participantProtocol": 1, "ticket": "9" * 32,
+                      "token": "9" * 64, "sequence": coordinator.take_sequence(),
+                      "resources": ["base-a"], "accessMode": "exclusive", "status": "running",
+                      "createdAt": "2026-01-01T00:00:00+00:00", "owner": {}}
+            coordinator.save(record)
+            record.update(status="released", finishedAt="2026-01-01T00:01:00+00:00")
+            coordinator.save(record)
+        coordinator.cleanup()
+        initial = coordinator.summary()
+        coordinator.configure_retention(30, 365, 100)
+        result = coordinator.compact(1)
+        self.assertEqual(1, result["compacted"])
+        compacted = coordinator.summary()
+        self.assertEqual(1, compacted["terminal"]["storedCount"])
+        self.assertLess(compacted["stores"]["terminal-archive"]["bytes"],
+                        initial["stores"]["terminal-archive"]["bytes"])
 
     def test_compaction_restarts_after_each_publication_boundary(self):
         for boundary in ("compaction-tombstone", "compaction-delete", "compaction-state"):

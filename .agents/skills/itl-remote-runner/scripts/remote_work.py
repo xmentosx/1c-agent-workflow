@@ -22,6 +22,8 @@ def main():
     command.add_argument("--bindings", required=True, help="JSON array of explicit database connections sharing this resource")
     command = commands.add_parser("access-status")
     command.add_argument("--coordinator", required=True)
+    command.add_argument("--summary", action="store_true",
+                         help="Return aggregate bounded metrics instead of the legacy active-record array")
     command = commands.add_parser("access-compact")
     command.add_argument("--coordinator", required=True)
     command.add_argument("--shards", type=int, default=1)
@@ -136,7 +138,7 @@ def main():
         if args.command == "access-register":
             return coordinator.register(args.resource, read_json(args.bindings))
         if args.command == "access-status":
-            return coordinator.snapshot()
+            return coordinator.summary() if args.summary else coordinator.snapshot()
         if args.command == "access-compact":
             return coordinator.compact(args.shards)
         if args.command == "access-cleanup":
