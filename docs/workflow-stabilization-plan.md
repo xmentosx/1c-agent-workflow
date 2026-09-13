@@ -38,6 +38,7 @@ evidence is preserved in the append-only
 | STAB-07 | P1: `ResumePlan` selected a newer supervisor instead of its recorded trusted supervisor. | Implemented; recorded-supervisor and fail-closed cases have focused fixture proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | No installed/live proof; local fixture regression only. |
 | STAB-08 | P1: an entrypoint edit selected the whole lifecycle test inventory. | Implemented; semantic routing and fail-closed fallback have focused proof. | Registered in the local queue. | Not published; user hold. | Not installed from this change. | Fresh local Targeted proof only; no installed/live proof. |
 | STAB-09 | P1: stale Pester estimates and serial-tail scheduling can exhaust the Targeted hard budget after every parallel owner has passed. | Implemented and independently reviewed: only implicit `Targeted` resolves the catalog default of four workers, capped by logical processors; explicit values and other modes retain the public default of three. Requested/explicit/effective provenance is preserved through both wrappers and the shard runner, and all 14 stale STAB-06E ordering weights were refreshed without changing owner selection, serial classification, or hard limits. | Registered at `d5aa122`: Targeted passed 106/106 in 435.424 seconds with `requested=3`, `explicit=false`, `effective=4`; seven shards executed and none were reused. | Not published; user hold. | Not installed. | The original measured STAB-06E 17-test schedule exceeds 1,200 seconds with three workers but retains more than 200 seconds modeled reserve with four. Peak Targeted memory use may increase on machines with at least four logical processors; no dynamic memory planner was added. |
+| STAB-10 | P0: incompatible access is queued, but an agent-owned long-lived holder had no general retain/release handoff; a later operation could wait for backend idle timeout instead of letting the agent finish or immediately release its current phase. | Implemented locally: all owner classes now have an explicit agent decision contract; the missing on-demand ROCTUP/Vanessa adapter retains the phase and exposes safe `finish_database_access`. | Not registered. | Not published; user hold. | Not installed. | Go, Python, Pester, ownership, drain/fence, restart, diagnostic-action, dependency-lock, and always-on agent-rule proof pass. Live installed cross-operation acceptance remains absent. |
 
 ## Wave 0 - frozen scope and baselines
 
@@ -142,6 +143,89 @@ the mode recorded in measurement evidence are machine-inventoried. Admission
 waiting stays outside measured time; the complete measured lifecycle stays under
 `measurement-exclusive`. This semantic batch is separate from the real-host and
 real-1C acceptance in STAB-05.
+
+### STAB-10 - agent-owned retain/release handoff
+
+Problem:
+
+The compatibility matrix prevents conflicting database work, but it does not
+tell an agent that its own earlier long-lived holder is blocking the next
+operation and does not give that agent one supported way to retain or release
+the holder. In the observed ROCTUP path, `shared-read` survives an individual
+tool response and an independently started measurement can therefore wait for
+the backend idle timeout. The same defect class must be assessed for every
+workflow-owned long-lived holder rather than patched only for ROCTUP.
+
+Contract:
+
+1. Database access evidence identifies the owning agent task and the exact
+   releasable holder without exposing the private lease token.
+2. Before an incompatible operation enters passive waiting, an agent can see
+   whether the blocker is its own holder or foreign work and gets a supported,
+   exact-scope retain/release action.
+3. The agent decides whether its current phase still needs the holder. If it
+   does, it finishes the required operations and then releases; otherwise it
+   releases immediately. Starting the incompatible operation must not silently
+   wait for that same agent's idle timeout.
+4. A release is graceful: an already running atomic call finishes, new calls do
+   not slip in after release begins, owned native runtime stops, and admission is
+   released only after cleanup is proven.
+5. Foreign active work is never killed or force-unlocked. It remains queued by
+   the existing compatibility/FIFO rules; an idle or explicitly yieldable
+   workflow-owned holder can cooperate without waiting for its cleanup timeout.
+6. Idle timeout remains crash/abandonment cleanup, not the normal transition
+   between agent operations. Bounded helpers continue to release automatically
+   at command completion and must not require an artificial manual step.
+7. The mechanism is generic at the access-owner boundary. Individual tools may
+   provide adapters, but must not invent separate ROCTUP-, Vanessa-, performance-
+   or lifecycle-only queue protocols.
+
+Implementation decision:
+
+- On-demand ROCTUP and Vanessa are the only ordinary interactive holders that
+  retain a database ticket between independent MCP tool calls. Their common
+  facade exposes one idempotent `finish_database_access` operation.
+  Retain is the default while the agent is still in that diagnostic phase;
+  finish gracefully stops the exact owned backend and releases only proven
+  ownership. The existing local `runtime-mcp.lock` is retained for the phase so
+  lifecycle cleanup cannot preempt the agent between calls. Idle cleanup may
+  stop unused native runtime, but is not evidence that the agent yielded the
+  phase.
+- A persistent Vanessa profile already has addressable status/stop ownership and
+  keeps that adapter. A performance job or lifecycle helper is a bounded owner:
+  the agent either lets it finish or uses its existing status/cancel contract;
+  uncertain cleanup remains operation-specific recovery. These owners do not
+  receive a generic unlock command.
+- Public blocker evidence names the safe owning action (`finish`, profile stop,
+  job/helper status or cancel, or recovery) without publishing a lease token.
+  The action is diagnostic, never authority to release another task's owner.
+- Session-capacity reservations and legacy runtime are included in the ownership
+  view because they can still delay work, but keep their existing exact-process
+  cleanup adapters. They are not converted into database coordinator tickets.
+- No force-unlock, ticket deletion, TTL stealing, second coordinator, heartbeat
+  negotiation, or automatic shutdown of live foreign work is introduced.
+
+Acceptance:
+
+- [x] inventory every production access-mode producer as bounded or long-lived,
+  and prove its normal release boundary;
+- [x] own idle holder -> incompatible operation reports the exact holder and can
+  release it without waiting for idle timeout;
+- [x] own active atomic call -> release waits for that call, admits no later call,
+  then admits the queued incompatible operation;
+- [x] retained own phase -> the agent can continue its declared work and release
+  explicitly when complete;
+- [x] foreign active holder -> no force-stop, no stolen lease, and normal FIFO
+  admission after proven release;
+- [x] abandoned holder -> existing fail-closed recovery remains authoritative;
+- [x] different database -> proceeds independently;
+- [x] after measurement/mutation release, an on-demand tool can reacquire and
+  restart normally;
+- [x] no source acceptance path depends on the ten-minute backend idle timeout or the
+  one-hour admission wait timeout.
+- [ ] install the qualified component candidate and repeat the retain -> finish ->
+  incompatible operation -> reacquire sequence against a real managed infobase;
+  this is intentionally deferred with publication and Release E2E.
 
 Then complete the base admission contract before adding operation-specific
 recovery: file/server aliases, two local processes, two projects, two hosts over

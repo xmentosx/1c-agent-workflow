@@ -164,6 +164,12 @@
             $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*status.*cancel.*recovery contract'
             $skillTexts[$skillId] | Should -Match 'do not call `finish_database_access`.*live job'
         }
+
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\USER-RULES.append.md') -Raw -Encoding UTF8
+        $userRules | Should -Match 'either retain owned activity and postpone, or finish it through its exact owner'
+        $userRules | Should -Match 'never await its idle timeout'
+        $userRules | Should -Match 'Let bounded jobs finish or cancel them through their owner'
+        $userRules | Should -Match 'Never release foreign work'
     }
 
     It "documentation budgets keep review thresholds below hard limits" {
@@ -171,7 +177,7 @@
             @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1700; rationale = "always-on ITL safety overlay with explicit routine routing precedence and database-owner handoff" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }

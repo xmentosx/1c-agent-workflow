@@ -9,7 +9,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Priority
 
-- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool` and `call_tool` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool and stops automatically after inactivity or client exit.
+- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool`, `call_tool`, and `finish_database_access` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool. Inactivity may stop the native backend, but it does not release the agent-owned database phase.
 - Use the legacy web-based Branch Data MCP only when ROCTUP is unavailable or the branch is intentionally published and the requested workflow depends on that legacy channel.
 - Do not assume a database is web-published.
 

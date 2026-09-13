@@ -2,7 +2,7 @@
 
 Windows x64 stdio facade for the ITL branch-local ROCTUP and Vanessa UI MCP backends.
 
-The executable is registered once in the active client's project MCP config. Its default gateway surface publishes only `resolve_tool` and `call_tool`; the versioned full compatibility catalog remains internal. `resolve_tool` searches that catalog without starting 1C. For parameterized calls, `call_tool.argumentsJson` carries one JSON-encoded inner object so schema-restricting model clients cannot erase unknown nested property names; `arguments={}` remains the no-argument and backward-compatible object form, and the two forms are mutually exclusive. The facade parses and validates the selected inner tool arguments, asks the private workflow broker to start a backend, initializes its Streamable HTTP MCP session, verifies the complete actual catalog, and only then forwards the call unchanged. Backend ports and processes never appear in client configuration. `--surface full` keeps the prior direct-catalog surface as a diagnostic fallback.
+The executable is registered once in the active client's project MCP config. Its default gateway surface publishes `resolve_tool`, `call_tool`, and the common `finish_database_access` handoff; the versioned full compatibility catalog remains internal. `resolve_tool` searches that catalog without starting 1C. For parameterized calls, `call_tool.argumentsJson` carries one JSON-encoded inner object so schema-restricting model clients cannot erase unknown nested property names; `arguments={}` remains the no-argument and backward-compatible object form, and the two forms are mutually exclusive. The facade parses and validates the selected inner tool arguments, asks the private workflow broker to start a backend, initializes its Streamable HTTP MCP session, verifies the complete actual catalog, and only then forwards the call unchanged. Backend ports and processes never appear in client configuration. `--surface full` keeps the prior direct-catalog surface as a diagnostic fallback and exposes the same handoff.
 
 For Vanessa, the broker leases separate MCP-manager and TestClient ports, creates the reserved `itl-ondemand` TestClient profile, and starts Vanessa Automation with silent/fail-closed VanessaExt installation. Editor-only calls leave TestClient stopped. Before a TestClient-dependent call, the facade reuses a proven owned process or runs the shared capacity/license preflight, starts one owned process, proves its port, auto-connects the reserved profile, and requires a positive logical-connection postcondition. A capacity failure permits one shared exact-dev-infobase cleanup and one admission retry; source-infobase, other-branch, and ambiguous processes remain fail-closed. Idle or stdio-EOF cleanup remains ownership-scoped and unsafe-action protection is never edited automatically.
 
@@ -26,12 +26,17 @@ never extend an earlier caller deadline. HTTP transport has no separate shorter
 wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
 minute); forced shutdown remains unproven cleanup at the adapter boundary.
 
-Facade 0.4.12 reserves its target and manager databases through the shared
+Facade 0.4.13 reserves its target and manager databases through the shared
 filesystem coordinator before taking the local runtime lock. It retains that
-reservation while its native backend exists. Nested broker work inherits a
-private proof and registers its participation; conflicting projects and chats
-wait outside the runtime lock. Uncertain native cleanup requires recovery and
-cannot be hidden by closing a process or a pipe. Inherited work requires the
+reservation and a shared phase handle while the agent still owns the interactive
+database phase, including between inner calls. `finish_database_access` fences
+later calls, finishes an active call, stops only the exact owned backend, proves
+cleanup, and then releases the phase and database ownership. Idle cleanup may
+stop an unused native backend but does not yield the agent's phase; the next call
+may restart it under the same ownership. Nested broker work inherits a private
+proof and registers its participation; conflicting projects and chats wait
+outside the runtime lock. Uncertain native cleanup requires recovery and cannot
+be hidden by closing a process or a pipe. Inherited work requires the
 participant-aware protocol on both sides; incompatible versions reject it before
 launch. Shared coordination across hosts requires the same configured authority
 and database identities, rather than separate local default directories.
