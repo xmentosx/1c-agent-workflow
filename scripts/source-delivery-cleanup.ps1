@@ -133,6 +133,7 @@ function Remove-SourceDeliveryExpiredArtifactHolds {
     if (-not (Test-Path -LiteralPath $root -PathType Container)) { return [pscustomobject]@{ removedDirectories = 0; retained = 0; freedBytes = 0; entries = @() } }
     foreach ($hold in @(Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction Stop | Where-Object { $_.Name -match '-artifact-hold-[0-9]{8}-[0-9]{4}$' })) {
         $build = Join-Path $hold.FullName 'build'; $testResults = Join-Path $build 'test-results'
+        if (-not (Test-Path -LiteralPath $build -PathType Container)) { continue }
         if (-not (Test-Path -LiteralPath $testResults -PathType Container) -or
             -not (Test-SourceDeliveryArtifactExpired -Item (Get-Item -LiteralPath $build) -MinimumAgeHours $MinimumAgeHours) -or
             (Test-SourceDeliveryPathInUse -Path $hold.FullName) -or (Test-SourceDeliveryTreeHasReparsePoint -Path $build)) { $retained++; continue }

@@ -155,6 +155,8 @@ Describe 'Source delivery post-success cleanup' {
         $result = Remove-SourceDeliveryExpiredArtifactHolds -SearchRoot $root -MinimumAgeHours 0
 
         $result.removedDirectories | Should -Be 1; Test-Path -LiteralPath $build | Should -BeFalse; Test-Path -LiteralPath $handoffs | Should -BeTrue
+        $again = Remove-SourceDeliveryExpiredArtifactHolds -SearchRoot $root -MinimumAgeHours 0
+        $again.removedDirectories | Should -Be 0; $again.retained | Should -Be 0
     }
 
     It 'retains three managed launcher backups across legacy and current names' {
