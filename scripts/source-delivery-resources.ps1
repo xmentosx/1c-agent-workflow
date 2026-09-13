@@ -347,7 +347,7 @@ function Invoke-DeliveryCleanupSweep {
     Update-DeliveryFailedPlanRetention
     $before = Read-DeliveryResourceLedger
     $preservePaths = @($before.resources | Where-Object { [string]$_.state -in @("active", "retained") -and $_.identity.PSObject.Properties["path"] } | ForEach-Object { [string]$_.identity.path } | Where-Object { $_ })
-    $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -PreservePaths $preservePaths
+    $cleanup = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -PreservePaths $preservePaths -Phase $Phase
     $ledger = Read-DeliveryResourceLedger
     $attemptedAt = [DateTime]::UtcNow.ToString("o")
     $ledgerWarnings = [Collections.Generic.List[string]]::new()

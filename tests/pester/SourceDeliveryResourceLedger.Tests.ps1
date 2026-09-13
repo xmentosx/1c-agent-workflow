@@ -21,7 +21,7 @@ BeforeAll {
         $output = @(& git -C $RepositoryRoot @Arguments 2>&1); [pscustomobject]@{ exitCode=$LASTEXITCODE; stdout=($output -join [Environment]::NewLine); stderr='' }
     }
     function Invoke-SourceDeliveryPostSuccessCleanup {
-        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths)
+        param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths,[string]$Phase)
         [pscustomobject]@{ status='completed'; warnings=@() }
     }
     . (Join-Path $RepoRoot 'scripts\source-delivery-resources.ps1')
@@ -126,10 +126,11 @@ Describe 'Delivery v3 resource ledger' {
     It 'turns a stale active candidate into retained state and preserves its path' {
         $root = New-LedgerRepository; $active = Join-Path $root 'active-resource'; New-Item -ItemType Directory -Force -Path $active | Out-Null
         Register-DeliveryResource -PlanId 'active-plan' -Kind 'candidate-worktree' -Owner 'delivery' -Identity ([ordered]@{ path=$active }) -State active | Out-Null
-        $script:capturedPreserve = @()
-        Mock Invoke-SourceDeliveryPostSuccessCleanup { param($FreshProjectsRoot,$E2EProjectRoot,$PreservePaths); $script:capturedPreserve=@($PreservePaths); [pscustomobject]@{status='completed';warnings=@()} }
-        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $root | Out-Null
+        $script:capturedPreserve = @(); $script:capturedPhase = ''
+        Mock Invoke-SourceDeliveryPostSuccessCleanup { param($FreshProjectsRoot,$E2EProjectRoot,$PreservePaths,$Phase); $script:capturedPreserve=@($PreservePaths); $script:capturedPhase=$Phase; [pscustomobject]@{status='completed';warnings=@()} }
+        Invoke-DeliveryCleanupSweep -FreshProjectsRoot $root -Phase pre-operation | Out-Null
         @($script:capturedPreserve) | Should -Contain $active
+        $script:capturedPhase | Should -Be 'pre-operation'
         (Read-DeliveryResourceLedger).resources[0].state | Should -Be 'retained'
     }
 

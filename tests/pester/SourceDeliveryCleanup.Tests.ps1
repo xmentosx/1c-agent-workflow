@@ -86,6 +86,73 @@ Describe 'Source delivery post-success cleanup' {
         $result.removedArchives | Should -Be 1; $result.freedBytes | Should -BeGreaterThan 0; Test-Path (Split-Path -Parent $stale) | Should -BeFalse; Test-Path (Split-Path -Parent $active) | Should -BeTrue
     }
 
+    It 'removes expired non-Git Vanessa build work under a whitespace and non-ASCII root' {
+        $root = Join-Path $TestDrive ("build with space-{0}" -f [char]0x0416); $owned = Join-Path $root 'deadbeef'; $git = Join-Path $root '1234abcd'; $unknown = Join-Path $root 'source-copy'
+        New-Item -ItemType Directory -Force -Path $owned | Out-Null; Set-Content -LiteralPath (Join-Path $owned 'result.bin') -Value 'owned'
+        New-CleanupRepository -Root $git
+        New-Item -ItemType Directory -Force -Path $unknown | Out-Null
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+
+        $result = Remove-SourceDeliveryStaleVanessaBuildWork -WorkRoot $root -MinimumAgeHours 0
+
+        $result.removedDirectories | Should -Be 1; $result.freedBytes | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $owned | Should -BeFalse; Test-Path -LiteralPath $git | Should -BeTrue; Test-Path -LiteralPath $unknown | Should -BeTrue
+    }
+
+    It 'removes only exact release quarantine and disposable preserved evidence' {
+        $temp = Join-Path $TestDrive ("temporary data with space-{0}" -f [char]0x0416)
+        $quarantine = Join-Path $temp 'itl-quarantine\workflow-release-e2e-snapshots-20260912'
+        $near = Join-Path $temp 'itl-quarantine\manual-snapshots'
+        $preserved = Join-Path $temp 'itl-release-e2e-preserved-20260911-171249'
+        $agent = Join-Path $preserved '.agent-1c'
+        $build = Join-Path $preserved 'build'
+        $relocated = Join-Path $preserved 'relocated-main'
+        foreach ($directory in @($quarantine, $near, $agent, $build, $relocated)) {
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        }
+        Set-Content -LiteralPath (Join-Path $quarantine 'release-e2e-extension-run.dt') -Value 'snapshot'; Set-Content -LiteralPath (Join-Path $quarantine 'release-e2e-extension-run.dt.state.json') -Value '{}'
+        Set-Content -LiteralPath (Join-Path $near 'release-e2e-extension-run.dt') -Value 'keep'; Set-Content -LiteralPath (Join-Path $agent 'old.bin') -Value 'agent'; Set-Content -LiteralPath (Join-Path $build 'old.bin') -Value 'build'; Set-Content -LiteralPath (Join-Path $relocated 'live.bin') -Value 'live'
+        [IO.File]::WriteAllText((Join-Path $preserved 'manifest.json'), (@{ moved = @(@{ junction = $true; destination = (Join-Path $relocated 'live') }) } | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+
+        $result = Remove-SourceDeliveryStaleReleaseRecoveryArtifacts -TempRoot $temp -MinimumAgeHours 0
+
+        $result.removedDirectories | Should -Be 3; Test-Path -LiteralPath $quarantine | Should -BeFalse
+        Test-Path -LiteralPath $agent | Should -BeFalse; Test-Path -LiteralPath $build | Should -BeFalse
+        Test-Path -LiteralPath $near | Should -BeTrue; Test-Path -LiteralPath $relocated | Should -BeTrue
+    }
+
+    It 'keeps the newest passed and every failed ai-rules migration snapshot' {
+        $root = Join-Path $TestDrive ("migration project with space-{0}" -f [char]0x0416); New-CleanupRepository -Root $root; $runs = Join-Path $root '.agent-1c\runs'
+        $names = @('ai-rules-migration-20260901-010101-001', 'ai-rules-migration-20260902-010101-001', 'ai-rules-migration-20260903-010101-001')
+        foreach ($name in $names) { $path = Join-Path $runs $name; New-Item -ItemType Directory -Force -Path $path | Out-Null; Set-Content -LiteralPath (Join-Path $path 'migration-report.json') -Value '{"status":"passed"}' }
+        $failed = Join-Path $runs 'ai-rules-migration-20260831-010101-001'; New-Item -ItemType Directory -Force -Path $failed | Out-Null; Set-Content -LiteralPath (Join-Path $failed 'migration-report.json') -Value '{"status":"failed"}'
+        for ($index = 0; $index -lt $names.Count; $index++) { (Get-Item -LiteralPath (Join-Path $runs $names[$index])).LastWriteTimeUtc = [DateTime]::UtcNow.AddHours(-10 + $index) }
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+
+        $result = Remove-SourceDeliveryOldAiRulesMigrationSnapshots -ProjectRoot $root -MinimumAgeHours 0 -Keep 1
+
+        $result.removedDirectories | Should -Be 2; Test-Path -LiteralPath (Join-Path $runs $names[2]) | Should -BeTrue; Test-Path -LiteralPath $failed | Should -BeTrue
+    }
+
+    It 'removes only build output from an exact expired artifact hold' {
+        $root = Join-Path $TestDrive ("storage with space-{0}" -f [char]0x0416)
+        $hold = Join-Path $root 'PM5-corp-branch-artifact-hold-20260821-1815'
+        $build = Join-Path $hold 'build'
+        $testResults = Join-Path $build 'test-results'
+        $handoffs = Join-Path $hold 'handoffs'
+        foreach ($directory in @($testResults, $handoffs)) {
+            New-Item -ItemType Directory -Force -Path $directory | Out-Null
+        }
+        Set-Content -LiteralPath (Join-Path $testResults 'result.xml') -Value '<testsuite />'
+        Set-Content -LiteralPath (Join-Path $handoffs 'keep.md') -Value 'keep'
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+
+        $result = Remove-SourceDeliveryExpiredArtifactHolds -SearchRoot $root -MinimumAgeHours 0
+
+        $result.removedDirectories | Should -Be 1; Test-Path -LiteralPath $build | Should -BeFalse; Test-Path -LiteralPath $handoffs | Should -BeTrue
+    }
+
     It 'retains three managed launcher backups across legacy and current names' {
         $list = Join-Path $TestDrive 'ibases.v8i'; Set-Content $list '[base]'; foreach ($name in @('20260827-010101','20260827-010102','20260827-010103-100','20260827-010104-200')) { Set-Content "$list.$name.bak" $name }; Set-Content "$list.manual.bak" 'manual'
         . (Join-Path $RepoRoot 'scripts\develop-e2e-cleanup.ps1')
@@ -122,6 +189,8 @@ Describe 'Source delivery post-success cleanup' {
         . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
         Mock Remove-SourceDeliveryStaleCandidateWorktrees { throw 'candidate cleanup unavailable' }
         Mock Remove-SourceDeliveryStaleTestFixtures { [pscustomobject]@{ removedFixtures=0; removedWorktrees=0 } }
+        Mock Remove-SourceDeliveryStaleVanessaBuildWork { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
+        Mock Remove-SourceDeliveryStaleReleaseRecoveryArtifacts { [pscustomobject]@{ removedDirectories=0; retained=0; freedBytes=0 } }
         Mock Remove-DevelopE2EStaleFreshProjects { [pscustomobject]@{ removedProjects=0 } }
         Mock Remove-DevelopE2EStaleLauncherRegistrations { 0 }
         Mock Remove-ReleaseE2EStaleLauncherRegistrations { 0 }

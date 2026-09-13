@@ -285,6 +285,15 @@ SHA проверяются до удаления. Housekeeping failure не от
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.
 
+Тот же sweep удаляет просроченные не-Git work-каталоги контролируемой сборки
+Vanessa из `C:\itlvabld`, старые passed-снимки миграции `ai_rules_1c`, точные
+`*-artifact-hold-YYYYMMDD-HHmm\build` и распознанные release quarantine/evidence.
+Автоматические pre/post-publication проходы выдерживают семь дней, ручной
+`Cleanup` удаляет их сразу. Dirty Git, активные процессы, reparse/junction,
+последний passed migration snapshot, текущие capability/rollback-каталоги и
+неизвестная форма артефакта всегда сохраняются. В build work root распознаются
+только восьмизначные hex-каталоги, создаваемые штатным builder.
+
 Для release-снимков распознаются текущий путь
 `.agent-1c/runs/release-e2e/<run>/snapshots/{baseline,post-config}.dt`,
 прежний `.agent-1c/release-e2e-runs/<run>/snapshots/` с теми же именами и
