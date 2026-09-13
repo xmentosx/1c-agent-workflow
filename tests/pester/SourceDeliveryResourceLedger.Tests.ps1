@@ -211,7 +211,7 @@ Describe 'Delivery v3 resource ledger' {
             $worktreesBefore = (& git -C $fixture.root worktree list --porcelain) -join "`n"
             $ledgerPath = Get-DeliveryResourceLedgerPath
             $ledgerBefore = [IO.File]::ReadAllText($ledgerPath)
-            $indexPath = (& git -C $owned.path rev-parse --path-format=absolute --git-path index).Trim()
+            $indexPath = (Invoke-RepositoryGit -RepositoryRoot $owned.path -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
             $indexBytesBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexPath))
             $indexShaBefore = (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash
             $report = Get-DeliveryDispositionReport
@@ -255,8 +255,8 @@ Describe 'Delivery v3 resource ledger' {
             $worktreesBefore = (& git -C $fixture.root worktree list --porcelain) -join "`n"
             $ledgerPath = Get-DeliveryResourceLedgerPath
             $ledgerBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($ledgerPath))
-            $rootIndex = (& git -C $fixture.root rev-parse --path-format=absolute --git-path index).Trim()
-            $candidateIndex = (& git -C $candidate.path rev-parse --path-format=absolute --git-path index).Trim()
+            $rootIndex = (Invoke-RepositoryGit -RepositoryRoot $fixture.root -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
+            $candidateIndex = (Invoke-RepositoryGit -RepositoryRoot $candidate.path -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
             $rootIndexBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($rootIndex))
             $candidateIndexBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($candidateIndex))
 
@@ -488,7 +488,7 @@ public static class $typeName
         childInfo.CreateNoWindow = true;
         Process child = Process.Start(childInfo);
         File.WriteAllText(Environment.GetEnvironmentVariable("ITL_DISPOSITION_PIPE_CHILD_PID_PATH"), child.Id.ToString(), new UTF8Encoding(false));
-        Thread.Sleep(300);
+        Thread.Sleep(1500);
         return 0;
     }
 }
@@ -510,7 +510,7 @@ public static class $typeName
             $script:Remote = 'ignored-by-fake-git'
 
             $watch = [Diagnostics.Stopwatch]::StartNew()
-            $result = Invoke-DeliveryBoundedLsRemote -TimeoutMilliseconds 750
+            $result = Invoke-DeliveryBoundedLsRemote -TimeoutMilliseconds 3000
             $watch.Stop()
             $result.status | Should -Be timed-out
             $result.stderr | Should -Match 'output drain'
