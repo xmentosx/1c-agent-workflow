@@ -697,12 +697,14 @@ function New-DeliveryRunHotIndex {
     $directoryStamp = if (Test-Path -LiteralPath $RunRoot -PathType Container) {
         (Get-Item -LiteralPath $RunRoot).LastWriteTimeUtc.ToString("o")
     } else { "" }
+    $totalDurationMs = [int64]0
+    foreach ($entry in $valid) { $totalDurationMs += [int64]$entry.durationMs }
     if ($ProcessedRawPaths) { $ProcessedRawPaths.Value = $processed }
     return [pscustomobject][ordered]@{
         schemaVersion=1; kind="itl-delivery-run-hot-index"; capacity=$script:DeliveryRunHotIndexCapacity
         sourceDirectory=[IO.Path]::GetFullPath($RunRoot); sourceDirectoryLastWriteTimeUtc=$directoryStamp
         validRunCount=$valid.Count; invalidRunCount=$invalidCount
-        totalDurationMs=[int64](($valid | Measure-Object durationMs -Sum).Sum)
+        totalDurationMs=$totalDurationMs
         byMode=$byMode; entries=@($entries); truncated=($valid.Count -gt $script:DeliveryRunHotIndexCapacity)
         updatedAt=[DateTime]::UtcNow.ToString("o")
     }
