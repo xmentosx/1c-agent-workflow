@@ -7,10 +7,24 @@ import platform
 import shutil
 import sys
 import zipfile
+from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (WorkError, digest, process_is_alive, read_json,
+from .common import (WorkError, digest, process_identity, process_is_alive, read_json,
                      resolve_resource_limits, stamp, write_json)
+
+
+WORKER_HEARTBEAT_MAX_AGE_SECONDS = 5.0
+
+
+def _worker_heartbeat_age(value):
+    try:
+        captured = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if captured.tzinfo is None:
+            captured = captured.replace(tzinfo=timezone.utc)
+        return max(0.0, (datetime.now(timezone.utc) - captured).total_seconds())
+    except (TypeError, ValueError):
+        return None
 
 
 def inspect(spool):
@@ -21,11 +35,26 @@ def inspect(spool):
               "worker": None, "targets": [], "agentConfigured": False}
     if (spool / "worker.json").exists():
         result["worker"] = read_json(spool / "worker.json")
-        # A saved heartbeat is observation, never proof of an active session.
-        result["worker"]["liveness"] = ("process-alive-heartbeat-unverified" if
-                                          process_is_alive(result["worker"].get("pid")) else "stale")
-        if result["worker"]["liveness"] == "stale" and result["worker"].get("status") != "stopped":
-            result["worker"]["status"] = "stale"
+        worker = result["worker"]
+        worker["heartbeatAgeSeconds"] = _worker_heartbeat_age(worker.get("updatedAt"))
+        # A saved PID is never enough: bind it to process creation and a fresh pulse.
+        if not process_is_alive(worker.get("pid")):
+            worker["liveness"] = "stale"
+        elif not isinstance(worker.get("processIdentity"), dict):
+            worker["liveness"] = "identity-unverified"
+        else:
+            try:
+                current_identity = process_identity(worker["pid"])
+            except WorkError:
+                current_identity = None
+            if current_identity != worker["processIdentity"]:
+                worker["liveness"] = "identity-mismatch"
+            elif worker["heartbeatAgeSeconds"] is None or worker["heartbeatAgeSeconds"] > WORKER_HEARTBEAT_MAX_AGE_SECONDS:
+                worker["liveness"] = "heartbeat-expired"
+            else:
+                worker["liveness"] = "process-identity-and-heartbeat-verified"
+        if worker["liveness"] != "process-identity-and-heartbeat-verified" and worker.get("status") != "stopped":
+            worker["status"] = "stale"
     if (spool / "profile.json").exists():
         profile = read_json(spool / "profile.json")
         result["targets"] = [{"name": name, "workspaceExists": Path(target["workspace"]).is_dir(),

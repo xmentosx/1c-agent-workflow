@@ -220,9 +220,33 @@ def process_memory_snapshot(pid, handle=None):
             counters.size = c.sizeof(counters)
             if not psapi.GetProcessMemoryInfo(w.HANDLE(int(handle)), c.byref(counters), c.sizeof(counters)):
                 raise WorkError("RESOURCE_MONITOR_UNAVAILABLE: GetProcessMemoryInfo")
+            class FileTime(c.Structure):
+                _fields_ = [("low", w.DWORD), ("high", w.DWORD)]
+
+            created, exited, kernel_time, user_time = FileTime(), FileTime(), FileTime(), FileTime()
+            kernel.GetProcessTimes.argtypes = [w.HANDLE, c.POINTER(FileTime), c.POINTER(FileTime),
+                                               c.POINTER(FileTime), c.POINTER(FileTime)]
+            if not kernel.GetProcessTimes(w.HANDLE(int(handle)), c.byref(created), c.byref(exited),
+                                          c.byref(kernel_time), c.byref(user_time)):
+                raise WorkError("RESOURCE_MONITOR_UNAVAILABLE: GetProcessTimes")
+
+            class BasicProcessInformation(c.Structure):
+                _fields_ = [("reserved1", c.c_void_p), ("peb", c.c_void_p),
+                            ("reserved2a", c.c_void_p), ("reserved2b", c.c_void_p),
+                            ("uniqueProcessId", c.c_size_t), ("parentProcessId", c.c_size_t)]
+
+            ntdll = c.WinDLL("ntdll")
+            ntdll.NtQueryInformationProcess.argtypes = [w.HANDLE, c.c_int, c.c_void_p, w.ULONG, c.POINTER(w.ULONG)]
+            basic = BasicProcessInformation()
+            returned = w.ULONG()
+            if ntdll.NtQueryInformationProcess(w.HANDLE(int(handle)), 0, c.byref(basic),
+                                                c.sizeof(basic), c.byref(returned)) != 0:
+                raise WorkError("RESOURCE_MONITOR_UNAVAILABLE: NtQueryInformationProcess")
+            creation_id = "windows-filetime:" + str((int(created.high) << 32) | int(created.low))
             return {"pid": int(pid), "workingSetBytes": int(counters.workingSet),
                     "peakWorkingSetBytes": int(counters.peakWorkingSet),
-                    "privateBytes": int(counters.privateUsage), "peakPrivateBytes": int(counters.peakPagefile)}
+                    "privateBytes": int(counters.privateUsage), "peakPrivateBytes": int(counters.peakPagefile),
+                    "parentPid": int(basic.parentProcessId), "creationId": creation_id}
         finally:
             if close_handle:
                 kernel.CloseHandle(handle)
@@ -235,10 +259,19 @@ def process_memory_snapshot(pid, handle=None):
                 name, value = line.split(":", 1)
                 if value.strip().split() and value.strip().split()[0].isdigit():
                     values[name] = int(value.strip().split()[0]) * 1024
+        stat_text = (Path("/proc") / str(pid) / "stat").read_text(encoding="ascii")
+        stat_fields = stat_text[stat_text.rfind(")") + 2:].split()
         return {"pid": int(pid), "workingSetBytes": values.get("VmRSS", 0),
                 "peakWorkingSetBytes": values.get("VmHWM", 0),
-                "privateBytes": values.get("VmSize", 0), "peakPrivateBytes": values.get("VmPeak", 0)}
+                "privateBytes": values.get("VmSize", 0), "peakPrivateBytes": values.get("VmPeak", 0),
+                "parentPid": int(stat_fields[1]), "creationId": "proc-start:" + stat_fields[19]}
     raise WorkError("RESOURCE_MONITOR_UNAVAILABLE: process memory")
+
+
+def process_identity(pid):
+    """Bind a PID to its OS creation identity so PID reuse cannot validate stale ownership."""
+    snapshot = process_memory_snapshot(pid)
+    return {"pid": int(pid), "creationId": snapshot["creationId"]}
 
 
 def process_is_alive(pid):
@@ -390,16 +423,33 @@ def git_path_list(project, arguments):
     return [item.decode('utf-8') for item in output.split(b'\0') if item]
 
 
+class ResourceContext:
+    """One immutable policy/evidence identity shared by all processes owned by a job."""
+    def __init__(self, policy, telemetry):
+        self.policy = _validated_resource_limits(policy or {})
+        self.telemetry = Path(telemetry)
+        self.context_id = identity({"policy": self.policy, "telemetry": str(self.telemetry.resolve())})
+
+    def process(self, argv, cwd, output, env=None, *, input_data=None):
+        return OwnedProcess(argv, cwd, output, env, self.policy, self.telemetry,
+                            resource_context_id=self.context_id, input_data=input_data)
+
+
 class OwnedProcess:
     """Keep descendants in a Windows job (or POSIX process group), never kill by name."""
-    def __init__(self, argv, cwd, output, env=None, resource_limits=None, telemetry=None, *, input_data=None):
+    def __init__(self, argv, cwd, output, env=None, resource_limits=None, telemetry=None, *,
+                 resource_context_id=None, input_data=None):
         self.argv = native_args(argv)
         if input_data is not None and (not isinstance(input_data, bytes) or len(input_data) > 4096):
             raise WorkError('OWNED_PROCESS_PRIVATE_INPUT_INVALID')
         self.resource_limits = _validated_resource_limits(resource_limits or {})
         self.telemetry = Path(telemetry) if telemetry else None
+        self.resource_context_id = resource_context_id
         self.resource_samples = []
+        self.process_peaks = {}
         self.resource_breach = None
+        self.command_identity = identity({"executable": Path(self.argv[0]).name.casefold(),
+                                          "argumentCount": len(self.argv)})
         self.started_at = stamp()
         self.next_resource_sample = 0.0
         host = host_memory_snapshot()
@@ -524,12 +574,25 @@ class OwnedProcess:
                 handle = int(self.process._handle) if os.name == "nt" and pid == self.process.pid else None
                 item = process_memory_snapshot(pid, handle)
                 item["executable"] = process_executable(pid)
+                item["commandIdentity"] = identity({"executable": (item["executable"] or "").casefold()})
                 process_samples.append(item)
             except WorkError:
                 if process_is_alive(pid):
                     raise
         if not process_samples:
             raise WorkError("RESOURCE_MONITOR_UNAVAILABLE: owned process list is empty")
+        for item in process_samples:
+            key = item["creationId"]
+            previous = self.process_peaks.get(key, {})
+            self.process_peaks[key] = {
+                "pid": item["pid"], "parentPid": item["parentPid"],
+                "creationId": item["creationId"], "executable": item["executable"],
+                "commandIdentity": item["commandIdentity"],
+                "peakPrivateBytes": max(previous.get("peakPrivateBytes", 0),
+                                        item.get("privateBytes", 0), item.get("peakPrivateBytes", 0)),
+                "peakWorkingSetBytes": max(previous.get("peakWorkingSetBytes", 0),
+                                           item.get("workingSetBytes", 0), item.get("peakWorkingSetBytes", 0)),
+            }
         largest = max(process_samples, key=lambda item: item.get("privateBytes", 0))
         sample = {"capturedAt": stamp(), "host": host_memory_snapshot(),
                   "process": largest, "processes": process_samples,
@@ -583,8 +646,12 @@ class OwnedProcess:
     def resource_summary(self):
         samples = [value for _, value in self.resource_samples]
         return {"pid": self.process.pid, "executable": Path(self.argv[0]).name,
+                "resourceContextId": self.resource_context_id,
+                "processIdentity": process_identity(self.process.pid) if process_is_alive(self.process.pid) else None,
+                "commandIdentity": self.command_identity,
                 "startedAt": self.started_at, "finishedAt": stamp(),
                 "peakObservedJobMemoryBytes": max(samples) if samples else 0,
+                "processes": sorted(self.process_peaks.values(), key=lambda item: (item["pid"], item["creationId"])),
                 "breach": self.resource_breach}
 
     def close(self):

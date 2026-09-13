@@ -53,7 +53,7 @@ def required_profile_types(base_kind, client_type="ManagedClient"):
     raise WorkError("RDBG_INFOBASE_KIND_REQUIRED")
 
 
-def prepare_debug_server(target, run, processes, cancelled):
+def prepare_debug_server(target, run, processes, cancelled, *, resource_context=None):
     """File bases get a job-owned loopback server on the execution host.
 
     Server bases use an explicitly configured endpoint; shared dbgs is never
@@ -85,7 +85,8 @@ def prepare_debug_server(target, run, processes, cancelled):
     if notification.exists():
         raise WorkError("STALE_DBGS_NOTIFICATION")
     command = [str(executable), "--addr=127.0.0.1", "--port=" + str(port), "--notify=" + str(notification)]
-    process = OwnedProcess(command, target["workspace"], Path(run) / "dbgs.log")
+    process = (resource_context.process(command, target["workspace"], Path(run) / "dbgs.log")
+               if resource_context else OwnedProcess(command, target["workspace"], Path(run) / "dbgs.log"))
     processes.append(process)
     deadline = time.monotonic() + config.get("startTimeoutSeconds", 30)
     while not notification.exists():
