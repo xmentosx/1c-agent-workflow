@@ -550,7 +550,7 @@
             $runText | Should -Match 'Get-VanessaTestClientTopology -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Get-VanessaSelectedScenarioCount -FeatureFiles \$applicationFeatureFiles'
             $runText | Should -Match 'Ensure-VanessaMcpInstalled -State \$state'
-            $runText | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease -State \$state -Reason "Vanessa verification preflight"'
+            $runText | Should -Match 'Invoke-DevBranchVanessaRuntimeRelease -State \$runtimeState -Reason "Vanessa verification preflight"'
             $runText | Should -Match 'Assert-VanessaScenarioCountJunitEvidence'
             $runText | Should -Match '(?s)New-VanessaParamsFile.*?-FeaturePath \$featuresPath'
             $runText | Should -Match '-InfoBasePath \$serviceInfoBase\.path'

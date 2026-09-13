@@ -7080,7 +7080,9 @@ function Confirm-DevBranchUnsafeActionProtection {
         [string]$InfoBasePath,
         [string]$DevBranchName,
         [ValidateSet("", "manual-confirm", "skip")]
-        [string]$SetupModeOverride = ""
+        [string]$SetupModeOverride = "",
+        [string]$InfoBaseUserOverride = "",
+        [string]$InfoBasePasswordOverride = ""
     )
 
     function Get-UnsafeActionProtectionMessage {
@@ -7112,7 +7114,8 @@ function Confirm-DevBranchUnsafeActionProtection {
     }
 
     $mode = if ($SetupModeOverride) { $SetupModeOverride } else { Get-DevBranchUnsafeActionProtectionSetup }
-    $user = [string](Get-EnvValue -Name "IB_USER")
+    $user = if ($PSBoundParameters.ContainsKey("InfoBaseUserOverride")) { $InfoBaseUserOverride } else { [string](Get-EnvValue -Name "IB_USER") }
+    $password = if ($PSBoundParameters.ContainsKey("InfoBasePasswordOverride")) { $InfoBasePasswordOverride } else { [string](Get-EnvValue -Name "IB_PASSWORD") }
     if ($mode -eq "skip") {
         Write-Host (Get-UnsafeActionProtectionMessage 0)
         return [pscustomobject]@{
@@ -7167,7 +7170,7 @@ function Confirm-DevBranchUnsafeActionProtection {
             -InfoBasePath $InfoBasePath `
             -InfoBaseKind $InfoBaseKind `
             -User $user `
-            -Password (Get-EnvValue -Name "IB_PASSWORD") | Out-Null
+            -Password $password | Out-Null
     }
 }
 

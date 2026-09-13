@@ -319,6 +319,57 @@ function Get-AuxiliaryContourConnection {
     return [pscustomobject][ordered]@{ kind = $kind; path = $path; user = $user; password = $password; identityHash = $identityHash }
 }
 
+function Get-AuxiliaryContourUserIdentityHash {
+    param([AllowEmptyString()][string]$User)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes([string]$User)))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Ensure-AuxiliaryContourUnsafeActionProtection {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contour,
+        [Parameter(Mandatory = $true)][object]$Connection
+    )
+    if ($Contour.baseMode -ne "managed-file") { return }
+    Assert-AuxiliaryContourMutationAllowed -Contour $Contour -Operation "unsafe-action protection confirmation"
+
+    $userIdentityHash = Get-AuxiliaryContourUserIdentityHash -User ([string]$Connection.user)
+    $state = Read-AuxiliaryContourState -Contour $Contour
+    $proof = Get-StateValue -State $state -Name "unsafeActionProtectionProof" -Default $null
+    if ($proof -and
+        [int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -eq 1 -and
+        [bool](Get-StateValue -State $proof -Name "confirmed" -Default $false) -and
+        [string](Get-StateValue -State $proof -Name "connectionIdentityHash" -Default "") -ceq [string]$Connection.identityHash -and
+        [string](Get-StateValue -State $proof -Name "userIdentityHash" -Default "") -ceq $userIdentityHash) {
+        return
+    }
+
+    if (-not (Test-InteractiveInputAvailable)) {
+        throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBaseKey='$($Connection.identityHash)' requiredAction=rerun-update-auxiliary-contour-interactively."
+    }
+    $confirmation = Confirm-DevBranchUnsafeActionProtection `
+        -InfoBaseKind $Connection.kind `
+        -InfoBasePath $Connection.path `
+        -DevBranchName "aux-$($Contour.name)" `
+        -SetupModeOverride "manual-confirm" `
+        -InfoBaseUserOverride ([string]$Connection.user) `
+        -InfoBasePasswordOverride ([string]$Connection.password)
+    if (-not [bool](Get-StateValue -State $confirmation -Name "confirmed" -Default $false)) {
+        throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBaseKey='$($Connection.identityHash)' requiredAction=confirm-unsafe-action-protection."
+    }
+    Save-AuxiliaryContourState -Contour $Contour -Updates @{
+        unsafeActionProtectionProof = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            connectionIdentityHash = [string]$Connection.identityHash
+            userIdentityHash = $userIdentityHash
+            confirmed = $true
+            mode = [string](Get-StateValue -State $confirmation -Name "mode" -Default "manual-confirm")
+            confirmedAt = [string](Get-StateValue -State $confirmation -Name "confirmedAt" -Default (Get-Date).ToString("o"))
+        }
+    } | Out-Null
+}
+
 function Assert-AuxiliaryContourMutationAllowed {
     param([Parameter(Mandatory = $true)][object]$Contour, [string]$Operation)
     if ($Contour.baseMode -eq "attached-readonly") {
@@ -445,6 +496,7 @@ function Update-AuxiliaryContour {
     Assert-AuxiliaryContourMutationAllowed -Contour $contour -Operation "update"
     $connection = Get-AuxiliaryContourConnection -Contour $contour
     Ensure-AuxiliaryManagedInfoBase -Contour $contour -Connection $connection
+    Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
     $source = Get-AuxiliaryContourFingerprint -Contour $contour
     $state = Read-AuxiliaryContourState -Contour $contour
     if ($state -and [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -eq "ready" -and
@@ -620,6 +672,65 @@ function Show-AuxiliaryContoursStatus {
     }
 }
 
+function Ensure-AuxiliaryContourVanessaExtension {
+    param([Parameter(Mandatory = $true)][object]$ReadyContext)
+    $contour = $ReadyContext.contour
+    $connection = $ReadyContext.connection
+    Assert-AuxiliaryContourMutationAllowed -Contour $contour -Operation "Vanessa tooling preparation"
+
+    $runtimeState = [pscustomobject][ordered]@{
+        safeDevBranchName = "aux-$($contour.name)"
+        worktreePath = $script:ProjectRoot
+        stateProjectRoot = $script:ProjectRoot
+        infoBaseKind = $connection.kind
+        devBranchInfoBasePath = $connection.path
+    }
+    $artifact = @(Install-VanessaMcpArtifacts | Where-Object { [string]$_.key -ceq "vaExtension" })[0]
+    if ($null -eq $artifact) { throw "ITL_AUXILIARY_VA_EXTENSION_ARTIFACT_MISSING: contour='$($contour.name)'." }
+
+    $state = Read-AuxiliaryContourState -Contour $contour
+    $proof = Get-StateValue -State $state -Name "vanessaExtensionProof" -Default $null
+    $runtime = @(Get-ToolingRuntimeExtensions -State $runtimeState -Names @("VAExtension") -User $connection.user -Password $connection.password)[0]
+    if ($proof -and
+        [int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -eq 1 -and
+        [string](Get-StateValue -State $proof -Name "connectionIdentityHash" -Default "") -ceq [string]$connection.identityHash -and
+        [string](Get-StateValue -State $proof -Name "artifactSha256" -Default "") -ceq [string]$artifact.sha256 -and
+        (Test-ToolingRuntimeExtensionReady -Runtime $runtime -Name "VAExtension" -ExpectedHash ([string](Get-StateValue -State $proof -Name "runtimeHash" -Default "")) -RequireUnsafeMode)) {
+        return
+    }
+
+    Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary Vanessa extension installation"
+    Install-VanessaMcpExtensionCfe `
+        -State $runtimeState `
+        -CfePath $artifact.path `
+        -ExtensionName "VAExtension" `
+        -InfoBaseKind $connection.kind `
+        -InfoBasePath $connection.path `
+        -User $connection.user `
+        -Password $connection.password | Out-Null
+    $safeModeProof = Set-VanessaMcpExtensionUnsafeMode `
+        -State $runtimeState `
+        -InfoBaseKind $connection.kind `
+        -InfoBasePath $connection.path `
+        -ExtensionName "VAExtension" `
+        -Artifact $artifact `
+        -User $connection.user `
+        -Password $connection.password `
+        -Scope "aux-$($contour.name)"
+    $runtime = @(Get-ToolingRuntimeExtensions -State $runtimeState -Names @("VAExtension") -User $connection.user -Password $connection.password)[0]
+    Assert-ToolingRuntimeExtensionReady -Runtime $runtime -Name "VAExtension" -RequireUnsafeMode
+    Save-AuxiliaryContourState -Contour $contour -Updates @{
+        vanessaExtensionProof = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            connectionIdentityHash = [string]$connection.identityHash
+            artifactSha256 = [string]$artifact.sha256
+            runtimeHash = [string]$runtime.contentHash
+            safeMode = $safeModeProof
+            verifiedAt = (Get-Date).ToString("o")
+        }
+    } | Out-Null
+}
+
 function Invoke-AuxiliaryContourVanessaTests {
     param([Parameter(Mandatory = $true)][object]$ReadyContext, [string]$TestSet = "")
     $normalizedSet = if ([string]::IsNullOrWhiteSpace($TestSet)) { "all" } else { $TestSet.Trim().ToLowerInvariant() }
@@ -634,6 +745,7 @@ function Invoke-AuxiliaryContourVanessaTests {
     if ($suites.Count -eq 0) {
         throw "ITL_AUXILIARY_TEST_SET_EMPTY: contour='$($ReadyContext.contour.name)' set='$normalizedSet'."
     }
+    Ensure-AuxiliaryContourVanessaExtension -ReadyContext $ReadyContext
     $requiredSuites = @()
     if ($ReadyContext.contour.testsIncludePrimary) { $requiredSuites += "primary" }
     if ($ReadyContext.contour.testsPath) { $requiredSuites += "contour" }

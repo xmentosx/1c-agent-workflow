@@ -1062,7 +1062,12 @@ function Get-ItlOnDemandRuntimeDatabaseConnections {
 function Get-ItlDatabaseAccessSettings {
     $coordinator = [string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_ROOT' -ConfigName 'databaseAccess.coordinator' -Default '')
     $scope = $(if ($coordinator) { 'configured-authority' } else { 'execution-host-only' })
-    if (-not $coordinator) { $coordinator = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ITL\infobase-access' }
+    if (-not $coordinator) {
+        # Source-test runners replace only the implicit host fallback. Explicit
+        # environment and project configuration remain authoritative.
+        $coordinator = [string][Environment]::GetEnvironmentVariable('ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT', 'Process')
+        if (-not $coordinator) { $coordinator = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ITL\infobase-access' }
+    }
     $timeout = 0.0
     $timeoutText = [string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_WAIT_TIMEOUT_SECONDS' -ConfigName 'databaseAccess.waitTimeoutSeconds' -Default '3600')
     if (-not [double]::TryParse($timeoutText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$timeout) -or

@@ -997,10 +997,13 @@ function Get-VanessaTestClientProfileConnection {
     param([Parameter(Mandatory = $true)][object]$Profile, [Parameter(Mandatory = $true)][object]$DefaultState,
         [switch]$ForAdmission, [string]$PrimaryContourName = '')
     $contourName = [string](Get-StateValue -State $Profile -Name "contour" -Default "primary")
+    $redirectedPrimary = $false
     if ($contourName -eq 'primary' -and $PrimaryContourName) {
         $contourName = $PrimaryContourName
+        $redirectedPrimary = $true
     } elseif ($contourName -eq "primary" -and $script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.contour) {
         $contourName = [string]$script:ActiveAuxiliaryVanessaContext.contour.name
+        $redirectedPrimary = $true
     }
     if ([string]::IsNullOrWhiteSpace($contourName) -or $contourName -eq "primary") {
         return [pscustomobject]@{
@@ -1017,8 +1020,10 @@ function Get-VanessaTestClientProfileConnection {
     $connection = if ($ForAdmission) { Get-AuxiliaryContourConnection -Contour $contour } else {
         (Assert-AuxiliaryContourReady -Contour $contour -Operation "Vanessa TestClient profile '$([string]$Profile.name)'").connection
     }
-    $profileUser = [string](Get-StateValue -State $Profile -Name "user" -Default "")
-    $profilePassword = [string](Get-StateValue -State $Profile -Name "password" -Default "")
+    # A primary profile redirected to an auxiliary contour must not carry
+    # credentials that belong to the primary infobase.
+    $profileUser = if ($redirectedPrimary) { "" } else { [string](Get-StateValue -State $Profile -Name "user" -Default "") }
+    $profilePassword = if ($redirectedPrimary) { "" } else { [string](Get-StateValue -State $Profile -Name "password" -Default "") }
     return [pscustomobject]@{
         contour = $contour.name
         kind = $connection.kind
@@ -4879,6 +4884,27 @@ function Add-VanessaVerificationEvidenceUpdates {
     $Updates["lastDiagnosticVerificationLogPath"] = $LogPath
 }
 
+function Get-VanessaVerificationRuntimeState {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    if (-not $script:ActiveAuxiliaryVanessaContext) { return $State }
+    $connection = Get-AuxiliaryContourConnection -Contour $script:ActiveAuxiliaryVanessaContext.contour
+    # This projection is deliberately ephemeral. It preserves the shared
+    # TestManager and branch-local files, but excludes primary runtime PIDs and
+    # changes the cleanup/evidence identity to the exact auxiliary infobase.
+    return [pscustomobject][ordered]@{
+        devBranchName = Get-StateValue -State $State -Name "devBranchName" -Default ""
+        safeDevBranchName = Get-StateValue -State $State -Name "safeDevBranchName" -Default ""
+        worktreePath = Get-StateValue -State $State -Name "worktreePath" -Default ""
+        stateProjectRoot = Get-StateValue -State $State -Name "stateProjectRoot" -Default ""
+        infoBaseKind = $connection.kind
+        devBranchInfoBasePath = $connection.path
+        vanessaServiceInfoBasePath = Get-StateValue -State $State -Name "vanessaServiceInfoBasePath" -Default ""
+        vanessaTestPort = Get-StateValue -State $State -Name "vanessaTestPort" -Default 0
+        vanessaTestPorts = @(Get-StateValue -State $State -Name "vanessaTestPorts" -Default @())
+    }
+}
+
 function Run-DevBranchTests {
     param(
         [switch]$RecordFullVerificationEvidence,
@@ -4969,14 +4995,32 @@ function Run-DevBranchTests {
     }
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     Save-VanessaTestSettingsToDotEnv -Port $testPort
-    Invoke-ForeignVanessaTestProcessPolicy -State $state -TestPort $testPort
-    $state = Ensure-DevBranchEventLogBaseline -State $state
-    Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "Vanessa verification preflight" | Out-Null
+    $auxiliaryVerification = [bool]($script:ActiveAuxiliaryVanessaContext -and $script:ActiveAuxiliaryVanessaContext.contour)
+    if (-not $auxiliaryVerification) {
+        $state = Ensure-DevBranchEventLogBaseline -State $state
+    }
+    $runtimeState = Get-VanessaVerificationRuntimeState -State $state
+    Invoke-ForeignVanessaTestProcessPolicy -State $runtimeState -TestPort $testPort
+    Invoke-DevBranchVanessaRuntimeRelease -State $runtimeState -Reason "Vanessa verification preflight" | Out-Null
 
     $runDirectory = New-VanessaRunDirectory
     $statusPath = Join-Path $runDirectory "status.json"
     $runEventLogCursorPath = Join-Path $runDirectory "event-log-cursor.json"
-    if ($EventLogCursorPath) {
+    $skipEventLogReason = if ($auxiliaryVerification) {
+        "Auxiliary event-log verification is unavailable; primary event-log evidence was not used."
+    } else {
+        "ITL_CHECK_EVENT_LOG=off skipped event-log verification."
+    }
+    if ($auxiliaryVerification) {
+        $EventLogBoundaryAt = Get-Date
+        $EventLogCursorScope = "auxiliary-unavailable"
+        Write-Utf8TextAtomic -Path $runEventLogCursorPath -Value (([ordered]@{
+            schemaVersion = 1
+            capturedAt = ([datetime]$EventLogBoundaryAt).ToString("o")
+            sourceKey = ""
+            scope = $EventLogCursorScope
+        } | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
+    } elseif ($EventLogCursorPath) {
         [System.IO.File]::Copy($EventLogCursorPath, $runEventLogCursorPath, $true)
         $externalCursorInfo = Read-DevBranchEventLogCursorInfo -Path $runEventLogCursorPath
         if ($null -eq $EventLogBoundaryAt) { $EventLogBoundaryAt = $externalCursorInfo.capturedAt }
@@ -4994,7 +5038,7 @@ function Run-DevBranchTests {
         -FeaturePath $featuresPath `
         -RunDirectory $runDirectory `
         -StatusPath $statusPath `
-        -State $state `
+        -State $runtimeState `
         -TestPort $testPort `
         -VanessaVersion $vanessa.version `
         -TestClientTopology $testClientTopology `
@@ -5002,7 +5046,7 @@ function Run-DevBranchTests {
         -FilterTags $VanessaFilterTags `
         -SelectedFeatureFiles $applicationFeatureFiles
     Publish-Agent1cVanessaRunEvidence `
-        -State $state `
+        -State $runtimeState `
         -TestPorts $testPorts `
         -RunParamsPath $paramsPath
 
@@ -5011,7 +5055,7 @@ function Run-DevBranchTests {
     Write-Host "Vanessa report directory: $runDirectory"
     Write-Host "Vanessa params: $paramsPath"
     Write-Host "Vanessa TestManager service infobase: $($serviceInfoBase.path)"
-    Write-Host "Vanessa TestClient target infobase: $($state.devBranchInfoBasePath)"
+    Write-Host "Vanessa TestClient target infobase: $($runtimeState.devBranchInfoBasePath)"
     Write-Host "Vanessa TestClient profiles: $(@($testClientTopology.profiles).Count); manifest ceiling: $($testClientTopology.declaredTestClientCeiling); required by selected scenarios: $($testClientTopology.requiredTestClientSlots); ports: $($testPorts -join ',')"
     if ($VanessaFilterTags) {
         Write-Host "Vanessa tag filter: $VanessaFilterTags"
@@ -5062,12 +5106,12 @@ function Run-DevBranchTests {
             -CompletionProbe {
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
                 if ($probeStatus.status -in @("passed", "failed")) { return $true }
-                return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $state -TestPorts $testPorts -RunParamsPath $paramsPath)
+                return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath)
             } `
             -CompletionGraceSeconds 10 `
             -OnTimeout {
                 Write-Host "[WARN] Vanessa verify exceeded timeout; stopping own TESTMANAGER/TESTCLIENT processes."
-                Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
+                Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
             }
         if ($null -ne $testClientStartupMonitor.failure) {
             $startupFailure = $testClientStartupMonitor.failure
@@ -5080,15 +5124,15 @@ function Run-DevBranchTests {
         $postProcessStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $runFinishedAt = Get-Date
         $logPath = $script:LastLogPath
-        Write-OneCVanessaProcessDiagnostics -State $state -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify failed; active 1C process diagnostics"
+        Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify failed; active 1C process diagnostics"
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
+        Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
         $eventLogReason = ""
         try {
             $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-            $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
-                [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
+            $eventLogVerification = if ($script:ItlSkipEventLogForVerification -or $auxiliaryVerification) {
+                [pscustomobject]@{ status = "skipped"; reason = $skipEventLogReason; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
             } else {
                 Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
             }
@@ -5168,7 +5212,7 @@ function Run-DevBranchTests {
     }
     try {
         $cleanupStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
+        Stop-OwnVanessaTestProcessesAndAssert -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
         Clear-Agent1cVanessaRunEvidence
         $cleanupStopwatch.Stop(); $cleanupDurationMs = $cleanupStopwatch.ElapsedMilliseconds
     } catch {
@@ -5181,8 +5225,8 @@ function Run-DevBranchTests {
     }
     try {
         $eventLogStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-        $eventLogVerification = if ($script:ItlSkipEventLogForVerification) {
-            [pscustomobject]@{ status = "skipped"; reason = "ITL_CHECK_EVENT_LOG=off skipped event-log verification."; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
+        $eventLogVerification = if ($script:ItlSkipEventLogForVerification -or $auxiliaryVerification) {
+            [pscustomobject]@{ status = "skipped"; reason = $skipEventLogReason; reader = ""; baselinePath = ""; reportPath = ""; newErrorCount = 0; legacyErrorCount = 0; checkedUntil = $runFinishedAt; scannedBytes = 0; scanMode = "skipped" }
         } else {
             Test-DevBranchEventLogAfterVanessa -State $state -RunStartedAt $runStartedAt -RunFinishedAt $runFinishedAt -RunDirectory $runDirectory -CursorPath $runEventLogCursorPath -BoundaryStartedAt $EventLogBoundaryAt -CursorScope $EventLogCursorScope
         }
@@ -5287,8 +5331,8 @@ function Run-DevBranchTests {
             -EventLogConfirmsPrimaryFailure:$eventLogConfirmsPrimaryFailure
         Set-RunFailureContext -Category $failureRoute.category -RequiredAction $failureRoute.requiredAction
         if ($verification.status -eq "unknown") {
-            Write-OneCVanessaProcessDiagnostics -State $state -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
-            Stop-OwnHungVanessaTestClients -State $state -TestPorts $testPorts -RunParamsPath $paramsPath
+            Write-OneCVanessaProcessDiagnostics -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath -Context "Vanessa verify produced no reliable JUnit/status; active 1C process diagnostics"
+            Stop-OwnHungVanessaTestClients -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
         }
         throw "Vanessa verification did not pass: $($verification.status). $($verification.reason)"
     }

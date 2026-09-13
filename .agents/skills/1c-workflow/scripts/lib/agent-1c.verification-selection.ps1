@@ -380,6 +380,65 @@ function Get-VerificationAcceptedMasterInput {
     return $result
 }
 
+function Get-VerificationConfigurationMetadataRoots {
+    $configurationRoots = [Collections.Generic.List[string]]::new()
+    $extensionRoots = [Collections.Generic.List[string]]::new()
+    $normalize = {
+        param([string]$Path)
+        if ([string]::IsNullOrWhiteSpace($Path)) { return "" }
+        return (($Path -replace "\\", "/").Trim("/"))
+    }
+
+    $primaryConfigurationRoot = if (Get-Command Get-ExportPath -ErrorAction SilentlyContinue) { Get-ExportPath } else { "src/cf" }
+    $primaryExtensionsRoot = if (Get-Command Get-ExtensionsPath -ErrorAction SilentlyContinue) { Get-ExtensionsPath } else { "src/cfe" }
+    $configurationRoots.Add((& $normalize $primaryConfigurationRoot))
+    $extensionRoots.Add((& $normalize $primaryExtensionsRoot))
+    if (Get-Command Get-AuxiliaryContourDefinitions -ErrorAction SilentlyContinue) {
+        try {
+            foreach ($contour in @(Get-AuxiliaryContourDefinitions)) {
+                $configurationPath = & $normalize ([string](Get-StateValue -State $contour -Name "configurationPath" -Default ""))
+                if ($configurationPath) { $configurationRoots.Add($configurationPath) }
+                $extensionsProperty = $contour.PSObject.Properties["extensions"]
+                $extensions = if ($null -eq $extensionsProperty -or $null -eq $extensionsProperty.Value) { @() } else { @($extensionsProperty.Value) }
+                foreach ($extension in $extensions) {
+                    $extensionPath = & $normalize ([string](Get-StateValue -State $extension -Name "path" -Default ""))
+                    if ($extensionPath) { $extensionRoots.Add($extensionPath) }
+                }
+            }
+        } catch {
+            # Auxiliary definitions are optional for primary verification. An
+            # invalid declaration is rejected by its own admission path.
+        }
+    }
+    return [pscustomobject]@{
+        configurationRoots = @($configurationRoots | Where-Object { $_ } | Sort-Object -Unique)
+        extensionRoots = @($extensionRoots | Where-Object { $_ } | Sort-Object -Unique)
+        primaryExtensionsRoot = (& $normalize $primaryExtensionsRoot)
+    }
+}
+
+function Test-VerificationConfigurationMetadataPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [ValidateSet("ConfigDumpInfo.xml", "Configuration.xml")][string]$FileName
+    )
+    $normalized = (($Path -replace "\\", "/").TrimStart("/"))
+    $roots = Get-VerificationConfigurationMetadataRoots
+    foreach ($root in @($roots.configurationRoots)) {
+        if ($normalized -ceq "$root/$FileName") { return $true }
+    }
+    foreach ($root in @($roots.extensionRoots)) {
+        if ($normalized -ceq "$root/$FileName") { return $true }
+        # The configured primary extension path is a container; each immediate
+        # child is one extension dump root.
+        if ($root -ceq $roots.primaryExtensionsRoot -and
+            $normalized -match ('^' + [regex]::Escape($root) + '/[^/]+/' + [regex]::Escape($FileName) + '$')) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function New-VerificationSelectionPlan {
     param(
         [string[]]$ApplicationFeatureFiles,
@@ -522,6 +581,15 @@ function New-VerificationSelectionPlan {
         }
         if ($changedPath -eq ".agent-1c/dependency-lock.json") {
             $fullReasons.Add("The pinned verification runtime changed; the complete acceptance set is required.")
+            continue
+        }
+        if (Test-VerificationConfigurationMetadataPath -Path $changedPath -FileName "ConfigDumpInfo.xml") {
+            # ConfigDumpInfo is the dump cursor maintained by 1C. It carries no
+            # independent semantic owner and must not force a suite assignment.
+            continue
+        }
+        if (Test-VerificationConfigurationMetadataPath -Path $changedPath -FileName "Configuration.xml") {
+            $fullReasons.Add("Shared configuration metadata changed at '$changedPath'; the complete acceptance set is required.")
             continue
         }
         $ownerMatches = @($catalog.suites | Where-Object {
