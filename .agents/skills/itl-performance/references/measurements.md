@@ -2,6 +2,8 @@
 
 The engine measures on the execution host regardless of `local`, `ssh` or `agent`. The controller never times a chat response or SSH transfer. `pack` defaults to `time+profile`, one warmup, three unprofiled repeats and one separate diagnostic profile. Choose `--mode time` for timing alone or `--mode profile` for one profile. Preserve explicit user counts.
 
+For opt-in internal operation boundaries use the versioned [operation evidence](operation-evidence.md) contract. It is analyzed after the measured interval and does not change the automatic/default diagnostic depth because there is no such policy. Product adapters still own readiness and equivalence semantics.
+
 ## Build the scenario in the project
 
 Use `scripts/New-PerformanceScenario.ps1` from the runner skill to scaffold `tests/performance/<name>` without overwriting existing files. The included Python handshake example is a calibration exercise, not 1C performance evidence. Replace its action and assertions with the requested operation before drawing product conclusions.

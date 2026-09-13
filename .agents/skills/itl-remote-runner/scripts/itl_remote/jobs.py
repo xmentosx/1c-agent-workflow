@@ -26,8 +26,14 @@ def validate_scenario(scenario):
     Selection(scenario.get("sourceAnalysisModules"))
     if scenario.get("sourceAnalysisModules") is not None and scenario.get("sourceAnalysis", "none") == "none":
         raise WorkError("SOURCE_MODULE_SELECTION_REQUIRES_ANALYSIS")
-    if scenario.get("schemaVersion") != 1 or not scenario.get("id"):
+    version = scenario.get("schemaVersion")
+    if version not in (1, 2) or not scenario.get("id"):
         raise WorkError("SCENARIO_VERSION_OR_ID_INVALID")
+    if version == 2:
+        from .operation_evidence import validate_diagnostics
+        validate_diagnostics(scenario.get("diagnostics"))
+    elif "diagnostics" in scenario:
+        raise WorkError("OPERATION_EVIDENCE_DIAGNOSTICS_REQUIRES_SCENARIO_V2")
     if scenario.get("adapter", "command") not in ("command", "handshake"):
         raise WorkError("UNKNOWN_SCENARIO_ADAPTER")
     if not scenario.get("readyDescription"):
@@ -98,7 +104,7 @@ def pack(scenario_path, destination, *, target, values=None, mode="time+profile"
             shutil.copyfile(original, copied)
             files[str(relative).replace("\\", "/")] = {"sha256": digest(copied), "bytes": copied.stat().st_size}
         write_json(stage / "scenario.json", scenario)
-        request = {"schemaVersion": 1, "id": job_id(identifier or uuid.uuid4().hex), "parentId": parent,
+        request = {"schemaVersion": scenario["schemaVersion"], "id": job_id(identifier or uuid.uuid4().hex), "parentId": parent,
                    "createdAt": stamp(), "target": target, "route": route, "mode": mode,
                    "parameters": parameters(scenario, values or {}), "repeats": repeats, "warmups": warmups,
                    "operations": sorted(set(operations or ["measure"])), "files": files,
@@ -121,7 +127,7 @@ def validate_package(package):
     package = Path(package)
     request = read_json(package / "request.json")
     job_id(request.get("id"))
-    if request.get("schemaVersion") != 1:
+    if request.get("schemaVersion") not in (1, 2):
         raise WorkError("JOB_SCHEMA_UNSUPPORTED")
     if request.get("mode") not in ("time", "profile", "time+profile") or request.get("route") not in ("local", "auto", "ssh", "agent"):
         raise WorkError("INVALID_MODE_OR_ROUTE")
@@ -133,6 +139,8 @@ def validate_package(package):
         raise WorkError("SCENARIO_HASH_MISMATCH")
     scenario = read_json(package / "scenario.json")
     validate_scenario(scenario)
+    if request["schemaVersion"] != scenario["schemaVersion"]:
+        raise WorkError("JOB_SCENARIO_VERSION_MISMATCH")
     if request["mode"] == "time" and scenario.get("sourceAnalysis", "none") != "none":
         raise WorkError("SOURCE_ANALYSIS_REQUIRES_PROFILE")
     if parameters(scenario, request["parameters"]) != request["parameters"]:

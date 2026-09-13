@@ -10,7 +10,7 @@ import statistics
 import sys
 import time
 
-from .common import (FileLock, OwnedProcess, WorkError, digest, host_memory_snapshot,
+from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_memory_snapshot,
                      identity, read_json, resolve_resource_limits, stamp, write_json)
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
@@ -57,6 +57,8 @@ def capture_provenance(run, request, scenario, target, *, executor=None):
               "dataIdentity": scenario["dataIdentity"], "sourceIdentity": target.get("sourceIdentity"),
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "data/source/environment are declarations; exact loaded state requires runtime evidence"}
+    if scenario.get("diagnostics") is not None:
+        record["diagnostics"] = scenario["diagnostics"]
     # A target profile can contain credentials, lease tokens and private adapter
     # settings. Only the explicitly public declarations above belong here.
     if path.exists():
@@ -84,6 +86,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     context = {"schemaVersion": 1, "jobId": request["id"], "parameters": request["parameters"],
                "target": target, "scenarioId": scenario["id"], "operations": request["operations"],
                "phaseTimeoutSeconds": phase_budgets, "cancelPath": str(cancel_path) if cancel_path else None}
+    if scenario.get("diagnostics") is not None:
+        context["diagnostics"] = scenario["diagnostics"]
     child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
     if access_lease:
         context["accessLease"] = access_lease.proof()
@@ -114,6 +118,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
                                     "hostAfter": None, "telemetry": resource_telemetry.name,
                                     "processes": []}}
+    result["operationEvidence"] = ({"status": "notRequested"} if scenario.get("diagnostics") is None else
+                                   {"status": "running", "iterations": []})
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
@@ -124,7 +130,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         snapshot = {key: result[key] for key in (
             "schemaVersion", "jobId", "scenarioId", "startedAt", "provenance",
             "timings", "iterations", "phases", "loadedState", "limitations", "cleanupErrors",
-            "resourceEvidence")}
+            "resourceEvidence", "operationEvidence")}
         snapshot.update(updatedAt=stamp(), status=result["status"] if "finishedAt" in result else "running",
                         resultAvailable=(run / "result.json").is_file(), profiles=[])
         for evidence in profile_evidence:
@@ -150,6 +156,29 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             return
         from .loaded_state import write_evidence
         result["loadedState"] = write_evidence(run, result, profile_paths, profile_evidence)
+
+    def collect_operation_evidence(iteration, index):
+        diagnostics = scenario.get("diagnostics")
+        if diagnostics is None:
+            return
+        from .operation_evidence import analyze_file
+        source = beneath(iteration, diagnostics["evidencePath"])
+        destination = iteration / "operation-evidence.json"
+        item = {"iteration": index, "level": diagnostics["level"], "required": diagnostics.get("required", False)}
+        try:
+            if not source.is_file():
+                raise WorkError("OPERATION_EVIDENCE_NOT_PRODUCED")
+            item.update(analyze_file(source, destination, job_id=request["id"], iteration_id=index))
+        except (OSError, ValueError, WorkError) as error:
+            item.update(status="invalid", error=str(error))
+        result["operationEvidence"]["iterations"].append(item)
+        statuses = [entry["status"] for entry in result["operationEvidence"]["iterations"]]
+        result["operationEvidence"]["status"] = ("complete" if statuses and all(status == "complete" for status in statuses)
+                                                   else "invalid" if any(status == "invalid" for status in statuses)
+                                                   else "partial")
+        if item["status"] != "complete":
+            detail = item.get("error") or "; ".join(item.get("limitations", [])) or "coverage is partial"
+            result["limitations"].append("OPERATION_EVIDENCE_%s: %s" % (item["status"].upper(), detail))
 
     def start_phase(name):
         deadline = Deadline(name, phase_budgets[name], cancel_path=context["cancelPath"])
@@ -310,6 +339,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                 finally:
                     profiler.close()
                     profiler = None
+            collect_operation_evidence(iteration, index)
             command("verify")
             verification = read_json(iteration / "verification.json")
             checks = verification.get("checks")
@@ -367,6 +397,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             result["cleanupErrors"].append(str(error))
         if result["cleanupErrors"]:
             result["status"] = "needs-attention"
+        if result["operationEvidence"]["status"] == "running":
+            result["operationEvidence"]["status"] = "notExecuted"
         result["finishedAt"] = stamp()
         seconds = [item["seconds"] for item in result["timings"]]
         result["summary"] = {"count": len(seconds), "medianSeconds": statistics.median(seconds) if seconds else None,
@@ -397,6 +429,12 @@ def report(run, result):
     lines += ["", "Resource guard: enabled; peak observed owned-job memory bytes: " +
               str(max(process_peaks) if process_peaks else 0) + "."]
     lines += ["", *result["limitations"]]
+    evidence = result.get("operationEvidence", {"status": "notRequested"})
+    lines += ["", "Operation evidence: " + evidence["status"] + "."]
+    for item in evidence.get("iterations", []):
+        lines.append("- iteration %s, level %s: %s%s" % (
+            item["iteration"], item["level"], item["status"],
+            " (" + item["error"] + ")" if item.get("error") else ""))
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]
     (Path(run) / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
