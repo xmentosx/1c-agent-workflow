@@ -418,6 +418,63 @@ class AccessTests(unittest.TestCase):
         d, pd = self.child("D")
         self.assertEqual("released", self.wait_file(d / "done.json")["status"])
 
+    def test_on_demand_owner_action_reaches_waiting_status_and_terminal_error(self):
+        instance = "a" * 32
+        action = {"kind": "finish-owned-on-demand", "family": "roctup",
+                  "instanceId": instance, "tool": "finish_database_access"}
+        owner = {"project": "C:/project", "operation": "ondemand-roctup", "requestId": instance,
+                 "lifecycle": "on-demand", "releaseAction": action}
+        progress = []
+        with Lease(self.coordinator, [self.base], owner, access_mode="shared-read"):
+            status_owner = Coordinator(self.coordinator).snapshot()[0]["owner"]
+            self.assertEqual("on-demand", status_owner["lifecycle"])
+            self.assertEqual(action, status_owner["releaseAction"])
+            with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_WAIT_TIMEOUT") as blocked:
+                with Lease(self.coordinator, [self.base], {"jobId": "measurement"}, timeout=0,
+                           progress=progress.append, access_mode="measurement-exclusive"):
+                    self.fail("exclusive work bypassed the on-demand owner")
+        self.assertEqual(action, progress[-1]["blockers"][0]["owner"]["releaseAction"])
+        details = json.loads(str(blocked.exception).split(": ", 1)[1])
+        self.assertEqual(action, details["blockers"][0]["owner"]["releaseAction"])
+        self.assertEqual("access-status", details["blockers"][0]["nextAction"]["command"])
+
+    def test_new_owner_projection_preserves_legacy_diagnostic_fields(self):
+        owner = {"jobId": "legacy", "diagnostic": {"producer": "legacy", "revision": 7}}
+        progress = []
+        with Lease(self.coordinator, [self.base], owner, access_mode="shared-read"):
+            self.assertEqual(owner["diagnostic"],
+                             Coordinator(self.coordinator).snapshot()[0]["owner"]["diagnostic"])
+            with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_WAIT_TIMEOUT"):
+                with Lease(self.coordinator, [self.base], {"jobId": "measurement"}, timeout=0,
+                           progress=progress.append, access_mode="measurement-exclusive"):
+                    self.fail("exclusive work bypassed the legacy owner")
+        self.assertEqual(owner["diagnostic"], progress[-1]["blockers"][0]["owner"]["diagnostic"])
+
+    def test_unknown_or_tainted_owner_action_falls_back_without_leaking_or_injecting(self):
+        secret = "private-lease-token"
+        injected = "Remove-Item C:/important -Recurse"
+        owner = {"jobId": "foreign", "lifecycle": "on-demand",
+                 "releaseAction": {"kind": "finish-owned-on-demand", "family": "roctup",
+                                   "instanceId": "b" * 32, "tool": "finish_database_access",
+                                   "token": secret, "command": injected}}
+        progress = []
+        with Lease(self.coordinator, [self.base], owner, access_mode="shared-read"):
+            serialized_status = json.dumps(Coordinator(self.coordinator).snapshot(), ensure_ascii=False)
+            with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_WAIT_TIMEOUT") as blocked:
+                with Lease(self.coordinator, [self.base], {"jobId": "measurement"}, timeout=0,
+                           progress=progress.append, access_mode="measurement-exclusive"):
+                    self.fail("exclusive work bypassed the foreign owner")
+        terminal = str(blocked.exception)
+        serialized_wait = json.dumps(progress[-1], ensure_ascii=False)
+        for evidence in (serialized_status, serialized_wait, terminal):
+            self.assertNotIn(secret, evidence)
+            self.assertNotIn(injected, evidence)
+            self.assertNotIn("releaseAction", evidence)
+            self.assertNotIn("on-demand", evidence)
+        details = json.loads(terminal.split(": ", 1)[1])
+        self.assertEqual("foreign", details["blockers"][0]["owner"]["jobId"])
+        self.assertEqual("access-status", details["blockers"][0]["nextAction"]["command"])
+
     def test_crashed_waiter_can_be_skipped_because_it_was_never_admitted(self):
         a, pa = self.child("A", hold=True)
         self.wait_file(a / "acquired.json")

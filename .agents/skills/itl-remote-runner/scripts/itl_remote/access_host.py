@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 
-from .access import Lease, public
+from .access import Lease, on_demand_release_action, public
 from .common import WorkError
 from . import native_journal
 
@@ -32,9 +32,13 @@ def serve(input_stream, output_stream):
             raise WorkError("INFOBASE_ACCESS_PYTHON311_REQUIRED")
         request = json.loads(input_stream.readline())
         fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol", "accessMode"}
-        owner_fields = {"project", "operation", "threadId", "parentPid", "requestId"}
+        owner_fields = {"project", "operation", "threadId", "parentPid", "requestId", "lifecycle", "releaseAction"}
+        owner = request.get("owner") if isinstance(request, dict) else None
+        has_lifecycle_evidence = isinstance(owner, dict) and (
+            "lifecycle" in owner or "releaseAction" in owner)
         if (not isinstance(request, dict) or request.get("schemaVersion") != 1 or set(request) - fields or
-                not isinstance(request.get("owner"), dict) or set(request["owner"]) - owner_fields or
+                not isinstance(owner, dict) or set(owner) - owner_fields or
+                (has_lifecycle_evidence and on_demand_release_action(owner) is None) or
                 not isinstance(request.get("bases"), list) or
                 any(not isinstance(base, dict) for base in request["bases"]) or
                 not isinstance(request.get("coordinator"), str) or not request["coordinator"].strip()):

@@ -123,6 +123,26 @@ class AccessHostTests(unittest.TestCase):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             pass
 
+    def test_host_accepts_only_the_exact_diagnostic_on_demand_release_action(self):
+        instance = "c" * 32
+        owner = {"project": "проект с пробелом", "operation": "ondemand-roctup",
+                 "requestId": instance, "lifecycle": "on-demand",
+                 "releaseAction": {"kind": "finish-owned-on-demand", "family": "roctup",
+                                   "instanceId": instance, "tool": "finish_database_access"}}
+        child, received = self.start(owner=owner)
+        admitted = self.next(received, "admitted")
+        self.assertEqual(owner["releaseAction"], admitted["owner"]["owner"]["releaseAction"])
+        self.send(child, {"event": "release", "cleanupErrors": []})
+        self.assertEqual("released", self.next(received, "released")["status"])
+        self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
+        tainted = {**owner, "releaseAction": {**owner["releaseAction"], "command": "arbitrary-command"}}
+        rejected, rejected_events = self.start(owner=tainted)
+        error = self.next(rejected_events, "error")
+        self.assertIn("INFOBASE_ACCESS_HOST_REQUEST_INVALID", error["error"])
+        self.assertNotIn("arbitrary-command", json.dumps(error))
+        self.assertNotEqual(0, rejected.wait(timeout=5))
+
     def test_host_transitions_the_same_functional_ticket_to_mutation_and_back(self):
         child, received = self.start(accessMode="functional-test")
         admitted = self.next(received, "admitted")

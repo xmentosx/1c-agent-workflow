@@ -48,6 +48,12 @@ ACCESS_COMPATIBILITY = {
     "legacy-exclusive": frozenset(),
 }
 
+PUBLIC_OWNER_FIELDS = (
+    "project", "workspace", "operation", "jobId", "threadId", "host", "pid", "parentPid", "requestId",
+)
+ON_DEMAND_FAMILIES = frozenset(("roctup", "vanessa-ui"))
+ON_DEMAND_RELEASE_ACTION_KEYS = frozenset(("kind", "family", "instanceId", "tool"))
+
 # Access modes control compatibility between independent root tickets. Nested
 # participants are phases of the same root operation and do not change its
 # external compatibility envelope. Shared and functional roots stay limited;
@@ -89,6 +95,35 @@ def persisted_access_mode(mode, legacy_field="accessMode", canonical_field="acce
     return {legacy_field: LEGACY_ACCESS_MODE_PROJECTION[mode], canonical_field: mode}
 
 
+def on_demand_release_action(owner):
+    """Project a diagnostic action without accepting a command or lease authority."""
+    if not isinstance(owner, dict) or owner.get("lifecycle") != "on-demand":
+        return None
+    action = owner.get("releaseAction")
+    if (not isinstance(action, dict) or set(action) != ON_DEMAND_RELEASE_ACTION_KEYS or
+            action.get("kind") != "finish-owned-on-demand" or
+            action.get("family") not in ON_DEMAND_FAMILIES or
+            not isinstance(action.get("instanceId"), str) or
+            not re.fullmatch(r"[0-9a-f]{32}", action["instanceId"]) or
+            action.get("tool") != "finish_database_access"):
+        return None
+    return {key: action[key] for key in ("kind", "family", "instanceId", "tool")}
+
+
+def public_owner(owner, *, preserve_legacy=False):
+    """Project new action evidence without changing the legacy owner surface."""
+    if not isinstance(owner, dict):
+        return {}
+    result = ({key: value for key, value in owner.items()
+               if key not in ("lifecycle", "releaseAction")} if preserve_legacy else
+              {key: owner[key] for key in PUBLIC_OWNER_FIELDS if key in owner})
+    action = on_demand_release_action(owner)
+    if action is not None:
+        result["lifecycle"] = "on-demand"
+        result["releaseAction"] = action
+    return result
+
+
 def admission_error(code, coordinator, blockers, elapsed):
     """Keep the terminal error actionable even when progress output is hidden."""
     details = {"coordinator": str(coordinator.root), "waitSeconds": round(elapsed, 3),
@@ -97,9 +132,7 @@ def admission_error(code, coordinator, blockers, elapsed):
         recovery = record["status"] == "needs-attention" and not record.get("corruptRecord")
         details["blockers"].append({
             "ticket": record["ticket"], "status": record["status"],
-            "owner": {key: record.get("owner", {})[key] for key in
-                      ("project", "workspace", "operation", "jobId", "threadId", "host", "pid", "parentPid")
-                      if key in record.get("owner", {})},
+            "owner": public_owner(record.get("owner", {})),
             "reason": record.get("reason", "owner has not released database access"),
             "nextAction": (
                 {"command": "access-recovery-plan", "coordinator": str(coordinator.root),
@@ -1383,6 +1416,8 @@ def public(record, *, include_native_journal=True):
               if key not in ("token", "accessModeV2", "requestedAccessModeV2") and
               (include_native_journal or key != "nativeJournal")}
     result["accessMode"] = access_mode(record)
+    if "owner" in record:
+        result["owner"] = public_owner(record["owner"], preserve_legacy=True)
     if "requestedAccessMode" in record or "requestedAccessModeV2" in record:
         result["requestedAccessMode"] = stored_access_mode(record, "requestedAccessMode", "requestedAccessModeV2")
     if "participants" in result:
