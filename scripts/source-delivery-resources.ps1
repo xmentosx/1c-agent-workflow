@@ -30,6 +30,170 @@ function Write-DeliveryResourceLedger {
     return $path
 }
 
+function Get-DeliveryResourceArchiveRoot {
+    return Join-Path (Split-Path -Parent (Get-DeliveryResourceLedgerPath)) "archive"
+}
+
+if (-not (Get-Variable -Name DeliveryResourceArchiveCache -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:DeliveryResourceArchiveCache = @{}
+}
+$script:DeliveryResourceArchivePhysicalReadCount = 0
+
+function Test-DeliveryRemovedResourceArchivable {
+    param([Parameter(Mandatory = $true)][object]$Resource)
+    if (-not $Resource.PSObject.Properties['state'] -or [string]$Resource.state -cne 'removed') { return $false }
+    $ownership = Test-DeliveryLedgerResourceOwnership -Resource $Resource
+    if (-not [bool]$ownership.owned) { return $false }
+    foreach ($name in @('createdAt','updatedAt','retainUntil','cleanupAttempts','lastAttemptAt','lastError')) {
+        if (-not $Resource.PSObject.Properties[$name]) { return $false }
+    }
+    try {
+        [void](ConvertFrom-DeliveryUtcTimestamp -Value $Resource.createdAt)
+        [void](ConvertFrom-DeliveryUtcTimestamp -Value $Resource.updatedAt)
+        [void](ConvertFrom-DeliveryUtcTimestamp -Value $Resource.retainUntil)
+        [void][int]$Resource.cleanupAttempts
+    } catch { return $false }
+    return $true
+}
+
+function Read-DeliveryResourceArchive {
+    param([Parameter(Mandatory = $true)][object]$Descriptor)
+    $sha = [string]$Descriptor.sha256
+    $prefix = [string]$Descriptor.prefix
+    if ($prefix -notmatch '^[a-f0-9]{2}$' -or $sha -notmatch '^[a-f0-9]{64}$' -or [string]$Descriptor.file -cne "$sha.json") {
+        throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: invalid archive descriptor."
+    }
+    $path = Join-Path (Get-DeliveryResourceArchiveRoot) ([string]$Descriptor.file)
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: missing or SHA-mismatched archive '$path'."
+    }
+    $item = Get-Item -LiteralPath $path
+    $cacheKey = "$sha|$($item.Length)|$($item.LastWriteTimeUtc.Ticks)"
+    if ($script:DeliveryResourceArchiveCache.ContainsKey($cacheKey)) {
+        $archive = $script:DeliveryResourceArchiveCache[$cacheKey]
+    } else {
+        if ((Get-DeliveryFileSha256 -Path $path) -cne $sha) {
+            throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: missing or SHA-mismatched archive '$path'."
+        }
+        try { $archive = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: unreadable archive '$path'. $($_.Exception.Message)" }
+        $script:DeliveryResourceArchivePhysicalReadCount++
+        $script:DeliveryResourceArchiveCache[$cacheKey] = $archive
+    }
+    if ([int]$archive.schemaVersion -ne 1 -or [string]$archive.kind -cne 'itl-delivery-resource-archive' -or
+        [string]$archive.prefix -cne $prefix -or
+        @($archive.resources).Count -ne [int]$Descriptor.count) {
+        throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: invalid archive contract '$path'."
+    }
+    foreach ($resource in @($archive.resources)) {
+        if (-not $resource.PSObject.Properties['resourceId'] -or [string]$resource.resourceId -notmatch "^$prefix[a-f0-9]{62}$") {
+            throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: resource outside shard '$prefix' in '$path'."
+        }
+    }
+    return $archive
+}
+
+function Get-DeliveryArchivedResource {
+    param(
+        [Parameter(Mandatory = $true)][object]$Ledger,
+        [Parameter(Mandatory = $true)][string]$ResourceId
+    )
+    if ($ResourceId -notmatch '^[a-f0-9]{64}$') { return $null }
+    $prefix = $ResourceId.Substring(0, 2)
+    $descriptors = if ($Ledger.PSObject.Properties['archives']) { @($Ledger.archives) } else { @() }
+    $matchingDescriptors = @($descriptors | Where-Object { $_.PSObject.Properties['prefix'] -and [string]$_.prefix -ceq $prefix })
+    if ($matchingDescriptors.Count -eq 0) { return $null }
+    if ($matchingDescriptors.Count -ne 1) { throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: duplicate shard '$prefix'." }
+    $archive = Read-DeliveryResourceArchive -Descriptor $matchingDescriptors[0]
+    $matches = @($archive.resources | Where-Object { [string]$_.resourceId -ceq $ResourceId })
+    if ($matches.Count -eq 0) { return $null }
+    foreach ($resource in $matches) {
+        if (-not (Test-DeliveryRemovedResourceArchivable -Resource $resource)) {
+            throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: archived resource '$ResourceId' is not an exact terminal delivery resource."
+        }
+    }
+    return @($matches | Sort-Object { ConvertFrom-DeliveryUtcTimestamp -Value $_.updatedAt }, resourceId -Descending | Select-Object -First 1)[0]
+}
+
+function Write-DeliveryResourceArchiveShard {
+    param(
+        [Parameter(Mandatory = $true)][string]$Prefix,
+        [Parameter(Mandatory = $true)][object[]]$Resources
+    )
+    $payload = [pscustomobject][ordered]@{
+        schemaVersion=1; kind='itl-delivery-resource-archive'; prefix=$Prefix; resources=@($Resources)
+    }
+    $content = ($payload | ConvertTo-Json -Depth 24 -Compress) + [Environment]::NewLine
+    $sha = Get-DeliveryTextSha256 -Text $content
+    $archiveRoot = Get-DeliveryResourceArchiveRoot
+    New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+    $archivePath = Join-Path $archiveRoot "$sha.json"
+    if (Test-Path -LiteralPath $archivePath -PathType Leaf) {
+        if ((Get-DeliveryFileSha256 -Path $archivePath) -cne $sha) { throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: content-address collision at '$archivePath'." }
+    } else {
+        $temporary = Join-Path $archiveRoot ("$sha." + [guid]::NewGuid().ToString('N') + '.tmp')
+        try {
+            [IO.File]::WriteAllText($temporary, $content, [Text.UTF8Encoding]::new($false))
+            Move-Item -LiteralPath $temporary -Destination $archivePath
+        } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    }
+    return [pscustomobject]@{
+        descriptor=[pscustomobject][ordered]@{ prefix=$Prefix; sha256=$sha; file="$sha.json"; count=$Resources.Count }
+        sha256=$sha; path=$archivePath
+    }
+}
+
+function Compact-DeliveryResourceLedger {
+    $ledger = Read-DeliveryResourceLedger
+    $selected = @($ledger.resources | Where-Object {
+        Test-DeliveryRemovedResourceArchivable -Resource $_
+    } | Sort-Object resourceId, updatedAt)
+    if ($selected.Count -eq 0) {
+        return [pscustomobject]@{ status='unchanged'; archived=0; retained=@($ledger.resources).Count; archiveSha256='' }
+    }
+
+    # Each two-hex resourceId prefix owns one bounded lookup shard. Complete
+    # records (including unknown fields) are retained, while old immutable blobs
+    # remain valid crash evidence after the ledger atomically points at a new SHA.
+    $archives = if ($ledger.PSObject.Properties['archives']) { @($ledger.archives) } else { @() }
+    $writes = [Collections.Generic.List[object]]::new()
+    foreach ($group in @($selected | Group-Object { ([string]$_.resourceId).Substring(0, 2) } | Sort-Object Name)) {
+        $prefix = [string]$group.Name
+        $descriptors = @($archives | Where-Object { $_.PSObject.Properties['prefix'] -and [string]$_.prefix -ceq $prefix })
+        if ($descriptors.Count -gt 1) { throw "DELIVERY_RESOURCE_ARCHIVE_CORRUPT: duplicate shard '$prefix'." }
+        $prior = if ($descriptors.Count -eq 1) { @((Read-DeliveryResourceArchive -Descriptor $descriptors[0]).resources) } else { @() }
+        $byId = [ordered]@{}
+        foreach ($resource in @($prior) + @($group.Group)) {
+            $id = [string]$resource.resourceId
+            if (-not $byId.Contains($id) -or
+                (ConvertFrom-DeliveryUtcTimestamp -Value $resource.updatedAt) -ge (ConvertFrom-DeliveryUtcTimestamp -Value $byId[$id].updatedAt)) {
+                $byId[$id] = $resource
+            }
+        }
+        $resources = @($byId.Values | Sort-Object resourceId)
+        $write = Write-DeliveryResourceArchiveShard -Prefix $prefix -Resources $resources
+        $writes.Add($write) | Out-Null
+        $archives = @($archives | Where-Object { -not $_.PSObject.Properties['prefix'] -or [string]$_.prefix -cne $prefix }) + @($write.descriptor)
+    }
+
+    $selectedIds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($resource in $selected) { [void]$selectedIds.Add([string]$resource.resourceId) }
+    $ledger.resources = @($ledger.resources | Where-Object {
+        -not ($selectedIds.Contains([string]$_.resourceId) -and (Test-DeliveryRemovedResourceArchivable -Resource $_))
+    })
+    $archives = @($archives | Sort-Object prefix)
+    if ($ledger.PSObject.Properties['archives']) { $ledger.archives = $archives }
+    else { $ledger | Add-Member -NotePropertyName archives -NotePropertyValue $archives }
+    [void](Write-DeliveryResourceLedger -Ledger $ledger)
+    $first = @($writes | Select-Object -First 1)
+    return [pscustomobject]@{
+        status='compacted'; archived=$selected.Count; retained=@($ledger.resources).Count; archivesWritten=$writes.Count
+        archiveSha256=$(if($first.Count){[string]$first[0].sha256}else{''})
+        archivePath=$(if($first.Count){[string]$first[0].path}else{''})
+        archiveSha256s=@($writes | ForEach-Object { [string]$_.sha256 })
+    }
+}
+
 function ConvertFrom-DeliveryUtcTimestamp {
     param([Parameter(Mandatory = $true)][object]$Value)
     if ($Value -is [DateTime]) { return ([DateTime]$Value).ToUniversalTime() }
@@ -55,7 +219,13 @@ function Register-DeliveryResource {
     $ledger = Read-DeliveryResourceLedger
     $resources = @($ledger.resources)
     $existing = $resources | Where-Object { [string]$_.resourceId -eq $resourceId } | Select-Object -First 1
+    if (-not $existing) {
+        $existing = Get-DeliveryArchivedResource -Ledger $ledger -ResourceId $resourceId
+        if ($existing) { $resources += $existing }
+    }
     if ($existing) {
+        $existing.identity = $Identity
+        $existing.identitySha256 = $identitySha
         $existing.state = $State
         $existing.retainUntil = $RetainUntil.ToUniversalTime().ToString("o")
         $existing.updatedAt = [DateTime]::UtcNow.ToString("o")
@@ -124,6 +294,7 @@ function Get-DeliveryResourceLedgerSummary {
     } else { 0 }
     return [pscustomobject][ordered]@{
         path=(Get-DeliveryResourceLedgerPath); total=@($ledger.resources).Count
+        archived=$(if($ledger.PSObject.Properties['archives']){[int64](($ledger.archives | Measure-Object count -Sum).Sum)}else{0})
         pending=@($pending | Where-Object state -eq "cleanup-pending").Count; retained=@($pending | Where-Object state -eq "retained").Count
         bytes=$bytes; oldestAt=$(if($oldest.Count){[string]$oldest[0].createdAt}else{""}); oldestAgeSeconds=$oldestAgeSeconds
         nextAttempt="next PublishDevelop, PromoteRelease, ReleaseMaster, or Cleanup"

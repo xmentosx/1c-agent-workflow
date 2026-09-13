@@ -300,6 +300,32 @@ SHA проверяются до удаления. Housekeeping failure не от
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.
 
+Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
+`Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
+opening every raw file; the projection retains 2048 detailed recent entries and
+lifetime counts/durations. A missing, stale, or corrupt index is reported as
+unavailable rather than silently returning a partial raw scan. Serialized manual
+`Cleanup` rebuilds it from raw proof once; writing a new run advances it
+atomically under a short cross-process lock. If the projection lock or update
+fails, the authoritative raw proof is still written and a pending marker makes
+the projection explicitly stale until `Cleanup` repairs it. Exact Targeted
+lookup tries the index first, then the unchanged raw store, and still accepts
+only the existing schema-1 proof contract with exact commit/tree/stages and a
+freshly calculated file SHA.
+
+Only serialized manual `Cleanup` compacts exact-owned `removed` resource-ledger
+records. It writes immutable content-addressed shards keyed by the first two hex
+digits of `resourceId`, each containing complete records (including unknown
+fields), then atomically removes them from the hot ledger. The fixed 256-way
+address space makes rehydration a single-shard lookup instead of an archive
+scan; unchanged shards are cached within the process. A restart between blob
+write and ledger swap is idempotent. Re-registration uses the deterministic
+`resourceId` to rehydrate the archived record before changing its state, so
+extension fields survive. Active, retained, cleanup-pending, malformed, and
+unknown-owner records remain hot. `Status` never rebuilds, compacts, deletes, or
+rewrites either store; qualification, evidence, Pester shards, plans, and raw
+runs are outside this retention action.
+
 Для release-снимков распознаются текущий путь
 `.agent-1c/runs/release-e2e/<run>/snapshots/{baseline,post-config}.dt`,
 прежний `.agent-1c/release-e2e-runs/<run>/snapshots/` с теми же именами и

@@ -268,6 +268,7 @@ Describe "Local quality gate contract" {
                 "tests\pester\Agent1cEntrypoint.Tests.ps1",
                 "tests\pester\AuxiliaryContours.Tests.ps1",
                 "tests\pester\McpConfig.Tests.ps1"
+                "tests\pester\SourceDeliveryRunIndex.Tests.ps1"
             )) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relativePath) -Destination (Join-Path $root $relativePath) -Force
             }

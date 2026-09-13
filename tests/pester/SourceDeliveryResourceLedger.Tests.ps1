@@ -492,6 +492,7 @@ public static class $typeName
         return 0;
     }
 }
+
 "@
             $sourcePath = Join-Path $fakeRoot 'fake-git.cs'
             [IO.File]::WriteAllText($sourcePath, $source, [Text.UTF8Encoding]::new($true))
@@ -771,5 +772,155 @@ Describe 'Release snapshot cleanup ownership and retention' {
         $result.debt.pending | Should -Be 0
         Test-Path -LiteralPath $fixture.path | Should -BeFalse
         @((Read-DeliveryResourceLedger).resources | Where-Object { $_.kind -eq 'release-snapshot' -and $_.state -eq 'removed' }).Count | Should -Be 2
+    }
+}
+
+Describe 'Delivery resource ledger compaction' {
+    BeforeAll {
+        function New-ExactRemovedResource {
+            param([int]$Sequence, [object]$UnknownValue = $null)
+            $identity = [pscustomobject][ordered]@{ path=(Join-Path $script:Root ("candidate $Sequence")); branch="itl/publish-develop-$('{0:x32}' -f $Sequence)"; candidate=('a' * 40) }
+            $identitySha = Get-DeliveryCanonicalJsonSha256 -Value $identity
+            $planId = "plan-$Sequence"
+            $resourceId = Get-DeliveryTextSha256 -Text "$planId|candidate-worktree|source-delivery|$identitySha"
+            $record = [pscustomobject][ordered]@{
+                resourceId=$resourceId; planId=$planId; kind='candidate-worktree'; owner='source-delivery'; identity=$identity; identitySha256=$identitySha
+                state='removed'; createdAt='2026-09-01T00:00:00.0000000Z'; updatedAt='2026-09-02T00:00:00.0000000Z'
+                retainUntil='2026-09-03T00:00:00.0000000Z'; cleanupAttempts=1; lastAttemptAt='2026-09-02T00:00:00.0000000Z'; lastError=''
+            }
+            if ($null -ne $UnknownValue) { $record | Add-Member -NotePropertyName futureField -NotePropertyValue $UnknownValue }
+            return $record
+        }
+    }
+
+    It 'archives only exact terminal records and rehydrates unknown fields by deterministic resourceId' {
+        $root = New-LedgerRepository
+        $root | Should -Match ' '
+        $root | Should -Match '[^\u0000-\u007f]'
+        $removed = New-ExactRemovedResource -Sequence 1 -UnknownValue ([pscustomobject]@{ nested='сохранить'; version=7 })
+        $active = New-ExactRemovedResource -Sequence 2; $active.state = 'active'
+        $malformed = New-ExactRemovedResource -Sequence 3; $malformed.resourceId = '0' * 64
+        $unknown = New-ExactRemovedResource -Sequence 4; $unknown.kind = 'future-resource'
+        $missingState = New-ExactRemovedResource -Sequence 5; $missingState.PSObject.Properties.Remove('state')
+        $badTimestamp = New-ExactRemovedResource -Sequence 6; $badTimestamp.updatedAt = 'not-a-timestamp'
+        $ledger = [pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed,$active,$malformed,$unknown,$missingState,$badTimestamp); updatedAt=''; futureTopLevel='preserve-me' }
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+
+        $result = Compact-DeliveryResourceLedger
+        $result.status | Should -Be 'compacted'
+        $result.archived | Should -Be 1
+        (Get-FileHash -LiteralPath $result.archivePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $result.archiveSha256
+        (Split-Path -Leaf $result.archivePath) | Should -BeExactly "$($result.archiveSha256).json"
+        $hot = Read-DeliveryResourceLedger
+        $hot.futureTopLevel | Should -Be 'preserve-me'
+        $hot.resources | Should -HaveCount 5
+        @($hot.resources | Where-Object { $_.PSObject.Properties['state'] -and [string]$_.state -eq 'active' }) | Should -HaveCount 1
+        @($hot.resources | Where-Object { [string]$_.resourceId -eq ('0' * 64) }) | Should -HaveCount 1
+        @($hot.resources | Where-Object kind -eq 'future-resource') | Should -HaveCount 1
+        @($hot.resources | Where-Object { -not $_.PSObject.Properties['state'] }) | Should -HaveCount 1
+        @($hot.resources | Where-Object updatedAt -eq 'not-a-timestamp') | Should -HaveCount 1
+
+        $rehydratedId = Register-DeliveryResource -PlanId ([string]$removed.planId) -Kind ([string]$removed.kind) -Owner ([string]$removed.owner) -Identity $removed.identity -State active
+        $rehydratedId | Should -BeExactly ([string]$removed.resourceId)
+        $rehydrated = (Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $rehydratedId
+        $rehydrated.futureField.nested | Should -Be 'сохранить'
+        $rehydrated.futureField.version | Should -Be 7
+        $before = (Get-FileHash -LiteralPath (Get-DeliveryResourceLedgerPath) -Algorithm SHA256).Hash
+        (Compact-DeliveryResourceLedger).status | Should -Be 'unchanged'
+        (Get-FileHash -LiteralPath (Get-DeliveryResourceLedgerPath) -Algorithm SHA256).Hash | Should -BeExactly $before
+    }
+
+    It 'reuses an already-written content blob after restart before the ledger swap' {
+        New-LedgerRepository | Out-Null
+        $removed = New-ExactRemovedResource -Sequence 11 -UnknownValue 'restart'
+        $ledger = [pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed); updatedAt='' }
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+        $prefix = ([string]$removed.resourceId).Substring(0, 2)
+        $payload = [pscustomobject][ordered]@{ schemaVersion=1; kind='itl-delivery-resource-archive'; prefix=$prefix; resources=@($removed) }
+        $content = ($payload | ConvertTo-Json -Depth 24 -Compress) + [Environment]::NewLine
+        $sha = Get-DeliveryTextSha256 -Text $content
+        $archiveRoot = Get-DeliveryResourceArchiveRoot
+        New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+        $archivePath = Join-Path $archiveRoot "$sha.json"
+        [IO.File]::WriteAllText($archivePath, $content, [Text.UTF8Encoding]::new($false))
+        $beforeWrite = (Get-Item -LiteralPath $archivePath).LastWriteTimeUtc
+
+        $result = Compact-DeliveryResourceLedger
+        $result.archiveSha256 | Should -BeExactly $sha
+        (Get-Item -LiteralPath $archivePath).LastWriteTimeUtc | Should -Be $beforeWrite
+        (Read-DeliveryResourceLedger).resources | Should -HaveCount 0
+        (Read-DeliveryResourceLedger).archives | Should -HaveCount 1
+        (Read-DeliveryResourceLedger).archives[0].prefix | Should -BeExactly $prefix
+    }
+
+    It 'fails closed on archive corruption without recreating a live record' {
+        New-LedgerRepository | Out-Null
+        $removed = New-ExactRemovedResource -Sequence 21
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed); updatedAt='' }) | Out-Null
+        $archivePath = (Compact-DeliveryResourceLedger).archivePath
+        [IO.File]::AppendAllText($archivePath, 'tamper', [Text.UTF8Encoding]::new($false))
+
+        { Register-DeliveryResource -PlanId ([string]$removed.planId) -Kind ([string]$removed.kind) -Owner ([string]$removed.owner) -Identity $removed.identity -State active } | Should -Throw '*DELIVERY_RESOURCE_ARCHIVE_CORRUPT*'
+        (Read-DeliveryResourceLedger).resources | Should -HaveCount 0
+    }
+
+    It 'looks up only the deterministic shard and ignores corruption in an unrelated shard' {
+        New-LedgerRepository | Out-Null
+        $byPrefix = [ordered]@{}
+        for ($i = 0; $byPrefix.Count -lt 2; $i++) {
+            $candidate = New-ExactRemovedResource -Sequence (100 + $i)
+            $prefix = ([string]$candidate.resourceId).Substring(0, 2)
+            if (-not $byPrefix.Contains($prefix)) { $byPrefix[$prefix] = $candidate }
+        }
+        $records = @($byPrefix.Values)
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=$records; updatedAt='' }) | Out-Null
+        Compact-DeliveryResourceLedger | Out-Null
+        $ledger = Read-DeliveryResourceLedger
+        $descriptors = @($ledger.archives | Sort-Object prefix)
+        [IO.File]::AppendAllText((Join-Path (Get-DeliveryResourceArchiveRoot) ([string]$descriptors[0].file)), 'tamper', [Text.UTF8Encoding]::new($false))
+
+        $safe = @($records | Where-Object { ([string]$_.resourceId).StartsWith([string]$descriptors[1].prefix, [StringComparison]::Ordinal) })[0]
+        (Get-DeliveryArchivedResource -Ledger $ledger -ResourceId ([string]$safe.resourceId)).resourceId | Should -BeExactly ([string]$safe.resourceId)
+        $corrupt = @($records | Where-Object { ([string]$_.resourceId).StartsWith([string]$descriptors[0].prefix, [StringComparison]::Ordinal) })[0]
+        { Get-DeliveryArchivedResource -Ledger $ledger -ResourceId ([string]$corrupt.resourceId) } | Should -Throw '*DELIVERY_RESOURCE_ARCHIVE_CORRUPT*'
+    }
+
+    It 'compacts 10000 terminal records into bounded prefix shards and caches repeated shard reads' {
+        New-LedgerRepository | Out-Null
+        $resources = [Collections.Generic.List[object]]::new()
+        for ($i = 0; $i -lt 10000; $i++) { $resources.Add((New-ExactRemovedResource -Sequence (10000 + $i) -UnknownValue $i)) | Out-Null }
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=@($resources); updatedAt='' }) | Out-Null
+
+        $result = Compact-DeliveryResourceLedger
+        $result.archived | Should -Be 10000
+        $result.retained | Should -Be 0
+        $hot = Read-DeliveryResourceLedger
+        $hot.resources | Should -HaveCount 0
+        $hot.archives.Count | Should -BeLessOrEqual 256
+        [int](($hot.archives | Measure-Object count -Sum).Sum) | Should -Be 10000
+        @(Get-ChildItem -LiteralPath (Get-DeliveryResourceArchiveRoot) -File -Filter '*.json').Count | Should -BeLessOrEqual 256
+
+        $descriptor = @($hot.archives | Sort-Object count -Descending | Select-Object -First 1)[0]
+        $script:DeliveryResourceArchiveCache = @{}
+        $script:DeliveryResourceArchivePhysicalReadCount = 0
+        1..20 | ForEach-Object {
+            $missing = ([string]$descriptor.prefix) + ('{0:x62}' -f $_)
+            Get-DeliveryArchivedResource -Ledger $hot -ResourceId $missing | Should -BeNullOrEmpty
+        }
+        $script:DeliveryResourceArchivePhysicalReadCount | Should -Be 1
+    }
+
+    It 'routes both state mutations only through serialized manual Cleanup and never Status' {
+        $supervisor = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
+        ([regex]::Matches($supervisor, 'Compact-DeliveryResourceLedger')).Count | Should -Be 1
+        ([regex]::Matches($supervisor, 'Repair-DeliveryRunHotIndex')).Count | Should -Be 1
+        $lockOffset = $supervisor.IndexOf('Enter-DeliveryOperation -Action $Action', [StringComparison]::Ordinal)
+        $cleanupOffset = $supervisor.IndexOf('"Cleanup" {', [StringComparison]::Ordinal)
+        $compactOffset = $supervisor.IndexOf('Compact-DeliveryResourceLedger', [StringComparison]::Ordinal)
+        $statusOffset = $supervisor.IndexOf('"Status" {', [StringComparison]::Ordinal)
+        $lockOffset | Should -BeLessThan $cleanupOffset
+        $cleanupOffset | Should -BeLessThan $compactOffset
+        $statusBlock = $supervisor.Substring($statusOffset, $cleanupOffset - $statusOffset)
+        $statusBlock | Should -Not -Match 'Compact-DeliveryResourceLedger|Repair-DeliveryRunHotIndex|Write-Delivery'
     }
 }

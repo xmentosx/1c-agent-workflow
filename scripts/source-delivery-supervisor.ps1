@@ -117,7 +117,14 @@ try {
             }
         }
         "Plan" { New-AccumulatedDeliveryPlan -RequireRelease:$RequireRelease }
-        "Cleanup" { Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual" }
+        "Cleanup" {
+            $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual"
+            $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue ([pscustomobject][ordered]@{
+                runIndex=(Repair-DeliveryRunHotIndex)
+                resourceLedger=(Compact-DeliveryResourceLedger)
+            })
+            $cleanup
+        }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
         "PublishDevelop" { Publish-AccumulatedDevelop }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster }

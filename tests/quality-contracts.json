@@ -183,7 +183,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
       "paths": ["scripts/source-delivery-process.ps1"],
-      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
     },
     {
       "id": "source-delivery-queue",
