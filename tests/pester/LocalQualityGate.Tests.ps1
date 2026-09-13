@@ -97,6 +97,7 @@ Describe "Local quality gate contract" {
             "scripts/source-delivery-supervisor.ps1",
             "scripts/source-delivery-plan.ps1",
             "scripts/source-delivery-resources.ps1",
+            "scripts/source-delivery-ref-cleanup.ps1",
             "scripts/source-delivery-process.ps1",
             "scripts/source-delivery-queue.ps1",
             "scripts/source-delivery-candidate.ps1",
@@ -267,8 +268,9 @@ Describe "Local quality gate contract" {
                 "tests\pester\TestSupport.ps1",
                 "tests\pester\Agent1cEntrypoint.Tests.ps1",
                 "tests\pester\AuxiliaryContours.Tests.ps1",
-                "tests\pester\McpConfig.Tests.ps1"
-                "tests\pester\SourceDeliveryRunIndex.Tests.ps1"
+                "tests\pester\McpConfig.Tests.ps1",
+                "tests\pester\SourceDeliveryRunIndex.Tests.ps1",
+                "tests\pester\SourceDeliveryRefCleanup.Tests.ps1"
             )) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relativePath) -Destination (Join-Path $root $relativePath) -Force
             }
@@ -439,9 +441,10 @@ Get-PesterShardFileSha256 -Path `$Path
     It "qualifies static and live candidate evidence without repeating Develop during Release" {
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8; $qualification = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-qualification.ps1") -Raw -Encoding UTF8
         $promoter = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\promote-ai-rules-compatibility.ps1") -Raw -Encoding UTF8
-        $delivery = @("source-delivery.ps1", "source-delivery-supervisor.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1", "source-delivery-resources.ps1", "source-delivery-cleanup.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
+        $delivery = @("source-delivery.ps1", "source-delivery-supervisor.ps1", "source-delivery-process.ps1", "source-delivery-queue.ps1", "source-delivery-component.ps1", "source-delivery-candidate.ps1", "source-delivery-resources.ps1", "source-delivery-ref-cleanup.ps1", "source-delivery-cleanup.ps1" | ForEach-Object { Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\$_") -Raw -Encoding UTF8 }) -join [Environment]::NewLine
         $developJourney = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-develop-e2e.ps1") -Raw -Encoding UTF8
         $check | Should -Match 'itl-workflow-full-qualification'
+        $check | Should -Match 'source-delivery-ref-cleanup\.ps1' -Because 'ref cleanup code must invalidate reusable gate evidence'
         $check | Should -Match 'itl-workflow-develop-qualification'
         $check | Should -Match 'Test-DevelopQualification'
         $check | Should -Match 'Test-WorkflowQualification -Path \$qualificationFullPath.*-ForkIdentity \$aiRulesRelease'

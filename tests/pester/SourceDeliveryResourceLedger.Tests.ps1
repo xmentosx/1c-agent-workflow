@@ -127,7 +127,7 @@
 }
 
 Describe 'Delivery v3 resource ledger' {
-    It 'keeps the disposition call graph read-only and documents the future CAS boundary' {
+    It 'keeps the disposition call graph read-only and documents the manual CAS boundary' {
         $resourcePath = Join-Path $RepoRoot 'scripts\source-delivery-resources.ps1'
         $tokens = $null
         $errors = $null
@@ -173,7 +173,7 @@ Describe 'Delivery v3 resource ledger' {
         $supervisorText | Should -Match 'disposition = \(Get-DeliveryDispositionReport\)'
         $docsText = Get-Content -LiteralPath (Join-Path $RepoRoot 'docs\local-quality-gate.md') -Raw -Encoding UTF8
         foreach ($marker in @(
-            'git update-ref --stdin', 'git update-ref -d <ref> <expectedSha>',
+            'git update-ref --no-deref --stdin',
             'delivery-operation', 'name-only worktree match', 'age-based decision',
             'promotionCommit', 'Restore-DevelopCompatibilityPromotion',
             'git ls-remote', 'fixed timeout', 'credential prompts', 'Status.snapshot',

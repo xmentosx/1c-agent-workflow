@@ -27,6 +27,7 @@
     "SourceDeliveryProcessLifetime.Tests.ps1": 5.2,
     "SourceDeliveryResourceLedger.Tests.ps1": 185.0,
     "SourceDeliveryRunIndex.Tests.ps1": 45.0,
+    "SourceDeliveryRefCleanup.Tests.ps1": 200.0,
     "SourceDeliveryPublish.Tests.ps1": 260.0,
     "SourceDeliveryPublishContinuation.Tests.ps1": 190.0,
     "SourceDeliveryPublishQualification.Tests.ps1": 270.0,

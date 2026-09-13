@@ -365,8 +365,14 @@ captured while that root identity was live, rejects creation times after the
 root exit, and rechecks each PID plus creation time immediately before stopping
 it. An unknown pipe holder is reported as a timeout and may leak; PID reuse never
 authorizes killing an unproven process.
-`eligible` remains advisory until a separate cleanup implementation revalidates
-all guards against the same snapshot and performs expected-SHA compare-and-swap.
+`eligible` in `Status` remains advisory. Only an explicit manual `-Action Cleanup`
+recomputes the disposition while holding the exact live `Cleanup`
+`delivery-operation` lease. It may remove complete queue base/head pairs and stale
+promotion refs in one `git update-ref --no-deref --stdin` transaction, with the
+observed old SHA on every delete. A changed old object SHA or publication attempt
+aborts the whole transaction. Symbolic refs observed by the cleanup snapshot are
+rejected, and `--no-deref` prevents a later symbolic ref from exposing its target
+to deletion. Publication pre/post sweeps never invoke this ref cleanup.
 
 The current CIM command-line scan is only an advisory active-process signal. A
 clear scan does not prove absence of open handles, a process cwd, or an
@@ -383,14 +389,15 @@ appears, disappears, or changes during the probe, every promotion ref remains
 eligible. `Status.snapshot` exposes this validation result; it is a bounded
 observation, not a cleanup lease.
 
-A later mutating batch may consume a reported ref only after recomputing every
-guard against the same expected SHA. Queue base/head refs must be deleted in one
-`git update-ref --stdin` transaction with an old-value SHA for each ref; a single
-ref uses `git update-ref -d <ref> <expectedSha>`. A moved ref makes the CAS fail
-and leaves the target untouched. Worktree removal additionally requires the
-reported branch SHA still to equal `expectedSha` while the delivery-operation
-lock is held. A bare ref delete, name-only worktree match, or age-based decision
-is never allowed.
+The mutating cleanup consumes no previously printed `Status` result: it recomputes
+every guard and rejects symbolic refs before committing its expected-SHA CAS.
+Queue base/head refs always enter the same transaction, and eligible promotion
+singletons use the same old-value guard. A moved ref leaves every target untouched.
+Repeated Cleanup is idempotent: after a committed transaction the next fresh
+disposition contains no target refs. Worktrees and ledger resources remain
+read-only in this slice; worktree removal still requires a complete process,
+handle, and cwd absence proof that is not currently available. A bare ref delete,
+name-only worktree match, or age-based decision is never allowed.
 
 An exact `publication-attempts/develop.json` `promotionRef` remains `keep` while
 the attempt exists, even when its commit is already published. Its

@@ -82,6 +82,7 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-component.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-plan.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-resources.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-ref-cleanup.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
@@ -123,6 +124,11 @@ try {
                 runIndex=(Repair-DeliveryRunHotIndex)
                 resourceLedger=(Compact-DeliveryResourceLedger)
             })
+            $refCleanup = Invoke-DeliveryRefDispositionCleanup
+            $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
+            if ([string]$refCleanup.status -eq 'needs-attention' -and [string]$cleanup.status -eq 'completed') {
+                $cleanup | Add-Member -NotePropertyName status -NotePropertyValue 'completed-with-warnings' -Force
+            }
             $cleanup
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
