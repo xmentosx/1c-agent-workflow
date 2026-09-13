@@ -113,11 +113,112 @@ Describe "Local quality gate contract" {
         $shardRunner = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
         $shardRunner | Should -Match '\$serialTestNames = @\("CompactItlRunner\.Tests\.ps1", "DependencyLocks\.Tests\.ps1", "ReleaseGate\.Tests\.ps1"\)'
         $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
-        $check | Should -Match 'SelectionPath", \$selectionPath\) -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
+        $check | Should -Match 'Invoke-PowerShellChild -ScriptPath \$shardRunner -Arguments \$shardArguments -TimeoutSeconds \$modeHardBudgetSeconds' -Because "the selected shard runner must use the Targeted contract budget instead of a second hard-coded limit"
         $check | Should -Match '-TimeoutSeconds \$pesterHardBudgetSeconds -ProgressPaths \(Join-Path \$outputRoot "pester-shards"\) -LogName "pester-shards"' -Because "the complete Pester inventory must use the catalog Full hard budget and treat shard artifacts as live progress"
         [int]$catalog.budgets.targetedHardSeconds | Should -BeGreaterOrEqual 1200
         [int]$catalog.budgets.fullHardSeconds | Should -BeGreaterOrEqual 1800
         [int]($catalog.contracts | Where-Object id -eq "source-delivery-candidate").budgetSeconds | Should -BeGreaterOrEqual 1200
+    }
+    It "uses the catalog Targeted worker default only when PesterWorkers is implicit" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        [int]$catalog.pesterWorkers.targetedImplicitDefault | Should -Be 4
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 4
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 2 | Should -Be 2
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 0 | Should -Be 1
+        Resolve-PesterWorkerCount -Mode Targeted -RequestedWorkerCount 3 -Explicit $true -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        foreach ($mode in @("Smoke", "Full", "Develop", "Release")) {
+            Resolve-PesterWorkerCount -Mode $mode -RequestedWorkerCount 3 -Explicit $false -Catalog $catalog -ProcessorCount 8 | Should -Be 3
+        }
+
+        $check = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\check.ps1") -Raw -Encoding UTF8
+        $check | Should -Match '\[int\]\$PesterWorkers = 3'
+        $check | Should -Match '\$pesterWorkersExplicit = \$PSBoundParameters\.ContainsKey\("PesterWorkers"\)'
+        $check | Should -Match '"-WorkerCount", \[string\]\$effectivePesterWorkers, "-RequestedWorkerCount", \[string\]\$PesterWorkers'
+        $check | Should -Match 'pesterWorkers = \[ordered\]@\{\s*requested = \[int\]\$PesterWorkers\s*explicit = \[bool\]\$pesterWorkersExplicit\s*effective = \[int\]\$effectivePesterWorkers'
+        $focusedWrapper = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\test.ps1") -Raw -Encoding UTF8
+        $focusedWrapper | Should -Match '\$pesterWorkersExplicit = \$PSBoundParameters\.ContainsKey\("PesterWorkers"\)'
+        $focusedWrapper | Should -Match '"-RequestedWorkerCount", \[string\]\$PesterWorkers'
+        $focusedWrapper | Should -Match 'if \(-not \$pesterWorkersExplicit\) \{ \$runnerArguments \+= "-WorkerCountDefaulted" \}'
+    }
+    It "preserves implicit worker provenance through the focused test wrapper" {
+        $outputRoot = Join-Path $TestDrive "implicit focused wrapper"
+        $resultPath = Join-Path $outputRoot "parser-docs.xml"
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\test.ps1") -Arguments @("-Path", "tests/pester/ParserDocsBudgets.Tests.ps1", "-OutputFile", $resultPath)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $summary = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $summary.pesterWorkers.requested | Should -Be 3
+        $summary.pesterWorkers.explicit | Should -BeFalse
+        $summary.pesterWorkers.effective | Should -Be 3
+    }
+    It "keeps the exact stabilization E owner selection and models four workers with hard-budget reserve" {
+        . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
+        $catalog = Get-QualityContractCatalog -RepositoryRoot $RepoRoot
+        $ePaths = @(
+            "docs/local-quality-gate.md", "docs/workflow-stabilization-history.md", "docs/workflow-stabilization-plan.md",
+            "scripts/check.ps1", "scripts/pester-timings.json", "scripts/source-delivery-ref-cleanup.ps1", "scripts/source-delivery-supervisor.ps1",
+            "tests/pester/LocalQualityGate.Tests.ps1", "tests/pester/SourceDelivery.TestSupport.ps1",
+            "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/quality-contracts.json"
+        )
+        $expectedTests = @(
+            "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
+            "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
+            "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
+            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
+            "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
+            "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
+            "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1",
+            "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1"
+        )
+        $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
+        @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-gate")
+        @($selection.tests) | Should -Be $expectedTests
+        @($selection.tests).Count | Should -Be 17
+
+        $observedSeconds = [ordered]@{
+            "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
+            "DevelopStaticQualificationCache.Tests.ps1" = 16.008; "LocalQualityGate.Tests.ps1" = 232.946
+            "ParserDocsBudgets.Tests.ps1" = 12.688; "ReleaseGate.Tests.ps1" = 176.030; "ReleaseReadiness.Tests.ps1" = 104.107
+            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
+            "SourceDeliveryPublish.Tests.ps1" = 243.396; "SourceDeliveryPublishContinuation.Tests.ps1" = 252.135
+            "SourceDeliveryPublishQualification.Tests.ps1" = 459.824; "SourceDeliveryPublishRecovery.Tests.ps1" = 332.610
+            "SourceDeliveryPublishReleaseTrain.Tests.ps1" = 345.565; "SourceDeliveryQueue.Tests.ps1" = 351.430
+            "SourceDeliveryRefCleanup.Tests.ps1" = 191.680; "SourceDeliveryResourceLedger.Tests.ps1" = 191.731
+        }
+        $trackedTimings = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\pester-timings.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $updatedOrderingWeights = [ordered]@{
+            "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
+            "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=233
+            "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
+            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryProcessLifetime.Tests.ps1"=7
+            "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
+            "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
+            "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352
+        }
+        foreach ($entry in $updatedOrderingWeights.GetEnumerator()) { [double]$trackedTimings.files.($entry.Key) | Should -Be ([double]$entry.Value) }
+        [double]$trackedTimings.files."ReleaseGate.Tests.ps1" | Should -Be 181
+        [double]$trackedTimings.files."SourceDeliveryPublish.Tests.ps1" | Should -Be 260
+        [double]$trackedTimings.files."SourceDeliveryRefCleanup.Tests.ps1" | Should -Be 200
+        $estimate = {
+            param([double[]]$ParallelSeconds, [double[]]$SerialSeconds, [int]$WorkerCount, [double]$OverheadSeconds)
+            $lanes = New-Object double[] $WorkerCount
+            foreach ($seconds in @($ParallelSeconds | Sort-Object -Descending)) {
+                $lane = 0
+                for ($index = 1; $index -lt $lanes.Count; $index++) { if ($lanes[$index] -lt $lanes[$lane]) { $lane = $index } }
+                $lanes[$lane] += $seconds
+            }
+            $parallelCriticalPath = 0.0; foreach ($seconds in $lanes) { $parallelCriticalPath = [Math]::Max($parallelCriticalPath, $seconds) }
+            $serialCriticalPath = 0.0; foreach ($seconds in $SerialSeconds) { $serialCriticalPath += $seconds }
+            return $parallelCriticalPath + $serialCriticalPath + $OverheadSeconds
+        }
+        $serial = @([double]$observedSeconds["ReleaseGate.Tests.ps1"])
+        $parallel = @($observedSeconds.GetEnumerator() | Where-Object Key -ne "ReleaseGate.Tests.ps1" | ForEach-Object { [double]$_.Value })
+        # The first E run left about ten seconds outside shard execution; round that observed orchestration remainder up to 15 seconds.
+        $overhead = 15.0
+        $three = & $estimate $parallel $serial 3 $overhead
+        $four = & $estimate $parallel $serial 4 $overhead
+        $three | Should -BeGreaterThan ([double]$catalog.budgets.targetedHardSeconds)
+        ([double]$catalog.budgets.targetedHardSeconds - $four) | Should -BeGreaterThan 200
     }
     It "routes only exact named entrypoint AST changes and falls back for shared or unknown impact" {
         . (Join-Path $RepoRoot "scripts\quality-contracts.ps1")
@@ -204,6 +305,7 @@ Describe "Local quality gate contract" {
             Set-Content -LiteralPath (Join-Path $root "full.txt") -Encoding UTF8 -Value "full"
             $catalog = [ordered]@{
                 schemaVersion=1
+                pesterWorkers=[ordered]@{targetedImplicitDefault=4}
                 continuationScopes=[ordered]@{deliveryPostGate=@('delivery/*');develop=@('develop/*');gate=@('gate/*');release=@('release/*');static=@('tests/*')}
                 developJourneys=[ordered]@{names=@('upgrade','fresh');fullPaths=@('full.txt');routes=[ordered]@{upgrade=[ordered]@{contracts=@('lifecycle')};fresh=[ordered]@{contracts=@('lifecycle')}}}
                 retiredTests=[ordered]@{}
@@ -605,6 +707,13 @@ Get-PesterShardFileSha256 -Path `$Path
             $second.fingerprintPlanMs | Should -BeGreaterOrEqual 0
             $second.cacheLookupMs | Should -BeGreaterOrEqual 0
             $second.workerSpanMs | Should -BeGreaterOrEqual 0
+            $second.pesterWorkers.requested | Should -Be 1
+            $second.pesterWorkers.explicit | Should -BeTrue
+            $second.pesterWorkers.effective | Should -Be 1
+            $out3 = Join-Path $root "out3"; $implicitRun = Invoke-TestPowerShellFile -FilePath $invoke -Arguments @("-RepositoryRoot", $root, "-OutputRoot", $out3, "-JunitPath", (Join-Path $out3 "pester.xml"), "-SelectionPath", $selectionPath); $implicitRun.exitCode | Should -Be 0 -Because ((@($implicitRun.stdout) + @($implicitRun.stderr)) -join [Environment]::NewLine); $implicit = ($implicitRun.stdout -join [Environment]::NewLine) | ConvertFrom-Json
+            $implicit.pesterWorkers.requested | Should -Be 3
+            $implicit.pesterWorkers.explicit | Should -BeFalse
+            $implicit.pesterWorkers.effective | Should -Be 3
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
     It "runs owner-selected upgrade before complete Pester and records shard timing metrics" {

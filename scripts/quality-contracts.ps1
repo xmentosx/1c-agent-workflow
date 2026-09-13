@@ -10,6 +10,22 @@ function Get-QualityContractCatalog {
     return $catalog
 }
 
+function Resolve-PesterWorkerCount {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet("Targeted", "Smoke", "Full", "Develop", "Release")][string]$Mode,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 4)][int]$RequestedWorkerCount,
+        [Parameter(Mandatory = $true)][bool]$Explicit,
+        [Parameter(Mandatory = $true)][object]$Catalog,
+        [int]$ProcessorCount = [Environment]::ProcessorCount
+    )
+
+    if ($Explicit -or $Mode -ne "Targeted") { return $RequestedWorkerCount }
+    $targetedDefault = [int]$Catalog.pesterWorkers.targetedImplicitDefault
+    if ($targetedDefault -lt 1 -or $targetedDefault -gt 4) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 4." }
+    $availableProcessors = [Math]::Max(1, $ProcessorCount)
+    return [Math]::Max(1, [Math]::Min($targetedDefault, $availableProcessors))
+}
+
 function Get-PublicLifecycleActions {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
@@ -215,6 +231,9 @@ function Test-QualityContractCatalog {
         [Parameter(Mandatory = $true)][object]$Catalog,
         [switch]$SkipSemanticEntrypointValidation
     )
+
+    $targetedImplicitDefault = [int]$Catalog.pesterWorkers.targetedImplicitDefault
+    if ($targetedImplicitDefault -lt 1 -or $targetedImplicitDefault -gt 4) { throw "Quality contract pesterWorkers.targetedImplicitDefault must be between 1 and 4." }
 
     $expectedContinuationScopes = @("deliveryPostGate", "develop", "gate", "release", "static") | Sort-Object
     $actualContinuationScopes = @($Catalog.continuationScopes.PSObject.Properties | ForEach-Object { [string]$_.Name } | Sort-Object -Unique)

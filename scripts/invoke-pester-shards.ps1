@@ -5,12 +5,16 @@ param(
     [Parameter(Mandatory = $true)][string]$JunitPath,
     [string]$AiRulesSource = "",
     [string]$SelectionPath = "",
-    [ValidateRange(1, 4)][int]$WorkerCount = 3
+    [ValidateRange(1, 4)][int]$WorkerCount = 3,
+    [ValidateRange(0, 4)][int]$RequestedWorkerCount = 0,
+    [switch]$WorkerCountDefaulted
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$workerCountParameterExplicit = $PSBoundParameters.ContainsKey("WorkerCount")
+$reportedRequestedWorkerCount = $(if ($RequestedWorkerCount -gt 0) { $RequestedWorkerCount } else { $WorkerCount })
 
 function ConvertTo-NativeArgument {
     param([string]$Value)
@@ -674,6 +678,11 @@ $summary = [ordered]@{
     schemaVersion = 2
     status = $(if ($failures.Count -eq 0 -and $failed -eq 0 -and $errors -eq 0) { "passed" } else { "failed" })
     workerCount = $results.Count
+    pesterWorkers = [ordered]@{
+        requested = [int]$reportedRequestedWorkerCount
+        explicit = ([bool]$workerCountParameterExplicit -and -not [bool]$WorkerCountDefaulted)
+        effective = [int]$WorkerCount
+    }
     executedWorkerCount = @($entries | Where-Object { -not $_.reused -and $_.process }).Count
     reusedWorkerCount = @($entries | Where-Object { $_.reused }).Count
     fingerprintPlanMs = [int64]$fingerprintPlanStopwatch.ElapsedMilliseconds

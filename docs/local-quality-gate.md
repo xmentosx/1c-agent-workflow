@@ -46,7 +46,7 @@ retrying registration. Keep the required final gates and their assertions intact
 
 | Режим | Когда | Цель | Hard limit |
 |---|---|---:|---:|
-| `Targeted` | регистрация одной доработки | 5 мин | 15 мин |
+| `Targeted` | регистрация одной доработки | 5 мин | 20 мин |
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 20 мин |
 | `Develop` | один Full и реальные стандартные journey | 25 мин | 90 мин |
@@ -54,6 +54,14 @@ retrying registration. Keep the required final gates and their assertions intact
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
+Публичный `PesterWorkers` по умолчанию остаётся равен `3`. Только неявный
+`Targeted` использует объявленное каталогом значение `4`, ограниченное числом
+логических процессоров; явно переданное значение и все остальные режимы не
+изменяются. Оба summary сохраняют requested/explicit/effective worker count;
+`effective` означает разрешённый предел sharded runner, а не число фактически
+запущенных процессов. `Smoke` остаётся однопроцессным.
+Tracked timings задают порядок запуска и округляются вверх от сохранённых
+наблюдений; это не обещание длительности и не отдельный timeout.
 `Targeted` получает изменённые пути через NUL-delimited Git output и
 `tests/quality-contracts.json`. Неизвестный путь останавливает проверку и требует
 назначить владельца — полного fallback-прогона нет.

@@ -18,6 +18,7 @@ param(
 )
 
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
+$pesterWorkersExplicit = $PSBoundParameters.ContainsKey("PesterWorkers")
 $effectiveMode = $(if ($Mode -eq "Fast") { "Smoke" } else { $Mode })
 if ($Mode -eq "Fast") { Write-Warning "Mode Fast is deprecated and now aliases Smoke. Use Targeted for a change or Smoke for a short source sanity check." }
 
@@ -69,6 +70,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "develop-static-qualification.ps1")
 . (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
 $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
+$effectivePesterWorkers = Resolve-PesterWorkerCount -Mode $effectiveMode -RequestedWorkerCount $PesterWorkers -Explicit $pesterWorkersExplicit -Catalog $qualityCatalog
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
 $modeTargetBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}TargetSeconds")
 $modeHardBudgetSeconds = [int]$qualityCatalog.budgets.("${budgetPrefix}HardSeconds")
@@ -884,7 +886,9 @@ try {
                 $selection = Get-Content -LiteralPath $selectionPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 if ($effectiveMode -eq "Targeted") {
                     $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath) -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
+                    $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers, "-SelectionPath", $selectionPath)
+                    if (-not $pesterWorkersExplicit) { $shardArguments += "-WorkerCountDefaulted" }
+                    Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $modeHardBudgetSeconds -NoProgressSeconds 300 -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-selection-shards"
                     $selectionResult = Get-Content -LiteralPath (Join-Path $outputRoot "pester-shards\summary.json") -Raw -Encoding UTF8 | ConvertFrom-Json
                     $script:pesterShardSummary = $selectionResult
                 } else {
@@ -898,7 +902,8 @@ try {
                 $script:pesterResult = [pscustomobject]@{ Result = $(if ([string]$selectionResult.status -eq "passed") { "Passed" } else { "Failed" }); PassedCount = [int]$selectionResult.passed; FailedCount = [int]$selectionResult.failed; SkippedCount = [int]$selectionResult.skipped }
             } else {
                 $shardRunner = Join-Path $repoRoot "scripts\invoke-pester-shards.ps1"
-                $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$PesterWorkers)
+                $shardArguments = @("-RepositoryRoot", $repoRoot, "-OutputRoot", $outputRoot, "-JunitPath", $junitPath, "-WorkerCount", [string]$effectivePesterWorkers, "-RequestedWorkerCount", [string]$PesterWorkers)
+                if (-not $pesterWorkersExplicit) { $shardArguments += "-WorkerCountDefaulted" }
                 if ($resolvedAiRulesSource) { $shardArguments += @("-AiRulesSource", $resolvedAiRulesSource) }
                 Invoke-PowerShellChild -ScriptPath $shardRunner -Arguments $shardArguments -TimeoutSeconds $pesterHardBudgetSeconds -ProgressPaths (Join-Path $outputRoot "pester-shards") -LogName "pester-shards"
                 $shardSummaryPath = Join-Path $outputRoot "pester-shards\summary.json"
@@ -1167,6 +1172,11 @@ try {
         tree = $tree
         worktreeClean = (-not $dirty)
         offline = [bool]$Offline
+        pesterWorkers = [ordered]@{
+            requested = [int]$PesterWorkers
+            explicit = [bool]$pesterWorkersExplicit
+            effective = [int]$effectivePesterWorkers
+        }
         aiRulesRelease = $aiRulesRelease
         qualificationPath = $qualificationFullPath
         developQualificationPath = $developQualificationFullPath

@@ -13,6 +13,9 @@
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
   },
+  "pesterWorkers": {
+    "targetedImplicitDefault": 4
+  },
   "continuationScopes": {
     "static": [
       "tests/pester/*",

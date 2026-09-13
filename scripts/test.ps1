@@ -6,6 +6,7 @@ param(
     [ValidateRange(1, 4)][int]$PesterWorkers = 3
 )
 
+$pesterWorkersExplicit = $PSBoundParameters.ContainsKey("PesterWorkers")
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -44,8 +45,10 @@ try {
             "-OutputRoot", $outputRoot,
             "-JunitPath", $resolvedOutputFile,
             "-WorkerCount", [string]$PesterWorkers,
+            "-RequestedWorkerCount", [string]$PesterWorkers,
             "-SelectionPath", $selectionPath
         )
+        if (-not $pesterWorkersExplicit) { $runnerArguments += "-WorkerCountDefaulted" }
         # Use the same Windows PowerShell host as the authoritative quality gate
         # so the host/Pester fingerprint is reusable by RegisterChange.
         & powershell.exe @runnerArguments
