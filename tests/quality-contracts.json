@@ -322,6 +322,15 @@
       "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1", "tests/pester/AiRulesMigration.Tests.ps1", "tests/pester/AiRulesOverlay.Tests.ps1", "tests/pester/KiloContextDiagnostics.Tests.ps1", "tests/pester/KiloVerificationRecovery.Tests.ps1", "tests/pester/OpenCodeWorkspace.Tests.ps1"]
     },
     {
+      "id": "source-maintenance-context",
+      "owner": "durable source-maintenance task context",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceMaintenanceContext.Tests.ps1",
+      "paths": ["scripts/source-maintenance-context.ps1", "docs/source-maintenance-context.md", "tests/pester/SourceMaintenanceContext.Tests.ps1"],
+      "tests": ["tests/pester/SourceMaintenanceContext.Tests.ps1", "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1"]
+    },
+    {
       "id": "documentation",
       "owner": "source documentation",
       "gate": "targeted",
