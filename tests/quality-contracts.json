@@ -331,6 +331,15 @@
       "tests": ["tests/pester/ParserDocsBudgets.Tests.ps1"]
     },
     {
+      "id": "context-orchestration-benchmark",
+      "owner": "installed-project context orchestration diagnostics",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ContextOrchestrationBenchmark.Tests.ps1",
+      "paths": [".agents/skills/1c-workflow/scripts/context-orchestration-benchmark.ps1", "tests/pester/ContextOrchestrationBenchmark.Tests.ps1", "tests/pester/fixtures/context-orchestration-benchmark/*", "docs/context-orchestration-benchmark.md"],
+      "tests": ["tests/pester/ContextOrchestrationBenchmark.Tests.ps1"]
+    },
+    {
       "id": "test-infrastructure",
       "owner": "Pester fixtures and test support",
       "gate": "targeted",
