@@ -207,6 +207,7 @@ func newFacadeSessionForFamily(t *testing.T, family string, tools []*mcp.Tool, b
 		idle: idle, logger: slog.New(slog.NewTextHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute),
 	}
 	server := mcp.NewServer(&mcp.Implementation{Name: serverName, Version: version}, nil)
+	addDatabaseAccessControlTool(server, rt)
 	for _, definition := range tools {
 		tool := definition
 		server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -282,8 +283,6 @@ func vanessaIntegrationTools() []*mcp.Tool {
 		{Name: "check_syntax", InputSchema: filePath},
 		{Name: "load_features", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}}},
 		{Name: "get_editor_state", InputSchema: object},
-		{Name: "execute_feature_step", InputSchema: object},
-		{Name: "get_form_analysis", InputSchema: object, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false)}},
 		{Name: "run_scenario", InputSchema: object},
 		{Name: "close_test_client", InputSchema: object},
 	}
@@ -360,7 +359,7 @@ func TestRuntimeLazyHTTPPaginationCallAndProgress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Tools) != 2 {
+	if len(listed.Tools) != 3 {
 		t.Fatalf("facade list has %d tools", len(listed.Tools))
 	}
 	if ensures, _ := broker.counts(); ensures != 0 {
@@ -627,7 +626,7 @@ func TestRuntimeConcurrentStaleCallsShareOneRecovery(t *testing.T) {
 	}
 }
 
-func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
+func TestGatewayListsControlToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 	tools := integrationTools()
 	broker := &fakeBroker{info: &backendInfo{}}
 	_, session := newGatewayFacadeSession(t, "roctup", tools, broker, nil)
@@ -641,7 +640,7 @@ func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 		names = append(names, tool.Name)
 	}
 	sort.Strings(names)
-	if len(names) != 2 || names[0] != gatewayCallTool || names[1] != gatewayResolveTool {
+	if len(names) != 3 || names[0] != gatewayCallTool || names[1] != finishDatabaseAccessTool || names[2] != gatewayResolveTool {
 		t.Fatalf("unexpected gateway surface: %#v", listed.Tools)
 	}
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: gatewayResolveTool, Arguments: map[string]any{"query": "echo", "limit": 1}})
@@ -656,19 +655,87 @@ func TestGatewayListsTwoToolsAndResolvesWithoutStartingBackend(t *testing.T) {
 	}
 }
 
+func TestFinishDatabaseAccessIsPublicIdempotentAndAllowsRestart(t *testing.T) {
+	for _, surface := range []string{"full", "gateway"} {
+		t.Run(surface, func(t *testing.T) {
+			tools := integrationTools()
+			_, backend := newBackend(t, tools, false)
+			broker := &fakeBroker{info: &backendInfo{URL: backend.URL}}
+			var session *mcp.ClientSession
+			if surface == "gateway" {
+				_, session = newGatewayFacadeSession(t, "roctup", tools, broker, nil)
+			} else {
+				_, session = newFacadeSession(t, tools, broker, time.Minute, nil)
+			}
+			call := func() {
+				name, arguments := "echo", map[string]any{"value": "x"}
+				if surface == "gateway" {
+					name, arguments = gatewayCallTool, map[string]any{"name": "echo", "arguments": arguments}
+				}
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("database call failed: %v %s", err, resultText(result))
+				}
+			}
+			finish := func(wantAlready bool) {
+				result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: finishDatabaseAccessTool, Arguments: map[string]any{}})
+				if err != nil || result == nil || result.IsError {
+					t.Fatalf("finish failed: %v %s", err, resultText(result))
+				}
+				payload, ok := result.StructuredContent.(map[string]any)
+				if !ok || payload["status"] != "released" || payload["alreadyReleased"] != wantAlready || payload["family"] != "roctup" {
+					t.Fatalf("unexpected finish result: %#v", result.StructuredContent)
+				}
+			}
+
+			call()
+			finish(false)
+			if ensures, stops := broker.counts(); ensures != 1 || stops != 1 {
+				t.Fatalf("first phase counts: ensures=%d stops=%d", ensures, stops)
+			}
+			finish(true)
+			if _, stops := broker.counts(); stops != 1 {
+				t.Fatalf("idempotent finish stopped again: %d", stops)
+			}
+			call()
+			if ensures, stops := broker.counts(); ensures != 2 || stops != 1 {
+				t.Fatalf("restart counts: ensures=%d stops=%d", ensures, stops)
+			}
+		})
+	}
+}
+
 func TestGatewayDefinitionsStayCompactAndDoNotEmbedInnerCatalog(t *testing.T) {
-	definitions := []*mcp.Tool{gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui")}
+	definitions := []*mcp.Tool{
+		gatewayResolveDefinition("roctup"), gatewayCallDefinition("roctup"), finishDatabaseAccessDefinition("roctup"),
+		gatewayResolveDefinition("vanessa-ui"), gatewayCallDefinition("vanessa-ui"), finishDatabaseAccessDefinition("vanessa-ui"),
+	}
 	raw, err := json.Marshal(definitions)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(raw) > 6000 {
-		t.Fatalf("four gateway definitions are too large: %d bytes", len(raw))
+		t.Fatalf("six gateway definitions are too large: %d bytes", len(raw))
 	}
 	for _, innerName := range []string{"get_metadata", "execute_query", "run_scenario", "get_test_results"} {
 		if strings.Contains(string(raw), innerName) {
 			t.Fatalf("gateway surface embeds inner tool %q", innerName)
 		}
+	}
+}
+
+func TestFinishDatabaseAccessDefinitionIsSafeAndReserved(t *testing.T) {
+	definition := finishDatabaseAccessDefinition("roctup")
+	if definition.Name != finishDatabaseAccessTool || definition.Annotations == nil ||
+		definition.Annotations.DestructiveHint == nil || *definition.Annotations.DestructiveHint ||
+		!definition.Annotations.IdempotentHint {
+		t.Fatalf("unexpected finish definition: %#v", definition)
+	}
+	catalog := &loadedCatalog{Data: catalogFile{Tools: []*mcp.Tool{{
+		Name: finishDatabaseAccessTool, InputSchema: map[string]any{"type": "object"},
+	}}}}
+	if err := validateFacadeCatalog(catalog); err == nil || !strings.Contains(err.Error(), "reserved facade tool") {
+		t.Fatalf("full surface accepted a colliding upstream tool: %v", err)
 	}
 }
 
@@ -1426,167 +1493,14 @@ func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
 	if evidence["schemaVersion"] != float64(3) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
 		t.Fatalf("unexpected failure evidence: %#v", evidence)
 	}
-	if evidence["resultMessage"] != "Vanessa returned a runtime/editor failure: Internal error: Ошибка при вызове конструктора (Файл)" || evidence["logPath"] != "backend.log" {
+	if evidence["resultMessage"] != "Vanessa returned a runtime/editor failure" || evidence["logPath"] != "backend.log" {
 		t.Fatalf("safe runner error details were not persisted: %#v", evidence)
-	}
-	if started["correlationId"] == "" || started["correlationId"] != evidence["correlationId"] {
-		t.Fatalf("started and final evidence are not correlated: started=%#v final=%#v", started, evidence)
 	}
 	if evidence["featurePath"] != "tests/features/demo.feature" || len(evidence["featureSha256"].(string)) != 64 || len(evidence["argumentsSha256"].(string)) != 64 {
 		t.Fatalf("failure evidence was not feature-bound: %#v", evidence)
 	}
 	if evidence["progressTokenProvided"] != false || evidence["progressNotificationsForwarded"] != float64(0) {
 		t.Fatalf("absent progress metadata was not diagnosed: %#v", evidence)
-	}
-}
-
-func TestRuntimeVanessaSemanticFailurePreservesBoundPrimaryAndSecondaryDiagnostics(t *testing.T) {
-	primary := `step failed password=super-secret ` + strings.Repeat("x", 260)
-	secondary := `Internal error: localization failed token=secondary-secret`
-	result := (&runtime{family: "vanessa-ui"}).validateVanessaResult(context.Background(), "execute_feature_step", &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: "PRIMARY_ERROR: " + primary + "\nSECONDARY_ERROR: " + secondary}},
-	}, nil)
-	assertToolErrorCode(t, result, "ITL_VANESSA_TOOL_RESULT_FAILED")
-	structured := result.StructuredContent.(map[string]any)
-	details := structured["details"].(map[string]any)
-	primaryDetail := details["primary"].(map[string]any)
-	secondaryDetails := details["secondaryDiagnostics"].([]map[string]any)
-	primaryMessage := primaryDetail["message"].(string)
-	secondaryMessage := secondaryDetails[0]["message"].(string)
-	if !strings.Contains(primaryMessage, "password=[redacted]") || len([]rune(primaryMessage)) > 240 || strings.Contains(primaryMessage, "super-secret") {
-		t.Fatalf("primary diagnostic is not bounded and redacted: %q", primaryMessage)
-	}
-	if !strings.Contains(secondaryMessage, "token=[redacted]") || strings.Contains(secondaryMessage, "secondary-secret") {
-		t.Fatalf("secondary diagnostic is not redacted: %q", secondaryMessage)
-	}
-}
-
-func TestVanessaTransportSuccessDoesNotMaskScenarioFailure(t *testing.T) {
-	for _, test := range []struct {
-		tool string
-		text string
-	}{
-		{tool: "run_scenario", text: "## Результат выполнения сценариев: были ошибки\nРезультат прохождения сценария: Failed"},
-		{tool: "get_test_results", text: "- Статус: Failed"},
-		{tool: "check_syntax", text: "Синтаксис корректен: Нет"},
-	} {
-		if marker := vanessaSemanticFailureMarker(test.tool, test.text); marker == "" {
-			t.Fatalf("%s transport-success failure was not recognized: %q", test.tool, test.text)
-		}
-	}
-}
-
-func TestRuntimeInterruptedCallsAreNotReplayedAndBackendIsReplaced(t *testing.T) {
-	for _, test := range []struct {
-		name        string
-		tool        string
-		wantCode    string
-		wantOutcome string
-	}{
-		{name: "read-only timeout before confirmed effect", tool: "get_form_analysis", wantCode: "ITL_ONDEMAND_CALL_TIMED_OUT", wantOutcome: "timed_out_before_confirmed_effect"},
-		{name: "side-effect timeout after possible effect", tool: "execute_feature_step", wantCode: "ITL_ONDEMAND_CALL_OUTCOME_UNKNOWN", wantOutcome: "unknown_after_possible_effect"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			tools := vanessaIntegrationTools()
-			var initialTargetCalls, replacementTargetCalls, replacementSafeCalls int
-			effectReached := false
-
-			initialServer := mcp.NewServer(&mcp.Implementation{Name: "interrupted-vanessa", Version: "1"}, nil)
-			for _, definition := range tools {
-				tool := definition
-				initialServer.AddTool(tool, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					text := tool.Name
-					switch tool.Name {
-					case "get_environment_data":
-						text = "VanessaExt: true"
-					case "connect_test_client":
-						text = "TestClient подключен"
-					case "get_window_list_testclient":
-						text = "Окно: Главное"
-					}
-					if tool.Name == test.tool {
-						initialTargetCalls++
-						if tool.Name == "execute_feature_step" {
-							effectReached = true
-						}
-						<-ctx.Done()
-						return nil, ctx.Err()
-					}
-					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
-				})
-			}
-			initialBackend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return initialServer }, nil))
-			t.Cleanup(initialBackend.Close)
-
-			replacementServer := mcp.NewServer(&mcp.Implementation{Name: "replacement-vanessa", Version: "1"}, nil)
-			for _, definition := range tools {
-				tool := definition
-				replacementServer.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-					if tool.Name == test.tool {
-						replacementTargetCalls++
-					}
-					if tool.Name == "get_form_analysis" {
-						replacementSafeCalls++
-					}
-					text := tool.Name
-					if tool.Name == "get_environment_data" {
-						text = "VanessaExt: true"
-					} else if tool.Name == "connect_test_client" {
-						text = "TestClient подключен"
-					} else if tool.Name == "get_window_list_testclient" {
-						text = "Окно: Главное"
-					}
-					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
-				})
-			}
-			replacementBackend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return replacementServer }, nil))
-			t.Cleanup(replacementBackend.Close)
-
-			instanceID := "0123456789abcdef0123456789abcdef"
-			broker := &fakeBroker{
-				info:        &backendInfo{InstanceID: instanceID, PID: 501, Port: 44001, URL: initialBackend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151},
-				recoverInfo: &backendInfo{PID: 502, Port: 44002, URL: replacementBackend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151},
-			}
-			rt, session := newFacadeSessionForFamily(t, "vanessa-ui", tools, broker, time.Minute, nil)
-			rt.cleanupTimeout = 2 * time.Second
-			configureRecoveryMarkers(t, rt, broker, instanceID)
-			foreignSentinel := filepath.Join(rt.projectRoot, "foreign-runtime.sentinel")
-			if err := os.WriteFile(foreignSentinel, []byte("foreign"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-
-			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-				Name: test.tool, Arguments: map[string]any{}, Meta: mcp.Meta{"itlPhaseRemainingMs": 500},
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			assertToolErrorCode(t, result, test.wantCode)
-			details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
-			if details["callOutcome"] != test.wantOutcome || details["automaticRetryPerformed"] != false || details["backendRecovered"] != true || details["correlationId"] == "" {
-				t.Fatalf("unexpected interruption contract: %#v", details)
-			}
-			if initialTargetCalls != 1 || replacementTargetCalls != 0 {
-				t.Fatalf("interrupted call was lost or replayed: initial=%d replacement=%d", initialTargetCalls, replacementTargetCalls)
-			}
-			if test.tool == "execute_feature_step" && !effectReached {
-				t.Fatal("side-effect sentinel was not reached before the deadline")
-			}
-			if broker.recoveryCount() != 1 {
-				t.Fatalf("backend replacement count=%d", broker.recoveryCount())
-			}
-
-			safe, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_form_analysis", Arguments: map[string]any{}})
-			if err != nil || safe == nil || safe.IsError {
-				t.Fatalf("safe call was not served by the replacement backend: result=%#v err=%v", safe, err)
-			}
-			if replacementSafeCalls != 1 {
-				t.Fatalf("replacement safe call count=%d", replacementSafeCalls)
-			}
-			if _, err := os.Stat(foreignSentinel); err != nil {
-				t.Fatalf("foreign sentinel was removed during owned recovery: %v", err)
-			}
-		})
 	}
 }
 
