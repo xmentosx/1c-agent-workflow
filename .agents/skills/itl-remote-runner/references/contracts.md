@@ -27,12 +27,16 @@ Each target may define `resourceLimits` with numeric `pollIntervalSeconds`, `max
 declares several operations, the worker applies the most restrictive combined policy. The runtime supplies bounded
 defaults when a legacy profile omits the section. On Windows, process and job memory are also installed as Job
 Object hard limits. Host/process/job samples are flushed to `resource-telemetry.jsonl` and summarized in
-`result.json.resourceEvidence`. A threshold breach terminates only the owned Job Object and records
+`result.json.resourceEvidence`. One immutable resource context identifies the policy and telemetry shared by
+the job's command and profiler processes. Process evidence binds a PID to its OS creation identity and records
+its parent PID, executable identity, peak private bytes and peak working set. A threshold breach terminates only the owned Job Object and records
 `RESOURCE_LIMIT_EXCEEDED`; external 1C server processes remain outside this boundary.
 
 Optional profile-level `workerLimits` contains `allowPersistent`, `maxJobs`, and `maxLifetimeSeconds`. Generated
 launchers are one-shot and process at most one queued job. Persistent polling requires both the explicit
 `--persistent` switch and `allowPersistent: true`; it still rotates at the configured job/lifetime limit.
+`worker.json` is refreshed during a running job and binds the worker PID to its OS creation identity. Probe treats
+a missing/mismatched identity or an expired heartbeat as stale; PID presence alone never proves worker ownership.
 
 ## Scenario (schemaVersion 1 or diagnostic v2)
 

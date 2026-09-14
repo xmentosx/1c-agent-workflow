@@ -7,10 +7,47 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 
-from itl_remote.common import (FileLock, WorkError, host_memory_snapshot, process_memory_snapshot,
+from itl_remote.common import (FileLock, WorkError, host_memory_snapshot, process_identity, process_memory_snapshot,
                                read_json, stamp, write_json)
+
+
+class WorkerHeartbeat:
+    """Publish a PID-reuse-safe heartbeat while the foreground worker owns its session."""
+    def __init__(self, spool, mode, started_at):
+        self.path = Path(spool) / "worker.json"
+        self.identity = process_identity(os.getpid())
+        self.state = {"status": "ready", "pid": os.getpid(), "processIdentity": self.identity,
+                      "mode": mode, "startedAt": started_at, "jobsProcessed": 0}
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="itl-worker-heartbeat", daemon=True)
+
+    def _publish(self):
+        with self.lock:
+            value = dict(self.state, updatedAt=stamp(), hostMemory=host_memory_snapshot(),
+                         workerMemory=process_memory_snapshot(os.getpid()))
+            write_json(self.path, value)
+
+    def start(self):
+        self._publish()
+        self.thread.start()
+
+    def update(self, **values):
+        with self.lock:
+            self.state.update(values)
+        self._publish()
+
+    def _run(self):
+        while not self.stop_event.wait(1.0):
+            self._publish()
+
+    def stop(self, *, jobs_processed, reason):
+        self.stop_event.set()
+        self.thread.join(timeout=5)
+        self.update(status="stopped", jobsProcessed=jobs_processed, reason=reason, currentJob=None)
 
 
 def main():
@@ -197,6 +234,8 @@ def main():
         completed_jobs = 0
         stop_reason = "one-shot-complete"
         with FileLock(spool / "service.lock"):
+            heartbeat = WorkerHeartbeat(spool, "persistent" if persistent else "one-shot", started_at)
+            heartbeat.start()
             print("ITL worker ready. Mode: " + ("persistent" if persistent else "one-shot") +
                   ". Stop: Ctrl+C. Spool: " + str(spool), flush=True)
             try:
@@ -206,25 +245,24 @@ def main():
                     if elapsed >= max_lifetime:
                         stop_reason = "max-lifetime"
                         break
-                    write_json(spool / "worker.json", {"status": "ready", "pid": os.getpid(),
-                               "mode": "persistent" if persistent else "one-shot", "startedAt": started_at,
-                               "updatedAt": stamp(), "jobsProcessed": completed_jobs,
-                               "hostMemory": host_memory_snapshot(),
-                               "workerMemory": process_memory_snapshot(os.getpid())})
+                    heartbeat.update(status="ready", jobsProcessed=completed_jobs, currentJob=None)
                     for package in sorted((spool / "jobs").glob("*")):
                         if package.name.startswith(".") or not package.is_dir():
                             continue
                         current = jobs.status(spool, package.name)
                         if current["status"] in ("queued", "running", "waiting-for-base"):
+                            heartbeat.update(status="running", jobsProcessed=completed_jobs, currentJob=package.name)
                             try:
                                 result = execution.execute_job(spool, package.name, profile)
                                 print(json.dumps(result, ensure_ascii=True), flush=True)
                             except WorkError as error:
                                 if str(error).startswith("OWNER_BUSY"):
+                                    heartbeat.update(status="ready", jobsProcessed=completed_jobs, currentJob=None)
                                     continue
                                 write_json(spool / "state" / (package.name + ".json"),
                                            {"id": package.name, "status": "needs-attention", "error": str(error), "updatedAt": stamp()})
                             completed_jobs += 1
+                            heartbeat.update(status="ready", jobsProcessed=completed_jobs, currentJob=None)
                             break
                     from itl_remote.agents import run_queued_controls
                     run_queued_controls(spool)
@@ -237,11 +275,7 @@ def main():
                         break
                     time.sleep(1)
             finally:
-                write_json(spool / "worker.json", {"status": "stopped", "pid": os.getpid(),
-                           "mode": "persistent" if persistent else "one-shot", "startedAt": started_at,
-                           "updatedAt": stamp(), "jobsProcessed": completed_jobs, "reason": stop_reason,
-                           "hostMemory": host_memory_snapshot(),
-                           "workerMemory": process_memory_snapshot(os.getpid())})
+                heartbeat.stop(jobs_processed=completed_jobs, reason=stop_reason)
         return {"status": "stopped", "jobsProcessed": completed_jobs, "reason": stop_reason}
 
 

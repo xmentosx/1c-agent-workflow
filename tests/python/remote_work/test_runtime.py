@@ -114,6 +114,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNotNone(result["databaseIdentity"])
         self.assertIn("Database binding: topology=file", (self.spool / "runs/one/report.md").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(result["resourceEvidence"]["processes"]), 2)
+        self.assertRegex(result["resourceEvidence"]["contextId"], "^[a-f0-9]{64}$")
+        self.assertEqual({result["resourceEvidence"]["contextId"]},
+                         {item["resourceContextId"] for item in result["resourceEvidence"]["processes"]})
         self.assertTrue((self.spool / "runs/one/resource-telemetry.jsonl").is_file())
         telemetry = [json.loads(line) for line in
                      (self.spool / "runs/one/resource-telemetry.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -263,6 +266,17 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertIn("INTERRUPTED_OWNER", result["error"])
         self.assertFalse((self.spool / "runs").exists())
 
+    def test_reused_owner_pid_identity_is_reconciled_without_replay(self):
+        _, package = self.package()
+        jobs.submit(package, self.spool)
+        write_json(self.spool / "state/one.json", {
+            "id": "one", "status": "running", "ownerPid": os.getpid(),
+            "ownerIdentity": {"pid": os.getpid(), "creationId": "previous-process"}})
+        result = execution.execute_job(self.spool, "one", self.profile)
+        self.assertEqual("needs-attention", result["status"])
+        self.assertIn("INTERRUPTED_OWNER_IDENTITY_MISMATCH", result["error"])
+        self.assertFalse((self.spool / "runs").exists())
+
     def test_cancel_queued_job_does_not_launch(self):
         request, package = self.package()
         jobs.submit(package, self.spool)
@@ -378,6 +392,95 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertIn("RESOURCE_LIMIT_EXCEEDED", result["error"])
         self.assertEqual([], result["timings"])
 
+    def test_resource_breach_remains_primary_when_cleanup_also_fails(self):
+        self.scenario["adapter"] = "command"
+        self.scenario["commands"]["action"] = [
+            sys.executable, "-c",
+            "import time; blocks=[]\nfor _ in range(30):\n blocks.append(bytearray(1024*1024)); time.sleep(.1)"]
+        self.scenario["commands"]["cleanup"] = [sys.executable, "-c", "raise SystemExit(7)"]
+        self.profile["targets"]["fixture"]["resourceLimits"] = {
+            "maxGrowthMb": 4, "growthWindowSeconds": 2, "pollIntervalSeconds": 0.1}
+        _, package = self.package()
+        state, result = self.execute(package)
+        self.assertEqual("needs-attention", state["status"])
+        self.assertTrue(result["error"].startswith("RESOURCE_LIMIT_EXCEEDED"), result)
+        self.assertIn("job-memory-growth", result["error"])
+        self.assertEqual(["COMMAND_FAILED: exit=7"], result["cleanupErrors"])
+
+    @unittest.skipUnless(os.name == "nt", "native Job Object contract is Windows-only")
+    def test_windows_resource_breaker_captures_owned_tree_and_keeps_foreign_process(self):
+        grandchild = self.root / "внук расходует память.py"
+        child = self.root / "дочерний процесс расходует память.py"
+        identities = self.root / "идентификаторы процессов.json"
+        start_gate = self.root / "начать расход памяти.flag"
+        grandchild.write_text(
+            "import sys,time\nfrom pathlib import Path\n"
+            "while not Path(sys.argv[1]).exists(): time.sleep(.02)\nblocks=[]\n"
+            "for _ in range(120):\n blocks.append(bytearray(1024*1024)); time.sleep(0.08)\n",
+            encoding="utf-8")
+        child.write_text(
+            "import json,os,subprocess,sys,time\nfrom pathlib import Path\n"
+            "grand=subprocess.Popen([sys.executable,sys.argv[1],sys.argv[3]])\n"
+            "open(sys.argv[2],'w',encoding='utf-8').write(json.dumps({'child':os.getpid(),'grandchild':grand.pid}))\n"
+            "while not Path(sys.argv[3]).exists(): time.sleep(.02)\n"
+            "blocks=[]\n"
+            "for _ in range(120):\n blocks.append(bytearray(1024*1024)); time.sleep(0.08)\n"
+            "grand.wait()\n", encoding="utf-8")
+        telemetry = self.root / "resource-telemetry.jsonl"
+        policy = resolve_resource_limits({"resourceLimits": {
+            "pollIntervalSeconds": 0.1, "maxWorkerMemoryMb": 4096,
+            "maxProcessMemoryMb": 128, "maxJobMemoryMb": 256,
+            "minAvailableMemoryMb": 1, "maxCommittedPercent": 100,
+            "maxGrowthMb": 6, "growthWindowSeconds": 3}}, ["measure"])
+        foreign = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(20)"])
+        owned = None
+        try:
+            with self.assertRaisesRegex(WorkError, "RESOURCE_LIMIT_EXCEEDED.*job-memory-growth"):
+                with OwnedProcess([sys.executable, str(child), str(grandchild), str(identities), str(start_gate)],
+                                  self.root, self.root / "owned.log",
+                                  resource_limits=policy, telemetry=telemetry) as owned:
+                    deadline = time.monotonic() + 5
+                    while not identities.is_file() and time.monotonic() < deadline:
+                        time.sleep(0.02)
+                    self.assertTrue(identities.is_file())
+                    start_gate.write_text("go", encoding="ascii")
+                    owned.wait(15)
+            pids = read_json(identities)
+            deadline = time.monotonic() + 5
+            while any(common.process_is_alive(pid) for pid in pids.values()) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(common.process_is_alive(pids["child"]))
+            self.assertFalse(common.process_is_alive(pids["grandchild"]))
+            self.assertIsNone(foreign.poll())
+            summary = owned.resource_summary()
+            self.assertEqual("job-memory-growth", summary["breach"]["metric"])
+            self.assertGreaterEqual(len(summary["processes"]), 2)
+            by_pid = {item["pid"]: item for item in summary["processes"]}
+            self.assertEqual(pids["child"], by_pid[pids["grandchild"]]["parentPid"])
+            for pid in pids.values():
+                self.assertGreater(by_pid[pid]["peakPrivateBytes"], 0)
+                self.assertGreater(by_pid[pid]["peakWorkingSetBytes"], 0)
+                self.assertRegex(by_pid[pid]["commandIdentity"], "^[a-f0-9]{64}$")
+        finally:
+            foreign.terminate()
+            foreign.wait()
+
+    def test_worker_probe_requires_matching_process_identity_and_fresh_heartbeat(self):
+        write_json(self.spool / "worker.json", {
+            "status": "ready", "pid": os.getpid(), "updatedAt": common.stamp(),
+            "processIdentity": {"pid": os.getpid(), "creationId": "not-this-process"}})
+        worker = bootstrap.inspect(self.spool)["worker"]
+        self.assertEqual("stale", worker["status"])
+        self.assertEqual("identity-mismatch", worker["liveness"])
+
+        actual = common.process_identity(os.getpid())
+        write_json(self.spool / "worker.json", {
+            "status": "ready", "pid": os.getpid(), "updatedAt": "2000-01-01T00:00:00+00:00",
+            "processIdentity": actual})
+        worker = bootstrap.inspect(self.spool)["worker"]
+        self.assertEqual("stale", worker["status"])
+        self.assertEqual("heartbeat-expired", worker["liveness"])
+
     def test_prepared_worker_launcher_is_explicitly_one_shot(self):
         launcher = (self.spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")
         self.assertIn(" worker --once --spool ", launcher)
@@ -402,6 +505,75 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         worker = read_json(self.spool / "worker.json")
         self.assertEqual("stopped", worker["status"])
         self.assertEqual(1, worker["jobsProcessed"])
+        self.assertEqual(worker["pid"], worker["processIdentity"]["pid"])
+        self.assertRegex(worker["processIdentity"]["creationId"], "^(windows-filetime|proc-start):")
+
+    def test_worker_refreshes_identity_heartbeat_during_a_long_job(self):
+        _, package = self.package(values={"delay": 8})
+        jobs.submit(package, self.spool)
+        runtime = RUNTIME / "remote_work.py"
+        worker_process = subprocess.Popen([sys.executable, str(runtime), "worker", "--spool", str(self.spool)],
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if jobs.status(self.spool, "one").get("status") == "running":
+                    break
+                time.sleep(0.05)
+            self.assertEqual("running", jobs.status(self.spool, "one")["status"])
+            time.sleep(5.5)
+            worker = bootstrap.inspect(self.spool)["worker"]
+            self.assertEqual("process-identity-and-heartbeat-verified", worker["liveness"])
+            self.assertEqual("running", worker["status"])
+        finally:
+            if worker_process.poll() is None:
+                worker_process.terminate()
+            worker_process.communicate(timeout=10)
+
+    @unittest.skipUnless(os.name == "nt", "worker Job Object ownership is Windows-only")
+    def test_killed_worker_closes_owned_child_and_next_worker_only_reconciles(self):
+        (self.source / "workload.py").write_text(
+            "import os,sys,time\nfrom pathlib import Path\n"
+            "sys.path.insert(0,sys.argv[1])\nfrom itl_measure import context,measurement,verify\n"
+            "c=context()\n"
+            "if sys.argv[2]=='action':\n"
+            " (Path(c['iteration']).parent/'owned-child.json').write_text(str(os.getpid()),encoding='ascii')\n"
+            " with measurement(): time.sleep(20)\n"
+            "else: verify([{'name':'never-replayed','passed':False}])\n", encoding="utf-8")
+        _, package = self.package()
+        jobs.submit(package, self.spool)
+        runtime = RUNTIME / "remote_work.py"
+        first = subprocess.Popen([sys.executable, str(runtime), "worker", "--spool", str(self.spool)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        child_path = self.spool / "runs/one/owned-child.json"
+        try:
+            deadline = time.monotonic() + 10
+            while not child_path.is_file() and first.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            if not child_path.is_file():
+                stdout, stderr = first.communicate(timeout=10)
+                self.fail("owned child did not start\n" + stdout + stderr)
+            child_pid = int(child_path.read_text(encoding="ascii"))
+            self.assertTrue(common.process_is_alive(child_pid))
+            first.terminate()
+            first.communicate(timeout=10)
+            deadline = time.monotonic() + 5
+            while common.process_is_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertFalse(common.process_is_alive(child_pid))
+
+            second = subprocess.run([sys.executable, str(runtime), "worker", "--spool", str(self.spool)],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+            self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+            state = jobs.status(self.spool, "one")
+            self.assertEqual("needs-attention", state["status"])
+            self.assertIn("INTERRUPTED_OWNER", state["error"])
+            self.assertFalse(state["reconciliation"]["workloadReplayed"])
+            self.assertEqual(child_pid, int(child_path.read_text(encoding="ascii")))
+        finally:
+            if first.poll() is None:
+                first.terminate()
+                first.communicate(timeout=10)
 
     def test_persistent_worker_requires_explicit_profile_authorization(self):
         runtime = RUNTIME / "remote_work.py"

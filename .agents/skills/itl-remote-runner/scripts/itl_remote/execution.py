@@ -12,6 +12,7 @@ import time
 
 from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_memory_snapshot,
                      identity, read_json, resolve_resource_limits, stamp, write_json)
+from .common import ResourceContext, beneath, process_identity
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
 from .access import Lease, target_access
@@ -116,6 +117,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     processes = []
     resource_limits = resolve_resource_limits(target, request["operations"])
     resource_telemetry = run / "resource-telemetry.jsonl"
+    resource_context = ResourceContext(resource_limits, resource_telemetry)
     profile_paths = []
     profile_evidence = []
     profiler = None
@@ -143,6 +145,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
+    result["resourceEvidence"]["contextId"] = resource_context.context_id
 
     def persist_progress():
         # Public evidence is independent of the private context and final result.
@@ -234,8 +237,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         if cancelled() and name != "cleanup":
             raise WorkError("CANCELLED")
         with phase(name, deadline) as active_deadline:
-            process = OwnedProcess(render(commands[name], variables), variables["workspace"], run / (name + ".log"),
-                                   child_environment, resource_limits, resource_telemetry)
+            process = resource_context.process(render(commands[name], variables), variables["workspace"],
+                                               run / (name + ".log"), child_environment)
             processes.append(process)
             try:
                 process.wait(active_deadline.remaining(), cancelled if name != "cleanup" else lambda: False)
@@ -274,7 +277,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         result["resourceEvidence"]["hostBefore"] = host_memory_snapshot()
         command("update")
         if request["mode"] != "time":
-            effective_rdbg = prepare_debug_server(target, run, processes, cancelled)
+            effective_rdbg = prepare_debug_server(target, run, processes, cancelled,
+                                                  resource_context=resource_context)
             context["rdbg"] = effective_rdbg
             write_json(variables["context"], context)
         else:
@@ -311,9 +315,9 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                     continue
             if scenario.get("adapter", "command") == "handshake":
                 with phase("ready") as readiness_deadline:
-                    process = OwnedProcess(render(commands["action"], variables), variables["workspace"],
-                                           iteration / "action.log", child_environment,
-                                           resource_limits, resource_telemetry)
+                    process = resource_context.process(render(commands["action"], variables),
+                                                       variables["workspace"], iteration / "action.log",
+                                                       child_environment)
                     processes.append(process)
                     ready = wait_json(iteration / "ready.json", process, readiness_deadline, cancelled)
                     if ready.get("jobId") != request["id"] or ready.get("ready") is not True:
@@ -498,7 +502,17 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
         state = status(spool, identifier)
         if state["status"] != "queued" and not (via_agent and state["status"] == "agent-running"):
             if state["status"] in ("running", "waiting-for-base"):
-                state.update(status="needs-attention", error="INTERRUPTED_OWNER: inspect effects; no automatic replay", updatedAt=stamp())
+                expected_owner = state.get("ownerIdentity")
+                try:
+                    current_owner = process_identity(state.get("ownerPid"))
+                except (WorkError, TypeError, ValueError):
+                    current_owner = None
+                error = ("INTERRUPTED_OWNER_IDENTITY_MISMATCH: inspect effects; no automatic replay"
+                         if isinstance(expected_owner, dict) and current_owner != expected_owner else
+                         "INTERRUPTED_OWNER: inspect effects; no automatic replay")
+                state.update(status="needs-attention", error=error, updatedAt=stamp(),
+                             reconciliation={"expectedOwner": expected_owner, "observedOwner": current_owner,
+                                             "workloadReplayed": False})
                 write_json(spool / "state" / (identifier + ".json"), state)
             return state
         package = spool / "jobs" / identifier
@@ -514,11 +528,14 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                                         executor="agent" if via_agent else "worker")
         profile_path = spool / "profile.json"
         profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
+        executor_identity = process_identity(os.getpid())
         def waiting(record):
-            state.update(status="waiting-for-base", phase="admission", access=record, ownerPid=os.getpid(), updatedAt=stamp())
+            state.update(status="waiting-for-base", phase="admission", access=record, ownerPid=os.getpid(),
+                         ownerIdentity=executor_identity, updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
         def progress(phase):
-            state.update(status="running", phase=phase, ownerPid=os.getpid(), updatedAt=stamp())
+            state.update(status="running", phase=phase, ownerPid=os.getpid(),
+                         ownerIdentity=executor_identity, updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
         result = None
         try:
