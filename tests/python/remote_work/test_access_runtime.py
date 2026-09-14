@@ -154,7 +154,7 @@ class AccessRuntimeTests(unittest.TestCase):
 import json
 from itl_remote.access import Lease
 proof = json.loads(os.environ['ITL_INFOBASE_ACCESS_LEASE'])
-with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['workspace']}],
+with Lease(proof['coordinator'], [c['target']['infoBase']],
            {'operation':'nested'}, inherited=proof):
     (Path(c['iteration']) / 'inherited.json').write_text(json.dumps({'ticket':proof['ticket']}))''')
         workload.write_text(text, encoding="utf-8")
@@ -172,7 +172,7 @@ with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['worksp
 import json
 from itl_remote.access import Lease
 proof = json.loads(os.environ['ITL_INFOBASE_ACCESS_LEASE'])
-with Lease(proof['coordinator'], [{'kind':'workspace','path':c['target']['workspace']}],
+with Lease(proof['coordinator'], [c['target']['infoBase']],
            {'operation':'nested'}, inherited=proof) as nested:
     nested.release(cleanup_errors=['native outcome unproven'])''')
         workload.write_text(text, encoding="utf-8")

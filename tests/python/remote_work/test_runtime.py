@@ -31,6 +31,33 @@ else:
     verify([{"name":"result", "passed": (Path(c["iteration"]) / "value.txt").read_text(encoding="utf-8") == "готово"}])
 '''
 
+EVIDENCE_WORKLOAD = '''import json, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from itl_measure import context, measurement, verify
+c = context()
+iteration = Path(c["iteration"])
+if sys.argv[2] == "action":
+    with measurement():
+        time.sleep(c["parameters"]["delay"])
+        (iteration / "value.txt").write_text("готово", encoding="utf-8")
+    raw = iteration / c["diagnostics"]["evidencePath"]
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    value = {"schemaVersion": 1, "jobId": c["jobId"], "iterationId": c["iterationIndex"],
+             "operationId": "fixture-operation", "diagnostics": {"level": c["diagnostics"]["level"]},
+             "clocks": [{"clockId": "fixture-mono", "kind": "monotonic", "unit": "ms"}],
+             "spans": [{"spanId": "operation", "kind": "work", "clockId": "fixture-mono",
+                         "duration": {"availability": "available", "evidenceKind": "measured",
+                                      "value": 30, "unit": "ms"}}],
+             "links": [], "coverage": {"client": "partial", "serverWithContext": "unknown",
+                                          "serverWithoutContext": "unknown", "background": "unknown"},
+             "milestones": [], "equivalence": {"status": "unverified", "reason": "fixture"},
+             "streamStatus": {"complete": True, "truncated": False, "droppedEvents": 0}}
+    raw.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+else:
+    verify([{"name":"result", "passed": (iteration / "value.txt").read_text(encoding="utf-8") == "готово"}])
+'''
+
 
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -48,6 +75,7 @@ class RuntimeTests(unittest.TestCase):
                                       "verify": ["{python}", "{input}/workload.py", "{runtime}", "verify"]}}
         self.profile = {"schemaVersion": 1, "targets": {"fixture": {"workspace": str(self.source),
                         "allowedOperations": ["measure"], "sourceIdentity": "fixture-code-v1",
+                        "infoBase": {"kind": "file", "path": str(self.root / "конкретная база")},
                         "access": {"coordinator": str(self.root / "координатор баз")},
                         "environmentIdentity": "fixture-environment-v1"}}}
         self.profile_path = self.root / "profile.json"
@@ -82,11 +110,56 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(result["loadedState"]["evidence"])
         self.assertIsNotNone(result["resourceEvidence"]["hostBefore"])
         self.assertIsNotNone(result["resourceEvidence"]["hostAfter"])
+        self.assertEqual("file", result["databaseTopology"])
+        self.assertIsNotNone(result["databaseIdentity"])
+        self.assertIn("Database binding: topology=file", (self.spool / "runs/one/report.md").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(result["resourceEvidence"]["processes"]), 2)
         self.assertTrue((self.spool / "runs/one/resource-telemetry.jsonl").is_file())
         telemetry = [json.loads(line) for line in
                      (self.spool / "runs/one/resource-telemetry.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertTrue(any(sample["processes"] and sample["processes"][0]["pid"] > 0 for sample in telemetry))
+        self.assertEqual({"status": "notRequested"}, result["operationEvidence"])
+
+    def test_v2_collects_public_operation_evidence_and_keeps_raw_private(self):
+        (self.source / "workload.py").write_text(EVIDENCE_WORKLOAD, encoding="utf-8")
+        self.scenario.update(schemaVersion=2, diagnostics={"schemaVersion": 1, "level": "D1",
+                                                           "evidencePath": "private/operation-evidence.json",
+                                                           "required": False})
+        request, package = self.package("evidence")
+        self.assertEqual(2, request["schemaVersion"])
+        state, result = self.execute(package)
+        self.assertEqual("partial", state["status"], result)
+        self.assertEqual(1, result["summary"]["count"])
+        self.assertEqual("partial", result["operationEvidence"]["status"])
+        item = result["operationEvidence"]["iterations"][0]
+        self.assertEqual("fixture-operation", item["operationId"])
+        run = self.spool / "runs/evidence/000-time"
+        self.assertTrue((run / "private/operation-evidence.json").is_file())
+        self.assertTrue((run / "operation-evidence.json").is_file())
+        self.assertTrue((run / "operation-evidence.md").is_file())
+        self.assertEqual("000-time/operation-evidence.json", item["path"])
+        self.assertEqual("000-time/operation-evidence.md", item["reportPath"])
+        output = self.root / "Собранные доказательства"
+        jobs.collect(self.spool, "evidence", output)
+        self.assertTrue((output / "000-time/operation-evidence.json").is_file())
+        self.assertTrue((output / "000-time/operation-evidence.md").is_file())
+        self.assertFalse((output / "000-time/private/operation-evidence.json").exists())
+        summary = (output / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Operation evidence", summary)
+        self.assertIn("[operation map](000-time/operation-evidence.md)", summary)
+
+    def test_invalid_v2_sidecar_keeps_verified_timing_as_partial(self):
+        broken = EVIDENCE_WORKLOAD.replace('"jobId": c["jobId"]', '"jobId": "foreign"')
+        (self.source / "workload.py").write_text(broken, encoding="utf-8")
+        self.scenario.update(schemaVersion=2, diagnostics={"schemaVersion": 1, "level": "D1",
+                                                           "evidencePath": "private/operation-evidence.json",
+                                                           "required": True})
+        _, package = self.package("broken-evidence")
+        state, result = self.execute(package)
+        self.assertEqual("partial", state["status"], result)
+        self.assertEqual(1, result["summary"]["count"])
+        self.assertEqual("invalid", result["operationEvidence"]["status"])
+        self.assertIn("FOREIGN_ITERATION", result["operationEvidence"]["iterations"][0]["error"])
 
     def test_same_id_is_never_executed_twice(self):
         request, package = self.package()
@@ -212,6 +285,41 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         write_json(self.root / "a.json", a)
         write_json(self.root / "b.json", b)
         with self.assertRaisesRegex(WorkError, "INCOMPARABLE_RUNS"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+
+    def test_comparison_accepts_the_same_bound_database_and_topology(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        comparison = execution.compare(self.root / "a.json", self.root / "b.json")
+        self.assertEqual("historical-comparison", comparison["kind"])
+        self.assertEqual(0, comparison["differenceSeconds"])
+
+    def test_comparison_rejects_another_database_and_file_server_topology(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other", databaseIdentity="another-base")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseIdentity"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+        b = dict(a, jobId="other", databaseTopology="server")
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseTopology"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+
+    def test_comparison_rejects_legacy_result_without_database_binding(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other")
+        for value in (a, b):
+            value.pop("databaseIdentity")
+            value.pop("databaseTopology")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseIdentity"):
             execution.compare(self.root / "a.json", self.root / "b.json")
 
     def test_process_cancellation_keeps_foreign_process_alive(self):

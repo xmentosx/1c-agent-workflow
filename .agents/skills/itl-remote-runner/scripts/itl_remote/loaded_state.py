@@ -177,11 +177,13 @@ def write_evidence(run, result, profile_paths, profile_references):
                 "moduleCount": len(unique_modules), "sourceRequestedModuleCount": source_requested_count,
                 "sourceBoundModuleCount": source_bound_count,
                 "sourceBindingStatus": binding_status, "sourceIssues": sorted(source_issues),
-                "wholeConfigurationSourceProven": False, "dataStateProven": False,
-                "declarations": {"sourceIdentity": result.get("sourceIdentity"),
-                                 "dataIdentity": result.get("dataIdentity"),
-                                 "environmentIdentity": result.get("environmentIdentity")},
-                "packets": records}
+                 "wholeConfigurationSourceProven": False, "dataStateProven": False,
+                 "declarations": {"sourceIdentity": result.get("sourceIdentity"),
+                                  "dataIdentity": result.get("dataIdentity"),
+                                  "environmentIdentity": result.get("environmentIdentity"),
+                                  "databaseIdentity": result.get("databaseIdentity"),
+                                  "databaseTopology": result.get("databaseTopology")},
+                 "packets": records}
     if result.get("sourceManifest"):
         evidence["sourceManifest"] = _reference(run, result["sourceManifest"]["path"])
     if result.get("sourceSnapshot") and result["sourceSnapshot"].get("status") == "captured":

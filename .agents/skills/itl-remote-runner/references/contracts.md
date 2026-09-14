@@ -12,7 +12,7 @@ Create a private JSON object with `targets` keyed by short aliases. Each target 
 
 - `workspace`: absolute directory on the execution host; must exist.
 - `allowedOperations`: explicit list, normally `measure`; include `write-data` for modifying scenarios and `update` only for authorized configuration updates.
-- `infoBase`: `{ "kind": "file" | "server", "path": "..." }`, using the same `/F` path or `/S` server/reference identity as ITL.
+- `infoBase`: required for every product measurement as `{ "kind": "file" | "server", "path": "..." }`, using the same `/F` path or `/S` server/reference identity as ITL. The result exposes only a hash of this declaration plus its topology. A legacy/calibration target without it is unbound and cannot be compared.
 - `platform`: absolute `1cv8.exe`/`1cv8c.exe` selected on this host.
 - `sourceIdentity`: exact CF/CFE hashes or a saved source manifest, including uncommitted inputs; never substitute a commit for a dirty export.
 - `environmentIdentity`: comparable platform/build, machine/base/data-copy settings. `dataIdentity` belongs to the scenario; update it when the dataset changes.
@@ -34,7 +34,7 @@ Optional profile-level `workerLimits` contains `allowPersistent`, `maxJobs`, and
 launchers are one-shot and process at most one queued job. Persistent polling requires both the explicit
 `--persistent` switch and `allowPersistent: true`; it still rotates at the configured job/lifetime limit.
 
-## Scenario (schemaVersion 1)
+## Scenario (schemaVersion 1 or diagnostic v2)
 
 Required: `id`, `readyDescription`, `dataIdentity`, `repeatable` and `mutates` booleans, `commands.action`, `commands.verify`. `files` lists all relative dependency paths to include. The package rejects traversal, absolute dependency paths and content changes. `parameters` maps arbitrary names to `type` (`string`, `integer`, `number`, `boolean`, `object`, `array`), optional `default`, `enum`, `required` (default true).
 
@@ -45,6 +45,8 @@ Required: `id`, `readyDescription`, `dataIdentity`, `repeatable` and `mutates` b
 The verify phase writes `{iteration}/verification.json` with the matching `jobId`, `passed: true` and a nonempty list of named checks; assertions must inspect real outputs, not merely write true. `itl_measure.verify` emits the contract and fails on false checks. `timeoutSeconds` supplies each phase's default (300, maximum 86400); `phaseTimeoutSeconds` may override `update`, `prepare`, `action`, `ready`, `verify`, `reset`, and `cleanup` individually. Values must be finite positive numbers. Queue admission has a separate target access timeout and never consumes the action budget. Child processes inherit the execution-host monotonic phase deadline through context; handshake `go.json` starts the action phase after readiness. Python waits and MCP requests consume the remaining budget, including sequential calls within the phase, rather than restarting a 300-second clock. See [phase deadlines](phase-deadlines.md).
 
 `prepare` runs once before iterations; `reset` runs between iterations. A repeatable mutating scenario requires reset. Updates require both job and target permission and happen outside the timer. Non-repeatable operations get one permitted run: default additional timings/profile remain explicitly missing. Cleanup executes even on failure/cancel; owned subprocess trees are contained in Windows jobs and closed afterward.
+
+Schema v2 is reserved for an opt-in `diagnostics` contract whose raw evidence path is private and iteration-relative. A v2 request carries the same schema version, so a v1 worker rejects it during package validation before `action`. New workers continue to accept v1 without diagnostics. See the performance [operation evidence](../../itl-performance/references/operation-evidence.md) reference; it does not define product readiness or an automatic D0-D3 policy.
 
 Optional `recovery` pins separate inspection, quiescence and restoration hooks
 before the original job starts. It never reuses `action` or blindly reruns
@@ -89,4 +91,4 @@ verified and retained inside the run. Selection applies only to requested module
 Profiler packets prove executed modules, not the source of the whole configuration
 or its data state, so both claims remain explicitly false.
 
-`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, loaded-state evidence, source/data/environment identity, resource evidence, limitations and cleanup errors. `report.md` is rebuilt from that data. `context.json` is private and excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.
+`result.json` contains unprofiled samples, iteration and phase outcomes, summary, raw-profile references, loaded-state evidence, source/data/environment identity, credential-free `databaseIdentity`, `databaseTopology`, resource evidence, limitations and cleanup errors. Comparison requires the same nonempty database identity and topology in addition to the existing scenario/data/environment contract; therefore a local file base and a remote server base are never accepted as an A/B pair. New results also contain additive `operationEvidence`: `notRequested` for v1 or normalized per-iteration refs/status for v2. Every valid diagnostic iteration has public `operation-evidence.json` and a detailed `operation-evidence.md`; the main `report.md` links the latter. Local and remote routes use the same execution-host renderer. `context.json` and every `private` subtree are excluded from result transfer. Raw packets are separate from native PFF; no file renaming or synthetic native export is permitted. A profile's partial source mapping must remain visible.

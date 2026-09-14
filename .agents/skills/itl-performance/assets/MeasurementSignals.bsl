@@ -2,6 +2,8 @@
 // Call ready only after own TestClient/session setup and runtime-proof discovery.
 // The feature's existing polling/wait step waits for go; do not busy-wait here.
 // Call done only after actual form/server readiness; cleanup comes afterward.
+// For a D1 operation map, use OperationEvidenceFragment.bsl as a neutral
+// in-memory producer and let the client/harness publish its transported fragments.
 
 Процедура ЗаписатьСигналЗамера(КаталогИтерации, ИмяСигнала, ИдентификаторЗадания) Экспорт
     Сигнал = Новый Структура("jobId,ready", ИдентификаторЗадания, Истина);
