@@ -36,6 +36,28 @@ A useful D1 document describes one execution, not a comparison. It should provid
 
 The portable runtime does not invent these product facts from a profile. A profile can identify expensive modules and lines, while spans establish operation order and causality. Missing producers remain explicit `unknown` or `notApplicable` with a reason.
 
+The supplied `OperationEvidenceFragment.bsl` creates in-memory, JSON-serializable fragments. It deliberately has no filesystem writer: a real server or background session generally cannot address the worker iteration directory. The product adapter owns correlation and transport of each fragment. Once the measured operation and its readiness predicate have completed, scenario-side Python calls `itl_measure.publish_operation_evidence(envelope, fragments)` to validate identities, merge collections, inventory missing producers and atomically write the configured private sidecar. Raw arbitrary payload values are outside this contract.
+
+The envelope declares every expected emitter with `emitterId`, domain and whether it is required. Every fragment repeats `jobId`, `iterationId`, `operationId`, emitter and domain, plus coverage and stream status. Foreign operation identity, an unexpected/duplicate emitter or a colliding clock/span/background ID is invalid. A missing, truncated or lossy producer yields a valid partial map with an explicit limitation; it never disappears silently and never invalidates a separately verified outer timing.
+
+The scenario-side assembly call is intentionally small; `client_json` and `server_json` may be serialized BSL strings, dictionaries or private JSON paths:
+
+```python
+from itl_measure import publish_operation_evidence
+
+publish_operation_evidence({
+    "operationId": operation_id,
+    "expectedEmitters": [
+        {"emitterId": "client", "domain": "client", "required": True},
+        {"emitterId": "server", "domain": "serverWithoutContext", "required": True},
+        {"emitterId": "background", "domain": "background", "required": False},
+    ],
+    "equivalence": {"status": "verified", "checks": verified_business_checks},
+}, [client_json, server_json, *background_json])
+```
+
+Keep the BSL helper in a diagnostic extension, external processor or project-owned test adapter when that can observe the required boundaries. Changing the main configuration is not a prerequisite of the format. If no external adapter can see an internal boundary, leave that coverage unknown or make a separately authorized product instrumentation change; do not infer the missing block from total time.
+
 ## Interpretation
 
 - A span duration records availability, evidence kind, value and unit. Large ticks use decimal strings so JSON readers cannot round them.
@@ -48,15 +70,16 @@ The portable runtime does not invent these product facts from a profile. A profi
 
 Every valid diagnostic iteration also produces public `operation-evidence.md`. It presents:
 
-1. recorded root windows by domain;
-2. the nested operation-step tree;
-3. correlated RPC client/server/remainder durations;
-4. request/response semantics, counts, diagnostic bytes and wire bytes;
-5. background lifecycle, milestones and product-result status;
-6. coverage, clock domains, the proven critical path and limitations.
+1. expected and observed producers, including missing/truncated streams;
+2. recorded root windows by domain;
+3. the nested operation-step tree;
+4. correlated RPC client/server/remainder durations;
+5. request/response semantics, counts, diagnostic bytes and wire bytes;
+6. background lifecycle, milestones and product-result status;
+7. coverage, clock domains, the proven critical path and limitations.
 
 The main `report.md` links each diagnostic iteration to this map. Local, SSH and agent routes use the same renderer on the execution host and transfer the same public JSON/Markdown artifacts. Arbitrary raw payload values are not rendered; private evidence remains local.
 
 ## Deferred product and live contract
 
-Automatic depth thresholds, product BSL probes, `firstViewApplied`/`editable`/`fullyReady` predicates, complete business equivalence, background-session ownership, live overhead experiments and treatment-aware A/B are separate product/live work. Until supplied by an authorized adapter and stand, those capabilities remain unverified.
+Product-specific placement of the neutral BSL probes, `firstViewApplied`/`editable`/`fullyReady` predicates, complete business equivalence, background-session ownership, live overhead experiments and treatment-aware A/B are separate product/live work. Until supplied by an authorized adapter and stand, those capabilities remain unverified.

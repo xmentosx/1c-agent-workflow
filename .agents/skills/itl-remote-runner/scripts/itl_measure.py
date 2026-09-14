@@ -6,6 +6,7 @@ import time
 
 from itl_remote.common import WorkError, read_json, write_json
 from itl_remote.deadlines import Deadline
+from itl_remote.operation_producer import publish
 
 
 def context():
@@ -44,3 +45,18 @@ def verify(checks):
                {"jobId": value["jobId"], "passed": passed, "checks": checks})
     if not passed:
         raise WorkError("SCENARIO_ASSERTIONS_FAILED")
+
+
+def publish_operation_evidence(envelope, fragments):
+    """Merge transported producer fragments into the iteration's private sidecar."""
+    value = context()
+    diagnostics = value.get("diagnostics")
+    if not diagnostics:
+        raise WorkError("OPERATION_EVIDENCE_NOT_REQUESTED")
+    envelope = dict(envelope)
+    envelope.setdefault("schemaVersion", 1)
+    envelope.setdefault("jobId", value["jobId"])
+    envelope.setdefault("iterationId", value["iterationIndex"])
+    envelope.setdefault("diagnostics", {"level": diagnostics["level"]})
+    destination = Path(value["iteration"]) / diagnostics["evidencePath"]
+    return publish(envelope, fragments, destination)

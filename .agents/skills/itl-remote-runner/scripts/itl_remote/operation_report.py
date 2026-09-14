@@ -202,7 +202,17 @@ def render(document):
                  _text(document.get("analysisStatus"), "unknown"), _text(diagnostics.get("level"), "unknown")), "",
              "Event stream: complete=%s, truncated=%s, dropped=%s." % (
                  _text(stream.get("complete"), "unknown"), _text(stream.get("truncated"), "unknown"),
-                 _text(stream.get("droppedEvents"), "unknown")), "",
+                 _text(stream.get("droppedEvents"), "unknown")), "", "## Producers", "",
+             "| Producer | Domain | Status | Coverage | Reason |", "|---|---|---|---|---|"]
+    emitters = _items(document.get("emitters"))
+    for emitter in emitters:
+        lines.append("| `%s` | %s | %s | %s | %s |" % (
+            _text(emitter.get("emitterId")), _text(emitter.get("domain"), "unknown"),
+            _text(emitter.get("status"), "unknown"), _text(emitter.get("coverage"), "unknown"),
+            _text(emitter.get("reason"), "—")))
+    if not emitters:
+        lines.append("| — | unknown | unknown | unknown | producer inventory not supplied |")
+    lines += ["",
              "## Domain windows", "",
              "These are recorded root windows, not a sum of nested work. Different domains may overlap.", "",
              "| Domain | Window | Duration | Status |", "|---|---|---:|---|"]

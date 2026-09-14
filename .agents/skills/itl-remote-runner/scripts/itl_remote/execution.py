@@ -18,6 +18,22 @@ from .access import Lease, target_access
 from .deadlines import Deadline, budgets
 
 
+def database_binding(target):
+    """Return a public, credential-free identity for the explicitly selected base."""
+    info_base = target.get("infoBase")
+    if not isinstance(info_base, dict) or info_base.get("kind") not in ("file", "server"):
+        return {"databaseIdentity": None, "databaseTopology": None,
+                "databaseIdentityEvidence": "unbound: target.infoBase was not explicitly configured"}
+    path = info_base.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise WorkError("TARGET_INFOBASE_PATH_REQUIRED")
+    kind = info_base["kind"]
+    declared_path = str(Path(path).resolve()) if kind == "file" else path.strip()
+    return {"databaseIdentity": identity({"kind": kind, "path": declared_path}),
+            "databaseTopology": kind,
+            "databaseIdentityEvidence": "hash of explicit target.infoBase kind and path; declaration, not runtime-loaded proof"}
+
+
 def render(command, variables):
     result = []
     for value in command:
@@ -43,6 +59,7 @@ def wait_json(path, process, timeout, cancelled):
 def capture_provenance(run, request, scenario, target, *, executor=None):
     """Retain public input evidence before waiting or starting any runtime."""
     path = Path(run) / "provenance.json"
+    database = database_binding(target)
     record = {"schemaVersion": 1, "jobId": request["id"], "parentId": request.get("parentId"),
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
               "scenarioInputsSha256": identity(request["files"]), "files": request["files"],
@@ -57,6 +74,7 @@ def capture_provenance(run, request, scenario, target, *, executor=None):
               "dataIdentity": scenario["dataIdentity"], "sourceIdentity": target.get("sourceIdentity"),
               "environmentIdentity": target.get("environmentIdentity"),
               "identityEvidence": "data/source/environment are declarations; exact loaded state requires runtime evidence"}
+    record.update(database)
     if scenario.get("diagnostics") is not None:
         record["diagnostics"] = scenario["diagnostics"]
     # A target profile can contain credentials, lease tokens and private adapter
@@ -101,6 +119,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     profile_paths = []
     profile_evidence = []
     profiler = None
+    database = database_binding(target)
     result = {"schemaVersion": 1, "jobId": request["id"], "scenarioId": scenario["id"],
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
               "scenarioInputsSha256": identity(request["files"]),
@@ -115,9 +134,10 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                                "runtimeObserved": False, "wholeConfigurationSourceProven": False,
                                "dataStateProven": False, "evidence": None},
                "status": "running", "limitations": [], "cleanupErrors": [],
-               "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
+                "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
                                     "hostAfter": None, "telemetry": resource_telemetry.name,
-                                    "processes": []}}
+                                     "processes": []}}
+    result.update(database)
     result["operationEvidence"] = ({"status": "notRequested"} if scenario.get("diagnostics") is None else
                                    {"status": "running", "iterations": []})
     if access_lease:
@@ -420,7 +440,11 @@ def report(run, result):
     lines += ["| %s | %.6f |" % (r["iteration"], r["seconds"]) for r in result["timings"]]
     lines += ["", "Median: " + str(summary["medianSeconds"]), "",
               "A small sample is diagnostic evidence, not statistical proof of a speedup.", "",
-              "Profiles: %d; native PFF: not produced." % len(result["profiles"])]
+              "Profiles: %d; native PFF: not produced." % len(result["profiles"]), "",
+              "Database binding: topology=%s; identity=%s; evidence=%s." % (
+                  result.get("databaseTopology") or "unbound",
+                  result.get("databaseIdentity") or "unbound",
+                  result.get("databaseIdentityEvidence") or "not supplied")]
     loaded = result["loadedState"]
     lines += ["", "Loaded-state evidence: %s; runtime configuration versions: %s; source-bound modules: %d/%d; whole configuration source proven: %s; data state proven: %s." % (
         loaded["status"], ", ".join(loaded.get("configurationVersions", [])) or "unavailable",
@@ -447,7 +471,8 @@ def report(run, result):
 
 def compare(left, right):
     left, right = read_json(left), read_json(right)
-    incompatible = [key for key in ("scenarioSha256", "scenarioInputsSha256", "parameters", "dataIdentity", "host", "environmentIdentity", "readiness")
+    incompatible = [key for key in ("scenarioSha256", "scenarioInputsSha256", "parameters", "dataIdentity",
+                                    "databaseIdentity", "databaseTopology", "host", "environmentIdentity", "readiness")
                     if left.get(key) != right.get(key) or left.get(key) is None]
     if incompatible:
         raise WorkError("INCOMPARABLE_RUNS: " + ", ".join(incompatible))

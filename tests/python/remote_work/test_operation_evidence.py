@@ -83,6 +83,12 @@ class OperationEvidenceTests(unittest.TestCase):
         self.assertEqual([], normalized["derivedMetrics"])
         self.assertTrue(any("containment not proven" in item for item in normalized["limitations"]))
 
+    def test_each_rpc_call_id_identifies_one_correlated_pair(self):
+        value = self.evidence()
+        value["links"].append(dict(value["links"][0]))
+        with self.assertRaisesRegex(WorkError, "RPC_CALL_DUPLICATE"):
+            operation_evidence.normalize(value, job_id="job-1", iteration_id=0)
+
     def test_large_ticks_must_be_exact_decimal_strings_and_unknown_is_not_zero(self):
         value = self.evidence()
         value["spans"][0]["startTicks"] = "9007199254740993"

@@ -75,6 +75,7 @@ class RuntimeTests(unittest.TestCase):
                                       "verify": ["{python}", "{input}/workload.py", "{runtime}", "verify"]}}
         self.profile = {"schemaVersion": 1, "targets": {"fixture": {"workspace": str(self.source),
                         "allowedOperations": ["measure"], "sourceIdentity": "fixture-code-v1",
+                        "infoBase": {"kind": "file", "path": str(self.root / "конкретная база")},
                         "access": {"coordinator": str(self.root / "координатор баз")},
                         "environmentIdentity": "fixture-environment-v1"}}}
         self.profile_path = self.root / "profile.json"
@@ -109,6 +110,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(result["loadedState"]["evidence"])
         self.assertIsNotNone(result["resourceEvidence"]["hostBefore"])
         self.assertIsNotNone(result["resourceEvidence"]["hostAfter"])
+        self.assertEqual("file", result["databaseTopology"])
+        self.assertIsNotNone(result["databaseIdentity"])
+        self.assertIn("Database binding: topology=file", (self.spool / "runs/one/report.md").read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(result["resourceEvidence"]["processes"]), 2)
         self.assertTrue((self.spool / "runs/one/resource-telemetry.jsonl").is_file())
         telemetry = [json.loads(line) for line in
@@ -281,6 +285,41 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         write_json(self.root / "a.json", a)
         write_json(self.root / "b.json", b)
         with self.assertRaisesRegex(WorkError, "INCOMPARABLE_RUNS"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+
+    def test_comparison_accepts_the_same_bound_database_and_topology(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        comparison = execution.compare(self.root / "a.json", self.root / "b.json")
+        self.assertEqual("historical-comparison", comparison["kind"])
+        self.assertEqual(0, comparison["differenceSeconds"])
+
+    def test_comparison_rejects_another_database_and_file_server_topology(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other", databaseIdentity="another-base")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseIdentity"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+        b = dict(a, jobId="other", databaseTopology="server")
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseTopology"):
+            execution.compare(self.root / "a.json", self.root / "b.json")
+
+    def test_comparison_rejects_legacy_result_without_database_binding(self):
+        _, package = self.package()
+        _, a = self.execute(package)
+        b = dict(a, jobId="other")
+        for value in (a, b):
+            value.pop("databaseIdentity")
+            value.pop("databaseTopology")
+        write_json(self.root / "a.json", a)
+        write_json(self.root / "b.json", b)
+        with self.assertRaisesRegex(WorkError, "databaseIdentity"):
             execution.compare(self.root / "a.json", self.root / "b.json")
 
     def test_process_cancellation_keeps_foreign_process_alive(self):

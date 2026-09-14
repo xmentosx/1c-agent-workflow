@@ -20,6 +20,9 @@ TOP_LEVEL_FIELDS = {"schemaVersion", "artifactKind", "isRuntimeEvidence", "note"
                     "jobId", "iterationId", "operationId", "diagnostics", "clocks", "emitters",
                     "spans", "links", "payloads", "milestones", "backgroundOperations", "coverage",
                     "criticalPath", "equivalence", "streamStatus", "limitations"}
+PAYLOAD_FIELDS = {"callId", "direction", "semanticKind", "representation", "semanticCounts",
+                  "diagnosticSerializedBytes", "wireBytes"}
+METRIC_FIELDS = {"availability", "evidenceKind", "value", "unit", "reason"}
 
 
 def _text(value, error):
@@ -68,6 +71,27 @@ def _validate_ticks(span):
         if isinstance(value, str) and re.fullmatch(r"-?[0-9]+", value):
             continue
         raise WorkError("OPERATION_EVIDENCE_TICKS_MUST_BE_EXACT")
+
+
+def _metric(value, *, named=False):
+    allowed = METRIC_FIELDS | ({"name"} if named else set())
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise WorkError("OPERATION_EVIDENCE_PAYLOAD_METRIC_INVALID")
+    if named:
+        _text(value.get("name"), "OPERATION_EVIDENCE_PAYLOAD_COUNT_NAME_REQUIRED")
+    availability = value.get("availability")
+    if availability not in AVAILABILITY:
+        raise WorkError("OPERATION_EVIDENCE_AVAILABILITY_INVALID")
+    if availability != "available":
+        if value.get("value") is not None or not value.get("reason"):
+            raise WorkError("OPERATION_EVIDENCE_UNKNOWN_REQUIRES_NULL_AND_REASON")
+        return
+    if value.get("evidenceKind") not in EVIDENCE_KINDS:
+        raise WorkError("OPERATION_EVIDENCE_KIND_INVALID")
+    number = value.get("value")
+    if isinstance(number, bool) or not isinstance(number, (int, float)) or not math.isfinite(number) or number < 0:
+        raise WorkError("OPERATION_EVIDENCE_PAYLOAD_METRIC_VALUE_INVALID")
+    _text(value.get("unit"), "OPERATION_EVIDENCE_PAYLOAD_METRIC_UNIT_REQUIRED")
 
 
 def _validate_availability_tree(value):
@@ -197,14 +221,32 @@ def normalize(document, *, job_id, iteration_id):
         _validate_ticks(span)
         by_id[identifier] = span
     _validate_parents(by_id)
+    rpc_call_ids = set()
     for link in links:
         if (not isinstance(link, dict) or link.get("kind") not in LINK_KINDS or
                 link.get("from") not in by_id or link.get("to") not in by_id):
             raise WorkError("OPERATION_EVIDENCE_LINK_INVALID")
         if link["kind"] == "rpc":
             call_id = _text(link.get("callId"), "OPERATION_EVIDENCE_RPC_CALL_REQUIRED")
+            if call_id in rpc_call_ids:
+                raise WorkError("OPERATION_EVIDENCE_RPC_CALL_DUPLICATE")
+            rpc_call_ids.add(call_id)
             if by_id[link["from"]].get("callId") != call_id or by_id[link["to"]].get("callId") != call_id:
                 raise WorkError("OPERATION_EVIDENCE_RPC_CALL_MISMATCH")
+    payloads = document.get("payloads", [])
+    if not isinstance(payloads, list):
+        raise WorkError("OPERATION_EVIDENCE_PAYLOAD_COLLECTION_INVALID")
+    for payload in payloads:
+        if not isinstance(payload, dict) or set(payload) - PAYLOAD_FIELDS:
+            raise WorkError("OPERATION_EVIDENCE_PAYLOAD_FIELD_INVALID")
+        counts = payload.get("semanticCounts", [])
+        if not isinstance(counts, list) or any(not isinstance(item, dict) for item in counts):
+            raise WorkError("OPERATION_EVIDENCE_PAYLOAD_COUNTS_INVALID")
+        for count in counts:
+            _metric(count, named=True)
+        for field in ("diagnosticSerializedBytes", "wireBytes"):
+            if field in payload:
+                _metric(payload[field])
     _dependencies(spans, links)
     result = copy.deepcopy(document)
     limitations = list(result.get("limitations", []))

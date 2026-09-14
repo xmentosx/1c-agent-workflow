@@ -108,7 +108,7 @@ class OperationReportTests(unittest.TestCase):
         normalized = operation_evidence.normalize(self.evidence(), job_id="job-1", iteration_id=0)
         report = operation_report.render(normalized)
 
-        for heading in ("# Operation map: open-plan-1", "## Domain windows", "## Operation steps",
+        for heading in ("# Operation map: open-plan-1", "## Producers", "## Domain windows", "## Operation steps",
                         "## RPC calls", "## Payloads", "## Background lifecycle",
                         "## Milestones", "## Coverage and unknowns", "## Critical path"):
             self.assertIn(heading, report)
@@ -133,11 +133,12 @@ class OperationReportTests(unittest.TestCase):
         evidence = self.evidence()
         evidence["spans"][0]["name"] = "Prepare | secret\nline"
         evidence["payloads"][0]["rawValue"] = "must-not-be-public"
-        normalized = operation_evidence.normalize(evidence, job_id="job-1", iteration_id=0)
-        report = operation_report.render(normalized)
+        report = operation_report.render(evidence)
 
         self.assertIn("Prepare \\| secret line", report)
         self.assertNotIn("must-not-be-public", report)
+        with self.assertRaisesRegex(WorkError, "PAYLOAD_FIELD"):
+            operation_evidence.normalize(evidence, job_id="job-1", iteration_id=0)
 
     def test_parent_must_reference_a_real_acyclic_span(self):
         evidence = self.evidence()
