@@ -46,7 +46,7 @@ retrying registration. Keep the required final gates and their assertions intact
 
 | Режим | Когда | Цель | Hard limit |
 |---|---|---:|---:|
-| `Targeted` | регистрация одной доработки | 5 мин | 15 мин |
+| `Targeted` | регистрация одной доработки | 5 мин | 20 мин |
 | `Smoke` | короткая проверка runner/catalog/delivery | 1 мин | 2 мин |
 | `Full` | все изолированные Pester и fork compatibility | 10 мин | 20 мин |
 | `Develop` | один Full и реальные стандартные journey | 25 мин | 90 мин |
@@ -54,9 +54,27 @@ retrying registration. Keep the required final gates and their assertions intact
 
 Без параметров `check.ps1` запускает `Smoke`. Старый `Fast` временно является
 deprecated alias для `Smoke`; в штатном процессе он не используется.
+Публичный `PesterWorkers` по умолчанию остаётся равен `3`. Только неявный
+`Targeted` использует объявленное каталогом значение `4`, ограниченное числом
+логических процессоров; явно переданное значение и все остальные режимы не
+изменяются. Оба summary сохраняют requested/explicit/effective worker count;
+`effective` означает разрешённый предел sharded runner, а не число фактически
+запущенных процессов. `Smoke` остаётся однопроцессным.
+Tracked timings задают порядок запуска и округляются вверх от сохранённых
+наблюдений; это не обещание длительности и не отдельный timeout.
 `Targeted` получает изменённые пути через NUL-delimited Git output и
 `tests/quality-contracts.json`. Неизвестный путь останавливает проверку и требует
 назначить владельца — полного fallback-прогона нет.
+
+Для точного `.agents/skills/1c-workflow/scripts/agent-1c.ps1` Targeted selection
+schema v2 сравнивает baseline и current PowerShell AST. Common-plus-domain tests
+может выбрать только literal `switch ($Action)` arm, явно внесённый в
+`semanticTargeting.selectiveNodes` вместе с literal public-entrypoint probe из
+owner test. Информационной привязки action к owner для этого недостаточно.
+Любой недоказанный parameter/function/action, общий startup/dispatch/completion
+код, `Action`/`ValidateSet`, метка arm, динамический или неизвестный узел,
+rename, parse error и отсутствующий baseline выбирают полный `lifecycle`
+contract. Full и Develop по-прежнему используют полный inventory.
 
 Каждый дочерний этап имеет hard timeout, no-progress timeout, heartbeat и запись
 длительности в `build/test-results/local/check-summary.json`. Там же сохраняются
@@ -71,7 +89,9 @@ deprecated alias для `Smoke`; в штатном процессе он не и
 PowerShell/Pester. Внешняя identity входит только для test-файлов, явно
 перечисленных в `pesterExternalInputs`; смена controlled fork или Vanessa build
 не сбрасывает не связанные с ними шарды. Неизвестный владелец теста отключает
-кэш для шарда. Провальные результаты не кэшируются.
+кэш для шарда. `additionalInputs` из selection schema v2 входят в digest каждого
+выбранного шарда; поэтому semantic routing не может переиспользовать proof от
+другой версии полного entrypoint. Провальные результаты не кэшируются.
 
 Исправление самого теста или gate-harness не сбрасывает уже доказанные более
 ранние возможности. `tests/quality-contracts.json` объявляет пять continuation
@@ -106,7 +126,10 @@ Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит D
 `execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
-`-ResumePlan <planId>`. Если сумма выполняемых стадий больше 60 минут, нужно явно
+`-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который
+записан в immutable plan, и принимает его только как предка текущего
+`origin/master`; новый plan без `-ResumePlan` всегда использует текущий master.
+Если сумма выполняемых стадий больше 60 минут, нужно явно
 передать `-ApproveLongPlan <planId>`. Исправление delivery/test harness меняет
 его собственный static proof, но не fingerprint независимой runtime capability.
 `verification-refresh` и `result-cleanup` намеренно всегда свежие.
@@ -285,15 +308,31 @@ SHA проверяются до удаления. Housekeeping failure не от
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.
 
-Тот же sweep удаляет просроченные не-Git work-каталоги контролируемой сборки
-Vanessa из `C:\itlvabld`, старые passed-снимки миграции `ai_rules_1c`, точные
-`*-artifact-hold-YYYYMMDD-HHmm\build` и распознанные release quarantine/evidence.
-Автоматические pre/post-publication проходы выдерживают семь дней, ручной
-`Cleanup` удаляет их сразу. Dirty Git, активные процессы, reparse/junction,
-последний passed migration snapshot, текущие capability/rollback-каталоги и
-неизвестная форма артефакта всегда сохраняются. В build work root распознаются
-только непосредственные не-Git каталоги выделенного `C:\itlvabld`; содержимое
-за его пределами sweep не рассматривает.
+Run history keeps every raw `itl/runs/*.json` proof in place. Routine timing and
+`Status` read the atomic `itl/run-index/v1/hot.json` projection instead of
+opening every raw file; the projection retains 2048 detailed recent entries and
+lifetime counts/durations. A missing, stale, or corrupt index is reported as
+unavailable rather than silently returning a partial raw scan. Serialized manual
+`Cleanup` rebuilds it from raw proof once; writing a new run advances it
+atomically under a short cross-process lock. If the projection lock or update
+fails, the authoritative raw proof is still written and a pending marker makes
+the projection explicitly stale until `Cleanup` repairs it. Exact Targeted
+lookup tries the index first, then the unchanged raw store, and still accepts
+only the existing schema-1 proof contract with exact commit/tree/stages and a
+freshly calculated file SHA.
+
+Only serialized manual `Cleanup` compacts exact-owned `removed` resource-ledger
+records. It writes immutable content-addressed shards keyed by the first two hex
+digits of `resourceId`, each containing complete records (including unknown
+fields), then atomically removes them from the hot ledger. The fixed 256-way
+address space makes rehydration a single-shard lookup instead of an archive
+scan; unchanged shards are cached within the process. A restart between blob
+write and ledger swap is idempotent. Re-registration uses the deterministic
+`resourceId` to rehydrate the archived record before changing its state, so
+extension fields survive. Active, retained, cleanup-pending, malformed, and
+unknown-owner records remain hot. `Status` never rebuilds, compacts, deletes, or
+rewrites either store; qualification, evidence, Pester shards, plans, and raw
+runs are outside this retention action.
 
 Для release-снимков распознаются текущий путь
 `.agent-1c/runs/release-e2e/<run>/snapshots/{baseline,post-config}.dt`,
@@ -305,6 +344,75 @@ reparse point ниже worktree не даёт права удалить пере
 старой pending-записью, даже при одинаковом SHA. После штатного удаления по
 совпадающей записи старые записи исчезнувшего файла закрываются в том же
 проходе. Несовпадение SHA само по себе никогда не разрешает удаление.
+
+`Status.disposition` is a read-only, compact inventory of only the
+source-delivery namespaces and ledger identities. It classifies records as
+`keep`, `eligible`, or `not-owned`, explains the reason, and never deletes or
+prunes anything. User branches and arbitrary `codex/*` worktrees are outside
+the inventory. The public `-Action Status` route uses the checked-out supervisor
+directly and does not create or remove a bootstrap worktree. Exact ledger
+ownership includes recomputing both `identitySha256` and `resourceId` from
+`planId|kind|owner|identitySha256`.
+
+Published ancestry or exact tree equivalence is proved only against the exact
+`develop`/`master` tips returned by a bounded, non-interactive, read-only
+`git ls-remote`; local remote-tracking refs are not publication evidence. The
+probe disables Git/GCM/SSH credential prompts and has a fixed timeout. Timeout,
+authentication failure, an unavailable remote, or a remote commit object that
+cannot be inspected locally leaves the item `keep`.
+Its native stdout/stderr boundary is explicitly UTF-8, including repository
+paths containing spaces and non-ASCII text. Timeout teardown bounds both
+`taskkill /T` and the direct-kill fallback, so descendant cleanup cannot turn
+the probe into an unbounded Status call. The same deadline covers both async
+stdout/stderr readers: if an already exited Git root leaves a descendant holding
+an inherited pipe, reader expiry is a timeout and triggers best-effort descendant
+cleanup instead of waiting without a deadline.
+`taskkill /T` is used only while the root PID still has its exact creation
+identity. If the root already exited, cleanup considers only descendants
+captured while that root identity was live, rejects creation times after the
+root exit, and rechecks each PID plus creation time immediately before stopping
+it. An unknown pipe holder is reported as a timeout and may leak; PID reuse never
+authorizes killing an unproven process.
+`eligible` in `Status` remains advisory. Only an explicit manual `-Action Cleanup`
+recomputes the disposition while holding the exact live `Cleanup`
+`delivery-operation` lease. It may remove complete queue base/head pairs and stale
+promotion refs in one `git update-ref --no-deref --stdin` transaction, with the
+observed old SHA on every delete. A changed old object SHA or publication attempt
+aborts the whole transaction. Symbolic refs observed by the cleanup snapshot are
+rejected, and `--no-deref` prevents a later symbolic ref from exposing its target
+to deletion. Publication pre/post sweeps never invoke this ref cleanup.
+
+The current CIM command-line scan is only an advisory active-process signal. A
+clear scan does not prove absence of open handles, a process cwd, or an
+unobservable process, so candidate worktrees stay `keep/process-free-proof-required`.
+An unavailable advisory probe is also `keep`, not a Status failure. A later
+mutating implementation must add a complete process-free proof before treating
+that deletion guard as satisfied. Qualification and content-addressed evidence
+are always retained by this disposition batch.
+
+Status brackets that remote probe with snapshots of the publication-attempt
+file and the exact owned ref namespaces, then re-reads both. If the attempt
+appears, disappears, or changes during the probe, every promotion ref remains
+`keep`. If the owned ref snapshot changes, no ref from that unstable snapshot is
+eligible. `Status.snapshot` exposes this validation result; it is a bounded
+observation, not a cleanup lease.
+
+The mutating cleanup consumes no previously printed `Status` result: it recomputes
+every guard and rejects symbolic refs before committing its expected-SHA CAS.
+Queue base/head refs always enter the same transaction, and eligible promotion
+singletons use the same old-value guard. A moved ref leaves every target untouched.
+Repeated Cleanup is idempotent: after a committed transaction the next fresh
+disposition contains no target refs. Worktrees and ledger resources remain
+read-only in this slice; worktree removal still requires a complete process,
+handle, and cwd absence proof that is not currently available. A bare ref delete,
+name-only worktree match, or age-based decision is never allowed.
+
+An exact `publication-attempts/develop.json` `promotionRef` remains `keep` while
+the attempt exists, even when its commit is already published. Its
+`promotionCommit` is the expected SHA. A missing field, changed ref SHA,
+unsupported schema, or unreadable attempt is fail-closed and cannot produce an
+eligible promotion disposition; the promotion ref may still be required by
+`Restore-DevelopCompatibilityPromotion` after interruption.
 
 ## Release уже опубликованного develop в master
 
@@ -372,3 +480,13 @@ Gate помечает сбой как owner или infrastructure. Только 
 leaf stages (`fork-check`, `ai-rules-compatibility`) получают один автоматический
 повтор при узко распознанной временной инфраструктурной ошибке. Pester, live 1C
 journey, Release E2E и assertion failures автоматически не повторяются.
+
+Тот же sweep удаляет просроченные не-Git work-каталоги контролируемой сборки
+Vanessa из `C:\itlvabld`, старые passed-снимки миграции `ai_rules_1c`, точные
+`*-artifact-hold-YYYYMMDD-HHmm\build` и распознанные release quarantine/evidence.
+Автоматические pre/post-publication проходы выдерживают семь дней, ручной
+`Cleanup` удаляет их сразу. Dirty Git, активные процессы, reparse/junction,
+последний passed migration snapshot, текущие capability/rollback-каталоги и
+неизвестная форма артефакта всегда сохраняются. В build work root распознаются
+только непосредственные не-Git каталоги выделенного `C:\itlvabld`; содержимое
+за его пределами sweep не рассматривает.
