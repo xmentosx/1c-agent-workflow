@@ -15,7 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const version = "0.4.12"
+const version = "0.4.13"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -80,6 +80,9 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := validateFacadeCatalog(catalog); err != nil {
+		return err
+	}
 	instanceID, err := randomID()
 	if err != nil {
 		return err
@@ -92,8 +95,8 @@ func run(args []string) error {
 	rt := &runtime{
 		catalog: catalog, broker: broker, projectRoot: root, family: *family,
 		instanceID: instanceID, idle: *idle, catalogWait: 30 * time.Second, logger: logger,
-		vanessaConnectWait: 60 * time.Second, cleanupTimeout: *cleanupTimeout,
-		progress: make(map[string]*progressRoute),
+		vanessaConnectWait: 60 * time.Second,
+		progress:           make(map[string]*progressRoute),
 	}
 	serverName := "itl-roctup-data"
 	if *family == "vanessa-ui" {
@@ -106,6 +109,7 @@ func run(args []string) error {
 	if *surface == "gateway" {
 		addGatewayTools(server, rt)
 	} else {
+		addDatabaseAccessControlTool(server, rt)
 		for _, definition := range catalog.Data.Tools {
 			tool := definition
 			server.AddTool(tool, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {

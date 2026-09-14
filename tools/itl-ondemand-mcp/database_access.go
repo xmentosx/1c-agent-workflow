@@ -23,6 +23,7 @@ type databaseAccessProof struct {
 	Ticket      string `json:"ticket"`
 	Token       string `json:"token"`
 	Purpose     string `json:"purpose,omitempty"`
+	AccessMode  string `json:"accessMode,omitempty"`
 }
 
 type databaseAccessRequest struct {
@@ -63,6 +64,24 @@ type databasePipeOwner struct {
 	waitErr    error
 }
 
+var canonicalDatabaseAccessModes = map[string]struct{}{
+	"shared-read": {}, "functional-test": {}, "measurement-exclusive": {}, "mutation-exclusive": {},
+}
+
+func normalizeDatabaseAccessMode(value string) (string, error) {
+	switch value {
+	case "", "exclusive":
+		return "mutation-exclusive", nil
+	case "test-run":
+		return "functional-test", nil
+	default:
+		if _, ok := canonicalDatabaseAccessModes[value]; ok {
+			return value, nil
+		}
+		return "", errors.New("INFOBASE_ACCESS_MODE_INVALID")
+	}
+}
+
 func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, request databaseAccessRequest, progress func(databaseAccessEvent)) (*databasePipeOwner, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -70,6 +89,11 @@ func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, r
 	if python == "" {
 		python = "python"
 	}
+	accessMode, err := normalizeDatabaseAccessMode(request.AccessMode)
+	if err != nil {
+		return nil, err
+	}
+	request.AccessMode = accessMode
 	cmd := exec.Command(python, "-B", "-X", "utf8", "-u", "-m", "itl_remote.access_host")
 	cmd.Dir = runtimeRoot
 	cmd.Env = databaseHostEnvironment(runtimeRoot)
@@ -114,9 +138,13 @@ func acquireDatabasePipeOwner(ctx context.Context, python, runtimeRoot string, r
 				_ = owner.Close()
 				return nil, errors.New("INFOBASE_ACCESS_HOST_PROOF_INVALID")
 			}
-			owner.Proof, owner.Public, owner.AccessMode = event.Proof, event.Owner, request.AccessMode
+			owner.Proof, owner.Public, owner.AccessMode = event.Proof, event.Owner, event.Proof.AccessMode
 			if owner.AccessMode == "" {
-				owner.AccessMode = "exclusive"
+				owner.AccessMode = request.AccessMode
+			}
+			if owner.AccessMode != request.AccessMode {
+				_ = owner.Close()
+				return nil, errors.New("INFOBASE_ACCESS_HOST_MODE_UNCONFIRMED")
 			}
 			if err := ctx.Err(); err != nil {
 				// No operation has received this grant yet. Confirm that no work
@@ -250,6 +278,9 @@ func (owner *databasePipeOwner) Transition(ctx context.Context, accessMode strin
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if _, ok := canonicalDatabaseAccessModes[accessMode]; !ok {
+		return errors.New("INFOBASE_ACCESS_MODE_INVALID")
+	}
 	if accessMode == owner.AccessMode {
 		return nil
 	}
@@ -279,17 +310,35 @@ func (owner *databasePipeOwner) Transition(ctx context.Context, accessMode strin
 				progress(event)
 			}
 		case "transitioned":
-			if event.AccessMode != accessMode {
-				return errors.New("INFOBASE_ACCESS_TRANSITION_UNCONFIRMED")
-			}
-			owner.AccessMode = accessMode
-			return nil
+			return confirmDatabaseAccessTransition(owner, event, accessMode)
 		case "transition-error":
 			return errors.New(event.Error)
 		default:
 			return errors.New("INFOBASE_ACCESS_HOST_RESPONSE_INVALID")
 		}
 	}
+}
+
+func confirmDatabaseAccessTransition(owner *databasePipeOwner, event databaseAccessEvent, accessMode string) error {
+	if event.AccessMode != accessMode {
+		return errors.New("INFOBASE_ACCESS_TRANSITION_UNCONFIRMED")
+	}
+	if owner.Proof == nil {
+		return errors.New("INFOBASE_ACCESS_HOST_PROOF_INVALID")
+	}
+	var public map[string]any
+	if err := json.Unmarshal(owner.Public, &public); err != nil || public == nil {
+		return errors.New("INFOBASE_ACCESS_HOST_PUBLIC_INVALID")
+	}
+	public["accessMode"] = accessMode
+	updatedPublic, err := json.Marshal(public)
+	if err != nil {
+		return errors.New("INFOBASE_ACCESS_HOST_PUBLIC_INVALID")
+	}
+	owner.AccessMode = accessMode
+	owner.Proof.AccessMode = accessMode
+	owner.Public = updatedPublic
+	return nil
 }
 
 func (owner *databasePipeOwner) Close() error {
