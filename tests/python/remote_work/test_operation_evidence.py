@@ -28,7 +28,8 @@ class OperationEvidenceTests(unittest.TestCase):
                 "clocks": [{"clockId": "mono", "kind": "monotonic", "unit": "ms"}],
                 "spans": [span("client", 2325, kind="rpcWindow", call="call-1"),
                           span("server", 2267, call="call-1")],
-                "links": [{"kind": "rpc", "from": "client", "to": "server", "callId": "call-1"}],
+                "links": [{"kind": "rpc", "from": "client", "to": "server", "callId": "call-1",
+                           "contained": True}],
                 "coverage": {"client": "partial", "serverWithoutContext": "partial",
                              "serverWithContext": "unknown", "background": "unknown"},
                 "milestones": [{"name": "fullyReady", "availability": "unknown",
@@ -74,6 +75,13 @@ class OperationEvidenceTests(unittest.TestCase):
         value = operation_evidence.normalize(negative, job_id="job-1", iteration_id=0)
         self.assertEqual([], value["derivedMetrics"])
         self.assertTrue(any("negative" in item for item in value["limitations"]))
+
+    def test_rpc_remainder_requires_explicit_interval_containment(self):
+        value = self.evidence()
+        del value["links"][0]["contained"]
+        normalized = operation_evidence.normalize(value, job_id="job-1", iteration_id=0)
+        self.assertEqual([], normalized["derivedMetrics"])
+        self.assertTrue(any("containment not proven" in item for item in normalized["limitations"]))
 
     def test_large_ticks_must_be_exact_decimal_strings_and_unknown_is_not_zero(self):
         value = self.evidence()

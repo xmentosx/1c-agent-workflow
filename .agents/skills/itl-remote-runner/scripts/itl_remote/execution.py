@@ -169,6 +169,8 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             if not source.is_file():
                 raise WorkError("OPERATION_EVIDENCE_NOT_PRODUCED")
             item.update(analyze_file(source, destination, job_id=request["id"], iteration_id=index))
+            item["path"] = (iteration / item["path"]).relative_to(run).as_posix()
+            item["reportPath"] = (iteration / item["reportPath"]).relative_to(run).as_posix()
         except (OSError, ValueError, WorkError) as error:
             item.update(status="invalid", error=str(error))
         result["operationEvidence"]["iterations"].append(item)
@@ -432,9 +434,12 @@ def report(run, result):
     evidence = result.get("operationEvidence", {"status": "notRequested"})
     lines += ["", "Operation evidence: " + evidence["status"] + "."]
     for item in evidence.get("iterations", []):
-        lines.append("- iteration %s, level %s: %s%s" % (
+        detail = ""
+        if item.get("reportPath"):
+            detail = " — [operation map](%s)" % item["reportPath"]
+        lines.append("- iteration %s, level %s: %s%s%s" % (
             item["iteration"], item["level"], item["status"],
-            " (" + item["error"] + ")" if item.get("error") else ""))
+            " (" + item["error"] + ")" if item.get("error") else "", detail))
     if result.get("error"):
         lines += ["", "Error: " + result["error"]]
     (Path(run) / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

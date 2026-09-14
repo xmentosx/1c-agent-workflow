@@ -113,6 +113,28 @@ def _dependencies(spans, links):
     return incoming
 
 
+def _validate_parents(by_id):
+    for identifier, span in by_id.items():
+        parent = span.get("parentSpanId")
+        if parent is not None and (not isinstance(parent, str) or parent not in by_id):
+            raise WorkError("OPERATION_EVIDENCE_PARENT_MISSING: " + identifier)
+    state = {}
+
+    def visit(identifier):
+        if state.get(identifier) == "visiting":
+            raise WorkError("OPERATION_EVIDENCE_PARENT_CYCLE")
+        if state.get(identifier) == "complete":
+            return
+        state[identifier] = "visiting"
+        parent = by_id[identifier].get("parentSpanId")
+        if parent is not None:
+            visit(parent)
+        state[identifier] = "complete"
+
+    for identifier in by_id:
+        visit(identifier)
+
+
 def longest_path(spans, links, target_span_id):
     by_id = {item["spanId"]: item for item in spans}
     if target_span_id not in by_id:
@@ -174,6 +196,7 @@ def normalize(document, *, job_id, iteration_id):
         _duration(span)
         _validate_ticks(span)
         by_id[identifier] = span
+    _validate_parents(by_id)
     for link in links:
         if (not isinstance(link, dict) or link.get("kind") not in LINK_KINDS or
                 link.get("from") not in by_id or link.get("to") not in by_id):
@@ -195,7 +218,7 @@ def normalize(document, *, job_id, iteration_id):
             limitations.append("rpc remainder unavailable: duration unknown")
         elif c["unit"] != s["unit"]:
             limitations.append("rpc remainder unavailable: duration unit mismatch")
-        elif link.get("contained") is False:
+        elif link.get("contained") is not True:
             limitations.append("rpc remainder unavailable: independent interval containment not proven")
         elif c["value"] < s["value"]:
             limitations.append("rpc remainder invalid: negative remainder")
@@ -231,7 +254,10 @@ def analyze_file(source, destination, *, job_id, iteration_id):
     source, destination = Path(source), Path(destination)
     normalized = normalize(read_json(source), job_id=job_id, iteration_id=iteration_id)
     write_json(destination, normalized)
+    from .operation_report import write_report
+    report = write_report(destination.with_suffix(".md"), normalized)
     return {"status": normalized["analysisStatus"], "path": destination.name,
             "sha256": digest(destination), "operationId": normalized["operationId"],
             "level": normalized["diagnostics"]["level"], "coverage": normalized.get("coverage", {}),
-            "limitations": normalized["limitations"]}
+            "limitations": normalized["limitations"], "reportPath": report.name,
+            "reportSha256": digest(report)}

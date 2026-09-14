@@ -132,11 +132,17 @@ class RuntimeTests(unittest.TestCase):
         run = self.spool / "runs/evidence/000-time"
         self.assertTrue((run / "private/operation-evidence.json").is_file())
         self.assertTrue((run / "operation-evidence.json").is_file())
+        self.assertTrue((run / "operation-evidence.md").is_file())
+        self.assertEqual("000-time/operation-evidence.json", item["path"])
+        self.assertEqual("000-time/operation-evidence.md", item["reportPath"])
         output = self.root / "Собранные доказательства"
         jobs.collect(self.spool, "evidence", output)
         self.assertTrue((output / "000-time/operation-evidence.json").is_file())
+        self.assertTrue((output / "000-time/operation-evidence.md").is_file())
         self.assertFalse((output / "000-time/private/operation-evidence.json").exists())
-        self.assertIn("Operation evidence", (output / "report.md").read_text(encoding="utf-8"))
+        summary = (output / "report.md").read_text(encoding="utf-8")
+        self.assertIn("Operation evidence", summary)
+        self.assertIn("[operation map](000-time/operation-evidence.md)", summary)
 
     def test_invalid_v2_sidecar_keeps_verified_timing_as_partial(self):
         broken = EVIDENCE_WORKLOAD.replace('"jobId": c["jobId"]', '"jobId": "foreign"')
