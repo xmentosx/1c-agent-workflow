@@ -139,13 +139,13 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
                "resourceEvidence": {"policy": resource_limits, "hostBefore": None,
                                     "hostAfter": None, "telemetry": resource_telemetry.name,
                                      "processes": []}}
+    result["resourceEvidence"]["contextId"] = resource_context.context_id
     result.update(database)
     result["operationEvidence"] = ({"status": "notRequested"} if scenario.get("diagnostics") is None else
                                    {"status": "running", "iterations": []})
     if access_lease:
         result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
                             "resources": access_lease.record["resources"], "waitSeconds": access_lease.wait_seconds}
-    result["resourceEvidence"]["contextId"] = resource_context.context_id
 
     def persist_progress():
         # Public evidence is independent of the private context and final result.
