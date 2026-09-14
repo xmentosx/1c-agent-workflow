@@ -282,6 +282,8 @@ func vanessaIntegrationTools() []*mcp.Tool {
 		{Name: "check_syntax", InputSchema: filePath},
 		{Name: "load_features", InputSchema: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}}},
 		{Name: "get_editor_state", InputSchema: object},
+		{Name: "execute_feature_step", InputSchema: object},
+		{Name: "get_form_analysis", InputSchema: object, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPointer(false)}},
 		{Name: "run_scenario", InputSchema: object},
 		{Name: "close_test_client", InputSchema: object},
 	}
@@ -1424,14 +1426,167 @@ func TestRuntimeVanessaSemanticFailureWritesBoundFailedEvidence(t *testing.T) {
 	if evidence["schemaVersion"] != float64(3) || evidence["outcome"] != "failed" || evidence["resultCode"] != "ITL_VANESSA_TOOL_RESULT_FAILED" {
 		t.Fatalf("unexpected failure evidence: %#v", evidence)
 	}
-	if evidence["resultMessage"] != "Vanessa returned a runtime/editor failure" || evidence["logPath"] != "backend.log" {
+	if evidence["resultMessage"] != "Vanessa returned a runtime/editor failure: Internal error: Ошибка при вызове конструктора (Файл)" || evidence["logPath"] != "backend.log" {
 		t.Fatalf("safe runner error details were not persisted: %#v", evidence)
+	}
+	if started["correlationId"] == "" || started["correlationId"] != evidence["correlationId"] {
+		t.Fatalf("started and final evidence are not correlated: started=%#v final=%#v", started, evidence)
 	}
 	if evidence["featurePath"] != "tests/features/demo.feature" || len(evidence["featureSha256"].(string)) != 64 || len(evidence["argumentsSha256"].(string)) != 64 {
 		t.Fatalf("failure evidence was not feature-bound: %#v", evidence)
 	}
 	if evidence["progressTokenProvided"] != false || evidence["progressNotificationsForwarded"] != float64(0) {
 		t.Fatalf("absent progress metadata was not diagnosed: %#v", evidence)
+	}
+}
+
+func TestRuntimeVanessaSemanticFailurePreservesBoundPrimaryAndSecondaryDiagnostics(t *testing.T) {
+	primary := `step failed password=super-secret ` + strings.Repeat("x", 260)
+	secondary := `Internal error: localization failed token=secondary-secret`
+	result := (&runtime{family: "vanessa-ui"}).validateVanessaResult(context.Background(), "execute_feature_step", &mcp.CallToolResult{
+		Content: []mcp.Content{&mcp.TextContent{Text: "PRIMARY_ERROR: " + primary + "\nSECONDARY_ERROR: " + secondary}},
+	}, nil)
+	assertToolErrorCode(t, result, "ITL_VANESSA_TOOL_RESULT_FAILED")
+	structured := result.StructuredContent.(map[string]any)
+	details := structured["details"].(map[string]any)
+	primaryDetail := details["primary"].(map[string]any)
+	secondaryDetails := details["secondaryDiagnostics"].([]map[string]any)
+	primaryMessage := primaryDetail["message"].(string)
+	secondaryMessage := secondaryDetails[0]["message"].(string)
+	if !strings.Contains(primaryMessage, "password=[redacted]") || len([]rune(primaryMessage)) > 240 || strings.Contains(primaryMessage, "super-secret") {
+		t.Fatalf("primary diagnostic is not bounded and redacted: %q", primaryMessage)
+	}
+	if !strings.Contains(secondaryMessage, "token=[redacted]") || strings.Contains(secondaryMessage, "secondary-secret") {
+		t.Fatalf("secondary diagnostic is not redacted: %q", secondaryMessage)
+	}
+}
+
+func TestVanessaTransportSuccessDoesNotMaskScenarioFailure(t *testing.T) {
+	for _, test := range []struct {
+		tool string
+		text string
+	}{
+		{tool: "run_scenario", text: "## Результат выполнения сценариев: были ошибки\nРезультат прохождения сценария: Failed"},
+		{tool: "get_test_results", text: "- Статус: Failed"},
+		{tool: "check_syntax", text: "Синтаксис корректен: Нет"},
+	} {
+		if marker := vanessaSemanticFailureMarker(test.tool, test.text); marker == "" {
+			t.Fatalf("%s transport-success failure was not recognized: %q", test.tool, test.text)
+		}
+	}
+}
+
+func TestRuntimeInterruptedCallsAreNotReplayedAndBackendIsReplaced(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		tool        string
+		wantCode    string
+		wantOutcome string
+	}{
+		{name: "read-only timeout before confirmed effect", tool: "get_form_analysis", wantCode: "ITL_ONDEMAND_CALL_TIMED_OUT", wantOutcome: "timed_out_before_confirmed_effect"},
+		{name: "side-effect timeout after possible effect", tool: "execute_feature_step", wantCode: "ITL_ONDEMAND_CALL_OUTCOME_UNKNOWN", wantOutcome: "unknown_after_possible_effect"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tools := vanessaIntegrationTools()
+			var initialTargetCalls, replacementTargetCalls, replacementSafeCalls int
+			effectReached := false
+
+			initialServer := mcp.NewServer(&mcp.Implementation{Name: "interrupted-vanessa", Version: "1"}, nil)
+			for _, definition := range tools {
+				tool := definition
+				initialServer.AddTool(tool, func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					text := tool.Name
+					switch tool.Name {
+					case "get_environment_data":
+						text = "VanessaExt: true"
+					case "connect_test_client":
+						text = "TestClient подключен"
+					case "get_window_list_testclient":
+						text = "Окно: Главное"
+					}
+					if tool.Name == test.tool {
+						initialTargetCalls++
+						if tool.Name == "execute_feature_step" {
+							effectReached = true
+						}
+						<-ctx.Done()
+						return nil, ctx.Err()
+					}
+					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+				})
+			}
+			initialBackend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return initialServer }, nil))
+			t.Cleanup(initialBackend.Close)
+
+			replacementServer := mcp.NewServer(&mcp.Implementation{Name: "replacement-vanessa", Version: "1"}, nil)
+			for _, definition := range tools {
+				tool := definition
+				replacementServer.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+					if tool.Name == test.tool {
+						replacementTargetCalls++
+					}
+					if tool.Name == "get_form_analysis" {
+						replacementSafeCalls++
+					}
+					text := tool.Name
+					if tool.Name == "get_environment_data" {
+						text = "VanessaExt: true"
+					} else if tool.Name == "connect_test_client" {
+						text = "TestClient подключен"
+					} else if tool.Name == "get_window_list_testclient" {
+						text = "Окно: Главное"
+					}
+					return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil
+				})
+			}
+			replacementBackend := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return replacementServer }, nil))
+			t.Cleanup(replacementBackend.Close)
+
+			instanceID := "0123456789abcdef0123456789abcdef"
+			broker := &fakeBroker{
+				info:        &backendInfo{InstanceID: instanceID, PID: 501, Port: 44001, URL: initialBackend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151},
+				recoverInfo: &backendInfo{PID: 502, Port: 44002, URL: replacementBackend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151},
+			}
+			rt, session := newFacadeSessionForFamily(t, "vanessa-ui", tools, broker, time.Minute, nil)
+			rt.cleanupTimeout = 2 * time.Second
+			configureRecoveryMarkers(t, rt, broker, instanceID)
+			foreignSentinel := filepath.Join(rt.projectRoot, "foreign-runtime.sentinel")
+			if err := os.WriteFile(foreignSentinel, []byte("foreign"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+				Name: test.tool, Arguments: map[string]any{}, Meta: mcp.Meta{"itlPhaseRemainingMs": 500},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertToolErrorCode(t, result, test.wantCode)
+			details := result.StructuredContent.(map[string]any)["details"].(map[string]any)
+			if details["callOutcome"] != test.wantOutcome || details["automaticRetryPerformed"] != false || details["backendRecovered"] != true || details["correlationId"] == "" {
+				t.Fatalf("unexpected interruption contract: %#v", details)
+			}
+			if initialTargetCalls != 1 || replacementTargetCalls != 0 {
+				t.Fatalf("interrupted call was lost or replayed: initial=%d replacement=%d", initialTargetCalls, replacementTargetCalls)
+			}
+			if test.tool == "execute_feature_step" && !effectReached {
+				t.Fatal("side-effect sentinel was not reached before the deadline")
+			}
+			if broker.recoveryCount() != 1 {
+				t.Fatalf("backend replacement count=%d", broker.recoveryCount())
+			}
+
+			safe, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_form_analysis", Arguments: map[string]any{}})
+			if err != nil || safe == nil || safe.IsError {
+				t.Fatalf("safe call was not served by the replacement backend: result=%#v err=%v", safe, err)
+			}
+			if replacementSafeCalls != 1 {
+				t.Fatalf("replacement safe call count=%d", replacementSafeCalls)
+			}
+			if _, err := os.Stat(foreignSentinel); err != nil {
+				t.Fatalf("foreign sentinel was removed during owned recovery: %v", err)
+			}
+		})
 	}
 }
 

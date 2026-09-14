@@ -31,6 +31,7 @@ type runtime struct {
 	idle                    time.Duration
 	catalogWait             time.Duration
 	vanessaConnectWait      time.Duration
+	cleanupTimeout          time.Duration
 	logger                  *slog.Logger
 	progressMu              sync.Mutex
 	progress                map[string]*progressRoute
@@ -60,6 +61,7 @@ type runtime struct {
 	testClientPID     int
 	testClientPort    int
 	suppressEvidence  bool
+	quarantined       bool
 }
 
 type progressRoute struct {
@@ -109,6 +111,10 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 			"repair": "Retry with only explicitly intended fields; omit absent optional fields.",
 		}), nil
 	}
+	callCorrelationID, correlationErr := randomID()
+	if correlationErr != nil {
+		callCorrelationID = fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
 
 	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
@@ -156,6 +162,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		for _, code := range []string{
 			"ITL_ONDEMAND_BACKEND_VERSION_MISMATCH",
+			"ITL_ONDEMAND_BACKEND_QUARANTINED",
 			"ITL_VANESSA_UNSAFE_ACTION_PROTECTION_UNCONFIRMED",
 			"ITL_VANESSA_EXT_NOT_READY",
 		} {
@@ -177,7 +184,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	}
 	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
 		r.attachVanessaTestClientMetaLocked(preflight)
-		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, 0)
+		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, 0, "", callCorrelationID)
 		r.completeCallLocked()
 		r.mu.Unlock()
 		return preflight, nil
@@ -198,7 +205,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.progressMu.Unlock()
 	}
 	r.active++
-	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route))
+	r.writeEvidenceLocked(toolName, arguments, "started", "ITL_ONDEMAND_CALL_STARTED", "upstream tool call started", callInstanceID, callBackend, progressTokenProvided, 0, progressEvidenceID(route), callCorrelationID)
 	r.mu.Unlock()
 	result, err := r.callUpstream(ctx, session, params)
 	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
@@ -207,10 +214,41 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	r.applyVanessaTestClientResultLocked(toolName, result)
 	r.attachVanessaTestClientMetaLocked(result)
 	outcome, resultCode := callOutcome(result, err)
+	if isCallInterruption(err) {
+		outcome = "unknown"
+		resultCode = "ITL_ONDEMAND_CALL_OUTCOME_UNKNOWN"
+		if isIdempotentTool(r.family, tool) {
+			outcome = "timed-out"
+			resultCode = "ITL_ONDEMAND_CALL_TIMED_OUT"
+		}
+	}
 	if forwardedProtocolCode != "" {
 		resultCode = forwardedProtocolCode
 	}
-	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route))
+	r.writeEvidenceLocked(toolName, arguments, outcome, resultCode, resultEvidenceMessageForOutcome(outcome, result, err), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route), callCorrelationID)
+	if isCallInterruption(err) {
+		r.quarantined = true
+		recoveryBase := preserveDatabaseInvocation(ctx, context.Background())
+		recoveryCtx, recoveryCancel := context.WithTimeout(recoveryBase, r.recoveryTimeout())
+		recovery, recoveryErr := r.recoverLocked(recoveryCtx, session, callInstanceID, callBackend)
+		recoveryCancel()
+		if recoveryErr != nil {
+			if r.session == session {
+				_ = r.session.Close()
+				r.clearProgress(r.session)
+				r.session = nil
+			}
+			r.writeEvidenceLocked(toolName, arguments, "recovery-failed", "ITL_ONDEMAND_BACKEND_QUARANTINED", resultEvidenceMessage(nil, recoveryErr), callInstanceID, callBackend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route), callCorrelationID)
+			r.completeCallLocked()
+			r.mu.Unlock()
+			return callInterruptionAction(toolName, callCorrelationID, callInstanceID, callInstanceID, isIdempotentTool(r.family, tool), false, recoveryErr), nil
+		}
+		r.quarantined = false
+		r.writeEvidenceLocked(toolName, arguments, "recovered", "ITL_ONDEMAND_BACKEND_REPLACED_AFTER_INTERRUPTION", "interrupted backend was replaced without replaying the call", recovery.InstanceID, r.backend, progressTokenProvided, progressForwardedCount(route), progressEvidenceID(route), callCorrelationID)
+		r.completeCallLocked()
+		r.mu.Unlock()
+		return callInterruptionAction(toolName, callCorrelationID, recovery.PreviousInstanceID, recovery.InstanceID, isIdempotentTool(r.family, tool), true, nil), nil
+	}
 	if err != nil && isConnectionRefused(err) {
 		recovery, recoveryErr := r.recoverLocked(ctx, session, callInstanceID, callBackend)
 		if recoveryErr != nil {
@@ -226,7 +264,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
 			r.attachVanessaTestClientMetaLocked(preflight)
-			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, progressForwardedCount(route))
+			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, progressForwardedCount(route), "", callCorrelationID)
 			r.completeCallLocked()
 			r.mu.Unlock()
 			return preflight, nil
@@ -243,7 +281,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.applyVanessaTestClientResultLocked(toolName, retryResult)
 		r.attachVanessaTestClientMetaLocked(retryResult)
 		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
-		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route))
+		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route), "", callCorrelationID)
 		r.completeCallLocked()
 		r.mu.Unlock()
 		if retryErr != nil {
@@ -292,6 +330,41 @@ func callOutcome(result *mcp.CallToolResult, err error) (string, string) {
 		return "failed", code
 	}
 	return "passed", "ITL_OK"
+}
+
+func isCallInterruption(err error) bool {
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+func (r *runtime) recoveryTimeout() time.Duration {
+	if r.cleanupTimeout > 0 {
+		return r.cleanupTimeout
+	}
+	return time.Minute
+}
+
+func callInterruptionAction(toolName, correlationID, previousInstanceID, instanceID string, idempotent, backendRecovered bool, reason error) *mcp.CallToolResult {
+	code := "ITL_ONDEMAND_CALL_OUTCOME_UNKNOWN"
+	outcome := "unknown_after_possible_effect"
+	message := "the call deadline expired after forwarding; its effect is unknown and automatic replay is forbidden"
+	action := "review-effect-before-explicit-retry"
+	if idempotent {
+		code = "ITL_ONDEMAND_CALL_TIMED_OUT"
+		outcome = "timed_out_before_confirmed_effect"
+		message = "the call deadline expired before a result was confirmed; the call was not replayed"
+		action = "retry-explicitly-if-still-needed"
+	}
+	details := map[string]any{
+		"action": action, "automaticRetryPerformed": false, "tool": toolName,
+		"correlationId": correlationID, "previousInstanceId": previousInstanceID,
+		"instanceId": instanceID, "backendRecovered": backendRecovered,
+		"callOutcome": outcome,
+	}
+	if reason != nil {
+		details["recoveryError"] = sanitizeDiagnostic(reason.Error())
+		details["action"] = "recover-quarantined-backend-before-next-call"
+	}
+	return toolError(code, message, details)
 }
 
 func (r *runtime) completeCallLocked() {
@@ -501,6 +574,10 @@ func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
 	if message == "" && result != nil {
 		message = resultText(result)
 	}
+	return sanitizeDiagnostic(message)
+}
+
+func sanitizeDiagnostic(message string) string {
 	message = evidenceWhitespace.ReplaceAllString(strings.TrimSpace(message), " ")
 	message = evidenceSecretAssignment.ReplaceAllString(message, "$1=[redacted]")
 	message = evidenceBearerToken.ReplaceAllString(message, "Bearer [redacted]")
@@ -515,7 +592,7 @@ func resultEvidenceMessage(result *mcp.CallToolResult, err error) string {
 }
 
 func resultEvidenceMessageForOutcome(outcome string, result *mcp.CallToolResult, err error) string {
-	if outcome != "failed" {
+	if outcome != "failed" && outcome != "unknown" && outcome != "timed-out" && outcome != "recovery-failed" {
 		return ""
 	}
 	return resultEvidenceMessage(result, err)
@@ -524,6 +601,9 @@ func resultEvidenceMessageForOutcome(outcome string, result *mcp.CallToolResult,
 func (r *runtime) ensureLocked(ctx context.Context) error {
 	if r.closed {
 		return fmt.Errorf("gateway is closed")
+	}
+	if r.quarantined {
+		return fmt.Errorf("ITL_ONDEMAND_BACKEND_QUARANTINED: interrupted backend has not been replaced")
 	}
 	if r.session != nil {
 		return r.restoreDatabaseRuntimeMode(ctx)
@@ -1109,7 +1189,15 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "Vanessa manager is not logically connected to TestClient", map[string]any{"tool": name})
 	}
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
-		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
+		primary, secondary := vanessaFailureDiagnostics(resultText(result))
+		details := map[string]any{
+			"tool": name, "marker": marker, "phase": "backend-result",
+			"primary": map[string]any{"code": "VANESSA_RUNTIME_FAILURE", "message": primary},
+		}
+		if len(secondary) > 0 {
+			details["secondaryDiagnostics"] = secondary
+		}
+		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", sanitizeDiagnostic("Vanessa returned a runtime/editor failure: "+primary), details)
 	}
 	if name != "connect_test_client" {
 		return result
@@ -1198,9 +1286,15 @@ func vanessaSemanticFailureMarker(name, text string) string {
 	}
 	normalized := strings.ToLower(text)
 	markers := []string{
+		"primary_error:",
 		"ошибка при вызове конструктора (файл)",
 		"значение не является значением объектного типа",
 		"ошибка доступа к редактору",
+		"результат выполнения сценариев: были ошибки",
+		"результат прохождения сценария: failed",
+		"статус упавшего шага: failed",
+		"- статус: failed",
+		"синтаксис корректен: нет",
 		"internal error:",
 		"внутренняя ошибка",
 	}
@@ -1212,9 +1306,35 @@ func vanessaSemanticFailureMarker(name, text string) string {
 	return ""
 }
 
+func vanessaFailureDiagnostics(text string) (string, []map[string]any) {
+	primary := ""
+	secondary := []map[string]any{}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "primary_error:") {
+			primary = sanitizeDiagnostic(strings.TrimSpace(line[len("PRIMARY_ERROR:"):]))
+			continue
+		}
+		if strings.HasPrefix(lower, "secondary_error:") {
+			message := sanitizeDiagnostic(strings.TrimSpace(line[len("SECONDARY_ERROR:"):]))
+			if message != "" {
+				secondary = append(secondary, map[string]any{"code": "VANESSA_SECONDARY_FAILURE", "message": message})
+			}
+		}
+	}
+	if primary == "" {
+		primary = sanitizeDiagnostic(text)
+	}
+	if primary == "" {
+		primary = "backend reported a semantic failure without diagnostics"
+	}
+	return primary, secondary
+}
+
 func isVanessaAuthoringTool(name string) bool {
 	switch name {
-	case "search_for_steps_by_keywords", "open_feature_file", "check_syntax", "get_info_about_line_scenario", "run_scenario", "get_test_results", "get_editor_state", "load_features":
+	case "search_for_steps_by_keywords", "open_feature_file", "check_syntax", "get_info_about_line_scenario", "execute_feature_step", "run_scenario", "get_test_results", "get_editor_state", "load_features":
 		return true
 	default:
 		return false
@@ -1284,7 +1404,7 @@ func (r *runtime) stopOwnedRuntime(ctx context.Context) error {
 	return fmt.Errorf("cleanup owned backend after 3 attempts: %w", lastErr)
 }
 
-func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, progressID ...string) {
+func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, resultCode, resultMessage, instanceID string, backend *backendInfo, progressTokenProvided bool, progressNotificationsForwarded uint64, evidenceIDs ...string) {
 	if r.suppressEvidence {
 		return
 	}
@@ -1300,7 +1420,7 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 	argumentsHash := sha256.Sum256(argumentsRaw)
 	featurePath, featureSHA, scenarioLine := r.authoringEvidenceContextLocked(toolName, arguments, outcome)
 	logPath := ""
-	if outcome == "failed" {
+	if outcome == "failed" || outcome == "unknown" || outcome == "timed-out" || outcome == "recovery-failed" {
 		logPath = backend.LogPath
 	}
 	entry := map[string]any{
@@ -1313,9 +1433,12 @@ func (r *runtime) writeEvidenceLocked(toolName string, arguments any, outcome, r
 		"progressTokenProvided": progressTokenProvided, "progressNotificationsForwarded": progressNotificationsForwarded,
 		"recordedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if len(progressID) > 0 && progressID[0] != "" {
-		entry["progressEvidenceId"] = progressID[0]
+	if len(evidenceIDs) > 0 && evidenceIDs[0] != "" {
+		entry["progressEvidenceId"] = evidenceIDs[0]
 		entry["progressCountScope"] = "snapshot-at-outcome; complete events in instance.progress.jsonl"
+	}
+	if len(evidenceIDs) > 1 && evidenceIDs[1] != "" {
+		entry["correlationId"] = evidenceIDs[1]
 	}
 	raw, _ := json.Marshal(entry)
 	path := filepath.Join(directory, instanceID+".evidence.jsonl")

@@ -19,6 +19,8 @@ persisted. This avoids blocking final results on guessed notification delays.
 
 If a registered backend refuses a connection, the facade asks the private broker to compare the registered PID and port with the ownership record under the existing runtime/start locks. Only a dead PID or a verified owned PID with an unavailable port is stale; an unverified live PID fails closed. The broker atomically claims and removes the stale runtime, starts one replacement with a new instance ID, and the facade retries the original call once only when the compatibility contract marks it read-only/idempotent or it is in the conservative Vanessa idempotency policy. Other calls return `ITL_ONDEMAND_RECOVERY_ACTION_REQUIRED` with the old/new instance IDs and an explicit manual-review action; their outcome is treated as unknown and they are never replayed automatically.
 
+An interrupted forwarded call follows a stricter contract. A read-only/idempotent call returns `ITL_ONDEMAND_CALL_TIMED_OUT` with `timed_out_before_confirmed_effect`; a side-effecting call returns `ITL_ONDEMAND_CALL_OUTCOME_UNKNOWN` with `unknown_after_possible_effect`. Neither is replayed. The old backend is quarantined and replaced under a fresh bounded cleanup context before another call can use the facade. Started, interrupted, and replacement evidence share one correlation ID; primary Vanessa diagnostics stay ahead of bounded, redacted secondary diagnostics.
+
 The performance adapter supplies `_meta.itlPhaseRemainingMs` on tool calls to
 carry its remaining phase budget through HTTP and broker startup. Ordinary calls
 retain a ten-minute request budget; inherited budgets may extend to 24 hours and
@@ -26,7 +28,7 @@ never extend an earlier caller deadline. HTTP transport has no separate shorter
 wall-clock cap. `--cleanup-timeout` controls owned EOF shutdown (default one
 minute); forced shutdown remains unproven cleanup at the adapter boundary.
 
-Facade 0.4.11 reserves its target and manager databases through the shared
+Facade 0.4.12 reserves its target and manager databases through the shared
 filesystem coordinator before taking the local runtime lock. It retains that
 reservation while its native backend exists. Nested broker work inherits a
 private proof and registers its participation; conflicting projects and chats
