@@ -113,7 +113,7 @@
         $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
-        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13")]'))
+        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14")]'))
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
         $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'
@@ -130,5 +130,60 @@
         $licenseText | Should -Match "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS"
         $manifest.license.spdx | Should -Be "BSD-3-Clause"
         $manifest.license.artifactNoticePath | Should -Be "ITL-NOTICE.txt"
+    }
+}
+
+Describe "Controlled Vanessa Automation patched artifact itl-r14" {
+    BeforeAll {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.28-itl-r14"
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot "manifest.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patchPath = Join-Path $assetRoot "file-operations.patch"
+        $patchText = Get-Content -LiteralPath $patchPath -Raw -Encoding UTF8
+        $buildScriptText = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\build-vanessa-automation-patched.ps1") -Raw -Encoding UTF8
+    }
+
+    It "pins the exact source and the five-file r14 patch" {
+        $manifest.upstream.repository | Should -Be "https://github.com/Pr-Mex/vanessa-automation.git"
+        $manifest.upstream.ref | Should -Be "refs/tags/1.2.043.28"
+        $manifest.upstream.commit | Should -Be "f3a01778a14d29b38204685deea0131274d438ff"
+        $manifest.upstream.sourceArchive.sha256 | Should -Be "3581a8d6bb675426b6555fd0b0f2e612c7c9ea0b704123129256a89f1f8f2f81"
+        $manifest.downstreamRevision | Should -Be "itl-r14"
+        (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+
+        $parserPath = "VanessaAutomation/Forms/ПарсерGherkin/Ext/Form/Module.bsl"
+        $managedFormPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("VmFuZXNzYUF1dG9tYXRpb24vRm9ybXMv0KPQv9GA0LDQstC70Y/QtdC80LDRj9Ck0L7RgNC80LAvRXh0L0Zvcm0vTW9kdWxlLmJzbA=="))
+        @($manifest.patch.expectedChangedPaths) | Should -Be @(
+            "VanessaAutomation/Forms/MCPVA/Ext/Form/Module.bsl",
+            $parserPath,
+            $managedFormPath,
+            "features/Libraries/VAExtension/VAExtension/Forms/Форма/Ext/Form/Module.bsl",
+            "lib/VAExtension/Ext/ManagedApplicationModule.bsl"
+        )
+        @($manifest.patch.upstreamBackports) | Should -HaveCount 2
+        @($manifest.patch.retainedDownstreamFixes) | Should -HaveCount 11
+        @($manifest.patch.removedDownstreamWorkarounds) | Should -HaveCount 2
+    }
+
+    It "accepts only the legitimate omitted-empty-lines multiline shape" {
+        $patchText | Should -Match ([regex]::Escape('ПараметрJson.Свойство("lines", СтрокиМногострочногоПараметра)'))
+        $patchText | Should -Match ([regex]::Escape('ПараметрJson.Свойство("header") И ПараметрJson.Свойство("footer")'))
+        $patchText | Should -Match ([regex]::Escape('ТипЗнч(СтрокиМногострочногоПараметра) <> Тип("Массив")'))
+        ([regex]::Matches($patchText, 'ITL_VANESSA_GHERKIN_MULTILINE_INVALID')).Count | Should -Be 2
+        $patchText | Should -Match 'VanessaExt.*lines'
+    }
+
+    It "keeps the paired extension and deterministic artifact contract" {
+        $manifest.pairedExtension.required | Should -BeTrue
+        $manifest.pairedExtension.protocol | Should -Be "itl-file-code-v1"
+        $manifest.pairedExtension.fileName | Should -Be "VAExtension.1.29-itl-r14.cfe"
+        $manifest.artifact.fileName | Should -Be "vanessa-automation-single.1.2.043.28-itl-r14.zip"
+        $manifest.artifact.downstreamRevision | Should -Be "itl-r14"
+        $buildScriptText | Should -Match ([regex]::Escape('"itl-r13", "itl-r14"'))
+
+        $noticeText = Get-Content -LiteralPath (Join-Path $assetRoot "ITL-NOTICE.txt") -Raw -Encoding UTF8
+        $licenseText = Get-Content -LiteralPath (Join-Path $assetRoot "LICENSE.upstream") -Raw -Encoding UTF8
+        $noticeText | Should -Match "itl-r14"
+        $licenseText | Should -Match "BSD 3-Clause"
     }
 }
