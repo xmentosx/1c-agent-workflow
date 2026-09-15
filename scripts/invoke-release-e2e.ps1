@@ -489,8 +489,11 @@ function New-E2EVanessaFixtureCommit {
 '@
     [IO.File]::WriteAllText($catalogPath, $catalog.Trim() + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
     & git -C $worktreePath add -- tests/features/ITLReleaseFourFlat.feature tests/features/workflow-release-e2e.feature tests/verification-suites.branch.json | Out-Null
-    & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
+    & git -C $worktreePath diff --cached --quiet -- tests/features/ITLReleaseFourFlat.feature tests/features/workflow-release-e2e.feature tests/verification-suites.branch.json
+    if ($LASTEXITCODE -ne 0) {
+        & git -C $worktreePath commit -m "test: add four flat Vanessa release scenarios" | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Unable to commit the four-scenario Vanessa release fixture." }
+    }
     $commit = (& git -C $worktreePath rev-parse HEAD).Trim()
     Register-E2EGeneratedCommit -Kind "vanessa-fixture" -Commit $commit
     return [pscustomobject]@{ path = $featurePath; commit = $commit }
