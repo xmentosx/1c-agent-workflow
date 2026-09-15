@@ -956,7 +956,8 @@ function Register-DeliveryGateResourcesCore {
         foreach ($snapshotProperty in $snapshotProperties) {
             if (-not [string]$snapshotProperty.Value.path) { continue }
             $snapshotPath = [IO.Path]::GetFullPath([string]$snapshotProperty.Value.path)
-            $snapshotState = if (Test-Path -LiteralPath $snapshotPath -PathType Leaf) { if($Failed){"retained"}else{"cleanup-pending"} } else { "removed" }
+            # Reusable-stand checkpoint snapshots are the next Auto/Restart baseline.
+            $snapshotState = if (Test-Path -LiteralPath $snapshotPath -PathType Leaf) { "retained" } else { "removed" }
             $id = Register-DeliveryResource -PlanId $planId -Kind "release-snapshot" -Owner "release-e2e" -Identity ([ordered]@{ path=$snapshotPath; name=$snapshotProperty.Name; sha256=[string]$snapshotProperty.Value.sha256; worktreePath=[IO.Path]::GetFullPath([string]$report.worktreePath) }) -State $snapshotState
             $registered.Add($id) | Out-Null
         }
