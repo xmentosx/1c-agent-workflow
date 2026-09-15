@@ -413,7 +413,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
         $sourceRoot = Join-Path $tempRoot "source"
         $cacheRoot = Join-Path $tempRoot "cache"
         $savedTemp = $env:TEMP
+        $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
         try {
+            Remove-Item Env:\ITL_AI_RULES_SOURCE_PATH -ErrorAction SilentlyContinue
             New-Item -ItemType Directory -Force -Path (Join-Path $projectRoot ".agent-1c"), $sourceRoot, $cacheRoot | Out-Null
             & git -C $sourceRoot init *> $null
             & git -C $sourceRoot config user.email "test@example.invalid"
@@ -450,6 +452,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             $second.commit | Should -Not -Be (& git -C $sourceRoot rev-parse HEAD).Trim()
         } finally {
             $env:TEMP = $savedTemp
+            $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -499,7 +502,9 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
 
     It "rejects controlled fork main when aiRules.ref is absent" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-rules-fork-main-" + [guid]::NewGuid().ToString("N"))
+        $savedSource = $env:ITL_AI_RULES_SOURCE_PATH
         try {
+            Remove-Item Env:\ITL_AI_RULES_SOURCE_PATH -ErrorAction SilentlyContinue
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"dependencyMode":"fresh","aiRules":{"repo":"https://github.com/xmentosx/itl_ai_rules_1c.git","tools":["kilocode"]}}'
             $script:pinError = ""
@@ -509,6 +514,7 @@ Add-Content -LiteralPath (Join-Path $ProjectRoot "installer-calls.txt") -Encodin
             }
             $script:pinError | Should -Match "requires an immutable configured tag"
         } finally {
+            $env:ITL_AI_RULES_SOURCE_PATH = $savedSource
             Remove-Variable -Name pinError -Scope Script -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
