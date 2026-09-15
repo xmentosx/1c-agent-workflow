@@ -305,7 +305,7 @@ Describe "Immutable asset download retry policy" {
         $delivery = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\source-delivery-component.ps1") -Raw -Encoding UTF8
         $shards = Get-Content -LiteralPath (Join-Path $script:RepoRoot "scripts\invoke-pester-shards.ps1") -Raw -Encoding UTF8
 
-        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 4
+        @([regex]::Matches($vanessa, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 5
         @([regex]::Matches($roctup, 'Invoke-ItlImmutableFileAcquire -Source')).Count | Should -Be 2
         $readiness | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \(\[string\]\$Lock\.url\)'
         $delivery | Should -Match 'Invoke-ItlImmutableFileDownload -Uri \$Url'
