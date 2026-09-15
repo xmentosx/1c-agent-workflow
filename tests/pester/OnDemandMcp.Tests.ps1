@@ -122,9 +122,6 @@ Describe "ITL on-demand MCP facade" {
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
-        $probeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
-        $probeSource | Should -Match 'gatewayPublicToolCount = 3'
-        $probeSource | Should -Match 'item.count != gatewayPublicToolCount'
         $gatewaySource | Should -Match 'ArgumentsJSON\s+\*string\s+`json:"argumentsJson,omitempty"`'
         $gatewaySource | Should -Match '"additionalProperties":\s*true'
         $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.7.1"

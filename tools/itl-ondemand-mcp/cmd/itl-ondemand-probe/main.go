@@ -38,10 +38,7 @@ type probeSession struct {
 	state   *runtimeState
 }
 
-const (
-	gatewayCallTool        = "call_tool"
-	gatewayPublicToolCount = 3
-)
+const gatewayCallTool = "call_tool"
 
 func main() {
 	if err := run(); err != nil {
@@ -120,8 +117,8 @@ func run() error {
 		}
 		connected = append(connected, item)
 		observeConcurrency()
-		if item.count != gatewayPublicToolCount {
-			return fmt.Errorf("facade gateway tools/list count=%d, expected=%d; internal catalog count=%d", item.count, gatewayPublicToolCount, expectedCount)
+		if item.count != 2 {
+			return fmt.Errorf("facade gateway tools/list count=%d, expected=2; internal catalog count=%d", item.count, expectedCount)
 		}
 		var result *mcp.CallToolResult
 		if index > 0 {
@@ -241,7 +238,7 @@ func run() error {
 	observeExitWait(closeStarted)
 
 	evidence := map[string]any{
-		"schemaVersion": 2, "family": *family, "publicToolCount": gatewayPublicToolCount, "catalogToolCount": expectedCount,
+		"schemaVersion": 2, "family": *family, "publicToolCount": 2, "catalogToolCount": expectedCount,
 		"tool": *tool, "instances": initial, "secondSurvivedFirstClose": secondSurvived,
 		"serializedFacadeHandoffPassed": serializedFacadeHandoffPassed,
 		"cleanupPassed":                 true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,

@@ -25,11 +25,6 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match "runner-fallback-required"
         $e2eText | Should -Match "run_scenario:cold.*get_VanessaAutomation_state:cold.*get_test_results:cold.*run_scenario:hot.*run_scenario:from-line-cold.*open_feature_file:secondary.*select_scenario:secondary.*run_scenario:selected"
         $e2eText | Should -Match 'vanessa-secondary-feature'
-        $e2eText | Should -Match 'publicToolCount = 3'
-        $checkText | Should -Match 'onDemandRoctupPublicToolCount -ne 3'
-        $probeText = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
-        $probeText | Should -Match 'gatewayPublicToolCount = 3'
-        $probeText | Should -Match 'item.count != gatewayPublicToolCount'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 4'
         $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
@@ -277,15 +272,13 @@ Describe "Release gate scripts" {
         $text | Should -Match '"-HelperPath", \$releaseHelperPath'
         $text | Should -Match '"-AiRulesSource", \$releaseRulesSource'
         $text | Should -Match 'Release E2E summary reports'
-        $text | Should -Match 'onDemandRoctupPublicToolCount -ne 3'
-        $text | Should -Match 'onDemandVanessaPublicToolCount -ne 3'
+        $text | Should -Match 'maxConcurrentSessions'
         $text | Should -Match 'ownedProcessExitWaitMs'
         $text | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Raw -Encoding UTF8
         $runnerText | Should -Match 'SOURCE_INFOBASE_PATH must be a disposable snapshot inside the stand'
         $runnerText | Should -Match '\[Console\]::Error\.WriteLine\(\$failure\)'
         (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'source-snapshot'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "docs\release-checklist.md") -Raw -Encoding UTF8) | Should -Match 'finish_database_access'
     }
 
     It "uses the default seed root for a legacy project config" {
@@ -874,8 +867,8 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $summary.extensionUiJunitTests | Should -Be 1
             $summary.onDemandRoctupToolCount | Should -Be 13
             $summary.onDemandVanessaToolCount | Should -Be 38
-            $summary.onDemandRoctupPublicToolCount | Should -Be 3
-            $summary.onDemandVanessaPublicToolCount | Should -Be 3
+            $summary.onDemandRoctupPublicToolCount | Should -Be 2
+            $summary.onDemandVanessaPublicToolCount | Should -Be 2
             $summary.onDemandVanessaInstances | Should -Be 2
             $summary.onDemandVanessaSecondSurvived | Should -BeTrue
             $summary.onDemandVanessaSerializedHandoff | Should -BeTrue

@@ -213,8 +213,8 @@ only and never republished. Component evidence is stored separately per exact
 workflow candidate so a safe retry continues idempotently after a partial
 cross-repository finalization.
 
-The public facade `tools/list` must contain exactly `resolve_tool`,
-`call_tool`, and `finish_database_access` for each family while the release probe still qualifies every tool
+The public facade `tools/list` must contain exactly `resolve_tool` and
+`call_tool` for each family while the release probe still qualifies every tool
 in the complete internal catalog. Prove that `resolve_tool` does not start the
 backend and that a resolved exact name plus arguments reaches the intended
 backend tool through `call_tool`. Do not replace the gateway count with the
