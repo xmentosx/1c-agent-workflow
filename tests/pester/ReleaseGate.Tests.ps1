@@ -64,6 +64,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'RELEASE_E2E_CACHE_CORRUPT'
         $e2eText | Should -Match 'workflowTree'
         $e2eText | Should -Match 'Register-E2EGeneratedCommit'
+        $e2eText | Should -Match 'git -C \$worktreePath diff --cached --quiet -- tests/features/ITLReleaseFourFlat.feature'
         $e2eText | Should -Match 'Sync-E2EWorktreeFromMaster'
         $e2eText | Should -Match 'release-preflight-sync-master'
         $e2eText | Should -Match 'Invoke-E2ESeedParallelProof -MainRoot .*? -PreflightMasterHead \$preflightSeedMasterHead'
