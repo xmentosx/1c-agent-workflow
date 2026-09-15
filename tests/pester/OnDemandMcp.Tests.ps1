@@ -123,6 +123,9 @@ Describe "ITL on-demand MCP facade" {
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
+        $probeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
+        $probeSource | Should -Match 'gatewayPublicToolCount = 3'
+        $probeSource | Should -Match 'item.count != gatewayPublicToolCount'
         $gatewaySource | Should -Match 'addDatabaseAccessControlTool\(server, rt\)'
         $databaseRuntimeSource | Should -Match 'finishDatabaseAccessTool\s*=\s*"finish_database_access"'
         $gatewaySource | Should -Match 'ArgumentsJSON\s+\*string\s+`json:"argumentsJson,omitempty"`'
