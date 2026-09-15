@@ -86,6 +86,8 @@ def publish(lease, producer_id, payload):
         if payload['stepId'] in entries:
             previous = read(lease.coordinator, record, producer_id, payload['stepId'])
             if previous['phase'] == payload and previous['nativeSnapshot'] == snapshot(record):
+                lease.coordinator._pin_locked(record['ticket'],
+                                              'source-sync-phase:' + producer_id + ':' + payload['stepId'])
                 return reference(record, producer_id, payload['stepId'], entries[payload['stepId']])
             stable = {key: value for key, value in payload.items() if key not in ('status', 'result')}
             old_stable = {key: value for key, value in previous['phase'].items() if key not in ('status', 'result')}
@@ -106,6 +108,8 @@ def publish(lease, producer_id, payload):
         temporary.replace(path)
         entry = {'path': path.relative_to(lease.coordinator.root).as_posix(), 'sha256': sha}
         entries[payload['stepId']] = entry
+        lease.coordinator._pin_locked(record['ticket'],
+                                      'source-sync-phase:' + producer_id + ':' + payload['stepId'])
         lease.coordinator.save(record)
         lease.record = record
         return reference(record, producer_id, payload['stepId'], entry)
@@ -174,7 +178,7 @@ def observe(lease, ticket, expected):
             Path(expected['project']) != Path(lease.owner.get('project', '')) or
             not set(lease.coordinator.resources([m['target'] for m in expected['members']])) <= set(lease.record['resources'])):
         raise WorkError('SOURCE_SYNC_PHASE_READER_SCOPE_CHANGED')
-    record = read_json(beneath(lease.coordinator.root, 'tickets/' + ticket + '.json'))
+    record = lease.coordinator.record(ticket)
     if (record.get('ticket') != ticket or record.get('owner', {}).get('operation') != 'sync-dev-branches' or
             Path(record['owner'].get('project', '')) != Path(expected['project']) or
             (ticket != lease.record['ticket'] and record['status'] != 'released')):
@@ -211,6 +215,31 @@ def observe(lease, ticket, expected):
     return response
 
 
+def consume(lease, ticket, step_id):
+    """Acknowledge that lifecycle state durably consumed a phase reference."""
+    native._identifier(ticket)
+    native._identifier(step_id)
+    lease.validate()
+    if lease.owner.get('operation') != 'sync-dev-branches':
+        raise WorkError('SOURCE_SYNC_PHASE_CONSUMER_SCOPE_CHANGED')
+    prefix, suffix = 'source-sync-phase:', ':' + step_id
+    with lease.coordinator.mutex(time.monotonic() + 30, lease.cancelled):
+        lease.coordinator._repair_retention_update_locked()
+        pins = lease.coordinator._read_pins()
+        reasons = pins['entries'].get(ticket, {})
+        matches = [reason for reason in reasons if reason.startswith(prefix) and reason.endswith(suffix)]
+        if len(matches) > 1:
+            raise WorkError('SOURCE_SYNC_PHASE_CONSUMER_AMBIGUOUS')
+        if matches:
+            record = lease.coordinator.record(ticket)
+            if (record.get('owner', {}).get('operation') != 'sync-dev-branches' or
+                    Path(record.get('owner', {}).get('project', '')) != Path(lease.owner.get('project', '')) or
+                    not set(record['resources']) <= set(lease.record['resources'])):
+                raise WorkError('SOURCE_SYNC_PHASE_CONSUMER_SCOPE_CHANGED')
+            lease.coordinator._unpin_locked(ticket, matches[0])
+    return {'event': 'source-sync-phase-consumed', 'ticket': ticket, 'stepId': step_id}
+
+
 def _publish_recovered_completion(recovery, intent, result):
     """Write the phase receipt which the crashed producer could not publish."""
     with recovery.coordinator.mutex(time.monotonic() + 30, recovery.cancelled):
@@ -239,6 +268,8 @@ def _publish_recovered_completion(recovery, intent, result):
             temporary.replace(path)
         producer['sourceSyncPhases'][phase['stepId']] = {
             'path': path.relative_to(recovery.coordinator.root).as_posix(), 'sha256': sha}
+        recovery.coordinator._pin_locked(record['ticket'],
+                                         'source-sync-phase:' + producer_id + ':' + phase['stepId'])
         recovery.coordinator.save(record)
         recovery.record = record
         return value

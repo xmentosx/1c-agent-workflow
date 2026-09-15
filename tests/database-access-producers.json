@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "powershellCommands": [
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "function": "Start-ItlDevBranchMutationDatabaseAdmission", "command": "Start-ItlDatabaseAccessHost", "mode": "operation-classified" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "function": "Stop-DevBranchRuntimeBeforeInfobaseMutation", "command": "Set-ItlDevBranchDatabaseAccessMode", "mode": "mutation-exclusive" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "function": "Invoke-DevBranchCheck", "command": "Set-ItlDevBranchDatabaseAccessMode", "mode": "functional-test" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", "function": "Set-ItlDevBranchDatabaseAccessMode", "command": "Set-ItlDatabaseAccessMode", "mode": "parameter-canonical" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "function": "Ensure-VanessaServiceInfoBase", "command": "Set-ItlDevBranchDatabaseAccessMode", "mode": "mutation-exclusive" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "function": "Run-DevBranchTests", "command": "Set-ItlDevBranchDatabaseAccessMode", "mode": "functional-test" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", "function": "Start-ItlVanessaCleanupDatabaseAdmission", "command": "Start-ItlDatabaseAccessHost", "mode": "mutation-exclusive" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", "function": "Invoke-YAxUnitVerification", "command": "Set-ItlDevBranchDatabaseAccessMode", "mode": "functional-test" },
+    { "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", "function": "Start-ItlOnDemandInheritedDatabaseAccess", "command": "Start-ItlDatabaseAccessHost", "mode": "plan-canonical" },
+    { "file": "scripts/run-vanessa-build-runtime.ps1", "function": "<script>", "command": "Start-ItlDatabaseAccessHost", "mode": "mutation-exclusive" },
+    { "file": ".agents/skills/itl-remote-runner/scripts/Restore-NativeRecovery.ps1", "function": "<script>", "command": "Start-ItlDatabaseAccessHost", "mode": "mutation-exclusive" }
+  ],
+  "pythonCalls": [
+    { "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/access_host.py", "function": "serve", "call": "Lease", "mode": "wire-canonical" },
+    { "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/execution.py", "function": "execute_job", "call": "Lease", "mode": "measurement-exclusive" },
+    { "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/source_capture.py", "function": "Snapshot.run", "call": "Lease", "mode": "inherit-parent" }
+  ],
+  "goCalls": [
+    { "file": "tools/itl-ondemand-mcp/database_runtime.go", "function": "beginDatabaseCall", "call": "acquireDatabasePipeOwner", "mode": "request-canonical" },
+    { "file": "tools/itl-ondemand-mcp/database_runtime.go", "function": "transitionDatabaseMode", "call": "Transition", "mode": "canonical-transition" }
+  ]
+}

@@ -69,6 +69,7 @@ Describe 'Delivery v3 immutable selective plan' {
         Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade'); unknownPaths=@() } }
 
         $first = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $first.schemaVersion | Should -Be 1
         $first.status | Should -Be 'ready'; @($first.stages.id) | Should -Be @('develop.static','develop.upgrade'); @($first.stages.execution | Select-Object -Unique) | Should -Be @('execute')
         $proof = Join-Path $TestDrive 'proof.json'; [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
         foreach ($stage in $first.stages) { Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $repo.commit -CandidateTree $repo.tree -ProofPath $proof | Out-Null }
@@ -111,14 +112,65 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=src/cf`nEXTENSION_NAME=FirstExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
         $script:E2EProjectRoot = $stand
         $before = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
+        $before.environmentIdentitySchemaVersion | Should -Be 2
 
-        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=`nEXTENSION_NAME=`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=`nEXTENSION_NAME=`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nFUTURE_HELPER_OUTPUT=changed`n", [Text.UTF8Encoding]::new($false))
         $volatileRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
         (Get-DeliveryCanonicalJsonSha256 -Value $volatileRewrite) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
 
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nEXPORT_PATH=src/cfe`nEXTENSION_NAME=SecondExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`nROCTUP_MCP_PORT=6003`n", [Text.UTF8Encoding]::new($false))
         $materialRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
         (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+    }
+
+    It 'canonicalizes allowlisted env inputs without persisting secret values' {
+        $first = Join-Path $TestDrive 'first.env'
+        $second = Join-Path $TestDrive 'second.env'
+        $missing = Join-Path $TestDrive 'missing.env'
+        $empty = Join-Path $TestDrive 'empty.env'
+        [IO.File]::WriteAllText($first, "# comment`nIB_PASSWORD=old`n PLATFORM_PATH = 'C:\\1cv8' `nIB_PASSWORD=secret-value`nFUTURE_HELPER_OUTPUT=one`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($second, "IB_PASSWORD = `"secret-value`"`r`n# another comment`r`nFUTURE_HELPER_OUTPUT=two`r`nPLATFORM_PATH=C:\\1cv8`r`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($missing, "# PLATFORM_ARGS is absent`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($empty, "PLATFORM_ARGS=`n", [Text.UTF8Encoding]::new($false))
+
+        $firstHash = Get-DeliveryStableDotEnvSha256 -Path $first
+        $firstHash | Should -Be (Get-DeliveryStableDotEnvSha256 -Path $second)
+        $firstHash | Should -Not -Match 'secret-value'
+        (Get-DeliveryStableDotEnvSha256 -Path $missing) | Should -Not -Be (Get-DeliveryStableDotEnvSha256 -Path $empty)
+
+        $missingHash = Get-DeliveryStableDotEnvSha256 -Path $missing
+        foreach ($name in @(Get-DeliveryPlanSemanticDotEnvNames)) {
+            [IO.File]::WriteAllText($empty, "$name=semantic-value`n", [Text.UTF8Encoding]::new($false))
+            (Get-DeliveryStableDotEnvSha256 -Path $empty) | Should -Not -Be $missingHash -Because "$name is a declared semantic plan input"
+        }
+    }
+
+    It 'identifies the maintainer Vanessa source build by bytes rather than its path' {
+        $stand = Join-Path $TestDrive 'source build stand'
+        New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\project.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\release-e2e.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $stand '.dev.env'), "PLATFORM_PATH=C:\\1cv8`n", [Text.UTF8Encoding]::new($false))
+        $archive = Join-Path $TestDrive 'candidate archive.zip'
+        $copy = Join-Path $TestDrive 'same archive elsewhere.zip'
+        [IO.File]::WriteAllText($archive, 'first bytes', [Text.UTF8Encoding]::new($false))
+        Copy-Item -LiteralPath $archive -Destination $copy
+        $savedArchive = [Environment]::GetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', 'Process')
+        try {
+            $script:E2EProjectRoot = $stand
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $archive
+            $before = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+            $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $copy
+            $sameBytes = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+            (Get-DeliveryCanonicalJsonSha256 -Value $sameBytes) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+            (($before | ConvertTo-Json -Depth 8) -join '') | Should -Not -Match ([regex]::Escape($archive))
+
+            [IO.File]::WriteAllText($copy, 'second bytes', [Text.UTF8Encoding]::new($false))
+            $changed = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+            (Get-DeliveryCanonicalJsonSha256 -Value $changed) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+        } finally {
+            [Environment]::SetEnvironmentVariable('ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE', $savedArchive, 'Process')
+        }
     }
 
     It 'keys ai rules identity by commit and tree rather than temporary checkout path' {

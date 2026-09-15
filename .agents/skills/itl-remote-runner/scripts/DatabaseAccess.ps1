@@ -43,6 +43,41 @@ function Close-ItlDatabaseAccessHost {
     }
 }
 
+function Confirm-ItlDatabaseAccessHostMode {
+    param(
+        [Parameter(Mandatory = $true)][object]$Proof,
+        [Parameter(Mandatory = $true)][string]$RequestedMode
+    )
+
+    $hasMode = ($Proof -is [Collections.IDictionary] -and $Proof.Contains('accessMode')) -or
+        $null -ne $Proof.PSObject.Properties['accessMode']
+    if (-not $hasMode -or [string]$Proof.accessMode -cne $RequestedMode) {
+        throw 'INFOBASE_ACCESS_HOST_MODE_UNCONFIRMED'
+    }
+    return [string]$Proof.accessMode
+}
+
+function Confirm-ItlDatabaseAccessTransition {
+    param(
+        [Parameter(Mandatory = $true)][object]$Owner,
+        [Parameter(Mandatory = $true)][object]$Event,
+        [Parameter(Mandatory = $true)][string]$RequestedMode
+    )
+
+    if ([string]$Event.accessMode -cne $RequestedMode) { throw 'INFOBASE_ACCESS_TRANSITION_UNCONFIRMED' }
+    if ($null -eq $Owner.proof -or $null -eq $Owner.proof.PSObject.Properties['accessMode']) {
+        throw 'INFOBASE_ACCESS_HOST_PROOF_INVALID'
+    }
+    $hasPublicMode = $null -ne $Owner.public -and (
+        ($Owner.public -is [Collections.IDictionary] -and $Owner.public.Contains('accessMode')) -or
+        $null -ne $Owner.public.PSObject.Properties['accessMode'])
+    if (-not $hasPublicMode) { throw 'INFOBASE_ACCESS_HOST_PUBLIC_INVALID' }
+    $Owner.accessMode = $RequestedMode
+    $Owner.proof.accessMode = $RequestedMode
+    $Owner.public.accessMode = $RequestedMode
+    return $Event
+}
+
 function Start-ItlDatabaseAccessHost {
     param(
         [Parameter(Mandatory = $true)][object]$Request,
@@ -85,7 +120,17 @@ function Start-ItlDatabaseAccessHost {
     $start.EnvironmentVariables.Remove('PYTHONHOME')
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
-    $requestedMode = if (($Request -is [Collections.IDictionary] -and $Request.Contains('accessMode')) -or $null -ne $Request.PSObject.Properties['accessMode']) { [string]$Request.accessMode } else { 'exclusive' }
+    $hasRequestedMode = ($Request -is [Collections.IDictionary] -and $Request.Contains('accessMode')) -or $null -ne $Request.PSObject.Properties['accessMode']
+    $requestedMode = if ($hasRequestedMode) { [string]$Request.accessMode } else { '' }
+    $requestedMode = switch ($requestedMode) {
+        '' { 'mutation-exclusive' }
+        'exclusive' { 'mutation-exclusive' }
+        'test-run' { 'functional-test' }
+        { $_ -in @('shared-read', 'functional-test', 'measurement-exclusive', 'mutation-exclusive') } { $_ }
+        default { throw 'INFOBASE_ACCESS_MODE_INVALID' }
+    }
+    if ($Request -is [Collections.IDictionary]) { $Request['accessMode'] = $requestedMode }
+    else { $Request | Add-Member -NotePropertyName accessMode -NotePropertyValue $requestedMode -Force }
     $owner = [pscustomobject]@{ process = $process; proof = $null; public = $null; closed = $false; stderr = $null
         accessMode = $requestedMode; waitTimeoutSeconds = $budget }
     $started = $false
@@ -111,6 +156,7 @@ function Start-ItlDatabaseAccessHost {
                 if ($null -eq $event.proof -or $event.proof.ticket -notmatch '^[a-f0-9]{32}$' -or -not $event.proof.token) {
                     throw 'INFOBASE_ACCESS_HOST_PROOF_INVALID'
                 }
+                $owner.accessMode = Confirm-ItlDatabaseAccessHostMode -Proof $event.proof -RequestedMode $requestedMode
                 $owner.proof = $event.proof
                 $owner.public = $event.owner
                 if ($CancelPath -and (Test-Path -LiteralPath $CancelPath -PathType Leaf)) {
@@ -145,7 +191,7 @@ function Assert-ItlDatabaseAccessHost {
 function Set-ItlDatabaseAccessMode {
     param(
         [Parameter(Mandatory = $true)][object]$Owner,
-        [Parameter(Mandatory = $true)][ValidateSet('exclusive', 'shared-read', 'test-run')][string]$AccessMode,
+        [Parameter(Mandatory = $true)][ValidateSet('shared-read', 'functional-test', 'measurement-exclusive', 'mutation-exclusive')][string]$AccessMode,
         [string]$CancelPath = '',
         [scriptblock]$OnProgress
     )
@@ -161,10 +207,7 @@ function Set-ItlDatabaseAccessMode {
         $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds $remaining -CancelPath $CancelPath
         if ($event.event -eq 'transition-error') { throw ([string]$event.error) }
         if ($event.event -eq 'transitioned') {
-            if ([string]$event.accessMode -cne $AccessMode) { throw 'INFOBASE_ACCESS_TRANSITION_UNCONFIRMED' }
-            $Owner.accessMode = $AccessMode
-            $Owner.public.accessMode = $AccessMode
-            return $event
+            return Confirm-ItlDatabaseAccessTransition -Owner $Owner -Event $event -RequestedMode $AccessMode
         }
         if ($event.event -ne 'waiting' -or [string]$event.status -cne 'waiting-for-mode') {
             throw 'INFOBASE_ACCESS_HOST_RESPONSE_INVALID'
@@ -255,6 +298,22 @@ function Get-ItlDatabaseSourceSyncPhase {
     $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
     if ($event.event -cne 'source-sync-phase-observed' -or $event.ticket -cne $Ticket -or $event.stepId -cne $Record.stepId) {
         throw 'SOURCE_SYNC_PHASE_OBSERVATION_UNCONFIRMED'
+    }
+    return $event
+}
+
+function Confirm-ItlDatabaseSourceSyncPhaseConsumed {
+    param([object]$Owner, [string]$Ticket, [string]$StepId)
+    if ($Owner.closed) { throw 'INFOBASE_ACCESS_HOST_ALREADY_CLOSED' }
+    if ($Ticket -cnotmatch '^[a-f0-9]{32}$' -or $StepId -cnotmatch '^[a-f0-9]{32}$') {
+        throw 'SOURCE_SYNC_PHASE_CONSUMPTION_INVALID'
+    }
+    $payload = [pscustomobject]@{event='source-sync-phase-consumed';ticket=$Ticket;stepId=$StepId} | ConvertTo-Json -Compress
+    $Owner.process.StandardInput.WriteLine($payload)
+    $Owner.process.StandardInput.Flush()
+    $event = Read-ItlDatabaseAccessHostEvent -Owner $Owner -TimeoutSeconds 30
+    if ($event.event -cne 'source-sync-phase-consumed' -or $event.ticket -cne $Ticket -or $event.stepId -cne $StepId) {
+        throw 'SOURCE_SYNC_PHASE_CONSUMPTION_UNCONFIRMED'
     }
     return $event
 }

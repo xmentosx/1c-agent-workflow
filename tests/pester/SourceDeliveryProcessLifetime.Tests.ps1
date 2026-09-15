@@ -32,6 +32,38 @@ It "keeps the delivery wrapper budget above the authoritative child gate budget"
         (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $RepoRoot -AllowMissingCatalog) | Should -Be 7500
     }
 
+It "bounds taskkill teardown and keeps a direct kill fallback" {
+        $definition = Get-DeliveryFunctionDefinitions -Names @('Stop-DeliveryProcessTree') | Select-Object -First 1
+        $definition | Should -Not -BeNullOrEmpty
+        $text = $definition.Extent.Text
+        $text | Should -Match '\[int\]\$TimeoutMilliseconds = 5000'
+        $text | Should -Match 'Test-DeliveryProcessCreationIdentity -ProcessId \$processId -CreatedAt \$processStartedAt'
+        $text | Should -Match '\$killer\.WaitForExit\(\$remaining\)'
+        $text | Should -Not -Match '\$killer\.WaitForExit\(\)'
+        $text | Should -Match '\$descendantCreatedAt -gt \$processExitedAt'
+        $text | Should -Match 'Test-DeliveryProcessCreationIdentity -ProcessId \$descendantId -CreatedAt \$descendantCreatedAt'
+        $text | Should -Match '\$Process\.WaitForExit\(\$remaining\)'
+    }
+
+It "rejects reused root and foreign descendant identities without invoking a real kill" {
+        $definitions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree'))
+        Invoke-Expression (($definitions | Sort-Object { if ($_.Name -eq 'Test-DeliveryProcessCreationIdentity') { 0 } else { 1 } } | ForEach-Object Extent | ForEach-Object Text) -join "`n")
+        $createdAt = [DateTime]::UtcNow.AddMinutes(-1)
+        $fakeRoot = [pscustomobject]@{ Id=2147483000; HasExited=$true; StartTime=$createdAt.ToLocalTime(); ExitTime=$createdAt.AddSeconds(1).ToLocalTime() }
+        $fakeRoot | Add-Member -MemberType ScriptMethod -Name WaitForExit -Value { param([int]$Milliseconds); return $true }
+        Mock Get-Process {
+            [pscustomobject]@{ Id=$Id; HasExited=$false; StartTime=$createdAt.AddMinutes(1).ToLocalTime() }
+        }
+        Mock Stop-Process {}
+
+        Stop-DeliveryProcessTree -Process $fakeRoot -TimeoutMilliseconds 50 -CapturedDescendants @(
+            [pscustomobject]@{ processId=2147483001; createdAt=$createdAt.AddSeconds(2) },
+            [pscustomobject]@{ processId=2147483002; createdAt=$createdAt.AddMilliseconds(500) }
+        )
+
+        Assert-MockCalled Stop-Process -Times 0 -Exactly
+    }
+
 It "converts typed and round-trip delivery timestamps without current-culture stringification" {
         $definition = Get-DeliveryFunctionDefinitions -Names @('ConvertTo-DeliveryUtcDateTime') | Select-Object -First 1
         Invoke-Expression $definition.Extent.Text
@@ -96,7 +128,8 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
+            $functions = @(Get-DeliveryFunctionDefinitions -Names @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'Invoke-SourceGate', 'Invoke-ComponentPublicationFinalizer'))
+            $identityDefinition = $functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1
             $stopDefinition = $functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1
             $startDefinition = $functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1
             $closeJobDefinition = $functions | Where-Object Name -eq 'Close-DeliveryProcessJob' | Select-Object -First 1
@@ -119,6 +152,7 @@ while ($true) { Start-Sleep -Seconds 1 }
             $escapedRoot = $tempRoot.Replace("'", "''")
             $escapedGate = $gatePath.Replace("'", "''")
             $runspaceBody = @(
+                $identityDefinition.Extent.Text
                 $stopDefinition.Extent.Text
                 $startDefinition.Extent.Text
                 $closeJobDefinition.Extent.Text
@@ -186,13 +220,14 @@ $child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo', '-N
 [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'finalizer-child.pid'), [string]$child.Id, [Text.UTF8Encoding]::new($false))
 while ($true) { Start-Sleep -Seconds 1 }
 '@
-            $names = @('Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'ConvertTo-DeliveryNativeArgument', 'Invoke-ComponentPublicationFinalizer')
+            $names = @('Test-DeliveryProcessCreationIdentity', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob', 'ConvertTo-DeliveryNativeArgument', 'Invoke-ComponentPublicationFinalizer')
             $functions = @(Get-DeliveryFunctionDefinitions -Names $names)
             foreach ($name in $names) { ($functions | Where-Object Name -eq $name | Select-Object -First 1) | Should -Not -BeNullOrEmpty }
 
             $escapedRoot = $tempRoot.Replace("'", "''")
             $escapedFinalizer = $finalizerPath.Replace("'", "''")
             $runspaceBody = @(
+                ($functions | Where-Object Name -eq 'Test-DeliveryProcessCreationIdentity' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Stop-DeliveryProcessTree' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Start-DeliveryProcess' | Select-Object -First 1).Extent.Text
                 ($functions | Where-Object Name -eq 'Close-DeliveryProcessJob' | Select-Object -First 1).Extent.Text

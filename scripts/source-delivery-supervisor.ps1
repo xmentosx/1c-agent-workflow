@@ -82,6 +82,7 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-component.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-plan.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-resources.ps1")
+. (Join-Path $PSScriptRoot "source-delivery-ref-cleanup.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-candidate.ps1")
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
@@ -112,11 +113,24 @@ try {
                 activeOperation = (Get-DeliveryOperationStatus)
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
+                disposition = (Get-DeliveryDispositionReport)
                 runHistory = $history
             }
         }
         "Plan" { New-AccumulatedDeliveryPlan -RequireRelease:$RequireRelease }
-        "Cleanup" { Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual" }
+        "Cleanup" {
+            $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual"
+            $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue ([pscustomobject][ordered]@{
+                runIndex=(Repair-DeliveryRunHotIndex)
+                resourceLedger=(Compact-DeliveryResourceLedger)
+            })
+            $refCleanup = Invoke-DeliveryRefDispositionCleanup
+            $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
+            if ([string]$refCleanup.status -eq 'needs-attention' -and [string]$cleanup.status -eq 'completed') {
+                $cleanup | Add-Member -NotePropertyName status -NotePropertyValue 'completed-with-warnings' -Force
+            }
+            $cleanup
+        }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
         "PublishDevelop" { Publish-AccumulatedDevelop }
         "PromoteRelease" { Promote-AccumulatedDevelopToMaster }

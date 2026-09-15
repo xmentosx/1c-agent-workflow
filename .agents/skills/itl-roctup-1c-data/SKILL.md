@@ -9,7 +9,7 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 
 ## Priority
 
-- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool` and `call_tool` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool and stops automatically after inactivity or client exit.
+- Call the pre-registered `itl-roctup-data` MCP server for data exploration in a development branch. It exposes compact `resolve_tool`, `call_tool`, and `finish_database_access` gateway tools; the verified full catalog stays inside the facade. Its branch-local backend starts only when `call_tool` invokes an inner tool. Inactivity may stop the native backend, but it does not release the agent-owned database phase.
 - Use the legacy web-based Branch Data MCP only when ROCTUP is unavailable or the branch is intentionally published and the requested workflow depends on that legacy channel.
 - Do not assume a database is web-published.
 
@@ -30,6 +30,12 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
 - Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, run the supported `update-dev-branch-base` helper once and repeat the original call once. Report any other structured facade, catalog, or broker error.
+
+## Database Access Handoff
+
+Before an incompatible lifecycle, test, or measurement phase, explicitly choose one path: continue this task's current ROCTUP phase and postpone the next phase, or finish the phase and call `finish_database_access` on the same `itl-roctup-data` facade. Wait for that call to confirm release before starting the incompatible phase. `close_1c_session` alone is not this handoff.
+
+Release only access owned by the current task and facade instance. Never finish or stop a foreign holder; report its owner as the blocker and leave its process and lease intact. Idle timeout or client exit is an abandonment fallback, not a normal handoff.
 
 ## On-Demand References
 

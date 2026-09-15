@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
@@ -15,16 +15,24 @@ BeforeAll {
     }
     function Get-DeliveryFileSha256 { param([string]$Path); (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
     function Get-DeliveryCommonGitDirectory { (& git -C $script:Root rev-parse --path-format=absolute --git-common-dir).Trim() }
+    function Get-DevelopPublicationAttemptPath { Join-Path (Get-DeliveryCommonGitDirectory) 'itl\publication-attempts\develop.json' }
     function Test-SourceDeliveryPathInUse { param([string]$Path); return $false }
     function Invoke-RepositoryGit {
         param([string]$RepositoryRoot,[string[]]$Arguments,[switch]$AllowFailure)
         $output = @(& git -C $RepositoryRoot @Arguments 2>&1); [pscustomobject]@{ exitCode=$LASTEXITCODE; stdout=($output -join [Environment]::NewLine); stderr='' }
     }
+    function Invoke-DeliveryGit {
+        param([string[]]$Arguments,[switch]$AllowFailure)
+        Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure
+    }
     function Invoke-SourceDeliveryPostSuccessCleanup {
         param([string]$FreshProjectsRoot,[string]$E2EProjectRoot,[string[]]$PreservePaths,[string]$Phase)
         [pscustomobject]@{ status='completed'; warnings=@() }
     }
+    . (Join-Path $RepoRoot 'scripts\git-path-list.ps1')
+    . (Join-Path $RepoRoot 'scripts\source-delivery-process.ps1')
     . (Join-Path $RepoRoot 'scripts\source-delivery-resources.ps1')
+    . (Join-Path $RepoRoot 'scripts\develop-e2e-cleanup.ps1')
 
     function New-LedgerRepository {
         $nonAscii = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('0L/Rg9GC0Yw='))
@@ -67,9 +75,535 @@ BeforeAll {
         $id = Register-DeliveryResource -PlanId 'old-plan' -Kind release-snapshot -Owner release-e2e -Identity $identity -State cleanup-pending
         [pscustomobject]@{ root = $root; path = $path; identity = $identity; resourceId = $id }
     }
+
+    function New-DispositionRepository {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ('itl disposition репо ' + [guid]::NewGuid().ToString('N'))
+        $remote = Join-Path ([IO.Path]::GetTempPath()) ('itl-disposition-remote-' + [guid]::NewGuid().ToString('N') + '.git')
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & git -C $root init --quiet -b develop
+        & git -C $root config user.name 'ITL Test'
+        & git -C $root config user.email 'itl-test@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $root 'tracked.txt'), 'published', [Text.UTF8Encoding]::new($false))
+        & git -C $root add -- tracked.txt
+        & git -C $root commit --quiet -m published
+        & git init --quiet --bare $remote
+        & git -C $root remote add origin $remote
+        & git -C $root push --quiet origin HEAD:develop HEAD:master
+        & git -C $root fetch --quiet origin
+        $script:Root = $root
+        $script:Remote = 'origin'
+        return [pscustomobject]@{ root=$root; remote=$remote; published=(& git -C $root rev-parse HEAD).Trim(); candidates=[Collections.Generic.List[string]]::new() }
+    }
+
+    function Add-DispositionCandidate {
+        param(
+            [Parameter(Mandatory = $true)][object]$Fixture,
+            [string]$Commit = '',
+            [ValidateSet('active','retained','cleanup-pending','removed')][string]$State = 'cleanup-pending',
+            [switch]$RegisterLedger
+        )
+        $id = [guid]::NewGuid().ToString('N')
+        $path = Join-Path ([IO.Path]::GetTempPath()) "itl-source-publish-develop-$id"
+        $branch = "itl/publish-develop-$id"
+        $start = if ($Commit) { $Commit } else { [string]$Fixture.published }
+        & git -C $Fixture.root worktree add --quiet -b $branch $path $start
+        $Fixture.candidates.Add($path) | Out-Null
+        $resourceId = ''
+        if ($RegisterLedger) {
+            $resourceId = Register-DeliveryResource -PlanId "plan-$id" -Kind candidate-worktree -Owner source-delivery -Identity ([ordered]@{ path=$path; branch=$branch; candidate=$start }) -State $State
+        }
+        return [pscustomobject]@{ id=$id; path=$path; branch=$branch; fullBranch="refs/heads/$branch"; commit=$start; resourceId=$resourceId }
+    }
+
+    function Remove-DispositionRepository {
+        param([AllowNull()][object]$Fixture)
+        if (-not $Fixture) { return }
+        foreach ($candidate in @($Fixture.candidates)) {
+            if (Test-Path -LiteralPath $Fixture.root -PathType Container) { & git -C $Fixture.root worktree remove --force -- $candidate 2>$null }
+            Remove-Item -LiteralPath $candidate -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $Fixture.root, $Fixture.remote -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Describe 'Delivery v3 resource ledger' {
+    It 'keeps the disposition call graph read-only and documents the manual CAS boundary' {
+        $resourcePath = Join-Path $RepoRoot 'scripts\source-delivery-resources.ps1'
+        $tokens = $null
+        $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile($resourcePath, [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $functionNames = @(
+            'New-DeliveryDispositionEntry', 'Get-DeliveryDispositionGroups',
+            'Invoke-DeliveryBoundedLsRemote', 'Get-DeliveryAuthoritativePublishedTips', 'Get-DeliveryPublishedCommitDisposition', 'Get-DeliveryPathUseAdvisory',
+            'Test-DeliveryLedgerResourceOwnership', 'Get-DeliveryCandidateWorktreeDispositions',
+            'Get-DeliveryDispositionPublicationAttempt', 'Get-DeliveryOwnedRefSnapshot', 'Get-DeliveryRefDispositions', 'Get-DeliveryResourceDispositions',
+            'Get-DeliveryDispositionReport'
+        )
+        $definitions = @($ast.FindAll({
+            param($node)
+            $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $functionNames
+        }, $true))
+        @($definitions.Name | Sort-Object) | Should -Be @($functionNames | Sort-Object)
+        $dispositionText = @($definitions | ForEach-Object { $_.Extent.Text }) -join "`n"
+        $dispositionText | Should -Not -Match '(?i)\bRemove-[A-Za-z]'
+        $dispositionText | Should -Not -Match '(?i)\b(update-ref|worktree\s+remove|branch\s+-D|prune)\b'
+        $dispositionText | Should -Not -Match 'Invoke-DeliveryCleanupSweep'
+        $dispositionText | Should -Match ([regex]::Escape("@('--no-optional-locks', 'status', '--porcelain', '--untracked-files=all')"))
+        $dispositionText | Should -Match ([regex]::Escape("'ls-remote', '--exit-code', '--refs', `$script:Remote, 'refs/heads/develop', 'refs/heads/master'"))
+        $dispositionText | Should -Match ([regex]::Escape("EnvironmentVariables['GIT_TERMINAL_PROMPT'] = '0'"))
+        $dispositionText | Should -Match ([regex]::Escape("EnvironmentVariables['GCM_INTERACTIVE'] = 'Never'"))
+        $dispositionText | Should -Match ([regex]::Escape("'credential.interactive=never'"))
+        $dispositionText | Should -Match ([regex]::Escape('StandardOutputEncoding = $utf8'))
+        $dispositionText | Should -Match ([regex]::Escape('StandardErrorEncoding = $utf8'))
+        $dispositionText | Should -Match ([regex]::Escape('Stop-DeliveryProcessTree -Process $process -TimeoutMilliseconds 5000 -CapturedDescendants @($capturedDescendants.Values)'))
+        $dispositionText | Should -Match 'Get-DeliveryDescendantProcessIdentities -RootProcessId \$process\.Id -RootCreatedAt \$rootCreatedAt'
+        $dispositionText | Should -Match ([regex]::Escape('foreach ($reader in @($stdoutTask, $stderrTask))'))
+        $dispositionText | Should -Match ([regex]::Escape('$reader.Wait($remaining)'))
+        $dispositionText | Should -Not -Match 'GetAwaiter\(\)\.GetResult\(\)'
+        $dispositionText | Should -Match '\$process\.WaitForExit\(\[Math\]::Min\(100, \$remaining\)\)'
+
+        $entryText = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery.ps1') -Raw -Encoding UTF8
+        $statusRouteOffset = $entryText.IndexOf('if ($Action -eq "Status")', [StringComparison]::Ordinal)
+        $worktreeAddOffset = $entryText.IndexOf('& git -C $candidateRoot worktree add', [StringComparison]::Ordinal)
+        $statusRouteOffset | Should -BeGreaterOrEqual 0
+        $statusRouteOffset | Should -BeLessThan $worktreeAddOffset
+        $entryText.Substring($statusRouteOffset, $worktreeAddOffset - $statusRouteOffset) | Should -Not -Match '(?i)worktree\s+(add|remove)'
+        $supervisorText = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
+        $supervisorText | Should -Match 'disposition = \(Get-DeliveryDispositionReport\)'
+        $docsText = Get-Content -LiteralPath (Join-Path $RepoRoot 'docs\local-quality-gate.md') -Raw -Encoding UTF8
+        foreach ($marker in @(
+            'git update-ref --no-deref --stdin',
+            'delivery-operation', 'name-only worktree match', 'age-based decision',
+            'promotionCommit', 'Restore-DevelopCompatibilityPromotion',
+            'git ls-remote', 'fixed timeout', 'credential prompts', 'Status.snapshot',
+            'process-free-proof-required', 'resourceId'
+        )) { $docsText | Should -Match ([regex]::Escape($marker)) }
+    }
+
+    It 'reports exact owned refs worktrees and resources without changing them' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            $owned = Add-DispositionCandidate -Fixture $fixture -RegisterLedger
+            $lookalike = Add-DispositionCandidate -Fixture $fixture
+            & git -C $fixture.root worktree add --quiet -b codex/user-keep (Join-Path ([IO.Path]::GetTempPath()) ('codex-user-keep-' + [guid]::NewGuid().ToString('N'))) $fixture.published
+            $userRecord = @(& git -C $fixture.root worktree list --porcelain | Where-Object { $_ -like 'worktree *codex-user-keep-*' } | Select-Object -First 1)[0]
+            $userPath = $userRecord.Substring(9)
+            $fixture.candidates.Add($userPath) | Out-Null
+            & git -C $fixture.root update-ref refs/itl/develop-queue/fixture/base $fixture.published
+            & git -C $fixture.root update-ref refs/itl/develop-queue/fixture/head $fixture.published
+            & git -C $fixture.root update-ref refs/itl/develop-queue/incomplete/base $fixture.published
+            & git -C $fixture.root update-ref ("refs/itl/develop-promotions/" + ('a' * 64)) $fixture.published
+            Register-DeliveryResource -PlanId unknown -Kind manual-cache -Owner user -Identity ([ordered]@{ path=$fixture.root }) -State retained | Out-Null
+            Register-DeliveryResource -PlanId old -Kind release-snapshot -Owner release-e2e -Identity ([ordered]@{ path=(Join-Path $fixture.root 'missing.dt'); sha256=('b' * 64); worktreePath=$fixture.root }) -State removed | Out-Null
+            $tamperedId = Register-DeliveryResource -PlanId tampered -Kind release-snapshot -Owner release-e2e -Identity ([ordered]@{ path=(Join-Path $fixture.root 'before.dt'); sha256=('c' * 64); worktreePath=$fixture.root }) -State retained
+            $staleResourceId = Register-DeliveryResource -PlanId stale-id -Kind release-snapshot -Owner release-e2e -Identity ([ordered]@{ path=(Join-Path $fixture.root 'stale-before.dt'); sha256=('d' * 64); worktreePath=$fixture.root }) -State retained
+            $tamperedLedger = Read-DeliveryResourceLedger
+            @($tamperedLedger.resources | Where-Object resourceId -eq $tamperedId)[0].identity.path = Join-Path $fixture.root 'after.dt'
+            $staleResource = @($tamperedLedger.resources | Where-Object resourceId -eq $staleResourceId)[0]
+            $staleResource.identity.path = Join-Path $fixture.root 'stale-after.dt'
+            $staleResource.identitySha256 = Get-DeliveryCanonicalJsonSha256 -Value $staleResource.identity
+            Write-DeliveryResourceLedger -Ledger $tamperedLedger | Out-Null
+            Mock Get-DeliveryPathUseAdvisory { [pscustomobject]@{status='advisory-clear';detail=''} }
+
+            $refsBefore = (& git -C $fixture.root for-each-ref --format='%(refname) %(objectname)') -join "`n"
+            $worktreesBefore = (& git -C $fixture.root worktree list --porcelain) -join "`n"
+            $ledgerPath = Get-DeliveryResourceLedgerPath
+            $ledgerBefore = [IO.File]::ReadAllText($ledgerPath)
+            $indexPath = (Invoke-RepositoryGit -RepositoryRoot $owned.path -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
+            $indexBytesBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexPath))
+            $indexShaBefore = (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash
+            $report = Get-DeliveryDispositionReport
+
+            $report.readOnly | Should -BeTrue
+            $report.deleteSupported | Should -BeFalse
+            @($report.futureDeleteContract) | Should -Be @('exact-ownership','expected-sha-cas','clean-worktree','complete-process-free-proof-required','authoritative-published-ancestry-or-exact-tree-equivalence')
+            $report.publishedEvidence.status | Should -Be available
+            $ownedEntry = @($report.worktrees.entries | Where-Object resourceId -eq $owned.resourceId)
+            $ownedEntry.Count | Should -Be 1
+            $ownedEntry[0].disposition | Should -Be keep
+            $ownedEntry[0].reason | Should -Be process-free-proof-required
+            $ownedEntry[0].expectedSha | Should -Be $fixture.published
+            @($report.worktrees.entries | Where-Object identity -like "$($lookalike.path)|*")[0].disposition | Should -Be not-owned
+            @($report.worktrees.entries | Where-Object identity -like '*codex-user-keep*').Count | Should -Be 0
+            @($report.refs.entries | Where-Object identity -like 'refs/heads/codex/*').Count | Should -Be 0
+            @($report.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/fixture/*').disposition | Should -Be @('eligible','eligible')
+            @($report.refs.entries | Where-Object identity -eq 'refs/itl/develop-queue/incomplete/base')[0].disposition | Should -Be not-owned
+            @($report.refs.entries | Where-Object identity -eq 'refs/itl/develop-queue/incomplete/base')[0].reason | Should -Be incomplete-queue-pair
+            @($report.resources.entries | Where-Object identity -eq 'manual-cache|user')[0].disposition | Should -Be not-owned
+            @($report.resources.entries | Where-Object resourceId -eq $tamperedId)[0].reason | Should -Be identity-proof-mismatch
+            @($report.resources.entries | Where-Object resourceId -eq $staleResourceId)[0].reason | Should -Be resource-id-proof-mismatch
+            @($report.resources.groups | Where-Object reason -eq raw-history-preserved).count | Should -Be 1
+
+            ((& git -C $fixture.root for-each-ref --format='%(refname) %(objectname)') -join "`n") | Should -BeExactly $refsBefore
+            ((& git -C $fixture.root worktree list --porcelain) -join "`n") | Should -BeExactly $worktreesBefore
+            [IO.File]::ReadAllText($ledgerPath) | Should -BeExactly $ledgerBefore
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($indexPath)) | Should -BeExactly $indexBytesBefore
+            (Get-FileHash -LiteralPath $indexPath -Algorithm SHA256).Hash | Should -BeExactly $indexShaBefore
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
+    It 'keeps the public Status route byte-for-byte read-only' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            $fixture.root | Should -Match ' '
+            $fixture.root | Should -Match '[^\u0000-\u007f]'
+            $candidate = Add-DispositionCandidate -Fixture $fixture -RegisterLedger
+            $refsBefore = (& git -C $fixture.root for-each-ref --format='%(refname) %(objectname)') -join "`n"
+            $worktreesBefore = (& git -C $fixture.root worktree list --porcelain) -join "`n"
+            $ledgerPath = Get-DeliveryResourceLedgerPath
+            $ledgerBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($ledgerPath))
+            $rootIndex = (Invoke-RepositoryGit -RepositoryRoot $fixture.root -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
+            $candidateIndex = (Invoke-RepositoryGit -RepositoryRoot $candidate.path -Arguments @('rev-parse','--path-format=absolute','--git-path','index')).stdout.Trim()
+            $rootIndexBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($rootIndex))
+            $candidateIndexBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($candidateIndex))
+
+            $statusJson = (& (Join-Path $RepoRoot 'scripts\source-delivery.ps1') -Action Status -RepositoryRoot $fixture.root | Out-String)
+            $publicStatus = $statusJson | ConvertFrom-Json
+            $publicStatus.status | Should -Be ok
+            $publicStatus.disposition.publishedEvidence.status | Should -Be available
+
+            ((& git -C $fixture.root for-each-ref --format='%(refname) %(objectname)') -join "`n") | Should -BeExactly $refsBefore
+            ((& git -C $fixture.root worktree list --porcelain) -join "`n") | Should -BeExactly $worktreesBefore
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($ledgerPath)) | Should -BeExactly $ledgerBefore
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($rootIndex)) | Should -BeExactly $rootIndexBefore
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($candidateIndex)) | Should -BeExactly $candidateIndexBefore
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
+    It 'keeps a candidate unless every future deletion guard is proven' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'tracked.txt'), 'unpublished change', [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- tracked.txt
+            & git -C $fixture.root commit --quiet -m unpublished
+            $unpublished = (& git -C $fixture.root rev-parse HEAD).Trim()
+            $candidate = Add-DispositionCandidate -Fixture $fixture -Commit $unpublished -RegisterLedger
+            Mock Get-DeliveryPathUseAdvisory { [pscustomobject]@{status='advisory-clear';detail=''} }
+            (Get-DeliveryDispositionReport).worktrees.entries | Where-Object resourceId -eq $candidate.resourceId | Select-Object -ExpandProperty reason | Should -Be process-free-proof-required
+
+            [IO.File]::WriteAllText((Join-Path $candidate.path 'untracked.txt'), 'user data', [Text.UTF8Encoding]::new($false))
+            (Get-DeliveryDispositionReport).worktrees.entries | Where-Object resourceId -eq $candidate.resourceId | Select-Object -ExpandProperty reason | Should -Be worktree-not-clean
+            Remove-Item -LiteralPath (Join-Path $candidate.path 'untracked.txt') -Force
+
+            Mock Get-DeliveryPathUseAdvisory { [pscustomobject]@{status='unknown';detail='CIM unavailable'} }
+            (Get-DeliveryDispositionReport).worktrees.entries | Where-Object resourceId -eq $candidate.resourceId | Select-Object -ExpandProperty reason | Should -Be worktree-process-advisory-unknown
+
+            Mock Get-DeliveryPathUseAdvisory { [pscustomobject]@{status='advisory-active';detail=''} }
+            (Get-DeliveryDispositionReport).worktrees.entries | Where-Object resourceId -eq $candidate.resourceId | Select-Object -ExpandProperty reason | Should -Be worktree-process-advisory-active
+
+            $ledger = Read-DeliveryResourceLedger
+            $resource = @($ledger.resources | Where-Object resourceId -eq $candidate.resourceId)[0]
+            $resource.identity.candidate = $fixture.published
+            $resource.identitySha256 = Get-DeliveryCanonicalJsonSha256 -Value $resource.identity
+            $resource.resourceId = Get-DeliveryTextSha256 -Text "$([string]$resource.planId)|$([string]$resource.kind)|$([string]$resource.owner)|$([string]$resource.identitySha256)"
+            $candidate.resourceId = [string]$resource.resourceId
+            Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+            Mock Get-DeliveryPathUseAdvisory { [pscustomobject]@{status='advisory-clear';detail=''} }
+            $mismatch = (Get-DeliveryDispositionReport).worktrees.entries | Where-Object resourceId -eq $candidate.resourceId
+            $mismatch.reason | Should -Be expected-sha-mismatch
+            $mismatch.expectedSha | Should -Be $fixture.published
+            $mismatch.observedSha | Should -Be $unpublished
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
+    It 'accepts exact published tree equivalence only from authoritative remote tips' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            $publishedTree = (& git -C $fixture.root rev-parse 'HEAD^{tree}').Trim()
+            $equivalentOutput = 'equivalent root' | & git -C $fixture.root commit-tree $publishedTree
+            $equivalent = ($equivalentOutput -join '').Trim()
+            $promotionRef = "refs/itl/develop-promotions/$('b' * 64)"
+            & git -C $fixture.root update-ref $promotionRef $equivalent
+            $entry = (Get-DeliveryDispositionReport).refs.entries | Where-Object identity -eq $promotionRef
+            $entry.disposition | Should -Be eligible
+            $entry.reason | Should -Be promotion-published-tree-equivalent
+            $entry.expectedSha | Should -Be $equivalent
+            $entry.observedSha | Should -Be $equivalent
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
+    It 'ignores spoofed remote-tracking publication refs and fails closed when the remote is unavailable' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'tracked.txt'), 'local only', [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- tracked.txt
+            & git -C $fixture.root commit --quiet -m 'local only'
+            $localOnly = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root update-ref refs/remotes/origin/develop $localOnly
+            & git -C $fixture.root update-ref refs/remotes/origin/master $localOnly
+            & git -C $fixture.root update-ref refs/itl/develop-queue/spoof/base $fixture.published
+            & git -C $fixture.root update-ref refs/itl/develop-queue/spoof/head $localOnly
+
+            $report = Get-DeliveryDispositionReport
+            $report.publishedEvidence.status | Should -Be available
+            @($report.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/spoof/*').disposition | Should -Be @('keep','keep')
+            @($report.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/spoof/*').reason | Should -Be @('queue-open','queue-open')
+
+            $script:Remote = 'missing-authoritative-remote'
+            $unavailable = Get-DeliveryDispositionReport
+            $unavailable.publishedEvidence.status | Should -Be unavailable
+            @($unavailable.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/spoof/*').disposition | Should -Be @('keep','keep')
+        } finally {
+            $script:Remote = 'origin'
+            Remove-DispositionRepository -Fixture $fixture
+        }
+    }
+
+    It 'keeps refs when the attempt or owned ref snapshot changes across the remote probe' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            $promotionRef = "refs/itl/develop-promotions/$('c' * 64)"
+            & git -C $fixture.root update-ref $promotionRef $fixture.published
+            $attemptPath = Get-DevelopPublicationAttemptPath
+            $script:raceAttemptPath = $attemptPath
+            $script:racePromotionRef = $promotionRef
+            $script:racePublished = $fixture.published
+            Mock Invoke-DeliveryBoundedLsRemote {
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:raceAttemptPath) | Out-Null
+                $attempt = [ordered]@{ schemaVersion=1; promotionRef=$script:racePromotionRef; promotionCommit=$script:racePublished }
+                [IO.File]::WriteAllText($script:raceAttemptPath, (($attempt | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
+                [pscustomobject]@{ status='completed'; exitCode=0; stdout="$($script:racePublished)`trefs/heads/develop`n$($script:racePublished)`trefs/heads/master`n"; stderr='' }
+            }
+
+            $attemptRace = Get-DeliveryDispositionReport
+            $attemptRace.snapshot.attemptStable | Should -BeFalse
+            $attemptRace.snapshot.stable | Should -BeFalse
+            $attemptEntry = @($attemptRace.refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $attemptEntry.disposition | Should -Be keep
+            $attemptEntry.reason | Should -Be publication-attempt-changed-during-status
+
+            Remove-Item -LiteralPath $attemptPath -Force
+            [IO.File]::WriteAllText((Join-Path $fixture.root 'tracked.txt'), 'ref changed during status', [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add -- tracked.txt
+            & git -C $fixture.root commit --quiet -m 'ref race'
+            $script:raceNewCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Mock Invoke-DeliveryBoundedLsRemote {
+                & git -C $script:Root update-ref $script:racePromotionRef $script:raceNewCommit
+                [pscustomobject]@{ status='completed'; exitCode=0; stdout="$($script:racePublished)`trefs/heads/develop`n$($script:racePublished)`trefs/heads/master`n"; stderr='' }
+            }
+
+            $refRace = Get-DeliveryDispositionReport
+            $refRace.snapshot.refsStable | Should -BeFalse
+            $refEntry = @($refRace.refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $refEntry.disposition | Should -Be keep
+            $refEntry.reason | Should -Be local-ref-snapshot-changed
+        } finally {
+            Remove-Variable raceAttemptPath, racePromotionRef, racePublished, raceNewCommit -Scope Script -ErrorAction SilentlyContinue
+            Remove-DispositionRepository -Fixture $fixture
+        }
+    }
+
+    It 'keeps published-dependent refs when the bounded no-prompt probe times out or cannot authenticate' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            & git -C $fixture.root update-ref refs/itl/develop-queue/bounded/base $fixture.published
+            & git -C $fixture.root update-ref refs/itl/develop-queue/bounded/head $fixture.published
+
+            Mock Invoke-DeliveryBoundedLsRemote { [pscustomobject]@{ status='timed-out'; exitCode=-1; stdout=''; stderr='timeout' } }
+            $timedOut = Get-DeliveryDispositionReport
+            $timedOut.publishedEvidence.status | Should -Be timeout
+            @($timedOut.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/bounded/*').disposition | Should -Be @('keep','keep')
+
+            Mock Invoke-DeliveryBoundedLsRemote { [pscustomobject]@{ status='completed'; exitCode=128; stdout=''; stderr='authentication disabled' } }
+            $authUnavailable = Get-DeliveryDispositionReport
+            $authUnavailable.publishedEvidence.status | Should -Be unavailable
+            @($authUnavailable.refs.entries | Where-Object identity -like 'refs/itl/develop-queue/bounded/*').disposition | Should -Be @('keep','keep')
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
+    It 'bounds a real hanging publication probe and removes its descendant process' -Skip:($env:OS -ne 'Windows_NT') {
+        $fixture = $null
+        $childPid = 0
+        $hangerPath = ''
+        $priorAllowProtocol = $env:GIT_ALLOW_PROTOCOL
+        $priorPidPath = $env:ITL_DISPOSITION_CHILD_PID_PATH
+        try {
+            $fixture = New-DispositionRepository
+            $pidPath = Join-Path $TestDrive ('probe child путь ' + [guid]::NewGuid().ToString('N') + '.pid')
+            $hangerPath = Join-Path ([IO.Path]::GetTempPath()) ('itl-hangprobe-' + [guid]::NewGuid().ToString('N') + '.exe')
+            $typeName = 'HangingPublicationProbe' + [guid]::NewGuid().ToString('N')
+            $source = @"
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+public static class $typeName
+{
+    public static int Main(string[] args)
+    {
+        if (args != null && args.Length > 0 && args[0] == "--child")
+        {
+            while (true) { Thread.Sleep(1000); }
+        }
+        ProcessStartInfo childInfo = new ProcessStartInfo();
+        childInfo.FileName = Environment.GetCommandLineArgs()[0];
+        childInfo.Arguments = "--child";
+        childInfo.UseShellExecute = false;
+        childInfo.CreateNoWindow = true;
+        Process child = Process.Start(childInfo);
+        File.WriteAllText(Environment.GetEnvironmentVariable("ITL_DISPOSITION_CHILD_PID_PATH"), child.Id.ToString(), new UTF8Encoding(false));
+        while (true) { Thread.Sleep(1000); }
+    }
+}
+"@
+            $sourcePath = [IO.Path]::ChangeExtension($hangerPath, '.cs')
+            [IO.File]::WriteAllText($sourcePath, $source, [Text.UTF8Encoding]::new($true))
+            $compiler = @(
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            $compiler | Should -Not -BeNullOrEmpty
+            & $compiler /nologo /target:exe "/out:$hangerPath" $sourcePath
+            $LASTEXITCODE | Should -Be 0
+            $env:GIT_ALLOW_PROTOCOL = 'ext'
+            $env:ITL_DISPOSITION_CHILD_PID_PATH = $pidPath
+            $script:Remote = "ext::cmd.exe /c $hangerPath"
+
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-DeliveryBoundedLsRemote -TimeoutMilliseconds 750
+            $watch.Stop()
+            $result.status | Should -Be timed-out
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
+            Test-Path -LiteralPath $pidPath | Should -BeTrue
+            $childPid = [int](Get-Content -LiteralPath $pidPath -Raw -Encoding UTF8)
+            $exitDeadline = [DateTime]::UtcNow.AddSeconds(3)
+            while ([DateTime]::UtcNow -lt $exitDeadline -and (Get-Process -Id $childPid -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 100 }
+            (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
+        } finally {
+            if ($childPid -gt 0) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+            Get-Process | Where-Object {
+                try { $hangerPath -and [string]$_.Path -eq [string]$hangerPath } catch { $false }
+            } | Stop-Process -Force -ErrorAction SilentlyContinue
+            $env:GIT_ALLOW_PROTOCOL = $priorAllowProtocol
+            $env:ITL_DISPOSITION_CHILD_PID_PATH = $priorPidPath
+            $script:Remote = 'origin'
+            if ($hangerPath) {
+                Remove-Item -LiteralPath $hangerPath, ([IO.Path]::ChangeExtension($hangerPath, '.cs')) -Force -ErrorAction SilentlyContinue
+            }
+            Remove-DispositionRepository -Fixture $fixture
+        }
+    }
+
+    It 'bounds reader drain when an exited git root leaves a pipe-holding descendant' -Skip:($env:OS -ne 'Windows_NT') {
+        $fixture = $null
+        $childPid = 0
+        $priorPath = $env:PATH
+        $priorPidPath = $env:ITL_DISPOSITION_PIPE_CHILD_PID_PATH
+        $priorChildPayload = $env:ITL_DISPOSITION_PIPE_CHILD_PAYLOAD
+        try {
+            $fixture = New-DispositionRepository
+            $fakeRoot = Join-Path $TestDrive ('fake git путь ' + [guid]::NewGuid().ToString('N'))
+            New-Item -ItemType Directory -Force -Path $fakeRoot | Out-Null
+            $fakeGit = Join-Path $fakeRoot 'git.exe'
+            $typeName = 'PipeHoldingGit' + [guid]::NewGuid().ToString('N')
+            $source = @"
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+public static class $typeName
+{
+    public static int Main()
+    {
+        ProcessStartInfo childInfo = new ProcessStartInfo();
+        childInfo.FileName = "powershell.exe";
+        childInfo.Arguments = "-NoLogo -NoProfile -EncodedCommand " + Environment.GetEnvironmentVariable("ITL_DISPOSITION_PIPE_CHILD_PAYLOAD");
+        childInfo.UseShellExecute = false;
+        childInfo.CreateNoWindow = true;
+        Process child = Process.Start(childInfo);
+        File.WriteAllText(Environment.GetEnvironmentVariable("ITL_DISPOSITION_PIPE_CHILD_PID_PATH"), child.Id.ToString(), new UTF8Encoding(false));
+        Thread.Sleep(1500);
+        return 0;
+    }
+}
+
+"@
+            $sourcePath = Join-Path $fakeRoot 'fake-git.cs'
+            [IO.File]::WriteAllText($sourcePath, $source, [Text.UTF8Encoding]::new($true))
+            $compiler = @(
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            $compiler | Should -Not -BeNullOrEmpty
+            & $compiler /nologo /target:exe "/out:$fakeGit" $sourcePath
+            $LASTEXITCODE | Should -Be 0
+            $pidPath = Join-Path $TestDrive ('pipe child ' + [guid]::NewGuid().ToString('N') + '.pid')
+            $childBody = 'while ($true) { Start-Sleep -Seconds 1 }'
+            $env:ITL_DISPOSITION_PIPE_CHILD_PAYLOAD = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childBody))
+            $env:ITL_DISPOSITION_PIPE_CHILD_PID_PATH = $pidPath
+            $env:PATH = "$fakeRoot;$priorPath"
+            $script:Remote = 'ignored-by-fake-git'
+
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-DeliveryBoundedLsRemote -TimeoutMilliseconds 3000
+            $watch.Stop()
+            $result.status | Should -Be timed-out
+            $result.stderr | Should -Match 'output drain'
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
+            Test-Path -LiteralPath $pidPath | Should -BeTrue
+            $childPid = [int](Get-Content -LiteralPath $pidPath -Raw -Encoding UTF8)
+            $exitDeadline = [DateTime]::UtcNow.AddSeconds(3)
+            while ([DateTime]::UtcNow -lt $exitDeadline -and (Get-Process -Id $childPid -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 100 }
+            (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
+        } finally {
+            if ($childPid -gt 0) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+            $env:PATH = $priorPath
+            $env:ITL_DISPOSITION_PIPE_CHILD_PID_PATH = $priorPidPath
+            $env:ITL_DISPOSITION_PIPE_CHILD_PAYLOAD = $priorChildPayload
+            $script:Remote = 'origin'
+            Remove-DispositionRepository -Fixture $fixture
+        }
+    }
+
+    It 'keeps an active promotion ref and fails closed on attempt mismatch or corruption' {
+        $fixture = $null
+        try {
+            $fixture = New-DispositionRepository
+            $promotionRef = "refs/itl/develop-promotions/$('d' * 64)"
+            & git -C $fixture.root update-ref $promotionRef $fixture.published
+            $attemptPath = Get-DevelopPublicationAttemptPath
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $attemptPath) | Out-Null
+            $attempt = [ordered]@{ schemaVersion=1; promotionRef=$promotionRef; promotionCommit=$fixture.published }
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
+
+            $active = @((Get-DeliveryDispositionReport).refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $active.disposition | Should -Be keep
+            $active.reason | Should -Be active-promotion
+            $active.expectedSha | Should -Be $fixture.published
+            $active.observedSha | Should -Be $fixture.published
+
+            $attempt.promotionCommit = ('e' * 40)
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
+            $mismatch = @((Get-DeliveryDispositionReport).refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $mismatch.disposition | Should -Be keep
+            $mismatch.reason | Should -Be active-promotion-sha-mismatch
+            $mismatch.expectedSha | Should -Be ('e' * 40)
+            $mismatch.observedSha | Should -Be $fixture.published
+
+            $attempt.Remove('promotionCommit')
+            [IO.File]::WriteAllText($attemptPath, (($attempt | ConvertTo-Json) + "`n"), [Text.UTF8Encoding]::new($false))
+            $incomplete = @((Get-DeliveryDispositionReport).refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $incomplete.disposition | Should -Be keep
+            $incomplete.reason | Should -Be active-promotion-attempt-malformed
+
+            [IO.File]::WriteAllText($attemptPath, '{broken', [Text.UTF8Encoding]::new($false))
+            $malformed = @((Get-DeliveryDispositionReport).refs.entries | Where-Object identity -eq $promotionRef)[0]
+            $malformed.disposition | Should -Be keep
+            $malformed.reason | Should -Be publication-attempt-unreadable
+            (Get-DeliveryDispositionReport).publicationAttemptGuard.status | Should -Be malformed
+        } finally { Remove-DispositionRepository -Fixture $fixture }
+    }
+
     It 'journals known resources from a failed report before optional artifacts exist' {
         $root=New-LedgerRepository
         $output=Join-Path $root 'build/test-results/local'
@@ -273,5 +807,155 @@ Describe 'Release snapshot cleanup ownership and retention' {
         $result.debt.pending | Should -Be 0
         Test-Path -LiteralPath $fixture.path | Should -BeFalse
         @((Read-DeliveryResourceLedger).resources | Where-Object { $_.kind -eq 'release-snapshot' -and $_.state -eq 'removed' }).Count | Should -Be 2
+    }
+}
+
+Describe 'Delivery resource ledger compaction' {
+    BeforeAll {
+        function New-ExactRemovedResource {
+            param([int]$Sequence, [object]$UnknownValue = $null)
+            $identity = [pscustomobject][ordered]@{ path=(Join-Path $script:Root ("candidate $Sequence")); branch="itl/publish-develop-$('{0:x32}' -f $Sequence)"; candidate=('a' * 40) }
+            $identitySha = Get-DeliveryCanonicalJsonSha256 -Value $identity
+            $planId = "plan-$Sequence"
+            $resourceId = Get-DeliveryTextSha256 -Text "$planId|candidate-worktree|source-delivery|$identitySha"
+            $record = [pscustomobject][ordered]@{
+                resourceId=$resourceId; planId=$planId; kind='candidate-worktree'; owner='source-delivery'; identity=$identity; identitySha256=$identitySha
+                state='removed'; createdAt='2026-09-01T00:00:00.0000000Z'; updatedAt='2026-09-02T00:00:00.0000000Z'
+                retainUntil='2026-09-03T00:00:00.0000000Z'; cleanupAttempts=1; lastAttemptAt='2026-09-02T00:00:00.0000000Z'; lastError=''
+            }
+            if ($null -ne $UnknownValue) { $record | Add-Member -NotePropertyName futureField -NotePropertyValue $UnknownValue }
+            return $record
+        }
+    }
+
+    It 'archives only exact terminal records and rehydrates unknown fields by deterministic resourceId' {
+        $root = New-LedgerRepository
+        $root | Should -Match ' '
+        $root | Should -Match '[^\u0000-\u007f]'
+        $removed = New-ExactRemovedResource -Sequence 1 -UnknownValue ([pscustomobject]@{ nested='сохранить'; version=7 })
+        $active = New-ExactRemovedResource -Sequence 2; $active.state = 'active'
+        $malformed = New-ExactRemovedResource -Sequence 3; $malformed.resourceId = '0' * 64
+        $unknown = New-ExactRemovedResource -Sequence 4; $unknown.kind = 'future-resource'
+        $missingState = New-ExactRemovedResource -Sequence 5; $missingState.PSObject.Properties.Remove('state')
+        $badTimestamp = New-ExactRemovedResource -Sequence 6; $badTimestamp.updatedAt = 'not-a-timestamp'
+        $ledger = [pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed,$active,$malformed,$unknown,$missingState,$badTimestamp); updatedAt=''; futureTopLevel='preserve-me' }
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+
+        $result = Compact-DeliveryResourceLedger
+        $result.status | Should -Be 'compacted'
+        $result.archived | Should -Be 1
+        (Get-FileHash -LiteralPath $result.archivePath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -BeExactly $result.archiveSha256
+        (Split-Path -Leaf $result.archivePath) | Should -BeExactly "$($result.archiveSha256).json"
+        $hot = Read-DeliveryResourceLedger
+        $hot.futureTopLevel | Should -Be 'preserve-me'
+        $hot.resources | Should -HaveCount 5
+        @($hot.resources | Where-Object { $_.PSObject.Properties['state'] -and [string]$_.state -eq 'active' }) | Should -HaveCount 1
+        @($hot.resources | Where-Object { [string]$_.resourceId -eq ('0' * 64) }) | Should -HaveCount 1
+        @($hot.resources | Where-Object kind -eq 'future-resource') | Should -HaveCount 1
+        @($hot.resources | Where-Object { -not $_.PSObject.Properties['state'] }) | Should -HaveCount 1
+        @($hot.resources | Where-Object updatedAt -eq 'not-a-timestamp') | Should -HaveCount 1
+
+        $rehydratedId = Register-DeliveryResource -PlanId ([string]$removed.planId) -Kind ([string]$removed.kind) -Owner ([string]$removed.owner) -Identity $removed.identity -State active
+        $rehydratedId | Should -BeExactly ([string]$removed.resourceId)
+        $rehydrated = (Read-DeliveryResourceLedger).resources | Where-Object resourceId -eq $rehydratedId
+        $rehydrated.futureField.nested | Should -Be 'сохранить'
+        $rehydrated.futureField.version | Should -Be 7
+        $before = (Get-FileHash -LiteralPath (Get-DeliveryResourceLedgerPath) -Algorithm SHA256).Hash
+        (Compact-DeliveryResourceLedger).status | Should -Be 'unchanged'
+        (Get-FileHash -LiteralPath (Get-DeliveryResourceLedgerPath) -Algorithm SHA256).Hash | Should -BeExactly $before
+    }
+
+    It 'reuses an already-written content blob after restart before the ledger swap' {
+        New-LedgerRepository | Out-Null
+        $removed = New-ExactRemovedResource -Sequence 11 -UnknownValue 'restart'
+        $ledger = [pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed); updatedAt='' }
+        Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+        $prefix = ([string]$removed.resourceId).Substring(0, 2)
+        $payload = [pscustomobject][ordered]@{ schemaVersion=1; kind='itl-delivery-resource-archive'; prefix=$prefix; resources=@($removed) }
+        $content = ($payload | ConvertTo-Json -Depth 24 -Compress) + [Environment]::NewLine
+        $sha = Get-DeliveryTextSha256 -Text $content
+        $archiveRoot = Get-DeliveryResourceArchiveRoot
+        New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
+        $archivePath = Join-Path $archiveRoot "$sha.json"
+        [IO.File]::WriteAllText($archivePath, $content, [Text.UTF8Encoding]::new($false))
+        $beforeWrite = (Get-Item -LiteralPath $archivePath).LastWriteTimeUtc
+
+        $result = Compact-DeliveryResourceLedger
+        $result.archiveSha256 | Should -BeExactly $sha
+        (Get-Item -LiteralPath $archivePath).LastWriteTimeUtc | Should -Be $beforeWrite
+        (Read-DeliveryResourceLedger).resources | Should -HaveCount 0
+        (Read-DeliveryResourceLedger).archives | Should -HaveCount 1
+        (Read-DeliveryResourceLedger).archives[0].prefix | Should -BeExactly $prefix
+    }
+
+    It 'fails closed on archive corruption without recreating a live record' {
+        New-LedgerRepository | Out-Null
+        $removed = New-ExactRemovedResource -Sequence 21
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed); updatedAt='' }) | Out-Null
+        $archivePath = (Compact-DeliveryResourceLedger).archivePath
+        [IO.File]::AppendAllText($archivePath, 'tamper', [Text.UTF8Encoding]::new($false))
+
+        { Register-DeliveryResource -PlanId ([string]$removed.planId) -Kind ([string]$removed.kind) -Owner ([string]$removed.owner) -Identity $removed.identity -State active } | Should -Throw '*DELIVERY_RESOURCE_ARCHIVE_CORRUPT*'
+        (Read-DeliveryResourceLedger).resources | Should -HaveCount 0
+    }
+
+    It 'looks up only the deterministic shard and ignores corruption in an unrelated shard' {
+        New-LedgerRepository | Out-Null
+        $byPrefix = [ordered]@{}
+        for ($i = 0; $byPrefix.Count -lt 2; $i++) {
+            $candidate = New-ExactRemovedResource -Sequence (100 + $i)
+            $prefix = ([string]$candidate.resourceId).Substring(0, 2)
+            if (-not $byPrefix.Contains($prefix)) { $byPrefix[$prefix] = $candidate }
+        }
+        $records = @($byPrefix.Values)
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=$records; updatedAt='' }) | Out-Null
+        Compact-DeliveryResourceLedger | Out-Null
+        $ledger = Read-DeliveryResourceLedger
+        $descriptors = @($ledger.archives | Sort-Object prefix)
+        [IO.File]::AppendAllText((Join-Path (Get-DeliveryResourceArchiveRoot) ([string]$descriptors[0].file)), 'tamper', [Text.UTF8Encoding]::new($false))
+
+        $safe = @($records | Where-Object { ([string]$_.resourceId).StartsWith([string]$descriptors[1].prefix, [StringComparison]::Ordinal) })[0]
+        (Get-DeliveryArchivedResource -Ledger $ledger -ResourceId ([string]$safe.resourceId)).resourceId | Should -BeExactly ([string]$safe.resourceId)
+        $corrupt = @($records | Where-Object { ([string]$_.resourceId).StartsWith([string]$descriptors[0].prefix, [StringComparison]::Ordinal) })[0]
+        { Get-DeliveryArchivedResource -Ledger $ledger -ResourceId ([string]$corrupt.resourceId) } | Should -Throw '*DELIVERY_RESOURCE_ARCHIVE_CORRUPT*'
+    }
+
+    It 'compacts 10000 terminal records into bounded prefix shards and caches repeated shard reads' {
+        New-LedgerRepository | Out-Null
+        $resources = [Collections.Generic.List[object]]::new()
+        for ($i = 0; $i -lt 10000; $i++) { $resources.Add((New-ExactRemovedResource -Sequence (10000 + $i) -UnknownValue $i)) | Out-Null }
+        Write-DeliveryResourceLedger -Ledger ([pscustomobject][ordered]@{ schemaVersion=1; resources=@($resources); updatedAt='' }) | Out-Null
+
+        $result = Compact-DeliveryResourceLedger
+        $result.archived | Should -Be 10000
+        $result.retained | Should -Be 0
+        $hot = Read-DeliveryResourceLedger
+        $hot.resources | Should -HaveCount 0
+        $hot.archives.Count | Should -BeLessOrEqual 256
+        [int](($hot.archives | Measure-Object count -Sum).Sum) | Should -Be 10000
+        @(Get-ChildItem -LiteralPath (Get-DeliveryResourceArchiveRoot) -File -Filter '*.json').Count | Should -BeLessOrEqual 256
+
+        $descriptor = @($hot.archives | Sort-Object count -Descending | Select-Object -First 1)[0]
+        $script:DeliveryResourceArchiveCache = @{}
+        $script:DeliveryResourceArchivePhysicalReadCount = 0
+        1..20 | ForEach-Object {
+            $missing = ([string]$descriptor.prefix) + ('{0:x62}' -f $_)
+            Get-DeliveryArchivedResource -Ledger $hot -ResourceId $missing | Should -BeNullOrEmpty
+        }
+        $script:DeliveryResourceArchivePhysicalReadCount | Should -Be 1
+    }
+
+    It 'routes both state mutations only through serialized manual Cleanup and never Status' {
+        $supervisor = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
+        ([regex]::Matches($supervisor, 'Compact-DeliveryResourceLedger')).Count | Should -Be 1
+        ([regex]::Matches($supervisor, 'Repair-DeliveryRunHotIndex')).Count | Should -Be 1
+        $lockOffset = $supervisor.IndexOf('Enter-DeliveryOperation -Action $Action', [StringComparison]::Ordinal)
+        $cleanupOffset = $supervisor.IndexOf('"Cleanup" {', [StringComparison]::Ordinal)
+        $compactOffset = $supervisor.IndexOf('Compact-DeliveryResourceLedger', [StringComparison]::Ordinal)
+        $statusOffset = $supervisor.IndexOf('"Status" {', [StringComparison]::Ordinal)
+        $lockOffset | Should -BeLessThan $cleanupOffset
+        $cleanupOffset | Should -BeLessThan $compactOffset
+        $statusBlock = $supervisor.Substring($statusOffset, $cleanupOffset - $statusOffset)
+        $statusBlock | Should -Not -Match 'Compact-DeliveryResourceLedger|Repair-DeliveryRunHotIndex|Write-Delivery'
     }
 }

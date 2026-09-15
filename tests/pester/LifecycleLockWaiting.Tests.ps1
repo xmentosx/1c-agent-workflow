@@ -292,6 +292,7 @@ function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait 
                 Complete-Agent1cLifecycleOperation -Status succeeded -ExitCode 0
                 Exit-Agent1cLifecycleOperation
                 $result = Receive-Worker $job
+                $result.combinedText | Should -Not -Match '\bGet-FileHash\b'
                 if ($InputKind -eq 'config') {
                     $result.exitCode | Should -Be 0 -Because $result.combinedText
                     $result.stdout | Should -Match CURRENT_CONFIG
@@ -305,7 +306,7 @@ function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait 
                     $result.stdout | Should -Not -Match CURRENT_CONFIG
                 }
                 if ($InputKind -ne 'invalid-context') {
-                    $tickets = @(Get-ChildItem -LiteralPath (Join-Path $fixtureConfig.databaseAccess.coordinator 'tickets') -Filter '*.json' | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
+                    $tickets = @(Get-ChildItem -LiteralPath (Join-Path $fixtureConfig.databaseAccess.coordinator 'ticket-archive') -Filter '*.json' -Recurse | ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json })
                     $tickets | Should -HaveCount 1
                     $tickets[0].status | Should -Be 'released'
                 }

@@ -26,12 +26,16 @@ def _inputs(spool, identifier):
     access = target_access(target)
     coordinator = Coordinator(access["coordinator"])
     with coordinator.mutex(time.monotonic() + 30, lambda: False):
-        records = [r for r in coordinator.records() if r.get("owner", {}).get("jobId") == identifier and
-                   r["owner"].get("spool") and Path(r["owner"]["spool"]).resolve() == spool and
-                   r["owner"].get("operation") == "measure"]
-        if len(records) != 1:
+        state = status(spool, identifier)
+        ticket = state.get("access", {}).get("ticket")
+        try:
+            record = coordinator.record(ticket)
+        except WorkError as error:
+            raise WorkError("RECOVERY_ORIGINAL_OWNER_UNPROVEN") from error
+        if (record.get("owner", {}).get("jobId") != identifier or
+                not record["owner"].get("spool") or Path(record["owner"]["spool"]).resolve() != spool or
+                record["owner"].get("operation") != "measure"):
             raise WorkError("RECOVERY_ORIGINAL_OWNER_UNPROVEN")
-        record = records[0]
         if record["resources"] != coordinator.resources(access["bases"]):
             raise WorkError("RECOVERY_RESOURCE_BINDING_CHANGED")
     if record["owner"].get("host", "").casefold() != platform.node().casefold():
@@ -57,6 +61,10 @@ def create_plan(spool, identifier):
                   "automaticReplay": False}
         result["planId"] = identity(result)
         path = spool / "recovery-plans" / identifier / (result["planId"] + ".json")
+        # Publish retention authority before the durable plan can escape. A
+        # crash here may leave a bounded stale pin; the reverse order could
+        # leave a valid recovery plan pointing at compacted evidence.
+        coordinator.pin(record["ticket"], "job-recovery-plan:" + result["planId"])
         if not path.exists():
             write_json(path, result)
         elif read_json(path) != result:
@@ -122,6 +130,7 @@ def run(spool, identifier, plan_id):
             value = {"status": "completed", "planId": plan_id, "attemptId": completed[0]["id"],
                      "baseReleased": True, "measurementReplayed": False}
             save_state(value)
+            coordinator.unpin(original["ticket"], "job-recovery-plan:" + plan_id)
             return value
         try:
             with Recovery(coordinator.root, original["ticket"], expected["revision"],
@@ -145,6 +154,7 @@ def run(spool, identifier, plan_id):
                 value = {"status": "completed", "planId": plan_id, "attemptId": owner.attempt,
                          "output": str(output), "baseReleased": True, "measurementReplayed": False}
                 save_state(value)
+                coordinator.unpin(original["ticket"], "job-recovery-plan:" + plan_id)
                 return value
         except Exception as error:
             save_state({"status": "cancelled" if cancelled() else "needs-attention", "planId": plan_id,

@@ -41,6 +41,7 @@
         @($plan.bases.path) | Should -Contain $manager
         @($plan.bases.path) | Should -Not -Contain (Join-Path $TestDrive 'Чужая база')
         $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
+        $script:VanessaCleanupDatabaseAdmission.owner.accessMode | Should -Be 'mutation-exclusive'
         { Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest } | Should -Throw '*WAIT_TIMEOUT*'
         Stop-DevBranchTestClients
         Complete-ItlVanessaCleanupDatabaseAdmission $script:VanessaCleanupDatabaseAdmission

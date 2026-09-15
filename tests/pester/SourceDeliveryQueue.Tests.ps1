@@ -49,9 +49,101 @@ param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]
             & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
             & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
 
-            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Status','-RepositoryRoot',('"' + $fixture.root + '"'))
+            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"'))
             $payload = $result.stdout | ConvertFrom-Json
             $payload.status | Should -Be 'stable-supervisor'; $payload.supervisorCommit | Should -Be $masterCommit; $payload.bootstrap | Should -BeFalse
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+It "pins ResumePlan to its recorded trusted supervisor after origin master advances" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root switch --quiet -c master $fixture.base
+            $supervisorDirectory = Join-Path $fixture.root 'scripts'
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            $recordedSupervisorText = @'
+[CmdletBinding()]
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor,[string]$ResumePlan)
+[pscustomobject]@{ status='recorded-supervisor'; supervisorCommit=$SupervisorCommit; resumePlan=$ResumePlan } | ConvertTo-Json
+'@
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $recordedSupervisorText, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: recorded supervisor'
+            $recordedCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:master
+
+            $planId = 'a' * 64
+            $commonGitDirectory = Join-Path $fixture.root '.git'
+            $planRoot = Join-Path $commonGitDirectory 'itl\plans\v1'
+            New-Item -ItemType Directory -Force -Path $planRoot | Out-Null
+            $plan = [ordered]@{ schemaVersion=1; kind='itl-delivery-plan'; planId=$planId; supervisor=[ordered]@{commit=$recordedCommit} }
+            $planPath = Join-Path $planRoot "$planId.json"
+            [IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Test-Path -LiteralPath $planPath -PathType Leaf | Should -BeTrue
+
+            $latestSupervisorText = @'
+[CmdletBinding()]
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor,[string]$ResumePlan)
+[pscustomobject]@{ status='latest-supervisor'; supervisorCommit=$SupervisorCommit; resumePlan=$ResumePlan } | ConvertTo-Json
+'@
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $latestSupervisorText, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: latest supervisor'
+            $latestCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:master
+            & git -C $fixture.root switch --quiet develop
+            & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
+
+            $resumed = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$planId)
+            $resumedPayload = $resumed.stdout | ConvertFrom-Json
+            $resumedPayload.status | Should -Be 'recorded-supervisor'
+            $resumedPayload.supervisorCommit | Should -Be $recordedCommit
+            $resumedPayload.resumePlan | Should -Be $planId
+
+            $fresh = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"'))
+            $freshPayload = $fresh.stdout | ConvertFrom-Json
+            $freshPayload.status | Should -Be 'latest-supervisor'
+            $freshPayload.supervisorCommit | Should -Be $latestCommit
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+It "rejects a ResumePlan whose recorded supervisor is not trusted by origin master" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            & git -C $fixture.root switch --quiet -c master $fixture.base
+            $supervisorDirectory = Join-Path $fixture.root 'scripts'
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "param([string]`$Action)", [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: trusted master supervisor'
+            & git -C $fixture.root push --quiet origin HEAD:master
+            & git -C $fixture.root switch --quiet develop
+            & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
+            & git -C $fixture.root commit --allow-empty --quiet -m 'test: untrusted develop supervisor commit'
+            $untrustedCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+
+            $malformed = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan','not-a-plan') -AllowFailure
+            $malformed.exitCode | Should -Not -Be 0
+            $malformed.stderr | Should -Match 'DELIVERY_RESUME_PLAN_INVALID'
+            $missingId = 'c' * 64
+            $missing = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$missingId) -AllowFailure
+            $missing.exitCode | Should -Not -Be 0
+            $missing.stderr | Should -Match 'DELIVERY_RESUME_PLAN_MISSING'
+
+            $planId = 'b' * 64
+            $commonGitDirectory = Join-Path $fixture.root '.git'
+            $planRoot = Join-Path $commonGitDirectory 'itl\plans\v1'
+            New-Item -ItemType Directory -Force -Path $planRoot | Out-Null
+            $plan = [ordered]@{ schemaVersion=1; kind='itl-delivery-plan'; planId=$planId; supervisor=[ordered]@{commit=$untrustedCommit} }
+            $planPath = Join-Path $planRoot "$planId.json"
+            [IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            Test-Path -LiteralPath $planPath -PathType Leaf | Should -BeTrue
+
+            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$planId) -AllowFailure
+            $result.exitCode | Should -Not -Be 0
+            $result.stderr | Should -Match 'DELIVERY_RESUME_SUPERVISOR_UNTRUSTED'
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 

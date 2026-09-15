@@ -43,6 +43,32 @@ function Test-WorkflowContinuationPattern {
     return $wildcard.IsMatch($Path.Replace('\', '/'))
 }
 
+function Get-DeliveryIndexedTargetedRunPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$CommonGitPath,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [Parameter(Mandatory = $true)][string]$Tree
+    )
+    $runRoot = Join-Path $CommonGitPath "itl\runs"
+    $indexPath = Join-Path $CommonGitPath "itl\run-index\v1\hot.json"
+    if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) { return @() }
+    try {
+        $index = Get-Content -LiteralPath $indexPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$index.schemaVersion -ne 1 -or [string]$index.kind -cne "itl-delivery-run-hot-index" -or
+            [int]$index.capacity -le 0 -or @($index.entries).Count -gt [int]$index.capacity -or
+            [IO.Path]::GetFullPath([string]$index.sourceDirectory) -cne [IO.Path]::GetFullPath($runRoot)) { return @() }
+        $actualStamp = if (Test-Path -LiteralPath $runRoot -PathType Container) { (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o") } else { "" }
+        if ([string]$index.sourceDirectoryLastWriteTimeUtc -cne $actualStamp) { return @() }
+        $paths = [Collections.Generic.List[string]]::new()
+        foreach ($entry in @($index.entries | Where-Object { [string]$_.commit -ceq $Commit -and [string]$_.tree -ceq $Tree })) {
+            try { $candidate = [IO.Path]::GetFullPath([string]$entry.rawPath) } catch { continue }
+            if ([string]::Equals((Split-Path -Parent $candidate), [IO.Path]::GetFullPath($runRoot), [StringComparison]::OrdinalIgnoreCase) -and
+                (Split-Path -Leaf $candidate) -like '*-targeted-*.json') { $paths.Add($candidate) | Out-Null }
+        }
+        return @($paths)
+    } catch { return @() }
+}
+
 function Get-ExactTargetedRunProof {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -57,15 +83,31 @@ function Get-ExactTargetedRunProof {
     $runRoot = Join-Path $commonGitPath "itl\runs"
     if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $null }
 
-    foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*-targeted-*.json" | Sort-Object Name -Descending)) {
-        try { $run = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+    foreach ($path in @(Get-DeliveryIndexedTargetedRunPaths -CommonGitPath $commonGitPath -Commit $Commit -Tree $Tree)) {
+        try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
         if ([int]$run.schemaVersion -ne 1 -or [string]$run.mode -ne "Targeted" -or [string]$run.status -ne "passed" -or
             [int]$run.exitCode -ne 0 -or [string]$run.commit -ne $Commit -or [string]$run.tree -ne $Tree) { continue }
         $stageNames = @($run.stages | Where-Object { [string]$_.status -eq "passed" } | ForEach-Object { [string]$_.name })
         if ($stageNames -notcontains "pester" -or $stageNames -notcontains "tracked-state" -or $stageNames -notcontains "git-diff-check") { continue }
         return [pscustomobject]@{
-            path = $file.FullName
-            sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            run = $run
+        }
+    }
+    # A missing, stale, or bounded index cannot weaken proof lookup. Raw proof is
+    # immutable and remains the authority; the fallback also preserves the
+    # existing fail-closed schema-1 acceptance contract.
+    foreach ($file in @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*-targeted-*.json" | Sort-Object Name -Descending)) {
+        $path = $file.FullName
+        try { $run = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json } catch { continue }
+        if ([int]$run.schemaVersion -ne 1 -or [string]$run.mode -ne "Targeted" -or [string]$run.status -ne "passed" -or
+            [int]$run.exitCode -ne 0 -or [string]$run.commit -ne $Commit -or [string]$run.tree -ne $Tree) { continue }
+        $stageNames = @($run.stages | Where-Object { [string]$_.status -eq "passed" } | ForEach-Object { [string]$_.name })
+        if ($stageNames -notcontains "pester" -or $stageNames -notcontains "tracked-state" -or $stageNames -notcontains "git-diff-check") { continue }
+        return [pscustomobject]@{
+            path = $path
+            sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
             run = $run
         }
     }

@@ -16,6 +16,12 @@ Use `scripts/Invoke-RemoteWork.ps1` on Windows for durable jobs; it provisions p
 - Use `itl-performance` to create a project scenario and package. Send it over the selected connection. `auto` uses the worker and allows the configured agent fallback; `ssh` forces worker execution; `agent` uses `itl-remote-agent`. File exchange is an alternative transport for the same executor, not a new execution engine.
 - Observe the existing job ID after disconnects. Never repeat a failed modifying operation just because its reply was lost. Collect and verify results; engine state and artifacts establish completion, not a zero SSH exit code.
 
+## Database Access Handoff
+
+Before sending an incompatible job, explicitly choose one path for any database phase this task already owns: continue that phase and postpone the job, or finish it through its owning surface. Use `finish_database_access` on the same ROCTUP/Vanessa facade, or the existing exact stop action for an owned interactive profile, and wait for confirmed release. Never release a foreign holder; report its owner as the blocker and leave its processes and lease intact. Idle timeout is an abandonment fallback, not a normal handoff.
+
+A bounded helper or remote job retains access until its normal completion or confirmed terminal state. After disconnect or interruption, observe the existing job status, use its supported cancel only when cancellation is intended, and follow its recovery contract; do not call `finish_database_access` to bypass a live job.
+
 ## Runtime boundaries
 
 The execution host starts 1C in the user-started worker's session. File-base profiling starts that host's own loopback `dbgs`; server-base profiling uses the configured shared server endpoint. Cleanup stops only owned processes and detaches only owned debugger targets.

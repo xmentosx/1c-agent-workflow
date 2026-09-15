@@ -3796,7 +3796,7 @@ function Ensure-VanessaServiceInfoBase {
     $databasePath = Join-Path $path "1Cv8.1CD"
     $created = $false
     if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive -State $State | Out-Null
+        Set-ItlDevBranchDatabaseAccessMode -AccessMode mutation-exclusive -State $State | Out-Null
         if (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
             $unexpected = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)
             if ($unexpected.Count -gt 0) {
@@ -4928,7 +4928,7 @@ function Run-DevBranchTests {
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     $state = Ensure-VanessaMcpInstalled -State $state
-    Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run -State $state | Out-Null
+    Set-ItlDevBranchDatabaseAccessMode -AccessMode functional-test -State $state | Out-Null
 
     Assert-VanessaSourceBuildArchiveMatchesActivePin
     $vanessa = Get-VanessaAutomationState
@@ -6893,7 +6893,7 @@ function Start-ItlVanessaCleanupDatabaseAdmission {
     $plan = Get-ItlVanessaCleanupDatabasePlan -State $state
     $settings = Get-ItlDatabaseAccessSettings
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    $request = [ordered]@{schemaVersion=1;coordinator=$settings.coordinator;bases=$plan.bases;timeout=$settings.waitTimeoutSeconds
+    $request = [ordered]@{schemaVersion=1;coordinator=$settings.coordinator;bases=$plan.bases;timeout=$settings.waitTimeoutSeconds;accessMode='mutation-exclusive'
         owner=@{project=$script:ProjectRoot;operation='stop-dev-branch-test-clients';requestId=[guid]::NewGuid().ToString('N')}}
     $inherited = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
     if ($inherited) {
@@ -7218,6 +7218,19 @@ function Save-VanessaMcpPairedSourceBuildArtifact {
     )
 
     if ([string]$Definition.lockKey -ne "vaExtension") {
+        return $false
+    }
+
+    # The process-wide source-build archive belongs only to the active paired
+    # VAExtension pin. Tests and explicit resolvers may supply another immutable
+    # asset; in that case its own URL/source must win over the unrelated archive.
+    $pairedLock = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $pairedName = [string](Get-ConfigValueFromObject -Object $pairedLock -Path "assetName" -Default "")
+    $pairedVersion = [string](Get-ConfigValueFromObject -Object $pairedLock -Path "version" -Default "")
+    $pairedSha256 = ([string](Get-ConfigValueFromObject -Object $pairedLock -Path "sha256" -Default "")).ToLowerInvariant()
+    $requestedSha256 = ([string](Get-ConfigValueFromObject -Object $AssetInfo -Path "expectedSha256" -Default "")).ToLowerInvariant()
+    if ([string]$AssetInfo.name -cne $pairedName -or [string]$AssetInfo.version -cne $pairedVersion -or
+        $requestedSha256 -notmatch '^[a-f0-9]{64}$' -or $requestedSha256 -cne $pairedSha256) {
         return $false
     }
 

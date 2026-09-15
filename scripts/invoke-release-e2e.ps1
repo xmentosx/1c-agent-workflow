@@ -691,6 +691,56 @@ function Assert-E2ECheckpointFile {
     }
 }
 
+function Save-E2ECheckpointStageEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$SourcePath
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: $Name evidence is missing before checkpointing: $SourcePath"
+    }
+    $safeName = $Name -replace '[^A-Za-z0-9_.-]', '_'
+    $extension = [IO.Path]::GetExtension($SourcePath)
+    if (-not $extension) { $extension = ".json" }
+    $evidenceRoot = Join-Path $releaseRunRoot "evidence"
+    $destination = Join-Path $evidenceRoot ($safeName + $extension)
+    $resolvedSource = [IO.Path]::GetFullPath($SourcePath)
+    $resolvedDestination = [IO.Path]::GetFullPath($destination)
+    $sourceSha256 = Get-E2EFileSha256 -Path $resolvedSource
+    if (-not $sourceSha256) {
+        throw "RELEASE_E2E_RESUME_STATE_MISMATCH: $Name evidence SHA256 is unavailable before checkpointing: $resolvedSource"
+    }
+    if ($resolvedSource.Equals($resolvedDestination, [StringComparison]::OrdinalIgnoreCase)) {
+        return [ordered]@{ path = $resolvedDestination; sha256 = $sourceSha256 }
+    }
+
+    New-Item -ItemType Directory -Force -Path $evidenceRoot | Out-Null
+    $staging = Join-Path $evidenceRoot (".$safeName." + [guid]::NewGuid().ToString("N") + ".tmp")
+    $backup = $staging + ".bak"
+    try {
+        Copy-Item -LiteralPath $resolvedSource -Destination $staging -Force
+        $stagedSha256 = Get-E2EFileSha256 -Path $staging
+        if ($stagedSha256 -ne $sourceSha256) {
+            throw "RELEASE_E2E_RESUME_STATE_MISMATCH: $Name evidence changed while it was copied into the checkpoint store."
+        }
+        if (Test-Path -LiteralPath $resolvedDestination -PathType Leaf) {
+            [IO.File]::Replace($staging, $resolvedDestination, $backup, $true)
+            Remove-Item -LiteralPath $backup -Force
+        } else {
+            [IO.File]::Move($staging, $resolvedDestination)
+        }
+        return [ordered]@{ path = $resolvedDestination; sha256 = $sourceSha256 }
+    } finally {
+        if (Test-Path -LiteralPath $staging -PathType Leaf) {
+            Remove-Item -LiteralPath $staging -Force
+        }
+        if (Test-Path -LiteralPath $backup -PathType Leaf) {
+            Remove-Item -LiteralPath $backup -Force
+        }
+    }
+}
+
 function Save-E2EStateFiles {
     param([string]$StateCopyPath, [string]$EnvCopyPath)
     $stateRecord = Get-E2EState
@@ -806,7 +856,11 @@ function Set-E2EStageStatus {
     $record["status"] = $Status
     $record["updatedAt"] = $now.ToString("o")
     $record["error"] = $ErrorText
-    if ($EvidencePath -or $Status -ne "running") {
+    if ($Status -eq "passed" -and $EvidencePath) {
+        $sealedEvidence = Save-E2ECheckpointStageEvidence -Name $Name -SourcePath $EvidencePath
+        $record["evidencePath"] = [string]$sealedEvidence.path
+        $record["evidenceSha256"] = [string]$sealedEvidence.sha256
+    } elseif ($EvidencePath -or $Status -ne "running") {
         $record["evidencePath"] = $EvidencePath
         $record["evidenceSha256"] = Get-E2EFileSha256 -Path $EvidencePath
     }
@@ -859,7 +913,22 @@ function Test-E2EStagePassed {
         }
     }
     if ([string]$record.evidencePath) {
-        try { Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence" }
+        try {
+            Assert-E2ECheckpointFile -Path ([string]$record.evidencePath) -Sha256 ([string]$record.evidenceSha256) -Label "$Name evidence"
+            $resolvedEvidence = [IO.Path]::GetFullPath([string]$record.evidencePath)
+            $persistentRoots = @($releaseRunRoot, $capabilityCacheRoot) | ForEach-Object {
+                [IO.Path]::GetFullPath([string]$_).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+            }
+            $isPersistent = @($persistentRoots | Where-Object {
+                $resolvedEvidence.StartsWith($_, [StringComparison]::OrdinalIgnoreCase)
+            }).Count -gt 0
+            if (-not $isPersistent) {
+                $sealedEvidence = Save-E2ECheckpointStageEvidence -Name $Name -SourcePath $resolvedEvidence
+                $record["evidencePath"] = [string]$sealedEvidence.path
+                $record["evidenceSha256"] = [string]$sealedEvidence.sha256
+                Write-E2ECheckpoint
+            }
+        }
         catch { throw "RELEASE_E2E_CACHE_CORRUPT: $($_.Exception.Message)" }
     }
     return $true
@@ -2511,8 +2580,8 @@ try {
                     facadeSha256 = ("0" * 64)
                     testFixture = $true
                     families = [ordered]@{
-                        roctup = [ordered]@{ publicToolCount = 2; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false; maxConcurrentSessions = 1; ownedProcessExitWaitMs = 80 }
-                        "vanessa-ui" = [ordered]@{ publicToolCount = 2; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCalls = @("run_scenario:cold", "get_VanessaAutomation_state:cold", "get_test_results:cold", "run_scenario:hot", "get_VanessaAutomation_state:hot", "get_test_results:hot", "run_scenario:from-line-cold", "get_VanessaAutomation_state:from-line-cold", "get_test_results:from-line-cold", "open_feature_file:secondary", "check_syntax:secondary", "load_features:secondary", "select_scenario:secondary", "run_scenario:selected", "get_VanessaAutomation_state:selected", "get_test_results:selected"); vanessaFeature = $vanessaSmokeFeature; vanessaSecondaryFeature = $vanessaSecondarySmokeFeature; vanessaScenarioEvidencePassed = $true; secondSurvivedFirstClose = $true; serializedFacadeHandoffPassed = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
+                        roctup = [ordered]@{ publicToolCount = 3; catalogToolCount = 13; instances = @([ordered]@{ pid = 101; port = 6003 }); cleanupPassed = $true; idleCleanupPassed = $true; secondSurvivedFirstClose = $false; maxConcurrentSessions = 1; ownedProcessExitWaitMs = 80 }
+                        "vanessa-ui" = [ordered]@{ publicToolCount = 3; catalogToolCount = 38; instances = @([ordered]@{ pid = 201; port = 9876; testClientProfile = "itl-ondemand"; testClientPort = 48151; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }, [ordered]@{ pid = 202; port = 9877; testClientProfile = "itl-ondemand"; testClientPort = 48152; vanessaAutomationCompatibilityVersion = [string]$canonicalVanessaLock.compatibilityVersion; vanessaAutomationDownstreamRevision = [string]$canonicalVanessaLock.downstreamRevision; vanessaAutomationArchiveSha256 = [string]$canonicalVanessaLock.sha256; vanessaAutomationEpfSha256 = [string]$canonicalVanessaLock.epfSha256; clientMcpSafeMode = $false; vaExtensionSafeMode = $false }); cleanupPassed = $true; idleCleanupPassed = $true; vanessaUiSmokePassed = $true; vanessaFileAuthoringOutcome = "passed"; vanessaFileAuthoringCalls = @("run_scenario:cold", "get_VanessaAutomation_state:cold", "get_test_results:cold", "run_scenario:hot", "get_VanessaAutomation_state:hot", "get_test_results:hot", "run_scenario:from-line-cold", "get_VanessaAutomation_state:from-line-cold", "get_test_results:from-line-cold", "open_feature_file:secondary", "check_syntax:secondary", "load_features:secondary", "select_scenario:secondary", "run_scenario:selected", "get_VanessaAutomation_state:selected", "get_test_results:selected"); vanessaFeature = $vanessaSmokeFeature; vanessaSecondaryFeature = $vanessaSecondarySmokeFeature; vanessaScenarioEvidencePassed = $true; secondSurvivedFirstClose = $true; serializedFacadeHandoffPassed = $true; maxConcurrentSessions = 3; ownedProcessExitWaitMs = 120 }
                     }
                     capturedAt = [DateTime]::UtcNow.ToString("o")
                 }

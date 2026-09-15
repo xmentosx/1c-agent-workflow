@@ -43,14 +43,60 @@ function Get-SourceGateHardBudgetSeconds {
     return [int]$property.Value + 300
 }
 
-function Stop-DeliveryProcessTree {
-    param([AllowNull()][object]$Process)
-    if (-not $Process) { return }
-    try { if ($Process.HasExited) { return } } catch { return }
-
-    $processId = [int]$Process.Id
+function Test-DeliveryProcessCreationIdentity {
+    param([int]$ProcessId, [datetime]$CreatedAt)
     try {
-        if ($env:OS -eq "Windows_NT") {
+        $current = Get-Process -Id $ProcessId -ErrorAction Stop
+        return -not $current.HasExited -and $current.StartTime.ToUniversalTime().Ticks -eq $CreatedAt.ToUniversalTime().Ticks
+    } catch { return $false }
+}
+
+function Get-DeliveryDescendantProcessIdentities {
+    param([int]$RootProcessId, [datetime]$RootCreatedAt)
+    if ($env:OS -ne 'Windows_NT' -or -not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+    try {
+        $rows = @(Get-CimInstance Win32_Process -OperationTimeoutSec 1 -ErrorAction Stop)
+        $knownParents = [Collections.Generic.HashSet[int]]::new()
+        [void]$knownParents.Add($RootProcessId)
+        $descendantIds = [Collections.Generic.List[int]]::new()
+        $changed = $true
+        while ($changed) {
+            $changed = $false
+            foreach ($row in $rows) {
+                $childId = [int]$row.ProcessId
+                if ($knownParents.Contains([int]$row.ParentProcessId) -and $knownParents.Add($childId)) {
+                    $descendantIds.Add($childId) | Out-Null
+                    $changed = $true
+                }
+            }
+        }
+        if (-not (Test-DeliveryProcessCreationIdentity -ProcessId $RootProcessId -CreatedAt $RootCreatedAt)) { return @() }
+        return @($descendantIds | ForEach-Object {
+            $childId = [int]$_
+            try {
+                $child = Get-Process -Id $childId -ErrorAction Stop
+                $createdAt = $child.StartTime.ToUniversalTime()
+                if (-not $child.HasExited -and $createdAt -ge $RootCreatedAt.ToUniversalTime()) {
+                    [pscustomobject]@{ processId=$childId; createdAt=$createdAt }
+                }
+            } catch {}
+        })
+    } catch { return @() }
+}
+
+function Stop-DeliveryProcessTree {
+    param([AllowNull()][object]$Process, [int]$TimeoutMilliseconds = 5000, [object[]]$CapturedDescendants = @())
+    if (-not $Process) { return }
+    try {
+        $processId = [int]$Process.Id
+        $processStartedAt = $Process.StartTime.ToUniversalTime()
+        $processExited = [bool]$Process.HasExited
+        $processExitedAt = if ($processExited) { $Process.ExitTime.ToUniversalTime() } else { [DateTime]::MaxValue }
+    } catch { return }
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+    $rootIdentityLive = -not $processExited -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)
+    try {
+        if ($env:OS -eq "Windows_NT" -and $rootIdentityLive -and (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt)) {
             # Use the .NET launcher instead of a PowerShell native-command
             # pipeline: Ctrl+C stops that pipeline, while finally still needs
             # to run taskkill for every descendant owned by the gate.
@@ -66,17 +112,39 @@ function Stop-DeliveryProcessTree {
             try {
                 $stdoutTask = $killer.StandardOutput.ReadToEndAsync()
                 $stderrTask = $killer.StandardError.ReadToEndAsync()
-                $killer.WaitForExit()
-                [void]$stdoutTask.GetAwaiter().GetResult()
-                [void]$stderrTask.GetAwaiter().GetResult()
+                $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                if (-not $killer.WaitForExit($remaining)) {
+                    try { $killer.Kill() } catch {}
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$killer.WaitForExit($remaining) } catch {}
+                }
+                foreach ($reader in @($stdoutTask, $stderrTask)) {
+                    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                    try { [void]$reader.Wait($remaining) } catch {}
+                }
             } finally { $killer.Dispose() }
-        } else {
+        } elseif ($env:OS -ne "Windows_NT" -and $rootIdentityLive) {
             $Process.Kill()
         }
-    } catch {
+    } catch {}
+    try {
+        if ($Process.HasExited) { $processExitedAt = $Process.ExitTime.ToUniversalTime() }
+    } catch {}
+    foreach ($descendant in @($CapturedDescendants | Sort-Object processId -Descending)) {
+        try {
+            $descendantId = [int]$descendant.processId
+            $descendantCreatedAt = ([DateTime]$descendant.createdAt).ToUniversalTime()
+            if ($descendantCreatedAt -lt $processStartedAt -or $descendantCreatedAt -gt $processExitedAt) { continue }
+            if (Test-DeliveryProcessCreationIdentity -ProcessId $descendantId -CreatedAt $descendantCreatedAt) {
+                Stop-Process -Id $descendantId -Force -ErrorAction Stop
+            }
+        } catch {}
+    }
+    if (Test-DeliveryProcessCreationIdentity -ProcessId $processId -CreatedAt $processStartedAt) {
         try { $Process.Kill() } catch {}
     }
-    try { [void]$Process.WaitForExit(15000) } catch {}
+    $remaining = [Math]::Max(1, [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+    try { [void]$Process.WaitForExit($remaining) } catch {}
 }
 
 function Start-DeliveryProcess {
@@ -522,6 +590,252 @@ function Get-DeliveryFailureClass {
     return "product"
 }
 
+$script:DeliveryRunHotIndexCapacity = 2048
+$script:DeliveryRunHotIndexLockTimeoutMilliseconds = 30000
+
+function Get-DeliveryRunHotIndexPath {
+    return Join-Path (Get-DeliveryCommonGitDirectory) "itl\run-index\v1\hot.json"
+}
+
+function Get-DeliveryRunHotIndexPendingRoot {
+    return Join-Path (Split-Path -Parent (Get-DeliveryRunHotIndexPath)) 'pending'
+}
+
+function Write-DeliveryRunHotIndexPendingMarker {
+    param([Parameter(Mandatory = $true)][string]$RawPath)
+    $root = Get-DeliveryRunHotIndexPendingRoot
+    New-Item -ItemType Directory -Force -Path $root | Out-Null
+    $path = Join-Path $root ((Split-Path -Leaf $RawPath) + '.pending')
+    $temporary = Join-Path $root ((Split-Path -Leaf $path) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $writer = Get-Process -Id $PID -ErrorAction Stop
+        $payload = [pscustomobject][ordered]@{
+            schemaVersion=1; kind='itl-delivery-run-index-pending'; rawPath=[IO.Path]::GetFullPath($RawPath)
+            writerPid=[int]$PID; writerStartedAt=$writer.StartTime.ToUniversalTime().ToString('o')
+        }
+        [IO.File]::WriteAllText($temporary, (($payload | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    return $path
+}
+
+function Enter-DeliveryRunHotIndexLock {
+    param([int]$TimeoutMilliseconds = 30000)
+    $path = Join-Path (Split-Path -Parent (Get-DeliveryRunHotIndexPath)) 'write.lock'
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+    $deadline = [DateTime]::UtcNow.AddMilliseconds([Math]::Max(1, $TimeoutMilliseconds))
+    do {
+        try { return [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch [IO.IOException] {
+            if ([DateTime]::UtcNow -ge $deadline) { throw "DELIVERY_RUN_INDEX_LOCK_TIMEOUT: $path" }
+            Start-Sleep -Milliseconds 25
+        }
+    } while ($true)
+}
+
+function Test-DeliveryRunRecordShape {
+    param([Parameter(Mandatory = $true)][object]$Record)
+    $present = $Record.PSObject.Properties["mode"] -and $Record.PSObject.Properties["status"] -and
+        $Record.PSObject.Properties["startedAt"] -and $Record.PSObject.Properties["durationMs"] -and
+        $Record.PSObject.Properties["tree"]
+    if (-not $present) { return $false }
+    try {
+        [void](ConvertTo-DeliveryUtcDateTime -Value $Record.startedAt)
+        $duration = [int64]$Record.durationMs
+        return $duration -ge 0
+    } catch { return $false }
+}
+
+function ConvertTo-DeliveryRunHotIndexEntry {
+    param(
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$RawPath
+    )
+    return [pscustomobject][ordered]@{
+        rawPath=[IO.Path]::GetFullPath($RawPath)
+        schemaVersion=$(if($Record.PSObject.Properties["schemaVersion"]){[int]$Record.schemaVersion}else{0})
+        id=$(if($Record.PSObject.Properties["id"]){[string]$Record.id}else{""})
+        mode=[string]$Record.mode; status=[string]$Record.status
+        failureClass=$(if($Record.PSObject.Properties["failureClass"]){[string]$Record.failureClass}else{""})
+        exitCode=$(if($Record.PSObject.Properties["exitCode"]){[int]$Record.exitCode}else{-1})
+        startedAt=[string]$Record.startedAt
+        finishedAt=$(if($Record.PSObject.Properties["finishedAt"]){[string]$Record.finishedAt}else{""})
+        durationMs=[int64]$Record.durationMs
+        commit=$(if($Record.PSObject.Properties["commit"]){[string]$Record.commit}else{""})
+        tree=[string]$Record.tree
+        error=$(if($Record.PSObject.Properties["error"]){[string]$Record.error}else{""})
+        tests=$(if($Record.PSObject.Properties["tests"]){$Record.tests}else{$null})
+        stages=$(if($Record.PSObject.Properties["stages"]){@($Record.stages)}else{@()})
+        releaseE2E=$(if($Record.PSObject.Properties["releaseE2E"]){$Record.releaseE2E}else{$null})
+    }
+}
+
+function New-DeliveryRunHotIndex {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunRoot,
+        [ref]$ProcessedRawPaths
+    )
+    $entries = [Collections.Generic.List[object]]::new()
+    $valid = [Collections.Generic.List[object]]::new()
+    $processed = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $invalidCount = 0
+    if (Test-Path -LiteralPath $RunRoot -PathType Container) {
+        foreach ($file in @(Get-ChildItem -LiteralPath $RunRoot -File -Filter "*.json" | Sort-Object Name -Descending)) {
+            [void]$processed.Add([IO.Path]::GetFullPath($file.FullName))
+            try {
+                $record = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                if (-not (Test-DeliveryRunRecordShape -Record $record)) { $invalidCount++; continue }
+                $entry = ConvertTo-DeliveryRunHotIndexEntry -Record $record -RawPath $file.FullName
+                $valid.Add($entry) | Out-Null
+                if ($entries.Count -lt $script:DeliveryRunHotIndexCapacity) { $entries.Add($entry) | Out-Null }
+            } catch { $invalidCount++ }
+        }
+    }
+    $byMode = @($valid | Group-Object mode | Sort-Object Name | ForEach-Object {
+        [pscustomobject][ordered]@{ mode=$_.Name; count=[int]$_.Count; durationMs=[int64](($_.Group | Measure-Object durationMs -Sum).Sum) }
+    })
+    $directoryStamp = if (Test-Path -LiteralPath $RunRoot -PathType Container) {
+        (Get-Item -LiteralPath $RunRoot).LastWriteTimeUtc.ToString("o")
+    } else { "" }
+    $totalDurationMs = [int64]0
+    foreach ($entry in $valid) { $totalDurationMs += [int64]$entry.durationMs }
+    if ($ProcessedRawPaths) { $ProcessedRawPaths.Value = $processed }
+    return [pscustomobject][ordered]@{
+        schemaVersion=1; kind="itl-delivery-run-hot-index"; capacity=$script:DeliveryRunHotIndexCapacity
+        sourceDirectory=[IO.Path]::GetFullPath($RunRoot); sourceDirectoryLastWriteTimeUtc=$directoryStamp
+        validRunCount=$valid.Count; invalidRunCount=$invalidCount
+        totalDurationMs=$totalDurationMs
+        byMode=$byMode; entries=@($entries); truncated=($valid.Count -gt $script:DeliveryRunHotIndexCapacity)
+        updatedAt=[DateTime]::UtcNow.ToString("o")
+    }
+}
+
+function Get-DeliveryRunHotIndexContentSha256 {
+    param([Parameter(Mandatory = $true)][object]$Index)
+    $content = [pscustomobject][ordered]@{
+        schemaVersion=[int]$Index.schemaVersion; kind=[string]$Index.kind; capacity=[int]$Index.capacity
+        sourceDirectory=[string]$Index.sourceDirectory; sourceDirectoryLastWriteTimeUtc=[string]$Index.sourceDirectoryLastWriteTimeUtc
+        validRunCount=[int64]$Index.validRunCount; invalidRunCount=[int]$Index.invalidRunCount
+        totalDurationMs=[int64]$Index.totalDurationMs; byMode=@($Index.byMode); entries=@($Index.entries)
+        truncated=[bool]$Index.truncated; updatedAt=[string]$Index.updatedAt
+    }
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($content | ConvertTo-Json -Depth 16 -Compress))
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+}
+
+function Write-DeliveryRunHotIndex {
+    param([Parameter(Mandatory = $true)][object]$Index)
+    $contentSha = Get-DeliveryRunHotIndexContentSha256 -Index $Index
+    if ($Index.PSObject.Properties['contentSha256']) { $Index.contentSha256 = $contentSha }
+    else { $Index | Add-Member -NotePropertyName contentSha256 -NotePropertyValue $contentSha }
+    $path = Get-DeliveryRunHotIndexPath
+    $parent = Split-Path -Parent $path
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    $temporary = Join-Path $parent ("hot." + [guid]::NewGuid().ToString("N") + ".tmp")
+    try {
+        [IO.File]::WriteAllText($temporary, (($Index | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $path -Force
+    } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    return $path
+}
+
+function Read-DeliveryRunHotIndex {
+    param([switch]$IgnoreSourceStamp)
+    $path = Get-DeliveryRunHotIndexPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return [pscustomobject]@{ status="missing"; path=$path; index=$null } }
+    $pendingRoot = Get-DeliveryRunHotIndexPendingRoot
+    if ((Test-Path -LiteralPath $pendingRoot -PathType Container) -and
+        $null -ne (Get-ChildItem -LiteralPath $pendingRoot -File -Filter '*.pending' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        return [pscustomobject]@{ status="stale"; path=$path; index=$null; error='pending raw run records require serialized repair' }
+    }
+    try {
+        $index = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$index.schemaVersion -ne 1 -or [string]$index.kind -cne "itl-delivery-run-hot-index" -or
+            [int]$index.capacity -ne $script:DeliveryRunHotIndexCapacity -or @($index.entries).Count -gt $script:DeliveryRunHotIndexCapacity -or
+            [int64]$index.validRunCount -lt @($index.entries).Count -or [string]$index.contentSha256 -notmatch '^[a-f0-9]{64}$' -or
+            [string]$index.contentSha256 -cne (Get-DeliveryRunHotIndexContentSha256 -Index $index)) { throw "unsupported, inconsistent, or SHA-mismatched index schema" }
+        $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+        if ([IO.Path]::GetFullPath([string]$index.sourceDirectory) -cne [IO.Path]::GetFullPath($runRoot)) { throw "source directory mismatch" }
+        if (-not $IgnoreSourceStamp) {
+            $actualStamp = if (Test-Path -LiteralPath $runRoot -PathType Container) { (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o") } else { "" }
+            if ([string]$index.sourceDirectoryLastWriteTimeUtc -cne $actualStamp) { return [pscustomobject]@{ status="stale"; path=$path; index=$null } }
+        }
+        return [pscustomobject]@{ status="ready"; path=$path; index=$index }
+    } catch { return [pscustomobject]@{ status="corrupt"; path=$path; index=$null; error=$_.Exception.Message } }
+}
+
+function Repair-DeliveryRunHotIndex {
+    param([switch]$LockHeld)
+    $lock = $null
+    try {
+        if (-not $LockHeld) { $lock = Enter-DeliveryRunHotIndexLock }
+        $current = Read-DeliveryRunHotIndex
+        if ([string]$current.status -eq "ready") {
+            return [pscustomobject]@{ status="reused"; path=[string]$current.path; validRunCount=[int]$current.index.validRunCount; invalidRunCount=[int]$current.index.invalidRunCount; retained=@($current.index.entries).Count }
+        }
+        $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+        $pendingRoot = Get-DeliveryRunHotIndexPendingRoot
+        $pending = if (Test-Path -LiteralPath $pendingRoot -PathType Container) { @(Get-ChildItem -LiteralPath $pendingRoot -File -Filter '*.pending') } else { @() }
+        $processedRawPaths = $null
+        $index = New-DeliveryRunHotIndex -RunRoot $runRoot -ProcessedRawPaths ([ref]$processedRawPaths)
+        $path = Write-DeliveryRunHotIndex -Index $index
+        foreach ($marker in $pending) {
+            try {
+                $markerState = Get-Content -LiteralPath $marker.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ([int]$markerState.schemaVersion -ne 1 -or [string]$markerState.kind -cne 'itl-delivery-run-index-pending' -or
+                    [int]$markerState.writerPid -le 0 -or -not $markerState.PSObject.Properties['writerStartedAt']) { throw 'invalid marker contract' }
+                $markedRawPath = [IO.Path]::GetFullPath([string]$markerState.rawPath)
+                $expectedLeaf = $marker.Name.Substring(0, $marker.Name.Length - '.pending'.Length)
+                if (-not [string]::Equals((Split-Path -Parent $markedRawPath), [IO.Path]::GetFullPath($runRoot), [StringComparison]::OrdinalIgnoreCase) -or
+                    -not [string]::Equals((Split-Path -Leaf $markedRawPath), $expectedLeaf, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw 'marker path does not match its owned run filename'
+                }
+            } catch {
+                if ($marker.Name -match '^\d{8}-\d{6}-\d{3}-[a-z0-9-]+-[a-f0-9]{32}\.json\.pending$') {
+                    Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+                }
+                continue
+            }
+            if ($processedRawPaths.Contains($markedRawPath)) {
+                Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+            } elseif (-not (Test-Path -LiteralPath $markedRawPath -PathType Leaf) -and
+                -not (Test-DeliveryProcessCreationIdentity -ProcessId ([int]$markerState.writerPid) -CreatedAt (ConvertTo-DeliveryUtcDateTime -Value $markerState.writerStartedAt))) {
+                Remove-Item -LiteralPath $marker.FullName -Force -ErrorAction SilentlyContinue
+            }
+        }
+        return [pscustomobject]@{ status="rebuilt"; previousStatus=[string]$current.status; path=$path; validRunCount=[int]$index.validRunCount; invalidRunCount=[int]$index.invalidRunCount; retained=@($index.entries).Count }
+    } finally {
+        if ($lock) { $lock.Dispose() }
+    }
+}
+
+function Add-DeliveryRunToHotIndex {
+    param(
+        [Parameter(Mandatory = $true)][object]$PreviousIndexState,
+        [Parameter(Mandatory = $true)][object]$Record,
+        [Parameter(Mandatory = $true)][string]$RawPath
+    )
+    if ([string]$PreviousIndexState.status -ne "ready") { return Repair-DeliveryRunHotIndex -LockHeld }
+    $index = $PreviousIndexState.index
+    if (@($index.entries | Where-Object { [string]$_.rawPath -ceq [IO.Path]::GetFullPath($RawPath) }).Count -gt 0) { return [string]$PreviousIndexState.path }
+    $entry = ConvertTo-DeliveryRunHotIndexEntry -Record $Record -RawPath $RawPath
+    $index.entries = @(@($entry) + @($index.entries) | Sort-Object @{ Expression={ ConvertTo-DeliveryUtcDateTime -Value $_.startedAt }; Descending=$true }, @{ Expression={ [string]$_.rawPath }; Descending=$true } | Select-Object -First $script:DeliveryRunHotIndexCapacity)
+    $index.validRunCount = [int64]$index.validRunCount + 1
+    $index.totalDurationMs = [int64]$index.totalDurationMs + [int64]$entry.durationMs
+    $modes = @($index.byMode)
+    $mode = @($modes | Where-Object { [string]$_.mode -ceq [string]$entry.mode } | Select-Object -First 1)
+    if ($mode.Count) { $mode[0].count = [int]$mode[0].count + 1; $mode[0].durationMs = [int64]$mode[0].durationMs + [int64]$entry.durationMs }
+    else { $modes += [pscustomobject][ordered]@{ mode=[string]$entry.mode; count=1; durationMs=[int64]$entry.durationMs } }
+    $index.byMode = @($modes | Sort-Object mode)
+    $index.truncated = [int64]$index.validRunCount -gt $script:DeliveryRunHotIndexCapacity
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+    $index.sourceDirectoryLastWriteTimeUtc = (Get-Item -LiteralPath $runRoot).LastWriteTimeUtc.ToString("o")
+    $index.updatedAt = [DateTime]::UtcNow.ToString("o")
+    return Write-DeliveryRunHotIndex -Index $index
+}
+
 function Write-DeliveryRunRecord {
     param([string]$Mode, [string]$Status, [string]$ErrorMessage, [string]$WorkingRoot, [datetime]$StartedAt, [datetime]$FinishedAt, [int]$ExitCode)
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
@@ -552,40 +866,67 @@ function Write-DeliveryRunRecord {
     }
     $record = [ordered]@{ schemaVersion = 3; id = [guid]::NewGuid().ToString("N"); mode = $Mode; status = $Status; failureClass = $(if($Status -eq "passed"){""}else{Get-DeliveryFailureClass -Message $ErrorMessage -Stage $Mode}); exitCode = $ExitCode; startedAt = $StartedAt.ToString("o"); finishedAt = $FinishedAt.ToString("o"); durationMs = [int64]($FinishedAt - $StartedAt).TotalMilliseconds; commit = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD")).stdout.Trim(); tree = (Invoke-WorktreeGit -Root $WorkingRoot -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim(); error = $ErrorMessage; tests = $(if ($summary) { $summary.tests } else { $null }); stages = $(if ($summary) { @($summary.stages | Sort-Object durationMs -Descending | Select-Object -First 10) } else { @() }); releaseE2E = $releaseE2E }
     $name = "{0}-{1}-{2}.json" -f $StartedAt.ToString("yyyyMMdd-HHmmss-fff"), $Mode.ToLowerInvariant(), $record.id; $target = Join-Path $runRoot $name; $temp = "$target.tmp"
-    [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+    $indexLock = $null
+    $pendingMarker = $null
+    try {
+        try { $indexLock = Enter-DeliveryRunHotIndexLock -TimeoutMilliseconds $script:DeliveryRunHotIndexLockTimeoutMilliseconds }
+        catch {
+            if ($_.Exception.Message -notlike 'DELIVERY_RUN_INDEX_LOCK_TIMEOUT:*') { throw }
+            $pendingMarker = Write-DeliveryRunHotIndexPendingMarker -RawPath $target
+            [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+            return $target
+        }
+        $previousIndexState = Read-DeliveryRunHotIndex
+        $pendingMarker = Write-DeliveryRunHotIndexPendingMarker -RawPath $target
+        [IO.File]::WriteAllText($temp, (($record | ConvertTo-Json -Depth 12) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $temp -Destination $target
+        try {
+            [void](Add-DeliveryRunToHotIndex -PreviousIndexState $previousIndexState -Record ([pscustomobject]$record) -RawPath $target)
+            Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
+        } catch {}
+    } finally {
+        Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue
+        if ($pendingMarker -and -not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            Remove-Item -LiteralPath $pendingMarker -Force -ErrorAction SilentlyContinue
+        }
+        if ($indexLock) { $indexLock.Dispose() }
+    }
     return $target
 }
 
 function Get-DeliveryRunHistory {
     param([int]$Limit = 3, [switch]$IncludeDetails)
-    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"; if (-not (Test-Path -LiteralPath $runRoot)) { return [pscustomobject]@{ root = $runRoot; count = 0; totalDurationMs = 0; byMode = @(); lastRuns = @() } }
-    $runs = @(Get-ChildItem -LiteralPath $runRoot -File -Filter "*.json" | Sort-Object Name -Descending | ForEach-Object {
-        try {
-            $record = Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-            if ($record.PSObject.Properties["mode"] -and $record.PSObject.Properties["status"] -and
-                $record.PSObject.Properties["startedAt"] -and $record.PSObject.Properties["durationMs"] -and
-                $record.PSObject.Properties["tree"]) { $record }
-        } catch {}
-    })
-    $byMode = @($runs | Group-Object mode | Sort-Object Name | ForEach-Object { [pscustomobject]@{ mode = $_.Name; count = $_.Count; durationMs = [int64](($_.Group | Measure-Object durationMs -Sum).Sum) } })
+    $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
+    $state = Read-DeliveryRunHotIndex
+    if ([string]$state.status -ne "ready") {
+        return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus=[string]$state.status; count=0; totalDurationMs=0; byMode=@(); lastRuns=@(); truncated=$false; nextAction="run serialized Cleanup to rebuild the hot index" }
+    }
+    $index = $state.index
+    $runs = @($index.entries)
     $lastRuns = if ($IncludeDetails) { @($runs | Select-Object -First $Limit) } else {
         @($runs | Select-Object -First $Limit | ForEach-Object {
             [pscustomobject]@{ mode=$_.mode; status=$_.status; failureClass=$(if($_.PSObject.Properties["failureClass"]){$_.failureClass}else{""}); startedAt=$_.startedAt; finishedAt=$_.finishedAt; durationMs=$_.durationMs; commit=$_.commit; error=$_.error }
         })
     }
-    return [pscustomobject]@{ root = $runRoot; count = $runs.Count; totalDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum); byMode = $byMode; lastRuns = $lastRuns }
+    return [pscustomobject]@{ root=$runRoot; indexPath=[string]$state.path; indexStatus="ready"; count=[int64]$index.validRunCount; invalidCount=[int]$index.invalidRunCount; totalDurationMs=[int64]$index.totalDurationMs; byMode=@($index.byMode); lastRuns=$lastRuns; truncated=[bool]$index.truncated; nextAction="" }
 }
 
 function Get-DeliveryQualificationTimingSummary {
     param([Parameter(Mandatory = $true)][string]$Tree, [Parameter(Mandatory = $true)][datetime]$NotBefore, [datetime]$OperationStartedAt = $NotBefore)
-    $history = Get-DeliveryRunHistory -Limit 200 -IncludeDetails
+    $history = Get-DeliveryRunHistory -Limit $script:DeliveryRunHotIndexCapacity -IncludeDetails
     $runs = @($history.lastRuns | Where-Object {
         [string]$_.tree -ceq $Tree -and (ConvertTo-DeliveryUtcDateTime -Value $_.startedAt) -ge $NotBefore.AddSeconds(-2)
     } | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt })
     $finishedAt = [DateTime]::UtcNow
+    $earliestHot = @($history.lastRuns | Sort-Object { ConvertTo-DeliveryUtcDateTime -Value $_.startedAt } | Select-Object -First 1)
+    $historyComplete = [string]$history.indexStatus -eq "ready" -and (-not [bool]$history.truncated -or
+        ($earliestHot.Count -gt 0 -and (ConvertTo-DeliveryUtcDateTime -Value $earliestHot[0].startedAt) -le $NotBefore.AddSeconds(-2)))
+    $gateDurationMs = [int64]0
+    foreach ($run in $runs) { $gateDurationMs += [int64]$run.durationMs }
     return [pscustomobject]@{
         operationDurationMs = [int64]($finishedAt - $OperationStartedAt).TotalMilliseconds
-        gateDurationMs = [int64](($runs | Measure-Object -Property durationMs -Sum).Sum)
+        gateDurationMs = $gateDurationMs
+        historyStatus = [string]$history.indexStatus
+        historyComplete = $historyComplete
         gates = @($runs | ForEach-Object { [pscustomobject]@{ mode=$_.mode; status=$_.status; durationMs=$_.durationMs; stages=$_.stages; releaseE2E=$(if ($_.PSObject.Properties["releaseE2E"]) { $_.releaseE2E } else { $null }) } })
     }
 }

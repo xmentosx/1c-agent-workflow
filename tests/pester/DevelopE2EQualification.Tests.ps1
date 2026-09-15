@@ -35,6 +35,7 @@ BeforeAll {
         [IO.File]::WriteAllText((Join-Path $Root "tests\features\fixture.feature"), "# language: ru`n", [Text.UTF8Encoding]::new($false))
         $catalog = [ordered]@{
             schemaVersion = 1
+            pesterWorkers = [ordered]@{ targetedImplicitDefault=4 }
             continuationScopes = [ordered]@{ static=@('tests/pester/*'); deliveryPostGate=@('post-gate/*'); gate=@('scripts/*'); develop=@('develop/*'); release=@('release/*') }
             developJourneys = [ordered]@{
                 names = @('upgrade','fresh')

@@ -59,6 +59,19 @@ def main():
     command.add_argument("--bindings", required=True, help="JSON array of explicit database connections sharing this resource")
     command = commands.add_parser("access-status")
     command.add_argument("--coordinator", required=True)
+    command.add_argument("--summary", action="store_true",
+                         help="Return aggregate bounded metrics instead of the legacy active-record array")
+    command = commands.add_parser("access-compact")
+    command.add_argument("--coordinator", required=True)
+    command.add_argument("--shards", type=int, default=1)
+    command = commands.add_parser("access-cleanup")
+    command.add_argument("--coordinator", required=True)
+    command.add_argument("--shards", type=int, default=1)
+    command = commands.add_parser("access-retention-configure")
+    command.add_argument("--coordinator", required=True)
+    command.add_argument("--recovery-horizon-days", type=int, required=True)
+    command.add_argument("--tombstone-retention-days", type=int, required=True)
+    command.add_argument("--batch-size", type=int, required=True)
     for name in ("access-recovery-plan", "access-recover-workflow"):
         command = commands.add_parser(name)
         command.add_argument("--coordinator", required=True)
@@ -155,12 +168,21 @@ def main():
     if args.command == "access-recover-workflow":
         from itl_remote.native_recovery import recover_workflow_operation
         return recover_workflow_operation(args.coordinator, args.ticket)
-    if args.command in ("access-register", "access-status"):
+    if args.command in ("access-register", "access-status", "access-compact", "access-cleanup",
+                        "access-retention-configure"):
         from itl_remote.access import Coordinator
         coordinator = Coordinator(args.coordinator)
         if args.command == "access-register":
             return coordinator.register(args.resource, read_json(args.bindings))
-        return coordinator.snapshot()
+        if args.command == "access-status":
+            return coordinator.summary() if args.summary else coordinator.snapshot()
+        if args.command == "access-compact":
+            return coordinator.compact(args.shards)
+        if args.command == "access-cleanup":
+            return coordinator.cleanup(args.shards)
+        return coordinator.configure_retention(args.recovery_horizon_days,
+                                               args.tombstone_retention_days,
+                                               args.batch_size)
     if args.command == "scaffold":
         from itl_remote.scenarios import scaffold
         return scaffold(args.project, args.name)

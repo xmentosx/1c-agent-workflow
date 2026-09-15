@@ -38,6 +38,41 @@
         }
     }
 
+    It "keeps stabilization current state separate from append-only narrative history" {
+        $planPath = Join-Path $RepoRoot "docs\workflow-stabilization-plan.md"
+        $historyPath = Join-Path $RepoRoot "docs\workflow-stabilization-history.md"
+        $planText = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8
+        $historyText = Get-Content -LiteralPath $historyPath -Raw -Encoding UTF8
+        $current = [regex]::Match(
+            $planText,
+            '(?ms)^## Current state\s+(?<body>.*?)(?=^## Wave 0)'
+        )
+        $current.Success | Should -BeTrue
+        $body = $current.Groups['body'].Value
+
+        foreach ($field in @('Implementation', 'Registration', 'Publication', 'Installation', 'Runtime')) {
+            $body | Should -Match ([regex]::Escape($field))
+        }
+        $body | Should -Match 'Snapshot boundary:'
+        $body | Should -Match 'explicit user hold'
+        $body | Should -Match ([regex]::Escape('[stabilization history](workflow-stabilization-history.md)'))
+        foreach ($id in 1..8 | ForEach-Object { 'STAB-{0:d2}' -f $_ }) {
+            $rows = @($body -split '\r?\n' | Where-Object { $_ -match "^\| $([regex]::Escape($id)) \|" })
+            $rows.Count | Should -Be 1
+            @(($rows[0].Trim('|')) -split '\|').Count | Should -Be 7
+        }
+
+        $planText | Should -Not -Match '(?m)^## Execution log\r?$'
+        $historyText | Should -Match '(?m)^## Execution log\r?$'
+        $historyText | Should -Match 'append-only narrative ledger'
+        $historyText | Should -Match 'authoritative\s+raw registration, qualification, publication, and resource evidence'
+        $records = @($historyText -split '\r?\n' | Where-Object { $_ -match '^\| \d{4}-\d{2}-\d{2} \|' })
+        $records.Count | Should -BeGreaterOrEqual 1
+        foreach ($marker in @('Stabilization started', 'STAB-01', 'STAB-02', 'STAB-03', 'STAB-07', 'STAB-08', 'Develop publication explicitly paused')) {
+            @($records | Where-Object { $_ -match [regex]::Escape($marker) }).Count | Should -BeGreaterOrEqual 1
+        }
+    }
+
     It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
         ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 775
@@ -113,12 +148,36 @@
         }
     }
 
+    It "requires an explicit owned database access handoff before incompatible phases" {
+        $skillTexts = @{}
+        foreach ($skillId in @('itl-roctup-1c-data', 'itl-vanessa-ui-mcp', 'itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
+            $skillTexts[$skillId] | Should -Match '## Database Access Handoff'
+            $skillTexts[$skillId] | Should -Match 'finish_database_access'
+            $skillTexts[$skillId] | Should -Match 'Never (finish or stop|release) a foreign holder'
+            $skillTexts[$skillId] | Should -Match 'Idle timeout( or client exit)? is an abandonment fallback, not a normal handoff'
+        }
+
+        $skillTexts['itl-roctup-1c-data'] | Should -Match 'continue this task''s current ROCTUP phase and postpone the next phase.*finish the phase'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'continue this task''s current UI phase and postpone the next phase.*finish the UI phase'
+        foreach ($skillId in @('itl-performance', 'itl-remote-runner')) {
+            $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*status.*cancel.*recovery contract'
+            $skillTexts[$skillId] | Should -Match 'do not call `finish_database_access`.*live job'
+        }
+
+        $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\USER-RULES.append.md') -Raw -Encoding UTF8
+        $userRules | Should -Match 'either retain owned activity and postpone, or finish it through its exact owner'
+        $userRules | Should -Match 'never await its idle timeout'
+        $userRules | Should -Match 'Let bounded jobs finish or cancel them through their owner'
+        $userRules | Should -Match 'Never release foreign work'
+    }
+
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
             @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1600; rationale = "always-on ITL safety overlay with explicit routine routing precedence" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 775; reviewApproxTokens = 1200; maxApproxTokens = 1700; rationale = "always-on ITL safety overlay with explicit routine routing precedence and database-owner handoff" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }

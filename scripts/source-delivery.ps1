@@ -33,6 +33,47 @@ $candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 $localSupervisor = Join-Path $PSScriptRoot "source-delivery-supervisor.ps1"
 if (-not (Test-Path -LiteralPath $localSupervisor -PathType Leaf)) { throw "Delivery supervisor is missing: $localSupervisor" }
 
+# Status reports the current source checkout and must not bootstrap a detached
+# supervisor worktree. Besides being unnecessary for diagnostics, that
+# bootstrap performs worktree add/remove mutations in the repository being
+# inspected.
+if ($Action -eq "Status") {
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $statusSupervisorCommit = @(& git -C $candidateRoot rev-parse HEAD 2>$null) | Select-Object -First 1
+    $statusHeadExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($statusHeadExitCode -ne 0 -or [string]$statusSupervisorCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "Unable to resolve the inspected repository HEAD for read-only delivery status."
+    }
+    $statusArguments = @{}
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) { $statusArguments[$entry.Key] = $entry.Value }
+    $statusArguments["RepositoryRoot"] = $candidateRoot
+    $statusArguments["SupervisorCommit"] = [string]$statusSupervisorCommit
+    $statusArguments["BootstrapSupervisor"] = $true
+    & $localSupervisor @statusArguments
+    return
+}
+
+function Resolve-DeliveryBootstrapCommonGitDirectory {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    $dotGit = Join-Path $RepositoryRoot ".git"
+    if (Test-Path -LiteralPath $dotGit -PathType Container) { return [IO.Path]::GetFullPath($dotGit) }
+    if (-not (Test-Path -LiteralPath $dotGit -PathType Leaf)) { throw "DELIVERY_RESUME_PLAN_INVALID: .git entry is unavailable." }
+    $pointer = [IO.File]::ReadAllText($dotGit, [Text.UTF8Encoding]::new($false)).Trim()
+    if ($pointer -notmatch '^gitdir:\s*(.+)$') { throw "DELIVERY_RESUME_PLAN_INVALID: .git worktree pointer is invalid." }
+    $gitDirectory = [string]$Matches[1]
+    if (-not [IO.Path]::IsPathRooted($gitDirectory)) { $gitDirectory = Join-Path $RepositoryRoot $gitDirectory }
+    $gitDirectory = [IO.Path]::GetFullPath($gitDirectory)
+    $commonPointer = Join-Path $gitDirectory "commondir"
+    if (-not (Test-Path -LiteralPath $commonPointer -PathType Leaf)) { return $gitDirectory }
+    $commonDirectory = [IO.File]::ReadAllText($commonPointer, [Text.UTF8Encoding]::new($false)).Trim()
+    if (-not $commonDirectory) { throw "DELIVERY_RESUME_PLAN_INVALID: Git common-directory pointer is empty." }
+    if (-not [IO.Path]::IsPathRooted($commonDirectory)) { $commonDirectory = Join-Path $gitDirectory $commonDirectory }
+    return [IO.Path]::GetFullPath($commonDirectory)
+}
+
 $supervisorRoot = ""
 $supervisorPath = $localSupervisor
 $supervisorCommit = ""
@@ -44,7 +85,29 @@ try {
     $remoteMasterExitCode = $LASTEXITCODE
     $ErrorActionPreference = $previousErrorActionPreference
     if ($remoteMasterExitCode -eq 0 -and $remoteMaster.Count -eq 1 -and $remoteMaster[0] -match '^[a-f0-9]{40}$') {
-        $supervisorCommit = [string]$remoteMaster[0]
+        $currentMasterCommit = [string]$remoteMaster[0]
+        $supervisorCommit = $currentMasterCommit
+        if ($ResumePlan) {
+            if ($ResumePlan -notmatch '^[a-f0-9]{64}$') { throw "DELIVERY_RESUME_PLAN_INVALID: plan id must be a lowercase SHA256." }
+            $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
+            $resumePlanPath = Join-Path $commonGitPath "itl\plans\v1\$ResumePlan.json"
+            if (-not (Test-Path -LiteralPath $resumePlanPath -PathType Leaf)) { throw "DELIVERY_RESUME_PLAN_MISSING: $resumePlanPath" }
+            try { $savedPlan = Get-Content -LiteralPath $resumePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+            catch { throw "DELIVERY_RESUME_PLAN_INVALID: saved plan is unreadable: $($_.Exception.Message)" }
+            $recordedSupervisor = [string]$savedPlan.supervisor.commit
+            if ([int]$savedPlan.schemaVersion -ne 1 -or [string]$savedPlan.kind -ne "itl-delivery-plan" -or
+                [string]$savedPlan.planId -cne $ResumePlan -or $recordedSupervisor -notmatch '^[a-f0-9]{40}$') {
+                throw "DELIVERY_RESUME_PLAN_INVALID: saved plan identity or supervisor commit is invalid."
+            }
+            $ErrorActionPreference = "Continue"
+            & git -C $candidateRoot merge-base --is-ancestor $recordedSupervisor $currentMasterCommit 2>$null
+            $trustedSupervisor = $LASTEXITCODE -eq 0
+            $ErrorActionPreference = $previousErrorActionPreference
+            if (-not $trustedSupervisor) {
+                throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: recorded supervisor '$recordedSupervisor' is not an ancestor of origin/master '$currentMasterCommit'."
+            }
+            $supervisorCommit = $recordedSupervisor
+        }
         $ErrorActionPreference = "Continue"
         & git -C $candidateRoot cat-file -e "$supervisorCommit`:scripts/source-delivery-supervisor.ps1" 2>$null
         $supervisorExists = $LASTEXITCODE -eq 0

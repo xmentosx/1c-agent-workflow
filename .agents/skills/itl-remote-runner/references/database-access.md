@@ -6,6 +6,38 @@ the configured Vanessa manager base are acquired together with the target.
 Nothing is held partially while waiting. Older conflicting tickets run first;
 an unrelated database may proceed. A per-job claim prevents duplicate execution.
 
+Every new admission records one canonical mode:
+
+- `shared-read` may coexist with another shared read and with one diagnostic
+  `functional-test`; it promises availability and structurally readable state,
+  not a transactional snapshot;
+- `functional-test` may coexist only with `shared-read`, never with another
+  functional test;
+- `measurement-exclusive` excludes every independently owned operation so the
+  complete measured lifecycle, including preparation and cleanup, is isolated;
+- `mutation-exclusive` excludes every independently owned operation.
+
+This compatibility matrix is symmetric and applies between independent root
+tickets. Nested participants are phases inside the same root envelope: shared
+and functional roots remain limited, while either exclusive root may run any
+canonical internal phase without changing external compatibility. A mode
+transition keeps the same root ticket, requires no active nested participants,
+and an exclusive upgrade blocks newly arriving compatible work while it waits.
+New schema-1 records retain the legacy projection in `accessMode`
+(`shared-read`, `test-run`, or `exclusive`) for rolling old readers and put the
+exact canonical class in `accessModeV2`; transitions do the same with both
+requested-mode fields. New readers validate both fields and fail closed if they
+disagree, while public evidence exposes only the canonical meaning. Old persisted
+`test-run` tickets are read as `functional-test`; old `exclusive` tickets and
+tickets with no mode are read as fail-closed `legacy-exclusive`. These legacy
+records are not rewritten. At the external request boundary, missing or
+`exclusive` modes are canonicalized to `mutation-exclusive`, and `test-run` is
+canonicalized to `functional-test`, so old callers remain compatible without
+creating new legacy records. `legacy-exclusive` is never accepted for a new
+admission or transition. Ticket, waiting, progress and result evidence expose
+the effective mode. Measurement admission waiting remains outside the measured
+interval.
+
 ## One authority and database identity
 
 Every participating executor must configure the same `access.coordinator`
@@ -29,6 +61,64 @@ Create a UTF-8 JSON array of the authorized connections, such as two
 to split an identity currently in use. Configure the same authority on each
 project/host; do not put passwords in the registration. `access-status
 --coordinator <directory>` lists active owners and waiters without lease tokens.
+Its legacy JSON array is unchanged. Add `--summary` for an aggregate-only schema
+with active counts by status, oldest waiter age, terminal archive count/bytes and
+retained-checkpoint reason categories. The summary never includes tickets,
+tokens, owners, database identities, paths or embedded checkpoint identifiers.
+It reads active records through `active-index.json`, the small pin ledger and a
+derived terminal summary; it never enumerates the terminal archive or cleanup
+debt. On an empty, quiescent authority the first opt-in summary can establish an
+exact zero baseline from the append-only archive-queue tail, then publishes a
+layout capability marker last so older writers fail closed instead of silently
+bypassing the idempotent metrics journal. An indexed authority with active work
+or terminal history but no derived baseline reports terminal values as `null`
+with `complete=false` instead of scanning or inventing a count. Derived metrics
+are not admission or recovery authority; a metrics I/O failure invalidates the
+summary but does not stop the authoritative transition.
+The coordinator upgrades its storage only when no legacy owner is live. Active
+tickets then remain in a small resource index, while released and cancelled
+tickets move to an exact-addressed archive and are not scanned by admission or
+status. Exact full evidence remains addressable for a conservative 90-day
+recovery horizon by default. `remote_work.py access-compact --coordinator
+<directory> [--shards <1-256>]` incrementally replaces older full records with
+small identity tombstones, then removes tombstones 730 days after compaction.
+One restartable cursor and a default batch of 128 records per shard bound each
+pass; a crash after record or cursor publication is idempotently resumed.
+`access-retention-configure --coordinator <directory>
+--recovery-horizon-days <1-3650> --tombstone-retention-days <horizon-3650>
+--batch-size <1-10000>` atomically changes these persistent authority-wide
+values through a restartable policy-first transaction, so an interrupted
+shorter horizon can only retain pins too long. A compaction invocation visits
+at most 512 archive records regardless of `--shards` and configured batch size.
+Run `access-cleanup --coordinator <directory> [--shards <1-256>]` to retry at
+most 128 cleanup debts per invocation. Both maintenance routes use persisted
+fixed-size queue pages and direct slot reads; they do not enumerate an archive
+or debt shard before applying the cap. Ineligible entries move once to the tail
+and completed head pages are reclaimed after a restartable checkpoint, bounding
+live queue markers to outstanding work plus one partial page. Cleanup advances
+its cursor only after every selected debt is retired or durably requeued, so a
+pre-item crash cannot skip work even while new debt arrives. Admission and
+status neither scan nor rewrite cleanup debt. Run compaction and cleanup as
+maintenance; they never run in admission or status. The unpublished intermediate `cleanup-debt.json`
+format is deliberately unsupported: its presence fails closed with
+`INFOBASE_ACCESS_CLEANUP_DEBT_LEGACY_UNSUPPORTED` instead of silently ignoring
+possible debt; use the intermediate build that created that authority to drain
+it before upgrading.
+
+A durable recovery plan pins its ticket before recovery can make it terminal
+and removes only its own pin after terminal state is reflected in the job
+state. Source-sync phase receipts likewise pin their producer ticket before
+publishing the record reference. A successor observes it without mutation,
+durably saves the consumed/completed lifecycle state, and only then sends an
+explicit idempotent consume acknowledgement which removes that phase pin.
+Multiple plans and phases have independent pins. Pins expire no later than the
+configured tombstone horizon, so abandoned consumers become explicit bounded
+retention debt rather than permanent archive growth. Pending terminal-record
+or `.alive` cleanup debt also prevents premature compaction. Within the recovery horizon
+(or while pinned) exact lookup returns the full record; after compaction it
+returns `INFOBASE_ACCESS_TICKET_COMPACTED`, distinct from a never-known or
+expired ticket. Older runtimes fail closed on the new layout marker instead of
+bypassing its queue.
 
 ## Waiting and inherited ownership
 

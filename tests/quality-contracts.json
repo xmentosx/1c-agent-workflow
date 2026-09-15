@@ -13,6 +13,9 @@
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
   },
+  "pesterWorkers": {
+    "targetedImplicitDefault": 4
+  },
   "continuationScopes": {
     "static": [
       "tests/pester/*",
@@ -24,6 +27,7 @@
       "scripts/source-delivery-supervisor.ps1",
       "scripts/source-delivery-plan.ps1",
       "scripts/source-delivery-resources.ps1",
+      "scripts/source-delivery-ref-cleanup.ps1",
       "scripts/source-delivery-process.ps1",
       "scripts/source-delivery-queue.ps1",
       "scripts/source-delivery-candidate.ps1",
@@ -95,8 +99,8 @@
       "gate": "targeted",
       "budgetSeconds": 180,
       "primaryTest": "tests/pester/RemotePerformance.Tests.ps1",
-      "paths": [".agents/skills/itl-remote-runner/*", ".agents/skills/itl-remote-agent/*", ".agents/skills/itl-performance/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "tests/python/remote_work/*"],
-      "tests": ["tests/pester/RemotePerformance.Tests.ps1", "tests/pester/PythonRuntime.Tests.ps1"]
+      "paths": [".agents/skills/itl-remote-runner/*", ".agents/skills/itl-remote-agent/*", ".agents/skills/itl-performance/*", ".agents/skills/1c-workflow/scripts/lib/agent-1c.runtime-values.ps1", "tests/python/remote_work/*", "tests/database-access-producers.json"],
+      "tests": ["tests/pester/RemotePerformance.Tests.ps1", "tests/pester/PythonRuntime.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
       "id": "immutable-download",
@@ -123,7 +127,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
       "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1"],
-      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryRefCleanup.Tests.ps1"]
     },
     {
       "id": "source-delivery-plan",
@@ -142,6 +146,15 @@
       "primaryTest": "tests/pester/SourceDeliveryResourceLedger.Tests.ps1",
       "paths": ["scripts/source-delivery-resources.ps1"],
       "tests": ["tests/pester/SourceDeliveryResourceLedger.Tests.ps1", "tests/pester/SourceDeliveryCleanup.Tests.ps1"]
+    },
+    {
+      "id": "source-delivery-ref-cleanup",
+      "owner": "manual expected-SHA cleanup of published delivery refs",
+      "gate": "targeted",
+      "budgetSeconds": 300,
+      "primaryTest": "tests/pester/SourceDeliveryRefCleanup.Tests.ps1",
+      "paths": ["scripts/source-delivery-ref-cleanup.ps1"],
+      "tests": ["tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryResourceLedger.Tests.ps1"]
     },
     {
       "id": "source-delivery-candidate",
@@ -183,7 +196,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
       "paths": ["scripts/source-delivery-process.ps1"],
-      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
     },
     {
       "id": "source-delivery-queue",
@@ -237,8 +250,8 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/DevBranchLifecycle.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/agent-1c.ps1", ".agents/skills/1c-workflow/scripts/run-*.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.merge-preservation.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ports.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.bootstrap.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ui-tools.ps1"],
-      "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/MergePreservation.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/BranchSourceSyncGroup.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/OneCSessionCapacityWait.Tests.ps1", "tests/pester/OneCNativeOperationJournal.Tests.ps1", "tests/pester/OneCNativeRunOwnership.Tests.ps1", "tests/pester/OneCNativeInvocationOwnership.Tests.ps1", "tests/pester/OneCNativeJournalPersistence.Tests.ps1", "tests/pester/OneCFileRestorationJournal.Tests.ps1",
-        "tests/pester/OneCDatabaseRestorationJournal.Tests.ps1", "tests/pester/OneCNativeRecoveryGeneration.Tests.ps1", "tests/pester/EnterpriseOwnedRelease.Tests.ps1", "tests/pester/DevBranchMutationAdmission.Tests.ps1", "tests/pester/InitializationDatabaseAdmission.Tests.ps1", "tests/pester/LifecycleDatabaseContinuation.Tests.ps1", "tests/pester/MasterDatabaseAdmission.Tests.ps1", "tests/pester/DevBranchVerificationAdmission.Tests.ps1", "tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1", "tests/pester/ConfigRepositoryLockReport.Tests.ps1", "tests/pester/ConfigRepositoryRootLock.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/LifecycleLockWaiting.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerExportSharedBase.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
+      "tests": ["tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/MergePreservation.Tests.ps1", "tests/pester/BranchSourceSync.Tests.ps1", "tests/pester/BranchSourceSyncGroup.Tests.ps1", "tests/pester/SourceRepositoryUpdateMode.Tests.ps1", "tests/pester/DesignerLoadProof.Tests.ps1", "tests/pester/PortRegistryLifecycle.Tests.ps1", "tests/pester/OneCSessionLimit.Tests.ps1", "tests/pester/OneCSessionCapacityWait.Tests.ps1", "tests/pester/OneCNativeOperationJournal.Tests.ps1", "tests/pester/OneCNativeRunOwnership.Tests.ps1", "tests/pester/OneCNativeInvocationOwnership.Tests.ps1", "tests/pester/OneCNativeJournalPersistence.Tests.ps1", "tests/pester/OneCFileRestorationJournal.Tests.ps1",
+        "tests/pester/OneCDatabaseRestorationJournal.Tests.ps1", "tests/pester/OneCNativeRecoveryGeneration.Tests.ps1", "tests/pester/EnterpriseOwnedRelease.Tests.ps1", "tests/pester/DevBranchMutationAdmission.Tests.ps1", "tests/pester/InitializationDatabaseAdmission.Tests.ps1", "tests/pester/LifecycleDatabaseContinuation.Tests.ps1", "tests/pester/MasterDatabaseAdmission.Tests.ps1", "tests/pester/DevBranchVerificationAdmission.Tests.ps1", "tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1", "tests/pester/ConfigRepositoryLockReport.Tests.ps1", "tests/pester/ConfigRepositoryRootLock.Tests.ps1", "tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/LifecycleOperationLock.Tests.ps1", "tests/pester/LifecycleLockWaiting.Tests.ps1", "tests/pester/CompactItlRunner.Tests.ps1", "tests/pester/DesignerCompletion.Tests.ps1", "tests/pester/DesignerExportSharedBase.Tests.ps1", "tests/pester/DesignerMemoryGuard.Tests.ps1", "tests/pester/FormElementContext.Tests.ps1", "tests/pester/UiTools.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
       "id": "auxiliary-contours",
@@ -274,7 +287,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/YAxUnitVerification.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1", ".agents/skills/1c-workflow/references/yaxunit-tests.md"],
-      "tests": ["tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/ToolingReadiness.Tests.ps1"]
+      "tests": ["tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/ToolingReadiness.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
       "id": "tooling-readiness",
@@ -292,7 +305,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/VanessaAuthoring.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1", ".agents/skills/1c-workflow/references/vanessa-tests.md", ".agents/skills/1c-workflow/references/verification-suite-selection.md", ".agents/skills/1c-workflow/references/vanessa-authoring.md", ".agents/skills/1c-workflow/references/vanessa-recipes.md", ".agents/skills/1c-workflow/assets/vanessa-authoring-examples/*", ".agents/skills/1c-workflow/assets/vanessa-libraries/*", ".agents/skills/1c-workflow/assets/vanessa-service/*", ".agents/skills/itl-vanessa-ui-mcp/*", "scripts/build-vanessa-automation-patched.ps1", "scripts/vanessa-build-runtime.ps1", "scripts/run-vanessa-build-runtime.ps1", "third-party/vanessa-automation/*", "tests/fixtures/vanessa-nested-selection/*", "tests/fixtures/vanessa-row-criteria/*", "tests/fixtures/vanessa-client-code/*", "tests/fixtures/vanessa-testclient-ports/*"],
-      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VerificationAcceptedMaster.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaCleanupAdmission.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1"]
+      "tests": ["tests/pester/VerificationSelection.Tests.ps1", "tests/pester/VerificationAcceptedMaster.Tests.ps1", "tests/pester/YAxUnitVerification.Tests.ps1", "tests/pester/VanessaAuthoring.Tests.ps1", "tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaCleanupAdmission.Tests.ps1", "tests/pester/VanessaRunnerTopology.Tests.ps1", "tests/pester/DevBranchLifecycle.Tests.ps1", "tests/pester/VanessaArtifactIntegration.Tests.ps1", "tests/pester/VanessaAuthoringLint.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1", "tests/pester/VanessaPatchedArtifact.Tests.ps1", "tests/pester/VanessaBuildRuntime.Tests.ps1", "tests/pester/VanessaNestedSelection.Tests.ps1", "tests/pester/VanessaRowCriteria.Tests.ps1", "tests/pester/VanessaClientCode.Tests.ps1", "tests/pester/VanessaTestClientPorts.Tests.ps1", "tests/pester/VanessaDesignerAgent.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
       "id": "mcp-hosts",
@@ -301,7 +314,7 @@
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/McpConfig.Tests.ps1",
       "paths": [".agents/skills/1c-workflow/scripts/lib/agent-1c.mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1", ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1", ".agents/skills/1c-workflow/assets/ondemand-mcp/*", "tools/*"],
-      "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/OnDemandPostLoadScope.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1"]
+      "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/OnDemandPostLoadScope.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
       "id": "standalone-mcp-host",
@@ -358,6 +371,192 @@
       "tests": ["tests/pester/LocalQualityGate.Tests.ps1"]
     }
   ],
+  "semanticTargeting": {
+    "path": ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
+    "fallbackContract": "lifecycle",
+    "commonTests": ["tests/pester/Agent1cEntrypoint.Tests.ps1"],
+    "owners": {
+      "core": { "tests": ["tests/pester/DevBranchLifecycle.Tests.ps1"] },
+      "bootstrap": { "tests": ["tests/pester/BootstrapUpdate.Tests.ps1"] },
+      "tooling": { "tests": ["tests/pester/ToolingReadiness.Tests.ps1"] },
+      "vanessa": { "tests": ["tests/pester/VanessaRuntimeCleanup.Tests.ps1", "tests/pester/VanessaCleanupAdmission.Tests.ps1", "tests/pester/VanessaInteractiveProfile.Tests.ps1"] },
+      "yaxunit": { "tests": ["tests/pester/YAxUnitVerification.Tests.ps1"] },
+      "mcp": { "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1"] },
+      "clients": { "tests": ["tests/pester/AiRulesClients.Tests.ps1", "tests/pester/ClientAdaptersAndModes.Tests.ps1"] },
+      "auxiliary": { "tests": ["tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1"] },
+      "refresh": { "tests": ["tests/pester/BranchSeedRefreshLite.Tests.ps1"] },
+      "verification": { "tests": ["tests/pester/VerificationSelection.Tests.ps1"] },
+      "ui": { "tests": ["tests/pester/UiTools.Tests.ps1"] },
+      "release": { "tests": ["tests/pester/ReleaseGate.Tests.ps1"] },
+      "source-mode": { "tests": ["tests/pester/SourceRepositoryUpdateMode.Tests.ps1"] }
+    },
+    "actionOwners": {
+      "help": "core",
+      "doctor": "core",
+      "validate": "core",
+      "validate-test-classification": "verification",
+      "check-tools": "tooling",
+      "list-platforms": "tooling",
+      "detect-web-publication": "core",
+      "detect-apache": "core",
+      "configure-web-publication": "core",
+      "publish-dev-branch": "core",
+      "install-vanessa-automation": "vanessa",
+      "install-yaxunit": "yaxunit",
+      "repair-dev-branch-tooling": "tooling",
+      "begin-verification-repair": "verification",
+      "vibecoding1c-mcp-setup": "mcp",
+      "vibecoding1c-mcp-update": "mcp",
+      "vibecoding1c-mcp-status": "mcp",
+      "context-benchmark": "clients",
+      "vibecoding1c-mcp-start": "mcp",
+      "vibecoding1c-mcp-stop": "mcp",
+      "vibecoding1c-mcp-select": "mcp",
+      "vibecoding1c-mcp-refresh-registry": "mcp",
+      "vibecoding1c-mcp-rotate-keys": "mcp",
+      "vibecoding1c-mcp-ensure-model": "mcp",
+      "vibecoding1c-mcp-write-client-config": "mcp",
+      "update-workflow": "bootstrap",
+      "update-ai-rules": "clients",
+      "itl-litemode": "clients",
+      "itl-repository-mode": "source-mode",
+      "itl-switch-client": "clients",
+      "update1cbase": "core",
+      "loadfrom1cbase": "core",
+      "getconfigfiles": "core",
+      "deploy-and-test": "verification",
+      "status": "core",
+      "configure-auxiliary-contour": "auxiliary",
+      "status-auxiliary-contours": "auxiliary",
+      "update-auxiliary-contour": "auxiliary",
+      "dump-auxiliary-contour": "auxiliary",
+      "check-auxiliary-contour": "auxiliary",
+      "export-auxiliary-contour-result": "auxiliary",
+      "reset-auxiliary-contour": "auxiliary",
+      "cleanup-interrupted-vanessa-run": "vanessa",
+      "stop-dev-branch-test-clients": "vanessa",
+      "start-vanessa-profile": "vanessa",
+      "status-vanessa-profile": "vanessa",
+      "stop-vanessa-profile": "vanessa",
+      "check-dev-branch": "core",
+      "verify-dev-branch": "verification",
+      "init-project": "bootstrap",
+      "install-agent-browser": "ui",
+      "install-windows-mcp": "ui",
+      "install-ui-tools": "ui",
+      "ui-tools-status": "ui",
+      "sync-master": "refresh",
+      "get-dev-workspace-plan": "core",
+      "get-dev-workspace-close-plan": "core",
+      "set-dev-workspace-deregistration": "core",
+      "adopt-dev-worktree": "core",
+      "initialize-dev-branch-runtime": "tooling",
+      "new-dev-branch": "core",
+      "new-extension-dev-branch": "core",
+      "fork-dev-branch": "core",
+      "sync-dev-branches": "refresh",
+      "configure-dev-branch-unsafe-action-protection": "core",
+      "init-dev-branch-extension": "core",
+      "set-dev-branch-extension": "core",
+      "dump-dev-branch-extension": "core",
+      "activate-dev-branch-context": "core",
+      "update-dev-branch-base": "refresh",
+      "refresh-dev-branch": "refresh",
+      "refresh-dev-branch-lite": "refresh",
+      "refresh-all-dev-branches": "refresh",
+      "reset-dev-branch": "refresh",
+      "lock-config-repository-objects": "core",
+      "export-dev-branch-result": "core",
+      "close-dev-branch": "core",
+      "switch-master": "core",
+      "switch-dev-branch": "core",
+      "list-dev-branches": "core",
+      "release-e2e-snapshot": "release",
+      "release-e2e-restore": "release",
+      "release-e2e-prepare-ondemand": "release",
+      "release-e2e-config-roundtrip": "release",
+      "release-e2e-config-repository-lock-roundtrip": "release",
+      "release-e2e-extension-smoke": "release"
+    },
+    "parameterOwners": {
+      "AuxiliaryContourName": "auxiliary",
+      "AuxiliaryDisplayName": "auxiliary",
+      "AuxiliaryBaseMode": "auxiliary",
+      "AuxiliarySourceMode": "auxiliary",
+      "AuxiliaryConfigurationPath": "auxiliary",
+      "AuxiliaryInfoBaseKind": "auxiliary",
+      "AuxiliaryInfoBasePath": "auxiliary",
+      "AuxiliaryInfoBaseUser": "auxiliary",
+      "AuxiliaryPasswordMode": "auxiliary",
+      "AuxiliaryIncludePrimaryTests": "auxiliary",
+      "AuxiliaryTestsPath": "auxiliary",
+      "AuxiliaryExtension": "auxiliary",
+      "AuxiliaryMcpRoctup": "auxiliary",
+      "AuxiliaryMcpVanessaUi": "auxiliary",
+      "AuxiliaryTestSet": "auxiliary",
+      "VanessaFeaturePath": "vanessa",
+      "VanessaProfileOwnerId": "vanessa",
+      "VanessaFilterTags": "vanessa",
+      "VanessaTestPort": "vanessa",
+      "VanessaMcpPort": "vanessa",
+      "InterruptedVanessaInfoBasePath": "vanessa",
+      "InterruptedVanessaRunParamsPath": "vanessa",
+      "InterruptedVanessaTestPorts": "vanessa",
+      "McpDistributionPath": "mcp",
+      "McpScope": "mcp",
+      "McpServerId": "mcp",
+      "McpProvider": "mcp",
+      "McpConfigId": "mcp",
+      "McpHostId": "mcp",
+      "McpLocalScope": "mcp",
+      "RoctupMcpPort": "mcp",
+      "InternalOnDemandOperation": "mcp",
+      "InternalOnDemandFamily": "mcp",
+      "InternalOnDemandInstanceId": "mcp",
+      "InternalOnDemandCatalogSha256": "mcp",
+      "InternalOnDemandAuxiliaryContour": "mcp",
+      "InternalOnDemandReplacementInstanceId": "mcp",
+      "InternalOnDemandExpectedPid": "mcp",
+      "InternalOnDemandExpectedPort": "mcp",
+      "ReleaseAiRulesSource": "release",
+      "ReleaseSnapshotPath": "release",
+      "PreserveReleaseSnapshotApplicationProof": "release",
+      "ConfigLoadMode": "release",
+      "AgentTarget": "clients",
+      "AgentModel": "clients",
+      "Client": "clients",
+      "BenchmarkMode": "clients",
+      "BenchmarkModel": "clients",
+      "BenchmarkVariant": "clients",
+      "BenchmarkLabel": "clients",
+      "BenchmarkSessionId": "clients",
+      "BenchmarkBaseline": "clients",
+      "BenchmarkCandidate": "clients",
+      "VerificationTrigger": "verification",
+      "ExplicitVerificationComponent": "verification",
+      "RepairSessionId": "verification"
+    },
+    "functionOwners": {
+      "Normalize-Agent1cFullPathText": "core",
+      "Resolve-Agent1cFullPath": "core",
+      "Add-Agent1cReexecArgument": "core",
+      "Get-Agent1cReexecArguments": "core"
+    },
+    "selectiveNodes": {
+      "actions": {
+        "update-auxiliary-contour": {
+          "owners": ["auxiliary"],
+          "probes": ["auxiliary-update-readonly"]
+        },
+        "vibecoding1c-mcp-status": {
+          "owners": ["mcp"],
+          "probes": ["mcp-status-groups"]
+        }
+      },
+      "parameters": {},
+      "functions": {}
+    }
+  },
   "lifecycleActions": {
     "journey": [
       "check-dev-branch", "close-dev-branch", "export-dev-branch-result", "fork-dev-branch", "init-dev-branch-extension", "init-project", "lock-config-repository-objects", "new-dev-branch", "new-extension-dev-branch", "refresh-all-dev-branches", "refresh-dev-branch", "refresh-dev-branch-lite", "reset-dev-branch", "status", "sync-dev-branches", "sync-master", "update-workflow"

@@ -32,4 +32,4 @@ Global `1c-templates-mcp` `remember`/`recall` is shared across projects, not pro
 
 Use pinned `update-ai-rules`, `update-workflow`, and `/itl-refresh`; never hidden `/installmcp`, `/updatemcp`, `/checkmcp`, or `/updaterules`. Use ITL MCP helper requests. Qualify remote `vibecoding1c` and branch-local MCP separately; route deferred discovery, including Codex `ALL_TOOLS`, to `1c-workflow/references/mcp.md`. On-demand MCP is diagnostic, not a gate. Test `rtk rewrite` on the lifecycle helper; exclude only observed rewrites, then restart. Preserve `.agent-1c/event-log-baselines/*.json` and Vanessa `TESTMANAGER -> TESTCLIENT`. Search hygiene: ignore secrets/runtime, preserve user config; inspect only named runs under `.agent-1c/runs/` or `build/test-results/`.
 
-1C launches use admission. On `session-capacity`, finish/close owned work before retry; never change limits or kill foreign PIDs.
+Before incompatible database work, either retain owned activity and postpone, or finish it through its exact owner; never await its idle timeout. Let bounded jobs finish or cancel them through their owner. Never release foreign work.

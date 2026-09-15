@@ -37,6 +37,7 @@
         param($operation)
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation
         $admission = $script:DevBranchMutationDatabaseAdmission
+        $admission.accessMode | Should -Be $(if ($operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) { 'functional-test' } else { 'mutation-exclusive' })
         $admission.plan.bases | Should -HaveCount 4
         $admission.plan.bases.path | Should -Contain $auxPath
         $admission.plan.bases.path | Should -Contain $checkState.vanessaServiceInfoBasePath
@@ -55,16 +56,16 @@
         Complete-ItlDatabaseAccessHost $next | Out-Null
     }
 
-    It 'allows ROCTUP reads during one test run and requires exclusive mode before mutation' {
+    It 'allows ROCTUP reads during one functional test and requires mutation-exclusive mode before mutation' {
         Mock Invoke-DevBranchVanessaRuntimeRelease { throw 'cleanup must follow the exclusive transition' }
         $reader = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});accessMode='shared-read';owner=@{operation='roctup-read'};timeout=0}
         try {
             $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation check-dev-branch
-            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'test-run'
-            $otherTest = @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});accessMode='test-run';owner=@{operation='other-tests'};timeout=0}
+            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'functional-test'
+            $otherTest = @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});accessMode='functional-test';owner=@{operation='other-tests'};timeout=0}
             { Start-ItlDatabaseAccessHost -Python $python -Request $otherTest } | Should -Throw '*WAIT_TIMEOUT*'
             { Stop-DevBranchRuntimeBeforeInfobaseMutation -State $checkState -Reason 'fixture mutation' } | Should -Throw '*WAIT_TIMEOUT*'
-            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'test-run'
+            $script:DevBranchMutationDatabaseAdmission.accessMode | Should -Be 'functional-test'
             Should -Invoke Invoke-Designer -Times 0
             Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0 -Exactly
         } finally {
@@ -74,13 +75,25 @@
         }
     }
 
-    It 'changes the same check ticket to exclusive preparation and back to test mode' {
+    It 'changes the same check ticket to mutation-exclusive preparation and back to functional-test mode' {
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation verify-dev-branch
         $ticket = $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket
-        (Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive).accessMode | Should -Be 'exclusive'
+        $token = $script:DevBranchMutationDatabaseAdmission.owner.proof.token
+        (Set-ItlDevBranchDatabaseAccessMode -AccessMode mutation-exclusive).accessMode | Should -Be 'mutation-exclusive'
         $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket | Should -Be $ticket
-        (Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run).accessMode | Should -Be 'test-run'
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.token | Should -Be $token
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.accessMode | Should -Be 'mutation-exclusive'
+        $environmentProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process') | ConvertFrom-Json
+        $environmentProof.ticket | Should -Be $ticket
+        $environmentProof.token | Should -Be $token
+        $environmentProof.accessMode | Should -Be 'mutation-exclusive'
+        $child = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$checkState.devBranchInfoBasePath});inherited=$environmentProof;accessMode='functional-test';owner=@{operation='inherited-verifier'};timeout=0}
+        Complete-ItlDatabaseAccessHost -Owner $child | Out-Null
+        (Set-ItlDevBranchDatabaseAccessMode -AccessMode functional-test).accessMode | Should -Be 'functional-test'
         $script:DevBranchMutationDatabaseAdmission.owner.proof.ticket | Should -Be $ticket
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.token | Should -Be $token
+        $script:DevBranchMutationDatabaseAdmission.owner.proof.accessMode | Should -Be 'functional-test'
+        ([Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process') | ConvertFrom-Json).accessMode | Should -Be 'functional-test'
     }
 
     It 'reserves primary and both service generations for <operation> without reading test profiles' -TestCases @(

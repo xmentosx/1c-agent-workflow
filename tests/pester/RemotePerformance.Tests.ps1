@@ -41,14 +41,64 @@ Describe 'Native database access pipe owner' {
     }
     AfterEach { Close-ItlDatabaseAccessHost -Owner $owner }
 
+    It 'rejects a missing or mismatched host proof mode' {
+        { Confirm-ItlDatabaseAccessHostMode -Proof ([pscustomobject]@{}) -RequestedMode 'functional-test' } |
+            Should -Throw '*INFOBASE_ACCESS_HOST_MODE_UNCONFIRMED*'
+        { Confirm-ItlDatabaseAccessHostMode -Proof ([pscustomobject]@{accessMode='shared-read'}) -RequestedMode 'functional-test' } |
+            Should -Throw '*INFOBASE_ACCESS_HOST_MODE_UNCONFIRMED*'
+        Confirm-ItlDatabaseAccessHostMode -Proof ([pscustomobject]@{accessMode='functional-test'}) -RequestedMode 'functional-test' |
+            Should -Be 'functional-test'
+    }
+
+    It 'updates proof atomically only after a matching transition confirmation' {
+        $proof = [pscustomobject]@{ticket=('a' * 32);token=('b' * 64);accessMode='functional-test'}
+        $local = [pscustomobject]@{accessMode='functional-test';proof=$proof;public=[pscustomobject]@{accessMode='functional-test'}}
+        { Confirm-ItlDatabaseAccessTransition -Owner $local -Event ([pscustomobject]@{accessMode='shared-read'}) -RequestedMode 'mutation-exclusive' } |
+            Should -Throw '*INFOBASE_ACCESS_TRANSITION_UNCONFIRMED*'
+        $local.accessMode | Should -Be 'functional-test'
+        $local.proof.accessMode | Should -Be 'functional-test'
+        $local.public.accessMode | Should -Be 'functional-test'
+        $missingPublic = [pscustomobject]@{accessMode='functional-test';proof=$proof;public=$null}
+        { Confirm-ItlDatabaseAccessTransition -Owner $missingPublic -Event ([pscustomobject]@{accessMode='mutation-exclusive'}) -RequestedMode 'mutation-exclusive' } |
+            Should -Throw '*INFOBASE_ACCESS_HOST_PUBLIC_INVALID*'
+        $missingPublic.accessMode | Should -Be 'functional-test'
+        $missingPublic.proof.accessMode | Should -Be 'functional-test'
+        Confirm-ItlDatabaseAccessTransition -Owner $local -Event ([pscustomobject]@{accessMode='mutation-exclusive'}) -RequestedMode 'mutation-exclusive' | Out-Null
+        $local.accessMode | Should -Be 'mutation-exclusive'
+        $local.proof.accessMode | Should -Be 'mutation-exclusive'
+        $local.public.accessMode | Should -Be 'mutation-exclusive'
+        $local.proof.ticket | Should -Be ('a' * 32)
+        $local.proof.token | Should -Be ('b' * 64)
+    }
+
     It 'holds the whole native operation and admits a second owner only after cleanup' {
         $owner = Start-ItlDatabaseAccessHost -Request $request
         $owner.proof.ticket | Should -Match '^[a-f0-9]{32}$'
+        $owner.accessMode | Should -Be 'mutation-exclusive'
+        $owner.proof.accessMode | Should -Be 'mutation-exclusive'
         ($owner.public | ConvertTo-Json -Depth 20) | Should -Not -Match 'token'
         { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
         (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
         $owner = Start-ItlDatabaseAccessHost -Request $request
         (Complete-ItlDatabaseAccessHost -Owner $owner).status | Should -Be 'released'
+    }
+
+    It 'normalizes legacy wire modes but accepts only canonical transitions' {
+        foreach ($case in @(
+            @{wire='exclusive';canonical='mutation-exclusive'},
+            @{wire='test-run';canonical='functional-test'},
+            @{wire='measurement-exclusive';canonical='measurement-exclusive'}
+        )) {
+            $candidate = $request | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+            $candidate | Add-Member -NotePropertyName accessMode -NotePropertyValue $case.wire
+            $owner = Start-ItlDatabaseAccessHost -Request $candidate
+            try {
+                $owner.accessMode | Should -Be $case.canonical
+                $candidate.accessMode | Should -Be $case.canonical
+                { Set-ItlDatabaseAccessMode -Owner $owner -AccessMode exclusive } | Should -Throw
+                (Complete-ItlDatabaseAccessHost -Owner $owner).accessMode | Should -Be $case.canonical
+            } finally { Close-ItlDatabaseAccessHost -Owner $owner; $owner = $null }
+        }
     }
 
     It 'inherits a parent token without releasing the parent database reservation' {

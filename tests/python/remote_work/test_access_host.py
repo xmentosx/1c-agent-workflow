@@ -123,17 +123,84 @@ class AccessHostTests(unittest.TestCase):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             pass
 
-    def test_host_transitions_the_same_test_ticket_to_exclusive_and_back(self):
-        child, received = self.start(accessMode="test-run")
+    def test_host_accepts_only_the_exact_diagnostic_on_demand_release_action(self):
+        instance = "c" * 32
+        owner = {"project": "проект с пробелом", "operation": "ondemand-roctup",
+                 "requestId": instance, "lifecycle": "on-demand",
+                 "releaseAction": {"kind": "finish-owned-on-demand", "family": "roctup",
+                                   "instanceId": instance, "tool": "finish_database_access"}}
+        child, received = self.start(owner=owner)
         admitted = self.next(received, "admitted")
-        self.assertEqual("test-run", admitted["owner"]["accessMode"])
-        self.send(child, {"event":"transition", "accessMode":"exclusive", "timeout":1})
-        self.assertEqual("exclusive", self.next(received, "transitioned")["accessMode"])
-        self.send(child, {"event":"transition", "accessMode":"test-run"})
-        self.assertEqual("test-run", self.next(received, "transitioned")["accessMode"])
-        self.send(child, {"event":"release", "cleanupErrors":[]})
-        self.next(received, "released")
+        self.assertEqual(owner["releaseAction"], admitted["owner"]["owner"]["releaseAction"])
+        self.send(child, {"event": "release", "cleanupErrors": []})
+        self.assertEqual("released", self.next(received, "released")["status"])
         self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
+        tainted = {**owner, "releaseAction": {**owner["releaseAction"], "command": "arbitrary-command"}}
+        rejected, rejected_events = self.start(owner=tainted)
+        error = self.next(rejected_events, "error")
+        self.assertIn("INFOBASE_ACCESS_HOST_REQUEST_INVALID", error["error"])
+        self.assertNotIn("arbitrary-command", json.dumps(error))
+        self.assertNotEqual(0, rejected.wait(timeout=5))
+
+    def test_host_transitions_the_same_functional_ticket_to_mutation_and_back(self):
+        child, received = self.start(accessMode="functional-test")
+        admitted = self.next(received, "admitted")
+        self.assertEqual("functional-test", admitted["owner"]["accessMode"])
+        self.assertEqual("functional-test", admitted["proof"]["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"mutation-exclusive", "timeout":1})
+        self.assertEqual("mutation-exclusive", self.next(received, "transitioned")["accessMode"])
+        self.send(child, {"event":"transition", "accessMode":"functional-test"})
+        self.assertEqual("functional-test", self.next(received, "transitioned")["accessMode"])
+        self.send(child, {"event":"release", "cleanupErrors":[]})
+        self.assertEqual("functional-test", self.next(received, "released")["accessMode"])
+        self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
+    def test_host_normalizes_legacy_wire_modes_fail_closed(self):
+        for legacy, canonical in ((None, "mutation-exclusive"), ("exclusive", "mutation-exclusive"),
+                                  ("test-run", "functional-test")):
+            with self.subTest(legacy=legacy):
+                values = {} if legacy is None else {"accessMode": legacy}
+                child, received = self.start(**values)
+                admitted = self.next(received, "admitted")
+                self.assertEqual(canonical, admitted["owner"]["accessMode"])
+                self.assertEqual(canonical, admitted["proof"]["accessMode"])
+                self.send(child, {"event":"release", "cleanupErrors":[]})
+                self.assertEqual(canonical, self.next(received, "released")["accessMode"])
+                self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+        child, received = self.start(accessMode="legacy-exclusive")
+        self.assertIn("MODE_INVALID", self.next(received, "error")["error"])
+        self.assertEqual(1, child.wait(timeout=5))
+
+    def test_source_sync_observation_keeps_pin_until_explicit_consume_ack(self):
+        owner = {"project": str(self.root), "operation": "sync-dev-branches", "parentPid": os.getpid()}
+        record = {"schemaVersion": 2, "groupId": uuid.uuid4().hex, "stepId": uuid.uuid4().hex,
+                  "step": "load", "status": "running", "project": str(self.root), "member": "primary",
+                  "members": [{"name": "primary", "project": str(self.root), "target": self.base}],
+                  "sourceFingerprint": "v2|git-tree-sha256|" + "a" * 64,
+                  "sourceCommit": "b" * 40, "exportPath": "src/cf",
+                  "contentKind": "configuration", "extensionName": "", "result": {}}
+        producer, producer_events = self.start(owner=owner, nativeJournalProtocol=1)
+        ticket = self.next(producer_events, "admitted")["proof"]["ticket"]
+        self.send(producer, {"event": "source-sync-phase", "record": record})
+        self.next(producer_events, "source-sync-phase-recorded")
+        self.send(producer, {"event": "release", "cleanupErrors": []})
+        self.next(producer_events, "released")
+        producer.wait(timeout=5)
+        coordinator = Coordinator(self.coordinator)
+        self.assertIn(ticket, coordinator._read_pins()["entries"])
+        consumer, consumer_events = self.start(owner=owner, nativeJournalProtocol=1)
+        self.next(consumer_events, "admitted")
+        self.send(consumer, {"event": "source-sync-phase-read", "ticket": ticket, "record": record})
+        self.next(consumer_events, "source-sync-phase-observed")
+        self.assertIn(ticket, coordinator._read_pins()["entries"])
+        self.send(consumer, {"event": "source-sync-phase-consumed", "ticket": ticket,
+                             "stepId": record["stepId"]})
+        self.next(consumer_events, "source-sync-phase-consumed")
+        self.assertNotIn(ticket, coordinator._read_pins()["entries"])
+        self.send(consumer, {"event": "release", "cleanupErrors": []})
+        self.next(consumer_events, "released")
+        consumer.wait(timeout=5)
 
     def test_portable_parent_is_inherited_and_never_released_by_native_child(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
@@ -145,14 +212,36 @@ class AccessHostTests(unittest.TestCase):
             self.assertTrue(Coordinator(self.coordinator).alive(parent.record["ticket"]))
             self.assertEqual("running", Coordinator(self.coordinator).records()[0]["status"])
 
+    def test_measurement_root_runs_an_inherited_mutation_phase_and_stays_externally_exclusive(self):
+        with Lease(self.coordinator, [self.base], {}, timeout=0, access_mode="measurement-exclusive") as parent:
+            child, received = self.start(inherited=parent.proof(), accessMode="mutation-exclusive")
+            admitted = self.next(received, "admitted")
+            self.assertEqual(parent.record["ticket"], admitted["proof"]["ticket"])
+            self.assertEqual("mutation-exclusive", admitted["proof"]["accessMode"])
+            self.assertNotIn("accessModeV2", json.dumps(admitted))
+            raw_participant = next(iter(Coordinator(self.coordinator).records()[0]["participants"].values()))
+            self.assertEqual("exclusive", raw_participant["accessMode"])
+            self.assertEqual("mutation-exclusive", raw_participant["accessModeV2"])
+            competitor, competitor_events = self.start(accessMode="shared-read", timeout=0)
+            waiting = self.next(competitor_events, "waiting")
+            self.assertEqual("measurement-exclusive", waiting["blockers"][0]["accessMode"])
+            self.assertIn("WAIT_TIMEOUT", self.next(competitor_events, "error")["error"])
+            self.assertEqual(1, competitor.wait(timeout=5))
+            self.send(child, {"event":"release", "cleanupErrors":[]})
+            self.assertTrue(self.next(received, "released")["inherited"])
+            self.assertEqual(0, child.wait(timeout=5), child.stderr.read())
+
     def test_waiter_cancel_starts_no_operation_and_does_not_keep_ownership(self):
-        with Lease(self.coordinator, [self.base], {}, timeout=0):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start()
-            self.assertNotIn("token", json.dumps(self.next(received, "waiting")))
+            waiting = self.next(received, "waiting")
+            self.assertNotIn("token", json.dumps(waiting))
             self.send(child, {"event":"cancel"})
             self.assertIn("CANCELLED", self.next(received, "error")["error"])
             self.assertEqual(1, child.wait(timeout=5))
-        self.assertEqual(["released", "cancelled"], [r["status"] for r in Coordinator(self.coordinator).records()])
+        coordinator = Coordinator(self.coordinator)
+        self.assertEqual("released", coordinator.record(parent.record["ticket"])["status"])
+        self.assertEqual("cancelled", coordinator.record(waiting["ticket"])["status"])
 
     def test_parent_disconnect_after_admission_retains_recovery_debt(self):
         child, received = self.start()
@@ -166,13 +255,15 @@ class AccessHostTests(unittest.TestCase):
                 self.fail("EOF is not proof of stopped database work")
 
     def test_parent_disconnect_while_waiting_cancels_only_waiter(self):
-        with Lease(self.coordinator, [self.base], {}, timeout=0):
+        with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:
             child, received = self.start()
-            self.next(received, "waiting")
+            waiting = self.next(received, "waiting")
             child.stdin.close()
             self.next(received, "error")
             self.assertEqual(1, child.wait(timeout=5))
-            self.assertEqual(["running", "cancelled"], [r["status"] for r in Coordinator(self.coordinator).records()])
+            coordinator = Coordinator(self.coordinator)
+            self.assertEqual("running", coordinator.record(parent.record["ticket"])["status"])
+            self.assertEqual("cancelled", coordinator.record(waiting["ticket"])["status"])
 
     def test_unproven_cleanup_and_cancel_after_admission_retain_debt(self):
         for control in ({"event":"release", "cleanupErrors":["owned server work unproven"]}, {"event":"cancel"}):
@@ -204,11 +295,11 @@ class AccessHostTests(unittest.TestCase):
     def test_release_before_admission_is_rejected(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0):
             child, received = self.start()
-            self.next(received, "waiting")
+            waiting = self.next(received, "waiting")
             self.send(child, {"event":"release", "cleanupErrors":[]})
             self.next(received, "error")
             self.assertEqual(1, child.wait(timeout=5))
-        self.assertEqual("cancelled", Coordinator(self.coordinator).records()[-1]["status"])
+        self.assertEqual("cancelled", Coordinator(self.coordinator).record(waiting["ticket"])["status"])
 
     def test_invalid_inheritance_exits_without_buffered_stdin_shutdown_failure(self):
         with Lease(self.coordinator, [self.base], {}, timeout=0) as parent:

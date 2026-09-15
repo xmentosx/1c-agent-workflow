@@ -592,6 +592,10 @@ if ($Case -eq 'database ownership protocol') {
     $preparation = [pscustomobject]@{operation=$Action;plan=[pscustomobject]@{target=$base;bases=@($base)}
         settings=[pscustomobject]@{coordinator=(Join-Path $ProjectRoot 'Очередь');python=(Get-Command python -CommandType Application | Select-Object -First 1).Source;waitTimeoutSeconds=0}}
     $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $Action -Preparation $preparation
+    [IO.File]::WriteAllText(
+        (Join-Path $ProjectRoot 'admission-ticket.txt'),
+        [string]$script:DevBranchMutationDatabaseAdmission.owner.public.ticket,
+        [Text.UTF8Encoding]::new($false))
 }
 Enter-Agent1cLifecycleOperation -RequestedAction $Action
 try {
@@ -624,8 +628,12 @@ try {
             $result.combinedText | Should -Not -Match "CHILD_BODY_MUST_NOT_RUN"
             if ($Case -eq 'database ownership protocol') {
                 $result.combinedText | Should -Match 'DatabaseContinuationProtocol'
-                $ticket = Get-ChildItem -LiteralPath (Join-Path $tempRoot 'Очередь/tickets') -Filter '*.json' |
-                    ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw -Encoding UTF8 | ConvertFrom-Json }
+                $ticketId = [IO.File]::ReadAllText((Join-Path $tempRoot 'admission-ticket.txt'), [Text.Encoding]::UTF8)
+                $activeTicketPath = Join-Path $tempRoot ("Очередь/tickets/{0}.json" -f $ticketId)
+                $archiveTicketPath = Join-Path $tempRoot ("Очередь/ticket-archive/{0}/{1}.json" -f $ticketId.Substring(0, 2), $ticketId)
+                $activeTicketPath | Should -Not -Exist
+                $archiveTicketPath | Should -Exist
+                $ticket = Get-Content -LiteralPath $archiveTicketPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $ticket.status | Should -Be 'released'
                 @($ticket.nativeJournal.producers.PSObject.Properties) | Should -HaveCount 1
             }

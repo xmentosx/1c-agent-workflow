@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 import test_runtime
 from itl_remote import access, execution, jobs, recovery_job, transport
@@ -168,6 +169,37 @@ class JobRecoveryTests(unittest.TestCase):
         inventory = transport.endpoint(self.spool, {"operation": "results", "id": "one"})
         self.assertTrue(any("recovery/" in f["path"] for f in inventory["files"]))
         self.assertFalse(any(f["path"].endswith("context.json") for f in inventory["files"]))
+
+    def test_multiple_recovery_plans_keep_independent_archive_pins_until_state_is_reconciled(self):
+        first = self.failed_measurement()
+        second = recovery_job.create_plan(self.spool, "one")
+        coordinator = access.Coordinator(first["coordinator"])
+        pins = coordinator._read_pins()["entries"][first["ticket"]]
+        self.assertEqual({"job-recovery-plan:" + first["planId"],
+                          "job-recovery-plan:" + second["planId"]}, set(pins))
+        self.assertTrue(self.run_plan(first)["baseReleased"])
+        self.assertEqual({"job-recovery-plan:" + second["planId"]},
+                         set(coordinator._read_pins()["entries"][first["ticket"]]))
+        self.assertTrue(self.run_plan(second)["baseReleased"])
+        self.assertNotIn(first["ticket"], coordinator._read_pins()["entries"])
+
+    def test_plan_pin_precedes_durable_plan_publication(self):
+        request, package = self.fixture.package(values={"recoveryCase": "normal"}, operations=["measure", "write-data"])
+        state, result = self.fixture.execute(package)
+        self.assertEqual("needs-attention", state["status"], state)
+        original_write = recovery_job.write_json
+        def crash_before_plan(path, value):
+            if "recovery-plans" in Path(path).parts:
+                raise RuntimeError("injected crash before plan publication")
+            return original_write(path, value)
+        with patch.object(recovery_job, "write_json", side_effect=crash_before_plan):
+            with self.assertRaisesRegex(RuntimeError, "before plan publication"):
+                recovery_job.create_plan(self.spool, "one")
+        coordinator = access.Coordinator(access.target_access(self.target)["coordinator"])
+        reasons = coordinator._read_pins()["entries"][state["access"]["ticket"]]
+        self.assertEqual(1, len(reasons))
+        self.assertTrue(next(iter(reasons)).startswith("job-recovery-plan:"))
+        self.assertEqual([], list((self.spool / "recovery-plans" / "one").glob("*.json")))
 
     def test_owned_work_is_quiesced_before_restoration(self):
         plan = self.failed_measurement()

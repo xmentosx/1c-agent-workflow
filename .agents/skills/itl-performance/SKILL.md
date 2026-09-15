@@ -17,6 +17,12 @@ Bind every product measurement to one explicit `target.infoBase` and report its 
 
 By default collect one warmup, three unprofiled timings and one separate profiled run. Honor explicit counts/modes. A non-repeatable operation gets one permitted execution; without safe reset, record the omitted profile/repetitions as incomplete rather than rerun it. Never empty shared caches for a “cold” run. Define coldness in the scenario and report its exact scope.
 
+## Database Access Handoff
+
+Before submitting an incompatible measurement, explicitly choose one path for any database phase this task already owns: continue that phase and postpone the measurement, or finish it through its owning surface. Use `finish_database_access` on the same ROCTUP/Vanessa facade, or the existing exact stop action for an owned interactive profile, and wait for confirmed release. Never release a foreign holder; report its owner as the blocker and leave its processes and lease intact. Idle timeout is an abandonment fallback, not a normal handoff.
+
+Once a bounded helper or measurement job starts, let it own access through completion. Observe its existing status, use its supported cancel only when cancellation is intended, and follow its recovery contract after interruption; do not call `finish_database_access` as a shortcut around a live job.
+
 ## Execute and interpret
 
 - Resolve local/remote host and target, announce the operation and authorization. Configure `dbgs` according to base topology: for a file base launch a job-owned local `dbgs` on the execution machine; for a server base use its configured shared server endpoint. Never launch a replacement server merely because a server endpoint is unreachable.

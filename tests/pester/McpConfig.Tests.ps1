@@ -1204,9 +1204,13 @@
             Set-Content -LiteralPath (Join-Path $localHome "state.json") -Encoding UTF8 -Value (($state | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
             [Environment]::SetEnvironmentVariable("VIBECODING1C_MCP_LOCAL_HOME", $localHome, "Process")
 
-            $output = & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action vibecoding1c-mcp-status 2>&1
-            $LASTEXITCODE | Should -Be 0
-            $statusText = ($output -join [Environment]::NewLine)
+            $probe = Invoke-Agent1cEntrypointProbe `
+                -ProbeId 'mcp-status-groups' `
+                -HelperPath $HelperPath `
+                -ProjectRoot $projectRoot `
+                -Action 'vibecoding1c-mcp-status'
+            $probe.exitCode | Should -Be 0
+            $statusText = $probe.combinedText
 
             $statusText | Should -Match "vibecoding1c MCP active servers: .*itl-1c-docs/local/stale"
             $statusText | Should -Match "vibecoding1c MCP skipped servers: .*templates/global/remote/missing-settings"
@@ -1347,6 +1351,45 @@ enabled = true
             $text | Should -Not -Match '"ONEC_AI_TOKEN"\s*:\s*"(?!<)[^"]+"'
             $text | Should -Not -Match '(?m)^\s*BOOKSTACK_TOKEN_(ID|SECRET)\s*=\s*(?!<)[^#\s]+'
             $text | Should -Not -Match '"BOOKSTACK_TOKEN_(ID|SECRET)"\s*:\s*"(?!<)[^"]+"'
+        }
+    }
+
+    It "consults the paired Vanessa source-build archive only for the exact active VAExtension pin" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("vanessa-ui-mcp-paired-selection-" + [guid]::NewGuid().ToString("N"))
+        $archivePath = Join-Path $tempRoot "unrelated-candidate.zip"
+        $previousArchive = [Environment]::GetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", "Process")
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $archivePath -Encoding UTF8 -Value "not a zip because it must not be consulted"
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $archivePath, "Process")
+            $selection = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Get-VanessaMcpArtifactLockEntry {
+                    return [pscustomobject]@{
+                        assetName = "VAExtension.1.29-itl-r13.cfe"
+                        version = "1.2.043.28"
+                        sha256 = ("a" * 64)
+                    }
+                }
+                $definition = [pscustomobject]@{lockKey="vaExtension"}
+                return [pscustomobject]@{
+                    hashMismatch = Save-VanessaMcpPairedSourceBuildArtifact -Definition $definition -AssetInfo ([pscustomobject]@{
+                        name="VAExtension.1.29-itl-r13.cfe";version="1.2.043.28";expectedSha256=("b" * 64)
+                    }) -TargetPath (Join-Path $tempRoot "hash-mismatch.cfe")
+                    nameMismatch = Save-VanessaMcpPairedSourceBuildArtifact -Definition $definition -AssetInfo ([pscustomobject]@{
+                        name="VAExtension.1.29.cfe";version="1.2.043.28";expectedSha256=("a" * 64)
+                    }) -TargetPath (Join-Path $tempRoot "name-mismatch.cfe")
+                }
+            }
+            $selection.hashMismatch | Should -BeFalse
+            $selection.nameMismatch | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $tempRoot "hash-mismatch.cfe") | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $tempRoot "name-mismatch.cfe") | Should -BeFalse
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE", $previousArchive, "Process")
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

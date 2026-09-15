@@ -88,8 +88,21 @@
             server = [ordered]@{ baseMode = "attached-readonly"; connectionRef = "SERVER_TEST"; configurationPath = "src/cf" }
         })
         try {
-            & $HelperPath -ProjectRoot $root -Action update-auxiliary-contour -AuxiliaryContourName server *> $null
-            $LASTEXITCODE | Should -Be 1
+            $attachedBase = Join-Path $root "Присоединенная база"
+            New-Item -ItemType Directory -Force -Path $attachedBase | Out-Null
+            Set-Content -LiteralPath (Join-Path $attachedBase "1Cv8.1CD") -Encoding ASCII -Value "fixture"
+            Set-Content -LiteralPath (Join-Path $root ".dev.env") -Encoding UTF8 -Value @(
+                "ITL_AUX_SERVER_TEST_INFOBASE_KIND=file"
+                "ITL_AUX_SERVER_TEST_INFOBASE_PATH=$attachedBase"
+            )
+            $probe = Invoke-Agent1cEntrypointProbe `
+                -ProbeId 'auxiliary-update-readonly' `
+                -HelperPath $HelperPath `
+                -ProjectRoot $root `
+                -Action 'update-auxiliary-contour' `
+                -Arguments @{ AuxiliaryContourName = 'server' }
+            $probe.exitCode | Should -Be 1
+            $probe.combinedText | Should -Match 'ITL_AUXILIARY_READONLY'
             Test-Path -LiteralPath (Join-Path $root ".agent-1c\auxiliary-contours") | Should -BeFalse
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }

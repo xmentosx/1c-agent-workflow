@@ -2570,7 +2570,7 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
     } else { '' }
     $reserve = if ($null -ne $continuation) { [string]$continuation.plan.serviceReserveGeneration } else { '' }
     $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
-    $accessMode = if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) { 'test-run' } else { 'exclusive' }
+    $accessMode = if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) { 'functional-test' } else { 'mutation-exclusive' }
     $plan | Add-Member -NotePropertyName accessMode -NotePropertyValue $accessMode -Force
     if ($null -ne $continuation) {
         if ($plan.target.kind -cne $continuation.plan.target.kind -or
@@ -2596,7 +2596,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
     $plan = $Preparation.plan
     $settings = $Preparation.settings
-    $planAccessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'exclusive')
+    $planAccessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'mutation-exclusive')
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
     $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1; accessMode = $planAccessMode
@@ -2674,7 +2674,7 @@ function Assert-ItlDevBranchMutationDatabaseAdmission {
 }
 
 function Set-ItlDevBranchDatabaseAccessMode {
-    param([ValidateSet('exclusive', 'test-run')][string]$AccessMode, [object]$State = $null)
+    param([ValidateSet('functional-test', 'mutation-exclusive')][string]$AccessMode, [object]$State = $null)
 
     $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
     $admission = if ($null -ne $variable) { $variable.Value } else { $null }
@@ -2682,7 +2682,7 @@ function Set-ItlDevBranchDatabaseAccessMode {
     if ($null -eq $State) { $State = Get-ItlDevBranchMutationDatabaseState -Operation $admission.operation }
     Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $State
     if ($admission.inherited) {
-        if ($AccessMode -eq 'exclusive' -and $admission.accessMode -ne 'exclusive') {
+        if ($AccessMode -eq 'mutation-exclusive' -and $admission.accessMode -ne 'mutation-exclusive') {
             throw 'INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT: borrowed shared access cannot authorize database mutation.'
         }
         return [pscustomobject]@{accessMode=$admission.accessMode;inherited=$true}
@@ -2691,6 +2691,7 @@ function Set-ItlDevBranchDatabaseAccessMode {
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $changed = Set-ItlDatabaseAccessMode -Owner $admission.owner -AccessMode $AccessMode -CancelPath $admission.cancelPath
     $admission.accessMode = [string]$changed.accessMode
+    [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($admission.owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
     return $changed
 }
 
@@ -2778,7 +2779,7 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
         }).Count -eq 0) {
             throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
         }
-        Set-ItlDevBranchDatabaseAccessMode -AccessMode exclusive -State $State | Out-Null
+        Set-ItlDevBranchDatabaseAccessMode -AccessMode mutation-exclusive -State $State | Out-Null
         $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `
             -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath; requiredSessions = 0; expectedChildRole = '' })
         $drainRecord.startAttempted = $true
@@ -11940,15 +11941,18 @@ function Invoke-BranchSourceSyncLoadPhase {
         [scriptblock]$Action, [switch]$ReplaySafe)
     if ($null -eq $Context) { return (& $Action) }
     $progress = $Context.member.loadProgress
+    $owner = $script:DevBranchMutationDatabaseAdmission.owner
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $completed = @($progress.completed | Where-Object { $_.name -ceq $Name })
     if ($completed.Count -gt 1) { throw 'SOURCE_SYNC_PHASE_DUPLICATE' }
-    if ($completed.Count -eq 1) { return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result) }
+    if ($completed.Count -eq 1) {
+        Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $completed[0].ticket -StepId $completed[0].stepId | Out-Null
+        return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result)
+    }
     $order = @('load','normalize','runtime','cursor','state')
     if (@($progress.completed).Count -ge $order.Count -or $order[@($progress.completed).Count] -cne $Name) {
         throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED'
     }
-    $owner = $script:DevBranchMutationDatabaseAdmission.owner
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     if ($null -ne $progress.pending) {
         $pending = $progress.pending
         if ($pending.record.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
@@ -11958,6 +11962,7 @@ function Invoke-BranchSourceSyncLoadPhase {
                 name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $observation.result)})
             $progress.pending = $null
             Save-BranchSourceSyncLoadProgress -Context $Context
+            Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $pending.ticket -StepId $pending.record.stepId | Out-Null
             return $observation.result
         }
         if (-not $observation.canStart -and -not ($ReplaySafe -and $observation.canResumeLocalSteps)) {
@@ -11995,6 +12000,7 @@ function Invoke-BranchSourceSyncLoadPhase {
         name=$Name;ticket=$owner.proof.ticket;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
     $progress.pending = $null
     Save-BranchSourceSyncLoadProgress -Context $Context
+    Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $owner.proof.ticket -StepId $record.stepId | Out-Null
     return $result
 }
 
@@ -14768,7 +14774,7 @@ function Invoke-DevBranchCheck {
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
     Update-DevBranchBase
-    Set-ItlDevBranchDatabaseAccessMode -AccessMode test-run -State $state | Out-Null
+    Set-ItlDevBranchDatabaseAccessMode -AccessMode functional-test -State $state | Out-Null
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `
