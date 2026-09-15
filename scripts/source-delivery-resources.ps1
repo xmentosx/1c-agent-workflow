@@ -364,6 +364,11 @@ function Invoke-DeliveryBoundedLsRemote {
         while ($true) {
             $remaining = [int]($deadline - [DateTime]::UtcNow).TotalMilliseconds
             if ($remaining -le 0) {
+                if (Get-Command Get-DeliveryDescendantProcessIdentities -ErrorAction SilentlyContinue) {
+                    foreach ($identity in @(Get-DeliveryDescendantProcessIdentities -RootProcessId $process.Id -RootCreatedAt $rootCreatedAt)) {
+                        $capturedDescendants["$([int]$identity.processId)|$(([DateTime]$identity.createdAt).ToUniversalTime().Ticks)"] = $identity
+                    }
+                }
                 if (Get-Command Stop-DeliveryProcessTree -ErrorAction SilentlyContinue) { Stop-DeliveryProcessTree -Process $process -TimeoutMilliseconds 5000 -CapturedDescendants @($capturedDescendants.Values) }
                 else { try { if (-not $process.HasExited) { $process.Kill() } } catch {} }
                 return [pscustomobject]@{ status='timed-out'; exitCode=-1; stdout=''; stderr="ls-remote exceeded ${TimeoutMilliseconds}ms" }
@@ -382,6 +387,11 @@ function Invoke-DeliveryBoundedLsRemote {
             catch { $readersComplete = $false; break }
         }
         if (-not $readersComplete) {
+            if (Get-Command Get-DeliveryDescendantProcessIdentities -ErrorAction SilentlyContinue) {
+                foreach ($identity in @(Get-DeliveryDescendantProcessIdentities -RootProcessId $process.Id -RootCreatedAt $rootCreatedAt)) {
+                    $capturedDescendants["$([int]$identity.processId)|$(([DateTime]$identity.createdAt).ToUniversalTime().Ticks)"] = $identity
+                }
+            }
             if (Get-Command Stop-DeliveryProcessTree -ErrorAction SilentlyContinue) { Stop-DeliveryProcessTree -Process $process -TimeoutMilliseconds 5000 -CapturedDescendants @($capturedDescendants.Values) }
             else { try { if (-not $process.HasExited) { $process.Kill() } } catch {} }
             return [pscustomobject]@{ status='timed-out'; exitCode=-1; stdout=''; stderr="ls-remote output drain exceeded ${TimeoutMilliseconds}ms" }

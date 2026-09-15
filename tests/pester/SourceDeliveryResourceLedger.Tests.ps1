@@ -422,22 +422,51 @@ Describe 'Delivery v3 resource ledger' {
     It 'bounds a real hanging publication probe and removes its descendant process' -Skip:($env:OS -ne 'Windows_NT') {
         $fixture = $null
         $childPid = 0
+        $hangerPath = ''
         $priorAllowProtocol = $env:GIT_ALLOW_PROTOCOL
         $priorPidPath = $env:ITL_DISPOSITION_CHILD_PID_PATH
         try {
             $fixture = New-DispositionRepository
-            $pidPath = Join-Path $TestDrive ('probe child ' + [guid]::NewGuid().ToString('N') + '.pid')
+            $pidPath = Join-Path $TestDrive ('probe child путь ' + [guid]::NewGuid().ToString('N') + '.pid')
+            $hangerPath = Join-Path ([IO.Path]::GetTempPath()) ('itl-hangprobe-' + [guid]::NewGuid().ToString('N') + '.exe')
+            $typeName = 'HangingPublicationProbe' + [guid]::NewGuid().ToString('N')
+            $source = @"
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Text;
+using System.Threading;
+public static class $typeName
+{
+    public static int Main(string[] args)
+    {
+        if (args != null && args.Length > 0 && args[0] == "--child")
+        {
+            while (true) { Thread.Sleep(1000); }
+        }
+        ProcessStartInfo childInfo = new ProcessStartInfo();
+        childInfo.FileName = Environment.GetCommandLineArgs()[0];
+        childInfo.Arguments = "--child";
+        childInfo.UseShellExecute = false;
+        childInfo.CreateNoWindow = true;
+        Process child = Process.Start(childInfo);
+        File.WriteAllText(Environment.GetEnvironmentVariable("ITL_DISPOSITION_CHILD_PID_PATH"), child.Id.ToString(), new UTF8Encoding(false));
+        while (true) { Thread.Sleep(1000); }
+    }
+}
+"@
+            $sourcePath = [IO.Path]::ChangeExtension($hangerPath, '.cs')
+            [IO.File]::WriteAllText($sourcePath, $source, [Text.UTF8Encoding]::new($true))
+            $compiler = @(
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'),
+                (Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\csc.exe')
+            ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+            $compiler | Should -Not -BeNullOrEmpty
+            & $compiler /nologo /target:exe "/out:$hangerPath" $sourcePath
+            $LASTEXITCODE | Should -Be 0
             $env:GIT_ALLOW_PROTOCOL = 'ext'
             $env:ITL_DISPOSITION_CHILD_PID_PATH = $pidPath
-            $childPayload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('while ($true) { Start-Sleep -Seconds 1 }'))
-            $probeBody = @'
-$child = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-EncodedCommand',$env:ITL_DISPOSITION_CHILD_PAYLOAD) -WindowStyle Hidden -PassThru
-[IO.File]::WriteAllText($env:ITL_DISPOSITION_CHILD_PID_PATH, [string]$child.Id, [Text.UTF8Encoding]::new($false))
-while ($true) { Start-Sleep -Seconds 1 }
-'@
-            $probePayload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($probeBody))
-            $env:ITL_DISPOSITION_CHILD_PAYLOAD = $childPayload
-            $script:Remote = "ext::powershell.exe -NoLogo -NoProfile -EncodedCommand $probePayload"
+            $script:Remote = "ext::cmd.exe /c $hangerPath"
 
             $watch = [Diagnostics.Stopwatch]::StartNew()
             $result = Invoke-DeliveryBoundedLsRemote -TimeoutMilliseconds 750
@@ -451,10 +480,15 @@ while ($true) { Start-Sleep -Seconds 1 }
             (Get-Process -Id $childPid -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         } finally {
             if ($childPid -gt 0) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+            Get-Process | Where-Object {
+                try { $hangerPath -and [string]$_.Path -eq [string]$hangerPath } catch { $false }
+            } | Stop-Process -Force -ErrorAction SilentlyContinue
             $env:GIT_ALLOW_PROTOCOL = $priorAllowProtocol
             $env:ITL_DISPOSITION_CHILD_PID_PATH = $priorPidPath
-            Remove-Item Env:\ITL_DISPOSITION_CHILD_PAYLOAD -ErrorAction SilentlyContinue
             $script:Remote = 'origin'
+            if ($hangerPath) {
+                Remove-Item -LiteralPath $hangerPath, ([IO.Path]::ChangeExtension($hangerPath, '.cs')) -Force -ErrorAction SilentlyContinue
+            }
             Remove-DispositionRepository -Fixture $fixture
         }
     }
