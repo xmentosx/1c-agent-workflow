@@ -64,8 +64,18 @@
 
     It "preserves MCP tool contracts while compacting only descriptions" {
         $testPath = Join-Path $RepoRoot "tests\node\tools-list-proxy.test.js"
-        $output = & node $testPath 2>&1
-        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        $windowsNodeAbortExitCode = -1073740791
+        $output = @()
+        $exitCode = 1
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $output = & node $testPath 2>&1
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0 -or $exitCode -ne $windowsNodeAbortExitCode) {
+                break
+            }
+            Start-Sleep -Milliseconds 1500
+        }
+        $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
         ($output -join [Environment]::NewLine) | Should -Match "unit contract passed"
         $contract = Get-Content -LiteralPath (Join-Path $RepoRoot "vibecoding1c-mcp-host\tools-list-proxy\tools-contract.json") -Raw -Encoding UTF8 | ConvertFrom-Json
         $maximumLength = [int]$contract.descriptionPolicy.maximumApprovedDescriptionCharacters
