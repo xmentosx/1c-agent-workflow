@@ -1119,7 +1119,7 @@ try {
                 throw "Release without a server stand must report server-reset as unverified."
             }
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
-            if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 2 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 2) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
+            if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 3 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 3) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
             if (-not [bool]$e2eSummary.onDemandVanessaSerializedHandoff) { throw "Release E2E did not prove serialized database handoff between concurrent Vanessa facades." }
             if ([int]$e2eSummary.maxConcurrentSessions -lt 1 -or [int]$e2eSummary.maxConcurrentSessions -gt 3) { throw "Release E2E did not prove maxConcurrentSessions=3; observed $([int]$e2eSummary.maxConcurrentSessions)." }
