@@ -87,6 +87,36 @@ Describe 'Delivery v3 resource ledger' {
         { Register-DeliveryGateResources -Plan ([pscustomobject]@{planId='partial'}) -CandidateRoot $root -Mode Release } | Should -Throw '*retainedResultArtifact*'
     }
 
+    It "keeps reusable Release checkpoint snapshots after a passed gate" {
+        $root = New-LedgerRepository
+        $output = Join-Path $root 'build/test-results/local'
+        $snapDir = Join-Path $root '.agent-1c\runs\release-e2e\workflow-release-e2e\snapshots'
+        New-Item -ItemType Directory -Path $output, $snapDir -Force | Out-Null
+        $snap = Join-Path $snapDir 'baseline.dt'
+        [IO.File]::WriteAllText($snap, 'owned snapshot', [Text.UTF8Encoding]::new($false))
+        $sha = Get-DeliveryFileSha256 -Path $snap
+        $reportPath = Join-Path $output 'release-e2e-summary.json'
+        $report = [ordered]@{
+            status = 'passed'
+            projectRoot = $root
+            worktreePath = $root
+            snapshots = [ordered]@{ baseline = [ordered]@{ path = $snap; sha256 = $sha } }
+            onDemandMcpEvidencePath = ''
+            artifactRetention = [ordered]@{
+                retainedResultArtifact = ''
+                retainedResultManifest = ''
+                retainedCapabilityManifest = ''
+            }
+        }
+        [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $output 'check-summary.json'), (@{ e2eReportPath = $reportPath } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+        Register-DeliveryGateResources -Plan ([pscustomobject]@{ planId = 'passed-release' }) -CandidateRoot $root -Mode Release | Out-Null
+        $snapshot = @((Read-DeliveryResourceLedger).resources | Where-Object kind -eq 'release-snapshot')
+        @($snapshot).Count | Should -Be 1
+        $snapshot[0].state | Should -Be 'retained'
+        Test-Path -LiteralPath $snap | Should -BeTrue
+    }
+
     It 'keeps failed-gate journaling best effort while successful-gate journaling remains mandatory' {
         $root=New-LedgerRepository
         Mock Register-DeliveryGateResourcesCore { throw 'ledger write unavailable' }
