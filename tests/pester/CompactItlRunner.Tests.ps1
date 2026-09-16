@@ -10,8 +10,19 @@
         $runnerText = Get-Content -LiteralPath $RunnerSource -Raw -Encoding UTF8
         $runnerText | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
         $runnerText | Should -Match '\$coreModuleRoot = \[IO\.Path\]::GetFullPath\(\(Join-Path \$PSHOME "Modules"\)\)'
-        $runnerText | Should -Match 'Start-Process[\s\S]*?-FilePath "powershell"'
+        $runnerText | Should -Match 'function Start-CompactHelperProcess'
+        $runnerText | Should -Match 'CreateJobObject'
+        $runnerText | Should -Match 'JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE'
+        $runnerText | Should -Match 'PROC_THREAD_ATTRIBUTE_JOB_LIST'
+        $runnerText | Should -Match 'CREATE_NEW_PROCESS_GROUP'
+        $runnerText | Should -Match 'SetConsoleCtrlHandler'
+        $runnerText | Should -Not -Match 'AssignProcessToJobObject'
+        $runnerText | Should -Match 'ITL_RUNNER_OPERATION_TIMEOUT_SECONDS'
         $runnerText | Should -Match 'finally \{[\s\S]*?\$env:PSModulePath = \$originalPowerShellModulePath'
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($RunnerSource, [ref]$tokens, [ref]$errors) | Out-Null
+        @($errors).Count | Should -Be 0
     }
 
     It "keeps Windows PowerShell built-in modules available when invoked from PowerShell Core" -Skip:(-not (Get-Command pwsh.exe -ErrorAction SilentlyContinue)) {
@@ -625,6 +636,163 @@ exit 0
         }
     }
 
+    It "fails a synchronously stale helper status when liveness is empty" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stale-empty-liveness-" + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='start'; stageDetail='Starting helper action refresh-dev-branch-lite'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 30
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch-lite")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.status-stale"
+            $summary.error | Should -Match '^RUNNER_STATUS_STALE\b'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_STATUS_STALE"
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "fails a live helper that exceeds the compact operation limit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-operation-timeout-" + [guid]::NewGuid().ToString("N"))
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        $fixturePid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+while ($true) {
+    $now = Get-Date
+    $payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='start'; stageDetail='Starting helper action refresh-dev-branch-lite'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "3", "Process")
+            $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch-lite")
+            $stopwatch.Stop()
+
+            $processResult.exitCode | Should -Not -Be 0
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 15
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "failed"
+            $summary.stage | Should -Be "runner.operation-timeout"
+            $summary.error | Should -Match '^RUNNER_OPERATION_TIMEOUT\b'
+            $status = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixturePid = [int]$status.pid
+            $status.errorCode | Should -Be "LIFECYCLE_OPERATION_TIMEOUT"
+            $status.liveness | Should -Be "failed-operation-timeout"
+            @(Get-Process -Id $fixturePid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            if ($fixturePid -gt 0) { Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "kills the helper process tree when the compact runner is aborted" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl compact job abort путь " + [guid]::NewGuid().ToString("N"))
+        $runnerProcess = $null
+        $helperPid = 0
+        $childPid = 0
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$utf8 = New-Object Text.UTF8Encoding $false
+$child = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 120") -WindowStyle Hidden -PassThru
+[IO.File]::WriteAllText((Join-Path $ProjectRoot "child-pid.txt"), ([string]$child.Id + [Environment]::NewLine), $utf8)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='start'; stageDetail='owned child running'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),$utf8)
+while ($true) { Start-Sleep -Seconds 1 }
+'@
+            $runnerStdout = Join-Path $tempRoot "runner.stdout.log"
+            $runnerStderr = Join-Path $tempRoot "runner.stderr.log"
+            $runnerPath = Join-Path $scriptRoot "run-itl-command.ps1"
+            $quoteArgument = {
+                param([string]$Value)
+                if ($Value -match '[\s"]') { return '"' + ($Value -replace '"', '\"') + '"' }
+                return $Value
+            }
+            $runnerProcess = Start-Process -FilePath "powershell" `
+                -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (& $quoteArgument $runnerPath), "--", "-Action", "refresh-dev-branch-lite") `
+                -WorkingDirectory $tempRoot `
+                -RedirectStandardOutput $runnerStdout `
+                -RedirectStandardError $runnerStderr `
+                -WindowStyle Hidden `
+                -PassThru
+            $deadline = (Get-Date).AddSeconds(20)
+            $statusPath = ""
+            while ((Get-Date) -lt $deadline) {
+                $statusFile = @(Get-ChildItem -LiteralPath (Join-Path $tempRoot ".agent-1c\runs") -Filter status.json -File -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1)
+                $childPidPath = Join-Path $tempRoot "child-pid.txt"
+                if ($statusFile.Count -eq 1 -and (Test-Path -LiteralPath $childPidPath -PathType Leaf)) {
+                    try { $status = Get-Content -LiteralPath $statusFile[0].FullName -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $status = $null }
+                    if ($null -ne $status -and [int]$status.pid -gt 0) {
+                        $statusPath = $statusFile[0].FullName
+                        $helperPid = [int]$status.pid
+                        $childPid = [int]((Get-Content -LiteralPath $childPidPath -Encoding UTF8 | Select-Object -First 1))
+                        break
+                    }
+                }
+                Start-Sleep -Milliseconds 100
+            }
+            $helperPid | Should -BeGreaterThan 0
+            $childPid | Should -BeGreaterThan 0
+            @(Get-Process -Id $helperPid -ErrorAction SilentlyContinue).Count | Should -Be 1
+            @(Get-Process -Id $childPid -ErrorAction SilentlyContinue).Count | Should -Be 1
+
+            Stop-Process -Id $runnerProcess.Id -Force
+            $runnerProcess.WaitForExit(10000) | Out-Null
+            $goneDeadline = (Get-Date).AddSeconds(10)
+            while ((Get-Date) -lt $goneDeadline) {
+                $helperAlive = @(Get-Process -Id $helperPid -ErrorAction SilentlyContinue).Count
+                $childAlive = @(Get-Process -Id $childPid -ErrorAction SilentlyContinue).Count
+                if ($helperAlive -eq 0 -and $childAlive -eq 0) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            @(Get-Process -Id $helperPid -ErrorAction SilentlyContinue).Count | Should -Be 0
+            @(Get-Process -Id $childPid -ErrorAction SilentlyContinue).Count | Should -Be 0
+        } finally {
+            if ($null -ne $runnerProcess -and -not $runnerProcess.HasExited) {
+                Stop-Process -Id $runnerProcess.Id -Force -ErrorAction SilentlyContinue
+            }
+            if ($helperPid -gt 0) { Stop-Process -Id $helperPid -Force -ErrorAction SilentlyContinue }
+            if ($childPid -gt 0) { Stop-Process -Id $childPid -Force -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "lets the helper own its published Designer stall budget before the runner watchdog fails" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-stall-owner-" + [guid]::NewGuid().ToString("N"))
         $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
@@ -828,7 +996,7 @@ $ignored = $false
 $signaled = $false
 if ($attached) {
     $ignored = [ItlCtrlC]::SetConsoleCtrlHandler([IntPtr]::Zero, $true)
-    $signaled = [ItlCtrlC]::GenerateConsoleCtrlEvent(0, 0)
+    $signaled = [ItlCtrlC]::GenerateConsoleCtrlEvent(0, [uint32]$HelperPid)
     Start-Sleep -Milliseconds 500
 }
 [ItlCtrlC]::FreeConsole() | Out-Null

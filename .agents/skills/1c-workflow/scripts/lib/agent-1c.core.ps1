@@ -341,6 +341,50 @@ function Write-RunStatus {
     Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
 }
 
+function Invoke-WithRunStatusHeartbeat {
+    param(
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Action
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        return & $Action
+    }
+
+    $stopPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-run-status-hb-" + [guid]::NewGuid().ToString("N"))
+    $statusPath = [string]$RunStatusPath
+    $job = Start-Job -ScriptBlock {
+        param($StatusPath, $StopPath)
+        $utf8 = New-Object Text.UTF8Encoding $false
+        while (-not (Test-Path -LiteralPath $StopPath)) {
+            Start-Sleep -Seconds 15
+            if (Test-Path -LiteralPath $StopPath) { break }
+            if (-not (Test-Path -LiteralPath $StatusPath)) { continue }
+            try {
+                $raw = [IO.File]::ReadAllText($StatusPath, $utf8)
+                if ($raw -notmatch '"status"\s*:\s*"running"') { break }
+                $updated = [datetime]::Now.ToString("o")
+                $rewritten = [regex]::Replace($raw, '"updatedAt"\s*:\s*"[^"]*"', ('"updatedAt": "' + $updated + '"'), 1)
+                $tmp = $StatusPath + ".hb-tmp"
+                [IO.File]::WriteAllText($tmp, $rewritten, $utf8)
+                [IO.File]::Copy($tmp, $StatusPath, $true)
+                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+            } catch {
+            }
+        }
+    } -ArgumentList $statusPath, $stopPath
+    try {
+        return & $Action
+    } finally {
+        New-Item -ItemType File -Path $stopPath -Force | Out-Null
+        Wait-Job -Job $job -Timeout 8 | Out-Null
+        Stop-Job -Job $job -ErrorAction SilentlyContinue
+        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath ($statusPath + ".hb-tmp") -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Set-RunUserReport {
     param([AllowEmptyString()][string]$Report)
 

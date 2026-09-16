@@ -419,6 +419,260 @@ function Stop-RunnerOwnedProcessTree {
     }
 }
 
+function Close-CompactHelperProcessJob {
+    param([IntPtr]$JobHandle, [AllowNull()][object]$Process)
+
+    if ($JobHandle -eq [IntPtr]::Zero -or $env:OS -ne "Windows_NT") { return }
+    try {
+        [ItlCompactHelperProcessJob]::Close($JobHandle)
+    } catch {
+        if ($null -ne $Process) { [void](Stop-RunnerOwnedProcessTree -Process $Process) }
+        throw
+    }
+}
+
+function Start-CompactHelperProcess {
+    param(
+        [string]$EncodedCommand,
+        [string]$WorkingDirectory
+    )
+
+    $argumentList = "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $EncodedCommand"
+    if ($env:OS -ne "Windows_NT") {
+        $process = Start-Process `
+            -FilePath "powershell" `
+            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $EncodedCommand) `
+            -WorkingDirectory $WorkingDirectory `
+            -WindowStyle Hidden `
+            -PassThru
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]::Zero }
+    }
+
+    if (-not ("ItlCompactHelperProcessJob" -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class ItlCompactHelperProcessJob
+{
+    private const UInt32 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const Int32 JobObjectExtendedLimitInformation = 9;
+    private const UInt32 EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
+    private const UInt32 CREATE_SUSPENDED = 0x00000004;
+    private const UInt32 CREATE_NEW_CONSOLE = 0x00000010;
+    private const UInt32 CREATE_NEW_PROCESS_GROUP = 0x00000200;
+    private const UInt32 STARTF_USESHOWWINDOW = 0x00000001;
+    private const UInt32 PROC_THREAD_ATTRIBUTE_JOB_LIST = 0x0002000D;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public Int64 PerProcessUserTimeLimit;
+        public Int64 PerJobUserTimeLimit;
+        public UInt32 LimitFlags;
+        public UIntPtr MinimumWorkingSetSize;
+        public UIntPtr MaximumWorkingSetSize;
+        public UInt32 ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public UInt32 PriorityClass;
+        public UInt32 SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public UInt64 ReadOperationCount;
+        public UInt64 WriteOperationCount;
+        public UInt64 OtherOperationCount;
+        public UInt64 ReadTransferCount;
+        public UInt64 WriteTransferCount;
+        public UInt64 OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit;
+        public UIntPtr JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed;
+        public UIntPtr PeakJobMemoryUsed;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct STARTUPINFOEX
+    {
+        public Int32 cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public UInt32 dwX;
+        public UInt32 dwY;
+        public UInt32 dwXSize;
+        public UInt32 dwYSize;
+        public UInt32 dwXCountChars;
+        public UInt32 dwYCountChars;
+        public UInt32 dwFillAttribute;
+        public UInt32 dwFlags;
+        public UInt16 wShowWindow;
+        public UInt16 cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+        public IntPtr lpAttributeList;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public UInt32 dwProcessId;
+        public UInt32 dwThreadId;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct RTL_OSVERSIONINFOEX
+    {
+        public UInt32 dwOSVersionInfoSize;
+        public UInt32 dwMajorVersion;
+        public UInt32 dwMinorVersion;
+        public UInt32 dwBuildNumber;
+        public UInt32 dwPlatformId;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string szCSDVersion;
+        public UInt16 wServicePackMajor;
+        public UInt16 wServicePackMinor;
+        public UInt16 wSuiteMask;
+        public Byte wProductType;
+        public Byte wReserved;
+    }
+
+    public sealed class StartedProcess
+    {
+        public Process Process;
+        public IntPtr JobHandle;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr job, Int32 informationClass, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION information, UInt32 informationLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool InitializeProcThreadAttributeList(IntPtr attributeList, Int32 attributeCount, UInt32 flags, ref IntPtr size);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(IntPtr attributeList, UInt32 flags, IntPtr attribute, IntPtr value, IntPtr size, IntPtr previousValue, IntPtr returnSize);
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr attributeList);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateProcess(string applicationName, StringBuilder commandLine, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, UInt32 creationFlags, IntPtr environment, string currentDirectory, ref STARTUPINFOEX startupInfo, out PROCESS_INFORMATION processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern UInt32 ResumeThread(IntPtr thread);
+
+    [DllImport("ntdll.dll", CharSet = CharSet.Unicode)]
+    private static extern Int32 RtlGetVersion(ref RTL_OSVERSIONINFOEX versionInformation);
+
+    private static void AssertAtomicJobListSupport()
+    {
+        RTL_OSVERSIONINFOEX version = new RTL_OSVERSIONINFOEX();
+        version.dwOSVersionInfoSize = (UInt32)Marshal.SizeOf(typeof(RTL_OSVERSIONINFOEX));
+        Int32 status = RtlGetVersion(ref version);
+        if (status != 0)
+            throw new PlatformNotSupportedException("Unable to verify Windows 10 or Windows Server 2016+ support required for compact helper process ownership (RtlGetVersion status " + status + ").");
+        if (version.dwMajorVersion < 10)
+            throw new PlatformNotSupportedException("Compact helper process ownership requires Windows 10 or Windows Server 2016+; detected Windows " + version.dwMajorVersion + "." + version.dwMinorVersion + " build " + version.dwBuildNumber + ".");
+    }
+
+    public static StartedProcess Start(string executable, string arguments, string workingDirectory)
+    {
+        AssertAtomicJobListSupport();
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateJobObject failed.");
+        IntPtr attributeList = IntPtr.Zero;
+        IntPtr jobList = IntPtr.Zero;
+        PROCESS_INFORMATION processInformation = new PROCESS_INFORMATION();
+        try
+        {
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION information = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            UInt32 length = (UInt32)Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, ref information, length))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetInformationJobObject failed.");
+
+            IntPtr attributeSize = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeSize);
+            attributeList = Marshal.AllocHGlobal(attributeSize);
+            if (!InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeSize))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "InitializeProcThreadAttributeList failed.");
+
+            jobList = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobList, job);
+            if (!UpdateProcThreadAttribute(attributeList, 0, new IntPtr(PROC_THREAD_ATTRIBUTE_JOB_LIST), jobList, new IntPtr(IntPtr.Size), IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "UpdateProcThreadAttribute for the compact helper job failed.");
+
+            STARTUPINFOEX startupInfo = new STARTUPINFOEX();
+            startupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startupInfo.dwFlags = STARTF_USESHOWWINDOW;
+            startupInfo.wShowWindow = 0;
+            startupInfo.lpAttributeList = attributeList;
+            StringBuilder commandLine = new StringBuilder("\"" + executable + "\" " + arguments);
+            UInt32 creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED;
+            if (!CreateProcess(executable, commandLine, IntPtr.Zero, IntPtr.Zero, false, creationFlags, IntPtr.Zero, workingDirectory, ref startupInfo, out processInformation))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcess for the compact helper failed.");
+            StartedProcess started = new StartedProcess();
+            started.Process = Process.GetProcessById((Int32)processInformation.dwProcessId);
+            IntPtr ownedProcessHandle = started.Process.Handle;
+            started.JobHandle = job;
+            if (ResumeThread(processInformation.hThread) == UInt32.MaxValue)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "ResumeThread for the compact helper failed.");
+            job = IntPtr.Zero;
+            return started;
+        }
+        finally
+        {
+            if (processInformation.hThread != IntPtr.Zero) CloseHandle(processInformation.hThread);
+            if (processInformation.hProcess != IntPtr.Zero) CloseHandle(processInformation.hProcess);
+            if (attributeList != IntPtr.Zero) { DeleteProcThreadAttributeList(attributeList); Marshal.FreeHGlobal(attributeList); }
+            if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+            if (job != IntPtr.Zero) CloseHandle(job);
+        }
+    }
+
+    public static void Close(IntPtr job)
+    {
+        if (job != IntPtr.Zero && !CloseHandle(job))
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CloseHandle for compact helper process job failed.");
+    }
+}
+'@
+    }
+
+    $powershellPath = (Get-Command "powershell.exe" -ErrorAction Stop).Source
+    $started = [ItlCompactHelperProcessJob]::Start($powershellPath, $argumentList, $WorkingDirectory)
+    try {
+        $process = $started.Process
+        $null = $process.Handle
+        return [pscustomobject]@{ process = $process; jobHandle = [IntPtr]$started.JobHandle }
+    } catch {
+        try { [ItlCompactHelperProcessJob]::Close([IntPtr]$started.JobHandle) } catch {}
+        throw
+    }
+}
+
 function Find-LauncherRunDirectory {
     param([object[]]$Output, [datetime]$StartedAt, [string]$RunsRoot)
     foreach ($line in @($Output)) {
@@ -507,6 +761,8 @@ if ($windowed) {
 `$OutputEncoding = `$utf8
 `$ProgressPreference = 'SilentlyContinue'
 `$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public static class ItlHelperConsole { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetConsoleCtrlHandler(IntPtr handler, bool add); }'
+[ItlHelperConsole]::SetConsoleCtrlHandler([IntPtr]::Zero, `$false) | Out-Null
 `$helperExitCode = 1
 `$global:LASTEXITCODE = `$null
 try {
@@ -527,15 +783,17 @@ try {
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
     $staleWarningSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_WARNING_SECONDS" -Default 45
     $staleTimeoutSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS" -Default 120
+    $operationTimeoutSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_OPERATION_TIMEOUT_SECONDS" -Default 3600
     if ($staleTimeoutSeconds -le $staleWarningSeconds) {
         throw "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS must be greater than ITL_RUNNER_STATUS_STALE_WARNING_SECONDS."
     }
     $originalPowerShellModulePath = $env:PSModulePath
     $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
+    $helperJobHandle = [IntPtr]::Zero
     try {
-        # Start-Process preserves PowerShell Core's module path verbatim. Remove
-        # only the Core runtime module root before launching Windows PowerShell
-        # so its built-in modules (including Get-FileHash) can autoload.
+        # CreateProcess inherits this process environment. Remove only the Core
+        # runtime module root before launching Windows PowerShell so its
+        # built-in modules (including Get-FileHash) can autoload.
         if ($resetModulePathForWindowsPowerShell) {
             $coreModuleRoot = [IO.Path]::GetFullPath((Join-Path $PSHOME "Modules")).TrimEnd('\')
             $compatibleModuleRoots = @($originalPowerShellModulePath -split ';' | Where-Object {
@@ -545,12 +803,9 @@ try {
             })
             $env:PSModulePath = $compatibleModuleRoots -join ';'
         }
-        $helperProcess = Start-Process `
-            -FilePath "powershell" `
-            -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
-            -WorkingDirectory $projectRoot `
-            -WindowStyle Hidden `
-            -PassThru
+        $startedHelper = Start-CompactHelperProcess -EncodedCommand $encodedCommand -WorkingDirectory $projectRoot
+        $helperProcess = $startedHelper.process
+        $helperJobHandle = [IntPtr]$startedHelper.jobHandle
     } finally {
         if ($resetModulePathForWindowsPowerShell) {
             if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
@@ -563,54 +818,75 @@ try {
     $lastProgressStage = ""
     $lastProgressLiveness = ""
     $lastProgressAt = [DateTime]::MinValue
-    while (-not $helperProcess.HasExited) {
-        $currentStatus = Read-JsonFile -Path $statusPath
-        $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
-        $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
-        $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
-        $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
-        $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
-        # The helper owns the operation-specific stall budget. A generic runner
-        # watchdog must not preempt a live Designer probe before that budget can
-        # expire and publish its own terminal diagnosis.
-        $effectiveStaleTimeoutSeconds = if ($publishedStallRemainingSeconds -gt 0) {
-            [Math]::Max($staleTimeoutSeconds, $publishedStallRemainingSeconds + $staleWarningSeconds)
-        } else {
-            $staleTimeoutSeconds
-        }
-        $staleStatus = $publishedLiveness -and $statusAgeSeconds -ge $staleWarningSeconds
-        $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
-        $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
-        $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
-        $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
-        if ($stageChanged -or $livenessChanged -or $heartbeatDue) {
-            $lastProgressStage = $currentStage
-            $lastProgressLiveness = $displayLiveness
-            $lastProgressAt = [DateTime]::UtcNow
-            $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
-            $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
-            $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
+    try {
+        while (-not $helperProcess.HasExited) {
+            $currentStatus = Read-JsonFile -Path $statusPath
+            $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
+            $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
+            $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
+            $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
+            $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
             $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
-            $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
-            $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
-            $timeoutRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedTimeoutRemainingSeconds - $statusAgeSeconds) } else { $publishedTimeoutRemainingSeconds }
-            $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
-            [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
-        }
-        if ($publishedLiveness -and $statusAgeSeconds -ge $effectiveStaleTimeoutSeconds) {
-            $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
-            $updatedAt = [string]$freshness.updatedAt
-            $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
-            $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
-            if (-not $termination.confirmed) {
-                throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+            $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
+            # The helper owns the operation-specific stall budget. A generic runner
+            # watchdog must not preempt a live Designer probe before that budget can
+            # expire and publish its own terminal diagnosis.
+            $effectiveStaleTimeoutSeconds = if ($publishedStallRemainingSeconds -gt 0) {
+                [Math]::Max($staleTimeoutSeconds, $publishedStallRemainingSeconds + $staleWarningSeconds)
+            } else {
+                $staleTimeoutSeconds
             }
-            break
+            $effectiveOperationTimeoutSeconds = $operationTimeoutSeconds
+            if ($publishedTimeoutRemainingSeconds -gt 0) {
+                $effectiveOperationTimeoutSeconds = [Math]::Max($effectiveOperationTimeoutSeconds, $elapsed + $publishedTimeoutRemainingSeconds)
+            }
+            if ($publishedStallRemainingSeconds -gt 0) {
+                $effectiveOperationTimeoutSeconds = [Math]::Max($effectiveOperationTimeoutSeconds, $elapsed + $publishedStallRemainingSeconds)
+            }
+            $staleStatus = $currentStage -and $statusAgeSeconds -ge $staleWarningSeconds
+            $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
+            $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
+            $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
+            $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
+            if ($stageChanged -or $livenessChanged -or $heartbeatDue) {
+                $lastProgressStage = $currentStage
+                $lastProgressLiveness = $displayLiveness
+                $lastProgressAt = [DateTime]::UtcNow
+                $detail = Limit-Text -Value (Get-ObjectValue -Object $currentStatus -Name "stageDetail" -Default "") -Length 300
+                $publishedNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0)
+                $noProgressSeconds = if ($staleStatus) { $publishedNoProgressSeconds + $statusAgeSeconds } else { $publishedNoProgressSeconds }
+                $stallRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedStallRemainingSeconds - $statusAgeSeconds) } else { $publishedStallRemainingSeconds }
+                $timeoutRemainingSeconds = if ($staleStatus) { [Math]::Max(0, $publishedTimeoutRemainingSeconds - $statusAgeSeconds) } else { $publishedTimeoutRemainingSeconds }
+                $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
+                [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
+            }
+            if ($elapsed -ge $effectiveOperationTimeoutSeconds) {
+                $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
+                $updatedAt = [string]$freshness.updatedAt
+                $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) exceeded the ${effectiveOperationTimeoutSeconds}s operation limit after ${elapsed}s at stage '$currentStage' (liveness='$publishedLiveness'; updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                if (-not $termination.confirmed) {
+                    throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+                }
+                break
+            }
+            if ($currentStage -and $statusAgeSeconds -ge $effectiveStaleTimeoutSeconds) {
+                $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
+                $updatedAt = [string]$freshness.updatedAt
+                $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
+                $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                if (-not $termination.confirmed) {
+                    throw "$runnerFailureMessage Helper process tree termination was not confirmed: $($termination.error)"
+                }
+                break
+            }
+            $helperProcess.WaitForExit(500) | Out-Null
         }
-        $helperProcess.WaitForExit(500) | Out-Null
+        $helperProcess.WaitForExit()
+        $exitCode = [int]$helperProcess.ExitCode
+    } finally {
+        Close-CompactHelperProcessJob -JobHandle $helperJobHandle -Process $helperProcess
     }
-    $helperProcess.WaitForExit()
-    $exitCode = [int]$helperProcess.ExitCode
 }
 
 $status = Read-JsonFile -Path $statusPath
@@ -627,8 +903,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     $effectiveExitCode = if ($exitCode -ne 0) { $exitCode } else { 1 }
     $previousStage = [string](Get-ObjectValue -Object $status -Name "stage" -Default "")
     $message = if ($runnerFailureMessage) { $runnerFailureMessage } else { "ITL helper exited with code $exitCode before writing a terminal status. Log: $logPath" }
-    $runnerStage = if ($runnerFailureMessage) { "runner.status-stale" } else { "runner.helper-exited" }
-    $runnerErrorCode = if ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
+    $operationTimedOut = [string]$runnerFailureMessage -like "RUNNER_OPERATION_TIMEOUT*"
+    $runnerStage = if ($operationTimedOut) { "runner.operation-timeout" } elseif ($runnerFailureMessage) { "runner.status-stale" } else { "runner.helper-exited" }
+    $runnerErrorCode = if ($operationTimedOut) { "LIFECYCLE_OPERATION_TIMEOUT" } elseif ($runnerFailureMessage) { "LIFECYCLE_OPERATION_STATUS_STALE" } else { "LIFECYCLE_OPERATION_HELPER_EXITED" }
     if (-not $windowed) {
         $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
         $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
@@ -674,7 +951,8 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "stage" -Value $runnerStage
     Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
     if ($runnerFailureMessage) {
-        Set-ObjectValue -Object $status -Name "liveness" -Value "failed-stale-status"
+        $failedLiveness = if ($operationTimedOut) { "failed-operation-timeout" } else { "failed-stale-status" }
+        Set-ObjectValue -Object $status -Name "liveness" -Value $failedLiveness
         Set-ObjectValue -Object $status -Name "noProgressSeconds" -Value $runnerFailureNoProgressSeconds
         Set-ObjectValue -Object $status -Name "stallTimeoutRemainingSeconds" -Value 0
         Set-ObjectValue -Object $status -Name "timeoutRemainingSeconds" -Value 0

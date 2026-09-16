@@ -777,6 +777,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "Дополнительные действия:"
     Write-Host "  Данные ROCTUP: используйте MCP-сервер itl-roctup-data; backend ветки запускается и останавливается автоматически."
     Write-Host "  vibecoding1c MCP: попросите выполнить setup, status, select, refresh-registry или update."
+    Write-Host "  MCP другого клиента: sync-client-mcp -Client <client> записывает vibecoding1c, on-demand и UI MCP без смены активного клиента, rules и skills; после записи нужны reload, включение MCP Servers и новый чат."
     Write-Host "  Vanessa UI: используйте MCP-сервер itl-vanessa-ui только для исследования, записи или отладки фактического UI."
     Write-Host "  Ручное профилирование Vanessa: попросите запустить, проверить или остановить постоянную интерактивную пару текущей ветки."
     Write-Host "  Ветки расширений: одна ветка, worktree и база владеют одним CFE; внутри него допустимо несколько функций."
@@ -5144,39 +5145,235 @@ function Commit-WorkflowUpdate {
     }
     $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($unstagedManagedTracked.Count -gt 0) {
-        Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
-    }
-    if ($managedUntracked.Count -gt 0) {
-        Invoke-Git (@("add", "--") + $managedUntracked)
-    }
-    $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
-    $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
-    if ($unexpectedStaged.Count -gt 0) {
-        throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
-    }
-    if ($stagedChanges.Count -eq 0) {
-        throw "update-workflow found managed changes but could not stage any of them."
-    }
-    Invoke-Git @("commit", "--quiet", "-m", $message)
-    Write-Host "Committed: $message"
+    return Invoke-WithRunStatusHeartbeat {
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Staging the managed workflow update in master."
+        if ($unstagedManagedTracked.Count -gt 0) {
+            Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
+        }
+        if ($managedUntracked.Count -gt 0) {
+            Invoke-Git (@("add", "--") + $managedUntracked)
+        }
+        $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
+        $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+        if ($unexpectedStaged.Count -gt 0) {
+            throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
+        }
+        if ($stagedChanges.Count -eq 0) {
+            throw "update-workflow found managed changes but could not stage any of them."
+        }
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Creating the managed workflow update commit in master."
+        Invoke-Git @("commit", "--quiet", "-m", $message)
+        Write-Host "Committed: $message"
 
-    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Verifying the managed workflow update commit left master clean."
+        Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
 
-    $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
-    if ($remainingTracked.Count -gt 0) {
-        throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+        $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
+        if ($remainingTracked.Count -gt 0) {
+            throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+        }
+        $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
+            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+        if ($remainingManagedUntracked.Count -gt 0) {
+            throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+        }
+
+        [pscustomobject]@{
+            created = $true
+            commit = Get-CurrentCommit
+            message = $message
+        }
     }
-    $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($remainingManagedUntracked.Count -gt 0) {
-        throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+}
+
+function Get-WorkflowPackageCopyDirectoryPaths {
+    return @(
+        ".agents\skills\1c-workflow",
+        ".agents\skills\1c-workflow-fast",
+        ".agents\skills\product-docs",
+        ".agents\skills\itl-roctup-1c-data",
+        ".agents\skills\itl-vanessa-ui-mcp",
+        ".agents\skills\itl-remote-runner",
+        ".agents\skills\itl-remote-agent",
+        ".agents\skills\itl-performance",
+        "docs\itl-workflow",
+        "templates"
+    )
+}
+
+function Get-WorkflowPackageCopyFilePaths {
+    return @(
+        "install-agent-1c-workflow.ps1",
+        "AGENT-INSTALL.md"
+    )
+}
+
+function New-WorkflowUpdateCopyStagingRoot {
+    $tmpRoot = Join-Path $script:ProjectRoot ".agent-1c\tmp"
+    New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
+    $stagingRoot = Join-Path $tmpRoot ("workflow-copy-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
+    return $stagingRoot
+}
+
+function Remove-WorkflowUpdateCopyStagingRoot {
+    param([string]$StagingRoot)
+
+    if ([string]::IsNullOrWhiteSpace($StagingRoot)) { return }
+    $tmpRoot = Get-FullPathNormalized (Join-Path $script:ProjectRoot ".agent-1c\tmp")
+    $normalized = Get-FullPathNormalized $StagingRoot
+    if (-not $normalized.StartsWith(($tmpRoot + "\"), [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove an invalid workflow copy staging path: $StagingRoot"
+    }
+    if (Test-Path -LiteralPath $normalized -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $normalized -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-WorkflowManagedPathReplace {
+    param(
+        [string]$SourcePath,
+        [string]$TargetPath,
+        [switch]$Directory
+    )
+
+    Assert-WorkflowManagedTargetPath -Path $TargetPath
+    $parent = Split-Path -Parent $TargetPath
+    if ($parent) {
+        New-Item -ItemType Directory -Force -Path $parent | Out-Null
+    }
+
+    $stagingRoot = New-WorkflowUpdateCopyStagingRoot
+    $backupRoot = New-WorkflowUpdateCopyStagingRoot
+    $name = Split-Path -Leaf $TargetPath
+    $stagingPath = Join-Path $stagingRoot $name
+    $backupPath = Join-Path $backupRoot $name
+    $movedAside = $false
+    try {
+        if ($Directory) {
+            Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Recurse -Force -ErrorAction Stop
+        } else {
+            Copy-Item -LiteralPath $SourcePath -Destination $stagingPath -Force -ErrorAction Stop
+        }
+        if (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) {
+            Move-Item -LiteralPath $TargetPath -Destination $backupPath -ErrorAction Stop
+            $movedAside = $true
+        }
+        try {
+            Move-Item -LiteralPath $stagingPath -Destination $TargetPath -ErrorAction Stop
+        } catch {
+            if ($movedAside -and -not (Test-Path -LiteralPath $TargetPath -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath $backupPath -ErrorAction SilentlyContinue)) {
+                Move-Item -LiteralPath $backupPath -Destination $TargetPath -ErrorAction Stop
+                $movedAside = $false
+            }
+            throw
+        }
+        if (Test-Path -LiteralPath $backupPath -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop
+        }
+    } finally {
+        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $stagingRoot
+        Remove-WorkflowUpdateCopyStagingRoot -StagingRoot $backupRoot
+    }
+}
+
+function New-WorkflowUpdateRollbackSnapshot {
+    param([string[]]$RelativePaths)
+
+    $tempRoot = Get-FullPathNormalized ([System.IO.Path]::GetTempPath())
+    $snapshotRoot = Join-Path $tempRoot ("itl-workflow-update-rollback-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Force -Path $snapshotRoot | Out-Null
+    $records = @()
+    $parentStates = @{}
+    $index = 0
+
+    foreach ($relativePath in $RelativePaths) {
+        $targetPath = Join-Path $script:ProjectRoot $relativePath
+        Assert-WorkflowManagedTargetPath -Path $targetPath
+
+        $parent = Split-Path -Parent $targetPath
+        while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+            $parentFull = Get-FullPathNormalized $parent
+            if (-not $parentStates.ContainsKey($parentFull)) {
+                $parentStates[$parentFull] = Test-Path -LiteralPath $parentFull -PathType Container -ErrorAction SilentlyContinue
+            }
+            $parent = Split-Path -Parent $parentFull
+        }
+
+        $existed = Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue
+        $backupPath = ""
+        $wasDirectory = $false
+        if ($existed) {
+            $wasDirectory = Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction SilentlyContinue
+            $backupPath = Join-Path $snapshotRoot ("item-{0}" -f $index)
+            if ($wasDirectory) {
+                Copy-Item -LiteralPath $targetPath -Destination $backupPath -Recurse -Force
+            } else {
+                Copy-Item -LiteralPath $targetPath -Destination $backupPath -Force
+            }
+        }
+        $records += [pscustomobject]@{
+            relativePath = $relativePath
+            targetPath = $targetPath
+            existed = [bool]$existed
+            wasDirectory = [bool]$wasDirectory
+            backupPath = $backupPath
+        }
+        $index++
     }
 
     return [pscustomobject]@{
-        created = $true
-        commit = Get-CurrentCommit
-        message = $message
+        root = $snapshotRoot
+        tempRoot = $tempRoot
+        targetRoot = $script:ProjectRoot
+        records = @($records)
+        parentStates = $parentStates
+    }
+}
+
+function Restore-WorkflowUpdateRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    foreach ($record in @($Snapshot.records)) {
+        Assert-WorkflowManagedTargetPath -Path $record.targetPath
+        if (Test-Path -LiteralPath $record.targetPath -ErrorAction SilentlyContinue) {
+            Remove-Item -LiteralPath $record.targetPath -Recurse -Force -ErrorAction Stop
+        }
+        if ($record.existed) {
+            $parent = Split-Path -Parent $record.targetPath
+            if ($parent) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+            }
+            if ($record.wasDirectory) {
+                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Recurse -Force
+            } else {
+                Copy-Item -LiteralPath $record.backupPath -Destination $record.targetPath -Force
+            }
+        }
+    }
+
+    foreach ($entry in @($Snapshot.parentStates.GetEnumerator() | Sort-Object { ([string]$_.Key).Length } -Descending)) {
+        $parentPath = [string]$entry.Key
+        $existed = [bool]$entry.Value
+        Assert-WorkflowManagedTargetPath -Path $parentPath
+        if (-not $existed -and
+            (Test-Path -LiteralPath $parentPath -PathType Container -ErrorAction SilentlyContinue) -and
+            @(Get-ChildItem -LiteralPath $parentPath -Force -ErrorAction Stop).Count -eq 0) {
+            Remove-Item -LiteralPath $parentPath -Force -ErrorAction Stop
+        }
+    }
+}
+
+function Remove-WorkflowUpdateRollbackSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    $snapshotRoot = Get-FullPathNormalized ([string]$Snapshot.root)
+    $tempRoot = Get-FullPathNormalized ([string]$Snapshot.tempRoot)
+    if ((Split-Path -Parent $snapshotRoot) -ne $tempRoot -or (Split-Path -Leaf $snapshotRoot) -notlike "itl-workflow-update-rollback-*") {
+        throw "Refusing to remove an invalid workflow update rollback snapshot path: $snapshotRoot"
+    }
+    if (Test-Path -LiteralPath $snapshotRoot -PathType Container -ErrorAction SilentlyContinue) {
+        Remove-Item -LiteralPath $snapshotRoot -Recurse -Force -ErrorAction Stop
     }
 }
 
@@ -5192,15 +5389,7 @@ function Copy-WorkflowManagedDirectory {
         throw "Workflow package managed directory is missing: $RelativePath"
     }
 
-    Assert-WorkflowManagedTargetPath -Path $targetPath
-    $parent = Split-Path -Parent $targetPath
-    if ($parent) {
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    }
-    if (Test-Path -LiteralPath $targetPath -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $targetPath -Recurse -Force
-    }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Recurse -Force
+    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath -Directory
     Write-Host "Updated workflow directory: $RelativePath"
 }
 
@@ -5216,12 +5405,7 @@ function Copy-WorkflowManagedFile {
         throw "Workflow package managed file is missing: $RelativePath"
     }
 
-    Assert-WorkflowManagedTargetPath -Path $targetPath
-    $parent = Split-Path -Parent $targetPath
-    if ($parent) {
-        New-Item -ItemType Directory -Force -Path $parent | Out-Null
-    }
-    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force
+    Invoke-WorkflowManagedPathReplace -SourcePath $sourcePath -TargetPath $targetPath
     Write-Host "Updated workflow file: $RelativePath"
 }
 
@@ -5651,22 +5835,35 @@ function Update-WorkflowPackage {
         Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
 
         Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\1c-workflow-fast"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\product-docs"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-roctup-1c-data"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-vanessa-ui-mcp"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-runner"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-remote-agent"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath ".agents\skills\itl-performance"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "docs\itl-workflow"
-        Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath "templates"
-        foreach ($relativePath in @("install-agent-1c-workflow.ps1", "AGENT-INSTALL.md")) {
-            Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+        $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
+        $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
+        $copySnapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@($copyDirectoryPaths) + @($copyFilePaths))
+        $copyCompleted = $false
+        try {
+            foreach ($relativePath in $copyDirectoryPaths) {
+                Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
+            }
+            foreach ($relativePath in $copyFilePaths) {
+                Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+            }
+            Remove-LegacyWorkflowManagedFiles
+            Update-WorkflowPackageLockEntry -Source $source | Out-Null
+            $copyCompleted = $true
+        } catch {
+            $copyError = $_.Exception.Message
+            try {
+                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+            } catch {
+                throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
+            }
+            throw
+        } finally {
+            try {
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+            } catch {
+                if ($copyCompleted) { throw }
+            }
         }
-        Remove-LegacyWorkflowManagedFiles
-
-        Update-WorkflowPackageLockEntry -Source $source | Out-Null
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
         Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
     }
