@@ -5145,39 +5145,44 @@ function Commit-WorkflowUpdate {
     }
     $unstagedManagedTracked = @(Get-GitPathList -Arguments @("diff", "--name-only", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($unstagedManagedTracked.Count -gt 0) {
-        Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
-    }
-    if ($managedUntracked.Count -gt 0) {
-        Invoke-Git (@("add", "--") + $managedUntracked)
-    }
-    $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
-    $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
-    if ($unexpectedStaged.Count -gt 0) {
-        throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
-    }
-    if ($stagedChanges.Count -eq 0) {
-        throw "update-workflow found managed changes but could not stage any of them."
-    }
-    Invoke-Git @("commit", "--quiet", "-m", $message)
-    Write-Host "Committed: $message"
+    return Invoke-WithRunStatusHeartbeat {
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Staging the managed workflow update in master."
+        if ($unstagedManagedTracked.Count -gt 0) {
+            Invoke-Git (@("add", "--update", "--") + $unstagedManagedTracked)
+        }
+        if ($managedUntracked.Count -gt 0) {
+            Invoke-Git (@("add", "--") + $managedUntracked)
+        }
+        $stagedChanges = @(Get-GitPathList -Arguments @("diff", "--cached", "--name-only", "-z"))
+        $unexpectedStaged = @($stagedChanges | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs) })
+        if ($unexpectedStaged.Count -gt 0) {
+            throw "update-workflow found staged changes outside its managed allowlist and will not commit them: $($unexpectedStaged -join ', ')"
+        }
+        if ($stagedChanges.Count -eq 0) {
+            throw "update-workflow found managed changes but could not stage any of them."
+        }
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Creating the managed workflow update commit in master."
+        Invoke-Git @("commit", "--quiet", "-m", $message)
+        Write-Host "Committed: $message"
 
-    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
+        Set-RunStage -Stage "workflow-update.commit" -Detail "Verifying the managed workflow update commit left master clean."
+        Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs $managedPathSpecs
 
-    $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
-    if ($remainingTracked.Count -gt 0) {
-        throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
-    }
-    $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
-    if ($remainingManagedUntracked.Count -gt 0) {
-        throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
-    }
+        $remainingTracked = @(Get-WorkflowUpdateTrackedChangePaths)
+        if ($remainingTracked.Count -gt 0) {
+            throw "update-workflow created its commit but the tracked master worktree is still dirty: $($remainingTracked -join ', ')"
+        }
+        $remainingManagedUntracked = @(Get-GitPathList -Arguments @("ls-files", "-z", "--others", "--exclude-standard") |
+            Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $managedPathSpecs })
+        if ($remainingManagedUntracked.Count -gt 0) {
+            throw "update-workflow created its commit but managed files remain untracked: $($remainingManagedUntracked -join ', ')"
+        }
 
-    return [pscustomobject]@{
-        created = $true
-        commit = Get-CurrentCommit
-        message = $message
+        [pscustomobject]@{
+            created = $true
+            commit = Get-CurrentCommit
+            message = $message
+        }
     }
 }
 

@@ -588,12 +588,15 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $lifecycleText.IndexOf("Install-ItlUiTools -BestEffort") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf("Sync-ItlClientSurface") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf('Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.complete"')
+        $lifecycleText | Should -Match 'return Invoke-WithRunStatusHeartbeat'
+        $lifecycleText | Should -Match 'Creating the managed workflow update commit in master'
         $HelperText | Should -Match "function Write-PostInitClientReloadHandoff"
         $HelperText | Should -Match ([regex]::Escape("В окне Kilo Code"))
         $HelperText | Should -Match ([regex]::Escape("выполните /reload"))
         $HelperText | Should -Match ([regex]::Escape("Новое окно worktree"))
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
+        $HelperText | Should -Match "function Invoke-WithRunStatusHeartbeat"
         $HelperText | Should -Match "Remove-LegacyWorkflowManagedFiles"
         $HelperText | Should -Match "docs\\itl-workflow"
 
