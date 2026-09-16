@@ -38,10 +38,8 @@ Describe 'Optional ChatGPT RDC bridge' {
     }
     It 'ships ChatGPT Project instructions for master and dev worktrees' {
         $guide = Get-Content -LiteralPath (Join-Path $script:Repo 'docs/itl-workflow/CHATGPT.ru.md') -Raw -Encoding UTF8
-        $guide | Should -Match 'PROJECT_KIND=master'
-        $guide | Should -Match 'PROJECT_KIND=dev'
-        $guide | Should -Match 'PROJECT_KIND=workflow-source'
         $guide | Should -Match 'RDC_DEVICE_ID'
+        $guide | Should -Not -Match 'PROJECT_KIND='
         $guide | Should -Match 'source-delivery\.ps1'
         $guide | Should -Match 'itl-refresh-all'
         $guide | Should -Match 'itl-remote-runner'

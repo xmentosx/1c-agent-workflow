@@ -29,7 +29,6 @@
 ```text
 Это ChatGPT Project для основной master-worktree ITL-проекта.
 
-PROJECT_KIND=master
 RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
 RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
 PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
@@ -57,7 +56,6 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
 ```text
 Это ChatGPT Project для конкретной рабочей itldev/* worktree ITL-проекта.
 
-PROJECT_KIND=dev
 RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
 RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
 PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
@@ -86,7 +84,6 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
 ```text
 Это ChatGPT Project для разработки исходного репозитория 1c-agent-workflow.
 
-PROJECT_KIND=workflow-source
 RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
 RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
 WORKFLOW_SOURCE_ROOT=<ПОЛНЫЙ_ПУТЬ_К_CHECKOUT_1c-agent-workflow>
