@@ -3567,7 +3567,9 @@ function New-VanessaStartFeaturePlayerCommand {
         throw "Vanessa params path must not contain quote characters: $ParamsPath"
     }
 
-    return "StartFeaturePlayer;VAParams=$ParamsPath"
+    # Packet StartFeaturePlayer must enable VanessaExt in this TestManager session.
+    # MCP already passes the same /C levers; without them OS hotkey steps fail closed.
+    return "StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;VAParams=$ParamsPath"
 }
 
 function ConvertFrom-Utf8Base64 {
@@ -4115,6 +4117,10 @@ function New-VanessaParamsFile {
     $params[(ConvertFrom-Utf8Base64 "0J/Rg9GC0YzQmtCk0LDQudC70YPQlNC70Y/QktGL0LPRgNGD0LfQutC40KHRgtCw0YLRg9GB0LDQktGL0L/QvtC70L3QtdC90LjRj9Ch0YbQtdC90LDRgNC40LXQsg==")] = $StatusPath
     $params[(ConvertFrom-Utf8Base64 "0JfQsNCy0LXRgNGI0LjRgtGM0KDQsNCx0L7RgtGD0KHQuNGB0YLQtdC80Ys=")] = $true
     $params[(ConvertFrom-Utf8Base64 "0JLRi9C/0L7Qu9C90LjRgtGM0KHRhtC10L3QsNGA0LjQuA==")] = $true
+    # Native VanessaExt is per TestManager process, not an infobase install.
+    # useaddin maps to ИспользоватьКомпонентуVanessaExt; QuietInstall is on /C.
+    $params["useaddin"] = $true
+    $params["QuitIfSilentInstallationAddinFails"] = $true
 
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
     if ($normalizedFilterTags.Count -gt 0) {

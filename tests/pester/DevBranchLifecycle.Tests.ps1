@@ -3983,7 +3983,7 @@ try {
         $HelperText | Should -Match "TestClientPort"
         $HelperText | Should -Not -Match ([regex]::Escape('$args += @("/TESTMANAGER", "-TPort"'))
         $HelperText | Should -Match "New-VanessaStartFeaturePlayerCommand"
-        $HelperText | Should -Match "StartFeaturePlayer;VAParams="
+        $HelperText | Should -Match "StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;VAParams="
         $HelperText | Should -Match "Get-OneCProcessInfo"
         $HelperText | Should -Match "Stop-OwnHungVanessaTestClients"
         $HelperText | Should -Match "Invoke-ForeignVanessaTestProcessPolicy"
@@ -4974,7 +4974,9 @@ try {
                 $clientRecord.PSObject.Properties[$additionalParamsKey].Value | Should -Match ([regex]::Escape("/DisableStartupMessages"))
                 $clientRecord.PSObject.Properties[$additionalParamsKey].Value | Should -Not -Match ([regex]::Escape("/DisableStartupDialogs"))
 
-                $command | Should -Be "StartFeaturePlayer;VAParams=$paramsPath"
+                $params.useaddin | Should -BeTrue
+                $params.QuitIfSilentInstallationAddinFails | Should -BeTrue
+                $command | Should -Be "StartFeaturePlayer;QuietInstallVanessaExt;DisableFirstRunHelper;VAParams=$paramsPath"
                 $command | Should -Not -Match 'VAParams="'
             }
         } finally {
