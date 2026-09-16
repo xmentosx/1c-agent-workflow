@@ -16,7 +16,7 @@ Create and maintain:
 - `.agents/skills/1c-workflow/`, `.agents/skills/1c-workflow-fast/`, `.agents/skills/product-docs/`, `.agents/skills/itl-roctup-1c-data/`, `.agents/skills/itl-vanessa-ui-mcp/`, `.agents/skills/itl-remote-runner/`, `.agents/skills/itl-remote-agent/`, and `.agents/skills/itl-performance/`: shared skills installed with the workflow package.
 - `.agents/skills/1c-workflow/kilo-command-templates/`: tracked canonical Kilo templates.
 - Ignored native `itl*` commands, skills, or prompts for the one active client. Codex receives context-specific `.agents/skills/itl*/SKILL.md` wrappers with explicit-only invocation. OpenSpec commands remain owned by `ai_rules_1c`.
-- One active-client MCP config: Codex `.codex/config.toml`, Kilo `.kilo/kilo.json`, Claude `.mcp.json`, Cursor `.cursor/mcp.json`, or OpenCode root `opencode.json`.
+- One active client owns rules, skills, and commands. Init/update/refresh write that client's MCP config (Codex `.codex/config.toml`, Kilo `.kilo/kilo.json`, Claude `.mcp.json`, Cursor `.cursor/mcp.json`, or OpenCode root `opencode.json`). `sync-client-mcp -Client` can write the same managed MCP families to another client's config without changing the active client.
 
 Never store passwords in committed files. Write workflow state and `.dev.env` as UTF-8 and preserve Cyrillic paths exactly.
 

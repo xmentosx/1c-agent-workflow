@@ -1030,4 +1030,59 @@
             $tracked | Should -Match 'TRACKED_CLIENT_CONFIG'
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+
+    It "syncs a secondary client MCP config without changing the active client or surfaces" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-sync-client-mcp-adapter-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot ".cursor") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $tempRoot ".agent-1c\dependency-lock.json")
+            Set-Content -LiteralPath (Join-Path $tempRoot ".cursor\mcp.json") -Encoding UTF8 -Value '{"mcpServers":{"external-keep":{"command":"keep-me"}}}'
+
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $script:aiRulesClient = $null
+                $script:surfaceSynced = $false
+                $script:vibeClient = $null
+                $script:ondemandClient = $null
+                $script:uiClient = $null
+                function Set-ProjectAiRulesClient { param([string]$Client) $script:aiRulesClient = $Client }
+                function Sync-ItlClientSurface { $script:surfaceSynced = $true }
+                function Write-Vibecoding1cMcpClientConfig { param([string]$Client) $script:vibeClient = $Client }
+                function Write-ItlOnDemandMcpClientConfig { param([string]$Client) $script:ondemandClient = $Client; return "x" }
+                function Sync-ItlUiToolsMcp { param([string]$Client) $script:uiClient = $Client }
+
+                $missing = try { Sync-ItlClientMcpConfig -Client ""; "unexpected-success" } catch { $_.Exception.Message }
+                $output = @(Sync-ItlClientMcpConfig -Client cursor 6>&1) -join [Environment]::NewLine
+                [pscustomobject]@{
+                    missing = $missing
+                    output = $output
+                    active = Get-ItlActiveClient
+                    aiRulesClient = $script:aiRulesClient
+                    surfaceSynced = $script:surfaceSynced
+                    vibeClient = $script:vibeClient
+                    ondemandClient = $script:ondemandClient
+                    uiClient = $script:uiClient
+                    project = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Raw -Encoding UTF8
+                }
+            }
+
+            $result.missing | Should -Match "requires exactly one explicit -Client"
+            $result.active | Should -Be "codex"
+            $result.aiRulesClient | Should -BeNullOrEmpty
+            $result.surfaceSynced | Should -BeFalse
+            $result.vibeClient | Should -Be "cursor"
+            $result.ondemandClient | Should -Be "cursor"
+            $result.uiClient | Should -Be "cursor"
+            $result.project | Should -Match '"codex"'
+            $result.project | Should -Not -Match '"cursor"'
+            $result.output | Should -Match "Active client is unchanged: codex"
+            $result.output | Should -Match "Перезагрузите окно Cursor"
+            $result.output | Should -Match ([regex]::Escape("+ → MCP Servers"))
+            $result.output | Should -Match "новый Agent-чат"
+            $result.output | Should -Match "does not attach servers to an already open chat"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }

@@ -777,6 +777,7 @@ function Write-ItlAdditionalHelperActions {
     Write-Host "Дополнительные действия:"
     Write-Host "  Данные ROCTUP: используйте MCP-сервер itl-roctup-data; backend ветки запускается и останавливается автоматически."
     Write-Host "  vibecoding1c MCP: попросите выполнить setup, status, select, refresh-registry или update."
+    Write-Host "  MCP другого клиента: sync-client-mcp -Client <client> записывает vibecoding1c, on-demand и UI MCP без смены активного клиента, rules и skills; после записи нужны reload, включение MCP Servers и новый чат."
     Write-Host "  Vanessa UI: используйте MCP-сервер itl-vanessa-ui только для исследования, записи или отладки фактического UI."
     Write-Host "  Ручное профилирование Vanessa: попросите запустить, проверить или остановить постоянную интерактивную пару текущей ветки."
     Write-Host "  Ветки расширений: одна ветка, worktree и база владеют одним CFE; внутри него допустимо несколько функций."

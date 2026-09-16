@@ -25,7 +25,7 @@ The client sees the stable logical server `itl-roctup-data` immediately after ta
 
 Rules:
 
-1. Init/update/refresh registers `itl-roctup-data` for the active client and caches the compatible EPF and facade executable. No user service or manual MCP action is required.
+1. Init/update/refresh registers `itl-roctup-data` for the active client and caches the compatible EPF and facade executable. `sync-client-mcp -Client` can register the same facade for another client without switching. No user service or manual MCP action is required.
 2. Every client process gets its own backend instance and port. Ports come from `ROCTUP_MCP_PORT_RANGE` and are reserved through the shared ITL port registry with family, project, worktree, branch, and instance identity.
 3. The facade stops only its owned native instance after ten idle minutes, but retains the agent-owned database phase so a later call can resume it. Before an incompatible lifecycle, test, or measurement phase, the agent must either finish its current work and call `finish_database_access`, or deliberately keep the phase and postpone the incompatible operation. Stdio EOF is an abandonment fallback that performs the same ownership-scoped cleanup; it is not the normal handoff. Lifecycle mutations wait for active calls and stop all owned branch instances before changing the infobase.
 4. Use ROCTUP only for a concrete data exploration operation; do not call its private Streamable HTTP URL directly.
@@ -46,7 +46,8 @@ Actions:
 - `vibecoding1c-mcp-refresh-registry`: update remote endpoint discovery.
 - `vibecoding1c-mcp-update`: update registry/distribution/keys/images.
 - `vibecoding1c-mcp-status`: inspect active/skipped/stale/missing-configId servers.
-- `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`: advanced helper actions.
+- `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`: advanced helper actions for the active client.
+- `sync-client-mcp`: required `-Client`; writes vibecoding1c, on-demand facades, and UI MCP into that client's config without changing the active client, `ai_rules_1c`, or skills. After Cursor `.cursor/mcp.json`, reload the window, enable ITL servers in `+ -> MCP Servers`, and open a new Agent chat. Do not treat an already open chat as connected, and do not dot-source internal writers as a public scenario.
 
 Rules:
 
@@ -75,7 +76,7 @@ Rules:
 1. Calls must originate from the active `itldev/*` worktree through `itl-vanessa-ui`.
 2. `resolve_tool` searches the local catalog without backend startup. The first inner `call_tool` installs missing cached CFE dependencies, starts a client-owned Vanessa `runMcp` instance with silent/fail-closed VanessaExt installation, confirms the component through `get_environment_data`, initializes Streamable HTTP, and verifies the actual catalog before forwarding unchanged arguments. The first-run VanessaExt dialog is disabled.
 3. Allocate two distinct ports per facade process through the shared ITL registry: the private MCP manager port and a TestClient port from `VANESSA_MCP_TESTCLIENT_PORT_RANGE`. Starting the manager only reserves the TestClient port; editor-only tools do not start TestClient. The shared `ONEC_MAX_CONCURRENT_SESSIONS` admission guards the manager and each later TestClient launch against the exact infobase; it does not reserve an unused session for an editor-only manager. Before a TestClient-dependent tool, the facade reuses a proven owned process or starts one owned process through that same per-infobase admission, proves its port, and then proves the manager connection. Ten idle minutes stops that manager and its owned TestClient and releases their native leases, but deliberately retains the agent-owned database phase. Before incompatible work, call `finish_database_access` after completing the current UI operation; client exit remains the abandonment fallback.
-4. Init/update/refresh writes only the active client's native stdio config. One client reload is required when the facade is first installed or upgraded; backend starts never rewrite config and need no reload.
+4. Init/update/refresh writes only the active client's native stdio config. `sync-client-mcp -Client` writes the same facades to another client without switching. One client reload is required when the facade is first installed or upgraded; backend starts never rewrite config and need no reload.
 5. Pass known inner names such as `search_for_steps_by_keywords`, `open_feature_file`, `check_syntax`, `get_info_about_line_scenario`, `run_scenario`, and `get_test_results` directly to `call_tool`; use `resolve_tool` only when a name or schema is unknown. The agent does not address the private backend or raw HTTP endpoint.
 6. All inner tools remain callable and are schema-validated before startup; the facade never auto-approves dangerous operations.
 7. A catalog mismatch returns `ITL_ONDEMAND_CATALOG_MISMATCH`, stops the backend, and exposes no unverified tools.

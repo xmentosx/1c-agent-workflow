@@ -231,7 +231,7 @@
     }
 
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
-        $actions = @("vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config")
+        $actions = @("vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp")
         foreach ($action in $actions) {
             $HelperText | Should -Match ([regex]::Escape("`"$action`""))
         }
@@ -2807,6 +2807,70 @@ url = "http://localhost:9999/mcp"
                 (Get-Content -Encoding UTF8 -Raw $codexPath) | Should -Not -Match "1c-data-mcp"
             }
         } finally {
+            if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
+                Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It "syncs Cursor MCP for an active Codex project without switching the client" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-sync-client-mcp-" + [guid]::NewGuid().ToString("N"))
+        $projectRoot = Join-Path $tempRoot "project"
+        $ondemandExe = Join-Path $tempRoot "itl-ondemand-mcp.exe"
+        $oldOndemand = [Environment]::GetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", "Process")
+
+        try {
+            New-Item -ItemType Directory -Force -Path `
+                (Join-Path $projectRoot ".agent-1c"),
+                (Join-Path $projectRoot ".codex"),
+                (Join-Path $projectRoot ".cursor\skills"),
+                (Join-Path $projectRoot ".agents\skills\itl") | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".ai-rules.json") -Encoding UTF8 -Value '{"schemaVersion":1,"tools":["codex"],"files":{}}'
+            Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination (Join-Path $projectRoot ".agent-1c\dependency-lock.json")
+            Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value "model = `"codex-marker`"`n"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Encoding UTF8 -Value '{"mcpServers":{"external-keep":{"command":"keep-me"}}}'
+            Set-Content -LiteralPath (Join-Path $projectRoot ".cursor\skills\keep-me.md") -Encoding UTF8 -Value "cursor-skill-marker"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl\SKILL.md") -Encoding UTF8 -Value "codex-skill-marker"
+            Set-Content -LiteralPath $ondemandExe -Encoding UTF8 -Value "dummy-ondemand"
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $ondemandExe, "Process")
+
+            $probe = Invoke-Agent1cEntrypointProbe `
+                -ProbeId 'sync-client-mcp-cursor-codex' `
+                -HelperPath $HelperPath `
+                -ProjectRoot $projectRoot `
+                -Action 'sync-client-mcp' `
+                -Arguments @{ 'Client' = 'cursor' }
+            $probe.exitCode | Should -Be 0
+            $probe.combinedText | Should -Match "Active client is unchanged: codex"
+            $probe.combinedText | Should -Match "ai_rules_1c, skills, and generated command surfaces were not modified"
+            $probe.combinedText | Should -Match "Перезагрузите окно Cursor"
+            $probe.combinedText | Should -Match ([regex]::Escape("+ → MCP Servers"))
+            $probe.combinedText | Should -Match "новый Agent-чат"
+            $probe.combinedText | Should -Match "does not attach servers to an already open chat"
+
+            $project = Get-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\project.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($project.aiRules.tools) | Should -Be @("codex")
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Raw -Encoding UTF8) | Should -Match "codex-marker"
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\skills\keep-me.md") -Raw -Encoding UTF8) | Should -Match "cursor-skill-marker"
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl\SKILL.md") -Raw -Encoding UTF8) | Should -Match "codex-skill-marker"
+
+            $cursorConfig = Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cursorConfig.mcpServers.'external-keep'.command | Should -Be "keep-me"
+            @($cursorConfig.mcpServers.PSObject.Properties.Name) | Should -Contain "itl-roctup-data"
+            @($cursorConfig.mcpServers.PSObject.Properties.Name) | Should -Contain "itl-vanessa-ui"
+
+            $firstJson = Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8
+            $second = Invoke-Agent1cEntrypointProbe `
+                -ProbeId 'sync-client-mcp-cursor-codex-idempotent' `
+                -HelperPath $HelperPath `
+                -ProjectRoot $projectRoot `
+                -Action 'sync-client-mcp' `
+                -Arguments @{ 'Client' = 'cursor' }
+            $second.exitCode | Should -Be 0
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".cursor\mcp.json") -Raw -Encoding UTF8) | Should -BeExactly $firstJson
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_EXE", $oldOndemand, "Process")
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }

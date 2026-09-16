@@ -3833,11 +3833,13 @@ function Write-Vibecoding1cMcpKiloConfig {
 }
 
 function Write-Vibecoding1cMcpClientConfig {
+    param([string]$Client = "")
+
     Write-Section "Write vibecoding1c MCP client config"
 
     Ensure-GitIgnore
     $endpointSet = Get-Vibecoding1cMcpClientConfigEndpointSet
-    $client = Get-ItlActiveClient
+    if (-not $Client) { $Client = Get-ItlActiveClient }
     $endpoints = @($endpointSet.allEndpoints | ForEach-Object {
         $name = Get-Vibecoding1cMcpEndpointClientName -Endpoint $_
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $_ -Name "url" -Default "")

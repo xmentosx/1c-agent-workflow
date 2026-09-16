@@ -1439,6 +1439,40 @@ function Sync-ItlClientUserEnvironment {
     }
 }
 
+function Sync-ItlClientMcpConfig {
+    param([string]$Client)
+
+    $normalized = @(ConvertTo-AgentToolList -Value $Client)
+    if ($normalized.Count -ne 1 -or $normalized[0] -notin (Get-SupportedAgentTargets)) {
+        throw "sync-client-mcp requires exactly one explicit -Client: $((Get-SupportedAgentTargets) -join ', ')."
+    }
+    $target = [string]$normalized[0]
+    Assert-ItlClientConfigWritable -Client $target
+    $active = Get-ItlActiveClient
+    $adapter = Get-ItlClientAdapter -Client $target
+
+    Write-Section "Sync ITL MCP config for $target"
+    Write-Vibecoding1cMcpClientConfig -Client $target
+    Write-ItlOnDemandMcpClientConfig -Client $target | Out-Null
+    Sync-ItlUiToolsMcp -Client $target
+
+    $path = Join-Path $script:ProjectRoot $adapter.mcpPath
+    Write-Host "Synced managed ITL MCP families (vibecoding1c, on-demand facades, UI tools) for $target : $path"
+    Write-Host "Active client is unchanged: $active. ai_rules_1c, skills, and generated command surfaces were not modified."
+    $reload = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default "")
+    if (-not $reload) {
+        $reload = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "")
+    }
+    if ($reload) {
+        Write-Host $reload
+    }
+    $enablement = [string](Get-StateValue -State $adapter -Name "mcpEnablementUserInstruction" -Default "")
+    if ($enablement) {
+        Write-Host $enablement
+    }
+    Write-Host "Writing the client MCP config does not attach servers to an already open chat. Reload the client, enable ITL servers if it has MCP Server switches, then open a new chat."
+}
+
 function Switch-ItlClient {
     param([string]$Client)
 
