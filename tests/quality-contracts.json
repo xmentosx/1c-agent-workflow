@@ -317,6 +317,15 @@
       "tests": ["tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1", "tests/pester/OnDemandPostLoadScope.Tests.ps1", "tests/pester/OneCStartupDialogs.Tests.ps1", "tests/pester/DatabaseAccessModes.Tests.ps1"]
     },
     {
+      "id": "chatgpt-rdc-sidecar",
+      "owner": "optional ChatGPT Remote Desktop Commander sidecar and MCP bridge",
+      "gate": "targeted",
+      "budgetSeconds": 120,
+      "primaryTest": "tests/pester/ChatGptBridge.Tests.ps1",
+      "paths": ["chatgpt/*", "tests/python/chatgpt/*", "tests/pester/ChatGptBridge.Tests.ps1"],
+      "tests": ["tests/pester/ChatGptBridge.Tests.ps1"]
+    },
+    {
       "id": "standalone-mcp-host",
       "owner": "standalone MCP host and CodeChecker overlay",
       "gate": "targeted",
