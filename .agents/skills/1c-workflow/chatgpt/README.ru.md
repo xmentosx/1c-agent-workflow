@@ -19,9 +19,9 @@ Bridge находится по пути:
 
 ## ChatGPT Project
 
-Готовые Project Instructions для двух режимов — основной `master` и конкретная `itldev/*`
-worktree — находятся в `docs/itl-workflow/CHATGPT.ru.md`. Этот файл устанавливается вместе
-с workflow и предназначен для copy-paste в настройки ChatGPT Project.
+Готовые Project Instructions для трёх режимов — основной `master`, конкретная `itldev/*` worktree
+и разработка самого source repository — находятся в `docs/itl-workflow/CHATGPT.ru.md`. Этот файл устанавливается вместе
+с workflow и предназначен для copy-paste в настройки ChatGPT Project. При нескольких RDC-хостах шаблоны фиксируют стабильный `RDC_DEVICE_ID`.
 
 ## Доставка в рабочие ветки
 

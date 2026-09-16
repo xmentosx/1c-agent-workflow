@@ -10,28 +10,32 @@
 
 - **master-project** привязан к основной worktree проекта на `master`. Он удобен для `itl-update-workflow`, `itl-refresh-all`, создания веток, `itl-repository-mode`, переключения клиента и других master/lifecycle-задач.
 - **dev-project** привязан к одной конкретной `itldev/*` worktree. Он используется для разработки, `itl-check`, `itl-refresh`, `itl-refresh-lite`, `itl-reset-branch`, `itl-result`, MCP, `itl-remote-runner` и остальных задач этой рабочей ветки.
+- **workflow-source project** привязан к checkout исходного `1c-agent-workflow` и используется только для разработки самого workflow. Он следует source-repository `AGENTS.md` и `source-delivery`, а не installed-project lifecycle.
 
 Не привязывайте один ChatGPT Project одновременно к master и к нескольким dev-worktree. Если нужны оба контекста, создайте отдельные ChatGPT Projects.
 
 ## Требования
 
-1. В проекте установлен актуальный ITL workflow.
-2. В ChatGPT доступен Remote Desktop Commander.
-3. В выбранной worktree существует `.agents/skills/1c-workflow/chatgpt/mcp_bridge.py`.
-4. В Project Instructions указан точный `PROJECT_ROOT` именно этой worktree.
+Для всех режимов в ChatGPT должен быть доступен Remote Desktop Commander. Если подключено несколько компьютеров, в Project Instructions фиксируйте стабильный `RDC_DEVICE_ID`; `RDC_DEVICE_NAME` можно добавить как человекочитаемую подсказку. Агент должен передавать ID во все RDC-вызовы и не переключаться на другой доступный хост, если нужное устройство недоступно.
+
+Для **master/dev-project** дополнительно требуется установленный актуальный ITL workflow, локальный `.agents/skills/1c-workflow/chatgpt/mcp_bridge.py` и точный `PROJECT_ROOT` выбранной worktree.
+
+Для **workflow-source project** установленный sidecar не требуется: нужен только точный `WORKFLOW_SOURCE_ROOT` checkout исходного `1c-agent-workflow`; правила берутся из его корневого `AGENTS.md`.
 
 ## Project Instructions для master
 
-Скопируйте этот блок в Project Instructions ChatGPT Project и замените только `PROJECT_ROOT`:
+Скопируйте этот блок в Project Instructions ChatGPT Project и укажите `RDC_DEVICE_ID`, при желании `RDC_DEVICE_NAME`, и `PROJECT_ROOT`:
 
 ```text
 Это ChatGPT Project для основной master-worktree ITL-проекта.
 
 PROJECT_KIND=master
+RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
+RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
 PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
 
 Для любой задачи, связанной с проектом:
-1. Используй Remote Desktop Commander для доступа к локальному компьютеру.
+1. Используй Remote Desktop Commander только с устройством RDC_DEVICE_ID. Передавай этот device ID во все RDC-вызовы. Если устройство недоступно, не переключайся на другой хост без решения пользователя.
 2. Считай PROJECT_ROOT основной master-worktree этого проекта и выполняй прямые файловые, Git, тестовые, 1С и диагностические операции из неё.
 3. ChatGPT-sidecar находится в <PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt.
 4. При первом обращении к локальному проекту в новом чате самостоятельно выполни:
@@ -48,16 +52,18 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
 
 ## Project Instructions для dev-worktree
 
-Скопируйте этот блок в отдельный ChatGPT Project для конкретной рабочей ветки и замените только `PROJECT_ROOT`:
+Скопируйте этот блок в отдельный ChatGPT Project для конкретной рабочей ветки и укажите `RDC_DEVICE_ID`, при желании `RDC_DEVICE_NAME`, и `PROJECT_ROOT`:
 
 ```text
 Это ChatGPT Project для конкретной рабочей itldev/* worktree ITL-проекта.
 
 PROJECT_KIND=dev
+RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
+RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
 PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
 
 Для любой задачи, связанной с проектом:
-1. Используй Remote Desktop Commander для доступа к локальному компьютеру.
+1. Используй Remote Desktop Commander только с устройством RDC_DEVICE_ID. Передавай этот device ID во все RDC-вызовы. Если устройство недоступно, не переключайся на другой хост без решения пользователя.
 2. Работай напрямую только с PROJECT_ROOT и не привязывай чат к соседней master-worktree или другой dev-worktree.
 3. Если локальный itl-* skill запускает lifecycle, который сам по своему контракту разрешает/использует master или другие зарегистрированные worktree, исполняй этот skill штатно через PROJECT_ROOT; не выполняй такие действия вручную в обход lifecycle и не меняй PROJECT_ROOT.
 4. ChatGPT-sidecar находится в <PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt.
@@ -73,13 +79,39 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
 13. Если пользователь поручил конечную задачу, самостоятельно мониторь и продолжай работу до её завершения. Обращайся к пользователю только если действительно требуется его решение, разрешение или внешнее действие.
 ```
 
+## Project Instructions для разработки самого 1c-agent-workflow
+
+Этот шаблон нужен для отдельного ChatGPT Project, в котором дорабатывается сам source repository workflow. Здесь не используется installed-project `project-info`.
+
+```text
+Это ChatGPT Project для разработки исходного репозитория 1c-agent-workflow.
+
+PROJECT_KIND=workflow-source
+RDC_DEVICE_ID=<ID_КОМПЬЮТЕРА_ИЗ_REMOTE_DESKTOP_COMMANDER>
+RDC_DEVICE_NAME=<ИМЯ_КОМПЬЮТЕРА_ДЛЯ_ЧЕЛОВЕКА>
+WORKFLOW_SOURCE_ROOT=<ПОЛНЫЙ_ПУТЬ_К_CHECKOUT_1c-agent-workflow>
+
+Для любой задачи по workflow:
+1. Используй Remote Desktop Commander только с устройством RDC_DEVICE_ID и передавай этот device ID во все RDC-вызовы. Если устройство недоступно, не переключайся на другой хост без решения пользователя.
+2. Считай WORKFLOW_SOURCE_ROOT исходным репозиторием workflow, а не установленным 1С-проектом.
+3. При первом локальном обращении в новом чате прочитай <WORKFLOW_SOURCE_ROOT>\AGENTS.md и применяй source-repository правила ко всей дальнейшей работе.
+4. Не активируй installed-project skills `1c-workflow`, `1c-workflow-fast` и `itl-*` для обслуживания самого source repository. Используй их только если задача отдельно указывает внешний установленный проект.
+5. Сохраняй чужие незакоммиченные изменения. Если основной checkout dirty или задача параллельна другой работе, используй отдельный Git worktree и не смешивай изменения.
+6. Для обычной source-доработки следуй контракту AGENTS.md: сфокусированные проверки, один coherent commit и штатный `scripts/source-delivery.ps1 -Action RegisterChange`. Не делай direct push, PR или broad gate в обход source-delivery.
+7. `PublishDevelop`, `PromoteRelease` или `ReleaseMaster` выполняй только когда пользователь явно поручил соответствующую публикацию; следуй plan/approval/recovery контракту delivery scripts.
+8. Внешние ai_rules/E2E checkout и временные candidate/worktree используй только когда их требует source-delivery или конкретная source-задача. Не путай их с WORKFLOW_SOURCE_ROOT.
+9. Если пользователь поручил конечную задачу, самостоятельно мониторь и продолжай работу до её завершения. Обращайся к пользователю только если действительно требуется его решение, разрешение или внешнее действие.
+```
+
 ## Что происходит в новом чате
 
-Project Instructions применяются ко всем чатам внутри ChatGPT Project. Поэтому новый чат не требует ручного bootstrap-сообщения: при первой локальной задаче агент сам запускает `project-info`, читает правила проекта и дальше использует skills и MCP из той же worktree.
+Project Instructions применяются ко всем чатам внутри ChatGPT Project. Поэтому новый чат не требует ручного bootstrap-сообщения. В master/dev-project агент при первой локальной задаче запускает `project-info`, читает правила проекта и дальше использует skills и MCP из той же worktree. В workflow-source project он вместо этого читает корневой `AGENTS.md` source repository и следует source-maintenance контракту.
 
 Для dev-project это означает, что пользователь может сразу написать, например: `сделай itl-refresh`, `исправь тест`, `проверь и опубликуй результат`.
 
 Для master-project можно сразу вызывать задачи вроде: `сделай itl-update-workflow`, `сделай itl-refresh-all`, `создай новую ветку`, `покажи статус проекта`.
+
+Для workflow-source project можно сразу ставить source-задачи вроде: `измени lifecycle`, `добавь regression`, `зарегистрируй change`, `опубликуй develop`.
 
 ## Удалённые базы и itl-remote
 
