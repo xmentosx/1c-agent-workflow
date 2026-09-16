@@ -175,6 +175,14 @@ Describe "Release gate scripts" {
             @($catalog.suites[0].featurePaths) | Should -Be @("tests/features/*.feature")
             @($catalog.suites[0].ownerPaths) | Should -Be @("src/cf/Configuration.xml")
             (& git -C $tempRoot log -1 --pretty=%s).Trim() | Should -Be "test: seed develop E2E Vanessa fixture"
+            $feature = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes((Join-Path $tempRoot "tests\features\ITLDevelopJourney.feature")))
+            $contextIndex = $feature.IndexOf("Контекст:")
+            $scenarioIndex = $feature.IndexOf("Сценарий:")
+            $contextIndex | Should -BeGreaterThan -1
+            $scenarioIndex | Should -BeGreaterThan $contextIndex
+            ([regex]::Matches($feature, '(?m)^Сценарий:')).Count | Should -Be 2
+            $feature | Should -Match 'Пауза 0\.1'
+            $feature | Should -Not -Match '(?s)Сценарий: Базовая работает\s+Контекст:'
             @(& git -C $tempRoot status --porcelain).Count | Should -Be 0
 
             Set-DevelopStandVanessaFeature -Root $tempRoot
