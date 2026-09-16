@@ -233,6 +233,7 @@ Use these steps only when `install-agent-1c-workflow.ps1` is unavailable or fail
 <project>/docs/itl-workflow/FEATURE-DEVELOPMENT.ru.md
 <project>/docs/itl-workflow/MODES-AND-SETTINGS.ru.md
 <project>/docs/itl-workflow/DEV-ENV-REFERENCE.ru.md
+<project>/docs/itl-workflow/CHATGPT.ru.md
 ```
 
 12. Do not add detailed workflow text to `AGENTS.md`. Keep ITL-specific rules in `USER-RULES.md` so upstream-managed `AGENTS.md` can continue to update cleanly.

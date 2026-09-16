@@ -1,8 +1,8 @@
 # ChatGPT + Remote Desktop Commander
 
-Этот каталог — необязательный ChatGPT-sidecar, установленный **внутри конкретного ITL-проекта**.
+Этот каталог — необязательный ChatGPT-sidecar, установленный **внутри конкретной worktree ITL-проекта**.
 Он является частью `.agents/skills/1c-workflow`, поэтому версионируется и обновляется вместе
-с workflow текущего worktree. Для работы чату нужен только `PROJECT_ROOT` рабочей ветки.
+с workflow текущей worktree. Для работы чату нужен только её `PROJECT_ROOT`.
 
 Sidecar не меняет обычную работу Codex, не переписывает `.codex/config.toml`, не подменяет
 локальные `.agents/skills` и не требует отдельного checkout `1c-agent-workflow`.
@@ -14,7 +14,14 @@ Sidecar не меняет обычную работу Codex, не перепис
 Bridge находится по пути:
 `<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py`.
 Канонические правила, ITL-команды и MCP-конфигурация всегда берутся из того же `PROJECT_ROOT`.
-Ни master-worktree, ни внешний workflow-source для работы чата не используются.
+Для lifecycle-команд workflow может сам разрешать другие зарегистрированные worktree; ChatGPT
+не должен вручную подменять пути или использовать исходный workflow-source как runtime-зависимость.
+
+## ChatGPT Project
+
+Готовые Project Instructions для двух режимов — основной `master` и конкретная `itldev/*`
+worktree — находятся в `docs/itl-workflow/CHATGPT.ru.md`. Этот файл устанавливается вместе
+с workflow и предназначен для copy-paste в настройки ChatGPT Project.
 
 ## Доставка в рабочие ветки
 

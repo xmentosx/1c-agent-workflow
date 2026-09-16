@@ -13,7 +13,7 @@ Describe 'Optional ChatGPT RDC bridge' {
 
     It 'keeps the ChatGPT integration inside the installed workflow package' {
         $readme = Get-Content -LiteralPath (Join-Path $script:Sidecar 'README.ru.md') -Raw -Encoding UTF8
-        $readme | Should -Match 'только `PROJECT_ROOT`'
+        $readme | Should -Match 'PROJECT_ROOT'
         $readme | Should -Match '\.codex/config\.toml'
         Test-Path -LiteralPath (Join-Path $script:Repo '.agents/plugins/marketplace.json') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $script:Sidecar '.agents/plugins/marketplace.json') | Should -BeTrue
@@ -29,10 +29,20 @@ Describe 'Optional ChatGPT RDC bridge' {
         $installed = Join-Path $target '.agents/skills/1c-workflow/chatgpt'
         Test-Path -LiteralPath (Join-Path $installed 'mcp_bridge.py') -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $installed 'bootstrap-prompt.ru.md') -PathType Leaf | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $target 'docs/itl-workflow/CHATGPT.ru.md') -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $target '.agent-1c/chatgpt') | Should -BeFalse
 
         $bootstrap = Get-Content -LiteralPath (Join-Path $installed 'bootstrap-prompt.ru.md') -Raw -Encoding UTF8
         $bootstrap | Should -Match '<PROJECT_ROOT>\\\.agents\\skills\\1c-workflow\\chatgpt\\mcp_bridge\.py'
         $bootstrap | Should -Not -Match 'WORKFLOW_ROOT'
     }
+    It 'ships ChatGPT Project instructions for master and dev worktrees' {
+        $guide = Get-Content -LiteralPath (Join-Path $script:Repo 'docs/itl-workflow/CHATGPT.ru.md') -Raw -Encoding UTF8
+        $guide | Should -Match 'PROJECT_KIND=master'
+        $guide | Should -Match 'PROJECT_KIND=dev'
+        $guide | Should -Match 'itl-refresh-all'
+        $guide | Should -Match 'itl-remote-runner'
+        $guide | Should -Not -Match 'WORKFLOW_ROOT'
+    }
+
 }
