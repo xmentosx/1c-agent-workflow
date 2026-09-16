@@ -582,6 +582,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match "Assert-WorkflowTrackedGitClean"
         $agentEntrypointText | Should -Match '"update-workflow"\s*\{\s*Update-WorkflowPackage\s*\}'
         $lifecycleText.IndexOf('Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.copy"')
+        $lifecycleText | Should -Match "function New-WorkflowUpdateRollbackSnapshot"
+        $lifecycleText | Should -Match "function Restore-WorkflowUpdateRollbackSnapshot"
+        $lifecycleText | Should -Match "function Invoke-WorkflowManagedPathReplace"
         $lifecycleText.IndexOf("Install-ItlUiTools -BestEffort") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf("Sync-ItlClientSurface") | Should -BeLessThan $lifecycleText.IndexOf('$commitResult = Commit-WorkflowUpdate')
         $lifecycleText.IndexOf('Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult') | Should -BeLessThan $lifecycleText.IndexOf('Set-RunStage -Stage "workflow-update.complete"')
@@ -1810,6 +1813,58 @@ exit 0
             $result.vanessaArtifactsOrder | Should -BeLessThan $result.syncOrder
             $result.syncOrder | Should -BeLessThan $result.installOrder
         } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "replaces a managed workflow directory without deleting it first and restores the pre-copy tree after a later copy failure" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl workflow copy путь " + [guid]::NewGuid().ToString("N"))
+        $lock = $null
+        try {
+            $projectRoot = Join-Path $tempRoot "project"
+            $sourceRoot = Join-Path $tempRoot "source"
+            New-Item -ItemType Directory -Force -Path @(
+                (Join-Path $projectRoot ".agents\skills\itl-remote-runner\scripts"),
+                (Join-Path $projectRoot ".agents\skills\itl-performance"),
+                (Join-Path $sourceRoot ".agents\skills\itl-remote-runner\scripts"),
+                (Join-Path $sourceRoot ".agents\skills\itl-performance")
+            ) | Out-Null
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\SKILL.md") -Encoding UTF8 -Value "original-skill"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\scripts\keep.ps1") -Encoding UTF8 -Value "original-script"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-performance\SKILL.md") -Encoding UTF8 -Value "original-performance"
+            Set-Content -LiteralPath (Join-Path $sourceRoot ".agents\skills\itl-remote-runner\SKILL.md") -Encoding UTF8 -Value "new-skill"
+            Set-Content -LiteralPath (Join-Path $sourceRoot ".agents\skills\itl-remote-runner\scripts\keep.ps1") -Encoding UTF8 -Value "new-script"
+            Set-Content -LiteralPath (Join-Path $sourceRoot ".agents\skills\itl-performance\SKILL.md") -Encoding UTF8 -Value "new-performance"
+
+            . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+            Copy-WorkflowManagedDirectory -SourceRoot $sourceRoot -RelativePath ".agents\skills\itl-remote-runner"
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\SKILL.md") -Encoding UTF8 -Raw).Trim() | Should -Be "new-skill"
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\scripts\keep.ps1") -Encoding UTF8 -Raw).Trim() | Should -Be "new-script"
+            @(Get-ChildItem -LiteralPath (Join-Path $projectRoot ".agent-1c\tmp") -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "workflow-copy-*" }).Count | Should -Be 0
+
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\SKILL.md") -Encoding UTF8 -Value "original-skill"
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-performance\SKILL.md") -Encoding UTF8 -Value "original-performance"
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @(".agents\skills\itl-remote-runner", ".agents\skills\itl-performance")
+            $copyError = ""
+            try {
+                $lock = [IO.File]::Open((Join-Path $projectRoot ".agents\skills\itl-performance\SKILL.md"), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                Copy-WorkflowManagedDirectory -SourceRoot $sourceRoot -RelativePath ".agents\skills\itl-remote-runner"
+                Copy-WorkflowManagedDirectory -SourceRoot $sourceRoot -RelativePath ".agents\skills\itl-performance"
+            } catch {
+                $copyError = $_.Exception.Message
+                if ($null -ne $lock) {
+                    $lock.Dispose()
+                    $lock = $null
+                }
+                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            } finally {
+                Remove-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+            }
+            $copyError | Should -Not -BeNullOrEmpty
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-remote-runner\SKILL.md") -Encoding UTF8 -Raw).Trim() | Should -Be "original-skill"
+            (Get-Content -LiteralPath (Join-Path $projectRoot ".agents\skills\itl-performance\SKILL.md") -Encoding UTF8 -Raw).Trim() | Should -Be "original-performance"
+        } finally {
+            if ($null -ne $lock) { $lock.Dispose() }
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
