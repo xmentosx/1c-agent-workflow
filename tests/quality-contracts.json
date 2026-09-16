@@ -322,7 +322,7 @@
       "gate": "targeted",
       "budgetSeconds": 120,
       "primaryTest": "tests/pester/ChatGptBridge.Tests.ps1",
-      "paths": ["chatgpt/*", "tests/python/chatgpt/*", "tests/pester/ChatGptBridge.Tests.ps1"],
+      "paths": ["chatgpt/*", ".agents/skills/1c-workflow/chatgpt/*", "tests/python/chatgpt/*", "tests/pester/ChatGptBridge.Tests.ps1"],
       "tests": ["tests/pester/ChatGptBridge.Tests.ps1"]
     },
     {

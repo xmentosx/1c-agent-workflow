@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[3]
-BRIDGE_PATH = REPO / "chatgpt" / "mcp_bridge.py"
+BRIDGE_PATH = REPO / ".agents" / "skills" / "1c-workflow" / "chatgpt" / "mcp_bridge.py"
 spec = importlib.util.spec_from_file_location("mcp_bridge_stdio", BRIDGE_PATH)
 bridge = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

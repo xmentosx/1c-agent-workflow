@@ -973,6 +973,8 @@ local after
             [int]$operationState.continuationPid | Should -BeGreaterThan 0
 
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\SKILL.md") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\chatgpt\mcp_bridge.py") -PathType Leaf) | Should -Be $true
+            (Test-Path -LiteralPath (Join-Path $projectRoot ".agent-1c\chatgpt") -ErrorAction SilentlyContinue) | Should -Be $false
             (Test-Path -LiteralPath (Join-Path $projectRoot ".agents\skills\1c-workflow\assets\vanessa-reference-suites.json") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "tests\features\Libraries\ITL\Core\NavigationLinks.feature") -PathType Leaf) | Should -Be $true
             (Test-Path -LiteralPath (Join-Path $projectRoot "tests\features\Libraries\ITL\PM5\README.md") -PathType Leaf) | Should -Be $true

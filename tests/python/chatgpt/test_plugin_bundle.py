@@ -3,12 +3,12 @@ from pathlib import Path
 import unittest
 
 REPO = Path(__file__).resolve().parents[3]
-CHATGPT = REPO / "chatgpt"
+CHATGPT = REPO / ".agents" / "skills" / "1c-workflow" / "chatgpt"
 PLUGIN = CHATGPT / "plugins" / "itl-workflow-chatgpt"
 
 
 class PluginBundleTests(unittest.TestCase):
-    def test_marketplace_is_chatgpt_only_and_sidecar_scoped(self):
+    def test_marketplace_is_chatgpt_only_and_worktree_scoped(self):
         marketplace = json.loads((CHATGPT / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
         entry = marketplace["plugins"][0]
         self.assertEqual(entry["name"], "itl-workflow-chatgpt")

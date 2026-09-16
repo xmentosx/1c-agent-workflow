@@ -6,7 +6,7 @@ This source-only document describes the package layout for maintainers. It is no
 - `.agents/skills/1c-workflow-fast` owns the compact routine-operation surface.
 - `.agents/skills/product-docs`, `itl-roctup-1c-data`, and `itl-vanessa-ui-mcp` own optional product/runtime integrations.
 - `itl-remote-runner`, `itl-remote-agent`, and `itl-performance` share a portable Python job/measurement runtime. Local, SSH/exchange and agent routes use identical execution-host timing and artifact contracts. The portable bundle includes the existing 1C process/session guard modules; it does not install the full lifecycle. Remote worker startup remains an explicit user action. See [remote operation contracts](../.agents/skills/itl-remote-runner/references/operations.md) and [measurement recipes](../.agents/skills/itl-performance/references/measurements.md).
-- `chatgpt` contains the optional ChatGPT/Remote Desktop Commander sidecar, MCP transport bridge, and ChatGPT-only plugin marketplace; it is not installed into projects and is not part of normal Codex discovery.
+- `.agents/skills/1c-workflow/chatgpt` contains the optional ChatGPT/Remote Desktop Commander sidecar, MCP transport bridge, and ChatGPT-only plugin marketplace. It is installed and versioned with each project worktree but remains outside normal Codex command/MCP discovery.
 - `docs/itl-workflow` contains the human-facing documentation installed into projects.
 - `templates` contains tracked project defaults, ignored-file additions, dependency locks, and project guidance overlays.
 - `install-agent-1c-workflow.ps1` installs the managed package and starts monitored initialization.

@@ -279,6 +279,7 @@ function Assert-SourcePackage {
         "install-agent-1c-workflow.ps1",
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1",
+        ".agents\skills\1c-workflow\chatgpt\mcp_bridge.py",
         ".agents\skills\1c-workflow-fast\SKILL.md",
         ".agents\skills\product-docs\SKILL.md",
         ".agents\skills\itl-roctup-1c-data\SKILL.md",
