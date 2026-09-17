@@ -187,6 +187,34 @@ Describe 'Delivery v3 immutable selective plan' {
         (Get-DeliveryCanonicalJsonSha256 -Value $after) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }
 
+    It 'resolves the locked controlled fork before accumulated plan runtime fingerprints' {
+        $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
+        $resolverText = [regex]::Match($planSource, '(?ms)^function Resolve-DeliveryPlanAiRulesSource \{.*?^\}').Value
+        $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
+        $resolverText | Should -Match 'Resolve-DeliveryAiRulesSource -Lock \$aiRulesLock'
+        $accumulatedText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
+
+        & {
+            Invoke-Expression $resolverText
+            $candidateRoot = Join-Path $TestDrive 'plan locked rules candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo='https://example.invalid/ai_rules_1c.git'; commit=('a' * 40) } } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), ($lock | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+            $script:DeliveryCustomGateBoundary = $false
+            $script:seenRulesLock = $null
+            function Resolve-DeliveryAiRulesSource {
+                param([object]$Lock)
+                $script:seenRulesLock = $Lock
+                $script:AiRulesSource = 'C:\exact-rules'
+                return $script:AiRulesSource
+            }
+
+            (Resolve-DeliveryPlanAiRulesSource -CandidateRoot $candidateRoot) | Should -Be 'C:\exact-rules'
+            [string]$script:seenRulesLock.commit | Should -Be ('a' * 40)
+            $script:AiRulesSource | Should -Be 'C:\exact-rules'
+        }
+    }
+
     It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {
         $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=3601 }
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*'
