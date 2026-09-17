@@ -123,6 +123,26 @@ Describe 'Delivery v3 immutable selective plan' {
         (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }
 
+    It 'keeps durable publication identity stable across helper-owned dev-env rewrites' {
+        $candidateSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8
+        $functionText = [regex]::Match($candidateSource, '(?ms)^function Get-DevelopPublicationEnvironmentIdentity \{.*?^\}').Value
+        & {
+            Invoke-Expression $functionText
+            $stand = Join-Path $TestDrive 'durable stand identity'; $develop = Join-Path $stand 'develop'
+            New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c'), $develop | Out-Null
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\project.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\release-e2e.json'), ('{"developWorktreePath":"' + ($develop -replace '\\','\\\\') + '"}'), [Text.UTF8Encoding]::new($false))
+            $envPath = Join-Path $stand '.dev.env'; $script:E2EProjectRoot = $stand
+            function Invoke-RepositoryGit { param([string]$RepositoryRoot,[string[]]$Arguments,[switch]$AllowFailure); if ($Arguments[0] -eq 'rev-parse') { return [pscustomobject]@{exitCode=0;stdout=('a' * 40)} }; return [pscustomobject]@{exitCode=0;stdout=''} }
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+            $before = Get-DevelopPublicationEnvironmentIdentity
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nFUTURE_HELPER_OUTPUT=changed`n", [Text.UTF8Encoding]::new($false))
+            (Get-DevelopPublicationEnvironmentIdentity) | Should -Be $before
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`n", [Text.UTF8Encoding]::new($false))
+            (Get-DevelopPublicationEnvironmentIdentity) | Should -Not -Be $before
+        }
+    }
+
     It 'canonicalizes allowlisted env inputs without persisting secret values' {
         $first = Join-Path $TestDrive 'first.env'
         $second = Join-Path $TestDrive 'second.env'
@@ -185,6 +205,34 @@ Describe 'Delivery v3 immutable selective plan' {
         $after = Get-DeliveryPlanEnvironmentIdentity -Mode Release
 
         (Get-DeliveryCanonicalJsonSha256 -Value $after) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+    }
+
+    It 'resolves the locked controlled fork before accumulated plan runtime fingerprints' {
+        $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
+        $resolverText = [regex]::Match($planSource, '(?ms)^function Resolve-DeliveryPlanAiRulesSource \{.*?^\}').Value
+        $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
+        $resolverText | Should -Match 'Resolve-DeliveryAiRulesSource -Lock \$aiRulesLock'
+        $accumulatedText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
+
+        & {
+            Invoke-Expression $resolverText
+            $candidateRoot = Join-Path $TestDrive 'plan locked rules candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $lock = [ordered]@{ dependencies = [ordered]@{ aiRules1c = [ordered]@{ repo='https://example.invalid/ai_rules_1c.git'; commit=('a' * 40) } } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), ($lock | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+            $script:DeliveryCustomGateBoundary = $false
+            $script:seenRulesLock = $null
+            function Resolve-DeliveryAiRulesSource {
+                param([object]$Lock)
+                $script:seenRulesLock = $Lock
+                $script:AiRulesSource = 'C:\exact-rules'
+                return $script:AiRulesSource
+            }
+
+            (Resolve-DeliveryPlanAiRulesSource -CandidateRoot $candidateRoot) | Should -Be 'C:\exact-rules'
+            [string]$script:seenRulesLock.commit | Should -Be ('a' * 40)
+            $script:AiRulesSource | Should -Be 'C:\exact-rules'
+        }
     }
 
     It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {

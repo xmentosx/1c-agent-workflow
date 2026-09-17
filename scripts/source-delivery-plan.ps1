@@ -386,6 +386,22 @@ function Get-DeliveryPlanGateBudgetSeconds {
     return [Math]::Max(900, $budget)
 }
 
+function Resolve-DeliveryPlanAiRulesSource {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+
+    # PublishDevelop resolves the requested ai_rules checkout to the exact locked
+    # controlled-fork worktree before it fingerprints Develop/Release runtime stages.
+    # Plan must use the same effective checkout or its immutable planId cannot be
+    # resumed by publication even when the candidate tree is unchanged.
+    if ([bool]$script:DeliveryCustomGateBoundary) { return "" }
+    $lockPath = Join-Path $CandidateRoot "templates\dependency-lock.json"
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return "" }
+    $dependencies = (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
+    $aiRulesLock = if ($dependencies -and $dependencies.PSObject.Properties["aiRules1c"]) { $dependencies.aiRules1c } else { $null }
+    if ($null -eq $aiRulesLock) { return "" }
+    return Resolve-DeliveryAiRulesSource -Lock $aiRulesLock
+}
+
 function New-AccumulatedDeliveryPlan {
     param([switch]$RequireRelease)
     Assert-CleanDeliveryWorktree
@@ -399,6 +415,7 @@ function New-AccumulatedDeliveryPlan {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease
         $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         return $plan
