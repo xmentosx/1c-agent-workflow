@@ -16,7 +16,9 @@ Describe 'Optional ChatGPT RDC bridge' {
         $readme | Should -Match 'PROJECT_ROOT'
         $readme | Should -Match '\.codex/config\.toml'
         Test-Path -LiteralPath (Join-Path $script:Repo '.agents/plugins/marketplace.json') | Should -BeFalse
-        Test-Path -LiteralPath (Join-Path $script:Sidecar '.agents/plugins/marketplace.json') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:Sidecar '.agents/plugins/marketplace.json') | Should -BeFalse
+        @(Get-ChildItem -LiteralPath $script:Sidecar -Recurse -Filter 'SKILL.md' -File -ErrorAction SilentlyContinue).Count | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $script:Sidecar 'plugins') | Should -BeFalse
     }
 
     It 'installs the sidecar as tracked workflow content without agent-1c runtime copies' {
@@ -29,6 +31,8 @@ Describe 'Optional ChatGPT RDC bridge' {
         $installed = Join-Path $target '.agents/skills/1c-workflow/chatgpt'
         Test-Path -LiteralPath (Join-Path $installed 'mcp_bridge.py') -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $installed 'bootstrap-prompt.ru.md') -PathType Leaf | Should -BeTrue
+        @(Get-ChildItem -LiteralPath $installed -Recurse -Filter 'SKILL.md' -File -ErrorAction SilentlyContinue).Count | Should -Be 0
+        Test-Path -LiteralPath (Join-Path $installed 'plugins') | Should -BeFalse
         Test-Path -LiteralPath (Join-Path $target 'docs/itl-workflow/CHATGPT.ru.md') -PathType Leaf | Should -BeTrue
         Test-Path -LiteralPath (Join-Path $target '.agent-1c/chatgpt') | Should -BeFalse
 

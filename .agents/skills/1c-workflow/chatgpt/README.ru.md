@@ -14,6 +14,10 @@ Sidecar не меняет обычную работу Codex, не перепис
 Bridge находится по пути:
 `<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py`.
 Канонические правила, ITL-команды и MCP-конфигурация всегда берутся из того же `PROJECT_ROOT`.
+
+Sidecar намеренно **не содержит `SKILL.md` и plugin bundle**. ChatGPT использует штатные локальные
+`itl-*` skills проекта через Project Instructions. Это не даёт ChatGPT-обёрткам попадать в picker
+и контекст Codex, Cursor, Kilo и других локальных клиентов, которые индексируют `.agents/skills`.
 Для lifecycle-команд workflow может сам разрешать другие зарегистрированные worktree; ChatGPT
 не должен вручную подменять пути или использовать исходный workflow-source как runtime-зависимость.
 

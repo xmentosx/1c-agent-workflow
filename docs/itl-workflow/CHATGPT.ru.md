@@ -4,6 +4,8 @@
 
 Для обычной работы ChatGPT не нужен checkout исходного `1c-agent-workflow`: sidecar входит в установленный workflow самого проекта и находится в `.agents/skills/1c-workflow/chatgpt`.
 
+ChatGPT не получает отдельные копии команд: sidecar не содержит `SKILL.md` или plugin bundle. В ChatGPT используются штатные skills текущего проекта, а Project Instructions задают транспорт через RDC. Поэтому ChatGPT-интеграция не добавляет дубликаты `itl-*` в контекст локальных клиентов.
+
 ## Какой ChatGPT Project создавать
 
 Используйте отдельный ChatGPT Project для каждого контекста, который должен оставаться постоянным между чатами.
