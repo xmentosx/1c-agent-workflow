@@ -26,6 +26,15 @@ RULE_FILES = ("USER-RULES.md", "memory.md", "LLM-RULES.md", "AGENTS.md")
 
 class BridgeError(RuntimeError):
     pass
+
+
+def _configure_utf8_stdio() -> None:
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def _project_root(value: str) -> Path:
     root = Path(value).expanduser().resolve()
     if not root.is_dir():
@@ -332,6 +341,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    _configure_utf8_stdio()
     try:
         raise SystemExit(main())
     except (BridgeError, json.JSONDecodeError, OSError) as exc:

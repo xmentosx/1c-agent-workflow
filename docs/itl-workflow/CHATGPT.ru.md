@@ -39,9 +39,9 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
 1. Используй Remote Desktop Commander только с устройством RDC_DEVICE_ID. Передавай этот device ID во все RDC-вызовы. Если устройство недоступно, не переключайся на другой хост без решения пользователя.
 2. Считай PROJECT_ROOT основной master-worktree этого проекта и выполняй прямые файловые, Git, тестовые, 1С и диагностические операции из неё.
 3. ChatGPT-sidecar находится в <PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt.
-4. При первом обращении к локальному проекту в новом чате самостоятельно выполни:
-   python "<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py" --project-root "<PROJECT_ROOT>" project-info
-5. Прочитай указанные project-info файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
+4. При первом обращении к локальному проекту в новом чате сначала через файловый API RDC (не shell `Test-Path` и не отображение stdout) проверь наличие `<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py`. Если файла нет, считай sidecar отсутствующим в установленной версии workflow этой worktree, а не повреждённым из-за кодировки; доступные project rules прочитай напрямую через файловый API RDC и продолжай без sidecar/MCP до штатного update/refresh. Если bridge есть, выполни:
+   Set-Location -LiteralPath "<PROJECT_ROOT>"; python -X utf8 .\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root . project-info
+5. Если project-info выполнен, прочитай указанные им файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
 6. Используй локальные skills из <PROJECT_ROOT>\.agents\skills.
 7. При любой команде itl-* сначала прочитай соответствующий локальный SKILL.md и исполняй его контракт, не воспроизводя его логику самостоятельно.
 8. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml. Для stateful on-demand MCP, включая `itl-vanessa-ui`, используй одну bridge-сессию `session --server ...` на всю последовательность `connect/use/finish`; не разбивай её на отдельные one-shot `tools-call` процессы.
@@ -68,9 +68,9 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
 2. Работай напрямую только с PROJECT_ROOT и не привязывай чат к соседней master-worktree или другой dev-worktree.
 3. Если локальный itl-* skill запускает lifecycle, который сам по своему контракту разрешает/использует master или другие зарегистрированные worktree, исполняй этот skill штатно через PROJECT_ROOT; не выполняй такие действия вручную в обход lifecycle и не меняй PROJECT_ROOT.
 4. ChatGPT-sidecar находится в <PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt.
-5. При первом обращении к локальному проекту в новом чате самостоятельно выполни:
-   python "<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py" --project-root "<PROJECT_ROOT>" project-info
-6. Прочитай указанные project-info файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
+5. При первом обращении к локальному проекту в новом чате сначала через файловый API RDC (не shell `Test-Path` и не отображение stdout) проверь наличие `<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py`. Если файла нет, считай sidecar отсутствующим в установленной версии workflow этой worktree, а не повреждённым из-за кодировки; доступные project rules прочитай напрямую через файловый API RDC и продолжай без sidecar/MCP до штатного update/refresh. Если bridge есть, выполни:
+   Set-Location -LiteralPath "<PROJECT_ROOT>"; python -X utf8 .\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root . project-info
+6. Если project-info выполнен, прочитай указанные им файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
 7. Используй локальные skills из <PROJECT_ROOT>\.agents\skills.
 8. При любой команде itl-* сначала прочитай соответствующий локальный SKILL.md и исполняй его контракт, не воспроизводя его логику самостоятельно.
 9. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml. Для stateful on-demand MCP, включая `itl-vanessa-ui`, используй одну bridge-сессию `session --server ...` на всю последовательность `connect/use/finish`; не разбивай её на отдельные one-shot `tools-call` процессы.

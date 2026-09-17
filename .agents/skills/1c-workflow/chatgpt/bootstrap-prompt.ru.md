@@ -7,8 +7,13 @@
 Работай только внутри `PROJECT_ROOT`. Не обращайся к master-worktree проекта и не ищи
 отдельный checkout `1c-agent-workflow`.
 
-Сначала через RDC выполни:
-`python <PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root <PROJECT_ROOT> project-info`.
+Сначала через файловый API RDC, а не через shell `Test-Path` или отображение stdout, убедись, что
+`<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py` существует. Если его нет,
+считай sidecar отсутствующим в установленной версии workflow этой worktree, а не повреждённым
+из-за кодировки; доступные project rules читай напрямую через файловый API RDC.
+
+Если bridge существует, через RDC выполни:
+`Set-Location -LiteralPath "<PROJECT_ROOT>"; python -X utf8 .\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py --project-root . project-info`.
 Затем прочитай найденные файлы правил в указанном bridge порядке и применяй их как локальный
 агент проекта. Не подменяй проектные правила памятью чата.
 

@@ -15,6 +15,12 @@ Bridge находится по пути:
 `<PROJECT_ROOT>\.agents\skills\1c-workflow\chatgpt\mcp_bridge.py`.
 Канонические правила, ITL-команды и MCP-конфигурация всегда берутся из того же `PROJECT_ROOT`.
 
+Канонический RDC-запуск сначала устанавливает `PROJECT_ROOT` через `Set-Location -LiteralPath`, затем
+запускает bridge относительным путём как `python -X utf8 ... --project-root .`. Сам bridge также
+фиксирует UTF-8 для stdin/stdout/stderr, чтобы машинный JSON не зависел от OEM/ANSI code page.
+Отсутствие bridge проверяется файловым API RDC; повреждённое отображение shell stdout не является
+доказательством отсутствующего файла или испорченного `PROJECT_ROOT`.
+
 Sidecar намеренно **не содержит `SKILL.md` и plugin bundle**. ChatGPT использует штатные локальные
 `itl-*` skills проекта через Project Instructions. Это не даёт ChatGPT-обёрткам попадать в picker
 и контекст Codex, Cursor, Kilo и других локальных клиентов, которые индексируют `.agents/skills`.

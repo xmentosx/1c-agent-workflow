@@ -1,7 +1,11 @@
 import importlib.util
 import json
+import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -50,7 +54,7 @@ class FakeMcpHandler(BaseHTTPRequestHandler):
 
 class BridgeTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="ITL чат проект с пробелом ")
+        self.temp = tempfile.TemporaryDirectory(prefix="ITL Тест КОРП (ветка)-1 ")
         self.root = Path(self.temp.name)
         (self.root / ".codex").mkdir()
         FakeMcpHandler.calls = []
@@ -83,6 +87,27 @@ class BridgeTests(unittest.TestCase):
         finally:
             server.shutdown()
             server.server_close()
+
+    def test_cli_forces_utf8_and_preserves_relative_unicode_root(self):
+        self.write_config('''[mcp_servers."one"]\nurl = "http://127.0.0.1:1/mcp"\n''')
+        installed_bridge = self.root / ".agents" / "skills" / "1c-workflow" / "chatgpt" / "mcp_bridge.py"
+        installed_bridge.parent.mkdir(parents=True)
+        shutil.copy2(BRIDGE_PATH, installed_bridge)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "cp1251"
+        result = subprocess.run(
+            [sys.executable, str(installed_bridge.relative_to(self.root)), "--project-root", ".", "project-info"],
+            cwd=self.root,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", errors="replace"))
+        stdout = result.stdout.decode("utf-8")
+        info = json.loads(stdout)
+        self.assertEqual(info["projectRoot"], str(self.root.resolve()))
+        self.assertIn("Тест КОРП (ветка)-1", info["projectRoot"])
 
     def test_project_info_reports_rules_skills_and_servers(self):
         self.write_config('''[mcp_servers."one"]\nurl = "http://127.0.0.1:1/mcp"\n''')
