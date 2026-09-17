@@ -40,13 +40,20 @@ Describe 'Optional ChatGPT RDC bridge' {
         $bootstrap | Should -Match '<PROJECT_ROOT>\\\.agents\\skills\\1c-workflow\\chatgpt\\mcp_bridge\.py'
         $bootstrap | Should -Not -Match 'WORKFLOW_ROOT'
     }
-    It 'ships ChatGPT Project instructions for master and dev worktrees' {
+    It 'ships ChatGPT Project instructions for master, dev, and workflow-source worktrees' {
         $guide = Get-Content -LiteralPath (Join-Path $script:Repo 'docs/itl-workflow/CHATGPT.ru.md') -Raw -Encoding UTF8
         $guide | Should -Match 'RDC_DEVICE_ID'
         $guide | Should -Not -Match 'PROJECT_KIND='
         $guide | Should -Match 'source-delivery\.ps1'
         $guide | Should -Match 'itl-refresh-all'
         $guide | Should -Match 'itl-remote-runner'
+        $completionRule = 'Не завершай конечную задачу после промежуточного успешного шага'
+        ([regex]::Matches($guide, [regex]::Escape($completionRule))).Count | Should -Be 3
+        $guide | Should -Match 'без запроса подтверждения пользователя'
+        $guide | Should -Match 'status.*validate.*form-validate.*validate-test-classification'
+        $guide | Should -Match 'fresh passed'
+        $guide | Should -Match 'реальном blocker'
+        $guide | Should -Match 'объём контекста.*количество tool-вызовов'
         $guide | Should -Not -Match 'WORKFLOW_ROOT'
     }
 
