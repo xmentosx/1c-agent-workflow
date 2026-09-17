@@ -1180,10 +1180,11 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
     }
     $adapter = Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1'
     . $adapter
+    $purpose = $(if ([string](Get-StateValue -State $Invocation.proof -Name 'purpose' -Default 'operation') -ceq 'recovery') { 'recovery' } else { 'operation' })
     $owner = Start-ItlDatabaseAccessHost -Python $plan.python -Request ([ordered]@{
         schemaVersion = 1; coordinator = $plan.coordinator; bases = @($bases)
         owner = @{project=$script:ProjectRoot; operation=('ondemand-' + $Operation); requestId=$InstanceId}
-        timeout = 30; inherited = $Invocation.proof; purpose = 'operation'
+        timeout = 30; inherited = $Invocation.proof; purpose = $purpose
         accessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'mutation-exclusive')
     })
     return [pscustomobject]@{owner=$owner; plan=$fresh}
@@ -1391,9 +1392,77 @@ function Start-ItlOnDemandBackendInstance {
     }
 }
 
+
+function Get-ItlOnDemandRecoveryResourceSamples {
+    param([Parameter(Mandatory = $true)][object]$Plan)
+
+    $samples = @()
+    foreach ($sample in 1..2) {
+        $inventory = @(Get-OneCProcessInfo -RequireSuccess)
+        if (@($inventory | Where-Object { [string]::IsNullOrWhiteSpace($_.commandLine) }).Count -gt 0) {
+            throw 'ITL_ONDEMAND_RECOVERY_PROCESS_COMMAND_LINE_UNAVAILABLE'
+        }
+        $observed = @()
+        foreach ($base in @($Plan.bases)) {
+            $matching = @($inventory | Where-Object {
+                Test-OneCCommandLineInfoBasePath -CommandLine $_.commandLine -InfoBaseKind $base.kind -InfoBasePath $base.path
+            })
+            if ($matching.Count -gt 0) {
+                throw "ITL_ONDEMAND_RECOVERY_DATABASE_STILL_IN_USE: kind=$($base.kind) path='$($base.path)' pids='$(@($matching.processId) -join ',')'"
+            }
+            if ($base.kind -ceq 'file') {
+                $databasePath = Join-Path $base.path '1Cv8.1CD'
+                $present = Test-Path -LiteralPath $databasePath -PathType Leaf
+                $managedService = $null -ne $Plan.servicePlan -and
+                    (Test-ItlOnDemandInfoBaseMatch -First ([string]$Plan.servicePlan.path) -Second ([string]$base.path))
+                if (-not $present -and -not $managedService) {
+                    throw "ITL_ONDEMAND_RECOVERY_DATABASE_MISSING: $databasePath"
+                }
+                $exclusive = $false; $handle = $null
+                try {
+                    if ($present) {
+                        $handle = [IO.File]::Open($databasePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+                        $exclusive = $true
+                    } else { $exclusive = $true }
+                } catch [IO.IOException] { $exclusive = $false }
+                finally { if ($null -ne $handle) { $handle.Dispose() } }
+                if (-not $exclusive) { throw "ITL_ONDEMAND_RECOVERY_DATABASE_NOT_EXCLUSIVE: $databasePath" }
+                $observed += [pscustomobject]@{kind='file';path=[string]$base.path;databasePresent=[bool]$present;exclusive=$true;sessionCount=0}
+                continue
+            }
+            if ($base.kind -cne 'server') { throw 'ITL_ONDEMAND_RECOVERY_RESOURCE_KIND_INVALID' }
+            $inspector = Get-OneCNativeServerRecoveryInspector -Resources @($base)
+            $inspectorHash = (Get-FileHash -LiteralPath $inspector.path -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($inspectorHash -cne [string]$inspector.sha256) { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTOR_CHANGED' }
+            $observationId = [guid]::NewGuid().ToString('N')
+            $providerOutput = @(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass `
+                -File $inspector.path -Operation recovery-observe -ProjectRoot $script:ProjectRoot `
+                -InfoBasePath $base.path -ObservationId $observationId -Sample $sample 2>&1)
+            if ($LASTEXITCODE -ne 0) { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_FAILED' }
+            if ((Get-FileHash -LiteralPath $inspector.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inspectorHash) {
+                throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTOR_CHANGED'
+            }
+            try { $server = ($providerOutput -join [Environment]::NewLine) | ConvertFrom-Json }
+            catch { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_INVALID' }
+            if ([int](Get-StateValue $server 'schemaVersion' 0) -ne 1 -or [string](Get-StateValue $server 'observationId' '') -cne $observationId -or
+                [string](Get-StateValue (Get-StateValue $server 'infoBase' $null) 'kind' '') -cne 'server' -or
+                [string](Get-StateValue (Get-StateValue $server 'infoBase' $null) 'path' '') -cne [string]$base.path) {
+                throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_INVALID'
+            }
+            if ([int]$server.sessionCount -ne 0 -or -not [bool]$server.exclusive) {
+                throw "ITL_ONDEMAND_RECOVERY_DATABASE_STILL_IN_USE: server='$($base.path)' sessions=$($server.sessionCount)"
+            }
+            $observed += [pscustomobject]@{kind='server';path=[string]$base.path;databasePresent=[bool]$server.databasePresent;exclusive=$true;sessionCount=0}
+        }
+        $samples += [pscustomobject]@{observedAtUtc=[DateTime]::UtcNow.ToString('o');resources=$observed}
+        if ($sample -eq 1) { Start-Sleep -Milliseconds 1000 }
+    }
+    return @($samples)
+}
+
 function Invoke-ItlOnDemandBackendBroker {
     param(
-        [ValidateSet("access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$Operation,
+        [ValidateSet("access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "recover-stop", "stop", "stop-all")][string]$Operation,
         [ValidateSet("roctup", "vanessa-ui")][string]$Family,
         [string]$InstanceId,
         [string]$CatalogSha256,
@@ -1417,6 +1486,9 @@ function Invoke-ItlOnDemandBackendBroker {
         $startLockPath = Join-Path $script:ProjectRoot ".agent-1c\locks\ondemand-start.lock"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $startLockPath) | Out-Null
         $startHandle = [System.IO.File]::Open($startLockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    }
+    if ($Operation -eq 'recover-stop' -and ($null -eq $invocation -or [string](Get-StateValue -State $invocation.proof -Name 'purpose' -Default '') -cne 'recovery')) {
+        throw 'ITL_ONDEMAND_RECOVERY_PROOF_REQUIRED'
     }
     if ($Operation -eq "stop-all") {
         $nativeWorkAttempted = $true
@@ -1479,6 +1551,14 @@ function Invoke-ItlOnDemandBackendBroker {
         }
         $nativeWorkAttempted = $true
         $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
+        if ($Operation -eq 'recover-stop') {
+            $samples = Get-ItlOnDemandRecoveryResourceSamples -Plan $invocation.plan
+            $result | Add-Member -NotePropertyName recoveryEvidence -NotePropertyValue ([pscustomobject]@{
+                adapter='finish-owned-on-demand'; family=$Family; instanceId=$InstanceId
+                ownedRuntimeCleanup='strict-ownership-confirmed'; restoration='no-restoration-duties-created'
+                resources=@($invocation.plan.bases); samples=@($samples)
+            }) -Force
+        }
     }
     $succeeded = $true
     } finally {
@@ -1572,8 +1652,9 @@ function Write-ItlOnDemandMcpStatusLines {
     $installed = Test-Path -LiteralPath $executable -PathType Leaf
     Write-Host "${Indent}ITL on-demand MCP facade: $(if ($installed) { 'ready' } else { 'missing' })"
     Write-Host "${Indent}ITL on-demand MCP executable: $executable"
-    $removed = Invoke-ItlOnDemandStaleCleanupForStatus
-    if ($removed -gt 0) { Write-Host "${Indent}ITL on-demand MCP stale instances removed: $removed" }
+    # Status is observational. A stale registration may be the only retained
+    # exact PID/port/TestClient ownership evidence needed by crash recovery.
+    # Cleanup belongs to the owning facade or the trusted recovery adapter.
     $instances = @(Get-ItlOnDemandRuntimeInstances)
     Write-Host "${Indent}ITL on-demand MCP backend instances: $($instances.Count)"
     foreach ($item in $instances) {

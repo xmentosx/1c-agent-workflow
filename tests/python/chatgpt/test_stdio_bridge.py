@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 from pathlib import Path
 import sys
@@ -20,7 +21,8 @@ class StdioBridgeTests(unittest.TestCase):
         (self.root / ".codex").mkdir()
         self.server = self.root / "fixture_mcp.py"
         self.server.write_text(
-            """import json, sys
+            """import json, os, sys
+calls = 0
 for line in sys.stdin:
     payload = json.loads(line)
     method = payload.get('method')
@@ -36,7 +38,8 @@ for line in sys.stdin:
         self.server.write_text(
             self.server.read_text(encoding="utf-8")
             + """    elif method == 'tools/call':
-        result = {'content': [{'type': 'text', 'text': payload.get('params', {}).get('arguments', {}).get('value', '')}]}
+        calls += 1
+        result = {'content': [{'type': 'text', 'text': payload.get('params', {}).get('arguments', {}).get('value', '')}], 'pid': os.getpid(), 'calls': calls}
     else:
         result = {}
     print(json.dumps({'jsonrpc': '2.0', 'id': payload['id'], 'result': result}, ensure_ascii=False), flush=True)
@@ -58,6 +61,20 @@ for line in sys.stdin:
         self.assertEqual([tool["name"] for tool in listed["tools"]], ["echo"])
         called = bridge.call_tool(self.root, "fixture", "echo", {"value": "готово"})
         self.assertEqual(called["result"]["content"][0]["text"], "готово")
+
+
+    def test_session_reuses_one_stdio_client_across_calls(self):
+        requests = io.StringIO(
+            json.dumps({"action": "tools-call", "tool": "echo", "arguments": {"value": "one"}}) + "\n" +
+            json.dumps({"action": "tools-call", "tool": "echo", "arguments": {"value": "two"}}) + "\n" +
+            json.dumps({"action": "close"}) + "\n"
+        )
+        output = io.StringIO()
+        bridge.session_loop(self.root, "fixture", requests, output)
+        values = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([item["result"]["calls"] for item in values[:2]], [1, 2])
+        self.assertEqual(values[0]["result"]["pid"], values[1]["result"]["pid"])
+        self.assertEqual(values[-1]["status"], "closed")
 
 
 if __name__ == "__main__":

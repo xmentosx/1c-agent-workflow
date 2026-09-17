@@ -597,6 +597,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $HelperText | Should -Match ([regex]::Escape('Invoke-AiRules1cManagedMcpConfigReconcile -Operation "$OperationName MCP reconcile"'))
         $HelperText | Should -Match "updatedAt"
         $HelperText | Should -Match "function Invoke-WithRunStatusHeartbeat"
+        $seedText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.seed.ps1") -Raw -Encoding UTF8
+        $seedText | Should -Match 'function New-BranchSeed[\s\S]+return Invoke-WithRunStatusHeartbeat'
+        $seedText | Should -Match 'Set-RunStage -Stage "seed.prepare"'
         $HelperText | Should -Match "Remove-LegacyWorkflowManagedFiles"
         $HelperText | Should -Match "docs\\itl-workflow"
 

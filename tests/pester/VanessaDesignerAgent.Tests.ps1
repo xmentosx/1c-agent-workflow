@@ -186,6 +186,58 @@
         $VanessaText | Should -Match 'ITL_DESIGNER_AGENT_HOST_KEY_PATH_NON_ASCII'
     }
 
+    It "falls back to the Git for Windows ssh-keygen when Windows OpenSSH cannot create a host key" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-designer-key-fallback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $previousRoot = [Environment]::GetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", "Process")
+                try {
+                    $keyRoot = Join-Path $tempRoot "keys"
+                    $systemKeygen = Join-Path $tempRoot "Windows\System32\OpenSSH\ssh-keygen.exe"
+                    $gitExe = Join-Path $tempRoot "Git\cmd\git.exe"
+                    $gitKeygen = Join-Path $tempRoot "Git\usr\bin\ssh-keygen.exe"
+                    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $systemKeygen), (Split-Path -Parent $gitExe), (Split-Path -Parent $gitKeygen) | Out-Null
+                    Set-Content -LiteralPath $systemKeygen, $gitExe, $gitKeygen -Value "fixture" -Encoding ASCII
+                    [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $keyRoot, "Process")
+                    $script:keygenCalls = [System.Collections.Generic.List[string]]::new()
+                    function Get-Command {
+                        param([string]$Name, [object]$ErrorAction)
+                        if ($Name -eq "ssh-keygen.exe") { return [pscustomobject]@{ Source = $systemKeygen } }
+                        if ($Name -eq "git.exe") { return [pscustomobject]@{ Source = $gitExe } }
+                        return $null
+                    }
+                    function Invoke-NativeProcessAndWaitResult {
+                        param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds)
+                        $script:keygenCalls.Add($FilePath) | Out-Null
+                        if ($FilePath -eq $systemKeygen) { return [pscustomobject]@{ ExitCode = 255 } }
+                        $fileIndex = [Array]::IndexOf($Arguments, "-f")
+                        $privatePath = [string]$Arguments[$fileIndex + 1]
+                        [IO.File]::WriteAllText($privatePath, "PRIVATE", (New-Object Text.UTF8Encoding $false))
+                        [IO.File]::WriteAllText("$privatePath.pub", "PUBLIC", (New-Object Text.UTF8Encoding $false))
+                        return [pscustomobject]@{ ExitCode = 0 }
+                    }
+                    $state = [pscustomobject]@{ safeDevBranchName = "fallback"; stateProjectRoot = $RepoRoot; worktreePath = $RepoRoot }
+                    $keys = Ensure-VanessaDesignerAgentHostKey -State $state
+                    [pscustomobject]@{
+                        calls = @($script:keygenCalls)
+                        expectedSystem = $systemKeygen
+                        expectedGit = $gitKeygen
+                        privateExists = Test-Path -LiteralPath $keys.privateKeyPath -PathType Leaf
+                        publicExists = Test-Path -LiteralPath $keys.publicKeyPath -PathType Leaf
+                    }
+                } finally {
+                    [Environment]::SetEnvironmentVariable("VANESSA_DESIGNER_AGENT_HOST_KEY_ROOT", $previousRoot, "Process")
+                }
+            }
+            $result.calls | Should -Be @($result.expectedSystem, $result.expectedGit)
+            $result.privateExists | Should -BeTrue
+            $result.publicExists | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "builds canonical file infobase connection strings for native 1C arguments" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

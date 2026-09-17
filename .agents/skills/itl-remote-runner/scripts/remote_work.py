@@ -72,7 +72,7 @@ def main():
     command.add_argument("--recovery-horizon-days", type=int, required=True)
     command.add_argument("--tombstone-retention-days", type=int, required=True)
     command.add_argument("--batch-size", type=int, required=True)
-    for name in ("access-recovery-plan", "access-recover-workflow"):
+    for name in ("access-recovery-plan", "access-recover", "access-recover-workflow"):
         command = commands.add_parser(name)
         command.add_argument("--coordinator", required=True)
         command.add_argument("--ticket", required=True)
@@ -165,6 +165,15 @@ def main():
     if args.command == "access-recovery-plan":
         from itl_remote.access_recovery import plan
         return plan(args.coordinator, args.ticket)
+    if args.command == "access-recover":
+        from itl_remote.access import on_demand_release_action
+        from itl_remote.access_recovery import plan
+        prepared = plan(args.coordinator, args.ticket)
+        if on_demand_release_action(prepared.get("operation", {}).get("owner", {})) is not None:
+            from itl_remote.ondemand_recovery import recover_on_demand
+            return recover_on_demand(args.coordinator, args.ticket)
+        from itl_remote.native_recovery import recover_workflow_operation
+        return recover_workflow_operation(args.coordinator, args.ticket)
     if args.command == "access-recover-workflow":
         from itl_remote.native_recovery import recover_workflow_operation
         return recover_workflow_operation(args.coordinator, args.ticket)

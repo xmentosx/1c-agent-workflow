@@ -7508,16 +7508,42 @@ function Ensure-VanessaDesignerAgentHostKey {
         return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
     }
 
-    $sshKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
-    if ($null -eq $sshKeygen) {
-        throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_MISSING: Windows OpenSSH ssh-keygen.exe is required to create the project-owned Designer Agent host key."
+    $sshKeygenCandidates = [System.Collections.Generic.List[string]]::new()
+    $systemSshKeygen = Get-Command ssh-keygen.exe -ErrorAction SilentlyContinue
+    if ($null -ne $systemSshKeygen -and -not [string]::IsNullOrWhiteSpace([string]$systemSshKeygen.Source)) {
+        $sshKeygenCandidates.Add([System.IO.Path]::GetFullPath([string]$systemSshKeygen.Source)) | Out-Null
     }
-    $arguments = @("-q", "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", (ConvertTo-NativeEmptyStringArgument ""), "-f", $privateKeyPath)
-    $result = Invoke-NativeProcessAndWaitResult -FilePath $sshKeygen.Source -Arguments $arguments -TimeoutSeconds 30
-    if ($result.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $privateKeyPath -PathType Leaf) -or -not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
-        throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_FAILED: ssh-keygen exited with code $($result.ExitCode)."
+
+    # Windows OpenSSH can be present but unusable (for example after an OS servicing
+    # regression). Git is already a required workflow dependency and Git for Windows
+    # ships an equivalent trusted ssh-keygen. Keep it as a bounded fallback instead of
+    # weakening the Designer Agent host-key requirement.
+    $gitCommand = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($null -ne $gitCommand -and -not [string]::IsNullOrWhiteSpace([string]$gitCommand.Source)) {
+        $gitRoot = Split-Path -Parent (Split-Path -Parent ([System.IO.Path]::GetFullPath([string]$gitCommand.Source)))
+        foreach ($relativePath in @("usr\bin\ssh-keygen.exe", "mingw64\bin\ssh-keygen.exe")) {
+            $candidate = [System.IO.Path]::GetFullPath((Join-Path $gitRoot $relativePath))
+            if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and $candidate -notin $sshKeygenCandidates) {
+                $sshKeygenCandidates.Add($candidate) | Out-Null
+            }
+        }
     }
-    return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
+    if ($sshKeygenCandidates.Count -eq 0) {
+        throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_MISSING: a usable ssh-keygen.exe from Windows OpenSSH or Git for Windows is required to create the project-owned Designer Agent host key."
+    }
+
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($sshKeygenPath in $sshKeygenCandidates) {
+        Remove-Item -LiteralPath $privateKeyPath, $publicKeyPath -Force -ErrorAction SilentlyContinue
+        $arguments = @("-q", "-t", "rsa", "-b", "2048", "-m", "PEM", "-N", (ConvertTo-NativeEmptyStringArgument ""), "-f", $privateKeyPath)
+        $result = Invoke-NativeProcessAndWaitResult -FilePath $sshKeygenPath -Arguments $arguments -TimeoutSeconds 30
+        if ($result.ExitCode -eq 0 -and (Test-Path -LiteralPath $privateKeyPath -PathType Leaf) -and (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
+            return [pscustomobject]@{ privateKeyPath = $privateKeyPath; publicKeyPath = $publicKeyPath }
+        }
+        $failures.Add("$sshKeygenPath=$($result.ExitCode)") | Out-Null
+    }
+    Remove-Item -LiteralPath $privateKeyPath, $publicKeyPath -Force -ErrorAction SilentlyContinue
+    throw "ITL_DESIGNER_AGENT_SSH_KEYGEN_FAILED: no trusted ssh-keygen candidate created the host key. Attempts: $($failures -join '; ')."
 }
 
 function Invoke-VanessaDesignerAgentClient {

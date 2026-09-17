@@ -996,7 +996,9 @@ $ignored = $false
 $signaled = $false
 if ($attached) {
     $ignored = [ItlCtrlC]::SetConsoleCtrlHandler([IntPtr]::Zero, $true)
-    $signaled = [ItlCtrlC]::GenerateConsoleCtrlEvent(0, [uint32]$HelperPid)
+    # CTRL_C_EVENT cannot be scoped to a nonzero process-group id. After attaching
+    # to the helper's dedicated console, group 0 targets the processes on that console.
+    $signaled = [ItlCtrlC]::GenerateConsoleCtrlEvent(0, 0)
     Start-Sleep -Milliseconds 500
 }
 [ItlCtrlC]::FreeConsole() | Out-Null

@@ -89,6 +89,8 @@ class RecoveryTests(unittest.TestCase):
         self.assertNotIn(proof["token"], json.dumps(p))
         self.assertFalse(p["automaticReplay"])
         self.assertEqual(2, len(p["requirements"]))
+        self.assertEqual("access-recover", p["nextAction"]["command"])
+        self.assertEqual(proof["ticket"], p["nextAction"]["ticket"])
 
     def test_live_owner_cannot_be_recovered(self):
         out, process = self.child("original", hold=True)

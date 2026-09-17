@@ -620,6 +620,24 @@ Describe "ITL on-demand MCP facade" {
         Test-Agent1cActionRequiresLifecycleLock -RequestedAction "internal-ondemand-stop-all" | Should -BeTrue
     }
 
+    It "requires an inherited recovery proof before recover-stop can touch runtime state" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-recover-proof-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $message = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                try {
+                    Invoke-ItlOnDemandBackendBroker -Operation recover-stop -Family vanessa-ui -InstanceId ('a' * 32)
+                } catch { return $_.Exception.Message }
+                return ''
+            }
+            $message | Should -Be 'ITL_ONDEMAND_RECOVERY_PROOF_REQUIRED'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keys ports by family, project, worktree, branch, and client instance" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-keys-" + [guid]::NewGuid().ToString("N"))
         try {
