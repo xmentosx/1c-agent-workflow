@@ -117,7 +117,7 @@ function Get-DevelopPublicationEnvironmentIdentity {
         projectRoot = $projectRoot.ToLowerInvariant()
         projectConfig = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".agent-1c\project.json")
         standConfig = Get-DeliveryFileIdentity -Path $standConfigPath
-        devEnv = Get-DeliveryFileIdentity -Path (Join-Path $projectRoot ".dev.env")
+        devEnv = $(if (Test-Path -LiteralPath (Join-Path $projectRoot ".dev.env") -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path (Join-Path $projectRoot ".dev.env") } else { "missing" })
         repositories = $repositories
     }
     return Get-DeliveryTextSha256 -Text ($identity | ConvertTo-Json -Depth 8 -Compress)

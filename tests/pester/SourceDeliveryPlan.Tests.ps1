@@ -123,6 +123,26 @@ Describe 'Delivery v3 immutable selective plan' {
         (Get-DeliveryCanonicalJsonSha256 -Value $materialRewrite) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
     }
 
+    It 'keeps durable publication identity stable across helper-owned dev-env rewrites' {
+        $candidateSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8
+        $functionText = [regex]::Match($candidateSource, '(?ms)^function Get-DevelopPublicationEnvironmentIdentity \{.*?^\}').Value
+        & {
+            Invoke-Expression $functionText
+            $stand = Join-Path $TestDrive 'durable stand identity'; $develop = Join-Path $stand 'develop'
+            New-Item -ItemType Directory -Force -Path (Join-Path $stand '.agent-1c'), $develop | Out-Null
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\project.json'), '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $stand '.agent-1c\release-e2e.json'), ('{"developWorktreePath":"' + ($develop -replace '\\','\\\\') + '"}'), [Text.UTF8Encoding]::new($false))
+            $envPath = Join-Path $stand '.dev.env'; $script:E2EProjectRoot = $stand
+            function Invoke-RepositoryGit { param([string]$RepositoryRoot,[string[]]$Arguments,[switch]$AllowFailure); if ($Arguments[0] -eq 'rev-parse') { return [pscustomobject]@{exitCode=0;stdout=('a' * 40)} }; return [pscustomobject]@{exitCode=0;stdout=''} }
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+            $before = Get-DevelopPublicationEnvironmentIdentity
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nFUTURE_HELPER_OUTPUT=changed`n", [Text.UTF8Encoding]::new($false))
+            (Get-DevelopPublicationEnvironmentIdentity) | Should -Be $before
+            [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`n", [Text.UTF8Encoding]::new($false))
+            (Get-DevelopPublicationEnvironmentIdentity) | Should -Not -Be $before
+        }
+    }
+
     It 'canonicalizes allowlisted env inputs without persisting secret values' {
         $first = Join-Path $TestDrive 'first.env'
         $second = Join-Path $TestDrive 'second.env'
