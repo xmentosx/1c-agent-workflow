@@ -15,6 +15,8 @@ class SidecarIsolationTests(unittest.TestCase):
 
     def test_chatgpt_uses_native_project_skills_via_project_instructions(self):
         text = GUIDE.read_text(encoding="utf-8")
+        self.assertIn("session --server", text)
+        self.assertIn("one-shot `tools-call`", text)
         self.assertIn("При любой команде itl-*", text)
         self.assertIn("локальный SKILL.md", text)
         self.assertNotIn("ChatGPT/RDC thin wrapper", text)

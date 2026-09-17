@@ -259,6 +259,44 @@ def call_tool(root: Path, server: str, tool: str, arguments: dict[str, Any]) -> 
     finally:
         if hasattr(client, "close"):
             client.close()
+
+
+def session_loop(root: Path, server: str, input_stream, output_stream) -> None:
+    """Keep one MCP client/facade alive across stateful tool calls."""
+    client = open_client(root, server)
+    try:
+        client.initialize()
+        for raw in input_stream:
+            raw = raw.strip()
+            if not raw:
+                continue
+            request_value = json.loads(raw)
+            if not isinstance(request_value, dict):
+                raise BridgeError("session request must be a JSON object")
+            action = request_value.get("action")
+            if action == "close":
+                output_stream.write(json.dumps({"server": server, "status": "closed"}, ensure_ascii=False) + "\n")
+                output_stream.flush()
+                return
+            if action == "tools-list":
+                response = client.call("tools/list", {})
+                value = {"server": server, "tools": (response.get("result") or {}).get("tools") or []}
+            elif action == "tools-call":
+                tool = request_value.get("tool")
+                arguments = request_value.get("arguments", {})
+                if not isinstance(tool, str) or not tool or not isinstance(arguments, dict):
+                    raise BridgeError("session tools-call requires string tool and object arguments")
+                response = client.call("tools/call", {"name": tool, "arguments": arguments})
+                value = {"server": server, "tool": tool, "result": response.get("result")}
+            else:
+                raise BridgeError("unknown session action")
+            output_stream.write(json.dumps(value, ensure_ascii=False) + "\n")
+            output_stream.flush()
+    finally:
+        if hasattr(client, "close"):
+            client.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Optional ChatGPT/RDC bridge for installed ITL projects")
     parser.add_argument("--project-root", required=True)
@@ -271,6 +309,8 @@ def main() -> int:
     call.add_argument("--server", required=True)
     call.add_argument("--tool", required=True)
     call.add_argument("--arguments", default="{}", help="JSON object")
+    session = sub.add_parser("session")
+    session.add_argument("--server", required=True)
     args = parser.parse_args()
     root = _project_root(args.project_root)
     if args.action == "project-info":
@@ -279,6 +319,9 @@ def main() -> int:
         value = {"projectRoot": str(root), "servers": sorted(load_servers(root))}
     elif args.action == "tools-list":
         value = list_tools(root, args.server)
+    elif args.action == "session":
+        session_loop(root, args.server, sys.stdin, sys.stdout)
+        return 0
     else:
         arguments = json.loads(args.arguments)
         if not isinstance(arguments, dict):

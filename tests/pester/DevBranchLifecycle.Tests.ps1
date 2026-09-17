@@ -3274,17 +3274,21 @@ try {
 
     It "leaves Designer liveness before fingerprint, seed, and commit work" {
         $sync = [regex]::Match($HelperText, "(?s)function\s+Sync-Master\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
-        $seed = [regex]::Match($HelperText, "(?s)function\s+New-BranchSeed\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $seedCore = [regex]::Match($HelperText, "(?s)function\s+Invoke-NewBranchSeedCore\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
+        $seedWrapper = [regex]::Match($HelperText, "(?s)function\s+New-BranchSeed\s*\{(?<body>.*?)(?=`r?`nfunction\s+)")
         $sync.Success | Should -BeTrue
-        $seed.Success | Should -BeTrue
+        $seedCore.Success | Should -BeTrue
+        $seedWrapper.Success | Should -BeTrue
 
         $syncBody = $sync.Groups["body"].Value
-        $seedBody = $seed.Groups["body"].Value
+        $seedBody = $seedCore.Groups["body"].Value
+        $seedWrapperBody = $seedWrapper.Groups["body"].Value
         $syncBody | Should -Match '(?s)sync-master\.dump-config.*?Dump-ConfigToFiles.*?sync-master\.fingerprint.*?Get-ConfigSourceFingerprint.*?sync-master\.seed.*?Ensure-BranchSeed'
         $syncBody | Should -Match '(?s)sync-master\.commit.*?Commit-AuthoritativeExportPathIfChanged'
         $seedBody | Should -Match '(?s)seed\.dump-config.*?Dump-ConfigToFilesFromInfoBase.*?seed\.fingerprint.*?Get-ConfigSourceFingerprint'
         $seedBody | Should -Match '(?s)seed\.hash-artifact.*?Get-FileHash.*?seed\.finalize.*?Write-BranchSeedManifest'
         $seedBody | Should -Match '(?s)seed\.complete.*?Read-BranchSeedManifest'
+        $seedWrapperBody | Should -Match '(?s)Invoke-WithRunStatusHeartbeat.*?Invoke-NewBranchSeedCore'
     }
 
     It "activates 1C byte preservation only with an authoritative dump commit" {

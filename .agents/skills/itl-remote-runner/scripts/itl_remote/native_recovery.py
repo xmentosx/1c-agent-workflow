@@ -289,6 +289,8 @@ An unsupported later phase remains needs-attention for its operation adapter.
                     duty['kind'] == 'infobase-snapshot' and duty['status'] == 'pending'
                     for duty in journal['restoration']['duties']):
                 return _recover_extension_snapshots(recovery, journal, observed)
+            repository_capture = read_only_dump = verification_check = tooling_repair = False
+            refresh_retry = sync_master_retry = False
             if any(operation['startAttempted'] for operation in journal['operations']):
                 observations = inspect_native_work(recovery, journal)
                 with recovery.coordinator.mutex(time.monotonic() + 30, recovery.cancelled):
@@ -316,11 +318,15 @@ An unsupported later phase remains needs-attention for its operation adapter.
                     operation['operation'] == 'check-dev-branch' for operation in journal['operations'])
                 tooling_repair = current['owner']['operation'] == 'repair-dev-branch-tooling' and all(
                     operation['operation'] == 'repair-dev-branch-tooling' for operation in journal['operations'])
-                if not repository_capture and not read_only_dump and not verification_check and not tooling_repair:
+                refresh_retry = current['owner']['operation'] in ('refresh-dev-branch', 'refresh-dev-branch-lite') and all(
+                    operation['operation'] == current['owner']['operation'] for operation in journal['operations'])
+                sync_master_retry = current['owner']['operation'] == 'sync-master' and all(
+                    operation['operation'] == 'sync-master' for operation in journal['operations'])
+                if not repository_capture and not read_only_dump and not verification_check and not tooling_repair and not refresh_retry and not sync_master_retry:
                     raise WorkError('NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED')
                 quiescent = (_planned_resources_quiescent(
                     recovery, journal, observations, current['owner']['operation'])
-                             if verification_check or tooling_repair else observations and not any(
+                             if verification_check or tooling_repair or refresh_retry else observations and not any(
                                  base['sessionCount'] or not base['databasePresent'] or not base['exclusive']
                                  for observation in observations for sample in observation['observation']['samples']
                                  for base in sample['resources']))
@@ -367,6 +373,8 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 'adapter': ('workflow-read-only-dump' if read_only_dump else
                             'workflow-verification-check' if verification_check else
                             'workflow-tooling-repair' if tooling_repair else
+                            'workflow-refresh-retry' if refresh_retry else
+                            'workflow-sync-master-retry' if sync_master_retry else
                             'workflow-repository-capture' if observations else 'workflow-preparation'),
                 'nativeStartAttempted': bool(observations),
                 'producers': observed, 'restorations': restored,
@@ -379,7 +387,11 @@ An unsupported later phase remains needs-attention for its operation adapter.
                                      'verification remains failed or interrupted; no passing result is accepted; rerun the canonical check'
                                      if verification_check else
                                      'tooling repair remains interrupted; recovery does not create a readiness result; continue through the canonical helper'
-                                     if tooling_repair else 'no new success or verification claim'),
+                                     if tooling_repair else
+                                     'refresh remains interrupted; pending merge identity is preserved; rerun the same canonical refresh command'
+                                     if refresh_retry else
+                                     'master synchronization remains interrupted; rerun the canonical sync-master command'
+                                     if sync_master_retry else 'no new success or verification claim'),
             })
         return recovery.complete(verify)
 

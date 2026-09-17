@@ -218,13 +218,19 @@ restoration under that ownership before calling completion. The coordinator
 checks full resource coverage and records the adapter's evidence, but cannot
 infer database quiescence from a dead Python process. There is deliberately no
 CLI accepting `passed: true`, a force-unlock flag, or arbitrary cleanup command.
-The generic ticket command provides inspection only. Jobs with an original
-pinned recovery contract use the [job recovery commands](job-recovery.md).
-Workflow tickets have the separate `access-recover-workflow --coordinator
-<directory> --ticket <ticket>` adapter. Invoke it through
-`scripts/Invoke-RemoteWork.ps1 -Arguments @(...)` so the package resolves its
-managed Python runtime. Select the original operation's coordinator and ticket;
-this does not rerun the interrupted command. Supported local file-base paths are
+`access-recovery-plan --coordinator <directory> --ticket <ticket>` is inspection
+only and returns the fenced revision plus its trusted `nextAction`. Execute that
+plan with `access-recover --coordinator <directory> --ticket <ticket>`: the
+dispatcher accepts only persisted, whitelisted recovery contracts. On-demand
+owners must match their exact `releaseAction` (`finish-owned-on-demand` plus the
+recorded `vanessa-ui` or `roctup` family/instance), while all other tickets route
+to the workflow-native adapter. `access-recover-workflow` remains as the explicit
+workflow-only compatibility entrypoint. Jobs with an original pinned recovery
+contract use the [job recovery commands](job-recovery.md). Invoke access recovery
+through `scripts/Invoke-RemoteWork.ps1 -Arguments @(...)` so the package resolves
+its managed Python runtime. Select the original operation's coordinator and
+ticket; recovery never replays the interrupted business command.
+Supported local file-base paths are
 pre-native cursor recovery, repository-capture reconciliation and extension
 initialization/smoke snapshot rollback with retained lifecycle context. Native
 rollback imports the captured helper generation and uses a private recovery

@@ -47,7 +47,8 @@ def plan(root, ticket):
                 "ticket": ticket, "revision": identity(record),
                 "operation": public(record),
                 "requirements": ["verify-owned-work-stopped", "verify-restoration-complete"],
-                "automaticReplay": False}
+                "automaticReplay": False,
+                "nextAction": {"command": "access-recover", "coordinator": str(coordinator.root), "ticket": ticket}}
 
 
 @dataclass(frozen=True)

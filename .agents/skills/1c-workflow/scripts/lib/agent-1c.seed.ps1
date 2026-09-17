@@ -434,7 +434,7 @@ function Assert-BranchSeedReady {
     return $manifest
 }
 
-function New-BranchSeed {
+function Invoke-NewBranchSeedCore {
     param(
         [string]$ConfigurationFingerprint,
         [int]$ConfigurationFileCount = 0,
@@ -602,6 +602,20 @@ function New-BranchSeed {
     } finally {
         if ($null -ne $lease) { $lease.Dispose() }
         $writerIntent.Dispose()
+    }
+}
+
+function New-BranchSeed {
+    param(
+        [string]$ConfigurationFingerprint,
+        [int]$ConfigurationFileCount = 0,
+        [switch]$DumpConfigurationFromSeed
+    )
+
+    $arguments = @{}
+    foreach ($entry in $PSBoundParameters.GetEnumerator()) { $arguments[$entry.Key] = $entry.Value }
+    return Invoke-WithRunStatusHeartbeat {
+        Invoke-NewBranchSeedCore @arguments
     }
 }
 

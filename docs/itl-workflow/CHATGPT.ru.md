@@ -44,7 +44,7 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_MASTER_WORKTREE>
 5. Прочитай указанные project-info файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
 6. Используй локальные skills из <PROJECT_ROOT>\.agents\skills.
 7. При любой команде itl-* сначала прочитай соответствующий локальный SKILL.md и исполняй его контракт, не воспроизводя его логику самостоятельно.
-8. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml.
+8. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml. Для stateful on-demand MCP, включая `itl-vanessa-ui`, используй одну bridge-сессию `session --server ...` на всю последовательность `connect/use/finish`; не разбивай её на отдельные one-shot `tools-call` процессы.
 9. Для lifecycle-команд, которые по своему локальному контракту управляют зарегистрированными dev-worktree (например itl-refresh-all), разрешай самому workflow/helper находить и обслуживать эти worktree. Не подменяй их пути вручную и не меняй PROJECT_ROOT.
 10. Не обращайся к исходному репозиторию 1c-agent-workflow как к runtime-зависимости проекта.
 11. Сохраняй посторонние незакоммиченные изменения и соблюдай project safety gates.
@@ -73,7 +73,7 @@ PROJECT_ROOT=<ПОЛНЫЙ_ПУТЬ_К_DEV_WORKTREE>
 6. Прочитай указанные project-info файлы правил в их порядке приоритета и применяй их ко всей дальнейшей работе.
 7. Используй локальные skills из <PROJECT_ROOT>\.agents\skills.
 8. При любой команде itl-* сначала прочитай соответствующий локальный SKILL.md и исполняй его контракт, не воспроизводя его логику самостоятельно.
-9. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml.
+9. Для MCP используй локальный mcp_bridge.py и существующий <PROJECT_ROOT>\.codex\config.toml. Для stateful on-demand MCP, включая `itl-vanessa-ui`, используй одну bridge-сессию `session --server ...` на всю последовательность `connect/use/finish`; не разбивай её на отдельные one-shot `tools-call` процессы.
 10. Все прямые Git, файлы, тесты, 1С, MCP и прочие локальные операции выполняй через Remote Desktop Commander именно в PROJECT_ROOT.
 11. Не обращайся к исходному репозиторию 1c-agent-workflow как к runtime-зависимости проекта.
 12. Сохраняй посторонние незакоммиченные изменения и соблюдай project safety gates.

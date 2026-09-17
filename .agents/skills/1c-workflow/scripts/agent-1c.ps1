@@ -118,7 +118,7 @@ param(
     [int]$OperationOwnerPid = 0,
     [switch]$OperationContinuation,
     [ValidateRange(0,1)][int]$DatabaseContinuationProtocol = 0,
-    [ValidateSet("", "access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
+    [ValidateSet("", "access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "recover-stop", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
     [string]$InternalOnDemandCatalogSha256 = "",
