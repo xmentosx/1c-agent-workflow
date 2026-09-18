@@ -130,8 +130,11 @@ fallback нет. Повтор публикации может закрепить
 записан в immutable plan, и принимает его только как предка текущего
 `origin/master`; новый plan без `-ResumePlan` всегда использует текущий master.
 Если сумма выполняемых стадий больше 60 минут, нужно явно
-передать `-ApproveLongPlan <planId>`. Исправление delivery/test harness меняет
-его собственный static proof, но не fingerprint независимой runtime capability.
+передать `-ApproveLongPlan <planId>`. `Plan` выполняет тот же read-only preflight
+owned components, что и публикация, поэтому автоматическое повышение до Release
+из-за отсутствующего immutable asset уже входит в сохранённый `planId`.
+Исправление delivery/test harness меняет его собственный static proof, но не
+fingerprint независимой runtime capability.
 `verification-refresh` и `result-cleanup` намеренно всегда свежие.
 
 Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 минут; Develop

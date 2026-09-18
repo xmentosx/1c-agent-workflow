@@ -415,8 +415,11 @@ function New-AccumulatedDeliveryPlan {
         Add-QueuedRangesToCandidate -CandidateRoot $worktree.path -Entries $entries
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
+        $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+        $effectiveRequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
+        [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
-        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease
+        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$effectiveRequireRelease
         $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         return $plan
     } finally { if ($worktree) { Remove-DeliveryWorktree -Worktree $worktree } }

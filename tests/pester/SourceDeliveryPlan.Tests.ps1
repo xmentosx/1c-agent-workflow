@@ -235,6 +235,39 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
+    It 'auto-promotes accumulated Plan when owned components require Release' {
+        $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
+        $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
+        & {
+            Invoke-Expression $accumulatedText
+            $script:Remote = 'origin'; $script:preflightCalled = $false; $script:resolverCalled = $false
+            function Assert-CleanDeliveryWorktree {}
+            function Invoke-DeliveryGit { param([string[]]$Arguments); return [pscustomobject]@{ exitCode=0; stdout='' } }
+            function Get-GitValue { return ('b' * 40) }
+            function Get-QueueEntries { return @([pscustomobject]@{ id='develop'; base=('a' * 40); head=('c' * 40) }) }
+            function New-DeliveryWorktree { return [pscustomobject]@{ path='C:\candidate'; branch='itl/plan' } }
+            function Add-QueuedRangesToCandidate {}
+            function Invoke-WorktreeGit {
+                param([string]$Root,[string[]]$Arguments)
+                return [pscustomobject]@{ exitCode=0; stdout=$(if ($Arguments -contains 'HEAD^{tree}') { ('d' * 40) } else { ('c' * 40) }) }
+            }
+            function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiresRelease=$true; components=@() } }
+            function Assert-ComponentPublicationFinalizerPreflight { $script:preflightCalled = $true }
+            function Resolve-DeliveryPlanAiRulesSource { $script:resolverCalled = $true; return 'C:\exact-rules' }
+            function New-DeliveryQualityPlanForCandidate {
+                param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease)
+                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=[bool]$RequireRelease }
+            }
+            function Save-DeliveryQualityPlan { return 'C:\plan.json' }
+            function Remove-DeliveryWorktree {}
+
+            $plan = New-AccumulatedDeliveryPlan
+            $plan.requireRelease | Should -BeTrue
+            $script:preflightCalled | Should -BeTrue
+            $script:resolverCalled | Should -BeTrue
+        }
+    }
+
     It 'requires exact explicit approval for a plan whose selected stages exceed sixty minutes' {
         $plan = [pscustomobject]@{ status='ready'; planId='long-plan'; executedBudgetSeconds=3601 }
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*LONG_PLAN_APPROVAL_REQUIRED*'
