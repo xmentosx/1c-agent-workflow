@@ -72,6 +72,7 @@ set-dev-branch-extension
 dump-dev-branch-extension
 activate-dev-branch-context
 update-dev-branch-base
+recover-interrupted-database-access
 cleanup-interrupted-vanessa-run
 stop-dev-branch-test-clients
 start-vanessa-profile
@@ -115,7 +116,9 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 
 `stop-dev-branch-test-clients` stops only the Vanessa `TESTMANAGER` in the current worktree's service infobase and `TESTCLIENT` processes in its development infobase, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
 
-`cleanup-interrupted-vanessa-run` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
+`recover-interrupted-database-access` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It accepts only the lifecycle-published coordinator/ticket pair, invokes trusted persisted native recovery, stops only exact ownership-proven native runtime, and returns `retry-original-command` only after database release is verified. It never force-unlocks or performs broad process cleanup and must not be invoked manually.
+
+`cleanup-interrupted-vanessa-run` is the legacy exact fallback when no durable database/native recovery ticket is available. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
 
 `validate-test-classification` is the short static continuation after refresh or
 catalog edits. It inventories Vanessa feature files and YAxUnit `Module.bsl`

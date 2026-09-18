@@ -341,6 +341,7 @@ function Write-RunStatus {
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
         sourceIntegrityReportPath = $(if ($script:RunSourceIntegrityReportPath) { [string]$script:RunSourceIntegrityReportPath } else { "" })
         activeVanessaRun = $script:ActiveVanessaRunEvidence
+        activeDatabaseRecovery = $script:ActiveDatabaseRecoveryEvidence
     }
 
     Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
@@ -528,6 +529,13 @@ function Set-RunStage {
 
 function Test-Agent1cActionRequiresLifecycleLock {
     param([string]$RequestedAction)
+
+    if ($RequestedAction -eq 'recover-interrupted-database-access') {
+        # The original lifecycle owner is already dead. Trusted recovery is
+        # authorized by its exact coordinator ticket and must not reacquire the
+        # abandoned lifecycle/runtime locks before it can release that ticket.
+        return $false
+    }
 
     if ($RequestedAction -eq 'stop-vanessa-profile' -and
         (Get-Command Test-VanessaInteractiveProfileHasOwner -CommandType Function -ErrorAction SilentlyContinue) -and
@@ -1077,6 +1085,7 @@ function Enter-Agent1cLifecycleOperation {
         errorCode = ""
         errorMessage = ""
         activeVanessaRun = $null
+        activeDatabaseRecovery = $null
         recoveredOperationId = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.operationId } else { "" })
         recoveredOperationArchivePath = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.archivePath } else { "" })
     }
@@ -1225,6 +1234,57 @@ function Complete-Agent1cLifecycleOperation {
             Write-Agent1cLifecycleOperationRecord -Path $holderPath -Record $holder
         }
     }
+}
+
+function Publish-Agent1cDatabaseRecoveryEvidence {
+    param([Parameter(Mandatory = $true)][object]$Admission)
+
+    if ($null -eq $script:LifecycleOperationRecord -or
+        [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath) -or
+        [string]::IsNullOrWhiteSpace($script:LifecycleOperationId)) {
+        throw 'LIFECYCLE_DATABASE_RECOVERY_EVIDENCE_INVALID: active lifecycle operation is required.'
+    }
+    $proof = Get-StateValue -State $Admission.owner -Name 'proof' -Default $null
+    $coordinator = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $proof -Name 'coordinator' -Default ''))
+    $ticket = [string](Get-StateValue -State $proof -Name 'ticket' -Default '')
+    $operation = [string](Get-StateValue -State $Admission -Name 'operation' -Default '')
+    if (-not $coordinator -or $ticket -cnotmatch '^[a-f0-9]{32}$' -or -not $operation) {
+        throw 'LIFECYCLE_DATABASE_RECOVERY_EVIDENCE_INVALID: coordinator, ticket, and operation are required.'
+    }
+    $evidence = [pscustomobject][ordered]@{
+        schemaVersion = 1
+        operationId = $script:LifecycleOperationId
+        operation = $operation
+        projectRoot = $script:ProjectRoot
+        coordinator = $coordinator
+        ticket = $ticket
+        publishedAt = (Get-Date).ToString('o')
+    }
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -eq $record -or [string]$record['operationId'] -cne $script:LifecycleOperationId -or
+        [string]$record['status'] -cne 'running' -or [string]$record['action'] -cne $operation) {
+        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='cannot publish database recovery evidence' operationId='$($script:LifecycleOperationId)'"
+    }
+    $record['activeDatabaseRecovery'] = $evidence
+    $record['updatedAt'] = (Get-Date).ToString('o')
+    $script:LifecycleOperationRecord = $record
+    $script:ActiveDatabaseRecoveryEvidence = $evidence
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) { Write-RunStatus -Status 'running' }
+}
+
+function Clear-Agent1cDatabaseRecoveryEvidence {
+    if ($null -eq $script:ActiveDatabaseRecoveryEvidence) { return }
+    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
+    if ($null -ne $record -and [string]$record['operationId'] -ceq $script:LifecycleOperationId -and
+        [string]$record['status'] -ceq 'running') {
+        $record['activeDatabaseRecovery'] = $null
+        $record['updatedAt'] = (Get-Date).ToString('o')
+        $script:LifecycleOperationRecord = $record
+        Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    }
+    $script:ActiveDatabaseRecoveryEvidence = $null
+    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) { Write-RunStatus -Status 'running' }
 }
 
 function Publish-Agent1cVanessaRunEvidence {
@@ -6571,6 +6631,100 @@ function Stop-NativeProcessForSafety {
     }
 }
 
+function New-NativeWaitRunStatusMonitor {
+    param([string[]]$LogPaths = @(), [ValidateRange(1, 60)][int]$HeartbeatSeconds = 10)
+
+    $lengths = @{}
+    foreach ($path in @($LogPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $lengths[[string]$path] = [int64]-1
+    }
+    return [pscustomobject]@{
+        heartbeatSeconds = $HeartbeatSeconds
+        lastPublishedAtUtc = [DateTime]::MinValue
+        lastEvidenceAtUtc = [DateTime]::UtcNow
+        lastCpuTicks = [int64]0
+        lastCpuSampleAvailable = $false
+        lastLogLengths = $lengths
+    }
+}
+
+function Publish-NativeWaitRunStatus {
+    param(
+        [Parameter(Mandatory = $true)][object]$Process,
+        [Parameter(Mandatory = $true)][object]$Monitor,
+        [Parameter(Mandatory = $true)][DateTime]$StartedAtUtc,
+        [Parameter(Mandatory = $true)][DateTime]$DeadlineUtc
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    $now = [DateTime]::UtcNow
+    if ($Monitor.lastPublishedAtUtc -ne [DateTime]::MinValue -and
+        ($now - [DateTime]$Monitor.lastPublishedAtUtc).TotalSeconds -lt [int]$Monitor.heartbeatSeconds) { return }
+
+    # A richer operation-specific monitor (Designer/Vanessa) owns its own stall
+    # budget and evidence. The generic native heartbeat must refresh the helper
+    # status without overwriting that diagnosis.
+    if ([int]$script:RunStallTimeoutRemainingSeconds -gt 0 -or
+        [string]$script:RunLiveness -in @('stalled-suspected','stalled-timeout','probe-running')) {
+        $Monitor.lastPublishedAtUtc = $now
+        Write-RunStatus -Status 'running'
+        return
+    }
+
+    $cpuTicks = [int64]0
+    $cpuSampleAvailable = $false
+    $workingSetMb = 0
+    try {
+        $Process.Refresh()
+        if (-not [bool]$Process.HasExited) {
+            $cpuTicks = [int64]$Process.TotalProcessorTime.Ticks
+            $workingSetMb = [int][Math]::Ceiling([double]$Process.WorkingSet64 / 1MB)
+            $cpuSampleAvailable = $true
+        }
+    } catch {}
+
+    $cpuDeltaMilliseconds = 0
+    $progressObserved = $false
+    if ($cpuSampleAvailable -and [bool]$Monitor.lastCpuSampleAvailable -and $cpuTicks -gt [int64]$Monitor.lastCpuTicks) {
+        $cpuDeltaMilliseconds = [int][Math]::Floor(($cpuTicks - [int64]$Monitor.lastCpuTicks) / [TimeSpan]::TicksPerMillisecond)
+        $progressObserved = $true
+    }
+
+    $logGrowthBytes = [int64]0
+    foreach ($path in @($Monitor.lastLogLengths.Keys)) {
+        $length = [int64]-1
+        try {
+            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue) {
+                $length = [int64](Get-Item -LiteralPath $path -Force -ErrorAction Stop).Length
+            }
+        } catch { $length = [int64]-1 }
+        $previous = [int64]$Monitor.lastLogLengths[$path]
+        if ($previous -ge 0 -and $length -ge 0 -and $length -ne $previous) {
+            $logGrowthBytes += ($length - $previous)
+            $progressObserved = $true
+        }
+        $Monitor.lastLogLengths[$path] = $length
+    }
+
+    if ($progressObserved) { $Monitor.lastEvidenceAtUtc = $now }
+    $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($now - [DateTime]$Monitor.lastEvidenceAtUtc).TotalSeconds))
+    $timeoutRemainingSeconds = if ($DeadlineUtc -eq [DateTime]::MaxValue) { 0 } else {
+        [int][Math]::Max(0, [Math]::Ceiling(($DeadlineUtc - $now).TotalSeconds))
+    }
+    $script:RunLiveness = $(if ($progressObserved) { 'running-active' } else { 'running-waiting' })
+    $script:RunNoProgressSeconds = $noProgressSeconds
+    $script:RunStallTimeoutRemainingSeconds = 0
+    $script:RunTimeoutRemainingSeconds = $timeoutRemainingSeconds
+    $script:RunOwnedProcessIds = @([int]$Process.Id)
+    $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
+    $script:RunWorkingSetMb = $workingSetMb
+    $script:RunLogGrowthBytes = $logGrowthBytes
+    $Monitor.lastPublishedAtUtc = $now
+    $Monitor.lastCpuTicks = $cpuTicks
+    $Monitor.lastCpuSampleAvailable = $cpuSampleAvailable
+    Write-RunStatus -Status 'running'
+}
+
 function Invoke-NativeProcessAndWaitResult {
     param(
         [string]$FilePath,
@@ -6632,9 +6786,12 @@ function Invoke-NativeProcessAndWaitResult {
     $memoryMonitorError = ""
     $terminationConfirmed = $true
     $terminationError = ""
+    $monitorStartedAtUtc = [DateTime]::UtcNow
+    $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
+    $heartbeatLogs = @()
+    if ($script:LastLogPath) { $heartbeatLogs += [string]$script:LastLogPath }
+    $runStatusMonitor = New-NativeWaitRunStatusMonitor -LogPaths $heartbeatLogs
     if ($TimeoutSeconds -gt 0 -or $MaxWorkingSetMb -gt 0 -or $null -ne $CompletionProbe) {
-        $monitorStartedAtUtc = [DateTime]::UtcNow
-        $deadline = if ($TimeoutSeconds -gt 0) { $monitorStartedAtUtc.AddSeconds($TimeoutSeconds) } else { [DateTime]::MaxValue }
         $postExitProbeDeadlineUtc = $null
         $probeObservedAt = $null
         $finished = $false
@@ -6783,6 +6940,7 @@ function Invoke-NativeProcessAndWaitResult {
                 break
             }
 
+            Publish-NativeWaitRunStatus -Process $process -Monitor $runStatusMonitor -StartedAtUtc $monitorStartedAtUtc -DeadlineUtc $deadline
             if (-not $launcherExited) {
                 $process.WaitForExit(250) | Out-Null
             } else {
@@ -6809,7 +6967,10 @@ function Invoke-NativeProcessAndWaitResult {
             }
         }
     } else {
-        $process.WaitForExit()
+        while (-not $process.HasExited) {
+            Publish-NativeWaitRunStatus -Process $process -Monitor $runStatusMonitor -StartedAtUtc $monitorStartedAtUtc -DeadlineUtc $deadline
+            $process.WaitForExit(250) | Out-Null
+        }
     }
 
     try {

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "recover-interrupted-database-access", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -126,7 +126,10 @@ param(
     [string]$InternalOnDemandReplacementInstanceId = "",
     [int]$InternalOnDemandExpectedPid = 0,
     [int]$InternalOnDemandExpectedPort = 0,
+    [string]$InterruptedDatabaseCoordinator = "",
+    [string]$InterruptedDatabaseTicket = "",
     [string]$InterruptedVanessaInfoBasePath = "",
+    [string]$InterruptedVanessaTestClientInfoBasePath = "",
     [string]$InterruptedVanessaRunParamsPath = "",
     [string]$InterruptedVanessaTestPorts = "",
     [string]$ExpectedMasterCommit = "",
@@ -389,6 +392,7 @@ $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
 $script:LifecycleWaitCancelled = $false
 $script:ActiveVanessaRunEvidence = $null
+$script:ActiveDatabaseRecoveryEvidence = $null
 $script:ActiveAuxiliaryVanessaContext = $null
 $script:ActiveVerificationSelectionPlan = $null
 
@@ -477,6 +481,7 @@ try {
     }
     if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $requestedLifecycleAction)
+        Publish-Agent1cDatabaseRecoveryEvidence -Admission $script:DevBranchMutationDatabaseAdmission
     }
     Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
@@ -535,6 +540,7 @@ try {
         "check-auxiliary-contour" { Check-AuxiliaryContour }
         "export-auxiliary-contour-result" { Export-AuxiliaryContourResult }
         "reset-auxiliary-contour" { Reset-AuxiliaryContour }
+        "recover-interrupted-database-access" { Invoke-InterruptedDatabaseAccessRecovery }
         "cleanup-interrupted-vanessa-run" { Invoke-InterruptedDevBranchVanessaRunCleanup }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "start-vanessa-profile" { Start-DevBranchVanessaInteractiveProfile | Out-Null }

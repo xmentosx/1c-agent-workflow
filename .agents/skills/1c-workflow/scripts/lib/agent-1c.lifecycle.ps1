@@ -2613,6 +2613,42 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
     return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings;continuationParent=$(if($null -ne $continuation){$continuation.reference}else{$null})}
 }
 
+function Invoke-InterruptedDatabaseAccessRecovery {
+    if ($InterruptedDatabaseTicket -cnotmatch '^[a-f0-9]{32}$' -or
+        [string]::IsNullOrWhiteSpace($InterruptedDatabaseCoordinator)) {
+        throw 'ITL_INTERRUPTED_DATABASE_RECOVERY_EVIDENCE_INVALID'
+    }
+    $requestedCoordinator = Resolve-Agent1cFullPath -Path $InterruptedDatabaseCoordinator
+    $settings = Get-ItlDatabaseAccessSettings
+    $expectedCoordinator = Resolve-Agent1cFullPath -Path ([string]$settings.coordinator)
+    if (-not [string]::Equals($requestedCoordinator, $expectedCoordinator, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_COORDINATOR_CHANGED expected='$expectedCoordinator' actual='$requestedCoordinator'"
+    }
+
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/PythonRuntime.ps1')
+    $python = Resolve-ItlPythonExecutable -Python ([string]$settings.python)
+    $remoteWork = Resolve-Agent1cFullPath -Path (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/remote_work.py')
+    $captured = Invoke-ItlNativeProcessCapture -FilePath $python -Arguments @(
+        '-B', '-X', 'utf8', $remoteWork, 'access-recover-workflow',
+        '--coordinator', $requestedCoordinator, '--ticket', $InterruptedDatabaseTicket
+    )
+    $combined = (([string]$captured.stdout) + [Environment]::NewLine + ([string]$captured.stderr)).Trim()
+    if ([int]$captured.exitCode -ne 0) {
+        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_FAILED exitCode=$($captured.exitCode) detail='$(Protect-VanessaVerificationDiagnosticText -Text $combined -MaxLength 1500)'"
+    }
+    $result = $null
+    foreach ($line in @(([string]$captured.stdout -split "\r?\n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        try { $result = $line | ConvertFrom-Json -ErrorAction Stop } catch {}
+    }
+    if ($null -eq $result -or [string](Get-StateValue -State $result -Name 'status' -Default '') -cne 'released' -or
+        [string](Get-StateValue -State $result -Name 'reason' -Default '') -cne 'recovery-verified') {
+        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT_INVALID detail='$(Protect-VanessaVerificationDiagnosticText -Text $combined -MaxLength 1500)'"
+    }
+    $json = $result | ConvertTo-Json -Depth 20 -Compress
+    Write-Host "ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT=$json"
+    return $result
+}
+
 function Start-ItlDevBranchMutationDatabaseAdmission {
     param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
     if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
@@ -2741,6 +2777,7 @@ function Complete-ItlDevBranchMutationDatabaseAdmission {
         }
         $released = Complete-ItlDatabaseAccessHost -Owner $Admission.owner
         if ($released.status -ne 'released') { throw 'INFOBASE_ACCESS_RELEASE_UNCONFIRMED' }
+        Clear-Agent1cDatabaseRecoveryEvidence
     } finally {
         $script:OneCNativeOperationJournal = $Admission.previousJournal
         [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $Admission.previousProof, 'Process')

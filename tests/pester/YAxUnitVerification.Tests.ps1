@@ -85,6 +85,9 @@ Describe "YAxUnit verification" {
         $text = Get-Content -LiteralPath $modulePath -Raw -Encoding UTF8
         $text | Should -Match '"/LoadCfg".+"-Extension".+\$extensionName.+"/UpdateDBCfg"'
         $text | Should -Match '"/LoadConfigFromFiles".+"-Extension".+\$testsExtensionName.+"-Format".+"Hierarchical"'
+        $text | Should -Match 'Set-RunStage -Stage "yaxunit\.run"'
+        $text | Should -Match 'Set-RunStage -Stage "yaxunit\.postprocess"'
+        $text.IndexOf('Set-RunStage -Stage "yaxunit.run"') | Should -BeLessThan $text.IndexOf('Invoke-Enterprise')
         $text | Should -Match 'RunUnitTests=\$configPath'
         $text | Should -Match 'reportFormat = "jUnit"'
         $text | Should -Match 'ReconcileYAxUnitProtections'

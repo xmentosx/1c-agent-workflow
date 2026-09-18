@@ -4182,6 +4182,129 @@ function Test-VanessaTestClientConnectionFailure {
     return ($connectionFailure -and $startupEvidence)
 }
 
+function New-VanessaRunLivenessMonitor {
+    param(
+        [Parameter(Mandatory = $true)][string]$RunDirectory,
+        [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+    )
+
+    $stallTimeout = [int][Math]::Min(600, [Math]::Max(30, [Math]::Floor($TimeoutSeconds / 3)))
+    if ($stallTimeout -ge $TimeoutSeconds) { $stallTimeout = [int][Math]::Max(10, $TimeoutSeconds - 5) }
+    $stallWarning = [int][Math]::Min(300, [Math]::Max(5, [Math]::Floor($stallTimeout / 2)))
+    return [pscustomobject][ordered]@{
+        logPath = Join-Path (Resolve-Agent1cFullPath -Path $RunDirectory) 'vanessa.log'
+        stallWarningSeconds = $stallWarning
+        stallTimeoutSeconds = $stallTimeout
+        lastProbeAtUtc = [DateTime]::MinValue
+        lastPublishedAtUtc = [DateTime]::MinValue
+        lastEvidenceAtUtc = [DateTime]::UtcNow
+        lastLogLength = [int64]-1
+        lastProcessSignature = ''
+        lastCpuTicks = [int64]0
+        lastCpuSampleAvailable = $false
+        lastLiveness = ''
+    }
+}
+
+function Update-VanessaRunLiveness {
+    param(
+        [Parameter(Mandatory = $true)][object]$Monitor,
+        [Parameter(Mandatory = $true)][object]$ProbeContext,
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][int[]]$TestPorts,
+        [Parameter(Mandatory = $true)][string]$RunParamsPath
+    )
+
+    $now = [DateTime]::UtcNow
+    if ($Monitor.lastProbeAtUtc -ne [DateTime]::MinValue -and
+        ($now - [DateTime]$Monitor.lastProbeAtUtc).TotalSeconds -lt 2) { return }
+    $Monitor.lastProbeAtUtc = $now
+
+    $logLength = [int64]-1
+    try {
+        if (Test-Path -LiteralPath $Monitor.logPath -PathType Leaf -ErrorAction SilentlyContinue) {
+            $logLength = [int64](Get-Item -LiteralPath $Monitor.logPath -Force -ErrorAction Stop).Length
+        }
+    } catch { $logLength = [int64]-1 }
+    $logGrowthBytes = [int64]0
+    $progressObserved = $false
+    if ($logLength -ge 0) {
+        if ([int64]$Monitor.lastLogLength -lt 0) {
+            if ($logLength -gt 0) { $progressObserved = $true }
+        } elseif ($logLength -ne [int64]$Monitor.lastLogLength) {
+            $logGrowthBytes = $logLength - [int64]$Monitor.lastLogLength
+            $progressObserved = $true
+        }
+    }
+
+    $ownedIds = @()
+    $cpuTicks = [int64]0
+    $cpuSampleAvailable = $false
+    $workingSetMb = 0
+    try {
+        $owned = @(Get-OwnVanessaTestProcesses -State $State -TestPorts $TestPorts -RunParamsPath $RunParamsPath -RequireInspection)
+        $ownedIds = @($owned | ForEach-Object { [int]$_.processId } | Where-Object { $_ -gt 0 } | Sort-Object -Unique)
+        foreach ($processId in $ownedIds) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -eq $process) { continue }
+            $process.Refresh()
+            $cpuTicks += [int64]$process.TotalProcessorTime.Ticks
+            $workingSetMb += [int][Math]::Ceiling([double]$process.WorkingSet64 / 1MB)
+            $cpuSampleAvailable = $true
+        }
+    } catch {
+        # A transient process-inventory failure is not proof of a Vanessa stall.
+        # Log/report progress can still keep the operation alive; persistent
+        # absence of all evidence reaches the bounded stall timeout below.
+    }
+    $processSignature = ($ownedIds -join ',')
+    if ($processSignature -cne [string]$Monitor.lastProcessSignature) { $progressObserved = $true }
+    $cpuDeltaMilliseconds = 0
+    if ($cpuSampleAvailable -and [bool]$Monitor.lastCpuSampleAvailable -and $cpuTicks -gt [int64]$Monitor.lastCpuTicks) {
+        $cpuDeltaMilliseconds = [int][Math]::Floor(($cpuTicks - [int64]$Monitor.lastCpuTicks) / [TimeSpan]::TicksPerMillisecond)
+        $progressObserved = $true
+    }
+    if ($progressObserved) { $Monitor.lastEvidenceAtUtc = $now }
+
+    $noProgressSeconds = [int][Math]::Max(0, [Math]::Floor(($now - [DateTime]$Monitor.lastEvidenceAtUtc).TotalSeconds))
+    $liveness = if ($noProgressSeconds -ge [int]$Monitor.stallTimeoutSeconds) {
+        'stalled-timeout'
+    } elseif ($noProgressSeconds -ge [int]$Monitor.stallWarningSeconds) {
+        'stalled-suspected'
+    } else {
+        'running-active'
+    }
+    $stallRemaining = [int][Math]::Max(0, [int]$Monitor.stallTimeoutSeconds - $noProgressSeconds)
+    $timeoutRemaining = [int](Get-StateValue -State $ProbeContext -Name 'timeoutRemainingSeconds' -Default 0)
+    $script:RunLiveness = $liveness
+    $script:RunNoProgressSeconds = $noProgressSeconds
+    $script:RunStallTimeoutRemainingSeconds = $stallRemaining
+    $script:RunTimeoutRemainingSeconds = $timeoutRemaining
+    $script:RunOwnedProcessIds = @($ownedIds)
+    $script:RunCpuDeltaMilliseconds = $cpuDeltaMilliseconds
+    $script:RunWorkingSetMb = $workingSetMb
+    $script:RunLogGrowthBytes = $logGrowthBytes
+    $detail = "liveness=$liveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemaining}s; ownedPids=$(if($ownedIds.Count){$ownedIds -join ','}else{'none'}); cpuDelta=${cpuDeltaMilliseconds}ms; workingSet=${workingSetMb}MB; logGrowth=${logGrowthBytes}B; timeoutRemaining=${timeoutRemaining}s; Vanessa TESTMANAGER -> TESTCLIENT is running."
+    $publishDue = $Monitor.lastPublishedAtUtc -eq [DateTime]::MinValue -or
+        ($now - [DateTime]$Monitor.lastPublishedAtUtc).TotalSeconds -ge 10 -or
+        $liveness -cne [string]$Monitor.lastLiveness
+    if ($publishDue -and -not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
+        $script:RunStageDetail = $detail
+        $Monitor.lastPublishedAtUtc = $now
+        $Monitor.lastLiveness = $liveness
+        Write-RunStatus -Status 'running'
+    }
+
+    $Monitor.lastLogLength = $logLength
+    $Monitor.lastProcessSignature = $processSignature
+    $Monitor.lastCpuTicks = $cpuTicks
+    $Monitor.lastCpuSampleAvailable = $cpuSampleAvailable
+    if ($liveness -eq 'stalled-timeout') {
+        Set-RunFailureContext -Category 'runner'
+        throw "ITL_VANESSA_STALL_TIMEOUT stallTimeoutSeconds=$($Monitor.stallTimeoutSeconds) noProgressSeconds=$noProgressSeconds log='$($Monitor.logPath)' ownedProcessIds=$($ownedIds -join ',')"
+    }
+}
+
 function New-VanessaTestClientStartupMonitor {
     param(
         [string]$RunDirectory,
@@ -5077,6 +5200,7 @@ function Run-DevBranchTests {
     $currentCommit = Get-CurrentCommit
     $currentFingerprint = if ($script:ActiveAuxiliaryVanessaContext) { [string]$script:ActiveAuxiliaryVanessaContext.verificationFingerprint } else { Get-VerificationFingerprint }
     $timeoutSeconds = Get-VanessaTestTimeoutSeconds
+    $runLivenessMonitor = New-VanessaRunLivenessMonitor -RunDirectory $runDirectory -TimeoutSeconds $timeoutSeconds
     $runStartedAt = Get-Date
     $runFinishedAt = $null
     $eventLogVerification = $null
@@ -5110,6 +5234,8 @@ function Run-DevBranchTests {
             @sessionWait `
             -TimeoutSeconds $timeoutSeconds `
             -CompletionProbe {
+                param($probeContext)
+                Update-VanessaRunLiveness -Monitor $runLivenessMonitor -ProbeContext $probeContext -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath
                 $probeStatus = Get-VanessaVerificationStatus -RunDirectory $runDirectory -StatusPath $statusPath
                 if ($probeStatus.status -in @("passed", "failed")) { return $true }
                 return (Test-VanessaTestClientStartupMonitor -Monitor $testClientStartupMonitor -State $runtimeState -TestPorts $testPorts -RunParamsPath $paramsPath)
@@ -6290,7 +6416,15 @@ function Invoke-InterruptedDevBranchVanessaRunCleanup {
         -not (Test-Path -LiteralPath $paramsPath -PathType Leaf)) {
         throw "ITL_INTERRUPTED_VANESSA_EVIDENCE_INVALID: VAParams path is missing or outside the current project."
     }
-    Stop-OwnVanessaTestProcessesAndAssert -State $state -TestPorts $ports -RunParamsPath $paramsPath
+    $cleanupState = $state
+    if (-not [string]::IsNullOrWhiteSpace($InterruptedVanessaTestClientInfoBasePath)) {
+        $targetPath = Resolve-Agent1cFullPath -Path $InterruptedVanessaTestClientInfoBasePath
+        $stateHash = ConvertTo-Agent1cHashtable -Object $state
+        $stateHash["devBranchInfoBasePath"] = $targetPath
+        $stateHash["vanessaServiceInfoBasePath"] = $expectedInfoBase
+        $cleanupState = [pscustomobject]$stateHash
+    }
+    Stop-OwnVanessaTestProcessesAndAssert -State $cleanupState -TestPorts $ports -RunParamsPath $paramsPath
 }
 
 function Get-VanessaInteractiveProfileStatePath {

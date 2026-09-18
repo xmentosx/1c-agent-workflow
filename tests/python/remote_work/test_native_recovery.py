@@ -14,7 +14,8 @@ sys.path.insert(0, str(RUNTIME))
 from itl_remote.access import Coordinator, Lease
 from itl_remote.access_autorecovery import enter_root_lease
 from itl_remote.common import WorkError, read_json, write_json
-from itl_remote.native_recovery import WORKFLOW_OPERATIONS, recover_workflow_operation
+from itl_remote.native_recovery import (VERIFICATION_OPERATIONS, WORKFLOW_OPERATIONS,
+                                        _stable_owned_processes, recover_workflow_operation)
 
 CHILD = r'''
 import hashlib, os, sys, time
@@ -35,8 +36,10 @@ if server_case: fixture.base = {'kind': 'server', 'path': 'server:1541/База 
 operation = 'unknown-operation' if kind == 'unknown-operation' else ('lock-config-repository-objects' if kind in ('repository-capture', 'server-repository-capture') else 'export-dev-branch-result')
 read_only = kind.startswith('read-only:')
 if read_only: operation = kind.split(':')[1]
-verification_check = kind == 'verification-check'
-if verification_check: operation = 'check-dev-branch'
+verification_operation = ('check-dev-branch' if kind == 'verification-check' else
+                          kind.split(':', 1)[1] if kind.startswith('verification:') else '')
+verification_check = bool(verification_operation)
+if verification_check: operation = verification_operation
 tooling_repair = kind == 'tooling-repair'
 if tooling_repair: operation = 'repair-dev-branch-tooling'
 refresh_retry = kind in ('refresh-retry', 'refresh-missing-seed', 'refresh-missing-seed-legacy', 'refresh-required-missing')
@@ -171,6 +174,25 @@ class NativeRecoveryTests(unittest.TestCase):
         match = re.search(r"if \(\$requestedLifecycleAction -in @\(([^\r\n]+)\)\)", source)
         self.assertIsNotNone(match)
         self.assertEqual(WORKFLOW_OPERATIONS, frozenset(re.findall(r"'([^']+)'", match.group(1))))
+        self.assertEqual(frozenset({
+            'check-dev-branch', 'verify-dev-branch', 'check-auxiliary-contour', 'deploy-and-test',
+        }), VERIFICATION_OPERATIONS)
+        self.assertTrue(VERIFICATION_OPERATIONS <= WORKFLOW_OPERATIONS)
+
+    def test_owned_process_identity_must_be_stable_across_recovery_samples(self):
+        process = {'pid': 40112, 'processStartTime': '2026-09-18T14:07:40+00:00',
+                   'name': '1cv8c.exe', 'executablePath': str(self.root / '1cv8c.exe')}
+        observation = {'observation': {'samples': [
+            {'resources': [{'ownedProcesses': [dict(process)]}]},
+            {'resources': [{'ownedProcesses': [dict(process)]}]},
+        ]}}
+        self.assertEqual([process], _stable_owned_processes(observation))
+        observation['observation']['samples'][1]['resources'][0]['ownedProcesses'] = []
+        self.assertEqual([], _stable_owned_processes(observation))
+        observation['observation']['samples'][1]['resources'][0]['ownedProcesses'] = [dict(process)]
+        observation['observation']['samples'][1]['resources'][0]['ownedProcesses'][0]['processStartTime'] = '2026-09-18T14:08:40+00:00'
+        with self.assertRaisesRegex(WorkError, 'OWNED_PROCESS_SET_UNSTABLE'):
+            _stable_owned_processes(observation)
 
     def orphan(self, case='normal', *, project=None, seed_path=None):
         path = self.root / 'request.json'
@@ -347,6 +369,20 @@ class NativeRecoveryTests(unittest.TestCase):
             self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}]
         with Lease(self.coordinator.root, planned, {'operation': 'next-chat'}, timeout=0):
             pass
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_verify_dev_branch_uses_the_same_verification_recovery_contract(self):
+        data = self.orphan('verification:verify-dev-branch')
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        self.assertEqual('workflow-verification-check', record['recoveryAttempts'][-1]['evidence']['adapter'])
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_auxiliary_check_uses_the_same_verification_recovery_contract(self):
+        data = self.orphan('verification:check-auxiliary-contour')
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        self.assertEqual('workflow-verification-check', record['recoveryAttempts'][-1]['evidence']['adapter'])
 
     @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
     def test_failed_verification_releases_a_partially_created_planned_service_generation(self):

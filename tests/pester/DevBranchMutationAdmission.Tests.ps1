@@ -64,6 +64,37 @@
         } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
     }
 
+    It 'publishes the exact database recovery ticket until the owner releases it' {
+        $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation update-dev-branch-base
+        $admission = $script:DevBranchMutationDatabaseAdmission
+        $operationId = [guid]::NewGuid().ToString('N')
+        $operationPath = Join-Path $script:ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $operationPath) | Out-Null
+        $record = [ordered]@{
+            schemaVersion=1;status='running';operationId=$operationId;action='update-dev-branch-base'
+            projectRoot=$script:ProjectRoot;worktreePath=$script:ProjectRoot;lockScopes=@($script:ProjectRoot)
+            pid=$PID;continuationPid=0;phase='admission';activeDatabaseRecovery=$null
+        }
+        $script:LifecycleOperationRecord = $record
+        $script:LifecycleOperationStatePath = $operationPath
+        $script:LifecycleOperationId = $operationId
+        $script:LifecycleOperationIsContinuation = $false
+        $script:ActiveDatabaseRecoveryEvidence = $null
+        $RunStatusPath = ''
+        Write-Agent1cLifecycleOperationRecord -Path $operationPath -Record $record
+
+        Publish-Agent1cDatabaseRecoveryEvidence -Admission $admission
+        $published = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+        $published.activeDatabaseRecovery.operation | Should -Be 'update-dev-branch-base'
+        $published.activeDatabaseRecovery.ticket | Should -Be $admission.owner.proof.ticket
+        $published.activeDatabaseRecovery.coordinator | Should -Be ([IO.Path]::GetFullPath($settings.coordinator))
+
+        Complete-ItlDevBranchMutationDatabaseAdmission $admission
+        $cleared = Read-Agent1cLifecycleOperationRecord -Path $operationPath
+        $cleared.activeDatabaseRecovery | Should -BeNullOrEmpty
+        $script:ActiveDatabaseRecoveryEvidence | Should -BeNullOrEmpty
+    }
+
     It 'reserves recorded managers and releases a skipped update without native debt' {
         $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission
         $admission = $script:DevBranchMutationDatabaseAdmission

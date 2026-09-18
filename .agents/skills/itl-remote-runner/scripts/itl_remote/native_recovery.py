@@ -22,6 +22,10 @@ from .common import OwnedProcess, WorkError, digest, write_json
 from .native_resource_state import rebuildable_resources, require_quiescent
 from . import native_journal, restoration_journal
 
+VERIFICATION_OPERATIONS = frozenset({
+    'check-dev-branch', 'verify-dev-branch', 'check-auxiliary-contour', 'deploy-and-test',
+})
+
 WORKFLOW_OPERATIONS = frozenset({
     'update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch',
     'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour',
@@ -126,13 +130,114 @@ def inspect_native_work(recovery, journal):
             if recovery.coordinator.resources(actual) != sorted(resources):
                 raise WorkError('NATIVE_RECOVERY_INSPECTION_SCOPE_CHANGED')
             for base in actual:
+                owned_ids, other_ids, owned_processes = (
+                    base.get('ownedProcessIds'), base.get('otherProcessIds'), base.get('ownedProcesses'))
                 if (type(base.get('sessionCount')) is not int or base['sessionCount'] < 0 or
                         type(base.get('exclusive')) is not bool or type(base.get('databasePresent')) is not bool or
-                        type(base.get('directoryPresent')) is not bool):
+                        type(base.get('directoryPresent')) is not bool or
+                        not isinstance(owned_ids, list) or not isinstance(other_ids, list) or
+                        not isinstance(owned_processes, list) or
+                        any(type(pid) is not int or pid <= 0 for pid in owned_ids + other_ids) or
+                        len(set(owned_ids)) != len(owned_ids) or len(set(other_ids)) != len(other_ids) or
+                        set(owned_ids) & set(other_ids)):
                     raise WorkError('NATIVE_RECOVERY_INSPECTION_UNCONFIRMED')
+                process_ids = []
+                for process in owned_processes:
+                    if (not isinstance(process, dict) or set(process) != {'pid', 'processStartTime', 'name', 'executablePath'} or
+                            type(process['pid']) is not int or process['pid'] <= 0 or
+                            not isinstance(process['processStartTime'], str) or not process['processStartTime'] or
+                            not isinstance(process['name'], str) or not process['name'] or
+                            not isinstance(process['executablePath'], str) or not Path(process['executablePath']).is_absolute()):
+                        raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_IDENTITY_INVALID')
+                    try:
+                        if datetime.fromisoformat(process['processStartTime'].replace('Z', '+00:00')).tzinfo is None:
+                            raise ValueError('timezone required')
+                    except ValueError as error:
+                        raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_IDENTITY_INVALID') from error
+                    process_ids.append(process['pid'])
+                if sorted(process_ids) != sorted(owned_ids):
+                    raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_IDENTITY_INVALID')
         observations.append({'path': str(log), 'sha256': digest(log), 'workerSha256': worker_hash,
                              'generation': generation, 'observation': value})
     return observations
+
+
+def _stable_owned_processes(observation):
+    samples = observation['observation']['samples']
+    identities = []
+    for sample in samples:
+        processes = {}
+        for base in sample['resources']:
+            for process in base['ownedProcesses']:
+                value = {'pid': process['pid'], 'processStartTime': process['processStartTime'],
+                         'name': process['name'], 'executablePath': process['executablePath']}
+                previous = processes.get(process['pid'])
+                if previous is not None and previous != value:
+                    raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_IDENTITY_INVALID')
+                processes[process['pid']] = value
+        identities.append(processes)
+    if identities[0] != identities[1]:
+        # A proven owned process may exit naturally between the two samples.
+        # Accept only shrink-only evolution with identical surviving identity;
+        # never adopt a new/reused PID or changed process identity.
+        if (not set(identities[1]) <= set(identities[0]) or
+                any(identities[0][pid] != identities[1][pid] for pid in identities[1])):
+            raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_SET_UNSTABLE')
+    return [identities[1][pid] for pid in sorted(identities[1])]
+
+
+def cleanup_owned_native_work(recovery, journal, observations):
+    groups = {}
+    for operation in journal['operations']:
+        helpers = journal['helperGenerations'][operation['journalId'] + '/' + operation['id']]
+        group = groups.setdefault(helpers['generation'], {
+            'helpers': helpers, 'scopes': [], 'project': operation['project']})
+        group['scopes'].extend(operation['ownedProcessScopes'])
+    by_generation = {item['generation']: item for item in observations}
+    output = recovery.coordinator.root / 'recovery-cleanup' / recovery.ticket / recovery.attempt
+    output.mkdir(parents=True, exist_ok=True)
+    worker = Path(__file__).resolve().parent.parent / 'Recover-NativeOwnedProcesses.ps1'
+    shell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    stopped = []
+    for generation, group in groups.items():
+        observation = by_generation.get(generation)
+        if observation is None:
+            raise WorkError('NATIVE_RECOVERY_INSPECTION_UNCONFIRMED')
+        expected = _stable_owned_processes(observation)
+        if not expected:
+            continue
+        recovery.proof()
+        if recovery.cancelled():
+            raise WorkError('INFOBASE_ACCESS_CANCELLED')
+        cleanup_id = uuid.uuid4().hex
+        context = {'schemaVersion': 1, 'cleanupId': cleanup_id, 'project': group['project'],
+                   'helpers': group['helpers'], 'scopes': group['scopes'], 'expectedProcesses': expected}
+        context_path = output / (generation + '-' + cleanup_id + '.context.json')
+        log = output / (generation + '-' + cleanup_id + '.cleanup.json')
+        write_json(context_path, context)
+        worker_hash = digest(worker)
+        try:
+            with OwnedProcess([str(shell), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', str(worker),
+                               '-ContextPath', str(context_path)], output, log) as process:
+                process.wait(45, recovery.cancelled)
+        except WorkError as error:
+            raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_CLEANUP_FAILED: log=' + str(log) + '; ' + str(error)) from error
+        if digest(worker) != worker_hash:
+            raise WorkError('NATIVE_RECOVERY_CLEANUP_IMPLEMENTATION_CHANGED')
+        from .native_recovery_helpers import resolve
+        resolve(recovery.coordinator, group['helpers']['files'])
+        value = json.loads(log.read_text(encoding='utf-8-sig'))
+        if (value.get('schemaVersion') != 1 or value.get('cleanupId') != cleanup_id or
+                str(value.get('host', '')).casefold() != platform.node().casefold() or
+                not isinstance(value.get('stoppedProcessIds'), list) or
+                value.get('remainingOwnedProcessIds') != [] or
+                any(type(pid) is not int or pid <= 0 for pid in value['stoppedProcessIds'])):
+            raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+        stopped.extend(value['stoppedProcessIds'])
+    post = inspect_native_work(recovery, journal)
+    if any(_stable_owned_processes(observation) for observation in post):
+        raise WorkError('NATIVE_RECOVERY_OWNED_PROCESS_CLEANUP_UNCONFIRMED')
+    return {'stoppedProcessIds': sorted(set(stopped)), 'observations': post}
 
 
 def _require_process_exited(pid):
@@ -257,16 +362,33 @@ An unsupported later phase remains needs-attention for its operation adapter.
                     raise WorkError('NATIVE_RECOVERY_ORIGINAL_HOST_REQUIRED')
                 _require_process_exited(producer.get('ownerPid'))
                 observed.append({'host': producer['hostName'], 'pid': producer['ownerPid'], 'state': 'exited'})
+
+            observations = []
+            owned_cleanup = {'stoppedProcessIds': []}
+            if any(operation['startAttempted'] for operation in journal['operations']):
+                initial_observations = inspect_native_work(recovery, journal)
+                owned_cleanup = cleanup_owned_native_work(recovery, journal, initial_observations)
+                observations = owned_cleanup['observations']
+                with recovery.coordinator.mutex(time.monotonic() + 30, recovery.cancelled):
+                    inspected = recovery._current()
+                    attempt = inspected['recoveryAttempts'][-1]
+                    attempt['nativeObservationsBeforeCleanup'] = initial_observations
+                    attempt['ownedProcessCleanup'] = {
+                        'stoppedProcessIds': owned_cleanup['stoppedProcessIds'],
+                        'foreignProcessesStopped': [],
+                    }
+                    attempt['nativeObservations'] = observations
+                    recovery.coordinator.save(inspected)
+                    recovery.record = inspected
+
             if any(producer['participantId'] is None and producer.get('completion') for producer in producers.values()):
                 from .native_completion import recover_completed
-                observations = inspect_native_work(recovery, journal)
                 return recover_completed(recovery, journal, observed, observations)
             if journal['resetCheckpoints']:
                 from .native_reset_resume import recover
                 return recover(recovery, journal, observed)
             if current['owner']['operation'] == 'sync-dev-branches' and journal.get('sourceSyncPhases'):
                 from .native_source_sync import recover
-                observations = inspect_native_work(recovery, journal)
                 return recover(recovery, journal, observed, observations)
             if current['owner']['operation'] in ('init-dev-branch-extension', 'release-e2e-extension-smoke') and any(
                     duty['kind'] == 'infobase-snapshot' and duty['status'] == 'pending'
@@ -275,12 +397,6 @@ An unsupported later phase remains needs-attention for its operation adapter.
             repository_capture = read_only_dump = verification_check = tooling_repair = False
             refresh_retry = sync_master_retry = False
             if any(operation['startAttempted'] for operation in journal['operations']):
-                observations = inspect_native_work(recovery, journal)
-                with recovery.coordinator.mutex(time.monotonic() + 30, recovery.cancelled):
-                    inspected = recovery._current()
-                    inspected['recoveryAttempts'][-1]['nativeObservations'] = observations
-                    recovery.coordinator.save(inspected)
-                    recovery.record = inspected
                 if current['owner']['operation'] == 'init-dev-branch-extension' and any(
                         duty['kind'] == 'infobase-snapshot' and duty['status'] == 'committed'
                         for duty in journal['restoration']['duties']):
@@ -297,8 +413,8 @@ An unsupported later phase remains needs-attention for its operation adapter.
                 read_only_dump = current['owner']['operation'] in (
                     'loadfrom1cbase', 'getconfigfiles', 'dump-dev-branch-extension') and all(
                     operation['purpose'] == 'designer-dump-config-to-files' for operation in journal['operations'])
-                verification_check = current['owner']['operation'] == 'check-dev-branch' and all(
-                    operation['operation'] == 'check-dev-branch' for operation in journal['operations'])
+                verification_check = current['owner']['operation'] in VERIFICATION_OPERATIONS and all(
+                    operation['operation'] == current['owner']['operation'] for operation in journal['operations'])
                 tooling_repair = current['owner']['operation'] == 'repair-dev-branch-tooling' and all(
                     operation['operation'] == 'repair-dev-branch-tooling' for operation in journal['operations'])
                 refresh_retry = current['owner']['operation'] in ('refresh-dev-branch', 'refresh-dev-branch-lite') and all(
@@ -362,6 +478,7 @@ An unsupported later phase remains needs-attention for its operation adapter.
                             'workflow-repository-capture' if observations else 'workflow-preparation'),
                 'nativeStartAttempted': bool(observations),
                 'producers': observed, 'restorations': restored,
+                'ownedProcessesStopped': owned_cleanup['stoppedProcessIds'], 'foreignProcessesStopped': [],
                 'originalRecordRevision': journal['recordRevision'], 'originalOutcome': 'interrupted',
                 'nativeObservations': observations,
                 'repositoryClaims': ('not changed by read-only dump' if read_only_dump else

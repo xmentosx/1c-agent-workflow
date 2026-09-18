@@ -214,9 +214,18 @@ queued behind active recovery. An interrupted or incomplete recovery retains
 `needs-attention`; neither claim nor normal context exit releases the bases.
 
 An operation-specific adapter must verify stopped owned work and completed
-restoration under that ownership before calling completion. The coordinator
-checks full resource coverage and records the adapter's evidence, but cannot
-infer database quiescence from a dead Python process. Lifecycle continuation
+restoration under that ownership before calling completion. For persisted native
+work, recovery loads the exact retained helper generation, observes the saved
+`ownedProcessScopes` twice, and may terminate only a stable exact owned process
+identity (PID, start time, executable and scope match). A process that disappears
+between the two observations is accepted as a natural shrink; a new/reused PID,
+changed identity, or foreign process is never adopted or stopped. Recovery then
+re-observes every reserved database and completes only when owned runtime is gone
+and the operation-specific quiescence/restoration contract is satisfied. Its
+evidence reports `ownedProcessesStopped` and always records
+`foreignProcessesStopped=[]`. The coordinator checks full resource coverage and
+records the adapter's evidence, but cannot infer database quiescence from a dead
+Python process. Lifecycle continuation
 schema 2 records exact workflow-owned rebuildable roles separately from database
 readiness: the retained latest branch seed and planned Vanessa service
 generations. Once live inspection proves no sessions or owned/foreign processes

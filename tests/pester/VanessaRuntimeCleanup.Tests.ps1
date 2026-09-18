@@ -412,6 +412,49 @@ Describe "Branch-safe Vanessa runtime cleanup" {
         }
     }
 
+    It "publishes Vanessa progress heartbeat and detects a bounded real stall" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-liveness-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c"), (Join-Path $tempRoot "run") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $result = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                $RunStatusPath = Join-Path $tempRoot "runner-status.json"
+                $script:StatusWrites = 0
+                function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+                function Get-OwnVanessaTestProcesses { param($State,$TestPorts,$RunParamsPath,[switch]$RequireInspection); @() }
+                $run = Join-Path $tempRoot "run"
+                $log = Join-Path $run "vanessa.log"
+                [IO.File]::WriteAllText($log, "a", [Text.UTF8Encoding]::new($false))
+                $monitor = New-VanessaRunLivenessMonitor -RunDirectory $run -TimeoutSeconds 1800
+                $monitor.lastLogLength = 1
+                $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-20)
+                [IO.File]::AppendAllText($log, "progress", [Text.UTF8Encoding]::new($false))
+                $probe = [pscustomobject]@{timeoutRemainingSeconds=1700}
+                Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
+                $active = [pscustomobject]@{liveness=$script:RunLiveness;growth=$script:RunLogGrowthBytes;writes=$script:StatusWrites;stall=$script:RunStallTimeoutRemainingSeconds}
+                $monitor.lastLogLength = (Get-Item -LiteralPath $log).Length
+                $monitor.lastEvidenceAtUtc = [DateTime]::UtcNow.AddSeconds(-3)
+                $monitor.lastProbeAtUtc = [DateTime]::MinValue
+                $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-20)
+                $monitor.stallWarningSeconds = 1
+                $monitor.stallTimeoutSeconds = 2
+                $message = try {
+                    Update-VanessaRunLiveness -Monitor $monitor -ProbeContext $probe -State ([pscustomobject]@{}) -TestPorts @(48051) -RunParamsPath (Join-Path $run "VAParams.json")
+                    ""
+                } catch { $_.Exception.Message }
+                [pscustomobject]@{active=$active;stalled=$message}
+            }
+            $result.active.liveness | Should -Be "running-active"
+            $result.active.growth | Should -BeGreaterThan 0
+            $result.active.writes | Should -BeGreaterThan 0
+            $result.active.stall | Should -BeGreaterThan 0
+            $result.stalled | Should -Match '^ITL_VANESSA_STALL_TIMEOUT\b'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "publishes and clears exact Vanessa run evidence in lifecycle and helper status" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-va-run-evidence-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -461,7 +504,9 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 }
             }
 
+            [int]$result.publishedLifecycle.activeVanessaRun.schemaVersion | Should -Be 2
             $result.publishedLifecycle.activeVanessaRun.operationId | Should -Be $result.publishedLifecycle.operationId
+            $result.publishedLifecycle.activeVanessaRun.testClientInfoBasePath | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\branch1")
             [int]$result.publishedLifecycle.activeVanessaRun.ownerPid | Should -BeGreaterThan 0
             [int]$result.publishedLifecycle.activeVanessaRun.processId | Should -BeGreaterThan 0
             $result.publishedLifecycle.activeVanessaRun.testPorts | Should -Be @(48054, 48055)

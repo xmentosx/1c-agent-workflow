@@ -24,6 +24,21 @@
         Mock Receive-DesignerProcessEnumeration { [pscustomobject]@{status='completed';processes=$script:inventory;infoBaseReleaseChecked=$false;infoBaseReleased=$false} }
         $script:probeContext = [pscustomobject]@{processId=3040;launcherExited=$true}
     }
+    It 're-proves exact scope and stable process identity before recovery can stop an orphan' {
+        $worker = Get-Content -LiteralPath (Join-Path $context.RepoRoot '.agents\skills\itl-remote-runner\scripts\Recover-NativeOwnedProcesses.ps1') -Raw -Encoding UTF8
+        $scopeIndex = $worker.IndexOf('Test-OneCNativeProcessInRunScopes')
+        $setIndex = $worker.IndexOf('NATIVE_RECOVERY_OWNED_PROCESS_SET_CHANGED')
+        $startIndex = $worker.IndexOf('processStartTime')
+        $executableIndex = $worker.IndexOf('executablePath')
+        $stopIndex = $worker.IndexOf('Stop-Process -Id')
+        $scopeIndex | Should -BeGreaterThan -1
+        $setIndex | Should -BeGreaterThan $scopeIndex
+        $startIndex | Should -BeGreaterThan -1
+        $executableIndex | Should -BeGreaterThan -1
+        $stopIndex | Should -BeGreaterThan $setIndex
+        $worker | Should -Match 'remainingOwnedProcessIds=@\(\)'
+    }
+
     It 'reproduces the original ancestry-only probe reporting release despite the surviving run-owned B client' {
         $probe = New-DesignerInvocationProbeState -LauncherProcessId 3040
         Test-OneCNativeInvocationReleased -ProbeState $probe -ProbeContext $probeContext -LogPath '' | Should -BeFalse

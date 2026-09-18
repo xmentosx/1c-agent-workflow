@@ -6,6 +6,35 @@
         $HelperPath = $context.HelperPath
     }
 
+    It "publishes a generic native heartbeat while a non-Designer process is still running" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $RunStatusPath = Join-Path $TestDrive "native-heartbeat-status.json"
+            $script:StatusWrites = 0
+            function Write-RunStatus { param([string]$Status); $script:StatusWrites++ }
+            $fakeProcess = [pscustomobject]@{
+                Id = 9123
+                HasExited = $false
+                TotalProcessorTime = [TimeSpan]::FromMilliseconds(25)
+                WorkingSet64 = 2MB
+            }
+            $fakeProcess | Add-Member ScriptMethod Refresh { }
+            $monitor = New-NativeWaitRunStatusMonitor -HeartbeatSeconds 1
+            $monitor.lastPublishedAtUtc = [DateTime]::UtcNow.AddSeconds(-2)
+            Publish-NativeWaitRunStatus -Process $fakeProcess -Monitor $monitor -StartedAtUtc ([DateTime]::UtcNow.AddSeconds(-2)) -DeadlineUtc ([DateTime]::UtcNow.AddMinutes(5))
+            [pscustomobject]@{
+                writes = $script:StatusWrites
+                liveness = $script:RunLiveness
+                owned = @($script:RunOwnedProcessIds)
+                timeoutRemaining = $script:RunTimeoutRemainingSeconds
+            }
+        }
+        $result.writes | Should -Be 1
+        $result.liveness | Should -Be "running-waiting"
+        $result.owned | Should -Be @(9123)
+        $result.timeoutRemaining | Should -BeGreaterThan 0
+    }
+
     It "releases a failed <family> after delayed owned processes exit without requiring an artifact" -TestCases @(
         @{family='capture'}, @{family='repository-update'}, @{family='dump-files'}, @{family='dump-cfg'}
     ) {

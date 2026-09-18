@@ -58,6 +58,7 @@ foreach ($sample in 1..2) {
             $resources += [pscustomobject]@{kind=$base.kind;path=$base.path;databasePresent=(Test-Path -LiteralPath $databasePath -PathType Leaf)
                 directoryPresent=(Test-Path -LiteralPath $base.path)
                 exclusive=$exclusive;sessionCount=$matching.Count;ownedProcessIds=@($owned | ForEach-Object { $_.processId })
+                ownedProcesses=@($owned | ForEach-Object { [pscustomobject]@{pid=[int]$_.processId;processStartTime=[string]$_.processStartTime;name=[string]$_.name;executablePath=[string]$_.executablePath} })
                 otherProcessIds=@($matching | Where-Object { $_.processId -notin @($owned | ForEach-Object { $_.processId }) } | ForEach-Object { $_.processId })}
             continue
         }
@@ -91,6 +92,7 @@ foreach ($sample in 1..2) {
         $resources += [pscustomobject]@{kind='server';path=$base.path;databasePresent=[bool]$server.databasePresent
             directoryPresent=[bool]$server.databasePresent;exclusive=[bool]$server.exclusive;sessionCount=$serverSessionCount
             ownedProcessIds=@($owned | ForEach-Object { $_.processId })
+            ownedProcesses=@($owned | ForEach-Object { [pscustomobject]@{pid=[int]$_.processId;processStartTime=[string]$_.processStartTime;name=[string]$_.name;executablePath=[string]$_.executablePath} })
             otherProcessIds=@($matching | Where-Object { $_.processId -notin @($owned | ForEach-Object { $_.processId }) } | ForEach-Object { $_.processId })}
     }
     $observations += [pscustomobject]@{observedAtUtc=[DateTime]::UtcNow.ToString('o');resources=$resources}

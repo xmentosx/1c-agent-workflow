@@ -403,12 +403,14 @@ function Invoke-YAxUnitVerification {
         }
         Write-Utf8TextAtomic -Path $configPath -Value (($config | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
         $timeoutSeconds = ConvertTo-IntOrDefault -Value (Get-EnvValue -Name "YAXUNIT_TEST_TIMEOUT_SECONDS" -Default 1800) -Default 1800
+        Set-RunStage -Stage "yaxunit.run" -Detail "Running YAxUnit verification."
         Invoke-Enterprise `
             -InfoBasePath ([string]$State.devBranchInfoBasePath) `
             -InfoBaseKind ([string]$State.infoBaseKind) `
             -EnterpriseArgs @("/C", "RunUnitTests=$configPath") `
             -TimeoutSeconds $timeoutSeconds | Out-Null
 
+        Set-RunStage -Stage "yaxunit.postprocess" -Detail "Reading YAxUnit verification evidence."
         $summary = Get-YAxUnitJunitSummary -Path $reportPath
         if (-not $summary.passed) {
             throw "ITL_YAXUNIT_TESTS_FAILED: tests=$($summary.tests), failures=$($summary.failures), errors=$($summary.errors). Report: $reportPath"
