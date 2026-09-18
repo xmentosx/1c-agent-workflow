@@ -590,6 +590,7 @@ function Publish-AccumulatedDevelop {
             $attempt.tree = $candidateTree
             Write-DevelopPublicationAttempt -Attempt $attempt
         }
+        [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $customGate = [bool]$script:DeliveryCustomGateBoundary
         $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$RequireRelease -AllowCustomGateFixture:$customGate
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan

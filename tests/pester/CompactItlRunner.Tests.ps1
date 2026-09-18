@@ -1153,6 +1153,43 @@ exit 0
         }
     }
 
+    It "recovers exact terminal lifecycle success when a reexec helper leaves status running" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-terminal-lifecycle-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$utf8 = New-Object Text.UTF8Encoding $false
+$operationId = [guid]::NewGuid().ToString('N')
+$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath) | Out-Null
+$status = [ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;stage='reexec';stageDetail='fresh helper started';userReport='preserve-me'}
+[IO.File]::WriteAllText($RunStatusPath,(($status|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+$now = Get-Date
+$lifecycle = [ordered]@{schemaVersion=1;status='succeeded';operationId=$operationId;action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');phase='complete';detail='Lifecycle operation completed.';exitCode=0;errorCode='';errorMessage='';finishedAt=$now.ToString('o')}
+[IO.File]::WriteAllText($lifecyclePath,(($lifecycle|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
+exit 0
+'@
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--","-Action","refresh-dev-branch")
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 0
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be "succeeded"
+            $summary.stage | Should -Be "complete"
+            $summary.userReport | Should -BeExactly "preserve-me"
+            $terminalStatus = Get-Content -LiteralPath $summary.statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminalStatus.status | Should -Be "succeeded"
+            [int]$terminalStatus.exitCode | Should -Be 0
+            $terminalStatus.stage | Should -Be "complete"
+            $terminalLifecycle = Get-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\locks\lifecycle-operation.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $terminalLifecycle.status | Should -Be "succeeded"
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "fails closed when the helper exits successfully without any terminal status" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-no-status-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -1161,10 +1198,20 @@ exit 0
             Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$utf8 = New-Object Text.UTF8Encoding $false
+$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath) | Out-Null
+$old = (Get-Date).AddHours(-1)
+$stale = [ordered]@{schemaVersion=1;status='succeeded';operationId=([guid]::NewGuid().ToString('N'));action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$old.ToString('o');phase='complete';detail='stale terminal lifecycle';exitCode=0;finishedAt=$old.AddMinutes(1).ToString('o')}
+[IO.File]::WriteAllText($lifecyclePath,(($stale|ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
 Write-Output 'helper exited without status'
 exit 0
 '@
-            $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch"); $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
+            Push-Location $tempRoot
+            try {
+                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "refresh-dev-branch")
+            } finally { Pop-Location }
+            $processResult.exitCode | Should -Be 1; $output = $processResult.stdout
             $summary = ($output -join "`n") | ConvertFrom-Json
             $summary.status | Should -Be "failed"
             $summary.stage | Should -Be "runner.helper-exited"

@@ -260,6 +260,83 @@ function Get-RunnerOwnedLifecycleRecord {
     return $record
 }
 
+function Get-RunnerTerminalLifecycleRecord {
+    param(
+        [string]$Path,
+        [int]$HelperProcessId,
+        [string]$Action,
+        [string]$ProjectRoot,
+        [DateTime]$NotBeforeUtc
+    )
+    $record = Read-JsonFile -Path $Path
+    $status = [string](Get-ObjectValue -Object $record -Name "status" -Default "")
+    $operationId = [string](Get-ObjectValue -Object $record -Name "operationId" -Default "")
+    [DateTimeOffset]$lifecycleStartedAt = [DateTimeOffset]::MinValue
+    $startedAtText = [string](Get-ObjectValue -Object $record -Name "startedAt" -Default "")
+    $startedAtValid = $startedAtText -and [DateTimeOffset]::TryParse($startedAtText, [ref]$lifecycleStartedAt)
+    if ($null -eq $record -or $status -notin @("succeeded", "failed", "cancelled") -or
+        $operationId -cnotmatch '^[a-f0-9]{32}$' -or -not $startedAtValid -or
+        $lifecycleStartedAt.UtcDateTime -lt $NotBeforeUtc.AddSeconds(-5) -or
+        [int](Get-ObjectValue -Object $record -Name "pid" -Default 0) -ne $HelperProcessId -or
+        [string](Get-ObjectValue -Object $record -Name "action" -Default "") -ne $Action -or
+        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $record -Name "projectRoot" -Default "")) -Second $ProjectRoot)) {
+        return $null
+    }
+    return $record
+}
+
+function Restore-RunnerStatusFromTerminalLifecycle {
+    param(
+        [object]$Status,
+        [object]$LifecycleRecord,
+        [string]$StatusPath,
+        [string]$LogPath,
+        [string]$Action,
+        [string]$ProjectRoot,
+        [DateTime]$StartedAt
+    )
+    if ($null -eq $LifecycleRecord) { return $Status }
+    if ($null -eq $Status) {
+        $Status = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            action = $Action
+            projectRoot = $ProjectRoot
+            pid = [int](Get-ObjectValue -Object $LifecycleRecord -Name "pid" -Default 0)
+            launcherPid = 0
+            startedAt = $StartedAt.ToString("o")
+            lastLogPath = ""
+            runLogPath = $LogPath
+        }
+    }
+    $lifecycleStatus = [string](Get-ObjectValue -Object $LifecycleRecord -Name "status" -Default "")
+    $lifecycleExitCode = [int](Get-ObjectValue -Object $LifecycleRecord -Name "exitCode" -Default $(if ($lifecycleStatus -eq "succeeded") { 0 } else { 1 }))
+    $lifecyclePhase = [string](Get-ObjectValue -Object $LifecycleRecord -Name "phase" -Default "")
+    $lifecycleDetail = [string](Get-ObjectValue -Object $LifecycleRecord -Name "detail" -Default "")
+    $lifecycleErrorCode = [string](Get-ObjectValue -Object $LifecycleRecord -Name "errorCode" -Default "")
+    $lifecycleErrorMessage = [string](Get-ObjectValue -Object $LifecycleRecord -Name "errorMessage" -Default "")
+    $finishedAt = [string](Get-ObjectValue -Object $LifecycleRecord -Name "finishedAt" -Default "")
+    if (-not $finishedAt) { $finishedAt = (Get-Date).ToString("o") }
+
+    Set-ObjectValue -Object $Status -Name "schemaVersion" -Value 1
+    Set-ObjectValue -Object $Status -Name "status" -Value $lifecycleStatus
+    Set-ObjectValue -Object $Status -Name "action" -Value $Action
+    Set-ObjectValue -Object $Status -Name "projectRoot" -Value $ProjectRoot
+    Set-ObjectValue -Object $Status -Name "updatedAt" -Value $finishedAt
+    Set-ObjectValue -Object $Status -Name "finishedAt" -Value $finishedAt
+    Set-ObjectValue -Object $Status -Name "exitCode" -Value $lifecycleExitCode
+    Set-ObjectValue -Object $Status -Name "runLogPath" -Value $LogPath
+    Set-ObjectValue -Object $Status -Name "stage" -Value $(if ($lifecyclePhase) { $lifecyclePhase } else { "complete" })
+    Set-ObjectValue -Object $Status -Name "stageDetail" -Value $(if ($lifecycleDetail) { $lifecycleDetail } else { "Recovered exact terminal lifecycle state after helper reexec." })
+    Set-ObjectValue -Object $Status -Name "errorCode" -Value $lifecycleErrorCode
+    Set-ObjectValue -Object $Status -Name "errorMessage" -Value $lifecycleErrorMessage
+    if ($lifecycleStatus -eq "succeeded") {
+        Set-ObjectValue -Object $Status -Name "errorCategory" -Value ""
+        Set-ObjectValue -Object $Status -Name "requiredAction" -Value ""
+    }
+    Write-JsonFileAtomic -Path $StatusPath -Value $Status
+    return $Status
+}
+
 function Get-InterruptedDatabaseRecoveryEvidence {
     param(
         [object]$LifecycleRecord,
@@ -972,6 +1049,14 @@ try {
 
 $status = Read-JsonFile -Path $statusPath
 $terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
+if ($terminalStatus -notin @("succeeded", "failed", "cancelled") -and -not $windowed) {
+    $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
+    $terminalLifecycle = Get-RunnerTerminalLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot -NotBeforeUtc $startedAt.ToUniversalTime()
+    if ($null -ne $terminalLifecycle) {
+        $status = Restore-RunnerStatusFromTerminalLifecycle -Status $status -LifecycleRecord $terminalLifecycle -StatusPath $statusPath -LogPath $logPath -Action $action -ProjectRoot $projectRoot -StartedAt $startedAt
+        $terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
+    }
+}
 if ($terminalStatus -eq "succeeded") {
     # A valid terminal success is authoritative over a handled native probe
     # code inherited by the PowerShell helper host.

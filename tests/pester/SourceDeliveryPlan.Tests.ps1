@@ -209,10 +209,13 @@ Describe 'Delivery v3 immutable selective plan' {
 
     It 'resolves the locked controlled fork before accumulated plan runtime fingerprints' {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
+        $candidateSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8
         $resolverText = [regex]::Match($planSource, '(?ms)^function Resolve-DeliveryPlanAiRulesSource \{.*?^\}').Value
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
+        $publishText = [regex]::Match($candidateSource, '(?ms)^function Publish-AccumulatedDevelop \{.*?^\}').Value
         $resolverText | Should -Match 'Resolve-DeliveryAiRulesSource -Lock \$aiRulesLock'
         $accumulatedText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
+        $publishText | Should -Match 'Resolve-DeliveryPlanAiRulesSource[\s\S]*New-DeliveryQualityPlanForCandidate'
 
         & {
             Invoke-Expression $resolverText
