@@ -7,6 +7,7 @@ import subprocess
 import time
 
 from .common import WorkError, beneath, digest, identity, read_json, stamp, write_json
+from .native_resource_state import require_quiescent
 from . import native_journal as native
 
 STEPS = ('load', 'normalize', 'runtime', 'cursor', 'state')
@@ -434,10 +435,8 @@ def recover(recovery, journal, producers, observations):
             for base in sample['resources']:
                 path = Path(base['path'])
                 unused = (recovery.coordinator.resources([base])[0] not in used and base['kind'] == 'file' and
-                          path.parent in roots and re.fullmatch('vanessa-service-[a-f0-9]{32}', path.name) and
-                          not base['directoryPresent'] and not base['databasePresent'])
-                if base['sessionCount'] or (not unused and (not base['databasePresent'] or not base['exclusive'])):
-                    raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+                          path.parent in roots and re.fullmatch('vanessa-service-[a-f0-9]{32}', path.name))
+                require_quiescent(base, rebuildable=bool(unused))
     matching = [item for item in phases if item['nativeSnapshot'] == snapshot(record)]
     reconciled = None
     if not matching:

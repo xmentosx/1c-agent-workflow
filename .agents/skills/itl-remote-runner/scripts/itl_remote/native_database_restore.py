@@ -8,6 +8,7 @@ import time
 import uuid
 
 from .common import OwnedProcess, WorkError, digest, read_json, write_json
+from .native_resource_state import require_quiescent
 from . import native_journal, restoration_context, restoration_journal
 
 
@@ -15,14 +16,12 @@ def _quiescent(coordinator, observations, manifest):
     absent = manifest.get('absentFileResources', [])
     allowed_absent = set(coordinator.resources(absent)) if absent else set()
     if not observations:
-        raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+        raise WorkError('NATIVE_RECOVERY_INSPECTION_UNCONFIRMED')
     for observation in observations:
         for sample in observation['observation']['samples']:
             for base in sample['resources']:
-                unused_reservation = (not base['databasePresent'] and not base['directoryPresent'] and
-                    coordinator.resources([base])[0] in allowed_absent)
-                if base['sessionCount'] or not (base['databasePresent'] and base['exclusive'] or unused_reservation):
-                    raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+                unused_reservation = coordinator.resources([base])[0] in allowed_absent
+                require_quiescent(base, rebuildable=bool(unused_reservation))
 
 
 def restore(recovery, original_key):

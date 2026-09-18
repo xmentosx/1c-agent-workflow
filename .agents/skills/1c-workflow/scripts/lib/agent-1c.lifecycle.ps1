@@ -2232,17 +2232,19 @@ function Dump-ExtensionToFiles {
 function Get-ItlSourceDatabasePlan {
     $source = New-ItlOnDemandDatabaseConnection -Kind (Get-InfoBaseKind) -Path (Get-SourceInfoBasePath)
     $bases = @($source)
+    $seed = $null
     if ($source.kind -eq 'file') {
         # Seed normalization/dump runs Designer against this fixed directory.
         # Its file-reader/writer lease still protects artifact publication.
-        $bases += New-ItlOnDemandDatabaseConnection -Kind file -Path (Split-Path -Parent (Get-BranchSeedPaths).artifactPath)
+        $seed = New-ItlOnDemandDatabaseConnection -Kind file -Path (Split-Path -Parent (Get-BranchSeedPaths).artifactPath)
+        $bases += $seed
     }
     foreach ($runtime in @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
         Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $source.path
     })) {
         $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $runtime -Family ([string]$runtime.family) -FallbackTarget $source)
     }
-    return [pscustomobject]@{project=[IO.Path]::GetFullPath($script:ProjectRoot);source=$source;bases=@($bases)}
+    return [pscustomobject]@{project=[IO.Path]::GetFullPath($script:ProjectRoot);source=$source;seed=$seed;bases=@($bases)}
 }
 
 function Restore-ItlProcessEnvironment {
@@ -2509,7 +2511,8 @@ function Get-ItlDatabaseContinuationContext {
     if (-not $OperationContinuation -or -not $text -or $text.Length -gt 65536) { throw 'NATIVE_CONTINUATION_CONTEXT_REQUIRED' }
     try { $context = $text | ConvertFrom-Json -ErrorAction Stop }
     catch { throw 'NATIVE_CONTINUATION_CONTEXT_INVALID' }
-    if ($context.plan.schemaVersion -ne 1 -or $context.plan.operation -cne $Operation -or
+    if ($context.plan.schemaVersion -notin @(1,2) -or ($context.plan.schemaVersion -eq 2 -and -not $context.plan.PSObject.Properties['resourceRoles']) -or
+        $context.plan.operation -cne $Operation -or
         -not [string]::Equals([IO.Path]::GetFullPath($context.plan.project),[IO.Path]::GetFullPath($script:ProjectRoot),[StringComparison]::OrdinalIgnoreCase) -or
         @($context.plan.bases).Count -eq 0 -or $context.reference.ticket -cnotmatch '^[a-f0-9]{32}$' -or
         $context.reference.producerId -cnotmatch '^[a-f0-9]{32}$' -or $context.reference.sha256 -cnotmatch '^[a-f0-9]{64}$') {
@@ -2527,9 +2530,26 @@ function Publish-ItlDevBranchContinuationPlan {
     $generation = ''; $reserve = ''
     if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = [string]$Admission.plan.servicePlan.generation }
     if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { $reserve = [string]$Admission.plan.serviceReserveGeneration }
-    $record = [pscustomobject]@{schemaVersion=1;operation=$Admission.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
+    $roles = [Collections.Generic.List[object]]::new()
+    if ($Admission.plan.PSObject.Properties['resourceRoles']) {
+        foreach ($role in @($Admission.plan.resourceRoles)) {
+            $roles.Add([pscustomobject]@{kind=[string]$role.kind;path=[string]$role.path;role=[string]$role.role})
+        }
+    } else {
+        foreach ($serviceGeneration in @($generation, $reserve) | Where-Object { $_ } | Select-Object -Unique) {
+            $expectedServicePath = Join-Path $script:ProjectRoot ('.agent-1c/infobases/vanessa-service-' + $serviceGeneration)
+            $matches = @($Admission.plan.bases | Where-Object { $_.kind -ceq 'file' -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $expectedServicePath) })
+            if ($matches.Count -ne 1) { throw 'NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID' }
+            $roles.Add([pscustomobject]@{kind=[string]$matches[0].kind;path=[string]$matches[0].path;role='vanessa-service'})
+        }
+        if ($Admission.plan.PSObject.Properties['masterPlan'] -and $null -ne $Admission.plan.masterPlan -and
+            $Admission.plan.masterPlan.PSObject.Properties['seed'] -and $null -ne $Admission.plan.masterPlan.seed) {
+            $roles.Add([pscustomobject]@{kind=[string]$Admission.plan.masterPlan.seed.kind;path=[string]$Admission.plan.masterPlan.seed.path;role='branch-seed'})
+        }
+    }
+    $record = [pscustomobject]@{schemaVersion=2;operation=$Admission.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
         target=$Admission.plan.target;bases=@($Admission.plan.bases);serviceGeneration=$generation;serviceReserveGeneration=$reserve
-        helperInputs=@($journal.persistence.helperInputs)}
+        resourceRoles=@($roles);helperInputs=@($journal.persistence.helperInputs)}
     return Publish-ItlDatabaseContinuationPlan -Owner $Admission.owner -Record $record -Parent $Parent
 }
 
@@ -2585,6 +2605,9 @@ function Get-ItlDevBranchMutationAdmissionPreparation {
         }
         $plan.bases = @($continuation.plan.bases)
         $plan | Add-Member -NotePropertyName serviceReserveGeneration -NotePropertyValue $continuation.plan.serviceReserveGeneration -Force
+        if ($continuation.plan.schemaVersion -eq 2) {
+            $plan | Add-Member -NotePropertyName resourceRoles -NotePropertyValue @($continuation.plan.resourceRoles) -Force
+        }
     }
     $settings = Get-ItlDatabaseAccessSettings
     return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings;continuationParent=$(if($null -ne $continuation){$continuation.reference}else{$null})}

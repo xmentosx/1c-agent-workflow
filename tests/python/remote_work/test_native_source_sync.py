@@ -275,7 +275,7 @@ class NativeSourceSyncTests(unittest.TestCase):
                 if case == 'missing-database': resources[0]['databasePresent'] = False
                 with self.subTest(case=case), self.assertRaises(WorkError): self.recover(record, observations)
 
-    def test_peer_unused_manager_may_be_absent_but_arbitrary_missing_database_may_not(self):
+    def test_peer_unused_manager_may_be_absent_or_partially_created(self):
         peer = self.fixture.root / 'Ветка соседа'
         self.intent['members'].append(dict(name='peer', project=str(peer), target=self.fixture.base))
         manager = dict(kind='file', path=str(peer / '.agent-1c/infobases' / ('vanessa-service-' + 'c' * 32)))
@@ -287,8 +287,7 @@ class NativeSourceSyncTests(unittest.TestCase):
                 sample['resources'][-1].update(directoryPresent=False, databasePresent=False, exclusive=False)
             self.recover(self.current(lease), observations)
             observations[0]['observation']['samples'][0]['resources'][-1]['directoryPresent'] = True
-            with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
-                self.recover(self.current(lease), observations)
+            self.recover(self.current(lease), observations)
 
     def test_corrupt_completion_and_its_intent_are_both_detected(self):
         for which in ('completion', 'intent'):

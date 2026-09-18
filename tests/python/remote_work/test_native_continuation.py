@@ -34,6 +34,51 @@ class NativeContinuationTests(unittest.TestCase):
         producer = native_journal.register(lease)
         return continuation.publish(lease, producer, plan or self.plan, parent)
 
+    def v2_plan(self):
+        plan = copy.deepcopy(self.plan)
+        plan['schemaVersion'] = 2
+        plan['resourceRoles'] = [{**base, 'role': 'vanessa-service'} for base in plan['bases'][1:]]
+        return plan
+
+    def test_v2_persists_only_reserved_rebuildable_roles(self):
+        plan = self.v2_plan()
+        with self.lease() as lease:
+            published = self.publish(lease, plan)
+            stored = continuation.read(self.coordinator, lease.record, published['reference'])['plan']
+            self.assertEqual(plan, stored)
+            forged = copy.deepcopy(plan)
+            forged['resourceRoles'][0]['path'] = str(self.root / 'Другая база')
+            with self.assertRaisesRegex(WorkError, 'RESOURCE_ROLE_INVALID'):
+                continuation.validate(forged)
+
+    def test_v2_branch_seed_role_is_unique_and_never_the_target(self):
+        plan = self.v2_plan()
+        plan['operation'] = 'refresh-dev-branch'
+        seed = {'kind': 'file', 'path': str(self.root / 'Seed с пробелом')}
+        plan['bases'].append(seed)
+        plan['resourceRoles'].append({**seed, 'role': 'branch-seed'})
+        continuation.validate(plan)
+        target_seed = copy.deepcopy(plan)
+        target_seed['resourceRoles'][-1] = {**target_seed['target'], 'role': 'branch-seed'}
+        with self.assertRaisesRegex(WorkError, 'RESOURCE_ROLE_INVALID'):
+            continuation.validate(target_seed)
+        duplicate = copy.deepcopy(plan)
+        second = {'kind': 'file', 'path': str(self.root / 'Другой seed')}
+        duplicate['bases'].append(second)
+        duplicate['resourceRoles'].append({**second, 'role': 'branch-seed'})
+        with self.assertRaisesRegex(WorkError, 'RESOURCE_ROLE_INVALID'):
+            continuation.validate(duplicate)
+
+    def test_v2_child_cannot_change_rebuildable_roles(self):
+        plan = self.v2_plan()
+        with self.lease() as parent:
+            reference = self.publish(parent, plan)['reference']
+            changed = copy.deepcopy(plan)
+            changed['resourceRoles'].reverse()
+            with self.lease(parent.proof()) as child:
+                with self.assertRaisesRegex(WorkError, 'PLAN_CHANGED'):
+                    self.publish(child, changed, reference)
+
     def test_child_keeps_the_whole_reservation_and_parent_plan_is_immutable(self):
         with self.lease() as parent:
             published = self.publish(parent)

@@ -1,6 +1,7 @@
 """Immutable admitted resource plans for fresh lifecycle helper processes."""
 from pathlib import Path
 import copy
+import os
 import re
 import time
 
@@ -8,10 +9,24 @@ from .common import WorkError, beneath, digest, identity, read_json, write_json
 from . import native_journal as native
 
 
+PLAN_FIELDS = {'schemaVersion', 'operation', 'project', 'target', 'bases',
+               'serviceGeneration', 'serviceReserveGeneration', 'helperInputs'}
+ROLE_OPERATIONS = frozenset({'sync-master', 'refresh-dev-branch', 'init-project',
+                             'new-dev-branch', 'new-extension-dev-branch'})
+ROLE_NAMES = frozenset({'vanessa-service', 'branch-seed'})
+
+
+def _path_key(value):
+    text = str(Path(value).resolve())
+    return text.casefold() if os.name == 'nt' else text
+
+
 def validate(plan):
-    fields = {'schemaVersion', 'operation', 'project', 'target', 'bases',
-              'serviceGeneration', 'serviceReserveGeneration', 'helperInputs'}
-    if (not isinstance(plan, dict) or set(plan) != fields or plan['schemaVersion'] != 1 or
+    if not isinstance(plan, dict):
+        raise WorkError('NATIVE_CONTINUATION_PLAN_INVALID')
+    version = plan.get('schemaVersion')
+    fields = PLAN_FIELDS if version == 1 else PLAN_FIELDS | {'resourceRoles'} if version == 2 else None
+    if (fields is None or set(plan) != fields or
             not isinstance(plan['operation'], str) or not plan['operation'] or
             not isinstance(plan['project'], str) or not Path(plan['project']).is_absolute() or
             not isinstance(plan['bases'], list) or not plan['bases'] or
@@ -21,9 +36,40 @@ def validate(plan):
         if (not isinstance(base, dict) or set(base) != {'kind', 'path'} or
                 base['kind'] not in ('file', 'server') or not isinstance(base['path'], str) or not base['path']):
             raise WorkError('NATIVE_CONTINUATION_RESOURCE_INVALID')
+    generations = set()
     for name in ('serviceGeneration', 'serviceReserveGeneration'):
         if not isinstance(plan[name], str) or (plan[name] and not re.fullmatch('[a-f0-9]{32}', plan[name])):
             raise WorkError('NATIVE_CONTINUATION_GENERATION_INVALID')
+        if plan[name]:
+            generations.add(plan[name])
+    if version == 2:
+        if not isinstance(plan['resourceRoles'], list):
+            raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
+        reserved = {(base['kind'], base['path']) for base in plan['bases']}
+        target_key = (plan['target']['kind'], _path_key(plan['target']['path']))
+        seen, service_roles, branch_seed_count = set(), set(), 0
+        for value in plan['resourceRoles']:
+            if (not isinstance(value, dict) or set(value) != {'kind', 'path', 'role'} or
+                    value['kind'] != 'file' or not isinstance(value['path'], str) or not value['path'] or
+                    value['role'] not in ROLE_NAMES or (value['kind'], value['path']) not in reserved):
+                raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
+            key = (value['kind'], _path_key(value['path']))
+            if key in seen:
+                raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
+            seen.add(key)
+            if value['role'] == 'vanessa-service':
+                generation = Path(value['path']).name.removeprefix('vanessa-service-')
+                expected = Path(plan['project']) / '.agent-1c' / 'infobases' / ('vanessa-service-' + generation)
+                if (not re.fullmatch('[a-f0-9]{32}', generation) or
+                        _path_key(value['path']) != _path_key(expected)):
+                    raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
+                service_roles.add(generation)
+            else:
+                branch_seed_count += 1
+                if plan['operation'] not in ROLE_OPERATIONS or key == target_key:
+                    raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
+        if not generations <= service_roles or branch_seed_count > 1:
+            raise WorkError('NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID')
     for helper in plan['helperInputs']:
         if (not isinstance(helper, dict) or set(helper) != {'path', 'sha256'} or
                 not isinstance(helper['path'], str) or not Path(helper['path']).is_absolute() or
@@ -88,10 +134,12 @@ def publish(lease, producer_id, plan, parent=None):
             if native._index(record)['producers'][parent['producerId']]['generation'] != producer['generation']:
                 from .native_reset import assert_recovery_handoff
                 assert_recovery_handoff(lease, record, parent)
+            previous_roles = previous.get('resourceRoles')
+            role_changed = previous_roles is not None and previous_roles != plan.get('resourceRoles')
             if (previous['operation'] != plan['operation'] or Path(previous['project']) != Path(plan['project']) or
                     lease.coordinator.resources(previous['bases']) != resources or
                     lease.coordinator.resources([previous['target']]) != lease.coordinator.resources([plan['target']]) or
-                    previous['serviceReserveGeneration'] != plan['serviceReserveGeneration'] or
+                    previous['serviceReserveGeneration'] != plan['serviceReserveGeneration'] or role_changed or
                     plan['serviceGeneration'] not in (previous['serviceGeneration'], previous['serviceReserveGeneration'])):
                 raise WorkError('NATIVE_CONTINUATION_PLAN_CHANGED')
         if producer.get('continuation') is not None:

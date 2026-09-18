@@ -117,6 +117,10 @@
         $admission.plan.serviceReserveGeneration | Should -Not -Be $generation
         $reservedPath = Get-VanessaServiceInfoBasePath -State $continuationState -Generation $admission.plan.serviceReserveGeneration
         $admission.plan.bases.path | Should -Contain $reservedPath
+        $admission.continuation.plan.schemaVersion | Should -Be 2
+        $serviceRoles = @($admission.continuation.plan.resourceRoles | Where-Object { $_.role -eq 'vanessa-service' })
+        $serviceRoles | Should -HaveCount 2
+        @($serviceRoles.path | Sort-Object) | Should -Be @($servicePath,$reservedPath | Sort-Object)
         Test-Path -LiteralPath $reservedPath | Should -BeFalse
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $continuationState
         foreach ($base in $admission.plan.bases) {

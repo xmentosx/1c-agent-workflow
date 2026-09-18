@@ -5,6 +5,7 @@ import re
 import time
 
 from .common import WorkError, beneath, digest, identity, read_json, stamp, write_json
+from .native_resource_state import require_quiescent
 from . import native_journal as native
 
 OPERATIONS = frozenset({'sync-master', 'reset-dev-branch', 'refresh-dev-branch', 'refresh-dev-branch-lite',
@@ -137,7 +138,5 @@ def assert_quiescent(recovery, journal, observations, project):
                 path = Path(base['path'])
                 unused_service = (resource not in used and base['kind'] == 'file' and
                     path.parent == Path(project) / '.agent-1c' / 'infobases' and
-                    re.fullmatch('vanessa-service-[a-f0-9]{32}', path.name) and
-                    not base['directoryPresent'] and not base['databasePresent'])
-                if base['sessionCount'] or (not unused_service and (not base['databasePresent'] or not base['exclusive'])):
-                    raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+                    re.fullmatch('vanessa-service-[a-f0-9]{32}', path.name))
+                require_quiescent(base, rebuildable=bool(unused_service))

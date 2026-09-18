@@ -216,8 +216,19 @@ queued behind active recovery. An interrupted or incomplete recovery retains
 An operation-specific adapter must verify stopped owned work and completed
 restoration under that ownership before calling completion. The coordinator
 checks full resource coverage and records the adapter's evidence, but cannot
-infer database quiescence from a dead Python process. There is deliberately no
-CLI accepting `passed: true`, a force-unlock flag, or arbitrary cleanup command.
+infer database quiescence from a dead Python process. Lifecycle continuation
+schema 2 records exact workflow-owned rebuildable roles separately from database
+readiness: the retained latest branch seed and planned Vanessa service
+generations. Once live inspection proves no sessions or owned/foreign processes
+and restoration obligations are complete, such a file resource may be absent or
+partially created without masquerading as `DATABASE_STILL_IN_USE`; the next
+canonical operation may rebuild it after receiving a new admission. A missing
+unclassified database instead remains `NATIVE_RECOVERY_REQUIRED_DATABASE_MISSING`
+and keeps `needs-attention`. Existing schema-1 records retain only conservative
+compatibility for their exact planned Vanessa generations and the default
+master-owned latest-seed location proven through the same Git common directory.
+There is deliberately no CLI accepting `passed: true`, a force-unlock flag, or
+arbitrary cleanup command.
 `access-recovery-plan --coordinator <directory> --ticket <ticket>` is inspection
 only and returns the fenced revision plus its trusted `nextAction`. Execute that
 plan with `access-recover --coordinator <directory> --ticket <ticket>`: the
@@ -229,16 +240,20 @@ explicit workflow-only compatibility entrypoint. Jobs with an original pinned
 recovery contract use the same dispatcher, which
 routes them through their durable job recovery plan instead of the workflow-native
 adapter. Root lifecycle, measurement, and top-level on-demand admissions perform
-bounded trusted self-healing when admission encounters a same-project orphan:
+bounded trusted self-healing when admission encounters an in-scope orphan:
 they dispatch the persisted recovery contract, require a changed/released ticket,
 and retry admission with a new ticket/token; nested/inherited participants never
-do this. A live same-project on-demand holder returns `agent-owned-handoff-required`
-with its exact persisted `releaseAction`; foreign/live ownership or ambiguous live
-recovery evidence returns `user-decision-or-external-action`. Both are
-`database-access-blocked` continuations with `workflowChangeRequired=false`, not
-generic repair signals. After the exact owning action or user/external resolution
-confirms release, the agent retries the original command; it never force-unlocks,
-rewrites coordinator state, or replays the interrupted business command.
+do this. For workflow lifecycle recovery, two worktree paths are the same scope
+only when Git proves the same resolved common directory; a path from another
+repository remains foreign. A live same-project on-demand holder returns
+`agent-owned-handoff-required` with its exact persisted `releaseAction`;
+foreign/live ownership or ambiguous live recovery evidence returns
+`user-decision-or-external-action`. A missing implementation contract instead
+returns `workflow-repair-required` with `workflowChangeRequired=true`; it is
+not presented as a user decision. After the exact owning action, trusted repair,
+or user/external resolution confirms release, the agent retries the original
+command with a new ticket; it never force-unlocks, rewrites coordinator state,
+or replays the interrupted business command.
 
 Invoke manual access recovery through `scripts/Invoke-RemoteWork.ps1 -Arguments
 @(...)` so the package resolves its managed Python runtime. Select the original
@@ -254,8 +269,11 @@ If initialization's successful commit was already acknowledged before the crash,
 the adapter preserves the result and releases admission after live inspection.
 It does not require a snapshot that normal completion already removed, replay
 initialization or report fresh verification. Pending duties, later native work,
-additional business databases and occupied/damaged service bases prevent this
-completion path. Completed rollback and smoke finalization use their own contracts.
+additional business databases, and service bases with live sessions or processes
+prevent this completion path. An unused planned service generation may be absent
+or partially created when its role and lack of native launch are proven by the
+retained plan/journal. Completed rollback and smoke finalization use their own
+contracts.
 For a server resource, native work starts only when the configured
 `serverBaseCopyScript` advertises schema-2 capability `recovery-observe`. Its
 path and SHA are bound into the native intent. The operation accepts no session

@@ -1461,11 +1461,11 @@ function Get-ItlOnDemandRecoveryResourceSamples {
                     if ($present) {
                         $handle = [IO.File]::Open($databasePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
                         $exclusive = $true
-                    } else { $exclusive = $true }
+                    }
                 } catch [IO.IOException] { $exclusive = $false }
                 finally { if ($null -ne $handle) { $handle.Dispose() } }
-                if (-not $exclusive) { throw "ITL_ONDEMAND_RECOVERY_DATABASE_NOT_EXCLUSIVE: $databasePath" }
-                $observed += [pscustomobject]@{kind='file';path=[string]$base.path;databasePresent=[bool]$present;exclusive=$true;sessionCount=0}
+                if ($present -and -not $exclusive) { throw "ITL_ONDEMAND_RECOVERY_DATABASE_NOT_EXCLUSIVE: $databasePath" }
+                $observed += [pscustomobject]@{kind='file';path=[string]$base.path;databasePresent=[bool]$present;exclusive=[bool]$exclusive;sessionCount=0}
                 continue
             }
             if ($base.kind -cne 'server') { throw 'ITL_ONDEMAND_RECOVERY_RESOURCE_KIND_INVALID' }

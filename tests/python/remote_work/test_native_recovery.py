@@ -12,6 +12,7 @@ import unittest
 RUNTIME = Path(__file__).resolve().parents[3] / '.agents/skills/itl-remote-runner/scripts'
 sys.path.insert(0, str(RUNTIME))
 from itl_remote.access import Coordinator, Lease
+from itl_remote.access_autorecovery import enter_root_lease
 from itl_remote.common import WorkError, read_json, write_json
 from itl_remote.native_recovery import WORKFLOW_OPERATIONS, recover_workflow_operation
 
@@ -25,6 +26,7 @@ from itl_remote.common import digest, read_json, write_json
 from itl_remote import native_journal as native, native_continuation as continuation, restoration_journal as duties
 from itl_remote.native_recovery_helpers import NAMES
 c = read_json(sys.argv[3]); root = Path(c['root']); kind = c['case']
+project = Path(c.get('project', str(root)))
 fixture = RestorationJournalTests()
 fixture.root = root; fixture.coordinator = Coordinator(root / 'Общая очередь')
 fixture.base = {'kind': 'file', 'path': str(root / 'База проекта')}
@@ -37,16 +39,23 @@ verification_check = kind == 'verification-check'
 if verification_check: operation = 'check-dev-branch'
 tooling_repair = kind == 'tooling-repair'
 if tooling_repair: operation = 'repair-dev-branch-tooling'
-refresh_retry = kind == 'refresh-retry'
+refresh_retry = kind in ('refresh-retry', 'refresh-missing-seed', 'refresh-missing-seed-legacy', 'refresh-required-missing')
 if refresh_retry: operation = 'refresh-dev-branch'
-sync_master_retry = kind == 'sync-master-retry'
+sync_master_retry = kind in ('sync-master-retry', 'sync-master-missing-seed')
 if sync_master_retry: operation = 'sync-master'
 completion = kind.startswith('committed')
 bases = [fixture.base]
 service = None
 if verification_check or tooling_repair or refresh_retry:
-    service = {'kind': 'file', 'path': str(root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}
+    service = {'kind': 'file', 'path': str(project / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32))}
     bases.append(service)
+seed = None
+if kind in ('refresh-missing-seed', 'refresh-missing-seed-legacy', 'sync-master-missing-seed'):
+    seed = {'kind': 'file', 'path': c['seedPath']}
+    Path(seed['path']).mkdir(parents=True, exist_ok=True)
+    bases.append(seed)
+if kind == 'refresh-required-missing':
+    bases.append({'kind': 'file', 'path': str(root / 'Обязательная отсутствующая база')})
 if completion:
     operation = 'init-dev-branch-extension'
     if kind in ('committed-unused-service', 'committed-damaged-service'):
@@ -55,9 +64,14 @@ if completion:
     elif kind == 'committed-other-database':
         bases.append({'kind': 'file', 'path': str(root / 'Другая рабочая база')})
 with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parentPid': os.getpid(),
-        'operation': operation, 'project': str(root)}, timeout=0) as lease:
+        'operation': operation, 'project': str(project)}, timeout=0) as lease:
     producer = native.register(lease)
     value = fixture.database_payload(lease, policy='on-failure') if completion else fixture.payload(lease, existed=kind != 'absent')
+    value['project'] = str(project)
+    if not completion and project != root:
+        destination = project / 'Исходники с пробелом' / 'ConfigDumpInfo.xml'
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        value['destination'] = str(destination)
     if completion: value.update(operation=operation, resources=bases)
     contents = {name: ('# retained ' + name).encode() for name in NAMES}
     if completion or read_only or verification_check or tooling_repair or refresh_retry or sync_master_retry or kind in ('native-started', 'repository-capture', 'server-repository-capture'):
@@ -70,10 +84,15 @@ with Lease(fixture.coordinator.root, bases, {'nativeJournalProtocol': 1, 'parent
     for name, data in contents.items(): (directory / name).write_bytes(data)
     value['helperInputs'] = [{'path': str(directory / name), 'sha256': hashes[name]} for name in NAMES]
     duties.publish(lease, producer, value)
-    if verification_check or tooling_repair or refresh_retry:
-        continuation.publish(lease, producer, {'schemaVersion': 1, 'operation': operation, 'project': str(root),
-            'target': fixture.base, 'bases': bases, 'helperInputs': value['helperInputs'],
-            'serviceGeneration': 'a' * 32, 'serviceReserveGeneration': ''})
+    if verification_check or tooling_repair or refresh_retry or sync_master_retry:
+        plan = {'schemaVersion': 1, 'operation': operation, 'project': str(project),
+                'target': fixture.base, 'bases': bases, 'helperInputs': value['helperInputs'],
+                'serviceGeneration': 'a' * 32 if service else '', 'serviceReserveGeneration': ''}
+        if seed is not None and kind != 'refresh-missing-seed-legacy':
+            plan['schemaVersion'] = 2
+            plan['resourceRoles'] = ([{**service, 'role': 'vanessa-service'}] if service else []) + [
+                {**seed, 'role': 'branch-seed'}]
+        continuation.publish(lease, producer, plan)
     if kind == 'nested':
         inner = fixture.payload(lease)
         inner['createdAt'] = '2026-09-10T00:00:01Z'
@@ -131,7 +150,8 @@ if ($Operation -ne 'recovery-observe') { exit 8 }
             duties.publish(lease, producer, cursor)
     if kind == 'live-producer':
         lease.release(cleanup_errors=['fixture host exited before producer'])
-    write_json(root / 'ready.json', {'ticket': lease.record['ticket'], 'value': value, 'base': fixture.base})
+    write_json(root / 'ready.json', {'ticket': lease.record['ticket'], 'value': value, 'base': fixture.base,
+                                     'bases': bases, 'seed': seed, 'project': str(project)})
     if kind == 'live-producer':
         while True: time.sleep(.1)
     os._exit(19)
@@ -152,9 +172,14 @@ class NativeRecoveryTests(unittest.TestCase):
         self.assertIsNotNone(match)
         self.assertEqual(WORKFLOW_OPERATIONS, frozenset(re.findall(r"'([^']+)'", match.group(1))))
 
-    def orphan(self, case='normal'):
+    def orphan(self, case='normal', *, project=None, seed_path=None):
         path = self.root / 'request.json'
-        write_json(path, {'root': str(self.root), 'case': case})
+        request = {'root': str(self.root), 'case': case}
+        if project is not None:
+            request['project'] = str(project)
+        if seed_path is not None:
+            request['seedPath'] = str(seed_path)
+        write_json(path, request)
         process = subprocess.Popen([sys.executable, '-B', '-X', 'utf8', '-c', CHILD,
                                     str(RUNTIME), str(Path(__file__).parent), str(path)],
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -172,6 +197,23 @@ class NativeRecoveryTests(unittest.TestCase):
         if case != 'live-producer':
             self.assertEqual(19, process.wait(timeout=10))
         return read_json(self.root / 'ready.json')
+
+    def linked_worktrees(self):
+        main = self.root / 'Git main с пробелом'
+        branch = self.root / 'Git branch с пробелом'
+        main.mkdir()
+        def git(*arguments):
+            result = subprocess.run(['git', '-c', 'core.quotepath=false', '-C', str(main), *arguments],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(0, result.returncode, result.stderr.decode('utf-8', errors='replace'))
+        git('init')
+        git('config', 'user.email', 'fixture@example.com')
+        git('config', 'user.name', 'Recovery Fixture')
+        (main / 'tracked.txt').write_text('fixture', encoding='utf-8')
+        git('add', 'tracked.txt')
+        git('commit', '-m', 'fixture')
+        git('worktree', 'add', '-b', 'itldev/recovery-fixture', str(branch), 'HEAD')
+        return main, branch
 
     def test_fresh_cli_restores_cursor_and_releases_only_after_producer_exit(self):
         data = self.orphan()
@@ -246,6 +288,44 @@ class NativeRecoveryTests(unittest.TestCase):
         self.assertIn('rerun the canonical sync-master command', evidence['resultAcceptance'])
 
     @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_interrupted_sync_master_releases_with_partial_explicit_seed_role(self):
+        seed = self.root / '.agent-1c/branch-seed' / ('b' * 64) / 'infobase'
+        data = self.orphan('sync-master-missing-seed', seed_path=seed)
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        evidence = record['recoveryAttempts'][-1]['evidence']
+        self.assertEqual('workflow-sync-master-retry', evidence['adapter'])
+        for sample in evidence['nativeObservations'][0]['observation']['samples']:
+            observed = next(base for base in sample['resources'] if base['path'] == str(seed))
+            self.assertFalse(observed['databasePresent'])
+            self.assertTrue(observed['directoryPresent'])
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_required_missing_database_is_not_misreported_as_busy(self):
+        data = self.orphan('refresh-required-missing')
+        with self.assertRaisesRegex(WorkError, 'NATIVE_RECOVERY_REQUIRED_DATABASE_MISSING'):
+            recover_workflow_operation(self.coordinator.root, data['ticket'])
+        with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
+            with Lease(self.coordinator.root, data['bases'], {'operation': 'next-chat'}, timeout=0):
+                pass
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
+    def test_legacy_refresh_orphan_with_missing_seed_recovers_from_linked_master_worktree(self):
+        main, branch = self.linked_worktrees()
+        seed = main / '.agent-1c' / 'branch-seed' / ('b' * 64) / 'infobase'
+        data = self.orphan('refresh-missing-seed-legacy', project=branch, seed_path=seed)
+        lease = enter_root_lease(self.coordinator.root, [data['seed']],
+                                 {'project': str(main), 'operation': 'sync-master'},
+                                 timeout=0, access_mode='mutation-exclusive')
+        try:
+            self.assertNotEqual(data['ticket'], lease.record['ticket'])
+            old = self.coordinator.record(data['ticket'])
+            self.assertEqual('released', old['status'])
+            self.assertEqual('workflow-refresh-retry', old['recoveryAttempts'][-1]['evidence']['adapter'])
+        finally:
+            lease.release()
+
+    @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
     def test_failed_verification_releases_only_after_live_inspection_and_cursor_restore(self):
         data = self.orphan('verification-check')
         record = recover_workflow_operation(self.coordinator.root, data['ticket'])
@@ -269,15 +349,14 @@ class NativeRecoveryTests(unittest.TestCase):
             pass
 
     @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
-    def test_failed_verification_does_not_discard_a_partially_created_service_database(self):
+    def test_failed_verification_releases_a_partially_created_planned_service_generation(self):
         data = self.orphan('verification-check')
         service = self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32)
         service.mkdir(parents=True)
-        with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
-            recover_workflow_operation(self.coordinator.root, data['ticket'])
-        with self.assertRaisesRegex(WorkError, 'RECOVERY_REQUIRED'):
-            with Lease(self.coordinator.root, [data['base'], {'kind': 'file', 'path': str(service)}], {}, timeout=0):
-                pass
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+        with Lease(self.coordinator.root, [data['base'], {'kind': 'file', 'path': str(service)}], {}, timeout=0):
+            pass
 
     @unittest.skipUnless(os.name == 'nt', 'native database observation uses Windows PowerShell')
     def test_failed_tooling_repair_releases_only_after_live_inspection(self):
@@ -422,10 +501,20 @@ class NativeRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(WorkError, 'ADDITIONAL_DATABASE_COMPLETION_REQUIRED'):
             recover_workflow_operation(self.coordinator.root, data['ticket'])
 
-    def test_committed_result_does_not_treat_damaged_service_as_unused(self):
+    def test_committed_result_releases_a_partially_created_unused_service(self):
         data = self.orphan('committed-damaged-service')
-        with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
-            recover_workflow_operation(self.coordinator.root, data['ticket'])
+        record = recover_workflow_operation(self.coordinator.root, data['ticket'])
+        self.assertEqual('released', record['status'])
+
+    def test_committed_result_keeps_a_busy_unused_service_blocked(self):
+        data = self.orphan('committed-unused-service')
+        service = self.root / '.agent-1c/infobases' / ('vanessa-service-' + 'a' * 32)
+        service.mkdir(parents=True)
+        database = service / '1Cv8.1CD'
+        database.write_bytes(b'fixture service database')
+        with database.open('rb'):
+            with self.assertRaisesRegex(WorkError, 'DATABASE_STILL_IN_USE'):
+                recover_workflow_operation(self.coordinator.root, data['ticket'])
 
     def test_committed_result_waits_for_an_independent_database_handle(self):
         data = self.orphan('committed')

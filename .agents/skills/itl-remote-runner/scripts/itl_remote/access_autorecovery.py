@@ -9,6 +9,7 @@ import platform
 from .access import Lease
 from .access_recovery import plan
 from .common import WorkError
+from .workflow_scope import same_git_workspace
 
 RECOVERY_REQUIRED = "INFOBASE_ACCESS_RECOVERY_REQUIRED: "
 WAIT_TIMEOUT = "INFOBASE_ACCESS_WAIT_TIMEOUT: "
@@ -19,7 +20,9 @@ INTERVENTION_ERRORS = (
     "RECOVERY_EXECUTION_HOST_REQUIRED",
     "NATIVE_RECOVERY_PRODUCER_STILL_RUNNING",
     "ITL_ONDEMAND_RECOVERY_DATABASE_STILL_IN_USE",
+    "ITL_ONDEMAND_RECOVERY_DATABASE_MISSING",
     "NATIVE_RECOVERY_DATABASE_STILL_IN_USE",
+    "NATIVE_RECOVERY_REQUIRED_DATABASE_MISSING",
     "ITL_ONDEMAND_RECOVERY_DATABASE_NOT_EXCLUSIVE",
     "ITL_ONDEMAND_RECOVERY_PROCESS_COMMAND_LINE_UNAVAILABLE",
     "ITL_ONDEMAND_RECOVERY_RESOURCE_PLAN_CHANGED",
@@ -41,6 +44,11 @@ INTERVENTION_ERRORS = (
     "RECOVERY_ORIGINAL_INPUTS_CHANGED",
     "RECOVERY_RESOURCE_BINDING_CHANGED",
     "RECOVERY_ADAPTER_REQUIRED",
+)
+WORKFLOW_CHANGE_ERRORS = (
+    "NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED",
+    "NATIVE_RECOVERY_DATABASE_RESTORATION_ADAPTER_REQUIRED",
+    "NATIVE_RECOVERY_ADDITIONAL_DATABASE_RESTORATION_REQUIRED",
 )
 
 def _admission_details(error, prefix, *, require_single=True):
@@ -77,7 +85,7 @@ def _same_path(first, second):
 
 def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
                   classification="user-decision-or-external-action", required_action=None,
-                  requires_user_decision=True):
+                  requires_user_decision=True, workflow_change_required=False):
     payload = {
         "schemaVersion": 1,
         "classification": classification,
@@ -88,7 +96,7 @@ def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
         "requestExecuted": False,
         "recoveryAttempted": bool(recovery_error),
         "recoveryError": recovery_error,
-        "workflowChangeRequired": False,
+        "workflowChangeRequired": bool(workflow_change_required),
         "requiresUserDecision": requires_user_decision,
         "retryOriginalCommandAfterResolution": True,
         "requiredAction": required_action or "resolve-database-access-blocker",
@@ -105,6 +113,11 @@ def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
 def _requires_intervention(error):
     text = str(error)
     return any(text.startswith(prefix) for prefix in INTERVENTION_ERRORS)
+
+
+def _requires_workflow_change(error):
+    text = str(error)
+    return any(text.startswith(prefix) for prefix in WORKFLOW_CHANGE_ERRORS)
 
 
 def _live_blocker(blocker, requester):
@@ -139,7 +152,7 @@ def _recover(blocker, requester, seen, cancelled):
     if original_host and original_host.casefold() != platform.node().casefold():
         _intervention("foreign-host", coordinator=coordinator, ticket=ticket, owner=owner)
     requester_scope, owner_scope = _scope(requester), _scope(owner)
-    if requester_scope and owner_scope and not _same_path(requester_scope, owner_scope):
+    if requester_scope and owner_scope and not same_git_workspace(requester_scope, owner_scope):
         _intervention("foreign-project", coordinator=coordinator, ticket=ticket, owner=owner)
     key = ticket + ":" + prepared["revision"]
     if key in seen:
@@ -153,6 +166,11 @@ def _recover(blocker, requester, seen, cancelled):
     except WorkError as error:
         if str(error).startswith(("INFOBASE_ACCESS_RECOVERY_PLAN_STALE", "INFOBASE_ACCESS_RECOVERY_NOT_REQUIRED")):
             return
+        if _requires_workflow_change(error):
+            _intervention("trusted-recovery-contract-missing", coordinator=coordinator, ticket=ticket, owner=owner,
+                          recovery_error=str(error), classification="workflow-repair-required",
+                          required_action="repair-workflow-recovery-contract", requires_user_decision=False,
+                          workflow_change_required=True)
         if _requires_intervention(error):
             _intervention("trusted-recovery-needs-external-evidence", coordinator=coordinator,
                           ticket=ticket, owner=owner, recovery_error=str(error))

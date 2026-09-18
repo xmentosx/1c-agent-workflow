@@ -65,7 +65,8 @@
             $plan.project | Should -Be $masterRoot
             $plan.source.path | Should -Be $sourcePath
             $plan.bases | Should -HaveCount 2
-            $plan.bases[1].path | Should -BeLike (Join-Path $masterRoot 'Общий seed/*/infobase')
+            $plan.seed.path | Should -BeLike (Join-Path $masterRoot 'Общий seed/*/infobase')
+            $plan.bases[1].path | Should -Be $plan.seed.path
         }
         $script:ProjectRoot | Should -Be $branchRoot
         $script:ConfigPath | Should -Be (Join-Path $branchRoot '.agent-1c/project.json')
@@ -84,6 +85,10 @@
         $admission.plan.bases | Should -HaveCount $count
         $admission.plan.bases.path | Should -Contain $sourcePath
         $admission.plan.masterPlan.project | Should -Be $masterRoot
+        $admission.continuation.plan.schemaVersion | Should -Be 2
+        $seedRoles = @($admission.continuation.plan.resourceRoles | Where-Object { $_.role -eq 'branch-seed' })
+        $seedRoles | Should -HaveCount 1
+        $seedRoles[0].path | Should -Be $admission.plan.masterPlan.seed.path
         Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State (Get-ItlDevBranchMutationDatabaseState -Operation $operation)
         foreach ($base in $admission.plan.bases) {
             { Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$masterSettings.coordinator;bases=@($base);owner=@{operation='another-project'};timeout=0} } | Should -Throw '*WAIT_TIMEOUT*'

@@ -638,6 +638,35 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "reports an absent planned service as missing rather than falsely exclusive" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl ondemand recovery observation " + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $samples = & {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Get-OneCProcessInfo { @() }
+                function Start-Sleep {}
+                $servicePath = Join-Path $tempRoot 'vanessa-service-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+                New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
+                $plan = [pscustomobject]@{
+                    bases = @([pscustomobject]@{kind='file';path=$servicePath})
+                    servicePlan = [pscustomobject]@{path=$servicePath}
+                }
+                @(Get-ItlOnDemandRecoveryResourceSamples -Plan $plan)
+            }
+            $samples | Should -HaveCount 2
+            foreach ($sample in $samples) {
+                $sample.resources | Should -HaveCount 1
+                $sample.resources[0].databasePresent | Should -BeFalse
+                $sample.resources[0].exclusive | Should -BeFalse
+                $sample.resources[0].sessionCount | Should -Be 0
+            }
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "recovers an orphaned facade when runtime state is already absent" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl orphan recovery путь " + [guid]::NewGuid().ToString("N"))
         $savedContext = $env:ITL_DATABASE_ACCESS_CONTEXT

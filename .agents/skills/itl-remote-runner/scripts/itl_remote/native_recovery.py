@@ -19,6 +19,7 @@ import uuid
 
 from .access_recovery import Recovery, VerifiedRecovery, plan
 from .common import OwnedProcess, WorkError, digest, write_json
+from .native_resource_state import rebuildable_resources, require_quiescent
 from . import native_journal, restoration_journal
 
 WORKFLOW_OPERATIONS = frozenset({
@@ -169,38 +170,20 @@ def _require_process_exited(pid):
 
 
 def _planned_resources_quiescent(recovery, journal, observations, operation):
-    """Accept only live-quiescent databases or an exactly planned absent service generation."""
-    absent_services = set()
+    """Require live quiescence while allowing only persisted rebuildable roles to be absent."""
+    roles = {}
     for continuation in journal.get('continuations', {}).values():
         plan = continuation['plan']
         if plan['operation'] != operation:
             raise WorkError('NATIVE_RECOVERY_CONTINUATION_OPERATION_CHANGED')
-        target = recovery.coordinator.resources([plan['target']])[0]
-        for name in ('serviceGeneration', 'serviceReserveGeneration'):
-            generation = plan[name]
-            if not generation:
-                continue
-            service = {'kind': 'file', 'path': str(Path(plan['project']) / '.agent-1c' / 'infobases' /
-                                                  ('vanessa-service-' + generation))}
-            resource = recovery.coordinator.resources([service])[0]
-            if resource == target or resource not in recovery.coordinator.resources(plan['bases']):
-                raise WorkError('NATIVE_RECOVERY_CONTINUATION_RESOURCE_BINDING_CHANGED')
-            absent_services.add(resource)
+        roles.update(rebuildable_resources(recovery.coordinator, plan))
     if not observations:
-        return False
+        raise WorkError('NATIVE_RECOVERY_INSPECTION_UNCONFIRMED')
     for observation in observations:
         for sample in observation['observation']['samples']:
             for base in sample['resources']:
                 resource = recovery.coordinator.resources([{'kind': base['kind'], 'path': base['path']}])[0]
-                if base['sessionCount']:
-                    return False
-                if base['databasePresent']:
-                    if not base['exclusive']:
-                        return False
-                    continue
-                if (resource not in absent_services or base['directoryPresent'] or base['exclusive'] or
-                        base.get('ownedProcessIds') or base.get('otherProcessIds')):
-                    return False
+                require_quiescent(base, rebuildable=resource in roles)
     return True
 
 
@@ -324,14 +307,15 @@ An unsupported later phase remains needs-attention for its operation adapter.
                     operation['operation'] == 'sync-master' for operation in journal['operations'])
                 if not repository_capture and not read_only_dump and not verification_check and not tooling_repair and not refresh_retry and not sync_master_retry:
                     raise WorkError('NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED')
-                quiescent = (_planned_resources_quiescent(
-                    recovery, journal, observations, current['owner']['operation'])
-                             if verification_check or tooling_repair or refresh_retry else observations and not any(
-                                 base['sessionCount'] or not base['databasePresent'] or not base['exclusive']
-                                 for observation in observations for sample in observation['observation']['samples']
-                                 for base in sample['resources']))
-                if not quiescent:
-                    raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+                if verification_check or tooling_repair or refresh_retry or sync_master_retry:
+                    _planned_resources_quiescent(recovery, journal, observations, current['owner']['operation'])
+                else:
+                    if not observations:
+                        raise WorkError('NATIVE_RECOVERY_INSPECTION_UNCONFIRMED')
+                    for observation in observations:
+                        for sample in observation['observation']['samples']:
+                            for base in sample['resources']:
+                                require_quiescent(base)
             else:
                 observations = []
             duties = journal['restoration']['duties']

@@ -149,9 +149,11 @@ class RestorationJournalTests(unittest.TestCase):
             def observations(item):
                 return [{'observation': {'samples': [{'resources': [item]}, {'resources': [item]}]}}]
             _quiescent(self.coordinator, observations(base), manifest)
-            for changed in ({**base, 'path': self.base['path']}, {**base, 'directoryPresent': True}, {**base, 'sessionCount': 1}):
-                with self.subTest(base=changed), self.assertRaisesRegex(WorkError, 'STILL_IN_USE'):
-                    _quiescent(self.coordinator, observations(changed), manifest)
+            _quiescent(self.coordinator, observations({**base, 'directoryPresent': True}), manifest)
+            with self.assertRaisesRegex(WorkError, 'REQUIRED_DATABASE_MISSING'):
+                _quiescent(self.coordinator, observations({**base, 'path': self.base['path']}), manifest)
+            with self.assertRaisesRegex(WorkError, 'STILL_IN_USE'):
+                _quiescent(self.coordinator, observations({**base, 'sessionCount': 1}), manifest)
 
     def test_database_restore_requires_indexed_matching_native_operation(self):
         with self.lease() as lease:

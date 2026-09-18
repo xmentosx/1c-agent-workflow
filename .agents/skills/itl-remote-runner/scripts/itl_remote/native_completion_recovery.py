@@ -5,6 +5,7 @@ import re
 
 from .access_recovery import VerifiedRecovery
 from .common import WorkError
+from .native_resource_state import require_quiescent
 
 
 def _time(value):
@@ -68,9 +69,8 @@ def committed_initialization(recovery, journal, producers, observations):
         for sample in observation['observation']['samples']:
             for base in sample['resources']:
                 key = recovery.coordinator.resources([base])[0]
-                unused_absent = key in unused and not base['directoryPresent'] and not base['databasePresent']
-                if base['sessionCount'] or (not unused_absent and (not base['databasePresent'] or not base['exclusive'])):
-                    raise WorkError('NATIVE_RECOVERY_DATABASE_STILL_IN_USE')
+                unused_absent = key in unused
+                require_quiescent(base, rebuildable=bool(unused_absent))
     return VerifiedRecovery(tuple(current['resources']), {
         'adapter': 'workflow-committed-extension-initialization', 'originalOutcome': 'interrupted',
         'resolution': 'commit-acknowledged-before-interruption', 'producers': producers,

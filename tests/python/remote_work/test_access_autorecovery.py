@@ -104,8 +104,10 @@ class AutoRecoveryTests(unittest.TestCase):
                 enter_root_lease(self.coordinator, [self.base], self.requester,
                                  timeout=0, access_mode="mutation-exclusive")
         payload = json.loads(str(raised.exception).split(": ", 1)[1])
-        self.assertEqual("user-decision-or-external-action", payload["classification"])
-        self.assertFalse(payload["workflowChangeRequired"])
+        self.assertEqual("workflow-repair-required", payload["classification"])
+        self.assertTrue(payload["workflowChangeRequired"])
+        self.assertFalse(payload["requiresUserDecision"])
+        self.assertEqual("repair-workflow-recovery-contract", payload["requiredAction"])
         self.assertTrue(payload["recoveryAttempted"])
 
     def test_dispatcher_routes_measurement_owner_to_pinned_job_recovery(self):
