@@ -613,6 +613,44 @@ function Release-ItlOnDemandManagedPortLease {
     }
 }
 
+function Remove-ItlOnDemandOrphanPortLeases {
+    param([string]$Family, [string]$InstanceId)
+
+    $state = Read-CurrentDevBranchStateForRoctupMcp -Operation 'ITL on-demand orphan recovery'
+    $targets = @([pscustomobject]@{ family=(Get-ItlOnDemandPortFamily -Family $Family); key=(Get-ItlOnDemandPortKey -Family $Family -State $state -InstanceId $InstanceId) })
+    if ($Family -eq 'vanessa-ui') {
+        $targets += [pscustomobject]@{ family='vanessa-mcp-testclient'; key=(Get-ItlOnDemandVanessaTestClientPortKey -State $state -InstanceId $InstanceId) }
+    }
+    $released = @()
+    foreach ($target in $targets) {
+        $matches = @(Invoke-ItlPortRegistryLock -ScriptBlock {
+            $registry = Read-ItlPortRegistry
+            return @(ConvertTo-ItlPortAllocationArray (Get-ItlPortObjectValue -Object $registry -Name 'allocations' -Default @()) | Where-Object {
+                [string](Get-ItlPortObjectValue -Object $_ -Name 'family' -Default '') -eq $target.family -and
+                [string](Get-ItlPortObjectValue -Object $_ -Name 'key' -Default '') -eq $target.key
+            })
+        })
+        if ($matches.Count -eq 0) { continue }
+        if ($matches.Count -ne 1) { throw "ITL_ONDEMAND_ORPHAN_PORT_LEASE_AMBIGUOUS: $($target.family)/$($target.key)" }
+        $allocation = $matches[0]
+        if (-not (Test-ItlPortAllocationMatchesStateIdentity -Allocation $allocation -State $state)) {
+            throw "ITL_ONDEMAND_ORPHAN_PORT_LEASE_FOREIGN: $($target.family)/$($target.key)"
+        }
+        if (Test-ItlPortAllocationOwnerIdentityPresent -Allocation $allocation) {
+            throw "ITL_ONDEMAND_ORPHAN_PORT_LEASE_OWNER_LIVE: $($target.family)/$($target.key)"
+        }
+        $port = ConvertTo-ItlPortInt -Value (Get-ItlPortObjectValue -Object $allocation -Name 'port' -Default 0)
+        if ($port -le 0 -or -not (Test-ItlTcpPortAvailable -Port $port)) {
+            throw "ITL_ONDEMAND_ORPHAN_PORT_STILL_IN_USE: $($target.family)/$($target.key) port=$port"
+        }
+        $token = [string](Get-ItlPortObjectValue -Object $allocation -Name 'leaseToken' -Default '')
+        if (-not $token) { throw "ITL_ONDEMAND_ORPHAN_PORT_LEASE_TOKEN_MISSING: $($target.family)/$($target.key)" }
+        Release-ItlOnDemandManagedPortLease -Family $target.family -Key $target.key -LeaseToken $token
+        $released += [pscustomobject]@{family=$target.family;key=$target.key;port=$port;ownership='dead-exact-allocation';portAvailable=$true}
+    }
+    return @($released)
+}
+
 function Stop-ItlOnDemandBackendInstance {
     param(
         [string]$Family,
@@ -1532,15 +1570,16 @@ function Invoke-ItlOnDemandBackendBroker {
             -AuxiliaryContour $AuxiliaryContour `
             -ServiceAdmissionPlan $serviceAdmissionPlan
     } else {
+        $registered = $null
         if ($null -ne $invocation) {
             $registered = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
-            if ($null -eq $registered -or [int](Get-StateValue $registered 'pid' 0) -le 0) {
+            if ($Operation -ne 'recover-stop' -and ($null -eq $registered -or [int](Get-StateValue $registered 'pid' 0) -le 0)) {
                 throw 'ITL_ONDEMAND_STOP_UNCONFIRMED: native launch or cleanup cannot be proven from missing/incomplete runtime state.'
             }
-            if ($ExpectedPid -gt 0 -and ([int]$registered.pid -ne $ExpectedPid -or [int]$registered.port -ne $ExpectedPort)) {
+            if ($null -ne $registered -and $ExpectedPid -gt 0 -and ([int]$registered.pid -ne $ExpectedPid -or [int]$registered.port -ne $ExpectedPort)) {
                 throw 'ITL_ONDEMAND_STOP_IDENTITY_CHANGED: registered runtime no longer matches the caller evidence.'
             }
-            if ($ExpectedPid -gt 0) {
+            if ($null -ne $registered -and $ExpectedPid -gt 0) {
                 $expectedBackend = Get-StateValue $invocation 'expectedBackend' $null
                 $expectedStart = [string](Get-StateValue $expectedBackend 'processStartTime' '')
                 if (-not $expectedStart -or [string](Get-StateValue $expectedBackend 'instanceId' '') -cne $InstanceId -or
@@ -1550,14 +1589,29 @@ function Invoke-ItlOnDemandBackendBroker {
             }
         }
         $nativeWorkAttempted = $true
-        $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
-        if ($Operation -eq 'recover-stop') {
+        if ($Operation -eq 'recover-stop' -and $null -eq $registered) {
             $samples = Get-ItlOnDemandRecoveryResourceSamples -Plan $invocation.plan
+            $portCleanup = @(); $portCleanupError = ''
+            try { $portCleanup = @(Remove-ItlOnDemandOrphanPortLeases -Family $Family -InstanceId $InstanceId) }
+            catch { $portCleanupError = $_.Exception.Message }
+            $paramsPath = Join-Path (Split-Path -Parent (Get-ItlOnDemandRuntimePath -Family $Family -InstanceId $InstanceId)) "$InstanceId.VAParams.json"
+            if ($Family -eq 'vanessa-ui' -and (Test-Path -LiteralPath $paramsPath -PathType Leaf)) { Remove-Item -LiteralPath $paramsPath -Force -ErrorAction SilentlyContinue }
+            $result = [pscustomobject]@{schemaVersion=2;status='stopped';family=$Family;instanceId=$InstanceId;pid=0;port=0;testClientPort=0;url=''}
             $result | Add-Member -NotePropertyName recoveryEvidence -NotePropertyValue ([pscustomobject]@{
                 adapter='finish-owned-on-demand'; family=$Family; instanceId=$InstanceId
-                ownedRuntimeCleanup='strict-ownership-confirmed'; restoration='no-restoration-duties-created'
-                resources=@($invocation.plan.bases); samples=@($samples)
+                ownedRuntimeCleanup='runtime-state-absent-live-quiescence-confirmed'; restoration='no-restoration-duties-created'
+                resources=@($invocation.plan.bases); samples=@($samples); orphanPortCleanup=@($portCleanup); orphanPortCleanupError=$portCleanupError
             }) -Force
+        } else {
+            $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
+            if ($Operation -eq 'recover-stop') {
+                $samples = Get-ItlOnDemandRecoveryResourceSamples -Plan $invocation.plan
+                $result | Add-Member -NotePropertyName recoveryEvidence -NotePropertyValue ([pscustomobject]@{
+                    adapter='finish-owned-on-demand'; family=$Family; instanceId=$InstanceId
+                    ownedRuntimeCleanup='strict-ownership-confirmed'; restoration='no-restoration-duties-created'
+                    resources=@($invocation.plan.bases); samples=@($samples); orphanPortCleanup=@(); orphanPortCleanupError=''
+                }) -Force
+            }
         }
     }
     $succeeded = $true

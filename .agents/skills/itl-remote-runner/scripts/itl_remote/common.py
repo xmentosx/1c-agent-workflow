@@ -33,7 +33,16 @@ class WorkError(RuntimeError):
 
 
 def read_json(path):
-    return json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    path = Path(path)
+    for attempt in range(20):
+        try:
+            return json.loads(path.read_text(encoding="utf-8-sig"))
+        except OSError as error:
+            sharing_error = os.name == "nt" and (
+                isinstance(error, PermissionError) or getattr(error, "winerror", None) in (5, 32, 33))
+            if not sharing_error or attempt == 19:
+                raise
+            time.sleep(0.05 * (1 + min(attempt, 3)))
 
 
 def publish_path(source, destination, *, replace=False):

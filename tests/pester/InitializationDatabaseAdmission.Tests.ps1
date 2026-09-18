@@ -72,7 +72,7 @@
     It 'waits for a new target without acquiring its lifecycle lock or a manager lease' {
         $holder = Start-ItlDatabaseAccessHost -Python $script:initPython -Request @{schemaVersion=1;coordinator=$script:initAuthority;bases=@(@{kind='file';path=$script:initBase});owner=@{};timeout=0}
         try {
-            { Enter-ItlInitializationDatabasePhase -Operation initialize-dev-branch-runtime } | Should -Throw '*WAIT_TIMEOUT*'
+            { Enter-ItlInitializationDatabasePhase -Operation initialize-dev-branch-runtime } | Should -Throw '*INTERVENTION_REQUIRED*'
             $script:initLockHeld | Should -BeFalse
             Should -Invoke Enter-Agent1cLifecycleOperation -Times 0 -Exactly
             $manager = Join-Path $script:initMain ('.agent-1c/infobases/vanessa-service-' + ('a'*32))
@@ -217,7 +217,7 @@
         $holder = Start-ItlDatabaseAccessHost -Python $script:initPython -Request @{schemaVersion=1;coordinator=$script:initAuthority;bases=@(@{kind='file';path=$script:initBase});owner=@{};timeout=0}
         Mock Initialize-ForkedDevBranchRuntime {}
         try {
-            { Invoke-ForkDevBranchRuntimeAfterSnapshot -Snapshot ([pscustomobject]@{targetSafeName='new'}) -MainProjectRoot $script:initMain -WorktreePath $script:initTarget } | Should -Throw '*WAIT_TIMEOUT*'
+            { Invoke-ForkDevBranchRuntimeAfterSnapshot -Snapshot ([pscustomobject]@{targetSafeName='new'}) -MainProjectRoot $script:initMain -WorktreePath $script:initTarget } | Should -Throw '*INTERVENTION_REQUIRED*'
             $sourceOwner.closed | Should -BeTrue
             $script:initLockHeld | Should -BeFalse
             Should -Invoke Enter-Agent1cLifecycleOperation -Times 0 -Exactly

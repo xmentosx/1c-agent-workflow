@@ -127,7 +127,7 @@ class AccessRuntimeTests(unittest.TestCase):
         self.assertEqual(["provenance.json"], sorted(p.name for p in (self.fixture.spool / "runs/one").iterdir()))
         self.assertEqual([], access.Coordinator(self.config["coordinator"]).snapshot())
 
-    def test_cleanup_error_keeps_admission_blocked_for_followup(self):
+    def test_cleanup_error_becomes_explicit_intervention_blocker_for_followup(self):
         self.package()
         with patch.object(execution, "run_measurement", return_value={"status": "needs-attention", "cleanupErrors": ["restore failed"]}):
             state = execution.execute_job(self.fixture.spool, "one", self.fixture.profile)
@@ -135,7 +135,11 @@ class AccessRuntimeTests(unittest.TestCase):
         _, second = self.fixture.package("two")
         jobs.submit(second, self.fixture.spool)
         state = execution.execute_job(self.fixture.spool, "two", self.fixture.profile)
-        self.assertIn("INFOBASE_ACCESS_RECOVERY_REQUIRED", state["error"])
+        self.assertIn("INFOBASE_ACCESS_INTERVENTION_REQUIRED", state["error"])
+        blocker = json.loads(state["error"].split(": ", 1)[1])
+        self.assertEqual("user-decision-or-external-action", blocker["classification"])
+        self.assertFalse(blocker["workflowChangeRequired"])
+        self.assertTrue(blocker["retryOriginalCommandAfterResolution"])
         self.assertEqual(["provenance.json"], sorted(p.name for p in (self.fixture.spool / "runs/two").iterdir()))
 
     def test_worker_profile_change_during_wait_does_not_run_stale_target(self):

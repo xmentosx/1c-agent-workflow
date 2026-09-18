@@ -223,13 +223,26 @@ only and returns the fenced revision plus its trusted `nextAction`. Execute that
 plan with `access-recover --coordinator <directory> --ticket <ticket>`: the
 dispatcher accepts only persisted, whitelisted recovery contracts. On-demand
 owners must match their exact `releaseAction` (`finish-owned-on-demand` plus the
-recorded `vanessa-ui` or `roctup` family/instance), while all other tickets route
-to the workflow-native adapter. `access-recover-workflow` remains as the explicit
-workflow-only compatibility entrypoint. Jobs with an original pinned recovery
-contract use the [job recovery commands](job-recovery.md). Invoke access recovery
-through `scripts/Invoke-RemoteWork.ps1 -Arguments @(...)` so the package resolves
-its managed Python runtime. Select the original operation's coordinator and
-ticket; recovery never replays the interrupted business command.
+recorded `vanessa-ui` or `roctup` family/instance); workflow lifecycle owners
+route to the workflow-native adapter. `access-recover-workflow` remains as the
+explicit workflow-only compatibility entrypoint. Jobs with an original pinned
+recovery contract use the same dispatcher, which
+routes them through their durable job recovery plan instead of the workflow-native
+adapter. Root lifecycle, measurement, and top-level on-demand admissions perform
+bounded trusted self-healing when admission encounters a same-project orphan:
+they dispatch the persisted recovery contract, require a changed/released ticket,
+and retry admission with a new ticket/token; nested/inherited participants never
+do this. A live same-project on-demand holder returns `agent-owned-handoff-required`
+with its exact persisted `releaseAction`; foreign/live ownership or ambiguous live
+recovery evidence returns `user-decision-or-external-action`. Both are
+`database-access-blocked` continuations with `workflowChangeRequired=false`, not
+generic repair signals. After the exact owning action or user/external resolution
+confirms release, the agent retries the original command; it never force-unlocks,
+rewrites coordinator state, or replays the interrupted business command.
+
+Invoke manual access recovery through `scripts/Invoke-RemoteWork.ps1 -Arguments
+@(...)` so the package resolves its managed Python runtime. Select the original
+operation's coordinator and ticket; manual recovery has the same no-replay contract.
 Supported local file-base paths are
 pre-native cursor recovery, repository-capture reconciliation and extension
 initialization/smoke snapshot rollback with retained lifecycle context. Native

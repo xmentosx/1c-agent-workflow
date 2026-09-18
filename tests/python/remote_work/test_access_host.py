@@ -143,6 +143,29 @@ class AccessHostTests(unittest.TestCase):
         self.assertNotIn("arbitrary-command", json.dumps(error))
         self.assertNotEqual(0, rejected.wait(timeout=5))
 
+    def test_live_on_demand_holder_returns_agent_handoff_instead_of_generic_timeout(self):
+        project = str(self.root / "проект с пробелом")
+        first_instance, second_instance = "d" * 32, "e" * 32
+        def owner(instance):
+            return {"project": project, "operation": "ondemand-roctup", "requestId": instance,
+                    "lifecycle": "on-demand", "releaseAction": {"kind": "finish-owned-on-demand",
+                    "family": "roctup", "instanceId": instance, "tool": "finish_database_access"}}
+        holder, holder_events = self.start(owner=owner(first_instance), accessMode="shared-read")
+        self.next(holder_events, "admitted")
+        blocked, blocked_events = self.start(owner=owner(second_instance), timeout=0, accessMode="mutation-exclusive")
+        self.next(blocked_events, "waiting")
+        error = self.next(blocked_events, "error")["error"]
+        self.assertTrue(error.startswith("INFOBASE_ACCESS_INTERVENTION_REQUIRED: "), error)
+        payload = json.loads(error.split(": ", 1)[1])
+        self.assertEqual("agent-owned-handoff-required", payload["classification"])
+        self.assertFalse(payload["requiresUserDecision"])
+        self.assertFalse(payload["workflowChangeRequired"])
+        self.assertEqual(first_instance, payload["requiredAction"]["instanceId"])
+        self.assertNotEqual(0, blocked.wait(timeout=5))
+        self.send(holder, {"event": "release", "cleanupErrors": []})
+        self.assertEqual("released", self.next(holder_events, "released")["status"])
+        self.assertEqual(0, holder.wait(timeout=5), holder.stderr.read())
+
     def test_host_transitions_the_same_functional_ticket_to_mutation_and_back(self):
         child, received = self.start(accessMode="functional-test")
         admitted = self.next(received, "admitted")

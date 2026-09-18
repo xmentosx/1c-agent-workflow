@@ -15,7 +15,8 @@ from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_me
 from .common import ResourceContext, beneath, process_identity
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
-from .access import Lease, target_access
+from .access import target_access
+from .access_autorecovery import root_lease
 from .deadlines import Deadline, budgets
 
 
@@ -541,11 +542,20 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
         result = None
         try:
             inherited = json.loads(os.environ["ITL_INFOBASE_ACCESS_LEASE"]) if os.environ.get("ITL_INFOBASE_ACCESS_LEASE") else None
-            with Lease(access["coordinator"], access["bases"], {"jobId": identifier, "workspace": target["workspace"],
-                       "operation": "measure", "spool": str(spool),
-                       "recoveryBinding": {"requestSha256": identity(request), "targetSha256": identity(target)}},
-                       timeout=access["timeout"], cancelled=cancelled,
-                       progress=waiting, inherited=inherited, access_mode=access["accessMode"]) as lease:
+            lease_owner = {"jobId": identifier, "workspace": target["workspace"],
+                           "operation": "measure", "spool": str(spool),
+                           "recoveryBinding": {"requestSha256": identity(request), "targetSha256": identity(target)}}
+            lease_context = (root_lease(access["coordinator"], access["bases"], lease_owner,
+                                       timeout=access["timeout"], cancelled=cancelled,
+                                       progress=waiting, access_mode=access["accessMode"])
+                             if inherited is None else
+                             contextlib.nullcontext(None))
+            if inherited is not None:
+                from .access import Lease
+                lease_context = Lease(access["coordinator"], access["bases"], lease_owner,
+                                      timeout=access["timeout"], cancelled=cancelled,
+                                      progress=waiting, inherited=inherited, access_mode=access["accessMode"])
+            with lease_context as lease:
                 # Revalidate immutable inputs and target authorization after the
                 # queue. Actual loaded configuration/data checks belong to prepare.
                 try:

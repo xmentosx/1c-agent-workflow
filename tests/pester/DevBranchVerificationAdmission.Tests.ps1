@@ -133,7 +133,7 @@
         }
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$path});owner=@{operation='other-project'};timeout=0}
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling -Preparation $preparation } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation repair-dev-branch-tooling -Preparation $preparation } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath $preparation.plan.servicePlan.path | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Should -Invoke Invoke-Designer -Times 0
@@ -177,7 +177,7 @@
     It 'waits for an auxiliary database before taking lifecycle locks or creating a service generation' {
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$auxPath});owner=@{};timeout=0}
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission -Operation check-dev-branch } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation check-dev-branch } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/infobases') | Should -BeFalse
             Should -Invoke Invoke-Designer -Times 0

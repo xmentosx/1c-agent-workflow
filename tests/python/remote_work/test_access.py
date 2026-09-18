@@ -1567,6 +1567,9 @@ class AccessTests(unittest.TestCase):
             elif mode == "measurement-exclusive":
                 self.assertEqual(ast.dump(ast.parse('access["accessMode"]', mode="eval").body),
                                  ast.dump(keywords["access_mode"]))
+            elif mode == "root-canonical":
+                self.assertEqual(ast.dump(ast.parse("access_mode", mode="eval").body),
+                                 ast.dump(keywords["access_mode"]))
             elif mode == "wire-canonical":
                 self.assertEqual(ast.dump(ast.parse('request.get("accessMode")', mode="eval").body),
                                  ast.dump(keywords["access_mode"]))

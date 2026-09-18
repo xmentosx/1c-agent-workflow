@@ -122,6 +122,34 @@ exit 1
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "preserves database blocker classification and exact handoff action" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl blocker путь " + [guid]::NewGuid().ToString("N"))
+        try {
+            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$blockerAction = [ordered]@{kind='finish-owned-on-demand';family='vanessa-ui';instanceId=('a'*32);tool='finish_database_access'}
+$payload = [ordered]@{schemaVersion=1;status='failed';action=$Action;stage='database-access.blocked';stageDetail='live owner';errorMessage='INFOBASE_ACCESS_INTERVENTION_REQUIRED';errorCategory='database-access-blocked';requiredAction='finish-owned-database-access';exitCode=1;lastLogPath='';blockerClassification='agent-owned-handoff-required';blockerRequiresUserDecision=$false;blockerRetryOriginalCommand=$true;blockerAction=$blockerAction;blockerOwner=@{operation='ondemand-vanessa-ui'}}
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
+exit 1
+'@
+            Push-Location $tempRoot
+            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','refresh-dev-branch-lite') }
+            finally { Pop-Location }
+            $processResult.exitCode | Should -Be 1
+            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
+            $summary.errorCategory | Should -Be 'database-access-blocked'
+            $summary.nextAction | Should -Be 'finish-owned-database-access'
+            $summary.blockerClassification | Should -Be 'agent-owned-handoff-required'
+            $summary.blockerRequiresUserDecision | Should -BeFalse
+            $summary.blockerRetryOriginalCommand | Should -BeTrue
+            $summary.blockerAction.tool | Should -Be 'finish_database_access'
+            $summary.blockerOwner.operation | Should -Be 'ondemand-vanessa-ui'
+        } finally { if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force } }
+    }
+
     It "preserves a complete long repository-lock report and recovery action on failure" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl partial report захват с пробелом ' + [guid]::NewGuid().ToString('N'))
         try {

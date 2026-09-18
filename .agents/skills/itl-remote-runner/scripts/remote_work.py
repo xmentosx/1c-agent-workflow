@@ -166,14 +166,8 @@ def main():
         from itl_remote.access_recovery import plan
         return plan(args.coordinator, args.ticket)
     if args.command == "access-recover":
-        from itl_remote.access import on_demand_release_action
-        from itl_remote.access_recovery import plan
-        prepared = plan(args.coordinator, args.ticket)
-        if on_demand_release_action(prepared.get("operation", {}).get("owner", {})) is not None:
-            from itl_remote.ondemand_recovery import recover_on_demand
-            return recover_on_demand(args.coordinator, args.ticket)
-        from itl_remote.native_recovery import recover_workflow_operation
-        return recover_workflow_operation(args.coordinator, args.ticket)
+        from itl_remote.access_dispatch import recover
+        return recover(args.coordinator, args.ticket)
     if args.command == "access-recover-workflow":
         from itl_remote.native_recovery import recover_workflow_operation
         return recover_workflow_operation(args.coordinator, args.ticket)

@@ -27,7 +27,8 @@ def _inputs(spool, identifier):
     coordinator = Coordinator(access["coordinator"])
     with coordinator.mutex(time.monotonic() + 30, lambda: False):
         state = status(spool, identifier)
-        ticket = state.get("access", {}).get("ticket")
+        access_state = state.get("access")
+        ticket = access_state.get("ticket") if isinstance(access_state, dict) else None
         try:
             record = coordinator.record(ticket)
         except WorkError as error:

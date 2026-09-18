@@ -31,7 +31,7 @@ def serve(input_stream, output_stream):
         if sys.version_info < (3, 11):
             raise WorkError("INFOBASE_ACCESS_PYTHON311_REQUIRED")
         request = json.loads(input_stream.readline())
-        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol", "accessMode"}
+        fields = {"schemaVersion", "coordinator", "bases", "owner", "timeout", "inherited", "purpose", "nativeJournalProtocol", "accessMode", "autoRecovery"}
         owner_fields = {"project", "operation", "threadId", "parentPid", "requestId", "lifecycle", "releaseAction"}
         owner = request.get("owner") if isinstance(request, dict) else None
         has_lifecycle_evidence = isinstance(owner, dict) and (
@@ -43,6 +43,13 @@ def serve(input_stream, output_stream):
                 any(not isinstance(base, dict) for base in request["bases"]) or
                 not isinstance(request.get("coordinator"), str) or not request["coordinator"].strip()):
             raise WorkError("INFOBASE_ACCESS_HOST_REQUEST_INVALID")
+        auto_requested = request.get("autoRecovery", False)
+        if (type(auto_requested) is not bool or
+                (auto_requested and (request.get("inherited") is not None or request.get("purpose", "operation") != "operation"))):
+            raise WorkError("INFOBASE_ACCESS_AUTO_RECOVERY_SCOPE_INVALID")
+        auto_recovery = auto_requested or (
+            request.get("inherited") is None and request.get("purpose", "operation") == "operation" and
+            on_demand_release_action(owner) is not None)
         native_protocol = request.get("nativeJournalProtocol", 0)
         if type(native_protocol) is not int or native_protocol not in (0, 1):
             raise WorkError("NATIVE_JOURNAL_PROTOCOL_UNSUPPORTED")
@@ -125,11 +132,18 @@ def serve(input_stream, output_stream):
                 emit({"event": "waiting", **value})
                 last_progress = time.monotonic()
 
-        lease = Lease(request["coordinator"], request["bases"], {**request["owner"], "parentPid": os.getppid(), "nativeJournalProtocol": native_protocol},
-                      timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
-                      progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"),
-                      access_mode=request.get("accessMode"))
-        lease.__enter__()
+        lease_owner = {**request["owner"], "parentPid": os.getppid(), "nativeJournalProtocol": native_protocol}
+        if auto_recovery:
+            from .access_autorecovery import enter_root_lease
+            lease = enter_root_lease(request["coordinator"], request["bases"], lease_owner,
+                                    timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
+                                    progress=progress, access_mode=request.get("accessMode"))
+        else:
+            lease = Lease(request["coordinator"], request["bases"], lease_owner,
+                          timeout=request.get("timeout", 3600), cancelled=interrupted.is_set,
+                          progress=progress, inherited=request.get("inherited"), purpose=request.get("purpose", "operation"),
+                          access_mode=request.get("accessMode"))
+            lease.__enter__()
         producer_id = native_journal.register(lease)
         admitted.set()
         emit({"event": "admitted", "proof": lease.proof(), "owner": public(lease.record, include_native_journal=False)})

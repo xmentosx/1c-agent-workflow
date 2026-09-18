@@ -6904,6 +6904,8 @@ function Start-ItlVanessaCleanupDatabaseAdmission {
     $inherited = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
     if ($inherited) {
         try { $request.inherited = $inherited | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
+    } else {
+        $request.autoRecovery = $true
     }
     $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request
     return [pscustomobject]@{owner=$owner;plan=$plan;nativePending=$false;cleanupConfirmed=$false;completed=$false}

@@ -638,6 +638,38 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "recovers an orphaned facade when runtime state is already absent" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl orphan recovery путь " + [guid]::NewGuid().ToString("N"))
+        $savedContext = $env:ITL_DATABASE_ACCESS_CONTEXT
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
+            $lines = @(& {
+                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+                function Start-ItlOnDemandInheritedDatabaseAccess { [pscustomobject]@{owner=$null;plan=$null} }
+                function Complete-ItlOnDemandInheritedDatabaseAccess { }
+                function Read-ItlOnDemandRuntimeState { return $null }
+                function Get-ItlOnDemandRecoveryResourceSamples { @([pscustomobject]@{sample=1},[pscustomobject]@{sample=2}) }
+                function Remove-ItlOnDemandOrphanPortLeases { @([pscustomobject]@{family='vanessa-mcp';port=48101}) }
+                $instance = 'a' * 32
+                $plan = [pscustomobject]@{schemaVersion=1;family='vanessa-ui';projectRoot=$tempRoot;instanceId=$instance;auxiliaryContour='';python='python';bases=@([pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'База с пробелом')});accessMode='functional-test';servicePlan=$null}
+                $proof = [pscustomobject]@{coordinator=(Join-Path $tempRoot 'координатор');ticket=('b'*32);token=('c'*64);purpose='recovery';accessMode='mutation-exclusive'}
+                $env:ITL_DATABASE_ACCESS_CONTEXT = ([pscustomobject]@{schemaVersion=1;proof=$proof;plan=$plan} | ConvertTo-Json -Depth 12 -Compress)
+                Invoke-ItlOnDemandBackendBroker -Operation recover-stop -Family vanessa-ui -InstanceId $instance
+            })
+            $marker = [string](@($lines | Where-Object { [string]$_ -like 'ITL_ONDEMAND_RESULT=*' })[-1])
+            $result = $marker.Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json
+            $result.status | Should -Be 'stopped'
+            $result.recoveryEvidence.ownedRuntimeCleanup | Should -Be 'runtime-state-absent-live-quiescence-confirmed'
+            @($result.recoveryEvidence.samples).Count | Should -Be 2
+            @($result.recoveryEvidence.orphanPortCleanup).Count | Should -Be 1
+            $result.recoveryEvidence.orphanPortCleanupError | Should -Be ''
+        } finally {
+            $env:ITL_DATABASE_ACCESS_CONTEXT = $savedContext
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "keys ports by family, project, worktree, branch, and client instance" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-keys-" + [guid]::NewGuid().ToString("N"))
         try {

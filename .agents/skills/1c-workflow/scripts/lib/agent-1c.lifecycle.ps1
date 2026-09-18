@@ -2601,6 +2601,7 @@ function Start-ItlDevBranchMutationDatabaseAdmission {
     . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
     $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1; accessMode = $planAccessMode
+        autoRecovery = -not [bool]$previousProof
         owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
     if ($previousProof) {
         try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }

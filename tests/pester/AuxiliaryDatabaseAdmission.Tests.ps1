@@ -83,7 +83,7 @@
     It 'waits for the auxiliary owner before any runtime cleanup or lifecycle lock' {
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request @{schemaVersion=1;coordinator=$settings.coordinator;bases=@(@{kind='file';path=$auxPath});owner=@{operation='measurement'};timeout=0}
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission -Operation update-auxiliary-contour } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation update-auxiliary-contour } | Should -Throw '*INTERVENTION_REQUIRED*'
             Should -Invoke Stop-ItlOnDemandBackends -Times 0
             Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse

@@ -327,6 +327,11 @@ function Write-RunStatus {
         recoveryReason = $script:RecoveryReason
         errorCategory = $(if ($script:RunErrorCategory) { [string]$script:RunErrorCategory } else { "" })
         requiredAction = $(if ($script:RunRequiredAction) { [string]$script:RunRequiredAction } else { "" })
+        blockerClassification = $(if ($script:RunBlockerClassification) { [string]$script:RunBlockerClassification } else { "" })
+        blockerRequiresUserDecision = [bool]$script:RunBlockerRequiresUserDecision
+        blockerRetryOriginalCommand = [bool]$script:RunBlockerRetryOriginal
+        blockerAction = $script:RunBlockerAction
+        blockerOwner = $script:RunBlockerOwner
         refreshMasterCommit = [string]$script:RunRefreshMasterCommit
         devBranch = $(if ($script:RunDevBranch) { [string]$script:RunDevBranch } else { "" })
         worktreePath = $(if ($script:RunWorktreePath) { [string]$script:RunWorktreePath } else { "" })
@@ -403,7 +408,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "database-access-blocked", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -432,6 +437,21 @@ function Set-RunFailureContextFromMessage {
     if ($Message -match '^(?i:ITL_INFOBASE_APPLICATION_NOT_READY)\b') {
         Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
         return
+    }
+    $interventionPrefix = 'INFOBASE_ACCESS_INTERVENTION_REQUIRED: '
+    if ($Message.StartsWith($interventionPrefix, [StringComparison]::Ordinal)) {
+        try { $blocker = $Message.Substring($interventionPrefix.Length) | ConvertFrom-Json -ErrorAction Stop }
+        catch { $blocker = $null }
+        if ($null -ne $blocker -and [int](Get-StateValue -State $blocker -Name 'schemaVersion' -Default 0) -eq 1) {
+            $script:RunBlockerClassification = [string](Get-StateValue -State $blocker -Name 'classification' -Default '')
+            $script:RunBlockerRequiresUserDecision = [bool](Get-StateValue -State $blocker -Name 'requiresUserDecision' -Default $true)
+            $script:RunBlockerRetryOriginal = [bool](Get-StateValue -State $blocker -Name 'retryOriginalCommandAfterResolution' -Default $true)
+            $script:RunBlockerAction = Get-StateValue -State $blocker -Name 'requiredAction' -Default $null
+            $script:RunBlockerOwner = Get-StateValue -State $blocker -Name 'owner' -Default $null
+            $action = $(if ($script:RunBlockerClassification -eq 'agent-owned-handoff-required') { 'finish-owned-database-access' } else { 'resolve-database-access-blocker-with-user' })
+            Set-RunFailureContext -Category 'database-access-blocked' -RequiredAction $action
+            return
+        }
     }
 
     $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")

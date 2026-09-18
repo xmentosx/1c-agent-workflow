@@ -20,10 +20,10 @@ class OnDemandRecoveryTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="ITL on-demand recovery ")
         self.root = Path(self.temp.name)
         self.coordinator = self.root / "coordinator"
-        self.project = self.root / "project with spaces"
+        self.project = self.root / "проект with spaces"
         (self.project / ".agents/skills/1c-workflow/scripts").mkdir(parents=True)
         (self.project / ".agents/skills/1c-workflow/scripts/agent-1c.ps1").write_text("# fixture", encoding="utf-8")
-        self.base = {"kind": "file", "path": str(self.root / "????")}
+        self.base = {"kind": "file", "path": str(self.root / "база with spaces")}
         instance = "a" * 32
         self.action = {"kind": "finish-owned-on-demand", "family": "vanessa-ui",
                        "instanceId": instance, "tool": "finish_database_access"}

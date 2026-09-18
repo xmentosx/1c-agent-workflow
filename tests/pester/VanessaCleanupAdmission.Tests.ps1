@@ -53,7 +53,7 @@
     It 'waits on the database without taking local locks or stopping native clients' {
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
         try {
-            { Start-ItlVanessaCleanupDatabaseAdmission } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlVanessaCleanupDatabaseAdmission } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/runtime-mcp.lock') | Should -BeFalse
             Should -Invoke Invoke-DevBranchVanessaRuntimeRelease -Times 0

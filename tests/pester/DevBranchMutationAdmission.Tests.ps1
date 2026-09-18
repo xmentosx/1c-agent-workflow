@@ -56,7 +56,7 @@
     It 'waits for another database owner without local locks or stopping its manual profile' {
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/runtime-mcp.lock') | Should -BeFalse
             Should -Invoke Stop-DevBranchVanessaInteractiveProfile -Times 0 -Exactly
@@ -84,7 +84,7 @@
         param($operation, $resources)
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation $operation } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0
         } finally { Complete-ItlDatabaseAccessHost $holder | Out-Null }
@@ -230,7 +230,7 @@
         $sourceRequest = [ordered]@{ schemaVersion=1; coordinator=$settings.coordinator; timeout=0; bases=@(@{kind='file';path=$script:repositorySourcePath}); owner=@{project='another-project';operation='source-profile'} }
         $holder = Start-ItlDatabaseAccessHost -Python $python -Request $sourceRequest
         try {
-            { Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects' } | Should -Throw '*WAIT_TIMEOUT*'
+            { Start-ItlDevBranchMutationDatabaseAdmission -Operation 'lock-config-repository-objects' } | Should -Throw '*INTERVENTION_REQUIRED*'
             Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
             Should -Invoke Stop-DevBranchVanessaInteractiveProfile -Times 0 -Exactly
             Should -Invoke Stop-OneCInfoBaseSessionProcesses -Times 0 -Exactly
@@ -307,7 +307,7 @@
         It 'waits on the second base without keeping the first or taking local locks' {
             $holder = Start-ItlDatabaseAccessHost -Python $python -Request $peerRequest
             try {
-                { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*WAIT_TIMEOUT*'
+                { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*INTERVENTION_REQUIRED*'
                 $independent = Start-ItlDatabaseAccessHost -Python $python -Request $competingRequest
                 Complete-ItlDatabaseAccessHost $independent | Out-Null
                 Test-Path (Join-Path $script:ProjectRoot '.agent-1c/locks/lifecycle.lock') | Should -BeFalse
@@ -404,7 +404,7 @@
             It 'waits on the last participant without retaining earlier databases and admits all six resources after release' {
                 $holder = Start-ItlDatabaseAccessHost -Python $python -Request $thirdRequest
                 try {
-                    { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*WAIT_TIMEOUT*'
+                    { Start-ItlDevBranchMutationDatabaseAdmission -Operation sync-dev-branches } | Should -Throw '*INTERVENTION_REQUIRED*'
                     foreach ($request in @($competingRequest, $peerRequest)) {
                         $independent = Start-ItlDatabaseAccessHost -Python $python -Request $request
                         Complete-ItlDatabaseAccessHost $independent | Out-Null
