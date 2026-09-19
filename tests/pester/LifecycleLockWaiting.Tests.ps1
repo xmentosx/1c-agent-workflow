@@ -68,8 +68,10 @@ finally { Exit-Agent1cLifecycleOperation }
                 }
                 $second.elapsedSeconds | Should -BeGreaterThan $first.elapsedSeconds
                 $status = Wait-Fixture {
-                    try { Get-Content -LiteralPath (Join-Path $root 'wait-status.json') -Raw | ConvertFrom-Json }
-                    catch [IO.IOException] { $null }
+                    $waitStatusPath = Join-Path $root 'wait-status.json'
+                    if (-not (Test-Path -LiteralPath $waitStatusPath -PathType Leaf)) { return $null }
+                    try { Get-Content -LiteralPath $waitStatusPath -Raw -ErrorAction Stop | ConvertFrom-Json }
+                    catch { $null }
                 }
                 $status.status | Should -Be running
                 $status.liveness | Should -Be 'waiting-lock'
