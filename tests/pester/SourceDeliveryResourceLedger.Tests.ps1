@@ -975,17 +975,23 @@ Describe 'Delivery resource ledger compaction' {
         $script:DeliveryResourceArchivePhysicalReadCount | Should -Be 1
     }
 
-    It 'routes both state mutations only through serialized manual Cleanup and never Status' {
+    It 'routes both state mutations through the delegated manual Cleanup executor and never Status' {
         $supervisor = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
-        ([regex]::Matches($supervisor, 'Compact-DeliveryResourceLedger')).Count | Should -Be 1
-        ([regex]::Matches($supervisor, 'Repair-DeliveryRunHotIndex')).Count | Should -Be 1
         $lockOffset = $supervisor.IndexOf('Enter-DeliveryOperation -Action $Action', [StringComparison]::Ordinal)
         $cleanupOffset = $supervisor.IndexOf('"Cleanup" {', [StringComparison]::Ordinal)
-        $compactOffset = $supervisor.IndexOf('Compact-DeliveryResourceLedger', [StringComparison]::Ordinal)
         $statusOffset = $supervisor.IndexOf('"Status" {', [StringComparison]::Ordinal)
         $lockOffset | Should -BeLessThan $cleanupOffset
-        $cleanupOffset | Should -BeLessThan $compactOffset
+        $supervisor.Substring($cleanupOffset) | Should -Match 'Invoke-DeliveryChannelCleanupSafely[^\r\n]+-CompactState'
         $statusBlock = $supervisor.Substring($statusOffset, $cleanupOffset - $statusOffset)
-        $statusBlock | Should -Not -Match 'Compact-DeliveryResourceLedger|Repair-DeliveryRunHotIndex|Write-Delivery'
+        $statusBlock | Should -Not -Match 'Compact-DeliveryResourceLedger|Repair-DeliveryRunHotIndex|Invoke-DeliveryChannelCleanupSafely|Write-Delivery'
+
+        $cleanupModule = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1') -Raw -Encoding UTF8
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseInput($cleanupModule, 'source-delivery-cleanup.ps1', [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $executor = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-DeliveryDelegatedCleanupExecutor' }, $true)
+        $executor | Should -Not -BeNullOrEmpty
+        $executor.Extent.Text | Should -Match 'Repair-DeliveryRunHotIndex'
+        $executor.Extent.Text | Should -Match 'Compact-DeliveryResourceLedger'
     }
 }

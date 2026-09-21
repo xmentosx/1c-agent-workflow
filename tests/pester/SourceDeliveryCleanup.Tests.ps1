@@ -205,4 +205,80 @@ Describe 'Source delivery post-success cleanup' {
         $result = Invoke-SourceDeliveryPostSuccessCleanup -FreshProjectsRoot $TestDrive
         $result.status | Should -Be 'completed-with-warnings'; @($result.warnings).Count | Should -Be 1; $result.warnings[0] | Should -Match 'candidate cleanup unavailable'
     }
+
+    It 'resolves develop and master cleanup executors from their exact remote channel commits' {
+        $root = Join-Path $TestDrive ("cleanup channels with space-{0}" -f [char]0x0416)
+        $remote = Join-Path $TestDrive ('cleanup-channels-' + [guid]::NewGuid().ToString('N') + '.git')
+        try {
+            New-CleanupRepository -Root $root
+            $base = (& git -C $root rev-parse HEAD).Trim()
+            & git init --quiet --bare $remote
+            & git -C $root remote add origin $remote
+            & git -C $root push --quiet origin HEAD:develop HEAD:master
+
+            Set-Content -LiteralPath (Join-Path $root 'README.md') -Encoding UTF8 -Value 'develop executor'
+            & git -C $root add README.md; & git -C $root commit --quiet -m develop-executor
+            $developCommit = (& git -C $root rev-parse HEAD).Trim()
+            & git -C $root push --quiet origin HEAD:develop
+
+            & git -C $root switch --quiet -c master $base
+            Set-Content -LiteralPath (Join-Path $root 'README.md') -Encoding UTF8 -Value 'master executor'
+            & git -C $root add README.md; & git -C $root commit --quiet -m master-executor
+            $masterCommit = (& git -C $root rev-parse HEAD).Trim()
+            & git -C $root push --quiet origin HEAD:master
+            & git -C $root fetch --quiet origin '+refs/heads/*:refs/remotes/origin/*'
+
+            $script:Root = $root
+            $script:Remote = 'origin'
+            function Invoke-DeliveryGit {
+                param([string[]]$Arguments, [switch]$AllowFailure, [AllowNull()][string]$StandardInput = $null)
+                Invoke-RepositoryGit -RepositoryRoot $script:Root -Arguments $Arguments -AllowFailure:$AllowFailure -StandardInput $StandardInput
+            }
+            . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+
+            (Resolve-DeliveryCleanupChannelCommit -Channel Develop).commit | Should -Be $developCommit
+            (Resolve-DeliveryCleanupChannelCommit -Channel Master).commit | Should -Be $masterCommit
+            { Resolve-DeliveryCleanupChannelCommit -Channel Develop -ExpectedCommit $masterCommit } | Should -Throw '*DELIVERY_CLEANUP_EXECUTOR_MOVED*'
+        } finally {
+            Remove-Item -LiteralPath $root, $remote -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'routes publication cleanup to the matching channel before and after the exact published commit' {
+        . (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1')
+        $script:DeliverySupervisorCommit = 'a' * 40
+        function Publish-AccumulatedDevelop { throw 'must be mocked' }
+        function Release-DevelopToMaster { throw 'must be mocked' }
+        Mock Invoke-DeliveryChannelCleanupSafely {
+            param($Channel, $Phase, $ExpectedCommit, [switch]$CompactState)
+            [pscustomobject]@{ status='completed'; executor=[pscustomobject]@{ channel=$Channel.ToLowerInvariant(); commit=$ExpectedCommit; phase=$Phase } }
+        }
+        Mock Publish-AccumulatedDevelop { [pscustomobject]@{ status='published'; commit=('d' * 40) } }
+        Mock Release-DevelopToMaster { [pscustomobject]@{ status='released'; masterCommit=('e' * 40) } }
+
+        $published = Invoke-PublishDevelopWithCleanup
+        @($published.cleanupRuns).Count | Should -Be 2
+        @($published.cleanupRuns.executor.channel) | Should -Be @('develop', 'develop')
+        Should -Invoke Invoke-DeliveryChannelCleanupSafely -Times 1 -ParameterFilter { $Channel -eq 'Develop' -and $Phase -eq 'post-operation' -and $ExpectedCommit -eq ('d' * 40) }
+
+        $released = Invoke-ReleaseMasterWithCleanup
+        @($released.cleanupRuns).Count | Should -Be 2
+        @($released.cleanupRuns.executor.channel) | Should -Be @('master', 'master')
+        Should -Invoke Invoke-DeliveryChannelCleanupSafely -Times 1 -ParameterFilter { $Channel -eq 'Master' -and $Phase -eq 'post-operation' -and $ExpectedCommit -eq ('e' * 40) }
+    }
+
+    It 'keeps the master authority lease separate from the delegated cleanup executor identity' {
+        $supervisor = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-supervisor.ps1') -Raw -Encoding UTF8
+        $candidate = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-candidate.ps1') -Raw -Encoding UTF8
+        $cleanup = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-cleanup.ps1') -Raw -Encoding UTF8
+
+        $supervisor | Should -Match 'Invoke-PublishDevelopWithCleanup'
+        $supervisor | Should -Match 'Invoke-ReleaseMasterWithCleanup'
+        $supervisor | Should -Match 'CleanupChannel -eq "Auto"\) \{ "Develop" \}'
+        $candidate | Should -Match 'Promote-AccumulatedDevelopToMaster[\s\S]+Invoke-PublishDevelopWithCleanup[\s\S]+Invoke-ReleaseMasterWithCleanup'
+        $cleanup | Should -Match 'Resolve-DeliveryCleanupChannelCommit -Channel \$Channel -ExpectedCommit \$ExpectedCommit'
+        $cleanup | Should -Match 'authoritySupervisorCommit = \$AuthorityCommit'
+        $cleanup | Should -Match 'DELIVERY_CLEANUP_DELEGATION_INVALID'
+        $cleanup | Should -Not -Match 'Enter-DeliveryOperation -Action'
+    }
 }

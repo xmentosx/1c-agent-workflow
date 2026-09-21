@@ -99,7 +99,7 @@ Describe 'Source delivery ref-only cleanup' {
         $diagnoseStart | Should -BeGreaterThan $cleanupStart
         $supervisor.Substring($statusStart, $cleanupStart - $statusStart) | Should -Not -Match 'Invoke-DeliveryRefDispositionCleanup'
         $manualCleanup = $supervisor.Substring($cleanupStart, $diagnoseStart - $cleanupStart)
-        $manualCleanup | Should -Match 'Invoke-DeliveryCleanupSweep[\s\S]+Invoke-DeliveryRefDispositionCleanup'
+        $manualCleanup | Should -Match 'Invoke-DeliveryChannelCleanupSafely[\s\S]+Invoke-DeliveryRefDispositionCleanup'
         $refCleanupOffset = $manualCleanup.IndexOf('Invoke-DeliveryRefDispositionCleanup', [StringComparison]::Ordinal)
         foreach ($compaction in @('Repair-DeliveryRunHotIndex', 'Compact-DeliveryResourceLedger')) {
             $compactionOffset = $manualCleanup.IndexOf($compaction, [StringComparison]::Ordinal)

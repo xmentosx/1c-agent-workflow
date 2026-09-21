@@ -15,6 +15,8 @@ param(
     [string]$ComponentFinalizerScript = "",
     [string]$CompatibilityPromoterScript = "",
     [string]$Version = "",
+    [ValidateSet("Auto", "Develop", "Master")]
+    [string]$CleanupChannel = "Auto",
     [ValidateSet("Summary", "Runs", "Full")]
     [string]$StatusDetail = "Summary",
     [ValidateSet("Auto", "Restart")]
@@ -46,11 +48,27 @@ if ($Action -eq "Status") {
     if ($statusHeadExitCode -ne 0 -or [string]$statusSupervisorCommit -notmatch '^[a-f0-9]{40}$') {
         throw "Unable to resolve the inspected repository HEAD for read-only delivery status."
     }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $statusAuthorityCommit = @(& git -C $candidateRoot rev-parse "refs/remotes/$Remote/master" 2>$null) | Select-Object -First 1
+    $statusAuthorityExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    $statusAuthorityBootstrap = $true
+    if ($statusAuthorityExitCode -eq 0 -and [string]$statusAuthorityCommit -match '^[a-f0-9]{40}$') {
+        $ErrorActionPreference = "Continue"
+        & git -C $candidateRoot cat-file -e "$statusAuthorityCommit`:scripts/source-delivery-supervisor.ps1" 2>$null
+        $statusAuthorityBootstrap = $LASTEXITCODE -ne 0
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($statusAuthorityBootstrap) {
+        $statusAuthorityCommit = [string]$statusSupervisorCommit
+    }
     $statusArguments = @{}
     foreach ($entry in $PSBoundParameters.GetEnumerator()) { $statusArguments[$entry.Key] = $entry.Value }
     $statusArguments["RepositoryRoot"] = $candidateRoot
-    $statusArguments["SupervisorCommit"] = [string]$statusSupervisorCommit
-    $statusArguments["BootstrapSupervisor"] = $true
+    $statusArguments["SupervisorCommit"] = [string]$statusAuthorityCommit
+    $statusArguments["StatusReaderCommit"] = [string]$statusSupervisorCommit
+    $statusArguments["BootstrapSupervisor"] = $statusAuthorityBootstrap
     & $localSupervisor @statusArguments
     return
 }

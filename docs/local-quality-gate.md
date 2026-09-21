@@ -116,6 +116,13 @@ Develop proof закрывают reuse. Это продолжение по finge
 одноразовый bootstrap-режим; после первого выпуска candidate-копия supervisor
 никогда не выбирается.
 
+`Status` не является исполняющим supervisor: read-only вызов использует файл из
+текущего checkout без создания worktree. Поэтому диагностика выводит две разные
+identity: `statusReader` — коммит прочитанного кода, `authoritySupervisor` (и
+совместимый alias `supervisor`) — коммит `origin/master`, который будет владеть
+lock, очередью и публикацией. `cleanupPolicy` отдельно показывает каналы
+исполнения очистки.
+
 Перед дорогим запуском маршрут можно получить без публикации:
 
 ```powershell
@@ -307,14 +314,26 @@ attempt. Если reconciliation с `master` меняет candidate, reuse за�
 
 Supervisor ведёт `.git/itl/resources/v1/ledger.json`. Он регистрирует candidate и
 fresh worktree/базы/launcher identity, reusable stands, snapshots, current
-CF/CFE+manifest, capability generation и owned PID/ports. Перед каждой
-`PublishDevelop`, `PromoteRelease`, `ReleaseMaster` и после неё повторяется весь
-`cleanup-pending`. Используются прежние safe cleanup-функции: launcher-entry
+CF/CFE+manifest, capability generation и owned PID/ports. Authority из стабильного
+`master` сохраняет единственный operation lease, но cleanup-код выполняется из
+detached worktree точного опубликованного канала по краткоживущей capability:
+`PublishDevelop` — из текущего `origin/develop` до операции и из фактически
+опубликованного develop commit после неё; `ReleaseMaster` — аналогично из
+`origin/master` до и из фактически опубликованного master commit после неё.
+`PromoteRelease` последовательно использует обе пары. Сдвиг ref, несовпадение
+commit/result identity или отсутствие executor закрывает именно этот cleanup с
+warning; fallback на другой канал запрещён.
+
+В каждом проходе повторяется весь `cleanup-pending`. Используются прежние safe cleanup-функции: launcher-entry
 удаляется до базы, `ibases.v8i` меняется под lock с BOM-backup (остаются три), а
 имена, roots, process/worktree use, tracked drift, configured stand и artifact
 SHA проверяются до удаления. Housekeeping failure не отменяет push и даёт
 `completed-with-cleanup-warnings`; product cleanup assertion остаётся блокирующей.
-Ручной безопасный повтор — `-Action Cleanup`. `Status` показывает count, bytes,
+Ручной безопасный повтор по умолчанию выполняется из develop:
+`-Action Cleanup`; явный стабильный канал выбирается только через
+`-Action Cleanup -CleanupChannel Master`. Ref-only cleanup очереди и promotion
+refs остаётся у authority-supervisor и не делегируется канальному executor.
+`Status` показывает count, bytes,
 возраст, последнюю ошибку и следующую попытку. Failed plans сохраняют ресурсы
 только для двух новейших plan и не дольше семи дней; evidence после уборки не
 удаляется.

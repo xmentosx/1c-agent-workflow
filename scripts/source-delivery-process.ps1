@@ -575,10 +575,21 @@ function Get-DeliveryOperationStatus {
     if (-not $operation) { return $null }
     $ownerAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.ownerPid) -StartedAt $operation.ownerProcessStartedAt
     $gateAlive = Test-DeliveryProcessIdentity -ProcessId ([int]$operation.gatePid) -StartedAt $operation.gateProcessStartedAt
+    $cleanupPidProperty = $operation.PSObject.Properties['cleanupExecutorPid']
+    $cleanupPid = if ($cleanupPidProperty) { [int]$cleanupPidProperty.Value } else { 0 }
+    $cleanupDelegationProperty = $operation.PSObject.Properties['cleanupDelegation']
+    $cleanupDelegation = if ($cleanupDelegationProperty) { $cleanupDelegationProperty.Value } else { $null }
+    $cleanupStartedAt = if ($cleanupDelegation -and $cleanupDelegation.PSObject.Properties['childProcessStartedAt']) { $cleanupDelegation.childProcessStartedAt } else { $null }
+    $cleanupAlive = Test-DeliveryProcessIdentity -ProcessId $cleanupPid -StartedAt $cleanupStartedAt
     return [pscustomobject]@{
         id = [string]$operation.id; action = [string]$operation.action; startedAt = [string]$operation.startedAt
         ownerPid = [int]$operation.ownerPid; ownerAlive = $ownerAlive; gatePid = [int]$operation.gatePid; gateAlive = $gateAlive
-        mode = [string]$operation.mode; candidatePath = [string]$operation.workingRoot; status = $(if ($ownerAlive -or $gateAlive) { "running" } else { "stale" })
+        cleanupExecutorPid = $cleanupPid; cleanupExecutorAlive = $cleanupAlive
+        cleanupExecutor = $(if ($cleanupDelegation) { [pscustomobject]@{
+            channel=[string]$cleanupDelegation.channel; phase=[string]$cleanupDelegation.phase; commit=[string]$cleanupDelegation.commit
+            authorityCommit=[string]$cleanupDelegation.authorityCommit; status=[string]$cleanupDelegation.status
+        } } else { $null })
+        mode = [string]$operation.mode; candidatePath = [string]$operation.workingRoot; status = $(if ($ownerAlive -or $gateAlive -or $cleanupAlive) { "running" } else { "stale" })
     }
 }
 
