@@ -39,6 +39,15 @@ Exact and proxy fields cannot be mixed. Proxy and unavailable modes may pass fun
 
 `context-benchmark` remains a separate Kilo-only baseline diagnostic for initial rules/MCP context. Its results are not conversational-growth records for this benchmark.
 
+Static workflow-owned client surfaces are tracked separately in
+`workflow-maintainability-evidence.md`: installed rules/routers, deterministically
+rendered command files, on-demand MCP schemas, and compact-result bounds. A
+change to one of those surfaces reports its UTF-8 byte and approximate-token
+proxy delta through the existing documentation budget contract. Do not convert
+that proxy into a claimed model-token saving. Real Kilo counters remain the
+authority when a user explicitly authorizes a token-spending benchmark run;
+clients without counters remain proxy-qualified only.
+
 ## Run the analyzer
 
 The script is read-only unless `-OutputPath` is supplied. The explicit output contains only an aggregate summary and cannot overwrite the input record set.

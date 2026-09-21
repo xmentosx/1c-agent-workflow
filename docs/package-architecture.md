@@ -20,6 +20,125 @@ Client routine files are generated from `.agents/skills/1c-workflow/kilo-command
 
 The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
 
+## Architecture scope and compatibility policy
+
+Use the simplest coherent architecture that preserves the behavioral contract.
+Do not optimize for the smallest diff, fewest files, or fewest abstractions. One
+behavioral invariant has one authoritative owner, and duplicated policy must
+converge on that owner. Superficially similar operations do not share runtime
+authority unless one reproduced cross-boundary failure proves that a common
+owner is needed.
+
+Terms in this policy have narrow meanings:
+
+- A **runtime owner** controls one running operation and its exact processes,
+  resources, completion, cancellation, and cleanup.
+- An **authoritative owner** is the one package component that defines a
+  behavioral invariant. It may have many callers and need not be a runtime
+  process.
+- A **stateless contract** is shared validation, quoting, normalization,
+  serialization, or pure planning that owns no durable record, lock, queue, or
+  recovery transition.
+- **Runtime authority** is permission to block, serialize, cancel, clean up, or
+  recover work across otherwise independent runtime owners.
+- A **repair cycle** is one coherent implementation attempt followed by the
+  original acceptance path. Commits, fixture corrections, and evidence
+  collection inside that attempt do not create extra cycles by themselves.
+
+Normal architecture work does not require a separate approval merely because it
+touches several files or components. It includes moving an invariant to its
+authoritative owner, replacing duplicated policy, introducing a stateless shared
+contract, refactoring all affected callers, consuming an existing coordinator
+within its documented resource and recovery contract, and replacing a mechanism
+without adding installed migration or rollback risk. State the selected owner
+and verify every affected caller.
+
+Before implementation, obtain an explicit architecture checkpoint when a
+proposal introduces or widens any of these boundaries:
+
+- a machine-wide or workflow-wide coordinator, queue, lock, or persistent state;
+- blocking, cancellation, cleanup, or recovery authority across independent
+  runtime owners;
+- a new installed-state migration whose rollback needs compatibility handling;
+- interception of lifecycle, update, verification, or delivery operations that
+  were previously independent;
+- an elevation requirement, Windows service/firewall change, machine-wide ACL,
+  or reduction of supported Windows or terminal-session behavior;
+- material growth in always-on client rules, tool schemas, command surfaces, or
+  routine output that cannot be routed on demand.
+
+The checkpoint is a short proposal in the active task or an already requested
+plan, not a mandatory ADR, registry, manifest, command, or approval file. It
+names the invariant and proposed owner; provides a minimal cross-boundary
+reproducer when shared runtime authority is claimed; explains why owner-local
+and stateless alternatives are insufficient; lists affected and unaffected
+owners, resources, operations, clients, platforms, and installed state; confirms
+there is one state machine and no shadow coordinator; defines bounded waiting,
+status, completion, cancellation, and recovery; records compatibility,
+client-context, canary, and rollback effects; and keeps the original acceptance
+path as the deciding evidence. Approval covers that stated boundary. A newly
+affected owner, resource class, administrative prerequisite, or installed
+migration is a scope change; implementation details inside the boundary are not.
+
+The existing database-access coordinator is the authoritative owner for exact
+infobase admission across ROCTUP, Vanessa, lifecycle, measurement, and remote
+operations. Calling it with an already supported access mode, resource set, and
+recovery contract is normal composition. Adding an access mode, resource class,
+persistent record, recovery adapter, automatic interception point, or action
+against a foreign owner widens authority and requires the checkpoint. A local
+call site must not copy admission policy, but similarity alone must not pull an
+unrelated operation into this coordinator.
+
+After two repair cycles that neither restore the original acceptance path nor
+narrow the proven failure to a smaller owner, stop adding recovery layers.
+Record the remaining blocker and compare rollback/removal, an owner-local
+design, and a revised shared design. New evidence or real acceptance progress
+continues the current cycle; a timeout alone is not an architecture failure.
+
+### Supported Windows and privilege boundary
+
+Normal installed-workflow operation supports Windows 10, Windows 11, and
+Windows Server 2019 or later, in local and terminal sessions, under a standard
+user token. It must not require elevation, silently request it, write protected
+machine state, or substitute weaker isolation while reporting equivalent safety.
+The normal baseline is Windows PowerShell 5.1 plus the package-pinned runtimes;
+newer PowerShell may invoke the Windows PowerShell boundary where the workflow
+contract requires it.
+
+Administrative host preparation is an optional, explicitly invoked capability.
+Examples are enabling SSH, installing or configuring a service, changing a
+firewall, and provisioning a shared machine directory or ACL. An unavailable
+optional capability is reported as unavailable with its prerequisite and does
+not invalidate unrelated local workflow operations.
+
+Terminal-server support requires simultaneous standard-user sessions not to
+collide through user-local paths, temporary files, credentials, ports, process
+discovery, or cleanup. Cross-user coordination that genuinely needs shared state
+must use an explicitly provisioned writable root or another proven
+standard-user-safe mechanism. User-local fallback may be offered only with an
+explicit weaker-isolation warning; it is not equivalent terminal-server proof.
+Unknown or unavailable Windows stands remain unverified rather than silently
+narrowing the support promise.
+
+### Client context and token cost
+
+Always-on installed instructions, generated command/skill prompts, workflow MCP
+`tools/list` schemas, and routine status/result payloads are compatibility
+budgets. Keep routers compact, load one relevant reference on demand, and prefer
+script-owned orchestration plus bounded structured results over repeated prose.
+Do not load full catalogs, lifecycle documentation, logs, or runtime state for a
+request that does not need them.
+
+Measure changed client-facing surfaces against a recorded baseline. Use real
+client token counters when exposed; otherwise label serialized UTF-8 bytes and
+`ceil(bytes/4)` as proxies, never exact token counts. A surface increase must be
+attributable in the change and update its explicit budget with a rationale after
+duplication and on-demand routing are considered. Source-only maintainer rules
+are measured separately from installed-project context. Token optimization must
+never weaken the task goal, safety, diagnostics, tests, database work, evidence,
+or completion gates, and it must not add a model call or cumulative token ledger
+merely to estimate savings.
+
 ## Runtime check blocking policy
 
 A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.

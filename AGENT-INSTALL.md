@@ -41,6 +41,40 @@ This package supports Codex, Kilo Code, Claude Code, Cursor, OpenCode, Kimi Code
 
 Do not rely on Codex-only custom prompts for this workflow. They are local to one user and are not the team distribution mechanism.
 
+## Supported Windows environments
+
+Normal installed-workflow operation is supported for a standard, non-elevated
+user in local desktop sessions and terminal-server sessions on:
+
+- Windows 10;
+- Windows 11;
+- Windows Server 2019 and later Windows Server releases.
+
+Windows PowerShell 5.1 is the compatibility baseline for workflow entrypoints.
+Pinned helper runtimes are installed into user-local caches and do not require
+administrator rights, machine `PATH` or registry changes, or writes below the
+1C platform installation directory. The workflow must not request elevation
+silently. User-local state, credentials, temporary files, and owned process
+cleanup remain scoped to the current user/session unless an operation explicitly
+uses a documented shared coordinator.
+
+Administrative host provisioning is optional and separately invoked. Enabling
+the Windows OpenSSH service, changing firewall rules, installing a service, or
+provisioning a shared machine directory/ACL may require an administrator; these
+actions are never a prerequisite for unrelated local lifecycle, MCP,
+verification, or export operations. If an optional capability is unavailable,
+the workflow reports that capability and its prerequisite as unavailable rather
+than elevating, mutating the host implicitly, or claiming a weaker fallback has
+the same isolation.
+
+Exact coordination between simultaneous terminal-server users requires a
+shared writable root configured by the host owner, including
+`ITL_PORT_REGISTRY_HOME` and the database-access coordinator where applicable.
+`ITL_PORT_REGISTRY_SCOPE=user` is an explicit best-effort fallback for separate
+user-local registries; it does not prove cross-user port isolation. A missing or
+unwritable shared root must fail with actionable setup guidance, not silently
+degrade.
+
 ## Agent Input Collection
 
 Prefer the root bootstrap script for initialization. It copies only managed workflow files into the target project and then starts the monitored PowerShell helper wizard. The wizard collects local setup values, writes `.dev.env`, ensures `.agent-1c/project.json` exists, generates the local Kilo command surface, and then runs the lifecycle. Use `-InitMode configured` only when `.agent-1c/project.json` and `.dev.env` are already prepared.

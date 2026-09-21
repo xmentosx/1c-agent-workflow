@@ -178,7 +178,8 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1150; reviewApproxTokens = 2000; maxApproxTokens = 2200; rationale = "source-maintainer router plus delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
+            @{ path = "AGENTS.md"; maxWords = 1250; reviewApproxTokens = 2200; maxApproxTokens = 2450; rationale = "source-maintainer router plus architecture, platform, client-context, delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
+            @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
             @{ path = "templates\USER-RULES.append.md"; maxWords = 850; reviewApproxTokens = 1300; maxApproxTokens = 1850; rationale = "always-on ITL safety overlay with explicit routine routing precedence, database-owner handoff, and structured blocker continuation" },
@@ -203,6 +204,83 @@
         }
     }
 
+    It "keeps workflow-owned client context growth visible and attributable" {
+        $expectedRendered = @{
+            "master/codex" = @{ files = 20; maxBytes = 30965 }
+            "master/kilocode" = @{ files = 10; maxBytes = 29995 }
+            "master/claude-code" = @{ files = 10; maxBytes = 29865 }
+            "master/cursor" = @{ files = 10; maxBytes = 29865 }
+            "master/opencode" = @{ files = 11; maxBytes = 40868 }
+            "master/kimi" = @{ files = 10; maxBytes = 30080 }
+            "master/qwen" = @{ files = 10; maxBytes = 29865 }
+            "master/command-code" = @{ files = 10; maxBytes = 29865 }
+            "master/cline" = @{ files = 10; maxBytes = 30080 }
+            "master/pi" = @{ files = 10; maxBytes = 29865 }
+            "dev/codex" = @{ files = 28; maxBytes = 49898 }
+            "dev/kilocode" = @{ files = 14; maxBytes = 48608 }
+            "dev/claude-code" = @{ files = 14; maxBytes = 48426 }
+            "dev/cursor" = @{ files = 14; maxBytes = 48426 }
+            "dev/opencode" = @{ files = 15; maxBytes = 61888 }
+            "dev/kimi" = @{ files = 14; maxBytes = 48693 }
+            "dev/qwen" = @{ files = 14; maxBytes = 48426 }
+            "dev/command-code" = @{ files = 14; maxBytes = 48426 }
+            "dev/cline" = @{ files = 14; maxBytes = 48693 }
+            "dev/pi" = @{ files = 14; maxBytes = 48426 }
+        }
+
+        $rendered = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            foreach ($surface in @("master", "dev")) {
+                function Get-ItlCommandSurface { return $surface }
+                foreach ($client in @(Get-SupportedAgentTargets)) {
+                    $files = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $RepoRoot
+                    $bytes = 0
+                    foreach ($relativePath in @($files.Keys)) {
+                        $bytes += [System.Text.Encoding]::UTF8.GetByteCount([string]$files[$relativePath])
+                    }
+                    [pscustomobject]@{
+                        key = "$surface/$client"
+                        files = $files.Count
+                        bytes = $bytes
+                    }
+                }
+            }
+        }
+
+        @($rendered).Count | Should -Be $expectedRendered.Count
+        foreach ($item in @($rendered)) {
+            $expectedRendered.ContainsKey($item.key) | Should -BeTrue
+            $item.files | Should -Be $expectedRendered[$item.key].files
+            $item.bytes | Should -BeLessOrEqual $expectedRendered[$item.key].maxBytes
+        }
+
+        $catalogs = @(
+            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.7.1.json"; tools = 13; maxBytes = 90805 },
+            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.28.json"; tools = 38; maxBytes = 110132 }
+        )
+        foreach ($catalog in $catalogs) {
+            $path = Join-Path $RepoRoot $catalog.path
+            $raw = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+            $document = $raw | ConvertFrom-Json
+            @($document.tools).Count | Should -Be $catalog.tools
+            [System.Text.Encoding]::UTF8.GetByteCount($raw) | Should -BeLessOrEqual $catalog.maxBytes
+        }
+
+        $runnerText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1") -Raw -Encoding UTF8
+        $runnerText | Should -Match 'summaryText\.Length -gt 4000'
+        $evidenceText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\workflow-maintainability-evidence.md") -Raw -Encoding UTF8
+        $evidenceNormalized = $evidenceText -replace '\s+', ' '
+        foreach ($marker in @(
+            'ceil(bytes/4)',
+            '2,105 bytes for ROCTUP',
+            '2,117 bytes for Vanessa UI',
+            'did not spend model tokens',
+            'Source code changes outside these surfaces incur no new context step'
+        )) {
+            $evidenceNormalized | Should -Match ([regex]::Escape($marker))
+        }
+    }
+
     It "keeps root AGENTS source-only and enforces accumulated delivery defaults" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENTS.md") -Raw -Encoding UTF8
         $agentsText | Should -Match "source repository"
@@ -217,6 +295,22 @@
         $agentsText | Should -Match ([regex]::Escape("scripts/source-delivery.ps1 -Action ReleaseMaster"))
         $agentsText | Should -Match ([regex]::Escape('follow the blocking policy in `docs/package-architecture.md`'))
         $architectureText = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\package-architecture.md") -Raw -Encoding UTF8
+        $architectureNormalized = $architectureText -replace '\s+', ' '
+        foreach ($marker in @(
+            'simplest coherent architecture',
+            'behavioral invariant has one authoritative owner',
+            'stateless contract',
+            'Runtime authority',
+            'Normal architecture work does not require a separate approval',
+            'existing database-access coordinator is the authoritative owner',
+            'After two repair cycles',
+            'Windows Server 2019 or later',
+            'standard user token',
+            'Always-on installed instructions',
+            'Source-only maintainer rules are measured separately'
+        )) {
+            $architectureNormalized | Should -Match ([regex]::Escape($marker))
+        }
         $architectureText | Should -Match ([regex]::Escape('A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence'))
         $architectureText | Should -Match ([regex]::Escape('Every other diagnostic discrepancy is `WARN`, not `FAIL`'))
         $architectureText | Should -Match ([regex]::Escape("ITL may duplicate one only after a reproduced cross-boundary failure"))
@@ -250,12 +344,35 @@
         $agentsText | Should -Match 'targeted `rg`.*one matching contract or reference'
         $agentsText | Should -Match 'Widen one layer only for a concrete gap'
         $agentsText | Should -Match 'Browse or use MCP only when external or current state is required'
+        $agentsText | Should -Match 'one invariant has one authoritative owner'
+        $agentsText | Should -Match 'Shared stateless contracts.*normal within authority'
+        $agentsText | Should -Match 'widening shared runtime authority.*obtain architecture checkpoint'
+        $agentsText | Should -Match 'file count is not a trigger'
+        $agentsText | Should -Match 'Windows 10, Windows 11, and Windows Server 2019\+'
+        $agentsText | Should -Match 'without elevation in local and terminal sessions'
+        $agentsText | Should -Match 'always-on instructions, tool schemas, and routine output bounded and on demand'
+        $agentsText | Should -Match 'minimize tokens without weakening'
         foreach ($field in @('developPublished=true', 'dependenciesInstallable=true', 'masterReleased=false', 'masterReleased=true')) {
             $qualityText | Should -Match ([regex]::Escape($field))
         }
         $agentsText | Should -Match 'budgets protect routing and readability'
         $agentsText | Should -Match 'Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget'
         $agentsText | Should -Match 'propose an explicit limit change with a short rationale'
+
+        $installText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
+        $installNormalized = $installText -replace '\s+', ' '
+        foreach ($marker in @(
+            '## Supported Windows environments',
+            'standard, non-elevated user',
+            'Windows 10',
+            'Windows 11',
+            'Windows Server 2019',
+            'local desktop sessions and terminal-server sessions',
+            'Administrative host provisioning is optional and separately invoked',
+            'must fail with actionable setup guidance, not silently degrade'
+        )) {
+            $installNormalized | Should -Match ([regex]::Escape($marker))
+        }
 
         foreach ($skillId in @('1c-workflow', '1c-workflow-fast')) {
             $skillText = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
