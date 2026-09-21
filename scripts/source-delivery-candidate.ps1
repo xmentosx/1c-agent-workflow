@@ -982,6 +982,8 @@ function Release-DevelopToMaster {
 }
 
 function Promote-AccumulatedDevelopToMaster {
+    param([switch]$WithChannelCleanup)
+
     $entries = @(Get-QueueEntries)
     if ($entries.Count -eq 0) {
         [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
@@ -990,7 +992,13 @@ function Promote-AccumulatedDevelopToMaster {
         if ($attempt -and [bool]$attempt.requireRelease -and [string]$attempt.phase -eq "remote-pushed" -and [string]$attempt.candidate -eq $remoteDevelop -and
             [string]$attempt.tree -eq (Get-GitValue -Arguments @("rev-parse", "$remoteDevelop^{tree}"))) {
             Write-Verbose "PromoteRelease resumes the durable exact-candidate release train without repeating Develop or Release."
-            $released = Release-DevelopToMaster -PrequalifiedCommit $remoteDevelop -PrequalifiedTree ([string]$attempt.tree) -PrequalifiedNotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -ReusePrequalifiedGates
+            $releaseArguments = @{
+                PrequalifiedCommit = $remoteDevelop
+                PrequalifiedTree = [string]$attempt.tree
+                PrequalifiedNotBefore = ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt
+                ReusePrequalifiedGates = $true
+            }
+            $released = if ($WithChannelCleanup) { Invoke-ReleaseMasterWithCleanup @releaseArguments } else { Release-DevelopToMaster @releaseArguments }
             if ($attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
             Remove-DevelopPublicationAttempt
             $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
@@ -998,25 +1006,30 @@ function Promote-AccumulatedDevelopToMaster {
             return $released
         }
         Write-Verbose "PromoteRelease found no resumable train; using the ordinary ReleaseMaster qualification path."
-        return Release-DevelopToMaster
+        return $(if ($WithChannelCleanup) { Invoke-ReleaseMasterWithCleanup } else { Release-DevelopToMaster })
     }
 
     $script:RequireRelease = $true
     $script:RetainDevelopPublicationAttempt = $true
-    $published = Publish-AccumulatedDevelop
+    $published = if ($WithChannelCleanup) { Invoke-PublishDevelopWithCleanup } else { Publish-AccumulatedDevelop }
     if (-not [bool]$published.developPublished -or -not [bool]$published.releaseQualified) {
         throw "PromoteRelease requires an exact candidate published to develop with Release qualification."
     }
     $notBefore = ConvertTo-DeliveryUtcDateTime -Value $published.qualificationStartedAt
-    $released = Release-DevelopToMaster `
-        -PrequalifiedCommit ([string]$published.commit) `
-        -PrequalifiedTree ([string]$published.tree) `
-        -PrequalifiedNotBefore $notBefore `
-        -ReusePrequalifiedGates
+    $releaseArguments = @{
+        PrequalifiedCommit = [string]$published.commit
+        PrequalifiedTree = [string]$published.tree
+        PrequalifiedNotBefore = $notBefore
+        ReusePrequalifiedGates = $true
+    }
+    $released = if ($WithChannelCleanup) { Invoke-ReleaseMasterWithCleanup @releaseArguments } else { Release-DevelopToMaster @releaseArguments }
     $attempt = Read-DevelopPublicationAttempt
     if ($attempt -and $attempt.PSObject.Properties.Name -contains "promotionRef") { Remove-DevelopPromotionRef -Ref ([string]$attempt.promotionRef) }
     Remove-DevelopPublicationAttempt
     $released | Add-Member -NotePropertyName releaseTrain -NotePropertyValue $true -Force
     $released | Add-Member -NotePropertyName developQualificationCommit -NotePropertyValue ([string]$published.commit) -Force
+    if ($WithChannelCleanup) {
+        [void](Add-DeliveryCleanupResults -Result $released -Runs @(@($published.cleanupRuns) + @($released.cleanupRuns)))
+    }
     return $released
 }

@@ -27,6 +27,14 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         $status = $result.stdout | ConvertFrom-Json
         $status.status | Should -Be "ok"
         @($status.PSObject.Properties.Name) | Should -Contain "queue"
+        $status.statusReader.role | Should -Be 'read-only-inspector'
+        $status.statusReader.commit | Should -Be ((& git -C $RepoRoot rev-parse HEAD).Trim())
+        $status.authoritySupervisor.role | Should -Be 'lock-queue-push-owner'
+        $status.supervisor.commit | Should -Be $status.authoritySupervisor.commit
+        $status.cleanupPolicy.manualDefault | Should -Be 'develop'
+        $status.cleanupPolicy.publishDevelop | Should -Be 'develop'
+        $status.cleanupPolicy.releaseMaster | Should -Be 'master'
+        @($status.cleanupPolicy.promoteRelease) | Should -Be @('develop', 'master')
     }
 
 It "runs the immutable origin master supervisor while the candidate checkout contains different delivery code" {

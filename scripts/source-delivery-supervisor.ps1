@@ -15,6 +15,8 @@ param(
     [string]$ComponentFinalizerScript = "",
     [string]$CompatibilityPromoterScript = "",
     [string]$Version = "",
+    [ValidateSet("Auto", "Develop", "Master")]
+    [string]$CleanupChannel = "Auto",
     [ValidateSet("Summary", "Runs", "Full")]
     [string]$StatusDetail = "Summary",
     [ValidateSet("Auto", "Restart")]
@@ -22,6 +24,18 @@ param(
     [string]$ResumePlan = "",
     [string]$ApproveLongPlan = "",
     [string]$SupervisorCommit = "",
+    [string]$StatusReaderCommit = "",
+    [switch]$CleanupExecutor,
+    [ValidateSet("Develop", "Master")]
+    [string]$CleanupExecutorChannel = "Develop",
+    [ValidateSet("manual", "pre-operation", "post-operation")]
+    [string]$CleanupExecutorPhase = "manual",
+    [string]$CleanupExecutorCommit = "",
+    [string]$CleanupAuthorityCommit = "",
+    [string]$CleanupOperationId = "",
+    [string]$CleanupDelegationToken = "",
+    [string]$CleanupResultPath = "",
+    [switch]$CleanupCompactState,
     [switch]$BootstrapSupervisor,
     [switch]$RetryBlockedStage,
     [switch]$RequireRelease
@@ -87,28 +101,44 @@ function Get-DeliveryCommonGitDirectory {
 . (Join-Path $PSScriptRoot "source-delivery-cleanup.ps1")
 
 [void](Invoke-DeliveryGit -Arguments @("rev-parse", "--git-dir"))
+if ($CleanupExecutor) {
+    Invoke-DeliveryDelegatedCleanupExecutor `
+        -Channel $CleanupExecutorChannel `
+        -Phase $CleanupExecutorPhase `
+        -ExecutorCommit $CleanupExecutorCommit `
+        -AuthorityCommit $CleanupAuthorityCommit `
+        -OperationId $CleanupOperationId `
+        -DelegationToken $CleanupDelegationToken `
+        -ResultPath $CleanupResultPath `
+        -FreshProjectsRoot $FreshProjectsRoot `
+        -E2EProjectRoot $E2EProjectRoot `
+        -CompactState:$CleanupCompactState
+    return
+}
 if ($RequireRelease -and $Action -notin @("Plan", "PublishDevelop")) { throw "-RequireRelease is valid only with -Action Plan or PublishDevelop." }
 if ($RetryBlockedStage -and $Action -ne "PublishDevelop") { throw "-RetryBlockedStage is valid only with -Action PublishDevelop." }
 if ($ResumePlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ResumePlan is valid only for a publication action." }
 if ($ApproveLongPlan -and $Action -notin @("PublishDevelop", "PromoteRelease", "ReleaseMaster")) { throw "-ApproveLongPlan is valid only for a publication action." }
 if ($StatusDetail -ne "Summary" -and $Action -ne "Status") { throw "-StatusDetail is valid only with -Action Status." }
+if ($CleanupChannel -ne "Auto" -and $Action -ne "Cleanup") { throw "-CleanupChannel is valid only with -Action Cleanup." }
 
 $script:ActiveOperation = $null
 try {
     if ($Action -in @("Cleanup", "PublishDevelop", "PromoteRelease", "ReleaseMaster")) {
         [void](Enter-DeliveryOperation -Action $Action)
-        if ($Action -ne "Cleanup" -and -not $script:DeliveryCustomGateBoundary) {
-            [void](Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "pre-operation")
-        }
     }
     $result = switch ($Action) {
         "RegisterChange" { Register-SourceChange }
         "Status" {
             $history = Get-DeliveryRunHistory -Limit $(if ($StatusDetail -eq "Summary") { 3 } else { 20 }) -IncludeDetails:($StatusDetail -eq "Full")
             $attempt = Read-DevelopPublicationAttempt
+            $statusReaderDirty = [bool](Invoke-DeliveryGit -Arguments @("status", "--porcelain", "--untracked-files=all")).stdout
             [pscustomobject]@{
                 status = "ok"
-                supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                statusReader = [pscustomobject]@{ commit=$StatusReaderCommit; role="read-only-inspector"; workingTreeDirty=$statusReaderDirty }
+                authoritySupervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                cleanupPolicy = [pscustomobject]@{ manualDefault="develop"; publishDevelop="develop"; releaseMaster="master"; promoteRelease=@("develop", "master") }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
                 activeOperation = (Get-DeliveryOperationStatus)
                 publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
@@ -119,11 +149,11 @@ try {
         }
         "Plan" { New-AccumulatedDeliveryPlan -RequireRelease:$RequireRelease }
         "Cleanup" {
-            $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "manual"
-            $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue ([pscustomobject][ordered]@{
-                runIndex=(Repair-DeliveryRunHotIndex)
-                resourceLedger=(Compact-DeliveryResourceLedger)
-            })
+            $selectedCleanupChannel = if ($CleanupChannel -eq "Auto") { "Develop" } else { $CleanupChannel }
+            $channelCleanup = Invoke-DeliveryChannelCleanupSafely -Channel $selectedCleanupChannel -Phase "manual" -CompactState
+            $cleanup = $channelCleanup.cleanup
+            $cleanup | Add-Member -NotePropertyName executor -NotePropertyValue $channelCleanup.executor -Force
+            $cleanup | Add-Member -NotePropertyName stateCompaction -NotePropertyValue $channelCleanup.stateCompaction -Force
             $refCleanup = Invoke-DeliveryRefDispositionCleanup
             $cleanup | Add-Member -NotePropertyName refCleanup -NotePropertyValue $refCleanup
             if ([string]$refCleanup.status -eq 'needs-attention' -and [string]$cleanup.status -eq 'completed') {
@@ -132,16 +162,9 @@ try {
             $cleanup
         }
         "DiagnoseFull" { Invoke-DeliveryDiagnosticFull -AiRulesSource $AiRulesSource -E2EProjectRoot $E2EProjectRoot }
-        "PublishDevelop" { Publish-AccumulatedDevelop }
-        "PromoteRelease" { Promote-AccumulatedDevelopToMaster }
-        "ReleaseMaster" { Release-DevelopToMaster }
-    }
-    if ($Action -in @("PublishDevelop", "PromoteRelease", "ReleaseMaster") -and -not $script:DeliveryCustomGateBoundary -and $result -and [string]$result.status -in @("published", "released")) {
-        $cleanup = Invoke-DeliveryCleanupSweep -FreshProjectsRoot $FreshProjectsRoot -E2EProjectRoot $E2EProjectRoot -Phase "post-operation"
-        $result | Add-Member -NotePropertyName cleanup -NotePropertyValue $cleanup -Force
-        if ([string]$cleanup.status -eq "completed-with-warnings") {
-            $result | Add-Member -NotePropertyName deliveryStatus -NotePropertyValue "completed-with-cleanup-warnings" -Force
-        }
+        "PublishDevelop" { if ($script:DeliveryCustomGateBoundary) { Publish-AccumulatedDevelop } else { Invoke-PublishDevelopWithCleanup } }
+        "PromoteRelease" { Promote-AccumulatedDevelopToMaster -WithChannelCleanup:(-not $script:DeliveryCustomGateBoundary) }
+        "ReleaseMaster" { if ($script:DeliveryCustomGateBoundary) { Release-DevelopToMaster } else { Invoke-ReleaseMasterWithCleanup } }
     }
     $result | ConvertTo-Json -Depth 16
 } finally {
