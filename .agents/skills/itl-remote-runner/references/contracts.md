@@ -4,7 +4,14 @@
 
 New scenarios live in `tests/performance/<name>/scenario.json` with their scripts/features. Private profiles and spool normally live under `%LOCALAPPDATA%/ITL/remote-work/<host>/`; installed projects may instead use ignored `.agent-1c/remote-work`. Never commit connection profiles, runtime proofs, infobases, CF/CFE/DT, logs or secrets. Keep originals byte-preserving.
 
-The authenticated controller and scenario authors are trusted. A worker executes their scripts under the Windows user's permissions. `allowedOperations` prevents accidental scope expansion; it is not a hostile-code sandbox. Restrict SSH/exchange writes to that controller; use existing SSH host-key verification and credential storage. Do not accept arbitrary shared-folder writers or expose agent/debugger listeners publicly.
+The paired controller and scenario authors are trusted. A worker executes their scripts under the Windows user's permissions. `allowedOperations` prevents accidental scope expansion; it is not a hostile-code sandbox. Keep controller/worker pairing files private. Pull requires TLS except on loopback; an optional shared folder contains only hash-addressed immutable blobs and never queue/control state. Restrict SSH/exchange compatibility access to the same controller and do not expose agent/debugger listeners publicly.
+
+## Connection and execution dimensions
+
+New packages declare `runner: local | worker` and `agentPolicy: off | requested | diagnosis-on-failure`. Runner identifies and enforces the deterministic runtime owner; agent policy independently controls AI orchestration. Legacy `route` packages remain valid and normalize as follows: `local` to local/off, `ssh` to worker/off, `auto` to worker/diagnosis-on-failure, and `agent` to worker/requested. A package never selects its transport.
+
+A pull connection contains a private endpoint, worker id and bearer token. The broker is started with the controller halves it authorizes and rejects identities outside that set; the worker initiates every request from its interactive user session. Optional `bulkFolders` entries use matching ids and endpoint-local absolute paths; `thresholdBytes` only selects when to try the folder. A failed/missing folder transfer falls back to pull. Every adopted or exported blob is verified by size and SHA-256 before commit, so changing channels cannot create or replay a job.
+Preparation binds the private profile to the current Windows SID, and every heartbeat records that SID plus the current terminal-session id. A later session for the same user remains valid; another terminal-server user cannot start that spool even if filesystem permissions were accidentally broadened.
 
 ## Worker profile (schemaVersion 1)
 
@@ -37,6 +44,13 @@ launchers are one-shot and process at most one queued job. Persistent polling re
 `--persistent` switch and `allowPersistent: true`; it still rotates at the configured job/lifetime limit.
 `worker.json` is refreshed during a running job and binds the worker PID to its OS creation identity. Probe treats
 a missing/mismatched identity or an expired heartbeat as stale; PID presence alone never proves worker ownership.
+
+A pull-paired launcher is a separate explicit persistent opt-in: its private connection must contain
+`pull.persistent: true`, and existing job/lifetime bounds still apply. Profile-level
+`workerUpdatePolicy: compatible` authorizes later same-major worker updates from the paired controller. Updates are
+staged into a new user-local generation, never over a live runtime or private profile. The supervisor confirms the
+trial generation before making it current and retains rollback evidence on failure. `disabled` or an omitted policy
+rejects remote update staging.
 
 ## Scenario (schemaVersion 1 or diagnostic v2)
 

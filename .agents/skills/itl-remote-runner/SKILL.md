@@ -1,6 +1,6 @@
 ---
 name: itl-remote-runner
-description: Prepare a Windows remote worker and run authorized jobs through SSH or an exchange folder, including remote 1C tests and performance scenarios. Use for setup, transfer, monitoring, collection, or recovery; local measurements use itl-performance directly.
+description: Prepare a user-started Windows worker and run authorized jobs over its outbound pull channel, with an optional shared folder for large immutable files and SSH only as a preconfigured compatibility adapter. Use for setup, transfer, monitoring, collection, update, or recovery; local measurements use itl-performance directly.
 ---
 
 # ITL remote runner
@@ -9,11 +9,14 @@ Use `scripts/Invoke-RemoteWork.ps1` on Windows for durable jobs; it provisions p
 
 ## User route
 
-- Resolve a named connection/target from the project's references or the user's private `%LOCALAPPDATA%/ITL/remote-work` profiles. Reuse known authorization; ask together only for missing host/login, workspace/exchange folder, target base and permitted operations. Never treat access to a server as permission for all its bases.
-- For a new worker, inspect its OS, Python, 1C and SSH. Prepare missing access with `scripts/Prepare-RemoteHost.ps1`; administrative changes require their actual authorization. The user supplies authentication/host-key trust through SSH or the credential store. Do not put passwords/private keys in profiles, scenarios, prompts or Git.
-- Prepare a profile with `prepare`. The user starts the emitted one-shot `Start-Worker.cmd` in the Windows session where 1C should run. It processes one queued job and exits. Do not start a hidden service or simulate a user's interactive login. On a machine with no connection yet, give the user the portable bundle to transfer once.
+- Resolve a named connection/target from the project's references or the user's private `%LOCALAPPDATA%/ITL/remote-work` profiles. Reuse known authorization; ask together only for missing pull endpoint/pairing, workspace, target base and permitted operations. An optional bulk folder is an optimization, not a readiness prerequisite. Never treat access to a server as permission for all its bases.
+- Default to pull pairing. Create private controller/worker connection halves with `pair`, start the TLS pull broker with the authorized controller half, and transfer the worker half plus portable bundle once. The worker makes the outbound connection; it requires no administrator rights, inbound listener, firewall change, SSH server, service or simulated login. Plain HTTP is allowed only on loopback.
+- Prepare a target profile with `prepare --worker-connection ...`. The user starts the emitted `Start-Worker.cmd` in the Windows session where 1C should run. Pull pairing explicitly enables a bounded persistent worker; legacy preparation remains one-shot. Do not start a hidden service. The private connection and spool stay per Windows user.
+- Pull owns job control, heartbeat, cancellation and ordinary chunked/resumable transfer. A paired `bulkFolders` entry is optional: use it only for immutable content-addressed input/result/update blobs, verify every size/hash, and fall back to pull without creating a new job. Never put mutable queue state in a synchronized folder.
+- Run `sync-worker` before the first job from a newer workflow. When the connected version is older and its profile allows `workerUpdatePolicy: compatible`, it exports the exact current bundle and stages it through the paired connection. The supervisor switches only while idle, confirms the new heartbeat and rolls back a failed trial. A worker predating this updater needs one manual portable refresh.
+- SSH is not a prerequisite or the normal job route. Use it only when the host already provides authorized SSH or for separately authorized break-glass administration. `Prepare-RemoteHost.ps1 -EnableSsh` is an explicit administrator-only compatibility action, never an onboarding fallback.
 - Announce host, base, scenario, measurement mode and intended mutations briefly. A request to measure does not authorize a base update. Use an already authorized `update` job stage when requested; its project adapter owns platform update and startup/legal-confirmation handling.
-- Use `itl-performance` to create a project scenario and package. Send it over the selected connection. `auto` uses the worker and allows the configured agent fallback; `ssh` forces worker execution; `agent` uses `itl-remote-agent`. File exchange is an alternative transport for the same executor, not a new execution engine.
+- Use `itl-performance` to create a project scenario and package. `runner=worker` means the deterministic user-started runtime executes it; `agentPolicy` independently selects no agent, an explicitly requested agent, or diagnosis after failure. Legacy `route` values remain readable but are not the new authoring contract. Send, observe, cancel and collect over the paired connection.
 - Observe the existing job ID after disconnects. Never repeat a failed modifying operation just because its reply was lost. Collect and verify results; engine state and artifacts establish completion, not a zero SSH exit code.
 
 ## Database Access Handoff

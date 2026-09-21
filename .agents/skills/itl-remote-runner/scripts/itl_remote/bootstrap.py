@@ -4,13 +4,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import platform
+import secrets
 import shutil
 import sys
+import uuid
 import zipfile
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (WorkError, digest, process_identity, process_is_alive, read_json,
+from .common import (WorkError, current_user_identity, digest, process_identity, process_is_alive, read_json,
                      resolve_resource_limits, stamp, write_json)
 
 
@@ -32,7 +34,8 @@ def inspect(spool):
     result = {"schemaVersion": 1, "version": VERSION, "python": platform.python_version(),
               "host": platform.node(), "spool": str(spool), "ssh": shutil.which("ssh"),
               "powershell": shutil.which("pwsh") or shutil.which("powershell"),
-              "worker": None, "targets": [], "agentConfigured": False}
+              "worker": None, "pull": None, "runtime": {"current": None, "pending": None},
+              "targets": [], "agentConfigured": False}
     if (spool / "worker.json").exists():
         result["worker"] = read_json(spool / "worker.json")
         worker = result["worker"]
@@ -61,10 +64,20 @@ def inspect(spool):
                               "operations": target.get("allowedOperations", []), "profilingConfigured": bool(target.get("rdbg"))}
                              for name, target in profile.get("targets", {}).items()]
         result["agentConfigured"] = bool(profile.get("agent"))
+        result["workerUpdatePolicy"] = profile.get("workerUpdatePolicy", "disabled")
+    if (spool / "pull-connection.json").exists():
+        result["pull"] = read_json(spool / "pull-connection.json")
+    for name in ("current", "pending"):
+        path = spool / "runtime" / (name + ".json")
+        if path.exists():
+            value = read_json(path)
+            result["runtime"][name] = {key: value.get(key) for key in
+                                       ("version", "archiveSha256", "stagedAt", "confirmedAt", "bootstrap")
+                                       if value.get(key) is not None}
     return result
 
 
-def prepare(spool, configuration):
+def prepare(spool, configuration, worker_connection=None, update_policy=None):
     spool = Path(spool).resolve()
     profile = read_json(configuration)
     if profile.get("schemaVersion") != 1 or not profile.get("targets"):
@@ -75,24 +88,95 @@ def prepare(spool, configuration):
         if not Path(target["workspace"]).is_dir() or not target.get("allowedOperations"):
             raise WorkError("TARGET_WORKSPACE_OR_OPERATIONS_MISSING")
         resolve_resource_limits(target, target["allowedOperations"])
+    connection = None
+    if worker_connection is not None:
+        connection = read_json(worker_connection)
+        if connection.get("transport") != "pull":
+            raise WorkError("WORKER_CONNECTION_PULL_REQUIRED")
+        from .pull import _pull, _bulk_folders
+        _pull(connection)
+        _bulk_folders(connection)
+        if update_policy is None:
+            update_policy = "compatible"
+    if update_policy is not None:
+        if update_policy not in ("disabled", "compatible"):
+            raise WorkError("WORKER_UPDATE_POLICY_INVALID")
+        profile["workerUpdatePolicy"] = update_policy
+    profile["workerOwner"] = current_user_identity()
     spool.mkdir(parents=True, exist_ok=True)
     profile["profilePath"] = str(spool / "profile.json")
     write_json(spool / "profile.json", profile)
     script = Path(__file__).resolve().parent.parent / "remote_work.py"
+    supervisor = script.parent / "worker_supervisor.py"
+    if not supervisor.is_file():
+        raise WorkError("WORKER_SUPERVISOR_MISSING")
+    worker_connection_path = None
+    if connection is not None:
+        worker_connection_path = spool / "worker-connection.json"
+        write_json(worker_connection_path, connection)
+    runtime_root = spool / "runtime"
+    write_json(runtime_root / "current.json",
+               {"schemaVersion": 1, "version": VERSION, "runtime": str(script),
+                "supervisor": str(supervisor), "bootstrap": True})
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
     launcher = ("$ErrorActionPreference='Stop'\n$env:PYTHONUTF8='1'\n$env:PYTHONIOENCODING='utf-8'\n"
                 "$env:PYTHONDONTWRITEBYTECODE='1'\n$env:PYTHONNOUSERSITE='1'\n$env:PYTHONHOME=$null\n"
                 "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n"
-                "& " + quote(sys.executable) + " -B -X utf8 -u " + quote(script) + " worker --once --spool " + quote(spool) + "\nexit $LASTEXITCODE\n")
+                "$current=" + quote(runtime_root / "current.json") + "\n"
+                "$supervisor=" + quote(supervisor) + "\n"
+                "if(Test-Path -LiteralPath $current){$state=[IO.File]::ReadAllText($current,[Text.Encoding]::UTF8)|ConvertFrom-Json;"
+                "if($state.supervisor -and (Test-Path -LiteralPath $state.supervisor)){$supervisor=$state.supervisor}}\n"
+                "& " + quote(sys.executable) + " -B -X utf8 -u $supervisor --spool " + quote(spool) +
+                " --bootstrap-runtime " + quote(script) +
+                ((" --connection " + quote(worker_connection_path) + " --persistent") if worker_connection_path else "") +
+                "\nexit $LASTEXITCODE\n")
     (spool / "Start-Worker.ps1").write_text(launcher, encoding="utf-8-sig")
     (spool / "Start-Worker.cmd").write_bytes(b'@echo off\r\npowershell.exe -NoProfile -File "%~dp0Start-Worker.ps1"\r\npause\r\n')
-    connection = {"schemaVersion": 1, "transport": "exchange", "spool": str(spool),
-                  "host": platform.node(), "targets": list(profile["targets"]),
-                  "ssh": {"host": profile.get("sshAlias", ""), "python": sys.executable,
-                          "runtime": str(script), "spool": str(spool)}}
-    write_json(spool / "connection.json", connection)
+    controller_connection = {"schemaVersion": 1, "transport": "exchange", "spool": str(spool),
+                             "host": platform.node(), "targets": list(profile["targets"]),
+                             "ssh": {"host": profile.get("sshAlias", ""), "python": sys.executable,
+                                     "runtime": str(script), "spool": str(spool)}}
+    write_json(spool / "connection.json", controller_connection)
     return {"status": "prepared-user-start-required", "launcher": str(spool / "Start-Worker.cmd"),
-            "connection": str(spool / "connection.json")}
+            "connection": str(spool / "connection.json"),
+            "workerConnection": str(worker_connection_path) if worker_connection_path else None,
+            "workerUpdatePolicy": profile.get("workerUpdatePolicy", "disabled")}
+
+
+def pair(url, controller_output, worker_output, *, worker_id=None,
+         controller_folder=None, worker_folder=None, threshold_bytes=64 * 1024 * 1024):
+    """Create private controller/worker halves without printing their bearer secret."""
+    controller_output, worker_output = Path(controller_output).resolve(), Path(worker_output).resolve()
+    if controller_output == worker_output or controller_output.exists() or worker_output.exists():
+        raise WorkError("PAIRING_DESTINATION_EXISTS")
+    if (controller_folder is None) != (worker_folder is None):
+        raise WorkError("PAIRING_BULK_FOLDER_ENDPOINTS_REQUIRED")
+    if type(threshold_bytes) is not int or threshold_bytes < 0:
+        raise WorkError("PAIRING_BULK_THRESHOLD_INVALID")
+    worker_id = worker_id or (platform.node().lower() + "-" + uuid.uuid4().hex[:12])
+    pull = {"url": url, "workerId": worker_id, "token": secrets.token_urlsafe(32),
+            "timeoutSeconds": 120, "persistent": True}
+    common = {"schemaVersion": 1, "transport": "pull", "pull": pull}
+    controller, worker = dict(common), dict(common)
+    if controller_folder is not None:
+        controller["bulkFolders"] = [{"id": "default", "path": str(Path(controller_folder).resolve()),
+                                      "thresholdBytes": threshold_bytes}]
+        worker["bulkFolders"] = [{"id": "default", "path": str(Path(worker_folder).resolve()),
+                                  "thresholdBytes": threshold_bytes}]
+    from .pull import _pull, _bulk_folders
+    _pull(controller)
+    _bulk_folders(controller)
+    _bulk_folders(worker)
+    try:
+        write_json(controller_output, controller)
+        write_json(worker_output, worker)
+    except Exception:
+        controller_output.unlink(missing_ok=True)
+        worker_output.unlink(missing_ok=True)
+        raise
+    return {"status": "paired-files-created", "workerId": worker_id,
+            "controllerConnection": str(controller_output), "workerConnection": str(worker_output),
+            "bulkFolderConfigured": controller_folder is not None}
 
 
 def export_bundle(repository, output, python_archive=None):

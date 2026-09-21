@@ -8,31 +8,54 @@ Use `-Python <executable>` or `ITL_PYTHON_EXECUTABLE` for an explicit Python 3.1
 
 ## Prepare once
 
-Inspect 1C, SSH and the user's permitted workspace/base. Resolve the profile from the shared contract. On an unconfigured Windows host `Prepare-RemoteHost.ps1` prepares Python and reports prerequisites; `-EnableSsh` is an explicit administrative setup operation. Do not change firewall/service settings during mere inspection.
+Inspect 1C and the user's permitted workspace/base. Resolve the profile from the shared contract. The normal worker is user-local and outbound: it needs no administrator rights, Windows service, inbound listener, firewall change or SSH server. `Prepare-RemoteHost.ps1` remains available for offline Python preparation; `-EnableSsh` is an explicit administrator-only compatibility operation and is never implied by remote-worker setup.
+
+Choose the pull broker's stable URL and create private controller and worker halves. The returned JSON deliberately omits the bearer token; protect both generated files and transfer only the worker half to its Windows user. `--controller-folder` and `--worker-folder` are optional corresponding paths to one synchronized/shared folder and can be added later.
 
 ```powershell
-& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 prepare --spool C:\ITL\worker --profile C:\ITL\private-profile.json
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pair `
+  --url https://controller.example:8765 `
+  --controller-output "$env:LOCALAPPDATA\ITL\remote-work\host\controller.json" `
+  --worker-output C:\ITL\transfer\worker.json
 ```
 
-Give the user the generated `Start-Worker.cmd`. They launch it after logging into the session that will run 1C. The generated worker processes at most one queued job and exits; start it again for a later job. Persistent mode requires an explicit profile opt-in and remains bounded by job count and lifetime. `worker.json` records process creation identity, a heartbeat refreshed while a job runs, stopped/stale state and resource snapshots. Probe requires both the matching identity and a fresh heartbeat; it is still not proof of current access to an interactive desktop, so the real scenario establishes usable runtime readiness. Signing out can interrupt 1C; a new worker reconciles the interrupted owner to `needs-attention` without replaying its job.
+Start the broker with every controller pairing it may serve. A random bearer token is not accepted merely because it has the right shape. Non-loopback listeners require a TLS certificate and key; an organization-managed endpoint may instead terminate TLS before a loopback broker.
 
-`connection.json` defaults to exchange transport. When connecting through SSH, set `transport: ssh` and the concrete `ssh.host` alias; existing SSH config supplies user/key and optional port. The connection records remote Python/runtime/spool paths. SSH carries structured commands through stdin with encoded PowerShell bootstrap, without exposing a new network service. Approve/trust the SSH host through the user's existing workflow before noninteractive jobs.
+```powershell
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pull-serve `
+  --listen 0.0.0.0 --port 8765 --certificate C:\ITL\tls\server.pem `
+  --private-key C:\ITL\tls\server.key --connection "$env:LOCALAPPDATA\ITL\remote-work\host\controller.json"
+```
+
+```powershell
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 prepare --spool C:\ITL\worker `
+  --profile C:\ITL\private-profile.json --worker-connection C:\ITL\transfer\worker.json
+```
+
+Give the user the generated `Start-Worker.cmd`. They launch it after logging into the session that will run 1C. A pull-paired launcher runs a bounded persistent worker because starting the launcher is the user's explicit session opt-in; legacy preparation without a worker connection remains one-shot. `worker.json` records process creation identity, a heartbeat refreshed while a job runs, stopped/stale state and resource snapshots. Probe requires both the matching identity and a fresh heartbeat; it is still not proof of current access to an interactive desktop, so the real scenario establishes usable runtime readiness. Signing out can interrupt 1C; a new worker reconciles the interrupted owner to `needs-attention` without replaying its job.
+
+Pull is the normal control channel and also transfers files in verified chunks. Optional `bulkFolders` entries have the same id but may use different local paths on controller and worker. They carry only `itl-blobs/<sha256>` and `itl-results/<sha256>`; all queue/state/control remains on pull. A missing, delayed or damaged folder copy falls back to pull for the same job id. The legacy generated `connection.json` remains an exchange-local compatibility artifact.
+
+When connecting through already authorized SSH, set `transport: ssh` and the concrete `ssh.host` alias; existing SSH config supplies user/key and optional port. SSH carries the same structured spool RPC through stdin. It is not the execution engine and must not be installed automatically.
 
 Use `probe --spool ...` locally or `remote --connection ... --action probe` remotely. Unsupported optional capabilities do not install or start anything during probe.
 
 ## Package and execute
 
 ```powershell
-& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pack --scenario .\tests\performance\report\scenario.json --output C:\ITL\packages\report-1 --target test --route local
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pack --scenario .\tests\performance\report\scenario.json --output C:\ITL\packages\report-1 --target test --runner local --agent-policy off
 & .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 submit --package C:\ITL\packages\report-1 --spool C:\ITL\worker
 & .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 execute --spool C:\ITL\worker --id <returned-id>
 ```
 
-Local `execute` runs directly in the current user session: no SSH or second agent is needed. Remote packaging uses `auto`, `ssh`, or `agent`, then `send --package ... --connection ...`. The already running remote worker executes the queued job. Do not call remote `execute` from a noninteractive SSH session for a client-1C scenario.
+For the paired remote worker, package with `--runner worker --agent-policy off` and use
+`send --package <package> --connection <controller.json>`.
+
+`runner local` requires direct execution in the current user session. `runner worker` requires deterministic queued execution by the user-started worker; sending a local package or executing a worker package through the local entrypoint fails before launch. `agent-policy requested` asks that worker to dispatch the same runtime contract to the configured remote agent; `diagnosis-on-failure` permits only the existing bounded diagnostic fallback. Old `--route local|auto|ssh|agent` packages remain accepted and normalize to this split contract. Transport is selected only by the connection used by `send`, not by the immutable job package.
 
 `--parameters` takes a JSON file. `--operation measure --operation write-data --operation update` expresses only operations already authorized by the user; omit unneeded permissions. Job requests never enlarge the target's allowed operations.
 
-For an explicit remote agent route use the same package/transfer operations with `--route agent`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, `agentFallback` only diagnoses. Use [job recovery](job-recovery.md) when the original package supports it; a subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence.
+For an explicit remote agent use `--runner worker --agent-policy requested`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, configured diagnosis-on-failure only diagnoses. Use [job recovery](job-recovery.md) when the original package supports it; a subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence.
 
 ## Observe and collect
 
@@ -64,4 +87,6 @@ work stopped or restoration completed; inspect the recovery evidence separately.
 
 ## Portable export
 
-`Invoke-RemoteWork.ps1 export --repository <source-root> --output <new-archive.zip>` includes the three skills, pinned Python package and exact shared 1C core/port/session/value/download modules, with a SHA manifest. It excludes the full lifecycle, plugins, profiles, secrets, test bases and measurement artifacts. On the target, verify the archive SHA from the sender, extract it to a private directory and run `Prepare-RemoteHost.ps1 -Offline -Spool ... -Profile ...`. Python is installed from the included package; licensed 1C remains a machine prerequisite. The main agent can transfer dependencies once SSH exists; before then the user transfers the initial bundle. The lower-level Python `export` command includes Python only when `--python-archive <package>` is supplied; its hash must match the source manifest.
+`Invoke-RemoteWork.ps1 export --repository <source-root> --output <new-archive.zip>` includes the three skills, pinned Python package and exact shared 1C core/port/session/value/download modules, with a SHA manifest. It excludes the full lifecycle, plugins, profiles, secrets, test bases and measurement artifacts. On the target, verify the archive SHA from the sender, extract it to a private directory and run `Prepare-RemoteHost.ps1 -Offline -Spool ... -Profile ... -WorkerConnection ...`. Python is installed from the included package; licensed 1C remains a machine prerequisite. With no pre-existing connection, the user transfers this first bundle and worker connection half through RDP, a corporate download or any other approved file channel; SSH is not required. The lower-level Python `export` command includes Python only when `--python-archive <package>` is supplied; its hash must match the source manifest.
+
+After the first updater-capable worker is present, later compatible bundles require no remote user action. Run `sync-worker --connection <controller.json> --repository <current-workflow-root>` before the first job from a newer workflow. It probes the remote version, builds the exact current bundle only when needed and stages it through pull and any available bulk folder. `stage-update --connection ... --bundle ...` remains the explicit exact-bundle form. The worker verifies the archive and every manifest entry into a new user-local generation. Its supervisor switches only while idle, confirms startup and rolls back a failed trial; active jobs and private target profiles are never replaced. A pre-updater worker requires one final manual bundle refresh.

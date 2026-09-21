@@ -78,7 +78,7 @@ Every valid diagnostic iteration also produces public `operation-evidence.md`. I
 6. background lifecycle, milestones and product-result status;
 7. coverage, clock domains, the proven critical path and limitations.
 
-The main `report.md` links each diagnostic iteration to this map. Local, SSH and agent routes use the same renderer on the execution host and transfer the same public JSON/Markdown artifacts. Arbitrary raw payload values are not rendered; private evidence remains local.
+The main `report.md` links each diagnostic iteration to this map. Local and worker runners, every transport adapter and optional agent orchestration use the same renderer on the execution host and transfer the same public JSON/Markdown artifacts. Arbitrary raw payload values are not rendered; private evidence remains local.
 
 ## Deferred product and live contract
 

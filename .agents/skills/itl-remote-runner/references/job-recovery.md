@@ -24,10 +24,10 @@ Changed inputs, a live owner or an obsolete plan cannot start restoration.
 Cancellation belongs to that plan, separately from the original job's cancel
 request. After a cancelled/failed attempt, inspect again to obtain a fresh plan.
 
-Through SSH or an exchange connection use `remote --connection <profile>
+Through the configured pull, SSH-compatibility or exchange connection use `remote --connection <profile>
 --action recovery-plan|recover|recovery-cancel --id <job>` and `--plan-id` for
 the latter two actions. Remote `recover` only queues the pinned plan; the worker
-on the execution host performs it. It does not hold an SSH request open for the
+on the execution host performs it. It does not hold a transport request open for the
 duration of restoration. The local CLI can execute the same plan directly when
 the authorized remote-agent route owns execution. Duplicate delivery preserves
 one request; a recorded failure is not retried automatically.

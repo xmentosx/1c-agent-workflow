@@ -288,7 +288,7 @@ def dispatch(spool, request, profile, scenario, diagnosis=False, followup=None):
 
 
 def queue_followup(spool, identifier, payload):
-    """SSH only queues work: the logged-in worker owns agent process creation."""
+    """Transport only queues work: the logged-in worker owns agent process creation."""
     from .jobs import job_id
     from .common import identity
     directory = Path(spool) / "agents" / job_id(identifier)

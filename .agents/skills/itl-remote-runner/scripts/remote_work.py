@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Portable CLI shared by local, SSH and remote-agent workflows (Python 3.11+)."""
+"""Portable CLI shared by local and user-started remote worker workflows (Python 3.11+)."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,8 @@ import sys
 import threading
 import time
 
-from itl_remote.common import (FileLock, WorkError, host_memory_snapshot, process_identity, process_memory_snapshot,
+from itl_remote.common import (FileLock, WorkError, current_session_identity, current_user_identity,
+                               host_memory_snapshot, process_identity, process_memory_snapshot,
                                read_json, stamp, write_json)
 
 
@@ -20,7 +21,8 @@ class WorkerHeartbeat:
         self.path = Path(spool) / "worker.json"
         self.identity = process_identity(os.getpid())
         self.state = {"status": "ready", "pid": os.getpid(), "processIdentity": self.identity,
-                      "mode": mode, "startedAt": started_at, "jobsProcessed": 0}
+                      "sessionIdentity": current_session_identity(), "mode": mode,
+                      "startedAt": started_at, "jobsProcessed": 0}
         self.lock = threading.Lock()
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run, name="itl-worker-heartbeat", daemon=True)
@@ -53,6 +55,7 @@ class WorkerHeartbeat:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("version")
     command = commands.add_parser("access-register")
     command.add_argument("--coordinator", required=True)
     command.add_argument("--resource", required=True)
@@ -106,16 +109,46 @@ def main():
             mode.add_argument("--persistent", action="store_true")
             command.add_argument("--max-jobs", type=int)
             command.add_argument("--max-lifetime-seconds", type=float)
+            command.add_argument("--connection")
+            command.add_argument("--generation")
+            command.add_argument("--confirm-path")
     command = commands.add_parser("prepare")
     command.add_argument("--spool", required=True)
     command.add_argument("--profile", required=True)
+    command.add_argument("--worker-connection")
+    command.add_argument("--update-policy", choices=["disabled", "compatible"])
+    command = commands.add_parser("pair")
+    command.add_argument("--url", required=True)
+    command.add_argument("--controller-output", required=True)
+    command.add_argument("--worker-output", required=True)
+    command.add_argument("--worker-id")
+    command.add_argument("--controller-folder")
+    command.add_argument("--worker-folder")
+    command.add_argument("--threshold-bytes", type=int, default=64 * 1024 * 1024)
+    command = commands.add_parser("pull-serve")
+    command.add_argument("--listen", default="127.0.0.1")
+    command.add_argument("--port", type=int, default=8765)
+    command.add_argument("--certificate")
+    command.add_argument("--private-key")
+    command.add_argument("--connection", action="append", required=True,
+                         help="Paired controller connection authorized by this broker; repeat as needed")
+    command = commands.add_parser("stage-update")
+    command.add_argument("--connection", required=True)
+    command.add_argument("--bundle", required=True)
+    command = commands.add_parser("sync-worker")
+    command.add_argument("--connection", required=True)
+    command.add_argument("--repository", required=True)
     command = commands.add_parser("pack")
     command.add_argument("--scenario", required=True)
     command.add_argument("--output", required=True)
     command.add_argument("--target", required=True)
     command.add_argument("--parameters", help="UTF-8 JSON object file")
     command.add_argument("--mode", choices=["time", "profile", "time+profile"], default="time+profile")
-    command.add_argument("--route", choices=["local", "auto", "ssh", "agent"], default="auto")
+    execution = command.add_mutually_exclusive_group()
+    execution.add_argument("--route", choices=["local", "auto", "ssh", "agent"],
+                           help="Deprecated combined execution/transport selector")
+    execution.add_argument("--runner", choices=["local", "worker"], default="worker")
+    command.add_argument("--agent-policy", choices=["off", "requested", "diagnosis-on-failure"], default="off")
     command.add_argument("--repeats", type=int, default=3)
     command.add_argument("--warmups", type=int, default=1)
     command.add_argument("--operation", action="append", default=None)
@@ -156,6 +189,9 @@ def main():
     command.add_argument("--output", required=True)
     command.add_argument("--python-archive", help="Pinned Python package to include for offline Windows setup")
     args = parser.parse_args()
+    if args.command == "version":
+        from itl_remote import VERSION
+        return {"version": VERSION}
     from itl_remote import bootstrap, execution, jobs, profiling, transport
     if args.command in ("recovery-plan", "recover", "recovery-cancel"):
         from itl_remote import recovery_job
@@ -195,10 +231,34 @@ def main():
     if args.command == "pack":
         return jobs.pack(args.scenario, args.output, target=args.target,
                          values=read_json(args.parameters) if args.parameters else {}, mode=args.mode,
-                         route=args.route, repeats=args.repeats, warmups=args.warmups,
+                         route=args.route, runner=None if args.route else args.runner,
+                         agent_policy=None if args.route else args.agent_policy,
+                         repeats=args.repeats, warmups=args.warmups,
                          operations=args.operation, identifier=args.id, parent=args.parent)
     if args.command == "prepare":
-        return bootstrap.prepare(args.spool, args.profile)
+        return bootstrap.prepare(args.spool, args.profile, args.worker_connection, args.update_policy)
+    if args.command == "pair":
+        return bootstrap.pair(args.url, args.controller_output, args.worker_output,
+                              worker_id=args.worker_id, controller_folder=args.controller_folder,
+                              worker_folder=args.worker_folder, threshold_bytes=args.threshold_bytes)
+    if args.command == "pull-serve":
+        from itl_remote.pull import serve
+        return serve(args.listen, args.port, certificate=args.certificate, private_key=args.private_key,
+                     connections=args.connection)
+    if args.command == "stage-update":
+        return transport.Connection(read_json(args.connection)).stage_update(args.bundle)
+    if args.command == "sync-worker":
+        import tempfile
+        from itl_remote import VERSION
+        connection = transport.Connection(read_json(args.connection))
+        observed = connection.call({"operation": "probe"})
+        if observed.get("version") == VERSION:
+            return {"status": "worker-current", "version": VERSION}
+        with tempfile.TemporaryDirectory(prefix="itl-worker-update-") as temporary:
+            bundle = Path(temporary) / "worker-update.zip"
+            bootstrap.export_bundle(args.repository, bundle)
+            result = connection.stage_update(bundle)
+        return dict(result, observedVersion=observed.get("version"), controllerVersion=VERSION)
     if args.command == "probe":
         return bootstrap.inspect(args.spool)
     if args.command == "export":
@@ -238,14 +298,21 @@ def main():
     if args.command == "rpc":
         return transport.endpoint(args.spool, json.load(sys.stdin))
     if args.command == "execute":
-        return execution.execute_job(args.spool, args.id, read_json(Path(args.spool) / "profile.json"), via_agent=args.via_agent)
+        return execution.execute_job(args.spool, args.id, read_json(Path(args.spool) / "profile.json"),
+                                     via_agent=args.via_agent,
+                                     expected_runner="worker" if args.via_agent else "local")
     if args.command == "worker":
         spool = Path(args.spool).resolve()
         profile = read_json(spool / "profile.json")
+        if profile.get("workerOwner") is not None and profile["workerOwner"] != current_user_identity():
+            raise WorkError("WORKER_USER_IDENTITY_MISMATCH")
+        worker_connection = read_json(args.connection) if args.connection else None
         worker_limits = profile.get("workerLimits", {})
         if not isinstance(worker_limits, dict):
             raise WorkError("WORKER_LIMITS_INVALID")
-        if args.persistent and worker_limits.get("allowPersistent") is not True:
+        pull_persistent = bool(worker_connection and worker_connection.get("transport") == "pull" and
+                               worker_connection.get("pull", {}).get("persistent") is True)
+        if args.persistent and worker_limits.get("allowPersistent") is not True and not pull_persistent:
             raise WorkError("PERSISTENT_WORKER_NOT_ALLOWED")
         persistent = bool(args.persistent)
         max_jobs = args.max_jobs if args.max_jobs is not None else (worker_limits.get("maxJobs", 10) if persistent else 1)
@@ -260,7 +327,18 @@ def main():
         stop_reason = "one-shot-complete"
         with FileLock(spool / "service.lock"):
             heartbeat = WorkerHeartbeat(spool, "persistent" if persistent else "one-shot", started_at)
+            pull_stop = threading.Event()
+            pull_worker = None
+            if worker_connection is not None:
+                if worker_connection.get("transport") != "pull":
+                    raise WorkError("WORKER_CONNECTION_PULL_REQUIRED")
+                from itl_remote.pull import PullWorker
+                pull_worker = PullWorker(worker_connection, spool, pull_stop)
+                pull_worker.start()
             heartbeat.start()
+            if args.generation and args.confirm_path:
+                write_json(args.confirm_path, {"archiveSha256": args.generation, "confirmedAt": stamp(),
+                                               "pid": os.getpid()})
             print("ITL worker ready. Mode: " + ("persistent" if persistent else "one-shot") +
                   ". Stop: Ctrl+C. Spool: " + str(spool), flush=True)
             try:
@@ -270,6 +348,9 @@ def main():
                     if elapsed >= max_lifetime:
                         stop_reason = "max-lifetime"
                         break
+                    if (spool / "runtime" / "pending.json").exists():
+                        stop_reason = "update-staged"
+                        break
                     heartbeat.update(status="ready", jobsProcessed=completed_jobs, currentJob=None)
                     for package in sorted((spool / "jobs").glob("*")):
                         if package.name.startswith(".") or not package.is_dir():
@@ -278,7 +359,7 @@ def main():
                         if current["status"] in ("queued", "running", "waiting-for-base"):
                             heartbeat.update(status="running", jobsProcessed=completed_jobs, currentJob=package.name)
                             try:
-                                result = execution.execute_job(spool, package.name, profile)
+                                result = execution.execute_job(spool, package.name, profile, expected_runner="worker")
                                 print(json.dumps(result, ensure_ascii=True), flush=True)
                             except WorkError as error:
                                 if str(error).startswith("OWNER_BUSY"):
@@ -293,18 +374,23 @@ def main():
                     run_queued_controls(spool)
                     from itl_remote.recovery_job import run_queued
                     run_queued(spool)
-                    if not persistent:
+                    if not persistent and (completed_jobs or pull_worker is None):
                         break
                     if completed_jobs >= max_jobs:
                         stop_reason = "max-jobs"
                         break
-                    time.sleep(1)
+                    time.sleep(0.2 if pull_worker is not None else 1)
             finally:
+                if pull_worker is not None:
+                    pull_worker.stop()
                 heartbeat.stop(jobs_processed=completed_jobs, reason=stop_reason)
         return {"status": "stopped", "jobsProcessed": completed_jobs, "reason": stop_reason}
 
 
 if __name__ == "__main__":
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="strict")
     try:
         value = main()
         print(json.dumps(value, ensure_ascii=True, allow_nan=False))
