@@ -28,6 +28,40 @@ Describe "Local quality gate contract" {
         $text | Should -Match 'try\s*\{[\s\S]+Start-Process[\s\S]+\}\s*finally\s*\{'
     }
 
+    It "preserves exact Unicode stdout and stderr from a redirected Windows PowerShell Pester shard" {
+        $fixtureRoot = Join-Path $TestDrive "Путь с пробелом"
+        New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+        $testPath = Join-Path $fixtureRoot "UnicodeOutput.Tests.ps1"
+        $planPath = Join-Path $fixtureRoot "worker.plan.json"
+        $junitPath = Join-Path $fixtureRoot "worker.xml"
+        $resultPath = Join-Path $fixtureRoot "worker.result.json"
+        $stdoutMarker = "Стандартный вывод: Путь с пробелом"
+        $stderrMarker = "Стандартная ошибка: Путь с пробелом"
+        $fixture = @"
+BeforeAll {
+    [Console]::Out.WriteLine('$stdoutMarker')
+    [Console]::Error.WriteLine('$stderrMarker')
+}
+Describe 'Unicode redirected output' {
+    It 'passes' { `$true | Should -BeTrue }
+}
+"@
+        [IO.File]::WriteAllText($testPath, $fixture, [Text.UTF8Encoding]::new($true))
+        $plan = [ordered]@{ schemaVersion = 1; worker = 1; paths = @($testPath) }
+        [IO.File]::WriteAllText($planPath, (($plan | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+
+        $run = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @(
+            "-PlanPath", $planPath,
+            "-JunitPath", $junitPath,
+            "-ResultPath", $resultPath
+        )
+
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        ($run.stdout -join [Environment]::NewLine) | Should -Match ([regex]::Escape($stdoutMarker))
+        ($run.stderr -join [Environment]::NewLine) | Should -Match ([regex]::Escape($stderrMarker))
+        (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
+    }
+
     It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null
