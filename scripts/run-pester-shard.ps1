@@ -8,6 +8,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8NoBom
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 
 if ($env:OS -eq "Windows_NT" -and [string]$PSVersionTable.PSEdition -eq "Desktop") {
     $documents = [Environment]::GetFolderPath([Environment+SpecialFolder]::MyDocuments)
