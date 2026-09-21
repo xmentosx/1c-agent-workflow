@@ -1071,7 +1071,7 @@ function New-ItlOnDemandDatabaseConnection {
     param([string]$Kind, [string]$Path)
 
     if ($Kind -notin @('file', 'server') -or [string]::IsNullOrWhiteSpace($Path)) {
-        throw 'ITL_ONDEMAND_DATABASE_IDENTITY_REQUIRED: database kind and path must be known before admission.'
+        throw 'ITL_ONDEMAND_DATABASE_IDENTITY_REQUIRED: database kind and path must be known before execution.'
     }
     if ($Kind -eq 'file') { $Path = Resolve-ProjectPath $Path }
     return [pscustomobject]@{ kind = $Kind; path = $Path }
@@ -1097,30 +1097,27 @@ function Get-ItlOnDemandRuntimeDatabaseConnections {
     if ($managerPath) { New-ItlOnDemandDatabaseConnection -Kind $managerKind -Path $managerPath }
 }
 
-function Get-ItlDatabaseAccessSettings {
-    $coordinator = [string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_ROOT' -ConfigName 'databaseAccess.coordinator' -Default '')
-    $scope = $(if ($coordinator) { 'configured-authority' } else { 'execution-host-only' })
-    if (-not $coordinator) {
-        # Source-test runners replace only the implicit host fallback. Explicit
-        # environment and project configuration remain authoritative.
-        $coordinator = [string][Environment]::GetEnvironmentVariable('ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT', 'Process')
-        if (-not $coordinator) { $coordinator = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ITL\infobase-access' }
+function Get-ItlExecutionGuardSettings {
+    $root = [string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_ROOT' -ConfigName 'executionGuard.root' -Default '')
+    if (-not $root) {
+        $root = [string][Environment]::GetEnvironmentVariable('ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT', 'Process')
+        if (-not $root) { $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ITL\execution-guards-v2' }
     }
     $timeout = 0.0
-    $timeoutText = [string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_WAIT_TIMEOUT_SECONDS' -ConfigName 'databaseAccess.waitTimeoutSeconds' -Default '3600')
+    $timeoutText = [string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_WAIT_TIMEOUT_SECONDS' -ConfigName 'executionGuard.waitTimeoutSeconds' -Default '3600')
     if (-not [double]::TryParse($timeoutText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$timeout) -or
         [double]::IsNaN($timeout) -or [double]::IsInfinity($timeout) -or $timeout -lt 0 -or $timeout -gt 86400) {
-        throw 'INFOBASE_ACCESS_TIMEOUT_INVALID'
+        throw 'EXECUTION_GUARD_WAIT_TIMEOUT_INVALID'
     }
-    return [pscustomobject]@{ coordinator=(Resolve-ProjectPath $coordinator); scope=$scope; waitTimeoutSeconds=$timeout
-        python=[string](Get-Setting -EnvName 'ITL_INFOBASE_ACCESS_PYTHON' -ConfigName 'databaseAccess.python' -Default '') }
+    return [pscustomobject]@{ root=(Resolve-ProjectPath $root); waitTimeoutSeconds=$timeout
+        python=[string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_PYTHON' -ConfigName 'executionGuard.python' -Default '') }
 }
 
-function Get-ItlOnDemandDatabaseAccessPlan {
+function Get-ItlOnDemandExecutionPlan {
     param([ValidateSet('roctup', 'vanessa-ui')][string]$Family, [string]$InstanceId,
         [string]$AuxiliaryContour = '', [object]$PreviousServicePlan = $null)
 
-    $primary = Read-CurrentDevBranchStateForRoctupMcp -Operation 'ITL database admission planning'
+    $primary = Read-CurrentDevBranchStateForRoctupMcp -Operation 'ITL execution planning'
     $primaryBase = $null
     if ($Family -eq 'vanessa-ui' -or -not $AuxiliaryContour) {
         $primaryBase = New-ItlOnDemandDatabaseConnection -Kind $primary.infoBaseKind -Path $primary.devBranchInfoBasePath
@@ -1146,46 +1143,36 @@ function Get-ItlOnDemandDatabaseAccessPlan {
         # Unknown legacy kinds are not inferred from connection-string syntax.
         $bases += @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $existing -Family $Family -FallbackTarget $target)
     }
-    $access = Get-ItlDatabaseAccessSettings
+    $guard = Get-ItlExecutionGuardSettings
     $unique = @{}
     foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
     return [pscustomobject][ordered]@{
-        schemaVersion = 1; family = $Family; projectRoot = $script:ProjectRoot; instanceId = $InstanceId
-        coordinator = $access.coordinator; scope = $access.scope; waitTimeoutSeconds = $access.waitTimeoutSeconds
-        accessMode = $(if ($Family -eq 'roctup') { 'shared-read' } else { 'functional-test' })
-        python = $access.python
+        schemaVersion = 2; family = $Family; projectRoot = $script:ProjectRoot; instanceId = $InstanceId
+        guardRoot = $guard.root; executionHost = [Environment]::MachineName.ToLowerInvariant()
+        waitTimeoutSeconds = $guard.waitTimeoutSeconds; python = $guard.python
         bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
         primaryBase = $primaryBase; targetBase = $target; servicePlan = $servicePlan; auxiliaryContour = $AuxiliaryContour
         runtimePresent = ($null -ne $existing)
     }
 }
 
-function Read-ItlOnDemandDatabaseInvocation {
+function Read-ItlOnDemandExecutionInvocation {
     param([string]$Family, [string]$AuxiliaryContour)
 
-    $raw = [Environment]::GetEnvironmentVariable('ITL_DATABASE_ACCESS_CONTEXT', 'Process')
+    $raw = [Environment]::GetEnvironmentVariable('ITL_EXECUTION_INVOCATION', 'Process')
     if (-not $raw) { return $null }
-    try { $context = $raw | ConvertFrom-Json -ErrorAction Stop } catch { throw 'ITL_ONDEMAND_DATABASE_CONTEXT_INVALID' }
+    try { $context = $raw | ConvertFrom-Json -ErrorAction Stop } catch { throw 'ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID' }
     $plan = Get-StateValue $context 'plan' $null
-    if ([int](Get-StateValue $context 'schemaVersion' 0) -ne 1 -or $null -eq (Get-StateValue $context 'proof' $null) -or
-        [int](Get-StateValue $plan 'schemaVersion' 0) -ne 1 -or
+    if ([int](Get-StateValue $context 'schemaVersion' 0) -ne 2 -or $null -eq (Get-StateValue $context 'context' $null) -or
+        [int](Get-StateValue $plan 'schemaVersion' 0) -ne 2 -or
         [string](Get-StateValue $plan 'family' '') -cne $Family -or [string](Get-StateValue $plan 'auxiliaryContour' '') -cne $AuxiliaryContour -or
         -not [string]::Equals([string](Get-StateValue $plan 'projectRoot' ''), $script:ProjectRoot, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'ITL_ONDEMAND_DATABASE_CONTEXT_INVALID'
+        throw 'ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID'
     }
     return $context
 }
 
-function Resolve-ItlOnDemandInheritedAccessMode {
-    param([object]$Invocation, [object]$Plan)
-
-    if ([string](Get-StateValue -State $Invocation.proof -Name 'purpose' -Default 'operation') -ceq 'recovery') {
-        return 'mutation-exclusive'
-    }
-    return [string](Get-StateValue -State $Plan -Name 'accessMode' -Default 'mutation-exclusive')
-}
-
-function Start-ItlOnDemandInheritedDatabaseAccess {
+function Confirm-ItlOnDemandExecutionInvocation {
     param([object]$Invocation, [string]$Operation, [string]$Family, [string]$InstanceId,
         [string]$AuxiliaryContour = '')
 
@@ -1193,7 +1180,7 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
     $plan = $Invocation.plan
     $fresh = $null
     if ($Operation -in @('ensure', 'recover')) {
-        $fresh = Get-ItlOnDemandDatabaseAccessPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $plan.servicePlan
+        $fresh = Get-ItlOnDemandExecutionPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $plan.servicePlan
         foreach ($name in @('primaryBase', 'targetBase')) {
             $before = Get-StateValue $plan $name $null
             $after = Get-StateValue $fresh $name $null
@@ -1213,7 +1200,7 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
                 throw 'ITL_ONDEMAND_DATABASE_PLAN_CHANGED: manager identity or template changed after planning.'
             }
             # The same reserved manager may become a qualified reusable base
-            # after our first ensure. Pass the freshly verified admission hash.
+            # after our first ensure. Pass the freshly verified generation.
         }
         $bases = @($fresh.bases)
     } else {
@@ -1225,26 +1212,12 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
             $bases = @(Get-ItlOnDemandRuntimeDatabaseConnections -RuntimeState $state -Family $Family -FallbackTarget $plan.targetBase)
         }
     }
-    $adapter = Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1'
-    . $adapter
-    $purpose = $(if ([string](Get-StateValue -State $Invocation.proof -Name 'purpose' -Default 'operation') -ceq 'recovery') { 'recovery' } else { 'operation' })
-    $accessMode = Resolve-ItlOnDemandInheritedAccessMode -Invocation $Invocation -Plan $plan
-    $owner = Start-ItlDatabaseAccessHost -Python $plan.python -Request ([ordered]@{
-        schemaVersion = 1; coordinator = $plan.coordinator; bases = @($bases)
-        owner = @{project=$script:ProjectRoot; operation=('ondemand-' + $Operation); requestId=$InstanceId}
-        timeout = 30; inherited = $Invocation.proof; purpose = $purpose
-        accessMode = $accessMode
-    })
-    return [pscustomobject]@{owner=$owner; plan=$fresh}
-}
-
-function Complete-ItlOnDemandInheritedDatabaseAccess {
-    param([object]$Admission, [bool]$Succeeded, [bool]$NativeWorkAttempted = $true)
-
-    if ($null -eq $Admission) { return }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    if ($Succeeded -or -not $NativeWorkAttempted) { Complete-ItlDatabaseAccessHost -Owner $Admission.owner | Out-Null }
-    else { Close-ItlDatabaseAccessHost -Owner $Admission.owner }
+    $planned = @($plan.bases | ForEach-Object { ([string]$_.kind + '|' + [string]$_.path).ToLowerInvariant().TrimEnd('/','\') })
+    foreach ($base in $bases) {
+        $key = ([string]$base.kind + '|' + [string]$base.path).ToLowerInvariant().TrimEnd('/','\')
+        if ($planned -notcontains $key) { throw 'ITL_ONDEMAND_EXECUTION_RESOURCE_EXPANSION_FORBIDDEN' }
+    }
+    return $fresh
 }
 
 function Start-ItlOnDemandBackendInstance {
@@ -1441,76 +1414,9 @@ function Start-ItlOnDemandBackendInstance {
 }
 
 
-function Get-ItlOnDemandRecoveryResourceSamples {
-    param([Parameter(Mandatory = $true)][object]$Plan)
-
-    $samples = @()
-    foreach ($sample in 1..2) {
-        $inventory = @(Get-OneCProcessInfo -RequireSuccess)
-        if (@($inventory | Where-Object { [string]::IsNullOrWhiteSpace($_.commandLine) }).Count -gt 0) {
-            throw 'ITL_ONDEMAND_RECOVERY_PROCESS_COMMAND_LINE_UNAVAILABLE'
-        }
-        $observed = @()
-        foreach ($base in @($Plan.bases)) {
-            $matching = @($inventory | Where-Object {
-                Test-OneCCommandLineInfoBasePath -CommandLine $_.commandLine -InfoBaseKind $base.kind -InfoBasePath $base.path
-            })
-            if ($matching.Count -gt 0) {
-                throw "ITL_ONDEMAND_RECOVERY_DATABASE_STILL_IN_USE: kind=$($base.kind) path='$($base.path)' pids='$(@($matching.processId) -join ',')'"
-            }
-            if ($base.kind -ceq 'file') {
-                $databasePath = Join-Path $base.path '1Cv8.1CD'
-                $present = Test-Path -LiteralPath $databasePath -PathType Leaf
-                $managedService = $null -ne $Plan.servicePlan -and
-                    (Test-ItlOnDemandInfoBaseMatch -First ([string]$Plan.servicePlan.path) -Second ([string]$base.path))
-                if (-not $present -and -not $managedService) {
-                    throw "ITL_ONDEMAND_RECOVERY_DATABASE_MISSING: $databasePath"
-                }
-                $exclusive = $false; $handle = $null
-                try {
-                    if ($present) {
-                        $handle = [IO.File]::Open($databasePath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
-                        $exclusive = $true
-                    }
-                } catch [IO.IOException] { $exclusive = $false }
-                finally { if ($null -ne $handle) { $handle.Dispose() } }
-                if ($present -and -not $exclusive) { throw "ITL_ONDEMAND_RECOVERY_DATABASE_NOT_EXCLUSIVE: $databasePath" }
-                $observed += [pscustomobject]@{kind='file';path=[string]$base.path;databasePresent=[bool]$present;exclusive=[bool]$exclusive;sessionCount=0}
-                continue
-            }
-            if ($base.kind -cne 'server') { throw 'ITL_ONDEMAND_RECOVERY_RESOURCE_KIND_INVALID' }
-            $inspector = Get-OneCNativeServerRecoveryInspector -Resources @($base)
-            $inspectorHash = (Get-FileHash -LiteralPath $inspector.path -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($inspectorHash -cne [string]$inspector.sha256) { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTOR_CHANGED' }
-            $observationId = [guid]::NewGuid().ToString('N')
-            $providerOutput = @(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -NonInteractive -ExecutionPolicy Bypass `
-                -File $inspector.path -Operation recovery-observe -ProjectRoot $script:ProjectRoot `
-                -InfoBasePath $base.path -ObservationId $observationId -Sample $sample 2>&1)
-            if ($LASTEXITCODE -ne 0) { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_FAILED' }
-            if ((Get-FileHash -LiteralPath $inspector.path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $inspectorHash) {
-                throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTOR_CHANGED'
-            }
-            try { $server = ($providerOutput -join [Environment]::NewLine) | ConvertFrom-Json }
-            catch { throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_INVALID' }
-            if ([int](Get-StateValue $server 'schemaVersion' 0) -ne 1 -or [string](Get-StateValue $server 'observationId' '') -cne $observationId -or
-                [string](Get-StateValue (Get-StateValue $server 'infoBase' $null) 'kind' '') -cne 'server' -or
-                [string](Get-StateValue (Get-StateValue $server 'infoBase' $null) 'path' '') -cne [string]$base.path) {
-                throw 'ITL_ONDEMAND_RECOVERY_SERVER_INSPECTION_INVALID'
-            }
-            if ([int]$server.sessionCount -ne 0 -or -not [bool]$server.exclusive) {
-                throw "ITL_ONDEMAND_RECOVERY_DATABASE_STILL_IN_USE: server='$($base.path)' sessions=$($server.sessionCount)"
-            }
-            $observed += [pscustomobject]@{kind='server';path=[string]$base.path;databasePresent=[bool]$server.databasePresent;exclusive=$true;sessionCount=0}
-        }
-        $samples += [pscustomobject]@{observedAtUtc=[DateTime]::UtcNow.ToString('o');resources=$observed}
-        if ($sample -eq 1) { Start-Sleep -Milliseconds 1000 }
-    }
-    return @($samples)
-}
-
 function Invoke-ItlOnDemandBackendBroker {
     param(
-        [ValidateSet("access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "recover-stop", "stop", "stop-all")][string]$Operation,
+        [ValidateSet("execution-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$Operation,
         [ValidateSet("roctup", "vanessa-ui")][string]$Family,
         [string]$InstanceId,
         [string]$CatalogSha256,
@@ -1519,46 +1425,37 @@ function Invoke-ItlOnDemandBackendBroker {
         [int]$ExpectedPort,
         [string]$AuxiliaryContour = ""
     )
-    $invocation = Read-ItlOnDemandDatabaseInvocation -Family $Family -AuxiliaryContour $AuxiliaryContour
-    $admission = $null
+    $invocation = Read-ItlOnDemandExecutionInvocation -Family $Family -AuxiliaryContour $AuxiliaryContour
     $serviceAdmissionPlan = $null
-    $succeeded = $false
-    $nativeWorkAttempted = $false
     $startHandle = $null
     try {
-    if ($null -ne $invocation -and $Operation -ne 'access-plan') {
-        $admission = Start-ItlOnDemandInheritedDatabaseAccess -Invocation $invocation -Operation $Operation -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour
-        if ($null -ne $admission.plan) { $serviceAdmissionPlan = $admission.plan.servicePlan }
+    if ($null -ne $invocation -and $Operation -ne 'execution-plan') {
+        $freshPlan = Confirm-ItlOnDemandExecutionInvocation -Invocation $invocation -Operation $Operation -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour
+        if ($null -ne $freshPlan) { $serviceAdmissionPlan = $freshPlan.servicePlan }
     }
     if ($Operation -eq "ensure" -or $Operation -eq "ensure-test-client" -or $Operation -eq "mark-running" -or $Operation -eq "recover") {
         $startLockPath = Join-Path $script:ProjectRoot ".agent-1c\locks\ondemand-start.lock"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $startLockPath) | Out-Null
         $startHandle = [System.IO.File]::Open($startLockPath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
     }
-    if ($Operation -eq 'recover-stop' -and ($null -eq $invocation -or [string](Get-StateValue -State $invocation.proof -Name 'purpose' -Default '') -cne 'recovery')) {
-        throw 'ITL_ONDEMAND_RECOVERY_PROOF_REQUIRED'
-    }
     if ($Operation -eq "stop-all") {
-        $nativeWorkAttempted = $true
         Stop-ItlOnDemandBackends -Family $Family
         $result = [pscustomobject]@{ schemaVersion = 1; status = "stopped"; family = $Family; instanceId = "*" }
     } elseif ($InstanceId -notmatch '^[a-f0-9]{32}$') {
         throw "Invalid on-demand MCP instance id."
-    } elseif ($Operation -eq "access-plan") {
+    } elseif ($Operation -eq "execution-plan") {
         $previousServicePlan = $(if ($null -ne $invocation) { $invocation.plan.servicePlan } else { $null })
-        $databasePlan = Get-ItlOnDemandDatabaseAccessPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $previousServicePlan
+        $executionPlan = Get-ItlOnDemandExecutionPlan -Family $Family -InstanceId $InstanceId -AuxiliaryContour $AuxiliaryContour -PreviousServicePlan $previousServicePlan
         . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/PythonRuntime.ps1')
-        $databasePlan.python = Resolve-ItlPythonExecutable -Python $databasePlan.python
+        $executionPlan.python = Resolve-ItlPythonExecutable -Python $executionPlan.python
         $result = [pscustomobject]@{ schemaVersion = 1; status = 'planned'; family = $Family; instanceId = $InstanceId
-            databaseAccess = $databasePlan }
+            executionGuard = $executionPlan }
     } elseif ($Operation -eq "ensure") {
-        $nativeWorkAttempted = $true
         $result = Start-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -CatalogSha256 $CatalogSha256 -AuxiliaryContour $AuxiliaryContour -ServiceAdmissionPlan $serviceAdmissionPlan
     } elseif ($Operation -eq "ensure-test-client") {
         if ($Family -ne "vanessa-ui") {
             throw "ITL_ONDEMAND_ARGUMENTS_INVALID: ensure-test-client is available only for vanessa-ui."
         }
-        $nativeWorkAttempted = $true
         $result = Ensure-ItlOnDemandVanessaTestClient -InstanceId $InstanceId
     } elseif ($Operation -eq "mark-running") {
         if ($ExpectedPid -le 0 -or $ExpectedPort -le 0) {
@@ -1569,7 +1466,6 @@ function Invoke-ItlOnDemandBackendBroker {
         if ($ReplacementInstanceId -notmatch '^[a-f0-9]{32}$' -or $ReplacementInstanceId -eq $InstanceId -or $ExpectedPid -le 0 -or $ExpectedPort -le 0) {
             throw "Invalid on-demand MCP recovery identity."
         }
-        $nativeWorkAttempted = $true
         $result = Recover-ItlOnDemandBackendInstance `
             -Family $Family `
             -InstanceId $InstanceId `
@@ -1583,7 +1479,7 @@ function Invoke-ItlOnDemandBackendBroker {
         $registered = $null
         if ($null -ne $invocation) {
             $registered = Read-ItlOnDemandRuntimeState -Family $Family -InstanceId $InstanceId
-            if ($Operation -ne 'recover-stop' -and ($null -eq $registered -or [int](Get-StateValue $registered 'pid' 0) -le 0)) {
+            if ($null -eq $registered -or [int](Get-StateValue $registered 'pid' 0) -le 0) {
                 throw 'ITL_ONDEMAND_STOP_UNCONFIRMED: native launch or cleanup cannot be proven from missing/incomplete runtime state.'
             }
             if ($null -ne $registered -and $ExpectedPid -gt 0 -and ([int]$registered.pid -ne $ExpectedPid -or [int]$registered.port -ne $ExpectedPort)) {
@@ -1598,36 +1494,10 @@ function Invoke-ItlOnDemandBackendBroker {
                 }
             }
         }
-        $nativeWorkAttempted = $true
-        if ($Operation -eq 'recover-stop' -and $null -eq $registered) {
-            $samples = Get-ItlOnDemandRecoveryResourceSamples -Plan $invocation.plan
-            $portCleanup = @(); $portCleanupError = ''
-            try { $portCleanup = @(Remove-ItlOnDemandOrphanPortLeases -Family $Family -InstanceId $InstanceId) }
-            catch { $portCleanupError = $_.Exception.Message }
-            $paramsPath = Join-Path (Split-Path -Parent (Get-ItlOnDemandRuntimePath -Family $Family -InstanceId $InstanceId)) "$InstanceId.VAParams.json"
-            if ($Family -eq 'vanessa-ui' -and (Test-Path -LiteralPath $paramsPath -PathType Leaf)) { Remove-Item -LiteralPath $paramsPath -Force -ErrorAction SilentlyContinue }
-            $result = [pscustomobject]@{schemaVersion=2;status='stopped';family=$Family;instanceId=$InstanceId;pid=0;port=0;testClientPort=0;url=''}
-            $result | Add-Member -NotePropertyName recoveryEvidence -NotePropertyValue ([pscustomobject]@{
-                adapter='finish-owned-on-demand'; family=$Family; instanceId=$InstanceId
-                ownedRuntimeCleanup='runtime-state-absent-live-quiescence-confirmed'; restoration='no-restoration-duties-created'
-                resources=@($invocation.plan.bases); samples=@($samples); orphanPortCleanup=@($portCleanup); orphanPortCleanupError=$portCleanupError
-            }) -Force
-        } else {
-            $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
-            if ($Operation -eq 'recover-stop') {
-                $samples = Get-ItlOnDemandRecoveryResourceSamples -Plan $invocation.plan
-                $result | Add-Member -NotePropertyName recoveryEvidence -NotePropertyValue ([pscustomobject]@{
-                    adapter='finish-owned-on-demand'; family=$Family; instanceId=$InstanceId
-                    ownedRuntimeCleanup='strict-ownership-confirmed'; restoration='no-restoration-duties-created'
-                    resources=@($invocation.plan.bases); samples=@($samples); orphanPortCleanup=@(); orphanPortCleanupError=''
-                }) -Force
-            }
-        }
+        $result = Stop-ItlOnDemandBackendInstance -Family $Family -InstanceId $InstanceId -StrictOwnership
     }
-    $succeeded = $true
     } finally {
         if ($null -ne $startHandle) { $startHandle.Dispose() }
-        Complete-ItlOnDemandInheritedDatabaseAccess -Admission $admission -Succeeded $succeeded -NativeWorkAttempted $nativeWorkAttempted
     }
     $json = $result | ConvertTo-Json -Compress -Depth 20
     Write-Output "ITL_ONDEMAND_RESULT=$json"
@@ -1685,21 +1555,16 @@ function Remove-ItlOnDemandStaleInstances {
 
 function Invoke-ItlOnDemandStaleCleanupForStatus {
     $lifecycleHandle = $null
-    $runtimeHandle = $null
     try {
         $lifecyclePath = Get-Agent1cLifecycleLockPath -WorktreePath $script:ProjectRoot
-        $runtimePath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $script:ProjectRoot
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath) | Out-Null
-        # Status remains observable during another lifecycle operation. Cleanup is
-        # best-effort and runs only when lifecycle -> runtime exclusive order can
-        # be obtained immediately without replacing the visible operation record.
+        # Status remains observable during another lifecycle operation. Cleanup
+        # is best-effort and exact-process scoped; no global runtime writer exists.
         $lifecycleHandle = [System.IO.File]::Open($lifecyclePath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-        $runtimeHandle = [System.IO.File]::Open($runtimePath, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         return (Remove-ItlOnDemandStaleInstances)
     } catch [System.IO.IOException] {
         return 0
     } finally {
-        if ($null -ne $runtimeHandle) { $runtimeHandle.Dispose() }
         if ($null -ne $lifecycleHandle) { $lifecycleHandle.Dispose() }
     }
 }

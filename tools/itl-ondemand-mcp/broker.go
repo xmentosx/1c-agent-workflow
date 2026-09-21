@@ -16,36 +16,35 @@ import (
 const brokerMarker = "ITL_ONDEMAND_RESULT="
 
 type backendInfo struct {
-	DatabaseAccess          *facadeDatabasePlan `json:"databaseAccess,omitempty"`
-	SchemaVersion           int                 `json:"schemaVersion"`
-	Status                  string              `json:"status"`
-	Family                  string              `json:"family"`
-	InstanceID              string              `json:"instanceId"`
-	PID                     int                 `json:"pid"`
-	ProcessStartedAt        string              `json:"processStartTime"`
-	Port                    int                 `json:"port"`
-	URL                     string              `json:"url"`
-	BackendVersion          string              `json:"backendVersion"`
-	CatalogSHA256           string              `json:"catalogSha256"`
-	LogPath                 string              `json:"logPath"`
-	TestClientProfile       string              `json:"testClientProfile"`
-	TestClientPID           int                 `json:"testClientPid"`
-	TestClientPort          int                 `json:"testClientPort"`
-	TestClientState         string              `json:"testClientState"`
-	TestClientReused        bool                `json:"testClientReused"`
-	PreviousTestClientPID   int                 `json:"previousTestClientPid"`
-	PreviousTestClientState string              `json:"previousTestClientState"`
+	ExecutionGuard          *facadeExecutionPlan `json:"executionGuard,omitempty"`
+	SchemaVersion           int                  `json:"schemaVersion"`
+	Status                  string               `json:"status"`
+	Family                  string               `json:"family"`
+	InstanceID              string               `json:"instanceId"`
+	PID                     int                  `json:"pid"`
+	ProcessStartedAt        string               `json:"processStartTime"`
+	Port                    int                  `json:"port"`
+	URL                     string               `json:"url"`
+	BackendVersion          string               `json:"backendVersion"`
+	CatalogSHA256           string               `json:"catalogSha256"`
+	LogPath                 string               `json:"logPath"`
+	TestClientProfile       string               `json:"testClientProfile"`
+	TestClientPID           int                  `json:"testClientPid"`
+	TestClientPort          int                  `json:"testClientPort"`
+	TestClientState         string               `json:"testClientState"`
+	TestClientReused        bool                 `json:"testClientReused"`
+	PreviousTestClientPID   int                  `json:"previousTestClientPid"`
+	PreviousTestClientState string               `json:"previousTestClientState"`
 }
 
-type facadeDatabasePlan struct {
+type facadeExecutionPlan struct {
 	SchemaVersion      int                  `json:"schemaVersion"`
 	Family             string               `json:"family"`
 	ProjectRoot        string               `json:"projectRoot"`
 	InstanceID         string               `json:"instanceId"`
-	Coordinator        string               `json:"coordinator"`
-	Scope              string               `json:"scope"`
+	GuardRoot          string               `json:"guardRoot"`
+	ExecutionHost      string               `json:"executionHost"`
 	WaitTimeoutSeconds float64              `json:"waitTimeoutSeconds"`
-	AccessMode         string               `json:"accessMode"`
 	Python             string               `json:"python"`
 	Bases              []databaseConnection `json:"bases"`
 	PrimaryBase        *databaseConnection  `json:"primaryBase"`
@@ -55,43 +54,42 @@ type facadeDatabasePlan struct {
 	RuntimePresent     bool                 `json:"runtimePresent"`
 }
 
-type databaseInvocationKey struct{}
-type databaseInvocation struct {
-	SchemaVersion   int                  `json:"schemaVersion"`
-	Proof           *databaseAccessProof `json:"proof"`
-	Plan            *facadeDatabasePlan  `json:"plan"`
-	ExpectedBackend *backendInfo         `json:"expectedBackend,omitempty"`
+type executionInvocationKey struct{}
+type executionInvocation struct {
+	SchemaVersion   int                   `json:"schemaVersion"`
+	Context         executionContextProof `json:"context"`
+	Plan            *facadeExecutionPlan  `json:"plan"`
+	ExpectedBackend *backendInfo          `json:"expectedBackend,omitempty"`
 }
 
-func withDatabaseInvocation(ctx context.Context, proof *databaseAccessProof, plan *facadeDatabasePlan) context.Context {
-	return context.WithValue(ctx, databaseInvocationKey{}, &databaseInvocation{SchemaVersion: 1, Proof: proof, Plan: plan})
+func withExecutionInvocation(ctx context.Context, proof executionContextProof, plan *facadeExecutionPlan) context.Context {
+	return context.WithValue(ctx, executionInvocationKey{}, &executionInvocation{SchemaVersion: 2, Context: proof, Plan: plan})
 }
 
-func preserveDatabaseInvocation(from, to context.Context) context.Context {
-	if value, ok := from.Value(databaseInvocationKey{}).(*databaseInvocation); ok {
-		return context.WithValue(to, databaseInvocationKey{}, value)
+func preserveExecutionInvocation(from, to context.Context) context.Context {
+	if value, ok := from.Value(executionInvocationKey{}).(*executionInvocation); ok {
+		return context.WithValue(to, executionInvocationKey{}, value)
 	}
 	return to
 }
 
-func databaseBrokerEnvironment(ctx context.Context) ([]string, error) {
+func executionBrokerEnvironment(ctx context.Context) ([]string, error) {
 	result := []string{}
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if !strings.EqualFold(key, "ITL_DATABASE_ACCESS_CONTEXT") && !strings.EqualFold(key, "ITL_INFOBASE_ACCESS_LEASE") {
+		if !strings.EqualFold(key, "ITL_EXECUTION_INVOCATION") && !strings.EqualFold(key, "ITL_EXECUTION_CONTEXT") &&
+			!strings.EqualFold(key, "ITL_EXECUTION_CONTEXT_KEY") {
 			result = append(result, value)
 		}
 	}
-	if value, ok := ctx.Value(databaseInvocationKey{}).(*databaseInvocation); ok {
+	if value, ok := ctx.Value(executionInvocationKey{}).(*executionInvocation); ok {
 		encoded, err := json.Marshal(value)
 		if err != nil {
-			return nil, fmt.Errorf("ITL_ONDEMAND_DATABASE_CONTEXT_INVALID")
+			return nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID")
 		}
-		proof, err := json.Marshal(value.Proof)
-		if err != nil {
-			return nil, fmt.Errorf("ITL_ONDEMAND_DATABASE_CONTEXT_INVALID")
-		}
-		result = append(result, "ITL_DATABASE_ACCESS_CONTEXT="+string(encoded), "ITL_INFOBASE_ACCESS_LEASE="+string(proof))
+		result = append(result, "ITL_EXECUTION_INVOCATION="+string(encoded),
+			"ITL_EXECUTION_CONTEXT="+value.Context.Encoded,
+			"ITL_EXECUTION_CONTEXT_KEY="+value.Context.Key)
 	}
 	return result, nil
 }
@@ -126,28 +124,28 @@ func (b *powershellBroker) Ensure(ctx context.Context) (*backendInfo, error) {
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		_ = b.Stop(preserveDatabaseInvocation(ctx, cleanupCtx))
+		_ = b.Stop(preserveExecutionInvocation(ctx, cleanupCtx))
 		return nil, err
 	}
 	b.lastBackend = info
 	return info, nil
 }
 
-func (b *powershellBroker) DatabaseRuntimeRoot() string {
+func (b *powershellBroker) ExecutionRuntimeRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(b.HelperPath), "..", "..", "itl-remote-runner", "scripts"))
 }
 
-func (b *powershellBroker) DatabaseAccessPlan(ctx context.Context) (*facadeDatabasePlan, error) {
-	info, err := b.invoke(ctx, "access-plan", nil)
+func (b *powershellBroker) ExecutionPlan(ctx context.Context) (*facadeExecutionPlan, error) {
+	info, err := b.invoke(ctx, "execution-plan", nil)
 	if err != nil {
 		return nil, err
 	}
-	if info.DatabaseAccess == nil || info.Status != "planned" || info.DatabaseAccess.SchemaVersion != 1 ||
-		info.DatabaseAccess.Family != b.Family || info.DatabaseAccess.InstanceID != b.InstanceID ||
-		info.DatabaseAccess.Coordinator == "" || len(info.DatabaseAccess.Bases) == 0 {
-		return nil, fmt.Errorf("ITL_ONDEMAND_DATABASE_PLAN_INVALID")
+	if info.ExecutionGuard == nil || info.Status != "planned" || info.ExecutionGuard.SchemaVersion != 2 ||
+		info.ExecutionGuard.Family != b.Family || info.ExecutionGuard.InstanceID != b.InstanceID ||
+		info.ExecutionGuard.GuardRoot == "" || len(info.ExecutionGuard.Bases) == 0 {
+		return nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_INVALID")
 	}
-	return info.DatabaseAccess, nil
+	return info.ExecutionGuard, nil
 }
 
 func (b *powershellBroker) EnsureTestClient(ctx context.Context) (*backendInfo, error) {
@@ -218,13 +216,13 @@ func (b *powershellBroker) Stop(ctx context.Context) error {
 	for _, id := range ids {
 		extra := []string{}
 		stopCtx := ctx
-		if invocation, coordinated := ctx.Value(databaseInvocationKey{}).(*databaseInvocation); coordinated {
+		if invocation, coordinated := ctx.Value(executionInvocationKey{}).(*executionInvocation); coordinated {
 			pid, port := -1, 0
 			if b.lastBackend != nil && b.lastBackend.InstanceID == id {
 				pid, port = b.lastBackend.PID, b.lastBackend.Port
 				copy := *invocation
 				copy.ExpectedBackend = b.lastBackend
-				stopCtx = context.WithValue(ctx, databaseInvocationKey{}, &copy)
+				stopCtx = context.WithValue(ctx, executionInvocationKey{}, &copy)
 			}
 			extra = append(extra, "-InternalOnDemandExpectedPid", fmt.Sprint(pid), "-InternalOnDemandExpectedPort", fmt.Sprint(port))
 		}
@@ -264,7 +262,7 @@ func (b *powershellBroker) invoke(ctx context.Context, operation string, extra [
 	}
 	args = append(args, extra...)
 	cmd := exec.CommandContext(callCtx, command, args...)
-	environment, environmentErr := databaseBrokerEnvironment(ctx)
+	environment, environmentErr := executionBrokerEnvironment(ctx)
 	if environmentErr != nil {
 		return nil, environmentErr
 	}

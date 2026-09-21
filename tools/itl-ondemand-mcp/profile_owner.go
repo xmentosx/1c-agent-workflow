@@ -197,7 +197,7 @@ func profileOwnerErrorCode(err error) string {
 	if err == nil {
 		return ""
 	}
-	code := regexp.MustCompile(`\b(?:ITL|INFOBASE_ACCESS)_[A-Z0-9_]+\b`).FindString(err.Error())
+	code := regexp.MustCompile(`\bITL_[A-Z0-9_]+\b`).FindString(err.Error())
 	if code == "" {
 		return "ITL_PROFILE_OWNER_OPERATION_FAILED"
 	}

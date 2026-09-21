@@ -18,9 +18,9 @@ Use `scripts/Invoke-RemoteWork.ps1` on Windows for durable jobs; it provisions p
 
 ## Database Access Handoff
 
-Before sending an incompatible job, explicitly choose one path for any database phase this task already owns: continue that phase and postpone the job, or finish it through its owning surface. Use `finish_database_access` on the same ROCTUP/Vanessa facade, or the existing exact stop action for an owned interactive profile, and wait for confirmed release. Never release a foreign holder; report its owner as the blocker and leave its processes and lease intact. Idle timeout is an abandonment fallback, not a normal handoff.
+Before sending a job, declare its complete exact database resource set. A conflicting call/job waits visibly on the execution guard and proceeds after bounded owned cleanup; an idle on-demand backend is not an owner. Never release or terminate a foreign holder. Report a bounded exact-base external conflict and leave foreign processes intact.
 
-A bounded helper or remote job retains access until its normal completion or confirmed terminal state. After disconnect or interruption, observe the existing job status, use its supported cancel only when cancellation is intended, and follow its recovery contract; do not call `finish_database_access` to bypass a live job.
+A bounded helper or remote job retains its execution guard until normal completion or confirmed terminal owned cleanup. After disconnect or interruption, observe the existing job status and use its supported cancel only when cancellation is intended. Do not replay the old job or bypass a live owner; a later independent command is admitted automatically after cleanup without a generic recovery gate.
 
 ## Runtime boundaries
 

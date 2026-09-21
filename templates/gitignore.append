@@ -19,6 +19,7 @@ logs/
 .agent-1c/runs/
 .agent-1c/source-exports/
 .agent-1c/source-infobase-unsafe-action-protection.json
+.agent-1c/execution-guard-generation.json
 .agent-1c/vanessa-authoring/
 .agent-1c/verification-repair/
 .agent-1c/verification-selection/

@@ -3750,20 +3750,6 @@ function Get-VanessaServiceInfoBasePlan {
 function Ensure-VanessaServiceInfoBase {
     param([Parameter(Mandatory = $true)][object]$State, [object]$AdmissionPlan = $null)
 
-    $checkAdmission = $null
-    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $admissionVariable -and $null -ne $admissionVariable.Value) {
-        $candidateAdmission = $admissionVariable.Value
-        $serviceTarget = if ($candidateAdmission.plan.PSObject.Properties['serviceTarget']) { $candidateAdmission.plan.serviceTarget } else { $candidateAdmission.plan.target }
-        if (-not $candidateAdmission.completed -and $candidateAdmission.plan.PSObject.Properties['servicePlan'] -and
-            $null -ne $candidateAdmission.plan.servicePlan -and
-            $null -ne $serviceTarget -and
-            (Test-ItlOnDemandInfoBaseMatch -First ([string]$State.devBranchInfoBasePath) -Second $serviceTarget.path)) {
-            $checkAdmission = $candidateAdmission
-            if ($null -eq $AdmissionPlan -and -not $checkAdmission.servicePlanApplied) { $AdmissionPlan = $checkAdmission.plan.servicePlan }
-        }
-    }
-
     if ($null -ne $AdmissionPlan -and (
         [int](Get-StateValue -State $AdmissionPlan -Name 'schemaVersion' -Default 0) -ne 1 -or
         [string](Get-StateValue -State $AdmissionPlan -Name 'generation' -Default '') -cnotmatch '^[a-f0-9]{32}$' -or
@@ -3772,11 +3758,6 @@ function Ensure-VanessaServiceInfoBase {
     }
     $candidate = $(if ($null -ne $AdmissionPlan) { [string]$AdmissionPlan.generation } else { '' })
     $plan = Get-VanessaServiceInfoBasePlan -State $State -CandidateGeneration $candidate
-    if ($null -ne $checkAdmission -and (
-        $plan.generation -cne $checkAdmission.plan.servicePlan.generation -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $plan.path -Second $checkAdmission.plan.servicePlan.path))) {
-        throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: service generation is outside the admitted check plan.'
-    }
     if ($null -ne $AdmissionPlan -and (
         [string]$AdmissionPlan.kind -cne $plan.kind -or
         [string]$AdmissionPlan.generation -cne $plan.generation -or
@@ -3798,7 +3779,6 @@ function Ensure-VanessaServiceInfoBase {
     $databasePath = Join-Path $path "1Cv8.1CD"
     $created = $false
     if (-not (Test-Path -LiteralPath $databasePath -PathType Leaf -ErrorAction SilentlyContinue)) {
-        Set-ItlDevBranchDatabaseAccessMode -AccessMode mutation-exclusive -State $State | Out-Null
         if (Test-Path -LiteralPath $path -PathType Container -ErrorAction SilentlyContinue) {
             $unexpected = @(Get-ChildItem -LiteralPath $path -Force -ErrorAction Stop)
             if ($unexpected.Count -gt 0) {
@@ -3881,7 +3861,6 @@ function Ensure-VanessaServiceInfoBase {
             vanessaServiceInfoBaseUpdatedAt = (Get-Date).ToString("o")
         }
     }
-    if ($null -ne $checkAdmission) { $checkAdmission.servicePlanApplied = $true }
     return [pscustomobject][ordered]@{
         kind = "file"
         path = $path
@@ -5057,7 +5036,6 @@ function Run-DevBranchTests {
     $serviceInfoBase = Ensure-VanessaServiceInfoBase -State $state
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
     $state = Ensure-VanessaMcpInstalled -State $state
-    Set-ItlDevBranchDatabaseAccessMode -AccessMode functional-test -State $state | Out-Null
 
     Assert-VanessaSourceBuildArchiveMatchesActivePin
     $vanessa = Get-VanessaAutomationState
@@ -7024,70 +7002,18 @@ function Get-ItlVanessaCleanupDatabasePlan {
     return [pscustomobject]@{ target=$target; bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }) }
 }
 
-function Start-ItlVanessaCleanupDatabaseAdmission {
-    $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'stop-dev-branch-test-clients'
-    # This explicit stop command may stop its profile, but only through the
-    # persistent owner and before taking the writer lock that owner needs.
-    if (Test-VanessaInteractiveProfileHasOwner) { Stop-DevBranchVanessaInteractiveProfile | Out-Null }
-    $plan = Get-ItlVanessaCleanupDatabasePlan -State $state
-    $settings = Get-ItlDatabaseAccessSettings
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    $request = [ordered]@{schemaVersion=1;coordinator=$settings.coordinator;bases=$plan.bases;timeout=$settings.waitTimeoutSeconds;accessMode='mutation-exclusive'
-        owner=@{project=$script:ProjectRoot;operation='stop-dev-branch-test-clients';requestId=[guid]::NewGuid().ToString('N')}}
-    $inherited = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
-    if ($inherited) {
-        try { $request.inherited = $inherited | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
-    } else {
-        $request.autoRecovery = $true
-    }
-    $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request
-    return [pscustomobject]@{owner=$owner;plan=$plan;nativePending=$false;cleanupConfirmed=$false;completed=$false}
-}
-
-function Assert-ItlVanessaCleanupDatabaseAdmission {
-    param([object]$Admission, [object]$State)
-
-    if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_CLEANUP_ADMISSION_REQUIRED' }
-    $fresh = Get-ItlVanessaCleanupDatabasePlan -State $State
-    if ($fresh.target.kind -cne $Admission.plan.target.kind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $Admission.plan.target.path)) {
-        throw 'INFOBASE_ACCESS_CLEANUP_PLAN_CHANGED: target changed while waiting.'
-    }
-    foreach ($base in $fresh.bases) {
-        $matched = @($Admission.plan.bases | Where-Object {
-            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
-        })
-        if ($matched.Count -eq 0) { throw 'INFOBASE_ACCESS_CLEANUP_PLAN_CHANGED: manager resource appeared while waiting.' }
-    }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    Assert-ItlDatabaseAccessHost -Owner $Admission.owner
-}
-
-function Complete-ItlVanessaCleanupDatabaseAdmission {
-    param([AllowNull()][object]$Admission)
-
-    if ($null -eq $Admission -or $Admission.completed) { return }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    try {
-        if ($Admission.nativePending -and -not $Admission.cleanupConfirmed) {
-            Close-ItlDatabaseAccessHost -Owner $Admission.owner
-            throw 'INFOBASE_ACCESS_NATIVE_CLEANUP_UNCONFIRMED'
-        }
-        $released = Complete-ItlDatabaseAccessHost -Owner $Admission.owner
-        if ($released.status -ne 'released') { throw 'INFOBASE_ACCESS_RELEASE_UNCONFIRMED' }
-    } finally { $Admission.completed = $true }
-}
-
 function Stop-DevBranchTestClients {
     $state = Read-DevBranchState -Name $DevBranchName
-    Assert-DevelopmentBranchWorktreeContext -State $state -Operation "stop-dev-branch-test-clients"
-    Assert-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission -State $state
-    $script:VanessaCleanupDatabaseAdmission.nativePending = $true
-    Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason "stop-dev-branch-test-clients" | Out-Null
-    $script:VanessaCleanupDatabaseAdmission.cleanupConfirmed = $true
+    Assert-DevelopmentBranchWorktreeContext -State $state -Operation 'stop-dev-branch-test-clients'
+    if (Test-VanessaInteractiveProfileHasOwner) { Stop-DevBranchVanessaInteractiveProfile | Out-Null }
+    $plan = Get-ItlVanessaCleanupDatabasePlan -State $state
+    $admissions = @($plan.bases | ForEach-Object {
+        [pscustomobject]@{infoBaseKind=[string]$_.kind;infoBasePath=[string]$_.path;requiredSessions=1;expectedChildRole='';purpose='stop-dev-branch-test-clients'}
+    })
+    Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose 'stop-dev-branch-test-clients' -ScriptBlock {
+        Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason 'stop-dev-branch-test-clients' | Out-Null
+    }
 }
-
 function Read-CurrentDevBranchStateForVanessaMcp {
     param([string]$Operation)
 

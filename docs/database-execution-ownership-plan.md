@@ -1,6 +1,7 @@
 # План сужения ownership до execution/job boundary
 
-Статус: согласованное направление, реализация не начата.  
+Статус: реализовано в source candidate; локальные tests/registration, публикация,
+установка и live acceptance учитываются раздельно.
 Область: database admission, lifecycle/runtime locks, on-demand MCP, remote jobs,
 `update-workflow`, `refresh-dev-branch`, `refresh-dev-branch-lite` и
 `refresh-all-dev-branches`.  

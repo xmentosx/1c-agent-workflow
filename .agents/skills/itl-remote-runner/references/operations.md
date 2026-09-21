@@ -4,7 +4,7 @@ On Windows use `scripts/Invoke-RemoteWork.ps1`; it provides the Python runtime a
 
 The helper acquires pinned CPython 3.13.15 from the official NuGet package into the user-local shared ITL artifact cache. It verifies the package and every installed payload file, serializes concurrent installers and repairs a damaged installation into a new generation. Existing generations remain available to running workers. No administrator rights, NuGet client, pip packages, PATH/registry changes or `conf.cfg` edits are needed. Python runs on the agent/worker host; ordinary business users of 1C do not need it.
 
-Use `-Python <executable>` or `ITL_PYTHON_EXECUTABLE` for an explicit Python 3.11+ installation; an invalid override is reported rather than silently replaced. Database admission also preserves its existing `ITL_INFOBASE_ACCESS_PYTHON` / `databaseAccess.python` override. `-Offline` uses verified cache or the bundled archive and reports missing input without downloading. Runtime preparation precedes database ownership. Direct `remote_work.py` remains available for hosts with an explicitly managed interpreter.
+Use `-Python <executable>` or `ITL_PYTHON_EXECUTABLE` for an explicit Python 3.11+ installation; an invalid override is reported rather than silently replaced. `ITL_EXECUTION_GUARD_PYTHON` may select the interpreter used by the execution-guard host. `-Offline` uses verified cache or the bundled archive and reports missing input without downloading. Runtime preparation precedes native execution ownership. Direct `remote_work.py` remains available for hosts with an explicitly managed interpreter.
 
 ## Prepare once
 
@@ -32,20 +32,20 @@ Local `execute` runs directly in the current user session: no SSH or second agen
 
 `--parameters` takes a JSON file. `--operation measure --operation write-data --operation update` expresses only operations already authorized by the user; omit unneeded permissions. Job requests never enlarge the target's allowed operations.
 
-For an explicit remote agent route use the same package/transfer operations with `--route agent`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, `agentFallback` only diagnoses. Use [job recovery](job-recovery.md) when the original package supports it; a subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence.
+For an explicit remote agent route use the same package/transfer operations with `--route agent`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, `agentFallback` only diagnoses. A subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence; the interrupted job is not replayed.
 
 ## Observe and collect
 
-`status --spool ... --id ...` and `remote --action status --connection ... --id ...` read state. Send `cancel` to request stopping the current phase and owned processes. Cancellation is not rollback. Inspect cleanup and operation effects before recovery. A `RESOURCE_LIMIT_EXCEEDED` result is a safety stop: inspect `resourceEvidence` and `resource-telemetry.jsonl`, then reconcile effects in a new linked job instead of replaying the old job.
+`status --spool ... --id ...` and `remote --action status --connection ... --id ...` read state. Send `cancel` to request stopping the current phase and owned processes. Cancellation is not rollback. Inspect cleanup and operation effects before choosing any product-specific repair. A `RESOURCE_LIMIT_EXCEEDED` result is a safety stop: inspect `resourceEvidence` and `resource-telemetry.jsonl`, then reconcile effects in a new linked job instead of replaying the old job.
 
 `collect --spool ... --id ... --output ...` collects local results. `remote --action collect --connection ... --id ... --output ...` verifies every downloaded file. Use a new output directory; never overwrite older evidence. Repeated observation does not enqueue work. Files are content-addressed during upload; retry skips complete matching blobs and restarts an incomplete blob without executing partial input.
 
-Add `--allow-partial` to either collection command to retrieve available run and
-recovery diagnostics before `result.json` exists, including after an engine
+Add `--allow-partial` to either collection command to retrieve available run
+diagnostics before `result.json` exists, including after an engine
 crash. The command returns `collectionStatus: partial`, `resultAvailable: false`
 and the last observed job state; a stale `running` state is retained as observed,
 not interpreted as a live process. It never creates a measurement result,
-changes job state, releases database access or executes recovery. A successful
+changes job state, releases an execution guard or executes repair. A successful
 command exit means verified transfer only. When a result already exists, the
 command retains its normal result response, including a failed result.
 
@@ -58,9 +58,9 @@ are excluded; changed or truncated inventoried bytes fail collection. A failed
 transfer has no completed download manifest; retain its diagnostics and retry
 collection into a new directory. Missing run directories still report
 `RESULT_NOT_READY`. Keep output outside the execution spool. Private directories
-and `context.json`, including recovery contexts and case variants, are excluded
+and `context.json`, including private execution contexts and case variants, are excluded
 from both inventories and direct file reads. Collection is not proof that owned
-work stopped or restoration completed; inspect the recovery evidence separately.
+work stopped or a product-specific restoration completed; inspect that operation's evidence separately.
 
 ## Portable export
 

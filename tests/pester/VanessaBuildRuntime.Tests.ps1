@@ -190,34 +190,7 @@ Describe 'Build native descendants and complete session admissions' {
     }
 }
 
-Describe 'Build database queue resource set' {
-    It 'excludes competitors from each scratch and service base, admits an unrelated base and releases the entire set' {
-        $root = Join-Path $TestDrive 'Очередь сборки с пробелом'
-        [void][IO.Directory]::CreateDirectory($root)
-        & {
-            param($Root)
-            . $script:BuildRuntimeHelper -ProjectRoot $Root -Action help *> $null
-            . $script:BuildRuntimeModule
-            . (Join-Path $script:BuildRuntimeRepo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-            $bases = @(Get-VanessaBuildDatabasePlan $Root)
-            $bases | Should -HaveCount 3
-            $request = @{ schemaVersion = 1; coordinator = (Join-Path $Root 'coordinator'); bases = $bases; timeout = 0; owner = @{ operation = 'build'; project = $Root } }
-            $holder = Start-ItlDatabaseAccessHost -Request $request
-            try {
-                foreach ($base in $bases) {
-                    $competitor = @{ schemaVersion = 1; coordinator = $request.coordinator; bases = @($base); timeout = 0; owner = @{ operation = 'competing-build'; project = $Root } }
-                    { Start-ItlDatabaseAccessHost -Request $competitor } | Should -Throw '*WAIT_TIMEOUT*'
-                }
-                $independent = @{ schemaVersion = 1; coordinator = $request.coordinator; bases = @(@{ kind = 'file'; path = (Join-Path $Root 'other') }); timeout = 0; owner = @{ operation = 'other'; project = $Root } }
-                $other = Start-ItlDatabaseAccessHost -Request $independent
-                try { (Complete-ItlDatabaseAccessHost $other).status | Should -Be released } finally { Close-ItlDatabaseAccessHost $other }
-                (Complete-ItlDatabaseAccessHost $holder).status | Should -Be released
-            } finally { Close-ItlDatabaseAccessHost $holder }
-            $next = Start-ItlDatabaseAccessHost -Request $request
-            try { (Complete-ItlDatabaseAccessHost $next).status | Should -Be released } finally { Close-ItlDatabaseAccessHost $next }
-        } $root
-    }
-}
+
 
 Describe 'Build service-template and cleanup contract' {
     It 'uses the existing service template without editing user or platform protection configuration' {

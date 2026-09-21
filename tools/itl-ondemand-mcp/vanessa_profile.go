@@ -17,21 +17,20 @@ import (
 const vanessaProfileResultMarker = "ITL_VANESSA_PROFILE_RESULT="
 
 type vanessaProfileResult struct {
-	SchemaVersion       int                     `json:"schemaVersion"`
-	Status              string                  `json:"status"`
-	InstanceID          string                  `json:"instanceId"`
-	ManagerPID          int                     `json:"managerPid"`
-	ManagerPort         int                     `json:"managerPort"`
-	TestClientPID       int                     `json:"testClientPid"`
-	TestClientPort      int                     `json:"testClientPort"`
-	TestClientState     string                  `json:"testClientState"`
-	TestClientReused    bool                    `json:"testClientReused"`
-	FeaturePath         string                  `json:"featurePath"`
-	ScenarioWasStarted  bool                    `json:"scenarioWasStarted"`
-	DatabaseOwnerTicket string                  `json:"databaseOwnerTicket,omitempty"`
-	OwnerGeneration     string                  `json:"ownerGeneration,omitempty"`
-	OwnerID             string                  `json:"ownerId,omitempty"`
-	OwnerProcess        *profileProcessIdentity `json:"ownerProcess,omitempty"`
+	SchemaVersion      int                     `json:"schemaVersion"`
+	Status             string                  `json:"status"`
+	InstanceID         string                  `json:"instanceId"`
+	ManagerPID         int                     `json:"managerPid"`
+	ManagerPort        int                     `json:"managerPort"`
+	TestClientPID      int                     `json:"testClientPid"`
+	TestClientPort     int                     `json:"testClientPort"`
+	TestClientState    string                  `json:"testClientState"`
+	TestClientReused   bool                    `json:"testClientReused"`
+	FeaturePath        string                  `json:"featurePath"`
+	ScenarioWasStarted bool                    `json:"scenarioWasStarted"`
+	OwnerGeneration    string                  `json:"ownerGeneration,omitempty"`
+	OwnerID            string                  `json:"ownerId,omitempty"`
+	OwnerProcess       *profileProcessIdentity `json:"ownerProcess,omitempty"`
 }
 
 func runVanessaProfileStart(args []string) error {
@@ -71,7 +70,7 @@ func runVanessaProfileStart(args []string) error {
 	if err != nil {
 		return err
 	}
-	if os.Getenv("ITL_INFOBASE_ACCESS_LEASE") == "" {
+	if os.Getenv("ITL_EXECUTION_CONTEXT") == "" {
 		config.CallerID, err = resolveProfileCaller(*callerID, true)
 		if err != nil {
 			return err
@@ -122,18 +121,6 @@ func runVanessaProfileStart(args []string) error {
 		}
 		return err
 	}
-	unlock, err := rt.lockDatabaseCalls(context.Background())
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if rt.databaseOwner != nil {
-		// Closing this inherited pipe host does not release the caller's lease.
-		// Its normal profile cleanup still owns both recorded native sessions.
-		if err := rt.databaseOwner.Close(); err != nil {
-			return err
-		}
-	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
 		return fmt.Errorf("encode Vanessa profile result: %w", err)
@@ -142,7 +129,7 @@ func runVanessaProfileStart(args []string) error {
 	return nil
 }
 
-func newProfileOwnerRuntime(config profileOwnerConfig, retainInherited bool) (*runtime, error) {
+func newProfileOwnerRuntime(config profileOwnerConfig, _ bool) (*runtime, error) {
 	catalog, err := loadCatalog(config.CatalogPath, "vanessa-ui")
 	if err != nil {
 		return nil, err
@@ -153,7 +140,7 @@ func newProfileOwnerRuntime(config profileOwnerConfig, retainInherited bool) (*r
 		// A manual profile has no idle expiry. Its owner observes actual process
 		// exit or an explicit stop; outer-owned profiles inherit caller cleanup.
 		idle: 0, catalogWait: 30 * time.Second, vanessaConnectWait: time.Minute,
-		logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute), suppressEvidence: true, databaseRetainInherited: retainInherited,
+		logger: slog.New(slog.NewJSONHandler(os.Stderr, nil)), progress: make(map[string]*progressRoute), suppressEvidence: true,
 	}, nil
 }
 
@@ -184,14 +171,9 @@ func startInteractiveVanessaProfile(ctx context.Context, rt *runtime, featurePat
 		rt.testClientState != testClientManagerConnected {
 		return nil, fmt.Errorf("ITL_VANESSA_TESTCLIENT_CONNECTION_STATE_UNAVAILABLE: interactive manager connection was not positively proven")
 	}
-	ticket := ""
-	if rt.databaseOwner != nil {
-		ticket = rt.databaseOwner.Proof.Ticket
-	}
 	return &vanessaProfileResult{
 		SchemaVersion: 1, Status: "running", InstanceID: rt.instanceID,
-		DatabaseOwnerTicket: ticket,
-		ManagerPID:          rt.backend.PID, ManagerPort: rt.backend.Port,
+		ManagerPID: rt.backend.PID, ManagerPort: rt.backend.Port,
 		TestClientPID: rt.backend.TestClientPID, TestClientPort: rt.backend.TestClientPort,
 		TestClientState: rt.testClientState, TestClientReused: rt.backend.TestClientReused,
 		FeaturePath: featurePath, ScenarioWasStarted: false,

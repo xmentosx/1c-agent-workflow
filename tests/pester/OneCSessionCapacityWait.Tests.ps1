@@ -86,14 +86,14 @@
         Should -Invoke Invoke-OneCSessionAdmissionSet -Times 2 -Exactly
     }
 
-    It 'does not launch if the phase expires while admission is being inspected' {
+    It 'does not launch if the execution phase expires while admission is being inspected' {
         Mock Invoke-OneCSessionAdmissionSet { param($Admissions, $StartProcess) Start-Sleep -Milliseconds 40; & $StartProcess }
         $deadline = [long]([decimal][Diagnostics.Stopwatch]::GetTimestamp() * 1000000000 / [Diagnostics.Stopwatch]::Frequency) + 10000000
         {
             Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $basePath -SessionWaitTimeoutSeconds 10 -SessionDeadlineMonotonicNs $deadline -ScriptBlock {
                 Invoke-OneCSessionProcessStart -StartProcess { $script:NativeStarts++ }
             }
-        } | Should -Throw '*ITL_ONEC_SESSION_WAIT_TIMEOUT*'
+        } | Should -Throw '*EXECUTION_GUARD_PHASE_DEADLINE_EXPIRED*'
         $script:NativeStarts | Should -Be 0
     }
 

@@ -150,7 +150,7 @@ Path(c['target']['workspace'], sys.argv[1]+'.done').touch()
         f.scenario['commands']['cleanup'] = ['{python}', '-c', 'from pathlib import Path; Path("cleanup.done").touch()']
         _, package = f.package()
         state, result = f.execute(package)
-        self.assertEqual('needs-attention', state['status'])
+        self.assertEqual('failed', state['status'])
         self.assertTrue((f.source / 'cleanup.done').exists())
         self.assertEqual(['failed', 'completed'], [p['status'] for p in result['phases']])
         self.assertEqual([], result['cleanupErrors'])

@@ -40,7 +40,7 @@ type probeSession struct {
 
 const (
 	gatewayCallTool        = "call_tool"
-	gatewayPublicToolCount = 3
+	gatewayPublicToolCount = 2
 )
 
 func main() {

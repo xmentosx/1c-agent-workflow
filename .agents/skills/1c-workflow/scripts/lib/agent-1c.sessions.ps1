@@ -8,254 +8,30 @@ if (-not (Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorActi
 
 function New-OneCNativeOperationJournal {
     param([object[]]$Resources = @(), [AllowNull()][object]$Owner = $null)
-    # The aggregate database admission owns this journal. Session-capacity
-    # reservation removal is not proof that database work has stopped.
-    return [pscustomobject]@{ entries = [Collections.Generic.List[object]]::new(); restorations = [Collections.Generic.List[object]]::new(); resources = @($Resources); owner = $Owner; persistence = $null }
-}
-
-function Initialize-OneCNativeRecoveryContext {
-    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [AllowNull()][object]$Configuration = $null,
-        [string]$DatabaseAccessBridgePath = '')
-    # Called in a fresh recovery verifier after loading the retained modules.
-    # Do not run today's helper entrypoint or import a changed project config.
-    $script:ProjectRoot = [IO.Path]::GetFullPath($ProjectRoot)
-    $script:Config = if ($null -ne $Configuration) { $Configuration } else { [pscustomobject]@{} }
-    $script:NativeRecoveryDatabaseAccessBridgePath = $DatabaseAccessBridgePath
-    $script:LifecycleOperationRecord = $null
-    $script:LifecycleOperationStatePath = ''
-    $script:LastLogPath = ''
-    $script:LastProcessId = 0
-    $script:LastProcessTimedOut = $false
-    $script:LastProcessMemoryLimitExceeded = $false
-    $script:LastProcessPeakWorkingSetMb = 0
-    $script:LastProcessWorkingSetLimitMb = 0
-    $script:RunStatusPath = ''
-    $script:RunProbePhase = ''
-    $script:OneCSessionLaunchContext = $null
-    $script:OneCNativeOperationJournal = $null
-    Set-RunStage -Stage 'native-recovery' -Detail 'Reconcile an interrupted native operation.'
-}
-
-function Get-OneCDatabaseAccessBridgePath {
-    $override = Get-Variable -Name NativeRecoveryDatabaseAccessBridgePath -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $override -and $override.Value) { return [string]$override.Value }
-    return (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-}
-
-function Save-OneCNativeRecoveryHelpers {
-    param([Parameter(Mandatory = $true)][string]$CoordinatorRoot, [string]$LibraryRoot = $PSScriptRoot)
-    # Retain code, not project config, credentials, command lines or native
-    # artifacts. The retained modules include the child process-enumeration worker's
-    # dependencies. Content identity allows callers from different worktrees to
-    # share the same immutable generation. Ports owns the session registry lock
-    # needed when a fresh recovery process launches native rollback.
-    $names = @('agent-1c.core.ps1', 'agent-1c.runtime-values.ps1', 'agent-1c.sessions.ps1', 'agent-1c.vanessa.ps1', 'agent-1c.ports.ps1')
-    $files = [Collections.Generic.List[object]]::new()
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try {
-        foreach ($name in $names) {
-            $bytes = [IO.File]::ReadAllBytes((Join-Path $LibraryRoot $name))
-            $hash = [BitConverter]::ToString($sha.ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
-            $files.Add([pscustomobject]@{name=$name;sha256=$hash;bytes=$bytes})
-        }
-        $identity = ($files | ForEach-Object { $_.name + ':' + $_.sha256 }) -join "`n"
-        $generation = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($identity))).Replace('-', '').ToLowerInvariant()
-    } finally { $sha.Dispose() }
-    $archiveRoot = Join-Path ([IO.Path]::GetFullPath($CoordinatorRoot)) 'native-helper-generations'
-    [void][IO.Directory]::CreateDirectory($archiveRoot)
-    if ((Get-Item -LiteralPath $archiveRoot -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_REDIRECTED'
+    # Operation evidence is diagnostic only. OS handles in execution-guards-v2
+    # are the sole admission authority and no journal survives as a recovery gate.
+    return [pscustomobject]@{
+        entries = [Collections.Generic.List[object]]::new()
+        restorations = [Collections.Generic.List[object]]::new()
+        resources = @($Resources)
     }
-    $destination = Join-Path $archiveRoot $generation
-    $staging = $null
-    try {
-        if (-not (Test-Path -LiteralPath $destination)) {
-            $staging = Join-Path $archiveRoot ('.pending-' + [guid]::NewGuid().ToString('N'))
-            [void][IO.Directory]::CreateDirectory($staging)
-            foreach ($file in $files) { [IO.File]::WriteAllBytes((Join-Path $staging $file.name), $file.bytes) }
-            for ($attempt = 1; $attempt -le 40; $attempt++) {
-                try { [IO.Directory]::Move($staging, $destination); break }
-                catch {
-                    # A concurrent winner still needs full validation below.
-                    if (Test-Path -LiteralPath $destination -PathType Container) { break }
-                    $cause = $_.Exception.GetBaseException()
-                    if ($attempt -ge 40 -or ($cause -isnot [IO.IOException] -and $cause -isnot [UnauthorizedAccessException])) { throw }
-                    # Windows can briefly deny rename immediately after the
-                    # newly written scripts are closed. Never change ACLs or
-                    # replace an existing generation to work around that.
-                    Start-Sleep -Milliseconds 50
-                }
-            }
-        }
-        if ((Get-Item -LiteralPath $destination -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_REDIRECTED'
-        }
-        # Use the same .NET hash boundary as the producer above. A fresh
-        # Windows PowerShell helper can inherit another host's module path;
-        # archive validation must not depend on an auto-loaded Get-FileHash
-        # function from that host's PowerShell module generation.
-        $archiveSha = [Security.Cryptography.SHA256]::Create()
-        try {
-            foreach ($file in $files) {
-                $path = Join-Path $destination $file.name
-                $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
-                if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or
-                    [BitConverter]::ToString($archiveSha.ComputeHash([IO.File]::ReadAllBytes($path))).Replace('-', '').ToLowerInvariant() -cne $file.sha256) {
-                    throw 'ONEC_NATIVE_RECOVERY_HELPER_ARCHIVE_CHANGED'
-                }
-            }
-        } finally { $archiveSha.Dispose() }
-        return @($files | ForEach-Object { [pscustomobject]@{path=(Join-Path $destination $_.name);sha256=$_.sha256} })
-    } finally {
-        if ($staging -and (Test-Path -LiteralPath $staging -PathType Container)) {
-            # Only fixed files in this call's fresh staging directory are owned.
-            # Never recursively remove an archive generation or unknown files.
-            foreach ($name in $names) { [IO.File]::Delete((Join-Path $staging $name)) }
-            [IO.Directory]::Delete($staging)
-        }
-    }
-}
-
-function Get-OneCNativeServerRecoveryInspector {
-    param([Parameter(Mandatory = $true)][object[]]$Resources)
-    if (-not @($Resources | Where-Object { $_.kind -eq 'server' }).Count) { return $null }
-
-    $provider = [string](Get-ConfigValue -Path 'serverBaseCopyScript' -Default '')
-    if ([string]::IsNullOrWhiteSpace($provider)) {
-        throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: serverBaseCopyScript must advertise recovery-observe before a recoverable server-base operation can start.'
-    }
-    $providerPath = Resolve-ProjectPath $provider
-    if (-not (Test-Path -LiteralPath $providerPath -PathType Leaf)) {
-        throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: provider was not found: $providerPath"
-    }
-    $providerItem = Get-Item -LiteralPath $providerPath -Force
-    if ($providerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-        throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REDIRECTED'
-    }
-    $providerSha256 = (Get-FileHash -LiteralPath $providerPath -Algorithm SHA256).Hash.ToLowerInvariant()
-
-    $process = $null
-    try {
-        $arguments = @('-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',$providerPath,
-            '-Operation','capabilities','-ProjectRoot',[IO.Path]::GetFullPath($script:ProjectRoot))
-        $startInfo = [Diagnostics.ProcessStartInfo]::new()
-        $startInfo.FileName = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'
-        $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments $arguments
-        $startInfo.WorkingDirectory = $script:ProjectRoot
-        $startInfo.UseShellExecute = $false
-        $startInfo.CreateNoWindow = $true
-        $startInfo.RedirectStandardOutput = $true
-        $startInfo.RedirectStandardError = $true
-        $startInfo.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
-        $startInfo.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-        $process = [Diagnostics.Process]::new()
-        $process.StartInfo = $startInfo
-        if (-not $process.Start()) { throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_START_FAILED' }
-        $stdout = $process.StandardOutput.ReadToEndAsync()
-        $stderr = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(30000)) {
-            $stopped = Stop-NativeProcessForSafety -Process $process
-            if (-not $stopped.confirmed) { throw ('ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_STOP_FAILED: ' + $stopped.error) }
-            throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_TIMEOUT: capabilities did not finish within 30 seconds.'
-        }
-        $process.WaitForExit()
-        if ($process.ExitCode -ne 0) {
-            throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: capabilities failed with exit code $($process.ExitCode)."
-        }
-        try { $contract = $stdout.Result | ConvertFrom-Json }
-        catch { throw ('ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: capabilities output is not JSON. ' + $_.Exception.Message) }
-        if ([int]$contract.schemaVersion -ne 2 -or @($contract.capabilities) -notcontains 'recovery-observe') {
-            throw "ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_REQUIRED: schemaVersion=2 and capability 'recovery-observe' are required."
-        }
-        if ((Get-FileHash -LiteralPath $providerPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $providerSha256) {
-            throw 'ONEC_NATIVE_SERVER_RECOVERY_PROVIDER_CHANGED'
-        }
-        return [pscustomobject][ordered]@{schemaVersion=1;path=$providerPath;sha256=$providerSha256;capability='recovery-observe'}
-    } finally {
-        if ($null -ne $process) { $process.Dispose() }
-    }
-}
-
-function New-OneCNativeJournalPersistence {
-    param([object[]]$Resources, [object]$Owner)
-    $persistence = $null
-    if ($null -ne $Owner) {
-        if ($null -eq $Owner.proof -or $Owner.proof.ticket -notmatch '^[a-f0-9]{32}$' -or
-            -not $Owner.proof.coordinator -or $Owner.public.ticket -cne $Owner.proof.ticket) {
-            throw 'ONEC_NATIVE_JOURNAL_OWNER_INVALID'
-        }
-        $journalId = [guid]::NewGuid().ToString('N')
-        # The public owner can be an inherited caller with no descriptive
-        # metadata. Missing labels do not invalidate its admitted authority.
-        $operation = ''; $project = ''
-        if ($Owner.public.owner.PSObject.Properties['operation']) { $operation = [string]$Owner.public.owner.operation }
-        if ($Owner.public.owner.PSObject.Properties['project']) { $project = [string]$Owner.public.owner.project }
-        $serverRecoveryInspector = Get-OneCNativeServerRecoveryInspector -Resources $Resources
-        $persistence = [pscustomobject]@{
-            owner = $Owner
-            journalId = $journalId; ticket = $Owner.proof.ticket
-            createdAt = [DateTime]::UtcNow.ToString('o'); hostName = [Environment]::MachineName; ownerPid = $PID
-            operation = $operation; project = $project
-            resources = @($Resources | ForEach-Object { [pscustomobject]@{kind=$_.kind;path=$_.path} })
-            resourceIds = @($Owner.public.resources)
-            helperInputs = @(Save-OneCNativeRecoveryHelpers -CoordinatorRoot $Owner.proof.coordinator)
-            serverRecoveryInspector = $serverRecoveryInspector
-        }
-    }
-    return $persistence
 }
 
 function Save-OneCNativeOperationRecord {
     param([AllowNull()][object]$Record)
-    if ($null -eq $Record -or $null -eq $Record.persistence) { return }
-    $binding = $Record.persistence
-    # Explicit fields only: never serialize process objects, passwords, native
-    # command lines, or the private inheritance proof. Every journal gets its
-    # own directory even when several participants share one admission ticket.
-    $payload = [ordered]@{
-        schemaVersion = 1; journalId = $binding.journalId; ticket = $binding.ticket; id = $Record.id
-        createdAt = $binding.createdAt; updatedAt = [DateTime]::UtcNow.ToString('o')
-        hostName = $binding.hostName; ownerPid = $binding.ownerPid
-        operation = $binding.operation; project = $binding.project; purpose = $Record.purpose
-        resources = @($binding.resources); resourceIds = @($binding.resourceIds); helperInputs = @($binding.helperInputs)
-        serverRecoveryInspector = $binding.serverRecoveryInspector
-        admissions = @($Record.admissions | ForEach-Object {
-            [pscustomobject]@{kind=$_.infoBaseKind;path=$_.infoBasePath;requiredSessions=$_.requiredSessions;expectedChildRole=$_.expectedChildRole}
-        })
-        startAttempted = [bool]$Record.startAttempted; processId = [int]$Record.processId
-        launcherExited = [bool]$Record.launcherExited; quiescenceConfirmed = [bool]$Record.quiescenceConfirmed
-        releaseEvidence = $Record.releaseEvidence
-        effectContract = (Get-StateValue -State $Record -Name 'effectContract' -Default $null)
-        outcome = (Get-StateValue -State $Record -Name 'outcome' -Default ([pscustomobject]@{status='pending';recordedAt=''}))
-        ownedProcessScopes = @($Record.ownedProcessScopes | ForEach-Object {
-            if ($_.role -eq 'native-invocation') {
-                [pscustomobject]@{schemaVersion=$_.schemaVersion;role=$_.role;kind=$_.kind;path=$_.path;mode=$_.mode;logPath=$_.logPath;notBeforeUtc=$_.notBeforeUtc}
-            } else {
-                [pscustomobject]@{schemaVersion=$_.schemaVersion;role=$_.role;kind=$_.kind;path=$_.path;runParamsPath=$_.runParamsPath;runParamsSha256=$_.runParamsSha256;testPorts=@($_.testPorts)}
-            }
-        })
-        # A future recovery must inspect live work and the original operation's
-        # restoration duties; these saved observations never authorize release.
-        recoveryRequiresLiveVerification = $true
-    }
-    . (Get-OneCDatabaseAccessBridgePath)
-    $ack = Publish-ItlDatabaseNativeOperation -Owner $binding.owner -Record $payload
-    $Record.persistedPath = $ack.path
+    # Records remain process-local evidence for cleanup and test acceptance.
 }
 
 function Add-OneCNativeOperationRecord {
     param([object]$Journal, [object[]]$Admissions, [string]$Purpose, [AllowNull()][object]$EffectContract = $null)
     if ($null -eq $Journal) { return $null }
-    if ($null -ne $Journal.owner) {
-        # Build callers attach the acquired owner after allocating the journal.
-        # Defer disk binding until the first operation, inside their cleanup scope.
-        if ($null -eq $Journal.persistence) { $Journal.persistence = New-OneCNativeJournalPersistence -Resources $Journal.resources -Owner $Journal.owner }
+    if (@($Journal.resources).Count -gt 0) {
         foreach ($admission in $Admissions) {
             $matches = @($Journal.resources | Where-Object {
                 $_.kind -ceq $admission.infoBaseKind -and
                 (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $admission.infoBasePath)
             })
-            if ($matches.Count -eq 0) { throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED' }
+            if ($matches.Count -eq 0) { throw 'EXECUTION_GUARD_RESOURCE_NOT_DECLARED' }
         }
     }
     $record = [pscustomobject]@{
@@ -271,11 +47,8 @@ function Add-OneCNativeOperationRecord {
         effectContract = $EffectContract
         outcome = [pscustomobject]@{status='pending';recordedAt=''}
         ownedProcessScopes = @()
-        persistence = $Journal.persistence
-        persistedPath = ''
     }
     $Journal.entries.Add($record)
-    Save-OneCNativeOperationRecord -Record $record
     return $record
 }
 
@@ -284,8 +57,8 @@ function Test-OneCNativeOperationJournalReleased {
     foreach ($record in $Journal.entries) {
         if ($record.startAttempted -and -not $record.quiescenceConfirmed) { return $false }
     }
-    if ($Journal.PSObject.Properties['restorations']) {
-        foreach ($duty in $Journal.restorations) { if ($duty.payload.status -eq 'pending') { return $false } }
+    foreach ($duty in @($Journal.restorations)) {
+        if ($duty.payload.status -eq 'pending') { return $false }
     }
     return $true
 }
@@ -293,84 +66,45 @@ function Test-OneCNativeOperationJournalReleased {
 function Register-OneCFileRestorationDuty {
     param([Parameter(Mandatory = $true)][object]$Snapshot)
     $journalVariable = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value -or $null -eq $journalVariable.Value.owner) { return }
-    $journal = $journalVariable.Value
-    if ($null -eq $journal.persistence) { $journal.persistence = New-OneCNativeJournalPersistence -Resources $journal.resources -Owner $journal.owner }
-    $binding = $journal.persistence
-    $id = [guid]::NewGuid().ToString('N')
-    $oldBackup = $Snapshot.backupPath
-    if ($Snapshot.existed) {
-        # Keep the snapshot with the authority, not in OS temporary storage that
-        # can be removed before an interrupted operation is reconciled.
-        $directory = [IO.Path]::GetFullPath($binding.owner.proof.coordinator)
-        foreach ($component in @('restoration-snapshots', $binding.ticket, $binding.journalId)) {
-            $directory = Join-Path $directory $component
-            [void][IO.Directory]::CreateDirectory($directory)
-            if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'ONEC_RESTORATION_SNAPSHOT_REDIRECTED' }
-        }
-        $retained = Join-Path $directory ($id + '.xml')
-        [IO.File]::Copy($oldBackup, $retained, $false)
-        if ((Get-FileHash -LiteralPath $retained -Algorithm SHA256).Hash.ToLowerInvariant() -cne $Snapshot.backupSha256) { throw 'ONEC_RESTORATION_SNAPSHOT_CHANGED' }
-        $Snapshot.backupPath = $retained
+    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value) { return }
+    $payload = [pscustomobject]@{
+        id=[guid]::NewGuid().ToString('N');kind='config-dump-info';status='pending'
+        destination=[IO.Path]::GetFullPath($Snapshot.path);snapshotPath=$Snapshot.backupPath
+        snapshotSha256=$Snapshot.backupSha256;policy=$Snapshot.restorationPolicy
     }
-    $payload = [ordered]@{
-        schemaVersion=1;journalId=$binding.journalId;ticket=$binding.ticket;id=$id
-        createdAt=[DateTime]::UtcNow.ToString('o');updatedAt=[DateTime]::UtcNow.ToString('o')
-        hostName=$binding.hostName;ownerPid=$binding.ownerPid;operation=$binding.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
-        resources=@($binding.resources);resourceIds=@($binding.resourceIds);helperInputs=@($binding.helperInputs)
-        kind='config-dump-info';destination=[IO.Path]::GetFullPath($Snapshot.path);existed=[bool]$Snapshot.existed
-        snapshotPath=$Snapshot.backupPath;snapshotSha256=$Snapshot.backupSha256;policy=$Snapshot.restorationPolicy;status='pending'
-    }
-    $duty = [pscustomobject]@{owner=$binding.owner;payload=$payload}
-    $journal.restorations.Add($duty)
+    $duty = [pscustomobject]@{payload=$payload}
+    $journalVariable.Value.restorations.Add($duty)
     $Snapshot.restorationDuty = $duty
-    try {
-        . (Get-OneCDatabaseAccessBridgePath)
-        Publish-ItlDatabaseRestorationDuty -Owner $duty.owner -Record $payload | Out-Null
-    } catch { $Snapshot.preserveBackup = $true; throw }
-    if ($oldBackup -and $oldBackup -cne $Snapshot.backupPath) { [IO.File]::Delete($oldBackup) }
 }
 
 function Complete-OneCFileRestorationDuty {
     param([Parameter(Mandatory = $true)][object]$Snapshot, [ValidateSet('restored','committed')][string]$Resolution = 'restored')
-    if (-not $Snapshot.PSObject.Properties['restorationDuty'] -or $null -eq $Snapshot.restorationDuty) { return }
-    $duty = $Snapshot.restorationDuty
-    . (Get-OneCDatabaseAccessBridgePath)
-    $duty.payload.status = $Resolution
-    $duty.payload.updatedAt = [DateTime]::UtcNow.ToString('o')
-    try { Publish-ItlDatabaseRestorationDuty -Owner $duty.owner -Record $duty.payload | Out-Null }
-    catch { $duty.payload.status = 'pending'; $Snapshot.preserveBackup = $true; throw }
+    if ($Snapshot.PSObject.Properties['restorationDuty'] -and $null -ne $Snapshot.restorationDuty) {
+        $Snapshot.restorationDuty.payload.status = $Resolution
+    }
 }
 
 function Register-OneCDatabaseRestorationDuty {
     param([Parameter(Mandatory = $true)][object]$State, [Parameter(Mandatory = $true)][string]$SnapshotPath,
         [ValidateSet('always','on-failure')][string]$Policy = 'always', [AllowNull()][object]$RecoveryContext = $null)
     $journalVariable = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value -or $null -eq $journalVariable.Value.owner) { return $null }
-    $journal = $journalVariable.Value
-    if ($null -eq $journal.persistence) { $journal.persistence = New-OneCNativeJournalPersistence -Resources $journal.resources -Owner $journal.owner }
-    $binding = $journal.persistence
+    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value) { return $null }
     $path = [IO.Path]::GetFullPath($SnapshotPath)
-    $payload = [ordered]@{
-        schemaVersion=1;journalId=$binding.journalId;ticket=$binding.ticket;id=[guid]::NewGuid().ToString('N')
-        createdAt=[DateTime]::UtcNow.ToString('o');updatedAt=[DateTime]::UtcNow.ToString('o')
-        hostName=$binding.hostName;ownerPid=$binding.ownerPid;operation=$binding.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
-        resources=@($binding.resources);resourceIds=@($binding.resourceIds);helperInputs=@($binding.helperInputs)
-        kind='infobase-snapshot';infoBase=[pscustomobject]@{kind=[string]$State.infoBaseKind;path=[string]$State.devBranchInfoBasePath}
+    $payload = [pscustomobject]@{
+        id=[guid]::NewGuid().ToString('N');kind='infobase-snapshot';status='pending';policy=$Policy
+        infoBase=[pscustomobject]@{kind=[string]$State.infoBaseKind;path=[string]$State.devBranchInfoBasePath}
         snapshotPath=$path;snapshotSha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-        policy=$Policy;status='pending';restoreOperation='';recoveryContext=$RecoveryContext
+        restoreOperation='';recoveryContext=$RecoveryContext
     }
-    $duty = [pscustomobject]@{owner=$binding.owner;payload=$payload}
-    $journal.restorations.Add($duty)
-    . (Get-OneCDatabaseAccessBridgePath)
-    Publish-ItlDatabaseRestorationDuty -Owner $duty.owner -Record $payload | Out-Null
+    $duty = [pscustomobject]@{payload=$payload}
+    $journalVariable.Value.restorations.Add($duty)
     return $duty
 }
 
 function Get-OneCDatabaseRestorationDuty {
     param([Parameter(Mandatory = $true)][string]$SnapshotPath)
     $journalVariable = Get-Variable -Name OneCNativeOperationJournal -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value -or -not $journalVariable.Value.PSObject.Properties['restorations']) { return $null }
+    if ($null -eq $journalVariable -or $null -eq $journalVariable.Value) { return $null }
     $path = [IO.Path]::GetFullPath($SnapshotPath)
     $matches = @($journalVariable.Value.restorations | Where-Object {
         $_.payload.kind -eq 'infobase-snapshot' -and $_.payload.status -eq 'pending' -and
@@ -388,72 +122,48 @@ function Assert-OneCDatabaseRestoreRequest {
         $InfoBaseKind -cne $payload.infoBase.kind -or
         -not (Test-ItlOnDemandInfoBaseMatch -First $InfoBasePath -Second $payload.infoBase.path) -or
         $DesignerArgs.Count -ne 2 -or $DesignerArgs[0] -ine '/RestoreIB' -or
-        -not [string]::Equals([IO.Path]::GetFullPath($DesignerArgs[1]),$payload.snapshotPath,[StringComparison]::OrdinalIgnoreCase)) {
+        -not [string]::Equals([IO.Path]::GetFullPath($DesignerArgs[1]),$payload.snapshotPath,[StringComparison]::OrdinalIgnoreCase) -or
+        (Get-FileHash -LiteralPath $payload.snapshotPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $payload.snapshotSha256) {
         throw 'ONEC_RESTORATION_NATIVE_INPUT_CHANGED'
     }
-    $payload.restoreOperation = ''
-    $payload.updatedAt = [DateTime]::UtcNow.ToString('o')
-    . (Get-OneCDatabaseAccessBridgePath)
-    # Revalidates the pinned DT bytes before the native restore starts.
-    Publish-ItlDatabaseRestorationDuty -Owner $Duty.owner -Record $payload | Out-Null
 }
 
 function Set-OneCDatabaseRestoreEvidence {
     param([Parameter(Mandatory = $true)][object]$Duty, [AllowNull()][object]$NativeRecord)
-    if ($null -eq $NativeRecord -or $null -eq $NativeRecord.persistence -or -not $NativeRecord.quiescenceConfirmed -or
+    if ($null -eq $NativeRecord -or -not $NativeRecord.quiescenceConfirmed -or
         $NativeRecord.purpose -cne ('designer-restore-snapshot-' + $Duty.payload.id)) {
         throw 'ONEC_RESTORATION_NATIVE_RESTORE_UNPROVEN'
     }
-    $Duty.payload.restoreOperation = $NativeRecord.persistence.journalId + '/' + $NativeRecord.id
-    $Duty.payload.updatedAt = [DateTime]::UtcNow.ToString('o')
-    . (Get-OneCDatabaseAccessBridgePath)
-    Publish-ItlDatabaseRestorationDuty -Owner $Duty.owner -Record $Duty.payload | Out-Null
+    $Duty.payload.restoreOperation = [string]$NativeRecord.id
 }
 
 function Complete-OneCDatabaseRestorationDuty {
     param([AllowNull()][object]$Duty, [ValidateSet('restored','committed')][string]$Resolution = 'restored')
-    if ($null -eq $Duty) { return }
-    $Duty.payload.status = $Resolution
-    $Duty.payload.updatedAt = [DateTime]::UtcNow.ToString('o')
-    try {
-        . (Get-OneCDatabaseAccessBridgePath)
-        Publish-ItlDatabaseRestorationDuty -Owner $Duty.owner -Record $Duty.payload | Out-Null
-    } catch { $Duty.payload.status = 'pending'; throw }
+    if ($null -ne $Duty) { $Duty.payload.status = $Resolution }
 }
 
 function Assert-OneCNativeOperationJournalOwner {
     param([AllowNull()][object]$Journal)
-    if ($null -eq $Journal -or $null -eq $Journal.owner) { return }
-    . (Get-OneCDatabaseAccessBridgePath)
-    Assert-ItlDatabaseAccessHost -Owner $Journal.owner
+    # The current execution context is validated by execution-guards-v2.
 }
 
 function Confirm-OneCNativeOperationRelease {
     param([AllowNull()][object]$Record, [bool]$LauncherExited, [bool]$OwnedProcessesReleased, [string]$Evidence)
     if ($null -eq $Record) { return }
     $Record.launcherExited = $LauncherExited
-    # Never infer descendant release from launcher exit or an absent PID.
-    # The caller must supply its operation-specific owned-process proof.
     $Record.quiescenceConfirmed = [bool]($Record.startAttempted -and $LauncherExited -and $OwnedProcessesReleased -and $Evidence)
     $Record.releaseEvidence = if ($Record.quiescenceConfirmed) { $Evidence } else { '' }
-    Save-OneCNativeOperationRecord -Record $Record
 }
 
 function Complete-OneCNativeOperationOutcome {
     param([AllowNull()][object]$Record, [ValidateSet('succeeded','failed')][string]$Status)
     if ($null -eq $Record) { return }
     $previous = Get-StateValue -State $Record -Name 'outcome' -Default ([pscustomobject]@{status='pending';recordedAt=''})
-    if ($previous.status -ne 'pending' -and $previous.status -ne $Status) {
-        throw 'ONEC_NATIVE_OPERATION_OUTCOME_CHANGED'
-    }
+    if ($previous.status -ne 'pending' -and $previous.status -ne $Status) { throw 'ONEC_NATIVE_OPERATION_OUTCOME_CHANGED' }
     if ($previous.status -eq $Status) { return }
-    if ($Status -eq 'succeeded' -and -not $Record.quiescenceConfirmed) {
-        throw 'ONEC_NATIVE_OPERATION_SUCCESS_NOT_QUIESCENT'
-    }
+    if ($Status -eq 'succeeded' -and -not $Record.quiescenceConfirmed) { throw 'ONEC_NATIVE_OPERATION_SUCCESS_NOT_QUIESCENT' }
     $Record | Add-Member -NotePropertyName outcome -NotePropertyValue ([pscustomobject]@{status=$Status;recordedAt=[DateTime]::UtcNow.ToString('o')}) -Force
-    Save-OneCNativeOperationRecord -Record $Record
 }
-
 function Get-OneCMaxConcurrentSessions {
     $rawValue = Get-EnvValue -Name "ONEC_MAX_CONCURRENT_SESSIONS" -Default 3
     $text = ([string]$rawValue).Trim()
@@ -911,6 +621,105 @@ function Test-OneCSessionWaitExpired {
     return ($Context.sessionWaitTimeoutSeconds -gt 0 -and $Watch.Elapsed.TotalSeconds -ge $Context.sessionWaitTimeoutSeconds)
 }
 
+function Initialize-OneCExecutionJobType {
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or ('ItlWorkflow.ExecutionJob' -as [type])) { return }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace ItlWorkflow {
+    public static class ExecutionJob {
+        [StructLayout(LayoutKind.Sequential)] public struct IO_COUNTERS {
+            public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+            public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+        }
+        [StructLayout(LayoutKind.Sequential)] public struct BASIC_LIMITS {
+            public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+            public uint LimitFlags;
+            public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+            public uint ActiveProcessLimit;
+            public UIntPtr Affinity;
+            public uint PriorityClass, SchedulingClass;
+        }
+        [StructLayout(LayoutKind.Sequential)] public struct EXTENDED_LIMITS {
+            public BASIC_LIMITS BasicLimitInformation;
+            public IO_COUNTERS IoInfo;
+            public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+        }
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        public static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref EXTENDED_LIMITS info, uint length);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool CloseHandle(IntPtr handle);
+    }
+}
+'@
+}
+
+function Set-OneCExecutionJobKillOnClose {
+    param([Parameter(Mandatory = $true)][IntPtr]$Handle, [Parameter(Mandatory = $true)][bool]$Enabled)
+    $limits = [ItlWorkflow.ExecutionJob+EXTENDED_LIMITS]::new()
+    if ($Enabled) { $limits.BasicLimitInformation.LimitFlags = 0x00002000 }
+    $size = [Runtime.InteropServices.Marshal]::SizeOf([type][ItlWorkflow.ExecutionJob+EXTENDED_LIMITS])
+    if (-not [ItlWorkflow.ExecutionJob]::SetInformationJobObject($Handle, 9, [ref]$limits, [uint32]$size)) {
+        throw "ONEC_EXECUTION_JOB_CONFIGURATION_FAILED: win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+    }
+}
+
+function New-OneCExecutionJob {
+    param([AllowNull()][object]$Process)
+    if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or $Process -isnot [Diagnostics.Process]) { return $null }
+    try { if ($Process.HasExited) { return $null } } catch { return $null }
+    Initialize-OneCExecutionJobType
+    $handle = [ItlWorkflow.ExecutionJob]::CreateJobObject([IntPtr]::Zero, $null)
+    if ($handle -eq [IntPtr]::Zero) { throw "ONEC_EXECUTION_JOB_CREATE_FAILED: win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())" }
+    try {
+        Set-OneCExecutionJobKillOnClose -Handle $handle -Enabled $true
+        if (-not [ItlWorkflow.ExecutionJob]::AssignProcessToJobObject($handle, $Process.Handle)) {
+            $assignError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            # A foreground launcher may complete between Start-Process and the
+            # assignment call. There is no remaining process tree to own in
+            # that case; every still-live process must be assigned or fail.
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            while ($watch.ElapsedMilliseconds -lt 250) {
+                try { $Process.Refresh(); if ($Process.HasExited) { break } } catch { break }
+                Start-Sleep -Milliseconds 10
+            }
+            try { $exited = [bool]$Process.HasExited } catch { $exited = $true }
+            if ($exited) {
+                [ItlWorkflow.ExecutionJob]::CloseHandle($handle) | Out-Null
+                return $null
+            }
+            throw "ONEC_EXECUTION_JOB_ASSIGN_FAILED: pid=$($Process.Id) win32=$assignError"
+        }
+        return [pscustomobject]@{ handle=$handle;processId=[int]$Process.Id;closed=$false;detached=$false }
+    } catch {
+        [ItlWorkflow.ExecutionJob]::CloseHandle($handle) | Out-Null
+        throw
+    }
+}
+
+function Close-OneCExecutionJob {
+    param([AllowNull()][object]$Job, [switch]$Detach)
+    if ($null -eq $Job -or [bool]$Job.closed) { return }
+    try {
+        if ($Detach) {
+            Set-OneCExecutionJobKillOnClose -Handle ([IntPtr]$Job.handle) -Enabled $false
+            $Job.detached = $true
+        }
+    } finally {
+        if (-not [ItlWorkflow.ExecutionJob]::CloseHandle([IntPtr]$Job.handle)) {
+            throw "ONEC_EXECUTION_JOB_CLOSE_FAILED: win32=$([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+        }
+        $Job.closed = $true
+    }
+}
+
 function Invoke-OneCSessionAdmissionSet {
     param(
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
@@ -1049,7 +858,13 @@ function Invoke-OneCSessionProcessStart {
                     catch { $context.nativeOperationRecord.startAttempted = $false; throw }
                 }
                 $context.nativeStartAttempted = $true
+                if ($context.PSObject.Properties['executionState']) { $context.executionState.started = $true }
                 $startedProcess = & $requestedStartProcess
+                try { $context.executionJob = New-OneCExecutionJob -Process $startedProcess }
+                catch {
+                    Stop-NativeProcessForSafety -Process $startedProcess | Out-Null
+                    throw
+                }
                 if ($null -ne $context.nativeOperationRecord -and $null -ne $startedProcess) {
                     $context.nativeOperationRecord.process = $startedProcess
                     $context.nativeOperationRecord.processId = [int]$startedProcess.Id
@@ -1074,6 +889,121 @@ function Invoke-OneCSessionProcessStart {
             if (-not $beforeLaunch -or $waitSeconds -gt 0 -or $null -eq $context.sessionLimitRecovery -or [bool]$context.recoveryAttempted) { throw }
             $context.recoveryAttempted = $true
             & $context.sessionLimitRecovery
+        }
+    }
+}
+
+function Get-OneCExecutionGuardSettings {
+    $hasConfiguration = $null -ne (Get-Variable -Name Config -Scope Script -ErrorAction SilentlyContinue)
+    $root = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_GUARD_ROOT', 'Process')
+    if (-not $root -and $hasConfiguration) { $root = [string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_ROOT' -ConfigName 'executionGuard.root' -Default '') }
+    if (-not $root) {
+        $root = [string][Environment]::GetEnvironmentVariable('ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT', 'Process')
+        if (-not $root) { $root = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ITL\execution-guards-v2' }
+    }
+    $timeoutText = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_GUARD_WAIT_TIMEOUT_SECONDS', 'Process')
+    if (-not $timeoutText -and $hasConfiguration) { $timeoutText = [string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_WAIT_TIMEOUT_SECONDS' -ConfigName 'executionGuard.waitTimeoutSeconds' -Default '3600') }
+    if (-not $timeoutText) { $timeoutText = '3600' }
+    $timeout = 0.0
+    if (-not [double]::TryParse($timeoutText, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$timeout) -or
+        [double]::IsNaN($timeout) -or [double]::IsInfinity($timeout) -or $timeout -le 0 -or $timeout -gt 86400) {
+        throw 'EXECUTION_GUARD_WAIT_TIMEOUT_INVALID'
+    }
+    $python = [string][Environment]::GetEnvironmentVariable('ITL_EXECUTION_GUARD_PYTHON', 'Process')
+    if (-not $python -and $hasConfiguration) { $python = [string](Get-Setting -EnvName 'ITL_EXECUTION_GUARD_PYTHON' -ConfigName 'executionGuard.python' -Default '') }
+    return [pscustomobject]@{root=(Resolve-Agent1cFullPath -Path $root);waitTimeoutSeconds=$timeout;python=$python}
+}
+
+function ConvertTo-OneCExecutionGuardBases {
+    param([Parameter(Mandatory = $true)][object[]]$Admissions)
+    return @($Admissions | ForEach-Object {
+        $kind = [string](Get-StateValue -State $_ -Name 'infoBaseKind' -Default '')
+        $path = [string](Get-StateValue -State $_ -Name 'infoBasePath' -Default '')
+        if ($kind -notin @('file','server') -or [string]::IsNullOrWhiteSpace($path)) { throw 'EXECUTION_GUARD_RESOURCE_INVALID' }
+        [pscustomobject]@{kind=$kind;path=$(if ($kind -eq 'file') { Resolve-Agent1cFullPath -Path $path } else { $path.Trim() })}
+    })
+}
+
+function Invoke-WithOneCExecutionGuard {
+    param(
+        [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
+        [Parameter(Mandatory = $true)][string]$Purpose,
+        [ValidateRange(0, 86400)][double]$WaitTimeoutSeconds = 0,
+        [string]$CancelPath = '',
+        [long]$DeadlineMonotonicNs = 0,
+        [AllowNull()][object]$ExecutionState = $null,
+        [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock
+    )
+
+    if ($null -eq $ExecutionState) { $ExecutionState = [pscustomobject]@{ started = $false } }
+    $guardOwner = $null
+    $phaseCheckpoint = $null
+    $executionResult = 'failed'
+    $executionError = ''
+    $previousExecutionContext = [Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT', 'Process')
+    $previousExecutionContextKey = [Environment]::GetEnvironmentVariable('ITL_EXECUTION_CONTEXT_KEY', 'Process')
+    $bases = ConvertTo-OneCExecutionGuardBases -Admissions $Admissions
+    $guardSettings = Get-OneCExecutionGuardSettings
+    $effectiveGuardTimeout = $(if ($WaitTimeoutSeconds -gt 0) { [math]::Min($WaitTimeoutSeconds, $guardSettings.waitTimeoutSeconds) } else { $guardSettings.waitTimeoutSeconds })
+    $phaseCheckpoint = Suspend-Agent1cLifecycleOperationForExecutionWait -Admissions $Admissions -Purpose $Purpose
+    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/ExecutionGuard.ps1')
+    $request = [ordered]@{
+        schemaVersion=1;root=$guardSettings.root;bases=@($bases);operation=$Purpose
+        executionId=[guid]::NewGuid().ToString('N');timeout=$effectiveGuardTimeout
+        cancelPath=$CancelPath;phaseDeadline=$(if ($DeadlineMonotonicNs -gt 0) { [string]$DeadlineMonotonicNs } else { $null })
+    }
+    if ($previousExecutionContext) {
+        if (-not $previousExecutionContextKey) { throw 'EXECUTION_CONTEXT_KEY_REQUIRED' }
+        $request['inheritedContext'] = $previousExecutionContext
+        $request['inheritedContextKey'] = $previousExecutionContextKey
+    }
+    try {
+        $guardOwner = Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+        Resume-Agent1cLifecycleOperationAfterExecutionWait -Checkpoint $phaseCheckpoint -Admissions $Admissions
+        [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT', [string]$guardOwner.proof.encoded, 'Process')
+        [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT_KEY', [string]$guardOwner.proof.key, 'Process')
+        $drainVariable = Get-Variable -Name OneCExecutionDrainRequest -Scope Script -ErrorAction SilentlyContinue
+        if ($null -ne $drainVariable -and $null -ne $drainVariable.Value) {
+            $drain = $drainVariable.Value
+            $matches = @($Admissions | Where-Object {
+                [string]$_.infoBaseKind -ceq [string]$drain.infoBaseKind -and
+                (Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second ([string]$drain.infoBasePath))
+            })
+            # A command can run unrelated exact-base native phases before the
+            # planned mutating phase. Defer the drain until its own resource is
+            # guarded; target revalidation is owned by the lifecycle checkpoint.
+            if ($matches.Count -gt 0) {
+                if ([string](Get-StateValue -State $drain -Name 'drainKind' -Default 'branch') -eq 'auxiliary') {
+                    if (-not (Get-Command Invoke-AuxiliaryOwnedRuntimeDrainUnderExecutionGuard -CommandType Function -ErrorAction SilentlyContinue)) {
+                        throw 'EXECUTION_GUARD_DRAIN_IMPLEMENTATION_MISSING'
+                    }
+                    Invoke-AuxiliaryOwnedRuntimeDrainUnderExecutionGuard -Request $drain
+                } else {
+                    if (-not (Get-Command Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -CommandType Function -ErrorAction SilentlyContinue)) {
+                        throw 'EXECUTION_GUARD_DRAIN_IMPLEMENTATION_MISSING'
+                    }
+                    Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $drain
+                }
+                $script:OneCExecutionDrainRequest = $null
+            }
+        }
+        $value = & $ScriptBlock
+        $executionResult = 'succeeded'
+        return $value
+    } catch {
+        $executionError = $_.Exception.Message
+        if ($executionError -match 'CANCELLED') { $executionResult = 'cancelled' }
+        elseif ([bool](Get-StateValue -State $ExecutionState -Name 'started' -Default $false)) { $executionResult = 'interrupted' }
+        throw
+    } finally {
+        [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT', $previousExecutionContext, 'Process')
+        [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT_KEY', $previousExecutionContextKey, 'Process')
+        if ($null -ne $guardOwner -and -not $guardOwner.closed) {
+            try { Complete-ItlExecutionGuardHost -Owner $guardOwner -Result $executionResult -ErrorMessage $executionError | Out-Null }
+            catch {
+                Close-ItlExecutionGuardHost -Owner $guardOwner
+                if (-not $executionError) { throw }
+            }
         }
     }
 }
@@ -1106,36 +1036,50 @@ function Invoke-WithOneCSessionAdmissionContext {
         expectedChildRole = $ExpectedChildRole
         purpose = $Purpose
     }) + @($AdditionalAdmissions)
-    $script:OneCSessionLaunchContext = [pscustomobject]@{
-        infoBaseKind = $InfoBaseKind
-        infoBasePath = $InfoBasePath
-        requiredSessions = $RequiredSessions
-        expectedChildRole = $ExpectedChildRole
-        purpose = $Purpose
-        admissions = @($admissions)
-        consumed = $false
-        reservationIds = @()
-        sessionLimitRecovery = $SessionLimitRecovery
-        recoveryAttempted = $false
-        nativeStartAttempted = $false
-        nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose -EffectContract $NativeEffectContract)
-        nativeOperationJournal = $script:OneCNativeOperationJournal
-        sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
-        sessionCancelPath = $SessionCancelPath
-        sessionDeadlineMonotonicNs = $SessionDeadlineMonotonicNs
-        keepReservation = [bool]$KeepReservation
-    }
-    try {
-        return (& $ScriptBlock)
-    } finally {
-        $completedContext = $script:OneCSessionLaunchContext
-        $script:OneCSessionLaunchContext = $previous
-        if ($null -ne $completedContext -and -not [bool]$completedContext.keepReservation) {
-            foreach ($reservationId in @($completedContext.reservationIds)) {
-                Remove-OneCSessionReservation -ReservationId ([string]$reservationId)
+    $executionState = [pscustomobject]@{ started = $false }
+    $sessionScriptBlock = $ScriptBlock
+    $sessionSucceeded = $false
+    Invoke-WithOneCExecutionGuard -Admissions $admissions -Purpose $Purpose `
+        -WaitTimeoutSeconds $SessionWaitTimeoutSeconds -CancelPath $SessionCancelPath `
+        -DeadlineMonotonicNs $SessionDeadlineMonotonicNs -ExecutionState $executionState -ScriptBlock {
+            try {
+                $script:OneCSessionLaunchContext = [pscustomobject]@{
+                    infoBaseKind = $InfoBaseKind
+                    infoBasePath = $InfoBasePath
+                    requiredSessions = $RequiredSessions
+                    expectedChildRole = $ExpectedChildRole
+                    purpose = $Purpose
+                    admissions = @($admissions)
+                    consumed = $false
+                    reservationIds = @()
+                    sessionLimitRecovery = $SessionLimitRecovery
+                    recoveryAttempted = $false
+                    nativeStartAttempted = $false
+                    executionState = $executionState
+                    executionJob = $null
+                    nativeOperationRecord = (Add-OneCNativeOperationRecord -Journal $script:OneCNativeOperationJournal -Admissions $admissions -Purpose $Purpose -EffectContract $NativeEffectContract)
+                    nativeOperationJournal = $script:OneCNativeOperationJournal
+                    sessionWaitTimeoutSeconds = $SessionWaitTimeoutSeconds
+                    sessionCancelPath = $SessionCancelPath
+                    sessionDeadlineMonotonicNs = $SessionDeadlineMonotonicNs
+                    keepReservation = [bool]$KeepReservation
+                }
+                $value = & $sessionScriptBlock
+                $sessionSucceeded = $true
+                return $value
+            } finally {
+                $completedContext = $script:OneCSessionLaunchContext
+                $script:OneCSessionLaunchContext = $previous
+                if ($null -ne $completedContext) {
+                    Close-OneCExecutionJob -Job $completedContext.executionJob -Detach:($sessionSucceeded -and [bool]$completedContext.keepReservation)
+                }
+                if ($null -ne $completedContext -and -not [bool]$completedContext.keepReservation) {
+                    foreach ($reservationId in @($completedContext.reservationIds)) {
+                        Remove-OneCSessionReservation -ReservationId ([string]$reservationId)
+                    }
+                }
             }
         }
-    }
 }
 
 function Start-OneCProcessBackground {

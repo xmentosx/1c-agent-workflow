@@ -9,7 +9,7 @@ A scenario can allow a long calculation while bounding preparation and cleanup:
 }
 ```
 
-The execution host starts each deadline after database admission. Preparation,
+The execution host starts each deadline after execution-guard acquisition. Preparation,
 each iteration's action/readiness/verification, reset, source capture and cleanup have distinct
 budgets. A handshake first uses `ready` for workload preparation and controller
 start, then receives a fresh `action` deadline in `go.json`. The measured interval

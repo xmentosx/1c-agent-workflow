@@ -279,6 +279,7 @@ function Assert-SourcePackage {
         "install-agent-1c-workflow.ps1",
         "AGENT-INSTALL.md",
         ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1",
+        ".agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1",
         ".agents\skills\1c-workflow\chatgpt\mcp_bridge.py",
         ".agents\skills\1c-workflow-fast\SKILL.md",
         ".agents\skills\product-docs\SKILL.md",
@@ -557,6 +558,12 @@ try {
         Write-Host "Initialization skipped because -NoInit was specified."
         exit 0
     }
+
+    $cutoverPath = Join-Path $projectRootFull '.agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1'
+    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) {
+        throw "Installed execution-guard cutover entrypoint was not found: $cutoverPath"
+    }
+    & $cutoverPath -ProjectRoot $projectRootFull | Out-Null
 
     $launcherPath = Join-Path $projectRootFull ".agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1"
     if (-not (Test-Path -LiteralPath $launcherPath -PathType Leaf -ErrorAction SilentlyContinue)) {

@@ -223,12 +223,13 @@ Describe "Branch-safe Vanessa runtime cleanup" {
 
         $vanessaText | Should -Match 'function Invoke-DevBranchVanessaRuntimeRelease'
         $vanessaText | Should -Match 'function Stop-DevBranchTestClients[\s\S]*Invoke-DevBranchVanessaRuntimeRelease'
-        $lifecycleText | Should -Match 'function Stop-DevBranchRuntimeBeforeInfobaseMutation[\s\S]*Invoke-DevBranchVanessaRuntimeRelease'
+        $lifecycleText | Should -Match 'function Stop-DevBranchRuntimeBeforeInfobaseMutation[\s\S]*OneCExecutionDrainRequest'
+        $lifecycleText | Should -Match 'function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard[\s\S]*Invoke-DevBranchVanessaRuntimeRelease[\s\S]*Stop-ItlOnDemandBackends'
         $lifecycleText | Should -Match 'function Save-ReleaseE2EInfobaseSnapshot[\s\S]*Stop-DevBranchRuntimeBeforeInfobaseMutation'
         $lifecycleText | Should -Match 'function Close-DevBranch[\s\S]*Stop-DevBranchRuntimeBeforeInfobaseMutation'
     }
 
-    It "delegates infobase release to the Vanessa primitive and drains ROCTUP separately" {
+    It "plans infobase release before admission and drains Vanessa plus ROCTUP under the execution guard" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-vanessa-runtime-lifecycle-" + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
@@ -256,9 +257,15 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 function Get-RoctupMcpRuntimeInfo { [pscustomobject]@{ processAlive = $false } }
                 function Get-OwnVanessaTestProcesses { @() }
                 function Get-ItlOnDemandRuntimeInstances { param([switch]$Strict); @() }
+                function Get-OneCInfoBaseSessionProcesses { @() }
 
                 Stop-DevBranchRuntimeBeforeInfobaseMutation -State $state -Reason "fixture mutation" 6>$null
+                $plannedRequest = $script:OneCExecutionDrainRequest
+                $callsBeforeGuard = $script:VanessaCalls
+                Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $plannedRequest 6>$null
                 [pscustomobject]@{
+                    planned = ($null -ne $plannedRequest)
+                    callsBeforeGuard = $callsBeforeGuard
                     vanessaCalls = $script:VanessaCalls
                     reason = $script:VanessaReason
                     family = $script:DrainedFamily
@@ -266,6 +273,8 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 }
             }
 
+            $result.planned | Should -BeTrue
+            $result.callsBeforeGuard | Should -Be 0
             $result.vanessaCalls | Should -Be 1
             $result.reason | Should -Be "fixture mutation"
             $result.family | Should -Be "roctup"

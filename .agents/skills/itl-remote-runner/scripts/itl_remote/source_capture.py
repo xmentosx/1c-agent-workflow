@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 from contextlib import ExitStack
 from pathlib import Path
 import shutil
 import uuid
 
-from .access import Lease
 from .common import OwnedProcess, WorkError, beneath, digest, read_json, stamp, write_json
+from .execution_guard import canonical_resources, decode_execution_context
 
 
 def extension_names(log, *, diagnostics=None):
@@ -131,26 +132,17 @@ class Snapshot:
         except OSError:
             self.result["cleanupWarnings"].append("SOURCE_CAPTURE_SCRATCH_RETAINED")
 
-    def cleanup_and_release(self, lease):
-        try:
-            self.cleanup_scratch()
-        except Exception as error:
-            self.result["cleanupErrors"].append(str(error))
-            raise
-        finally:
-            lease.release(cleanup_errors=self.result["cleanupErrors"])
-
     def run(self):
-        proof = self.context.get("accessLease")
+        encoded = self.context.get("executionContext")
+        encoded_key = self.context.get("executionContextKey")
         try:
-            if not proof:
-                raise WorkError("SOURCE_CAPTURE_ACCESS_LEASE_REQUIRED")
+            if not encoded or not encoded_key:
+                raise WorkError("SOURCE_CAPTURE_EXECUTION_CONTEXT_REQUIRED")
+            key = base64.urlsafe_b64decode(encoded_key.encode("ascii"))
+            resources = canonical_resources([self.context["target"]["infoBase"]])
+            decode_execution_context(encoded, key, resources)
             with ExitStack() as owner:
-                lease = owner.enter_context(Lease(proof["coordinator"], [self.context["target"]["infoBase"]],
-                            {"jobId": self.context["jobId"], "purpose": "source-capture"}, inherited=proof,
-                            timeout=self.deadline.remaining(),
-                            cancelled=lambda: bool(self.context.get("cancelPath") and Path(self.context["cancelPath"]).exists())))
-                owner.callback(self.cleanup_and_release, lease)
+                owner.callback(self.cleanup_scratch)
                 initial = extension_names(self.step("list-extensions")["log"], diagnostics=self.result['diagnostics'])
                 self.step("dump-database")
                 self.artifact(self.root / "database.cf")

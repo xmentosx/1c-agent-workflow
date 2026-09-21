@@ -1,5 +1,6 @@
 """Capture orchestration, native source producer and unchanged raw coverage."""
 import copy
+import base64
 import hashlib
 from pathlib import Path
 import sys
@@ -11,9 +12,9 @@ import xml.etree.ElementTree as ET
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / ".agents/skills/itl-remote-runner/scripts"))
 from itl_remote import profiling
-from itl_remote.access import Lease
 from itl_remote.common import WorkError, digest, read_json, write_json
 from itl_remote.deadlines import Deadline
+from itl_remote.execution_guard import ExecutionGuard, canonical_resources
 from itl_remote.source_capture import Snapshot, extension_names
 from itl_remote.source_index import build_manifest, apply_manifest
 
@@ -136,10 +137,13 @@ class SnapshotTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.base = {"kind": "file", "path": str(self.root / "target")}
         self.context = {"jobId": "job", "operations": ["measure"], "target": {"infoBase": self.base, "workspace": str(self.root)}}
-        self.lease = Lease(self.root / "coordinator", [self.base], {"jobId": "job"})
-        self.lease.__enter__()
-        self.addCleanup(self.lease.__exit__, None, None, None)
-        self.context["accessLease"] = self.lease.proof()
+        self.guard = ExecutionGuard(self.root / "execution-guards-v2", canonical_resources([self.base]),
+                                    "measure", execution_id="job", timeout=10)
+        self.guard.__enter__()
+        self.addCleanup(self.guard.__exit__, None, None, None)
+        inherited = self.guard.context()
+        self.context["executionContext"] = inherited["encoded"]
+        self.context["executionContextKey"] = base64.urlsafe_b64encode(inherited["key"]).decode("ascii")
         self.context_path = self.root / "context.json"
         write_json(self.context_path, self.context)
 
@@ -170,7 +174,7 @@ class SnapshotTests(unittest.TestCase):
             module.write_bytes(b'')
         return {"status": "completed", "log": str(log), "cleanupErrors": []}
 
-    def test_captures_base_and_extensions_under_inherited_lease_and_cleans_only_scratch(self):
+    def test_captures_base_and_extensions_under_inherited_execution_and_cleans_only_scratch(self):
         snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
         self.operations = []
         with patch.object(Snapshot, "step", lambda s, op, ext=None: self.fake_step(s, op, ext)):
@@ -181,9 +185,9 @@ class SnapshotTests(unittest.TestCase):
                           ("dump-sources", None), ("load-snapshot", "Расширение"), ("dump-sources", "Расширение")], self.operations)
         self.assertFalse((snapshot.root / "private/scratch").exists())
         self.assertTrue((snapshot.root / "database.cf").is_file())
-        record = read_json(self.root / "coordinator/tickets" / (self.lease.record["ticket"] + ".json"))
-        self.assertEqual("running", record["status"])
-        self.assertEqual({}, record["participants"])
+        record = read_json(self.guard.state_path)
+        self.assertEqual("running", record["state"])
+        self.assertEqual("job", record["executionId"])
         self.assertEqual([], result["cleanupErrors"])
         sealed = {item['path']: item['sha256'] for item in result['artifacts']}
         for configuration in result['configurations']:
@@ -191,14 +195,14 @@ class SnapshotTests(unittest.TestCase):
                 path = configuration['path'] + '/' + relative
                 self.assertEqual(digest(snapshot.root / path), sealed[path])
 
-    def test_missing_or_invalid_lease_cannot_launch_a_capture(self):
-        self.context["accessLease"]["token"] = "wrong"
+    def test_missing_or_invalid_execution_context_cannot_launch_a_capture(self):
+        self.context["executionContextKey"] = base64.urlsafe_b64encode(b"wrong" * 8).decode("ascii")
         write_json(self.context_path, self.context)
         with patch.object(Snapshot, "step") as launch:
             result = Snapshot(self.context_path, Deadline("source-capture", 10)).run()
             launch.assert_not_called()
         self.assertEqual("failed", result["status"])
-        self.assertIn("INHERITANCE_INVALID", result["error"])
+        self.assertIn("SIGNATURE_INVALID", result["error"])
 
     def test_failed_capture_keeps_artifacts_and_primary_error(self):
         snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
@@ -213,28 +217,29 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual("fixture creation failed", result["error"])
         self.assertTrue((snapshot.root / "database.cf").is_file())
 
-        self.assertEqual("released", self.lease.release(), "a proven capture failure does not imply surviving native work")
+        self.assertEqual("running", read_json(self.guard.state_path)["state"],
+                         "the outer execution remains authoritative until its own cleanup")
 
-    def test_capture_cleanup_keeps_its_participant_until_scratch_cleanup_finishes(self):
+    def test_capture_cleanup_keeps_outer_execution_until_scratch_cleanup_finishes(self):
         snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
         self.operations = []
         cleanup = snapshot.cleanup_scratch
         def inspect_cleanup():
-            record = read_json(self.root / "coordinator/tickets" / (self.lease.record["ticket"] + ".json"))
-            self.assertEqual(1, len(record["participants"]))
+            record = read_json(self.guard.state_path)
+            self.assertEqual("running", record["state"])
             cleanup()
         with patch.object(Snapshot, "step", lambda s, op, ext=None: self.fake_step(s, op, ext)), patch.object(snapshot, "cleanup_scratch", inspect_cleanup):
             self.assertEqual("captured", snapshot.run()["status"])
-        self.assertEqual("released", self.lease.release())
+        self.assertEqual("running", read_json(self.guard.state_path)["state"])
 
-    def test_capture_unproven_native_cleanup_keeps_parent_reserved(self):
+    def test_capture_failure_does_not_release_parent_execution(self):
         snapshot = Snapshot(self.context_path, Deadline("source-capture", 10))
         def fail(s, operation, extension=None):
             s.result["cleanupErrors"].append("owned process still unproven")
             raise WorkError("capture failed")
         with patch.object(Snapshot, "step", fail):
             self.assertEqual("failed", snapshot.run()["status"])
-        self.assertEqual("needs-attention", self.lease.release())
+        self.assertEqual("running", read_json(self.guard.state_path)["state"])
 
     def test_extension_log_is_utf8_and_diagnostics_are_not_treated_as_names(self):
         log = self.root / "extensions.log"

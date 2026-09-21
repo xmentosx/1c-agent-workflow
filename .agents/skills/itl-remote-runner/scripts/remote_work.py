@@ -14,6 +14,14 @@ from itl_remote.common import (FileLock, WorkError, host_memory_snapshot, proces
                                read_json, stamp, write_json)
 
 
+def configure_utf8_stdio():
+    """Make the CLI byte boundary deterministic before emitting native paths."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 class WorkerHeartbeat:
     """Publish a PID-reuse-safe heartbeat while the foreground worker owns its session."""
     def __init__(self, spool, mode, started_at):
@@ -51,37 +59,9 @@ class WorkerHeartbeat:
 
 
 def main():
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    command = commands.add_parser("access-register")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--resource", required=True)
-    command.add_argument("--bindings", required=True, help="JSON array of explicit database connections sharing this resource")
-    command = commands.add_parser("access-status")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--summary", action="store_true",
-                         help="Return aggregate bounded metrics instead of the legacy active-record array")
-    command = commands.add_parser("access-compact")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--shards", type=int, default=1)
-    command = commands.add_parser("access-cleanup")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--shards", type=int, default=1)
-    command = commands.add_parser("access-retention-configure")
-    command.add_argument("--coordinator", required=True)
-    command.add_argument("--recovery-horizon-days", type=int, required=True)
-    command.add_argument("--tombstone-retention-days", type=int, required=True)
-    command.add_argument("--batch-size", type=int, required=True)
-    for name in ("access-recovery-plan", "access-recover", "access-recover-workflow"):
-        command = commands.add_parser(name)
-        command.add_argument("--coordinator", required=True)
-        command.add_argument("--ticket", required=True)
-    for name in ("recovery-plan", "recover", "recovery-cancel"):
-        command = commands.add_parser(name)
-        command.add_argument("--spool", required=True)
-        command.add_argument("--id", required=True)
-        if name != "recovery-plan":
-            command.add_argument("--plan-id", required=True)
     command = commands.add_parser("scaffold")
     command.add_argument("--project", required=True)
     command.add_argument("--name", required=True)
@@ -127,9 +107,7 @@ def main():
         command.add_argument("--spool" if name == "submit" else "--connection", required=True)
     command = commands.add_parser("remote")
     command.add_argument("--connection", required=True)
-    command.add_argument("--action", choices=["probe", "status", "cancel", "collect", "agent-request",
-                                             "recovery-plan", "recover", "recovery-cancel"], required=True)
-    command.add_argument("--plan-id")
+    command.add_argument("--action", choices=["probe", "status", "cancel", "collect", "agent-request"], required=True)
     command.add_argument("--agent-action", choices=["read", "followup", "interrupt", "respond"])
     command.add_argument("--payload")
     command.add_argument("--id")
@@ -157,35 +135,6 @@ def main():
     command.add_argument("--python-archive", help="Pinned Python package to include for offline Windows setup")
     args = parser.parse_args()
     from itl_remote import bootstrap, execution, jobs, profiling, transport
-    if args.command in ("recovery-plan", "recover", "recovery-cancel"):
-        from itl_remote import recovery_job
-        if args.command == "recovery-plan":
-            return recovery_job.create_plan(args.spool, args.id)
-        return (recovery_job.run if args.command == "recover" else recovery_job.cancel)(args.spool, args.id, args.plan_id)
-    if args.command == "access-recovery-plan":
-        from itl_remote.access_recovery import plan
-        return plan(args.coordinator, args.ticket)
-    if args.command == "access-recover":
-        from itl_remote.access_dispatch import recover
-        return recover(args.coordinator, args.ticket)
-    if args.command == "access-recover-workflow":
-        from itl_remote.native_recovery import recover_workflow_operation
-        return recover_workflow_operation(args.coordinator, args.ticket)
-    if args.command in ("access-register", "access-status", "access-compact", "access-cleanup",
-                        "access-retention-configure"):
-        from itl_remote.access import Coordinator
-        coordinator = Coordinator(args.coordinator)
-        if args.command == "access-register":
-            return coordinator.register(args.resource, read_json(args.bindings))
-        if args.command == "access-status":
-            return coordinator.summary() if args.summary else coordinator.snapshot()
-        if args.command == "access-compact":
-            return coordinator.compact(args.shards)
-        if args.command == "access-cleanup":
-            return coordinator.cleanup(args.shards)
-        return coordinator.configure_retention(args.recovery_horizon_days,
-                                               args.tombstone_retention_days,
-                                               args.batch_size)
     if args.command == "scaffold":
         from itl_remote.scenarios import scaffold
         return scaffold(args.project, args.name)
@@ -219,10 +168,6 @@ def main():
         return transport.Connection(read_json(args.connection)).send(args.package)
     if args.command == "remote":
         connection = transport.Connection(read_json(args.connection))
-        if args.action in ("recovery-plan", "recover", "recovery-cancel"):
-            if not args.id or (args.action != "recovery-plan" and not args.plan_id):
-                raise WorkError("RECOVERY_JOB_AND_PLAN_REQUIRED")
-            return connection.call({"operation": args.action, "id": args.id, "planId": args.plan_id})
         if args.action == "collect":
             return connection.collect(args.id, args.output, allow_partial=args.allow_partial)
         if args.action == "agent-request":
@@ -291,8 +236,6 @@ def main():
                             break
                     from itl_remote.agents import run_queued_controls
                     run_queued_controls(spool)
-                    from itl_remote.recovery_job import run_queued
-                    run_queued(spool)
                     if not persistent:
                         break
                     if completed_jobs >= max_jobs:
