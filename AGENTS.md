@@ -15,6 +15,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 ## Change discipline
 
 - Fix shared package code, templates, docs, and tests rather than patching an example project.
+- Optimize for the simplest coherent architecture, not diff size or abstraction count. One invariant has one authoritative owner; converge duplicated policy. Shared stateless contracts, cross-component refactors, and existing-coordinator use are normal within authority. Before widening shared runtime authority, cross-owner state/blocking/recovery, installed migration, elevation, support reduction, or material always-on context, obtain architecture checkpoint in `docs/package-architecture.md`; file count is not a trigger. After two repair cycles without acceptance or owner-narrowing progress, stop layering; compare rollback, owner-local, and shared redesign.
 - Preserve unrelated user changes and keep the dirty-state guards strict.
 - A normal source change is accumulated for `develop`. On a clean local `develop`, fetch and fast-forward `origin/develop` without asking. For concurrent tasks use an isolated worktree; never mix two tasks in one dirty checkout.
 - Finish one coherent local commit, then run `scripts/source-delivery.ps1 -Action RegisterChange`. Registration owns the one `Targeted` run and writes an atomic local base/head queue ref only after it passes. Do not push, open a PR, or run `Smoke`, `Full`, `Develop`, or `Release` for an ordinary change.
@@ -31,13 +32,12 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 - Run monitored bootstrap in the foreground with `timeout_ms >= 3900000`. On interruption repeat the same bootstrap command; never delete `index.lock`, finish lifecycle manually, or edit `status.json`.
 - Keep secrets/runtime out of Git: `.dev.env`, infobases, tools, state, logs, and client MCP config stay ignored.
 - Keep entrypoints compact and route detail to one relevant reference; do not load or duplicate the full lifecycle.
+- Normal installed operation runs without elevation in local and terminal sessions on Windows 10, Windows 11, and Windows Server 2019+. Admin provisioning is optional; never auto-elevate or weaken isolation. Keep always-on instructions, tool schemas, and routine output bounded and on demand; minimize tokens without weakening goals, safety, diagnostics, or evidence.
 
 ## Context budget
 
-- Start from Routing and targeted `rg` in likely owner paths. Open one matching contract or reference; read only matches or needed line ranges.
-- Widen one layer only for a concrete gap; stop when evidence suffices. Do not bulk-read skills, docs, tests, build/runtime output, or an upstream checkout.
-- Browse or use MCP only when external or current state is required. Read ignored runtime only for a named run or artifact.
-- Documentation budgets protect routing and readability; they are not a mandate to minimize text at any cost. Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget. Remove actual duplication or route detail on demand first; if necessary content still exceeds a hard limit, propose an explicit limit change with a short rationale.
+- Start from Routing and targeted `rg`; open one matching contract or reference and needed ranges. Widen one layer only for a concrete gap; stop when evidence suffices. Do not bulk-read skills, docs, tests, or outputs.
+- Browse or use MCP only when external or current state is required; read ignored runtime only for a named run or artifact. Documentation budgets protect routing and readability. Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget. Remove duplication or route detail first; if necessary meaning exceeds a hard limit, propose an explicit limit change with a short rationale.
 
 ## Verification
 
