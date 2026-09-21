@@ -638,6 +638,16 @@ Describe "ITL on-demand MCP facade" {
         }
     }
 
+    It "uses mutation-exclusive inheritance for recovery without changing ordinary functional access" {
+        $plan = [pscustomobject]@{accessMode='functional-test'}
+        Resolve-ItlOnDemandInheritedAccessMode -Invocation ([pscustomobject]@{
+            proof=[pscustomobject]@{purpose='operation'}
+        }) -Plan $plan | Should -Be 'functional-test'
+        Resolve-ItlOnDemandInheritedAccessMode -Invocation ([pscustomobject]@{
+            proof=[pscustomobject]@{purpose='recovery';accessMode='mutation-exclusive'}
+        }) -Plan $plan | Should -Be 'mutation-exclusive'
+    }
+
     It "reports an absent planned service as missing rather than falsely exclusive" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl ondemand recovery observation " + [guid]::NewGuid().ToString("N"))
         try {

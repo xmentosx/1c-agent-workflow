@@ -40,7 +40,7 @@ class AutoRecoveryTests(unittest.TestCase):
         self.assertEqual("needs-attention", lease.release(cleanup_errors=["cleanup unproven"]))
         return lease.record["ticket"]
 
-    def invoke(self, project, family, instance, operation, env=None):
+    def invoke(self, project, family, instance, operation, env=None, **kwargs):
         if operation == "access-plan":
             return {"databaseAccess": {"schemaVersion": 1, "family": family, "projectRoot": project,
                     "instanceId": instance, "coordinator": str(self.coordinator), "bases": [self.base],
@@ -109,6 +109,24 @@ class AutoRecoveryTests(unittest.TestCase):
         self.assertFalse(payload["requiresUserDecision"])
         self.assertEqual("repair-workflow-recovery-contract", payload["requiredAction"])
         self.assertTrue(payload["recoveryAttempted"])
+        self.assertFalse(payload["retryAllowed"])
+
+    def test_on_demand_helper_failure_stops_after_first_attempt_for_workflow_repair(self):
+        self.orphan()
+        failure = WorkError(
+            'ITL_ONDEMAND_RECOVERY_HELPER_FAILED: '
+            '{"schemaVersion":1,"operation":"access-plan","primaryError":"INFOBASE_ACCESS_MODE_INVALID"}')
+        with mock.patch("itl_remote.access_dispatch.recover", side_effect=failure) as recover:
+            with self.assertRaisesRegex(WorkError, "INFOBASE_ACCESS_INTERVENTION_REQUIRED") as raised:
+                enter_root_lease(self.coordinator, [self.base], self.requester,
+                                 timeout=0, access_mode="mutation-exclusive")
+        payload = json.loads(str(raised.exception).split(": ", 1)[1])
+        self.assertEqual(1, recover.call_count)
+        self.assertEqual("workflow-repair-required", payload["classification"])
+        self.assertEqual("INFOBASE_ACCESS_MODE_INVALID", payload["primaryError"])
+        self.assertTrue(payload["workflowChangeRequired"])
+        self.assertFalse(payload["requiresUserDecision"])
+        self.assertFalse(payload["retryAllowed"])
 
     def test_dispatcher_routes_measurement_owner_to_pinned_job_recovery(self):
         prepared = {"operation": {"owner": {"operation": "measure", "jobId": "job-a", "spool": str(self.root / "spool")}}}

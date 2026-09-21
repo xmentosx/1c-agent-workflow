@@ -46,6 +46,9 @@ INTERVENTION_ERRORS = (
     "RECOVERY_ADAPTER_REQUIRED",
 )
 WORKFLOW_CHANGE_ERRORS = (
+    "ITL_ONDEMAND_RECOVERY_HELPER_MISSING",
+    "ITL_ONDEMAND_RECOVERY_HELPER_FAILED",
+    "ITL_ONDEMAND_RECOVERY_HELPER_RESULT_INVALID",
     "NATIVE_RECOVERY_STARTED_OPERATION_ADAPTER_REQUIRED",
     "NATIVE_RECOVERY_DATABASE_RESTORATION_ADAPTER_REQUIRED",
     "NATIVE_RECOVERY_ADDITIONAL_DATABASE_RESTORATION_REQUIRED",
@@ -83,9 +86,24 @@ def _same_path(first, second):
     return left.casefold() == right.casefold() if os.name == "nt" else left == right
 
 
+def _primary_recovery_error(error):
+    _, separator, raw = str(error).partition(": ")
+    if not separator:
+        return ""
+    try:
+        value = json.loads(raw).get("primaryError", "")
+    except (AttributeError, json.JSONDecodeError):
+        return ""
+    if (not isinstance(value, str) or not value or len(value) > 128 or
+            value.upper() != value or not value.replace("_", "").isalnum()):
+        return ""
+    return value
+
+
 def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
                   classification="user-decision-or-external-action", required_action=None,
-                  requires_user_decision=True, workflow_change_required=False):
+                  requires_user_decision=True, workflow_change_required=False, retry_allowed=True,
+                  primary_error=""):
     payload = {
         "schemaVersion": 1,
         "classification": classification,
@@ -98,6 +116,7 @@ def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
         "recoveryError": recovery_error,
         "workflowChangeRequired": bool(workflow_change_required),
         "requiresUserDecision": requires_user_decision,
+        "retryAllowed": bool(retry_allowed),
         "retryOriginalCommandAfterResolution": True,
         "requiredAction": required_action or "resolve-database-access-blocker",
         "instruction": (
@@ -106,6 +125,8 @@ def _intervention(reason, *, coordinator, ticket, owner, recovery_error="",
             "requires a decision or external work. After confirmed release, repeat the original command."
         ),
     }
+    if primary_error:
+        payload["primaryError"] = primary_error
     raise WorkError("INFOBASE_ACCESS_INTERVENTION_REQUIRED: " +
                     json.dumps(payload, ensure_ascii=True, separators=(",", ":")))
 
@@ -170,7 +191,8 @@ def _recover(blocker, requester, seen, cancelled):
             _intervention("trusted-recovery-contract-missing", coordinator=coordinator, ticket=ticket, owner=owner,
                           recovery_error=str(error), classification="workflow-repair-required",
                           required_action="repair-workflow-recovery-contract", requires_user_decision=False,
-                          workflow_change_required=True)
+                          workflow_change_required=True, retry_allowed=False,
+                          primary_error=_primary_recovery_error(error))
         if _requires_intervention(error):
             _intervention("trusted-recovery-needs-external-evidence", coordinator=coordinator,
                           ticket=ticket, owner=owner, recovery_error=str(error))

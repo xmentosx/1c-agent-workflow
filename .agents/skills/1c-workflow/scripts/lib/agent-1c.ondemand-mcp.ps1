@@ -1176,6 +1176,15 @@ function Read-ItlOnDemandDatabaseInvocation {
     return $context
 }
 
+function Resolve-ItlOnDemandInheritedAccessMode {
+    param([object]$Invocation, [object]$Plan)
+
+    if ([string](Get-StateValue -State $Invocation.proof -Name 'purpose' -Default 'operation') -ceq 'recovery') {
+        return 'mutation-exclusive'
+    }
+    return [string](Get-StateValue -State $Plan -Name 'accessMode' -Default 'mutation-exclusive')
+}
+
 function Start-ItlOnDemandInheritedDatabaseAccess {
     param([object]$Invocation, [string]$Operation, [string]$Family, [string]$InstanceId,
         [string]$AuxiliaryContour = '')
@@ -1219,11 +1228,12 @@ function Start-ItlOnDemandInheritedDatabaseAccess {
     $adapter = Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1'
     . $adapter
     $purpose = $(if ([string](Get-StateValue -State $Invocation.proof -Name 'purpose' -Default 'operation') -ceq 'recovery') { 'recovery' } else { 'operation' })
+    $accessMode = Resolve-ItlOnDemandInheritedAccessMode -Invocation $Invocation -Plan $plan
     $owner = Start-ItlDatabaseAccessHost -Python $plan.python -Request ([ordered]@{
         schemaVersion = 1; coordinator = $plan.coordinator; bases = @($bases)
         owner = @{project=$script:ProjectRoot; operation=('ondemand-' + $Operation); requestId=$InstanceId}
         timeout = 30; inherited = $Invocation.proof; purpose = $purpose
-        accessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'mutation-exclusive')
+        accessMode = $accessMode
     })
     return [pscustomobject]@{owner=$owner; plan=$fresh}
 }
