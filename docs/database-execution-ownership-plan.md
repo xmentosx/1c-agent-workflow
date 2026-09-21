@@ -29,6 +29,14 @@
    диагностику и не останавливает другие базы, Git или обновление workflow.
 8. Для начала реализации дополнительных runtime-данных не требуется. Live-логи
    текущих инцидентов могут дополнять acceptance, но не определяют архитектуру.
+9. Для пересоздаваемых dev/test-баз приоритет — продолжение работы после сбоя.
+   Незавершённый запуск, неизвестный side effect и возможное повреждение тестовых
+   данных не требуют обязательного recovery, rollback или пересоздания базы перед
+   следующей командой. Старые записи и отсутствие evidence не являются lock.
+10. Допуск защищает от одновременно работающих конфликтующих операций. Он не
+    удостоверяет исправность тестовых данных. Прерванный запуск не считается
+    успешной проверкой; fresh passed check перед экспортом сохраняется. Допущение
+    о потере тестовых данных не распространяется на исходную базу и исходники Git.
 
 ## 2. Почему текущая граница неверна
 
@@ -68,6 +76,16 @@
 Idle backend, задача Codex, ветка и MCP-сессия owner-ами базы не являются.
 Долгоживущий `finish_database_access` удаляется из публичного контракта.
 
+Вложенные вызовы одного job используют тот же `executionId` и проверяемый
+execution context: `measurement -> source capture -> Designer` и
+`facade call -> broker -> native launch` не захватывают guard повторно.
+Supervisor проверяет принадлежность дочернего вызова текущему execution и его
+resource keys; одного переданного строкой ID недостаточно. Полный набор ресурсов
+объявляется внешним execution до admission, дочерний вызов не расширяет его под
+удерживаемым guard. Guard освобождает только внешний владелец после завершения
+вложенной работы. Это наследование внутри нового bounded execution, без старых
+root/participant tickets и без продления ownership между самостоятельными calls.
+
 ### 3.2. Ключ ресурса
 
 Guard строится из canonical exact infobase identity:
@@ -94,13 +112,19 @@ Authority находится на execution host. Для server base все work
 - состояние `waiting`, `running`, `cancelling` или terminal;
 - heartbeat, phase deadline и cancel endpoint/path;
 - сведения о принадлежащем Job Object/process tree;
-- ссылка на operation-specific recovery evidence только после фактического
-  начала native side effect.
+- terminal result (`succeeded`, `failed`, `interrupted` или `cancelled`) и ссылки
+  на доступные логи/артефакты; они служат диагностике, а не разрешением на допуск.
 
 Авторитетом владения является живой OS handle, а не JSON-файл. После смерти
 процесса OS освобождает handle; диагностическая запись не способна сама по себе
 заблокировать следующую операцию. Terminal-записи очищаются ограниченной
 retention-политикой и не сканируются на hot path.
+
+Освобождение handle не заменяет завершение активной работы execution: перед новым
+native start исключается наложение на ещё работающего владельца или его дочернюю
+активность. Проверяется текущая активность на exact base, а не полнота исторического
+журнала. Отсутствующий, повреждённый или незавершённый диагностический JSON сам по
+себе не создаёт запрета на запуск.
 
 ### 3.4. Ожидание
 
@@ -110,9 +134,10 @@ retention-политикой и не сканируются на hot path.
 2. полный набор ресурсов пробуется в canonical order;
 3. при частичном успехе все handles немедленно освобождаются;
 4. очередь повторяется до admission, отмены или настроенного wait deadline;
-5. после admission caller повторно проверяет target, HEAD, `.dev.env` и pending
-   transaction; изменившийся input завершается точной ошибкой, а не выполняется
-   по устаревшему плану.
+5. после admission caller повторно проверяет target, HEAD, `.dev.env` и checkpoint
+   текущей файловой/Git-фазы; изменившийся input завершается точной ошибкой, а не
+   выполняется по устаревшему плану. Запись о прерванной native-фазе dev/test-базы
+   не является самостоятельным основанием отказать новой команде.
 
 Сохраняются полезные части `Wait-Agent1cLockSet`: видимый статус, cancellation,
 полный release частичного набора, повторная проверка input и ограниченный timeout.
@@ -128,24 +153,42 @@ Native execution запускается через supervisor, который:
 4. обновляет heartbeat и контролирует operation-specific deadline;
 5. при cancel/hang сначала выполняет штатную остановку, затем после grace period
    завершает только проверенный owned process tree;
-6. подтверждает отсутствие owned descendants и только затем освобождает guard.
+6. подтверждает завершение активной работы execution, включая вложенные вызовы и
+   owned descendants этой работы, и только затем освобождает guard.
 
 Если caller умер, supervisor завершает cleanup самостоятельно. Если умер
-supervisor, следующий агент проверяет PID + start time + executable/script
-identity + executionId, закрывает или завершает только этого владельца; закрытие
-Job Object удаляет его descendants, а OS handle освобождается автоматически.
+supervisor, Job Object закрывает принадлежащую execution активность. Следующий
+supervisor автоматически проверяет текущую process identity и отсутствие
+продолжающейся owned работы перед своим native start; участие агента в recovery
+не требуется. Прогретый idle backend может жить отдельно от завершённого call,
+но незавершённый запрос к нему не считается idle.
 
-Если процесс успел начать native side effect, применяется adapter конкретной
-операции, а не generic recovery coordinator:
+После сбоя dev/test-операции действует один контракт:
 
-- доказать, что целевое состояние уже достигнуто, и завершить operation;
-- либо восстановить заранее объявленный snapshot/checkpoint;
-- только после доказанного восстановления разрешить новый bounded attempt;
-- никогда не replay-ить неизвестный side effect без такого доказательства.
+- операция получает `failed` или `interrupted`, имеющиеся логи сохраняются;
+- после bounded cleanup guard освобождается, следующая команда допускается;
+- неизвестный результат предыдущего side effect и состояние тестовых данных
+  выводятся как диагностика, без обязательного восстановления или проверки
+  исправности всей базы перед допуском;
+- скрытого автоматического replay прерванной mutating-операции нет; no-replay
+  относится к прежнему запуску и не запрещает следующую самостоятельную команду;
+- следующий тест может упасть из-за оставшихся данных; разбор, reset или
+  восстановление snapshot выполняются по необходимости отдельной операцией;
+- прерванная загрузка не подтверждает свежесть базы, а неуспешный тест не выдаёт
+  passed evidence. Следующий refresh/check выполняет свою обычную работу без
+  предварительного recovery gate.
 
-Каждая поддерживаемая mutating-фаза обязана иметь автоматический adapter до
-включения в новый runtime. Необслуживаемая неоднозначность является дефектом
-реализации и не переводится в вечный `needs-attention`.
+Если конфликтующая активность действительно остаётся живой и остановить её не
+удалось, текущий запуск получает bounded error по exact base. После исчезновения
+конфликта новая команда допускается без ручного сброса ошибок. Остальные базы,
+Git-фазы и `update-workflow` продолжают работать. Ошибка cleanup в старом логе
+сама по себе не доказывает наличие живого конфликта.
+
+Обязательные recovery adapters для каждого producer не вводятся. Сохраняются
+адресный process cleanup и существующие operation-specific контракты защиты
+исходной базы, исходников и публикации; они не превращаются в общий recovery gate
+для dev/test-баз. Snapshot rollback там, где он входит в явно выбранную операцию,
+остаётся её контрактом, но не условием запуска произвольной следующей команды.
 
 ## 4. Поведение пользовательских команд
 
@@ -196,7 +239,9 @@ Job Object удаляет его descendants, а OS handle освобождае�
 
 ### On-demand MCP
 
-- Guard получается на один tool call и освобождается после его atomic result.
+- Guard получается на один tool call; вложенный call использует execution context
+  внешнего job без повторного захвата. Освобождение следует за atomic result и
+  завершением активной работы; timeout ответа сам по себе этого не доказывает.
 - Idle backend может оставаться прогретым, но не владеет базой.
 - Перед mutating native phase lifecycle owner под guard выполняет адресный drain
   backend-а по exact base, PID/start identity, executable и markers.
@@ -215,31 +260,37 @@ Job Object удаляет его descendants, а OS handle освобождае�
 
 ## 5. Однократный cutover без legacy support
 
-Cutover является частью поставки, а не ручной инструкцией по удалению locks.
+Cutover выполняется одним обновлением всех обслуживаемых веток. Исходное условие
+этого перехода: известная проблема находится в workflow-блокировках; обязательная
+проверка исправности баз или их восстановление в установку не добавляются.
 
-1. Установить новый package updater и execution supervisor, не входя в старый
-   database admission и `runtime-mcp.lock`.
-2. Поставить protocol-generation marker, после которого новые процессы используют
-   только `execution-guards-v2`.
-3. Найти только exact workflow-owned facade/worker/supervisor processes по PID,
-   start time, executable, project/worktree markers и base identity.
-4. Штатно остановить их; после bounded grace period завершить только подтверждённый
-   owned process tree. Чужие и неоднозначные процессы не завершать.
-5. Не читая recovery semantics старых tickets, удалить старые tickets, indexes,
-   waiters, pins, archives, recovery markers и локальные `runtime-mcp.lock` /
-   lifecycle waiter records, относящиеся к удаляемому протоколу.
-6. Обновить managed workflow files активных веток из нового master-owned runner,
-   чтобы branch-local старый helper не мог снова войти в прежний admission path.
-7. Запустить дальнейший refresh уже новым runner-ом.
+1. Запустить source-owned новый updater в обход старого database admission и
+   `runtime-mcp.lock`; подготовить новый package и supervisor без запуска v2 jobs.
+2. На время установки остановить приём новых workflow jobs/calls и существующие
+   exact workflow-owned helpers, facade/worker/supervisor processes. Проверять PID,
+   start time, executable, project/worktree markers и base identity. После bounded
+   grace period завершать только подтверждённую owned активность; чужие и
+   неоднозначные процессы не завершать. Завершённость процессов не означает
+   проверку исправности тестовых данных.
+3. Новым master-owned updater обновить managed workflow files в master и всех
+   обслуживаемых ветках, не вызывая старые branch-local admission paths.
+4. Удалить obsolete tickets, indexes, waiters, pins, archives, recovery markers и
+   записи удаляемого lock-протокола без чтения их recovery semantics и миграции.
+   Исходники, базы и пользовательские артефакты не являются obsolete state.
+5. После остановки старых исполнителей и обновления всех entrypoints активировать
+   новую generation, возобновить jobs/calls и выполнять refresh новым runner-ом.
 
-Смешанная работа старого и нового протоколов не поддерживается. Старый branch
-helper после generation switch должен вернуть понятное `WORKFLOW_UPDATE_REQUIRED`
-до запуска 1С, а не создавать старый ticket. Это fencing перехода, а не runtime
-совместимость или миграция старого состояния.
+Сосуществование двух протоколов, compatibility reader и отдельная система
+переходных database tickets не разрабатываются. От старого helper не требуется
+понимать новый marker или возвращать `WORKFLOW_UPDATE_REQUIRED`: установщик
+останавливает старые исполнители и заменяет helpers до включения нового runtime.
+Конфликтующая активность чужого процесса остаётся локальным конфликтом конкретной
+базы, а не причиной запретить обновление файлов остальных веток.
 
-Если cutover падает до generation switch, staged package copy откатывается. После
-switch возврат к старому admission protocol не поддерживается; исправление идёт
-вперёд. Старые lock/recovery данные не сохраняются как rollback state.
+При прерывании установки повторный запуск того же updater завершает обновление
+файлов и удаление obsolete state, затем включает новую generation. Уже включённый
+новый runtime не откатывается к старому admission protocol. Исправность тестовых
+данных и восстановление старых tickets не являются условиями продолжения cutover.
 
 ## 6. Что сохраняется из уже сделанных доработок
 
@@ -252,20 +303,25 @@ switch возврат к старому admission protocol не поддержи
 | PID + process start time + executable/markers | Доказательство owned supervisor/process tree |
 | Windows Job Object и bounded process cleanup | Автоматическая очистка crash/hang |
 | Job claim, status, artifacts и no-replay | Remote execution contract |
-| Native journal/checkpoints/snapshots | Только operation-specific evidence после начала side effect |
+| Вложенные вызовы одного job/call | Один execution context, без повторного захвата guard |
+| Native logs, checkpoints и snapshots | Диагностика и явно выбранные операции; не admission gate dev/test-базы |
 | Session-capacity registry | Ограничение лицензий/сеансов, отдельно от ownership guard |
 | Exact target revalidation после ожидания | Защита от запуска по изменившемуся `.dev.env`/state |
 | Windows quoting, whitespace+Cyrillic и UTF-8 boundaries | Обязательная транспортная безопасность |
 
-То есть полезная process ownership и recovery-механика не откатывается вместе со
-старым coordinator. Она переносится внутрь конкретного supervisor/job adapter.
+Process ownership и bounded cleanup сохраняются внутри supervisor. Доступные
+средства восстановления остаются отдельными инструментами; обязательная цепочка
+recovery перед продолжением работы dev/test-базы не переносится.
 
 ## 7. Что удаляется
 
 - generic cross-project ticket database и lookup по historical state;
 - `needs-attention` как блокирующее состояние будущих операций;
 - generic auto-recovery до начала каждой команды;
-- root/participant/inherited lease protocol;
+- старый root/participant/inherited lease protocol; наследование нового execution
+  context внутри ограниченного job/call сохраняется;
+- обязательные recovery adapters и доказательство восстановления dev/test-базы
+  как условие следующего запуска;
 - access-mode transitions и legacy mode aliases;
 - retained on-demand database phase и `finish_database_access`;
 - archive/pin/migration/compaction логика старых tickets на runtime hot path;
@@ -283,6 +339,9 @@ switch возврат к старому admission protocol не поддержи
 - Добавить минимальный `execution_guard.py` и supervisor contract рядом с
   `itl_remote/execution.py`.
 - Перевести `execution.py` на job-scoped guard и owned Job Object cleanup.
+- Передавать проверяемый execution context в source capture и native helpers без
+  повторного acquisition; после interrupted job допускать следующую команду по
+  текущей активности, не по историческим journal/recovery записям.
 - Удалить runtime-вызовы `access.py`, `access_host.py`,
   `access_autorecovery.py`, `ondemand_recovery.py` и старый PowerShell
   `DatabaseAccess.ps1` после переключения всех producers.
@@ -293,6 +352,8 @@ switch возврат к старому admission protocol не поддержи
 
 - В `database_runtime.go` заменить retained owner на call-scoped guard.
 - В `runtime.go` отделить idle backend lifetime от database ownership.
+- Передавать execution context в broker/native helper; при timeout завершать
+  активный owned call, фиксировать ошибку и освобождать guard без recovery gate.
 - В `gateway.go` удалить `finish_database_access` и его fencing state.
 - Добавить адресный drain API, который доступен только mutating supervisor-у и
   проверяет exact base/process identity.
@@ -308,15 +369,15 @@ switch возврат к старому admission protocol не поддержи
 - Все workflow-owned запуски 1С направить через один supervisor API; прямой
   `Start-Process` для таких запусков остаётся запрещён.
 - Добавить set-completeness test: каждая операция из entrypoint registry либо не
-  запускает 1С, либо объявляет execution boundary, resources, deadline и recovery
-  adapter.
+  запускает 1С, либо объявляет внешний/вложенный execution boundary, resources,
+  deadline и bounded cleanup. Recovery adapter не является обязательным полем.
 
 ### Installer и managed copies
 
 - Добавить source-owned one-time cutover entrypoint, способный обновить старую
   установку при stale old locks.
-- Научить master-owned новый runner обновлять managed helper files активной ветки
-  до запуска её refresh continuation.
+- Научить master-owned новый runner обновлять managed helper files всех
+  обслуживаемых веток до включения новой generation и запуска refresh.
 - Не добавлять root `AGENTS.md` в managed-copy lists.
 
 ### Документация
@@ -330,34 +391,48 @@ switch возврат к старому admission protocol не поддержи
 
 ## 9. Реализационные волны
 
+Волны разделяют разработку и локальную регистрацию. Production activation нового
+протокола выполняется целиком в Wave 4; Wave 1–3 проверяются на изолированных
+fixtures и не включают смешанный режим в установленных рабочих ветках.
+
 ### Wave 0 — executable contract и отрицательные тесты
 
 - Зафиксировать registry всех native producers и точных ресурсов.
-- Добавить падающие regressions для `update-workflow`, трёх refresh routes,
-  owner death, owner hang, different-base concurrency и cutover.
-- Зафиксировать operation-specific timeout/recovery adapter для каждого producer.
+- Зафиксировать regressions для `update-workflow`, трёх refresh routes, owner
+  death/hang, продолжения после прерванного теста, nested calls, different-base
+  concurrency и cutover. Падающий reproducer используется при разработке;
+  регистрируемая доработка включает исправление и проходящую проверку.
+- Зафиксировать execution context, deadline и bounded cleanup каждого producer,
+  без обязательного recovery adapter для dev/test-базы.
 
-Критерий: нет producer-а с неопределённой ownership boundary; тесты воспроизводят
-текущую ошибочную блокировку без ослабления существующих safety assertions.
+Критерий: нет producer-а с неопределённой ownership boundary. Assertions старого
+протокола, требующие запрета после crash только из-за journal, заменяются проверкой
+продолжения после cleanup. Сохраняются проверки отсутствия живого конфликта,
+правильного target, защиты чужих процессов и достоверности passed evidence.
 
 ### Wave 1 — новый guard и supervisor параллельно старому коду
 
 - Реализовать OS-handle authority, canonical keys, queue/status/cancel и ordered
   multi-resource acquisition.
 - Реализовать owned Job Object, heartbeat, deadline, graceful cancel и exact kill.
+- Реализовать наследование execution context и terminal failed/interrupted result
+  без запрета следующего запуска по историческому состоянию.
 - Старый production route пока не переключать.
 
-Критерий: unit/integration tests доказывают wait, FIFO, crash/hang cleanup,
-отсутствие partial hold и независимость разных баз.
+Критерий: unit/integration tests доказывают wait, FIFO, crash/hang cleanup и
+независимость разных баз. Нет partial hold или повторного захвата во вложенном
+вызове; следующая команда допускается после cleanup без recovery.
 
 ### Wave 2 — remote jobs и on-demand
 
-- Первым production consumer сделать bounded remote job.
+- Первым интегрировать bounded remote job в новый runtime на изолированном fixture.
 - Затем перевести on-demand на call scope и targeted idle-runtime drain.
 - Удалить public `finish_database_access` после переключения clients/tests/docs.
 
 Критерий: backend idle не удерживает guard; параллельный mutating job безопасно
-останавливает только exact owned backend и продолжает автоматически.
+останавливает только exact owned backend и продолжает автоматически. Вложенные
+source capture/broker calls не ждут собственный guard; interrupted call не оставляет
+блокирующего recovery state.
 
 ### Wave 3 — lifecycle phase split
 
@@ -370,17 +445,21 @@ state; guard появляется только в трассе фактичес�
 
 ### Wave 4 — cutover и удаление старого протокола
 
-- Реализовать source-owned bootstrap, generation switch и managed branch update.
+- Реализовать один source-owned updater: остановить старые исполнители, обновить
+  все managed branches, удалить obsolete state и только затем включить v2.
 - Удалить старое состояние на acceptance fixture без migration/recovery.
 - Удалить old coordinator modules, command routes, tests и managed files.
 
 Критерий: repo-wide search не находит runtime producer-ов старого protocol;
-свежая установка и upgrade со старой установки используют только новый guard.
+свежая установка и upgrade всех обслуживаемых веток используют только новый guard,
+без миграции tickets и проверки исправности баз как условия обновления.
 
 ### Wave 5 — installed/live acceptance и доставка
 
 - Выполнить file-base, server-base и remote execution acceptance.
 - Проверить upgrade реальной старой установки со stale tickets.
+- Прервать dev/test job посередине и выполнить следующую команду без recovery,
+  ручного unlock, reset базы или ремонта служебных файлов.
 - Каждую coherent source change завершать commit + `RegisterChange`; не выполнять
   `PublishDevelop`, `Release` или master promotion без отдельного разрешения.
 
@@ -400,10 +479,12 @@ state; guard появляется только в трассе фактичес�
 5. Owned 1C child завис после старта: deadline запускает cancel, затем exact
    process-tree cleanup; следующий waiter продолжает работу.
 6. Caller умер, supervisor жив: supervisor завершает cleanup без исходного агента.
-7. Supervisor умер: следующий агент валидирует identity, Job Object закрывает
-   descendants, guard освобождается.
-8. Crash после side effect: adapter доказывает desired state либо восстанавливает
-   snapshot; неизвестный effect не replay-ится.
+7. Supervisor умер: Job Object закрывает owned активность; следующий supervisor
+   автоматически проверяет её завершение перед native start, без recovery агента.
+8. Dev/test job принудительно прерван после side effect: owned активность завершается,
+   результат остаётся failed/interrupted, следующая команда запускается без recovery,
+   rollback, ручного unlock или ремонта служебных файлов. Неизвестный effect не
+   replay-ится автоматически; возможная ошибка следующих тестов не блокирует их запуск.
 9. Foreign/unidentified 1C process: не завершается; только exact base получает
    bounded external-conflict result, другая база и `update-workflow` продолжаются.
 10. `itl-refresh-lite` с неизменным fingerprint: database guard не создаётся.
@@ -412,18 +493,33 @@ state; guard появляется только в трассе фактичес�
     две ветки одной базы сериализуются.
 13. Multi-resource job не удерживает первый resource, ожидая второй.
 14. Wait cancel завершает только waiter и не затрагивает owner.
-15. Reboot/kill оставляет диагностический JSON, но он не является lock и не
-    блокирует следующую операцию.
+15. Reboot/kill оставляет незавершённый/повреждённый JSON либо происходит до записи
+    evidence: при отсутствии живой конфликтующей активности следующая команда
+    запускается. Диагностические файлы не являются lock.
 16. File path одновременно содержит пробелы и кириллицу; native arguments и
     output проходят общие quoting/UTF-8 helpers.
 17. Server base запускается только через её configured execution host; конфликтная
     multi-host configuration отклоняется до native start.
 18. Upgrade active branches выполняется новым master-owned runner-ом, даже если
-    branch-local прежний helper не способен пройти старый admission.
+    branch-local прежний helper не способен пройти старый admission. Все helpers
+    обновлены, старые owned исполнители остановлены до активации v2; понимание
+    нового marker старым helper и восстановление баз не требуются.
+19. `measurement -> source capture -> Designer` и `facade call -> broker -> native
+    launch` используют один execution context без повторного acquisition; внешний
+    guard удерживается до завершения вложенной работы. Чужой context или ресурс за
+    пределами объявленного набора отвергается без расширения захвата.
+20. Cleanup не смог остановить реально живую конфликтующую активность: текущая
+    команда завершается с bounded error только по этой базе. После завершения
+    активности новая команда допускается без сброса прежнего error state.
+21. Прерванный check не становится passed evidence и не разрешает экспорт вместо
+    fresh passed check. Прерванная загрузка не подтверждает freshness; следующий
+    refresh/check допускается и выполняет обычную проверку/загрузку.
 
 ## 11. Stop rules и критерий завершения
 
 - Не добавлять новый generic recovery слой для закрытия отдельного failing test.
+- Не превращать неизвестный результат или состояние данных dev/test-базы в
+  обязательное восстановление перед следующей командой.
 - Не вводить TTL-based force unlock живого owner-а.
 - Не ослаблять ownership identity ради автоматического cleanup.
 - После двух одинаковых сбоев без новой причинной информации остановить retry и
@@ -437,8 +533,11 @@ state; guard появляется только в трассе фактичес�
 - `update-workflow` не зависит от database/on-demand locks;
 - все refresh routes блокируют только точную native phase и умеют ждать;
 - ordinary owned crash/hang очищается автоматически и bounded;
+- после прерванного dev/test job следующая команда запускается без recovery gate,
+  ручного unlock или ремонта диагностических файлов;
 - чужой процесс никогда не force-kill;
 - разные базы независимы, multi-resource acquisition не удерживает partial set;
-- полезные job/process/session/recovery контракты из раздела 6 сохранены;
+- вложенные вызовы используют один execution context без повторного acquisition;
+- полезные job/process/session/diagnostic контракты из раздела 6 сохранены;
 - source tests, registration, installed upgrade и live acceptance имеют отдельное
   подтверждённое evidence.
