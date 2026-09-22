@@ -9210,6 +9210,15 @@ function Initialize-DevBranchRuntime {
     if (-not $stateHash.ContainsKey("createdFromCommit") -or -not $stateHash["createdFromCommit"]) {
         $stateHash["createdFromCommit"] = $currentCommit
     }
+    # Existing states adopt on first check/refresh so their dirty BSL is not lost.
+    if (-not $stateHash.ContainsKey("yaxunitApplicabilityBaseline") -and $null -eq $existingState) {
+        $stateHash["yaxunitApplicabilityBaseline"] = [ordered]@{
+            schemaVersion = 1
+            commit = $currentCommit
+            legacy = $false
+            recordedAt = $now
+        }
+    }
     if (-not $stateHash.ContainsKey("lastConfigBaseUpdatedCommit") -or -not $stateHash["lastConfigBaseUpdatedCommit"]) {
         $stateHash["lastConfigBaseUpdatedCommit"] = $currentCommit
     }
@@ -10147,6 +10156,14 @@ function New-ForkedDevBranchState {
     $state["worktreePath"] = [string]$Snapshot.targetWorktreePath
     $state["mainWorktreePath"] = $MainProjectRoot
     $state["createdFromCommit"] = [string]$Snapshot.sourceCommit
+    if (-not $state.Contains("yaxunitApplicabilityBaseline")) {
+        $state["yaxunitApplicabilityBaseline"] = [ordered]@{
+            schemaVersion = 1
+            commit = [string]$Snapshot.sourceCommit
+            legacy = $true
+            recordedAt = $now
+        }
+    }
     $state["lastConfigBaseUpdatedCommit"] = [string]$Snapshot.sourceCommit
     $state["devBranchInfoBasePath"] = $TargetInfoBasePath
     $state["createdAt"] = $now
@@ -13460,6 +13477,7 @@ function Reset-DevBranch {
                 lastConfigDesignerFingerprint = [string]$seed.configurationFingerprint; lastConfigDesignerTreeObjectId = [string]$state.resetMasterConfigTreeObjectId
                 lastConfigDesignerLoadedAt = $now; configLoadStatus = "passed"; sourceFingerprint = [string]$seed.configurationFingerprint
                 loadReason = "branch-reset-seed"; lastConfigBaseUpdatedCommit = $masterCommit; lastRefreshMasterCommit = $masterCommit
+                yaxunitApplicabilityBaseline = [ordered]@{ schemaVersion = 1; commit = [string]$state.resetNewHead; legacy = $false; recordedAt = $now }
                 lastVerificationStatus = ""; lastVerificationReason = ""; lastVerificationFingerprint = ""; lastVerifiedFingerprint = ""
                 lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
                 lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
@@ -13572,9 +13590,23 @@ function Invoke-RefreshDevBranchCore {
         throw "REFRESH_MASTER_COMMIT_MISSING: the exact master SHA was not preserved across the merge."
     }
     Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+    if ($null -eq (Get-StateValue -State $state -Name "yaxunitApplicabilityBaseline" -Default $null)) {
+        Update-DevBranchState -State $state -Updates @{
+            yaxunitApplicabilityBaseline = [ordered]@{
+                schemaVersion = 1
+                commit = [string]$mergeTransaction.branchCommit
+                legacy = $true
+                recordedAt = (Get-Date).ToString("o")
+            }
+        }
+        $state = Read-DevBranchState -Name $DevBranchName
+    }
     Sync-AiRules1cManagedIgnoredFilesFromMain -State $state | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
-    $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge"
+    $verificationClassificationInventory = Update-VerificationSuiteInventory -Reason "$OperationName post-merge" -EvaluateApplicability
+    if ([bool]$verificationClassificationInventory.yaxunit.legacyBaseline) {
+        Write-Host "[WARN] YAxUnit legacy baseline: unchanged pre-upgrade BSL remains without a new unit-test obligation; later branch-owned BSL changes require an applicability decision."
+    }
     Set-RunStage -Stage "refresh.dependencies" -Detail "Binding the branch to its workflow-pinned immutable dependency cache."
     Install-VanessaAutomation
     if (Get-RoctupMcpEnabled) {

@@ -669,8 +669,131 @@ function Complete-VerificationSelectionProof {
     Write-Utf8TextAtomic -Path (Join-Path $root "proof.json") -Value (($value | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
 }
 
+function Get-YAxUnitProductionApplicability {
+    param([object]$Catalog)
+
+    $state = Read-DevBranchState -Name $DevBranchName
+    $baseline = Get-StateValue -State $state -Name "yaxunitApplicabilityBaseline" -Default $null
+    $roots = Get-VerificationConfigurationMetadataRoots
+    $sourceRoots = @(@($roots.configurationRoots) + @($roots.extensionRoots) | Where-Object { $_ } | Sort-Object -Unique)
+    try {
+        $currentTree = Get-VerificationSelectionEffectiveTree
+    } catch {
+        $projectRootVariable = Get-Variable -Name ProjectRoot -Scope Script -ErrorAction SilentlyContinue
+        if ($null -eq $projectRootVariable -or -not $projectRootVariable.Value -or
+            (Test-Path -LiteralPath (Join-Path $projectRootVariable.Value ".git"))) { throw }
+        # Classification also runs in projects that contain only Vanessa features.
+        # With no Git or production source root there is no BSL applicability to decide.
+        # Any source root still needs Git's exact change and object-id evidence.
+        $presentSourceRoots = @($sourceRoots | Where-Object { Test-Path -LiteralPath (Resolve-ProjectPath $_) })
+        if ($presentSourceRoots.Count -gt 0) {
+            throw "YAXUNIT_APPLICABILITY_BASELINE_MISSING: a Git repository is required to classify production BSL changes."
+        }
+        return [pscustomobject]@{
+            classificationComplete = $true; issues = @(); decisions = @()
+            legacy = $false; baselineCommit = ""; currentTree = ""
+        }
+    }
+    if ($null -eq $baseline) {
+        # An existing branch may run check-dev-branch before its first refresh.
+        # Preserve its exact dirty BSL content as well as its committed HEAD.
+        $adoptionCommit = ([string](Get-GitOutput @("rev-parse", "HEAD^{commit}"))).Trim()
+        if ($adoptionCommit -notmatch '^[a-f0-9]{40}$') {
+            throw "YAXUNIT_APPLICABILITY_BASELINE_MISSING: cannot identify the branch HEAD for workflow adoption."
+        }
+        $adoptionTree = ([string](Get-GitOutput @("rev-parse", "$adoptionCommit^{tree}"))).Trim()
+        $legacySources = [Collections.Generic.List[object]]::new()
+        foreach ($changedPathValue in @(Get-VerificationSelectionChangedPaths -BaseTree $adoptionTree -CurrentTree $currentTree)) {
+            $path = ([string]$changedPathValue -replace "\\", "/").TrimStart("/")
+            if ($path -notmatch '(?i)\.bsl$' -or
+                @($sourceRoots | Where-Object { $path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
+            $sourceOid = Get-GitObjectIdForTreePath -Treeish $currentTree -RepoPath $path
+            if ($sourceOid -match '^[a-f0-9]{40}$') {
+                $legacySources.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid })
+            }
+        }
+        $baseline = [pscustomobject][ordered]@{
+            schemaVersion = 1
+            commit = $adoptionCommit
+            legacy = $true
+            legacySourceOids = @($legacySources.ToArray())
+            recordedAt = (Get-Date).ToString("o")
+        }
+        Update-DevBranchState -State $state -Updates @{ yaxunitApplicabilityBaseline = $baseline }
+    }
+    $baselineCommit = [string](Get-StateValue -State $baseline -Name "commit" -Default "")
+    if ([int](Get-StateValue -State $baseline -Name "schemaVersion" -Default 0) -ne 1 -or
+        $baselineCommit -notmatch '^[a-f0-9]{40}$') {
+        throw "YAXUNIT_APPLICABILITY_BASELINE_MISSING: the managed branch needs its workflow adoption baseline."
+    }
+    $baselineTree = ([string](Get-GitOutput @("rev-parse", "$baselineCommit^{tree}"))).Trim()
+    $legacySourceOids = if ($baseline.PSObject.Properties["legacySourceOids"]) { @($baseline.legacySourceOids) } else { @() }
+    $changedPaths = @(Get-VerificationSelectionChangedPaths -BaseTree $baselineTree -CurrentTree $currentTree)
+    $acceptedMasterInput = Get-VerificationAcceptedMasterInput -ChangedPaths $changedPaths -CurrentTree $currentTree
+    $issues = [Collections.Generic.List[string]]::new()
+    $decisions = [Collections.Generic.List[object]]::new()
+    $registrationTexts = @{}
+    foreach ($registrationPath in @(Get-VerificationCatalogValue -Value $Catalog -Name "registrationPaths" -Default @())) {
+        $registrationText = Read-Utf8Text -Path (Resolve-ProjectPath ([string]$registrationPath))
+        $registrationTexts[[string]$registrationPath] = [regex]::Replace($registrationText, '(?m)//[^\r\n]*', '')
+    }
+    foreach ($changedPathValue in $changedPaths) {
+        $path = ([string]$changedPathValue -replace "\\", "/").TrimStart("/")
+        if ($path -notmatch '(?i)\.bsl$' -or $path -cin @($acceptedMasterInput.importedPaths)) { continue }
+        if (@($sourceRoots | Where-Object { $path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
+        $sourceOid = Get-GitObjectIdForTreePath -Treeish $currentTree -RepoPath $path
+        if ($sourceOid -notmatch '^[a-f0-9]{40}$') { continue } # A deleted module has no new behavior to cover.
+        if (@($legacySourceOids | Where-Object {
+            $_.path -ieq $path -and $_.sourceOid -ceq $sourceOid
+        }).Count -gt 0) { continue }
+        $groups = @($Catalog.groups | Where-Object {
+            $group = $_
+            $group.purpose -eq "default-fast" -and
+                @($group.ownerPaths | Where-Object { Test-VerificationRepoPathPattern -Path $path -Pattern $_ }).Count -gt 0
+        })
+        $declared = @((Get-VerificationCatalogValue -Value $Catalog -Name "notApplicable" -Default @()) | Where-Object { $_.path -ieq $path })
+        if ($groups.Count -gt 0 -and $declared.Count -gt 0) {
+            $issues.Add("YAxUnit applicability for '$path' is ambiguous: both a default-fast group and notApplicable are declared.")
+            continue
+        }
+        if ($groups.Count -gt 0) {
+            if (-not (Test-YAxUnitSuitePresent)) {
+                $issues.Add("YAxUnit is required for '$path', but the hierarchical test extension is absent.")
+                continue
+            }
+            foreach ($group in $groups) {
+                $modules = @($Catalog.assignments | Where-Object { $_.groupId -eq $group.id -and $_.purpose -eq "default-fast" })
+                foreach ($module in $modules) {
+                    $moduleName = Get-YAxUnitModuleNameFromPath -Path ([string]$module.path)
+                    $callPattern = '(?i)(?<![\p{L}\p{N}_])' + [regex]::Escape($moduleName) + '\s*\.'
+                    if (-not $moduleName -or @($registrationTexts.Values | Where-Object {
+                        [regex]::IsMatch($_, $callPattern)
+                    }).Count -eq 0) {
+                        $issues.Add("YAxUnit default-fast module '$($module.path)' for '$path' is not found in registrationPaths.")
+                    }
+                }
+            }
+            $decisions.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid; decision = "required"; groupIds = @($groups.id) })
+            continue
+        }
+        if ($declared.Count -eq 1 -and [string]$declared[0].sourceOid -ceq $sourceOid) {
+            $decisions.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid; decision = "not-applicable"; reason = [string]$declared[0].reason })
+        } else {
+            $issues.Add("YAxUnit applicability for '$path' is unclassified or stale. Current sourceOid=$sourceOid. Reuse a sufficient default-fast group, add a focused test group, or declare notApplicable with this exact sourceOid and a reason.")
+        }
+    }
+    return [pscustomobject]@{
+        classificationComplete = ($issues.Count -eq 0)
+        issues = @($issues.ToArray())
+        decisions = @($decisions.ToArray())
+        legacy = [bool](Get-StateValue -State $baseline -Name "legacy" -Default $false)
+        baselineCommit = $baselineCommit
+        currentTree = $currentTree
+    }
+}
+
 function Update-VerificationSuiteInventory {
-    param([string]$Reason = "refresh")
+    param([string]$Reason = "refresh", [switch]$EvaluateApplicability)
 
     $root = Get-VerificationSelectionStateRoot
     New-Item -ItemType Directory -Force -Path $root | Out-Null
@@ -688,13 +811,18 @@ function Update-VerificationSuiteInventory {
         $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles $applicationFiles
         $yaxunitModules = @(Get-YAxUnitModuleFiles)
         $yaxunitCatalog = Read-YAxUnitSuiteCatalog -ModuleFiles $yaxunitModules
-        $issues = @(@($catalog.issues) + @($yaxunitCatalog.issues))
+        $applicability = if ($EvaluateApplicability -and $catalog.classificationComplete -and $yaxunitCatalog.classificationComplete) {
+            Get-YAxUnitProductionApplicability -Catalog $yaxunitCatalog
+        } else {
+            [pscustomobject]@{ classificationComplete = $true; issues = @(); decisions = @(); legacy = $false; baselineCommit = ""; currentTree = "" }
+        }
+        $issues = @(@($catalog.issues) + @($yaxunitCatalog.issues) + @($applicability.issues))
         $value = [ordered]@{
             schemaVersion = 2
             generatedAt = (Get-Date).ToString("o")
             reason = $Reason
             durationMs = [int64]((Get-Date) - $started).TotalMilliseconds
-            classificationComplete = [bool]($catalog.classificationComplete -and $yaxunitCatalog.classificationComplete)
+            classificationComplete = [bool]($catalog.classificationComplete -and $yaxunitCatalog.classificationComplete -and $applicability.classificationComplete)
             classificationIssues = $issues
             vanessaClassificationComplete = [bool]$catalog.classificationComplete
             catalogAvailable = [bool]$catalog.available
@@ -711,11 +839,14 @@ function Update-VerificationSuiteInventory {
                 suitePresent = [bool](Test-YAxUnitSuitePresent)
                 catalogAvailable = [bool]$yaxunitCatalog.available
                 catalogValid = [bool]$yaxunitCatalog.valid
-                classificationComplete = [bool]$yaxunitCatalog.classificationComplete
+                classificationComplete = [bool]($yaxunitCatalog.classificationComplete -and $applicability.classificationComplete)
                 moduleCount = $yaxunitModules.Count
                 groups = @($yaxunitCatalog.groups | ForEach-Object { [ordered]@{ id = $_.id; purpose = $_.purpose } })
                 assignments = @($yaxunitCatalog.assignments | ForEach-Object { [ordered]@{ path = $_.path; groupId = $_.groupId; purpose = $_.purpose } })
                 registrationPaths = @($yaxunitCatalog.registrationPaths)
+                applicability = @($applicability.decisions)
+                legacyBaseline = [bool]$applicability.legacy
+                baselineCommit = [string]$applicability.baselineCommit
             }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
@@ -754,7 +885,7 @@ function Update-VerificationSuiteInventory {
             assignments = @()
             scenarios = @()
             scenarioMigrationRequired = $false
-            yaxunit = [ordered]@{ suitePresent = $false; catalogAvailable = $false; catalogValid = $false; classificationComplete = $false; moduleCount = 0; groups = @(); assignments = @(); registrationPaths = @() }
+            yaxunit = [ordered]@{ suitePresent = $false; catalogAvailable = $false; catalogValid = $false; classificationComplete = $false; moduleCount = 0; groups = @(); assignments = @(); registrationPaths = @(); applicability = @(); legacyBaseline = $false; baselineCommit = "" }
         }
         Write-Utf8TextAtomic -Path (Join-Path $root "inventory.json") -Value (($value | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
         Write-Host "[WARN] Test classification inventory failed. Normal verification will stop before starting 1C. $($_.Exception.Message)"
@@ -790,7 +921,7 @@ function Set-VerificationClassificationRequiredAction {
 
     if ($null -eq $Inventory -or [bool]$Inventory.classificationComplete) { return }
     $existing = [string]$script:RunRequiredAction
-    $action = "classify-tests-after-refresh: read .agents/skills/1c-workflow/references/verification-suite-selection.md and the scenario inventory at $(Get-VerificationClassificationInventoryPath); in this same agent task split oversized or mixed feature files while preserving scenario behavior, update the branch test catalogs, and validate classification before reporting refresh complete"
+    $action = "classify-tests-after-refresh: read .agents/skills/1c-workflow/references/verification-suite-selection.md and the inventory at $(Get-VerificationClassificationInventoryPath); in this same agent task classify changed BSL and tests, preserve scenario behavior when splitting mixed files, update branch catalogs, and validate classification before reporting refresh complete"
     if ($existing -and $existing -notmatch '^classify-tests-after-refresh:') {
         $action += "; then also follow: $existing"
     }
@@ -804,7 +935,7 @@ function Assert-VerificationClassificationReady {
         [switch]$RequireYAxUnit
     )
 
-    $inventory = Update-VerificationSuiteInventory -Reason $Reason
+    $inventory = Update-VerificationSuiteInventory -Reason $Reason -EvaluateApplicability
     $ready = (-not $RequireVanessa -or [bool]$inventory.vanessaClassificationComplete) -and
         (-not $RequireYAxUnit -or [bool]$inventory.yaxunit.classificationComplete)
     if (-not $ready) {
@@ -847,6 +978,10 @@ function Write-VerificationClassificationStatusLines {
 
     $status = [string](Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "unknown")
     Write-Host "${Indent}Test classification: $status"
+    $applicabilityBaseline = Get-StateValue -State $State -Name "yaxunitApplicabilityBaseline" -Default $null
+    if ([bool](Get-StateValue -State $applicabilityBaseline -Name "legacy" -Default $false)) {
+        Write-Host "${Indent}YAxUnit coverage: legacy baseline; unchanged pre-upgrade BSL has no new unit-test obligation."
+    }
     $inventoryPath = [string](Get-StateValue -State $State -Name "verificationClassificationInventoryPath" -Default "")
     if ($inventoryPath) { Write-Host "${Indent}Test classification inventory: $inventoryPath" }
     foreach ($issue in @(Get-StateValue -State $State -Name "verificationClassificationIssues" -Default @())) {

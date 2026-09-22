@@ -3,27 +3,27 @@ description: Восстановить пропущенное тестовое п
 agent: code
 ---
 
-Use this recovery command only from an active `itldev/*` development branch worktree when the current change may have skipped relevant Vanessa coverage or a complete verification cycle.
+Use this command only in an active `itldev/*` worktree after skipped YAxUnit/Vanessa coverage or failed complete verification.
 
-Begin one helper-owned repair session and retain the printed session id. It permits at most the configured number of unfiltered full verification runs (`ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS`, default `5`); do not pass `VanessaFeaturePath` or `VanessaFilterTags`:
+Begin one helper-owned repair session. Keep its id; it permits at most `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`) unfiltered runs. Do not pass `VanessaFeaturePath` or `VanessaFilterTags`:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action begin-verification-repair
 ```
 
-Retain the session id from the compact result `userReport`.
+Use the session id from compact `userReport`.
 
-1. Identify the current agent-made configuration/extension change from the user request, Git status/diff, and configured `exportPath`/`extensionsPath`. A Git-only refresh or merge from `master` is not an agent-made behavior change by itself.
-2. Search configured `testsPath` for scenarios that exercise the changed observable behavior. Name the matching scenarios. If coverage is relevant and sufficient, reuse it unchanged: do not add or edit a test merely because this command was invoked.
-3. Only when relevant coverage is missing, read `.agents/skills/1c-workflow/references/vanessa-tests.md` and add the smallest reliable scenario. A quick-fix normally needs one focused scenario; add another only for a separate meaningful boundary. Use `itl-vanessa-ui` only as needed for step search, syntax/runtime investigation, UI inspection, or focused debugging; MCP results are diagnostic and do not create a separate pass.
-4. Run the compact helper from the current project directory with `timeout_ms >= 3900000` by default when supported; if the configured Designer timeout is higher than 3600 seconds, raise the outer timeout too. Do not use `120000 ms` or another short default because the helper may launch 1C Designer/Enterprise operations:
+1. Identify the current agent-made configuration/extension change from the request, Git diff and configured roots. A master merge alone is not agent-made behavior. For classification, read the inventory; unchanged legacy BSL is exempt.
+2. Read `.agents/skills/1c-workflow/references/verification-result.md`. Use JUnit, helper/1C/event logs and owned process evidence to distinguish runner or environment, test fixture, and product failure before editing. An assertion or missing UI element needs requirement and runtime evidence.
+3. For a proven product defect, choose YAxUnit for local algorithmic decisions, Vanessa for object interaction or UI, or both when each proves a different risk. Search existing tests first: if sufficient, reuse it unchanged; otherwise strengthen one or add the smallest missing regression. Resolve new BSL applicability per `.agents/skills/1c-workflow/references/verification-suite-selection.md`; do not add or edit a test merely because this command was invoked. Read `.agents/skills/1c-workflow/references/vanessa-tests.md` before authoring a scenario; use UI MCP only for actual UI/step evidence.
+4. Run the compact helper from this project with `timeout_ms >= 3900000`; raise it if Designer can exceed 3600 seconds. A short outer timeout can interrupt 1C:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action check-dev-branch -VerificationTrigger repair -RepairSessionId <session-id>
 ```
 
-The helper owns the branch infobase update, Vanessa Automation `TESTMANAGER -> TESTCLIENT` run, JUnit/status/log evidence, and event-log baseline check. Do not run a separate base update first.
+The helper owns the branch infobase update, both test layers, `TESTMANAGER -> TESTCLIENT`, JUnit/log evidence, and event-log baseline check. Do not update the base separately.
 
-If verification fails, inspect the Vanessa report/status/log, the 1C log, event-log evidence, and the current change before editing. Fix a defective scenario when requirement evidence shows the test is wrong; fix the implementation when the product change is wrong. Treat missing UI elements and assertion mismatches as ambiguous until diagnosed. Before an evidence-dependent UI edit or the next full attempt, apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md`; it is not an extra gate or repair attempt. Never delete, skip, filter, or weaken the core observable assertion merely to make the run green. After every edit rerun the full helper with the same active repair session because previous evidence is stale. After the configured maximum of failed runs the helper marks the session exhausted and refuses another full run; return blocker diagnostics. After a pass it marks the session passed; resume the original task instead of starting another repair.
+On failure, diagnose again. Fix a defective scenario only when requirement evidence proves it wrong; fix the implementation for a product defect. Apply the conditional post-failure runtime diagnostic from `vanessa-authoring.md` before an evidence-dependent UI edit or the next full attempt; it is not an extra gate or repair attempt. Never delete, skip, filter or weaken the core assertion for a green run. Batch edits with targeted/static checks; rerun the full helper at a decision milestone or after the final relevant edit, not after every small edit. Reuse this session. At the configured maximum the helper refuses another full run: return blocker diagnostics. After a pass, resume the original task.
 
-On fresh pass, report the reused or added scenario names, whether tests changed, the branch infobase update result, Vanessa report path, and event-log result.
+On fresh pass, report cause, chosen layer, reason for both if needed, reused or added tests, base update, applicable YAxUnit/Vanessa evidence and event-log result. Keep one compact result, not a report per module.

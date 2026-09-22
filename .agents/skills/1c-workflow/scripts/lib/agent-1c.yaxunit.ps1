@@ -82,6 +82,7 @@ function Read-YAxUnitSuiteCatalog {
             groups = @()
             assignments = $assignments
             registrationPaths = @()
+            notApplicable = @()
             catalogPaths = @()
         }
     }
@@ -89,11 +90,29 @@ function Read-YAxUnitSuiteCatalog {
     $groupIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     $groups = New-Object System.Collections.Generic.List[object]
     $registrationPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    $notApplicable = New-Object System.Collections.Generic.List[object]
+    $notApplicablePaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     try {
         foreach ($catalogPath in $catalogPaths) {
             $catalog = (Read-Utf8Text -Path $catalogPath) | ConvertFrom-Json
             if ([int](Get-YAxUnitCatalogValue -Value $catalog -Name "schemaVersion" -Default 0) -ne 1) {
                 throw "YAXUNIT_SUITE_SCHEMA_UNSUPPORTED: '$catalogPath' must use schemaVersion=1."
+            }
+            foreach ($decision in @(Get-YAxUnitCatalogValue -Value $catalog -Name "notApplicable" -Default @())) {
+                $path = ([string](Get-YAxUnitCatalogValue -Value $decision -Name "path" -Default "") -replace "\\", "/").TrimStart("/")
+                $sourceOid = [string](Get-YAxUnitCatalogValue -Value $decision -Name "sourceOid" -Default "")
+                $reason = [string](Get-YAxUnitCatalogValue -Value $decision -Name "reason" -Default "")
+                if (-not $path -or [IO.Path]::IsPathRooted([string](Get-YAxUnitCatalogValue -Value $decision -Name "path" -Default "")) -or
+                    $path -match '(^|/)\.\.(/|$)|[\*\?\[]' -or $path -notmatch '(?i)\.bsl$') {
+                    throw "YAXUNIT_APPLICABILITY_PATH_INVALID: '$path' must be one exact repository-relative BSL path."
+                }
+                if ($sourceOid -notmatch '^[a-f0-9]{40}$' -or [string]::IsNullOrWhiteSpace($reason)) {
+                    throw "YAXUNIT_APPLICABILITY_DECISION_INVALID: '$path' needs a sourceOid and a reason."
+                }
+                if (-not $notApplicablePaths.Add($path)) {
+                    throw "YAXUNIT_APPLICABILITY_DUPLICATE: '$path' is declared more than once."
+                }
+                $notApplicable.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid; reason = $reason.Trim() })
             }
             foreach ($registrationPath in @(Get-YAxUnitCatalogValue -Value $catalog -Name "registrationPaths" -Default @())) {
                 $normalizedRegistrationPath = ([string]$registrationPath -replace "\\", "/").TrimStart("/")
@@ -192,6 +211,7 @@ function Read-YAxUnitSuiteCatalog {
             groups = @($groups.ToArray())
             assignments = @($assignments.ToArray())
             registrationPaths = @($registrationPaths)
+            notApplicable = @($notApplicable.ToArray())
             catalogPaths = @($catalogPaths)
         }
     } catch {
@@ -203,6 +223,7 @@ function Read-YAxUnitSuiteCatalog {
             groups = @()
             assignments = @()
             registrationPaths = @($registrationPaths)
+            notApplicable = @($notApplicable.ToArray())
             catalogPaths = @($catalogPaths)
         }
     }
@@ -366,12 +387,19 @@ function Invoke-YAxUnitVerification {
     param([Parameter(Mandatory = $true)][object]$State)
 
     if (-not (Test-YAxUnitSuitePresent)) {
+        $baseline = Get-StateValue -State $State -Name "yaxunitApplicabilityBaseline" -Default $null
+        $legacy = [bool](Get-StateValue -State $baseline -Name "legacy" -Default $false)
+        $reason = if ($legacy) {
+            "The pre-upgrade branch state has no YAxUnit coverage; the managed legacy baseline is preserved. No new branch-owned BSL lacks an applicability decision."
+        } else {
+            "No YAxUnit suite is required by the classified branch-owned BSL changes."
+        }
         Update-DevBranchState -State $State -Updates @{
             lastYAxUnitStatus = "not-applicable"
-            lastYAxUnitReason = "No hierarchical test extension exists at $(Get-YAxUnitTestsPath)."
+            lastYAxUnitReason = $reason
             lastYAxUnitTestAt = (Get-Date).ToString("o")
         }
-        Write-Host "YAxUnit verification: not applicable; $(Get-YAxUnitTestsPath) is absent."
+        Write-Host "YAxUnit verification: not applicable; $(Get-YAxUnitTestsPath) is absent. $reason"
         return [pscustomobject]@{ status = "not-applicable"; tests = 0 }
     }
 

@@ -151,6 +151,15 @@ verification scope and consume an unbounded runner budget. Refresh only
 inventories this contract and returns agent-owned continuation work, because the
 helper cannot infer semantic ownership safely.
 
+The YAxUnit production applicability check blocks only when a post-adoption,
+branch-owned BSL change has no exact decision. Without that check, the normal
+`not-applicable` result for an absent test extension could falsely present a
+new, unit-testable product change as covered. A pre-adoption branch baseline
+preserves previous coverage status; it is recorded as legacy rather than
+creating retroactive test work. Classification may reuse an existing test group
+or record a justified exact-content non-applicability decision; it does not
+require one new test for every changed module.
+
 Proven accepted-master input is a distinct selection case: unchanged imported
 CF/CFE paths select complete existing acceptance coverage with recorded Git
 provenance. They do not require invented tests or owner declarations. Own unknown
