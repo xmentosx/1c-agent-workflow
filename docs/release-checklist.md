@@ -205,8 +205,11 @@ presence of its remote immutable tag alone is not publication success.
 
 The finalizer covers every owned release surface: the controlled `ai_rules_1c`
 branch plus annotated tag, the patched Vanessa Automation asset, and the
-`itl-ondemand-mcp` asset. Missing high-risk assets automatically make
-`PublishDevelop` run Release even when `-RequireRelease` was not supplied. The
+`itl-ondemand-mcp` asset. Missing high-risk assets add their exact qualification
+capabilities to `PublishDevelop`: `extension-smoke` plus its `config-cadence`
+dependency for Vanessa, and only `ondemand-mcp` for the facade. The immutable
+plan records the dependency-closed capability set; explicit `-RequireRelease`
+still selects the complete Release catalog. The
 rules release still requires an explicit clean `-AiRulesSource` with exact Full
 qualification and local immutable refs. External dependency locks are verified
 only and never republished. Component evidence is stored separately per exact

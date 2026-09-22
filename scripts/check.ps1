@@ -14,7 +14,8 @@ param(
     [ValidateRange(1, 4)]
     [int]$PesterWorkers = 3,
     [ValidateSet("Auto", "Restart")]
-    [string]$ReleaseResumeMode = "Auto"
+    [string]$ReleaseResumeMode = "Auto",
+    [string]$ReleaseCapabilities = ""
 )
 
 $script:ExplicitAiRulesSource = $PSBoundParameters.ContainsKey("AiRulesSource") -and -not [string]::IsNullOrWhiteSpace($AiRulesSource)
@@ -1075,8 +1076,10 @@ try {
     }
 
     if ($effectiveMode -eq "Release") {
+        $selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
         Add-ReusedStage -Name "develop-e2e" -Reason "exact or ancestor same-tree Develop qualification" -Detail $developQualificationFullPath
-        Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for release" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
+        if ($selectedReleaseCapabilities.Count -eq 0 -or $selectedReleaseCapabilities -contains "ondemand-mcp") {
+        Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for the on-demand capability" -Detail "assets/ondemand-mcp/compatibility.json" -Body {
             $compatibilityPath = Join-Path $repoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json"
             $compatibility = Get-Content -LiteralPath $compatibilityPath -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($family in @("roctup", "vanessa-ui")) {
@@ -1095,19 +1098,33 @@ try {
                 }
             }
         }
+        }
         $e2eReportPath = Join-Path $outputRoot "release-e2e-summary.json"
         $e2eScript = Join-Path $repoRoot "scripts\invoke-release-e2e.ps1"
         $releaseHelperPath = Join-Path $repoRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         Invoke-GateStage -Name "release-e2e" -Reason "always-run release runtime proof" -Detail $e2eReportPath -Body {
             $releaseRulesSource = $(if ($forkSourceRoot) { $forkSourceRoot } elseif ($aiRulesRelease) { [string]$aiRulesRelease.sourceRoot } else { $resolvedAiRulesSource })
             $releaseProgressPaths = @($outputRoot, (Join-Path ([IO.Path]::GetFullPath($E2EProjectRoot)) ".agent-1c\locks"))
-            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode) -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
+            $releaseE2EArguments = @("-ProjectRoot", ([System.IO.Path]::GetFullPath($E2EProjectRoot)), "-AiRulesSource", $releaseRulesSource, "-HelperPath", $releaseHelperPath, "-OutputPath", $e2eReportPath, "-ResumeMode", $ReleaseResumeMode)
+            if ($selectedReleaseCapabilities.Count -gt 0) { $releaseE2EArguments += @("-Capabilities", ($selectedReleaseCapabilities -join ',')) }
+            Invoke-PowerShellChild -ScriptPath $e2eScript -Arguments $releaseE2EArguments -TimeoutSeconds 7200 -NoProgressSeconds 900 -ProgressPaths $releaseProgressPaths -LogName "release-e2e"
             if (-not (Test-Path -LiteralPath $e2eReportPath -PathType Leaf)) { throw "Release E2E summary was not created: $e2eReportPath" }
             $e2eSummary = Get-Content -LiteralPath $e2eReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$e2eSummary.schemaVersion -ne 3) { throw "Release E2E summary schema must be 3; actual: $($e2eSummary.schemaVersion)." }
             if ([string]$e2eSummary.status -ne "passed") { throw "Release E2E summary reports '$($e2eSummary.status)': $([string]$e2eSummary.error)" }
-            if ([bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
-            if ([bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
+            $effectiveReleaseCapabilities = @($e2eSummary.selectedCapabilities | ForEach-Object { [string]$_ })
+            if ($selectedReleaseCapabilities.Count -gt 0 -and @($selectedReleaseCapabilities | Where-Object { $effectiveReleaseCapabilities -cnotcontains [string]$_ }).Count -gt 0) {
+                throw "Release E2E capability scope mismatch: requested '$($selectedReleaseCapabilities -join ',')', executed '$($effectiveReleaseCapabilities -join ',')'."
+            }
+            $selectedReleaseCapabilities = $effectiveReleaseCapabilities
+            foreach ($capability in $effectiveReleaseCapabilities) {
+                $stageProperty = $e2eSummary.stages.PSObject.Properties[$capability]
+                if ($capability -eq "server-reset" -and -not [bool]$e2eSummary.serverResetConfigured -and [string]$e2eSummary.serverResetStatus -eq "unverified") { continue }
+                if (-not $stageProperty -or [string]$stageProperty.Value.status -ne "passed") { throw "Release E2E capability '$capability' has no passed evidence." }
+            }
+            if ($effectiveReleaseCapabilities -contains "ondemand-mcp" -and [bool]$e2eSummary.onDemandMcpTestFixture) { throw "Release E2E used the test-only on-demand MCP fixture." }
+            if ($effectiveReleaseCapabilities -contains "seed-parallel" -and [bool]$e2eSummary.seedParallelTestFixture) { throw "Release E2E used the test-only seed-parallel fixture." }
+            if ($effectiveReleaseCapabilities -contains "seed-parallel") {
             if (-not [bool]$e2eSummary.seedParallelBranchRuntimeConcurrent -or -not [bool]$e2eSummary.seedParallelLiteRefreshConcurrent -or
                 -not [bool]$e2eSummary.seedParallelRefreshAllPassed -or -not [bool]$e2eSummary.seedParallelDirtyCheckpointPassed -or
                 -not [bool]$e2eSummary.seedParallelFileResetPassed -or
@@ -1117,6 +1134,8 @@ try {
                 [int]$e2eSummary.seedParallelBaselineCount -lt 0) {
                 throw "Release E2E did not prove latest-only file seed, parallel branch runtime, dirty refresh-all, and archived file reset."
             }
+            }
+            if ($effectiveReleaseCapabilities -contains "server-reset") {
             if ([bool]$e2eSummary.serverResetConfigured) {
                 if ([string]$e2eSummary.serverResetStatus -ne "passed" -or -not [bool]$e2eSummary.seedParallelServerResetPassed) {
                     throw "Configured Release server-reset did not pass."
@@ -1124,12 +1143,15 @@ try {
             } elseif ([string]$e2eSummary.serverResetStatus -ne "unverified") {
                 throw "Release without a server stand must report server-reset as unverified."
             }
+            }
+            if ($effectiveReleaseCapabilities -contains "ondemand-mcp") {
             if ([int]$e2eSummary.onDemandRoctupToolCount -ne 13 -or [int]$e2eSummary.onDemandVanessaToolCount -ne 38) { throw "Release E2E did not prove both complete on-demand MCP catalogs." }
             if ([int]$e2eSummary.onDemandRoctupPublicToolCount -ne 3 -or [int]$e2eSummary.onDemandVanessaPublicToolCount -ne 3) { throw "Release E2E did not prove both compact on-demand MCP gateway surfaces." }
             if ([int]$e2eSummary.onDemandVanessaInstances -ne 2 -or -not [bool]$e2eSummary.onDemandVanessaSecondSurvived) { throw "Release E2E did not prove isolated concurrent Vanessa facade instances." }
             if (-not [bool]$e2eSummary.onDemandVanessaSerializedHandoff) { throw "Release E2E did not prove serialized database handoff between concurrent Vanessa facades." }
             if ([int]$e2eSummary.maxConcurrentSessions -lt 1 -or [int]$e2eSummary.maxConcurrentSessions -gt 3) { throw "Release E2E did not prove maxConcurrentSessions=3; observed $([int]$e2eSummary.maxConcurrentSessions)." }
             if ([int64]$e2eSummary.ownedProcessExitWaitMs -lt 0 -or [int64]$e2eSummary.ownedProcessExitWaitMs -gt 15000) { throw "Release E2E owned process exit wait exceeded 15000 ms: $([int64]$e2eSummary.ownedProcessExitWaitMs) ms." }
+            }
         } | Out-Null
     }
 
@@ -1172,6 +1194,7 @@ try {
         tree = $tree
         worktreeClean = (-not $dirty)
         offline = [bool]$Offline
+        releaseCapabilities = $(if ($effectiveMode -eq "Release") { @($selectedReleaseCapabilities) } else { @() })
         pesterWorkers = [ordered]@{
             requested = [int]$PesterWorkers
             explicit = [bool]$pesterWorkersExplicit

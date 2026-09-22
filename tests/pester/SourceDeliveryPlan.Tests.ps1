@@ -87,6 +87,34 @@ Describe 'Delivery v3 immutable selective plan' {
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*QUALITY_OWNER_MISSING*'
     }
 
+    It 'selects only requested Release capabilities and their dependencies' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+        Mock Get-DeliveryPlanEnvironmentIdentity { param([string]$Mode) [ordered]@{ mode=$Mode } }
+        Mock Get-DeliveryReleaseStageCatalog {
+            [pscustomobject]@{ stages=@(
+                [pscustomobject]@{ id='config-cadence'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('runtime.ps1') },
+                [pscustomobject]@{ id='extension-smoke'; version=1; budgetSeconds=10; dependsOn=@('config-cadence'); paths=@('runtime.ps1') },
+                [pscustomobject]@{ id='ondemand-mcp'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('runtime.ps1') }
+            ) }
+        }
+
+        $componentPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'ondemand-mcp'
+        @($componentPlan.releaseCapabilities) | Should -Be @('ondemand-mcp')
+        @($componentPlan.stages.id | Where-Object { $_ -like 'release.*' }) | Should -Be @('release.ondemand-mcp')
+
+        $vanessaPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
+        @($vanessaPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke')
+        @($vanessaPlan.stages.id | Where-Object { $_ -like 'release.*' }) | Should -Be @('release.config-cadence','release.extension-smoke')
+
+        $fullPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -RequireRelease
+        @($fullPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
+    }
+
     It 'does not invalidate an independent runtime fingerprint when only harness content changes' {
         $repo = New-PlanRepository; $script:Root = $repo.root
         $before = Get-DeliveryInputFingerprint -StageId 'release.runtime' -Version 1 -CandidateRoot $repo.root -ExactPath @('runtime.ps1')
@@ -238,7 +266,7 @@ Describe 'Delivery v3 immutable selective plan' {
         }
     }
 
-    It 'auto-promotes accumulated Plan when owned components require Release' {
+    It 'adds owned component Release capabilities to the accumulated Plan' {
         $planSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\source-delivery-plan.ps1') -Raw -Encoding UTF8
         $accumulatedText = [regex]::Match($planSource, '(?ms)^function New-AccumulatedDeliveryPlan \{.*?^\}').Value
         & {
@@ -254,18 +282,19 @@ Describe 'Delivery v3 immutable selective plan' {
                 param([string]$Root,[string[]]$Arguments)
                 return [pscustomobject]@{ exitCode=0; stdout=$(if ($Arguments -contains 'HEAD^{tree}') { ('d' * 40) } else { ('c' * 40) }) }
             }
-            function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiresRelease=$true; components=@() } }
+            function Get-OwnedComponentPublicationPlan { return [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@('ondemand-mcp'); components=@() } }
             function Assert-ComponentPublicationFinalizerPreflight { $script:preflightCalled = $true }
             function Resolve-DeliveryPlanAiRulesSource { $script:resolverCalled = $true; return 'C:\exact-rules' }
             function New-DeliveryQualityPlanForCandidate {
-                param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease)
-                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=[bool]$RequireRelease }
+                param([string]$CandidateRoot,[string]$BaseCommit,[string]$CandidateCommit,[string]$CandidateTree,[switch]$RequireRelease,[string[]]$ReleaseCapability)
+                return [pscustomobject]@{ planId='plan'; status='ready'; requireRelease=(@($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability) }
             }
             function Save-DeliveryQualityPlan { return 'C:\plan.json' }
             function Remove-DeliveryWorktree {}
 
             $plan = New-AccumulatedDeliveryPlan
             $plan.requireRelease | Should -BeTrue
+            @($plan.releaseCapabilities) | Should -Be @('ondemand-mcp')
             $script:preflightCalled | Should -BeTrue
             $script:resolverCalled | Should -BeTrue
         }

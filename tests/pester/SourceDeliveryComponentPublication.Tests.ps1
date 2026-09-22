@@ -12,7 +12,7 @@ Describe "Source develop queue and delivery" {
         foreach ($external in @('roctupMcpToolkit', 'vanessaMcp', 'agentBrowser', 'windowsMcp', 'piMcpExtension', 'opencodePlugin')) {
             $aggregate | Should -Not -Match ([regex]::Escape($external))
         }
-        $DeliverySourceText | Should -Match 'Owned component publication requires exact-candidate Release qualification'
+        $DeliverySourceText | Should -Match 'Owned component publication requires exact-candidate Release capabilities'
         $DeliverySourceText | Should -Match 'Resolve-DeliveryAiRulesSource'
         $DeliverySourceText | Should -Match 'worktree", "list", "--porcelain", "-z"'
         $DeliverySourceText | Should -Match 'Remove-DeliveryPreparedAiRulesWorktree'
@@ -47,7 +47,7 @@ Describe "Source develop queue and delivery" {
         }
     }
 
-    It "requires Release when only the paired Vanessa extension is unpublished" {
+    It "requires only the Vanessa Release capability when the paired extension is unpublished" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }
             $candidateRoot = Join-Path $TestDrive 'paired plan candidate'
@@ -59,20 +59,45 @@ Describe "Source develop queue and delivery" {
                 aiRules1c = [ordered]@{ compatibilityStatus = 'passed' }
             } }
             [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+            $script:missingAssetPattern = '*paired.cfe'
             function Get-DeliveryRemoteAssetState {
                 param([string]$Url, [string]$ExpectedSha256)
-                return [pscustomobject]@{ status = $(if ($Url -like '*paired.cfe') { 'missing' } else { 'matched' }); sha256 = $ExpectedSha256 }
+                return [pscustomobject]@{ status = $(if ($Url -like $script:missingAssetPattern) { 'missing' } else { 'matched' }); sha256 = $ExpectedSha256 }
             }
             function Get-DeliveryLocalAiRulesSource { return [pscustomobject]@{ root = $candidateRoot } }
             function Get-DeliveryAiRulesRemoteState { return [pscustomobject]@{ status = 'matched' } }
             $script:ComponentFinalizerScript = ''
 
             $plan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
-            $plan.requiresRelease | Should -BeTrue
+            @($plan.requiredReleaseCapabilities) | Should -Be @('extension-smoke')
             $component = @($plan.components | Where-Object { $_.name -eq 'vanessaAutomation' })[0]
             $component.status | Should -Be 'missing'
-            $component.releaseRequired | Should -BeTrue
+            @($component.requiredReleaseCapabilities) | Should -Be @('extension-smoke')
             @($component.assets | Where-Object { $_.name -eq 'paired.cfe' })[0].status | Should -Be 'missing'
+
+            $script:missingAssetPattern = '*facade.exe'
+            $onDemandPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('b' * 40)
+            @($onDemandPlan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
+            @($onDemandPlan.components | Where-Object { $_.name -eq 'itlOndemandMcp' })[0].requiredReleaseCapabilities | Should -Be @('ondemand-mcp')
+        }
+    }
+
+    It "rejects a component capability aggregate that omits an owned requirement" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-ComponentPublicationFinalizerPreflight')) { Invoke-Expression $definition.Extent.Text }
+            $script:ComponentFinalizerScript = ''
+            function Get-DeliveryGitHubRepository { [pscustomobject]@{ owner='owner'; repo='repo'; slug='owner/repo' } }
+            $components = @(
+                [pscustomobject]@{ name='aiRules1c'; status='matched'; requiredReleaseCapabilities=@() },
+                [pscustomobject]@{ name='itlOndemandMcp'; status='missing'; requiredReleaseCapabilities=@('ondemand-mcp') },
+                [pscustomobject]@{ name='vanessaAutomation'; status='matched'; requiredReleaseCapabilities=@() }
+            )
+            $plan = [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@(); components=$components }
+            { Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $TestDrive -CandidateCommit ('a' * 40) -Plan $plan } |
+                Should -Throw '*capability union*'
+            $plan.requiredReleaseCapabilities = @('ondemand-mcp')
+            { Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $TestDrive -CandidateCommit ('a' * 40) -Plan $plan } |
+                Should -Not -Throw
         }
     }
 

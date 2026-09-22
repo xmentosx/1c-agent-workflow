@@ -135,7 +135,12 @@ owned components, что и публикация, поэтому автомат�
 из-за отсутствующего immutable asset уже входит в сохранённый `planId`.
 Исправление delivery/test harness меняет его собственный static proof, но не
 fingerprint независимой runtime capability.
-`verification-refresh` и `result-cleanup` намеренно всегда свежие.
+Component preflight не хранит булево «нужен Release»: он возвращает минимальный
+набор `requiredReleaseCapabilities`, plan добавляет их dependency closure и
+включает точный упорядоченный список в `planId`. Для отсутствующего
+`itl-ondemand-mcp` это только `ondemand-mcp`; для Vanessa — `extension-smoke`
+и его зависимость `config-cadence`. Явный `-RequireRelease` выбирает весь каталог.
+`verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
 Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 минут; Develop
 `upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
@@ -217,7 +222,10 @@ plane, покрытый собственными source-delivery regression-те
 controlled `ai_rules_1c`, patched Vanessa Automation и `itl-ondemand-mcp`.
 Совпавшие remote identities проверяются без мутации; отсутствующий rules branch/tag
 публикуется после Develop из явного clean `-AiRulesSource`, а отсутствующий Vanessa
-или on-demand asset автоматически повышает тот же запуск до Release. Partial или
+или on-demand asset автоматически добавляет в тот же запуск только требуемые
+Release capabilities. Для Vanessa это `extension-smoke` с `config-cadence`, для
+`itl-ondemand-mcp` — `ondemand-mcp`; явный `-RequireRelease` по-прежнему означает
+полную Release-проверку. Partial или
 несовпадающие immutable refs/assets закрыто блокируют публикацию. Внешние npm,
 PyPI, ROCTUP, `client_mcp` и `VAExtension` остаются только lock-проверяемыми
 upstream-зависимостями; `PublishDevelop` их никогда не публикует.

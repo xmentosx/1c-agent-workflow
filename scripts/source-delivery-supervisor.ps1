@@ -111,7 +111,7 @@ try {
                 supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
                 activeOperation = (Get-DeliveryOperationStatus)
-                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
+                publicationAttempt = $(if ($attempt) { [pscustomobject]@{ phase=$attempt.phase; planId=$(if ($attempt.PSObject.Properties.Name -contains 'planId') { [string]$attempt.planId } else { '' }); candidate=$attempt.candidate; tree=$attempt.tree; startedAt=$attempt.startedAt; requireRelease=[bool]$attempt.requireRelease; releaseCapabilities=$(if ($attempt.PSObject.Properties.Name -contains 'releaseCapabilities') { @($attempt.releaseCapabilities) } else { @() }); fullReleaseRequested=$(if ($attempt.PSObject.Properties.Name -contains 'fullReleaseRequested') { [bool]$attempt.fullReleaseRequested } else { $false }); failures=$(if ($attempt.PSObject.Properties.Name -contains 'failures') { $attempt.failures } else { @() }) } } else { $null })
                 cleanupDebt = (Get-DeliveryResourceLedgerSummary)
                 disposition = (Get-DeliveryDispositionReport)
                 runHistory = $history

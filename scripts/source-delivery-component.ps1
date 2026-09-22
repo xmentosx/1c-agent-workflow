@@ -558,7 +558,7 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
 function Get-OwnedComponentPublicationPlan {
     param([string]$CandidateRoot, [string]$CandidateCommit)
     if ($script:ComponentFinalizerScript) {
-        return [pscustomobject]@{ status = "planned"; requiresRelease = [bool]$RequireRelease; components = @("test-seam") }
+        return [pscustomobject]@{ status = "planned"; requiredReleaseCapabilities = @(); components = @("test-seam") }
     }
     $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
     $vanessa = Get-DeliveryRemoteAssetState -Url ([string]$lock.vanessaAutomation.url) -ExpectedSha256 ([string]$lock.vanessaAutomation.sha256)
@@ -569,20 +569,23 @@ function Get-OwnedComponentPublicationPlan {
     if ($rules.status -in @("partial", "mismatch")) { throw "Remote ai_rules_1c release '$($lock.aiRules1c.ref)' is $($rules.status)." }
     return [pscustomobject]@{
         status = "planned"; candidateCommit = $CandidateCommit
-        requiresRelease = [bool]($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing" -or $onDemand.status -eq "missing")
+        requiredReleaseCapabilities = @(
+            if ($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing") { "extension-smoke" }
+            if ($onDemand.status -eq "missing") { "ondemand-mcp" }
+        )
         components = @(
             [pscustomobject]@{
-                name = "aiRules1c"; status = $rules.status; releaseRequired = $false
+                name = "aiRules1c"; status = $rules.status; requiredReleaseCapabilities = @()
                 compatibilityStatus = [string]$lock.aiRules1c.compatibilityStatus
                 compatibilityPromotionRequired = ([string]$lock.aiRules1c.compatibilityStatus -cne "passed")
             },
             [pscustomobject]@{
                 name = "vanessaAutomation"
                 status = $(if ($vanessa.status -eq "matched" -and $vanessaPaired.status -eq "matched") { "matched" } else { "missing" })
-                releaseRequired = [bool]($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing")
+                requiredReleaseCapabilities = $(if ($vanessa.status -eq "missing" -or $vanessaPaired.status -eq "missing") { @("extension-smoke") } else { @() })
                 assets = @([pscustomobject]@{ name = [string]$lock.vanessaAutomation.assetName; status = $vanessa.status }, [pscustomobject]@{ name = [string]$lock.vanessaMcp.vaExtension.assetName; status = $vanessaPaired.status })
             },
-            [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; releaseRequired = [bool]($onDemand.status -eq "missing") }
+            [pscustomobject]@{ name = "itlOndemandMcp"; status = $onDemand.status; requiredReleaseCapabilities = $(if ($onDemand.status -eq "missing") { @("ondemand-mcp") } else { @() }) }
         )
     }
 }
@@ -618,9 +621,16 @@ function Assert-ComponentPublicationFinalizerPreflight {
     }
     foreach ($component in $components) {
         if (-not [string]$component.status) { throw "Component publication plan '$([string]$component.name)' has no status." }
-        if ([bool]$component.releaseRequired -and -not [bool]$RequireRelease) {
-            throw "Component '$([string]$component.name)' requires Release qualification before finalization."
+        foreach ($capability in @($component.requiredReleaseCapabilities)) {
+            if ([string]$capability -notmatch '^[a-z0-9][a-z0-9-]*$') {
+                throw "Component '$([string]$component.name)' has an invalid Release capability '$capability'."
+            }
         }
+    }
+    $declaredCapabilities = @($Plan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+    $componentCapabilities = @($components | ForEach-Object { @($_.requiredReleaseCapabilities) } | ForEach-Object { [string]$_ } | Where-Object { $_ } | Sort-Object -Unique)
+    if (($declaredCapabilities -join "`n") -cne ($componentCapabilities -join "`n")) {
+        throw "Component publication capability union does not match its component requirements."
     }
 
     $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot

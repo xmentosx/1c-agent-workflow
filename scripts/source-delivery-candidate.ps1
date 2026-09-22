@@ -485,7 +485,8 @@ function Test-ExactPassedDeliveryRun {
         [Parameter(Mandatory = $true)][ValidateSet("Develop", "Release")][string]$Mode,
         [Parameter(Mandatory = $true)][string]$Candidate,
         [Parameter(Mandatory = $true)][string]$Tree,
-        [Parameter(Mandatory = $true)][DateTime]$NotBefore
+        [Parameter(Mandatory = $true)][DateTime]$NotBefore,
+        [string[]]$ReleaseCapability = @()
     )
     $runRoot = Join-Path (Get-DeliveryCommonGitDirectory) "itl\runs"
     if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) { return $false }
@@ -495,6 +496,10 @@ function Test-ExactPassedDeliveryRun {
             if ([string]$run.mode -cne $Mode -or [string]$run.status -cne "passed" -or [int]$run.exitCode -ne 0) { continue }
             if ([string]$run.commit -cne $Candidate -or [string]$run.tree -cne $Tree) { continue }
             if ((ConvertTo-DeliveryUtcDateTime -Value $run.startedAt) -lt $NotBefore.ToUniversalTime()) { continue }
+            if ($Mode -eq "Release" -and @($ReleaseCapability).Count -gt 0) {
+                $qualifiedCapabilities = @($run.releaseCapabilities | ForEach-Object { [string]$_ })
+                if (@($ReleaseCapability | Where-Object { $qualifiedCapabilities -cnotcontains [string]$_ }).Count -gt 0) { continue }
+            }
             return $true
         } catch { continue }
     }
@@ -524,7 +529,10 @@ function Complete-InterruptedDevelopPublication {
         status = "published"; branch = "develop"; commit = $RemoteBefore; tree = $remoteTree
         developPublished = $true; dependenciesInstallable = $true; masterReleased = $false
         aiRulesCompatibility = [string]$installability.aiRulesStatus
-        releaseQualified = [bool]$attempt.requireRelease; componentPublication = $attempt.componentPublication; recovered = $true
+        releaseQualified = [bool]$attempt.requireRelease
+        releaseCapabilities = $(if ($attempt.PSObject.Properties.Name -contains "releaseCapabilities") { @($attempt.releaseCapabilities) } else { @() })
+        fullReleaseQualified = $(if ($attempt.PSObject.Properties.Name -contains "fullReleaseRequested") { [bool]$attempt.fullReleaseRequested } else { $false })
+        componentPublication = $attempt.componentPublication; recovered = $true
         qualificationStartedAt = [string]$attempt.startedAt
         qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $remoteTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt)
     }
@@ -532,6 +540,7 @@ function Complete-InterruptedDevelopPublication {
 
 function Publish-AccumulatedDevelop {
     $operationStartedAt = [DateTime]::UtcNow
+    $fullReleaseRequested = [bool]$RequireRelease
     Assert-CleanDeliveryWorktree
     [void](Invoke-DeliveryGit -Arguments @("fetch", $script:Remote, "develop"))
     $remoteBefore = Get-GitValue -Arguments @("rev-parse", "$script:Remote/develop")
@@ -562,10 +571,11 @@ function Publish-AccumulatedDevelop {
         $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
-        if ([bool]$componentPlan.requiresRelease -and -not [bool]$RequireRelease) {
-            Write-Verbose "Owned component publication requires exact-candidate Release qualification; PublishDevelop promoted itself to Develop + Release."
+        $componentReleaseCapabilities = @($componentPlan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+        if ($componentReleaseCapabilities.Count -gt 0 -and -not $fullReleaseRequested) {
+            Write-Verbose "Owned component publication requires exact-candidate Release capabilities '$($componentReleaseCapabilities -join ',')'; PublishDevelop added only those capabilities to the plan."
         }
-        $RequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
+        $RequireRelease = [bool]($fullReleaseRequested -or $componentReleaseCapabilities.Count -gt 0)
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         if (-not $attempt -or [string]$attempt.identity -ne $attemptIdentity) {
             $attempt = New-DevelopPublicationAttempt -Identity $attemptIdentity -RemoteBefore $remoteBefore -Entries $entries -Candidate $candidate -Tree $candidateTree -ComponentPlan $componentPlan
@@ -584,6 +594,8 @@ function Publish-AccumulatedDevelop {
             $candidateTree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
             $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
             $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
+            $componentReleaseCapabilities = @($componentPlan.requiredReleaseCapabilities | ForEach-Object { [string]$_ } | Sort-Object -Unique)
+            $RequireRelease = [bool]($fullReleaseRequested -or $componentReleaseCapabilities.Count -gt 0)
             [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
             $attempt.componentPlan = $componentPlan
             $attempt.candidate = $candidate
@@ -592,12 +604,14 @@ function Publish-AccumulatedDevelop {
         }
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
         $customGate = [bool]$script:DeliveryCustomGateBoundary
-        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$RequireRelease -AllowCustomGateFixture:$customGate
+        $deliveryPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $candidateTree -RequireRelease:$fullReleaseRequested -ReleaseCapability $componentReleaseCapabilities -AllowCustomGateFixture:$customGate
         $deliveryPlanPath = Save-DeliveryQualityPlan -Plan $deliveryPlan
         $candidateResourceId = Register-DeliveryResource -PlanId ([string]$deliveryPlan.planId) -Kind "candidate-worktree" -Owner "source-delivery" -Identity ([ordered]@{ path=$worktree.path; branch=$worktree.branch; candidate=$candidate }) -State "active"
         Assert-DeliveryQualityPlanMayRun -Plan $deliveryPlan
         $attempt | Add-Member -NotePropertyName planId -NotePropertyValue ([string]$deliveryPlan.planId) -Force
         $attempt | Add-Member -NotePropertyName planPath -NotePropertyValue $deliveryPlanPath -Force
+        $attempt | Add-Member -NotePropertyName releaseCapabilities -NotePropertyValue @($deliveryPlan.releaseCapabilities) -Force
+        $attempt | Add-Member -NotePropertyName fullReleaseRequested -NotePropertyValue $fullReleaseRequested -Force
         Write-DevelopPublicationAttempt -Attempt $attempt
         [void](Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path)
         $developEnvironmentIdentity = Get-DevelopPublicationEnvironmentIdentity
@@ -617,7 +631,7 @@ function Publish-AccumulatedDevelop {
         }
         if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2 -and
             $exactDevelopQualificationRestored -and
-            (Test-ExactPassedDeliveryRun -Mode "Release" -Candidate $candidate -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt))) {
+            (Test-ExactPassedDeliveryRun -Mode "Release" -Candidate $candidate -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -ReleaseCapability @($deliveryPlan.releaseCapabilities))) {
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "release-qualified"
         }
@@ -649,7 +663,7 @@ function Publish-AccumulatedDevelop {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Release"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Release"
             try {
-                Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Release")
+                Invoke-SourceGate -Mode "Release" -WorkingRoot $worktree.path -HardBudgetSeconds (Get-DeliveryPlanGateBudgetSeconds -Plan $deliveryPlan -Mode "Release") -ReleaseCapability @($deliveryPlan.releaseCapabilities)
                 [void](Save-DeliveryQualification -CandidateRoot $worktree.path -Tree $candidateTree)
                 Save-DeliveryPlanGateEvidence -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release"
                 [void](Register-DeliveryGateResources -Plan $deliveryPlan -CandidateRoot $worktree.path -Mode "Release")
@@ -707,7 +721,7 @@ function Publish-AccumulatedDevelop {
             status = "published"; branch = "develop"; commit = $candidate; tree = $candidateTree
             developPublished = $true; dependenciesInstallable = [bool]$installability.installable; masterReleased = $false
             aiRulesCompatibility = [string]$installability.aiRulesStatus
-            releaseQualified = [bool]$RequireRelease; componentPublication = $componentPublication
+            releaseQualified = [bool]$RequireRelease; releaseCapabilities = @($deliveryPlan.releaseCapabilities); fullReleaseQualified = [bool]$fullReleaseRequested; componentPublication = $componentPublication
             planId = [string]$deliveryPlan.planId; planPath = $deliveryPlanPath
             qualificationStartedAt = [string]$attempt.startedAt
             qualificationTiming = Get-DeliveryQualificationTimingSummary -Tree $candidateTree -NotBefore (ConvertTo-DeliveryUtcDateTime -Value $attempt.startedAt) -OperationStartedAt $operationStartedAt

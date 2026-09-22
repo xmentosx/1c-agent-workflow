@@ -24,7 +24,7 @@ function Get-DeliveryPlanIdentity {
     return [ordered]@{
         protocolVersion=1; supervisorCommit=[string]$Plan.supervisor.commit
         candidateCommit=[string]$Plan.candidate.commit; candidateTree=[string]$Plan.candidate.tree; baseCommit=[string]$Plan.candidate.baseCommit
-        requireRelease=[bool]$Plan.requireRelease; paths=@($Plan.paths); contracts=@($Plan.contracts); stages=@($Plan.stages | ForEach-Object {
+        requireRelease=[bool]$Plan.requireRelease; releaseCapabilities=@($Plan.releaseCapabilities); paths=@($Plan.paths); contracts=@($Plan.contracts); stages=@($Plan.stages | ForEach-Object {
             [ordered]@{ id=[string]$_.id; version=[int]$_.version; mode=[string]$_.mode; dependsOn=@($_.dependsOn); budgetSeconds=[int]$_.budgetSeconds; alwaysExecute=[bool]($_.PSObject.Properties["alwaysExecute"] -and [bool]$_.alwaysExecute); inputFingerprint=[string]$_.inputFingerprint }
         })
     }
@@ -268,6 +268,7 @@ function New-DeliveryQualityPlanForCandidate {
         [Parameter(Mandatory = $true)][string]$CandidateCommit,
         [Parameter(Mandatory = $true)][string]$CandidateTree,
         [switch]$RequireRelease,
+        [string[]]$ReleaseCapability = @(),
         [switch]$AllowCustomGateFixture
     )
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -280,14 +281,15 @@ function New-DeliveryQualityPlanForCandidate {
         $stages = @(
             [pscustomobject][ordered]@{ id="develop.custom-gate"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=1; inputFingerprint=(Get-DeliveryCanonicalJsonSha256 -Value ([ordered]@{ paths=$paths; gate=$gateIdentity })); execution="execute"; reason="explicit custom gate fixture boundary" }
         )
-        if ($RequireRelease) {
+        $customReleaseRequired = [bool]($RequireRelease -or @($ReleaseCapability).Count -gt 0)
+        if ($customReleaseRequired) {
             $stages += [pscustomobject][ordered]@{ id="release.custom-gate"; version=1; mode="Release"; dependsOn=@("develop.custom-gate"); budgetSeconds=1; inputFingerprint=(Get-DeliveryCanonicalJsonSha256 -Value ([ordered]@{ paths=$paths; gate=$gateIdentity; mode="Release" })); execution="execute"; reason="explicit custom gate fixture boundary" }
         }
         $watch.Stop()
         $plan = [pscustomobject][ordered]@{
             schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
             supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
-            requireRelease=[bool]$RequireRelease; paths=$paths; contracts=@("custom-gate-fixture"); stages=$stages; executedBudgetSeconds=[int]$stages.Count; planningDurationMs=[int64]$watch.ElapsedMilliseconds
+            requireRelease=$customReleaseRequired; releaseCapabilities=$(if($customReleaseRequired){@("custom-gate")}else{@()}); paths=$paths; contracts=@("custom-gate-fixture"); stages=$stages; executedBudgetSeconds=[int]$stages.Count; planningDurationMs=[int64]$watch.ElapsedMilliseconds
         }
         $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
         return $plan
@@ -303,7 +305,7 @@ function New-DeliveryQualityPlanForCandidate {
         $plan = [pscustomobject][ordered]@{
             schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="blocked"; createdAt=[DateTime]::UtcNow.ToString("o")
             supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
-            requireRelease=[bool]$RequireRelease; paths=@($paths); contracts=@(); stages=$blockedStages; blockers=@($selection.unknownPaths | ForEach-Object { "QUALITY_OWNER_MISSING: $_" })
+            requireRelease=[bool]($RequireRelease -or @($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability | Sort-Object -Unique); paths=@($paths); contracts=@(); stages=$blockedStages; blockers=@($selection.unknownPaths | ForEach-Object { "QUALITY_OWNER_MISSING: $_" })
             executedBudgetSeconds=0; planningDurationMs=[int64]$watch.ElapsedMilliseconds
         }
         $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
@@ -324,11 +326,28 @@ function New-DeliveryQualityPlanForCandidate {
         $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint
         $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=$(if($journey -eq "upgrade"){1200}else{2100}); inputFingerprint=$fingerprint; execution=$(if($proof){"reuse"}else{"execute"}); reason=$(if($proof){"matching stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
+    $orderedReleaseCapabilities = @()
+    if ($RequireRelease -or @($ReleaseCapability).Count -gt 0) {
+    $releaseCatalog = Get-DeliveryReleaseStageCatalog -CandidateRoot $CandidateRoot
+    $releaseCapabilities = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $releaseDefinitions = @{}
+    foreach ($definition in @($releaseCatalog.stages)) { $releaseDefinitions[[string]$definition.id] = $definition }
+    function Add-DeliveryReleaseCapability {
+        param([Parameter(Mandatory = $true)][string]$Name)
+        if (-not $releaseDefinitions.ContainsKey($Name)) { throw "DELIVERY_RELEASE_CAPABILITY_UNKNOWN: $Name" }
+        foreach ($dependency in @($releaseDefinitions[$Name].dependsOn)) { Add-DeliveryReleaseCapability -Name ([string]$dependency) }
+        [void]$releaseCapabilities.Add($Name)
+    }
     if ($RequireRelease) {
-        $releaseCatalog = Get-DeliveryReleaseStageCatalog -CandidateRoot $CandidateRoot
+        foreach ($definition in @($releaseCatalog.stages)) { Add-DeliveryReleaseCapability -Name ([string]$definition.id) }
+    } else {
+        foreach ($capability in @($ReleaseCapability | Where-Object { [string]$_ } | Sort-Object -Unique)) { Add-DeliveryReleaseCapability -Name ([string]$capability) }
+    }
+    $orderedReleaseCapabilities = @($releaseCatalog.stages | Where-Object { $releaseCapabilities.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+    if ($orderedReleaseCapabilities.Count -gt 0) {
         $releaseEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Release
         $fingerprints = @{}
-        foreach ($definition in @($releaseCatalog.stages)) {
+        foreach ($definition in @($releaseCatalog.stages | Where-Object { $releaseCapabilities.Contains([string]$_.id) })) {
             $dependencies = @($definition.dependsOn | ForEach-Object { [string]$fingerprints[[string]$_] })
             $stageId = "release.$([string]$definition.id)"
             $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version ([int]$definition.version) -CandidateRoot $CandidateRoot -Pattern @($definition.paths) -DependencyFingerprint $dependencies -ExternalIdentity $releaseEnvironment
@@ -338,6 +357,7 @@ function New-DeliveryQualityPlanForCandidate {
             $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=[int]$definition.version; mode="Release"; dependsOn=@($definition.dependsOn | ForEach-Object { "release.$_" }); budgetSeconds=[int]$definition.budgetSeconds; alwaysExecute=[bool]$alwaysExecute; inputFingerprint=$fingerprint; execution=$(if($proof){"reuse"}else{"execute"}); reason=$(if($alwaysExecute){"freshness and cleanup contract"}elseif($proof){"matching stage evidence"}else{"required Release capability"}) }) | Out-Null
         }
     }
+    }
     $watch.Stop()
     if ($watch.Elapsed.TotalSeconds -gt 30) { throw "DELIVERY_PLAN_BUDGET_EXCEEDED: planning took $([int]$watch.Elapsed.TotalSeconds)s; hard limit is 30s." }
     $executedBudget = 0
@@ -346,7 +366,7 @@ function New-DeliveryQualityPlanForCandidate {
         schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
         supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
         candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
-        requireRelease=[bool]$RequireRelease; paths=@($paths); contracts=@($selection.contracts | ForEach-Object { [string]$_.id }); stages=@($stages)
+        requireRelease=[bool]($orderedReleaseCapabilities.Count -gt 0); releaseCapabilities=$orderedReleaseCapabilities; paths=@($paths); contracts=@($selection.contracts | ForEach-Object { [string]$_.id }); stages=@($stages)
         executedBudgetSeconds=$executedBudget; planningDurationMs=[int64]$watch.ElapsedMilliseconds
     }
     $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
@@ -416,10 +436,9 @@ function New-AccumulatedDeliveryPlan {
         $candidate = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD")).stdout.Trim()
         $tree = (Invoke-WorktreeGit -Root $worktree.path -Arguments @("rev-parse", "HEAD^{tree}")).stdout.Trim()
         $componentPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $worktree.path -CandidateCommit $candidate
-        $effectiveRequireRelease = [bool]($RequireRelease -or [bool]$componentPlan.requiresRelease)
         [void](Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $worktree.path -CandidateCommit $candidate -Plan $componentPlan)
         [void](Resolve-DeliveryPlanAiRulesSource -CandidateRoot $worktree.path)
-        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$effectiveRequireRelease
+        $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $worktree.path -BaseCommit $remoteBefore -CandidateCommit $candidate -CandidateTree $tree -RequireRelease:$RequireRelease -ReleaseCapability @($componentPlan.requiredReleaseCapabilities)
         $plan | Add-Member -NotePropertyName path -NotePropertyValue (Save-DeliveryQualityPlan -Plan $plan)
         return $plan
     } finally { if ($worktree) { Remove-DeliveryWorktree -Worktree $worktree } }

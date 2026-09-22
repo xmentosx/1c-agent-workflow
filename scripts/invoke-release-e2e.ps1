@@ -5,7 +5,8 @@ param(
     [string]$HelperPath = "",
     [string]$OutputPath = "",
     [ValidateSet("Auto", "Restart")]
-    [string]$ResumeMode = "Auto"
+    [string]$ResumeMode = "Auto",
+    [string]$Capabilities = ""
 )
 
 Set-StrictMode -Version Latest
@@ -1563,6 +1564,24 @@ foreach ($stage in @($releaseStageCatalog.stages)) {
     $script:releaseStageBudgets[$stageId] = [int]$stage.budgetSeconds
 }
 if (@($script:ReleaseE2EStageDefinitions.Keys | Where-Object { -not $script:releaseStageBudgets.ContainsKey([string]$_) }).Count -gt 0) { throw "Release E2E stage budget catalog is incomplete." }
+$selectedCapabilitySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+function Add-SelectedReleaseE2ECapability {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    if (-not $script:ReleaseE2EStageDefinitions.Contains($Name)) { throw "RELEASE_E2E_CAPABILITY_UNKNOWN: $Name" }
+    foreach ($dependency in @($script:ReleaseE2EStageDefinitions[$Name].dependsOn)) { Add-SelectedReleaseE2ECapability -Name ([string]$dependency) }
+    [void]$selectedCapabilitySet.Add($Name)
+}
+$requestedCapabilities = @($Capabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
+if ($requestedCapabilities.Count -eq 0) {
+    foreach ($stage in @($releaseStageCatalog.stages)) { Add-SelectedReleaseE2ECapability -Name ([string]$stage.id) }
+} else {
+    foreach ($capability in $requestedCapabilities) { Add-SelectedReleaseE2ECapability -Name ([string]$capability) }
+}
+$selectedCapabilities = @($releaseStageCatalog.stages | Where-Object { $selectedCapabilitySet.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
+function Test-ReleaseE2ECapabilitySelected {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    return $selectedCapabilitySet.Contains($Name)
+}
 $serverResetDisposition = Get-ReleaseE2EServerResetDisposition `
     -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
     -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
@@ -2161,7 +2180,7 @@ if ($checkpoint) {
 
 $preflightSeedMasterHead = ""
 if (-not $checkpoint) {
-    if (-not $seedParallelTestFixture) {
+    if ((Test-ReleaseE2ECapabilitySelected -Name "seed-parallel") -and -not $seedParallelTestFixture) {
         $preflightMainRoot = [string](Get-E2EState).value.mainWorktreePath
         if (-not $preflightMainRoot -or -not (Test-Path -LiteralPath $preflightMainRoot -PathType Container)) {
             throw "RELEASE_E2E_SEED_MAIN_WORKTREE_MISSING: $preflightMainRoot"
@@ -2215,15 +2234,16 @@ if (-not $checkpoint) {
 
 try {
     [void](Get-E2EState)
-    if ([string]$serverResetDisposition.status -eq "invalid") {
+    if ((Test-ReleaseE2ECapabilitySelected -Name "server-reset") -and [string]$serverResetDisposition.status -eq "invalid") {
         throw "RELEASE_E2E_SERVER_STAND_INVALID: $([string]$serverResetDisposition.reason). Configure all of serverProjectRoot, serverWorktreePath, and serverDevBranchName, or omit all three."
     }
-    if ($serverResetConfigured) {
+    if ((Test-ReleaseE2ECapabilitySelected -Name "server-reset") -and $serverResetConfigured) {
         Assert-E2EServerResetStandConfigured `
             -ServerProjectRoot (Get-E2EReleaseConfigValue -Name "serverProjectRoot") `
             -ServerWorktreePath (Get-E2EReleaseConfigValue -Name "serverWorktreePath") `
             -ServerDevBranchName (Get-E2EReleaseConfigValue -Name "serverDevBranchName")
     }
+    if (Test-ReleaseE2ECapabilitySelected -Name "seed-parallel") {
     if (-not (Test-E2EStagePassed -Name "seed-parallel")) {
         Set-E2EStageStatus -Name "seed-parallel" -Status "running"
         $executedStages += "seed-parallel"
@@ -2301,7 +2321,9 @@ try {
         $seedParallelEvidencePath = Get-E2EReusedStageEvidencePath -Name "seed-parallel" -DefaultPath $seedParallelEvidencePath
         $seedParallelEvidence = Get-Content -LiteralPath $seedParallelEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "server-reset") {
     if ([string]$serverResetDisposition.status -eq "unverified") {
         $serverResetEvidence = [ordered]@{
             schemaVersion = 1
@@ -2365,7 +2387,9 @@ try {
         $serverResetEvidencePath = Get-E2EReusedStageEvidencePath -Name "server-reset" -DefaultPath $serverResetEvidencePath
         $serverResetEvidence = Get-Content -LiteralPath $serverResetEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "config-cadence") {
     if (-not (Test-E2EStagePassed -Name "config-cadence")) {
         if ($checkpoint["stages"].Contains("config-cadence")) {
             Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["baseline"] -StateFiles $checkpoint["stateFiles"]["baseline"]
@@ -2480,7 +2504,9 @@ try {
         }
         $vanessaFixture = [pscustomobject]@{ path = [string]$configEvidence.featurePath; commit = $vanessaFixtureCommit }
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "config-roundtrip") {
     $roundtripEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\config-roundtrip.json"
     if (-not (Test-E2EStagePassed -Name "config-roundtrip")) {
         if ($checkpoint["stages"].Contains("config-roundtrip")) {
@@ -2509,7 +2535,9 @@ try {
         $roundtripEvidencePath = Get-E2EReusedStageEvidencePath -Name "config-roundtrip" -DefaultPath $roundtripEvidencePath
         $roundtripEvidence = Get-Content -LiteralPath $roundtripEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "extension-smoke") {
     $extensionSmokeEvidencePath = Join-Path $worktreePath "build\test-results\release-e2e\extension-smoke.json"
     if (-not (Test-E2EStagePassed -Name "extension-smoke")) {
         # The extension stage always starts from the exact post-configuration
@@ -2555,7 +2583,9 @@ try {
         $extensionSmokeEvidencePath = Get-E2EReusedStageEvidencePath -Name "extension-smoke" -DefaultPath $extensionSmokeEvidencePath
         $extensionSmokeEvidence = Get-Content -LiteralPath $extensionSmokeEvidencePath -Raw -Encoding UTF8 | ConvertFrom-Json
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "ondemand-mcp") {
     if (-not (Test-E2EStagePassed -Name "ondemand-mcp")) {
         Set-E2EStageStatus -Name "ondemand-mcp" -Status "running"
         $executedStages += "ondemand-mcp"
@@ -2705,7 +2735,9 @@ try {
         [int64]$onDemandMcpEvidence.families.roctup.ownedProcessExitWaitMs,
         [int64]$onDemandMcpEvidence.families.'vanessa-ui'.ownedProcessExitWaitMs
     ) | Measure-Object -Maximum).Maximum)
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "verification-refresh") {
     $verificationRefreshPassed = Test-E2EStagePassed -Name "verification-refresh"
     if (($executedStages -contains "config-cadence") -or $crossReleaseReuse -or -not $verificationRefreshPassed) {
         Restore-E2EInfobaseSnapshot -Snapshot $checkpoint["snapshots"]["postConfig"] -StateFiles $checkpoint["stateFiles"]["postConfig"]
@@ -2731,7 +2763,9 @@ try {
             throw
         }
     }
+    }
 
+    if (Test-ReleaseE2ECapabilitySelected -Name "result-cleanup") {
     $resultPassed = Test-E2EStagePassed -Name "result-cleanup"
     if ($checkpointWasResumed) {
         $resultPassed = $false
@@ -2802,14 +2836,17 @@ try {
         Assert-E2ECheckpointFile -Path $artifactPath -Sha256 $artifactSha256 -Label "result artifact"
         Assert-E2ECheckpointFile -Path $resultManifestPath -Sha256 ([string]$resultEvidence.manifestSha256) -Label "result manifest"
     }
+    }
     $sealedCapabilityPath = Save-E2ECapabilityCache
     Set-E2ECheckpointCapabilityEvidence -ManifestPath $sealedCapabilityPath
     $checkpoint["status"] = "passed"
     Write-E2ECheckpoint
-    $artifactRetention = Remove-E2EObsoleteArtifacts `
-        -CapabilityManifestPath $sealedCapabilityPath `
-        -ResultArtifactPath $artifactPath `
-        -ResultManifestPath $resultManifestPath
+    if ($artifactPath -and $resultManifestPath) {
+        $artifactRetention = Remove-E2EObsoleteArtifacts `
+            -CapabilityManifestPath $sealedCapabilityPath `
+            -ResultArtifactPath $artifactPath `
+            -ResultManifestPath $resultManifestPath
+    }
     $checkpoint["artifactRetention"] = $artifactRetention
     Write-E2ECheckpoint
 } catch {
@@ -2866,6 +2903,7 @@ try {
         finishedAt = $finishedAt.ToString("o")
         durationMs = [int64]($finishedAt - $startedAt).TotalMilliseconds
         resumeMode = $ResumeMode
+        selectedCapabilities = $selectedCapabilities
         checkpointPath = $checkpointPath
         checkpointWasResumed = $checkpointWasResumed
         crossReleaseReuse = $crossReleaseReuse

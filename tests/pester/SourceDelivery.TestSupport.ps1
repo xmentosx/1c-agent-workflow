@@ -59,7 +59,7 @@
         & git -C $root push --quiet -u origin develop *> $null
         $fakeGate = Join-Path $root "fake-gate.ps1"
         Set-Content -LiteralPath $fakeGate -Encoding UTF8 -Value @'
-param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
+param([string]$Mode, [string]$BaseRef, [string[]]$CoverageContract, [string]$AiRulesSource, [string]$E2EProjectRoot, [string]$ReleaseResumeMode, [string]$ReleaseCapabilities); $CoverageContract = @($CoverageContract -split ','); if ($CoverageContract -and @($CoverageContract).Count -ne 2) { exit 12 }
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encoding UTF8 -Value $Mode
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -Encoding UTF8 -Value ("$Mode " + (& git rev-parse HEAD).Trim())
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
