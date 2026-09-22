@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "protocol": "execution-guards-v2",
+  "producers": [
+    {
+      "id": "portable-remote-job",
+      "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/execution.py",
+      "function": "execute_job",
+      "boundary": "external",
+      "resources": "target.infoBase plus target.execution.additionalBases",
+      "deadline": "target.execution.waitTimeoutSeconds plus operation phase budgets",
+      "cleanup": "ResourceContext owned Job Object and operation cleanup"
+    },
+    {
+      "id": "portable-source-capture",
+      "file": ".agents/skills/itl-remote-runner/scripts/itl_remote/source_capture.py",
+      "function": "Snapshot.run",
+      "boundary": "nested",
+      "resources": "subset of the parent execution resources",
+      "deadline": "parent source-capture phase deadline",
+      "cleanup": "parent ResourceContext owned Job Object"
+    },
+    {
+      "id": "lifecycle-native-launch",
+      "file": ".agents/skills/1c-workflow/scripts/lib/agent-1c.sessions.ps1",
+      "function": "Invoke-WithOneCSessionAdmissionContext",
+      "boundary": "external-or-nested",
+      "resources": "complete primary and AdditionalAdmissions exact infobase set",
+      "deadline": "SessionDeadlineMonotonicNs or operation-specific timeout",
+      "cleanup": "owned native process tree and exact-base release proof"
+    },
+    {
+      "id": "ondemand-tool-call",
+      "file": "tools/itl-ondemand-mcp/database_runtime.go",
+      "function": "beginDatabaseCall",
+      "boundary": "external-or-nested",
+      "resources": "call plan exact infobase resources",
+      "deadline": "tool call context deadline",
+      "cleanup": "call-scoped owned backend request and targeted drain"
+    },
+    {
+      "id": "vanessa-build-runtime",
+      "file": "scripts/run-vanessa-build-runtime.ps1",
+      "function": "<script>",
+      "boundary": "external",
+      "resources": "declared build runtime infobase",
+      "deadline": "build runtime timeout",
+      "cleanup": "owned Vanessa and 1C process tree"
+    },
+    {
+      "id": "remote-source-capture-step",
+      "file": ".agents/skills/itl-remote-runner/scripts/Invoke-SourceCaptureStep.ps1",
+      "function": "<script>",
+      "boundary": "nested",
+      "resources": "parent measurement exact infobase resources",
+      "deadline": "parent source-capture deadline",
+      "cleanup": "parent execution supervisor"
+    }
+  ]
+}

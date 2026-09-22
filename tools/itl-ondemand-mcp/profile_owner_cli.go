@@ -43,7 +43,7 @@ func runProfileOwner(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if os.Getenv("ITL_INFOBASE_ACCESS_LEASE") != "" || os.Getenv("ITL_DATABASE_ACCESS_CONTEXT") != "" {
+	if os.Getenv("ITL_EXECUTION_CONTEXT") != "" || os.Getenv("ITL_EXECUTION_INVOCATION") != "" {
 		return fmt.Errorf("ITL_PROFILE_OWNER_MUST_OWN_ITS_LIFETIME")
 	}
 	rt, err := newProfileOwnerRuntime(config, false)

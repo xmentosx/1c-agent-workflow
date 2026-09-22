@@ -72,7 +72,6 @@ set-dev-branch-extension
 dump-dev-branch-extension
 activate-dev-branch-context
 update-dev-branch-base
-recover-interrupted-database-access
 cleanup-interrupted-vanessa-run
 stop-dev-branch-test-clients
 start-vanessa-profile
@@ -115,8 +114,6 @@ Extension helper actions are advanced/helper commands. `new-extension-dev-branch
 `configure-dev-branch-unsafe-action-protection` is an interactive recovery action for an existing development worktree when branch creation used `skip` before protection was actually disabled. Run it through `run-agent-1c-window.ps1`, optionally passing `-InfoBaseUser <name>` for an empty-password local user. It forces the normal visible Designer confirmation flow and records confirmation in branch state; it never disables protection automatically.
 
 `stop-dev-branch-test-clients` stops only the Vanessa `TESTMANAGER` in the current worktree's service infobase and `TESTCLIENT` processes in its development infobase, then fails if any remain. Successful Vanessa verification performs the same cleanup automatically. It never stops foreign worktree test processes.
-
-`recover-interrupted-database-access` is private to the monitored `run-itl-command.ps1` parent after its exact child helper exits without terminal status. It accepts only the lifecycle-published coordinator/ticket pair, invokes trusted persisted native recovery, stops only exact ownership-proven native runtime, and returns `retry-original-command` only after database release is verified. It never force-unlocks or performs broad process cleanup and must not be invoked manually.
 
 `cleanup-interrupted-vanessa-run` is the legacy exact fallback when no durable database/native recovery ticket is available. It requires matching lifecycle-owned infobase, `VAParams.json`, and TestClient ports, never falls back to branch-wide cleanup, and must not be invoked manually.
 
@@ -173,7 +170,7 @@ Outside a chat, use a stable `-VanessaProfileOwnerId` for related start/stop com
 
 `release-e2e-extension-smoke` is also reserved for the Release runner. It uses the public extension initialization lifecycle to create an Empty extension, produce and reload a CFE, validate both normalized dumps, and restore the disposable infobase and worktree from a snapshot. It is not a project command and must not have a slash wrapper.
 
-ROCTUP and Vanessa dependencies are cached by init/update/refresh in immutable user-local version/SHA directories. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends start on first use and may stop when idle, while the agent-owned database phase remains retained until the same facade completes `finish_database_access` or performs ownership-scoped abandonment cleanup on client exit. Runtime ownership appears in general `status`/`doctor` diagnostics.
+ROCTUP and Vanessa dependencies are cached by init/update/refresh in immutable user-local version/SHA directories. Agents call the stable `itl-roctup-data` and `itl-vanessa-ui` servers; private backends may stay idle between calls, while database ownership is limited to each active call's exact execution guard. Runtime identity appears in general `status`/`doctor` diagnostics and mutating supervisors drain only exact workflow-owned backends.
 
 `context-benchmark` is a Kilo-only read-only diagnostic exposed through natural-language requests such as "measure context" or "замерь контекст"; it has no slash command. `-BenchmarkMode run` requires an explicit `-BenchmarkModel provider/model` and `-ConfirmTokenSpend`, then creates one fixed no-tool `OK` request through the Kilo CLI. `analyze` reads one real IDE session by `-BenchmarkSessionId`; `compare` accepts session ids or saved summaries through `-BenchmarkBaseline` and `-BenchmarkCandidate`. Summaries under ignored `.agent-1c/diagnostics/context-benchmark/` contain counters and provenance only, never transcript text, tool arguments, URLs, or secrets.
 

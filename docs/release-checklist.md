@@ -214,7 +214,7 @@ workflow candidate so a safe retry continues idempotently after a partial
 cross-repository finalization.
 
 The public facade `tools/list` must contain exactly `resolve_tool`,
-`call_tool`, and `finish_database_access` for each family while the release probe still qualifies every tool
+`call_tool` for each family while the release probe still qualifies every tool
 in the complete internal catalog. Prove that `resolve_tool` does not start the
 backend and that a resolved exact name plus arguments reaches the intended
 backend tool through `call_tool`. Do not replace the gateway count with the
@@ -227,6 +227,12 @@ must have distinct manager and TestClient ports; closing one must leave the
 other usable. EOF and a shortened idle-timeout probe must both remove the owned
 manager/TestClient processes and release both leases. Do not qualify a release
 from `connect_test_client` text alone.
+
+The execution-ownership acceptance must also prove exact canonical base keys,
+all-or-none ordered acquisition, visible wait/cancel, call-scoped on-demand
+ownership, signed nested contexts, and bounded owned Job Object cleanup. An idle
+backend owns no database resource; legacy database-access tickets and public
+finish handoffs are not authority and must not be present in the candidate.
 
 Keep `build/test-results/local/check-summary.json` and the nested E2E summary as
 release evidence. A failed cleanup, stale Vanessa result, unverified override,

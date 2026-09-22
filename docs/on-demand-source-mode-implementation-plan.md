@@ -16,9 +16,9 @@ mode unless the project explicitly selects the new mode.
 - Preserve the existing semantic difference between full refresh and lite refresh:
   full refresh may update the source infobase from repository storage; lite refresh
   only captures the current state already present in the source infobase.
-- Serialize access to the shared source infobase by the existing database access
-  coordinator and wait for the owner instead of failing merely because another
-  branch is currently exporting its delta.
+- Serialize each native export of the shared source infobase by the
+  execution-scoped exact-base guard and show a visible wait instead of failing
+  merely because another branch is currently exporting its delta.
 - Keep branch merge/load work independent after its source export has completed,
   so unrelated branch work can proceed concurrently.
 - Bound accumulated materialized XML by the lifetime of each branch baseline and
@@ -249,8 +249,9 @@ itl-refresh-lite
 ```
 
 ## Source-infobase waiting and concurrency
-Reuse the existing database-access coordinator/admission model. Do not introduce a
-second ad-hoc lock file for on-demand source export.
+
+Reuse `execution-guards-v2` only for the bounded native export. Do not introduce a
+second ad-hoc lock file or retain ownership during the later branch apply phase.
 
 Two concurrent lite refreshes for different branches behave as:
 

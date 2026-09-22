@@ -1,45 +1,44 @@
-# Database access acceptance matrix
+# Execution ownership acceptance matrix
 
-This matrix separates source/protocol regressions from environment acceptance.
-A local fixture must never be reported as proof of SMB locking, a server
-infobase, an installed workflow, or a live configuration repository.
+The former database-ticket acceptance matrix is superseded. The current contract
+is `execution-guards-v2`: OS handles own bounded executions; JSON is diagnostic;
+idle backends own no database; interrupted dev/test work creates no generic
+recovery gate.
 
-## Current evidence
+Status vocabulary:
 
-| Contract | Evidence | Level | Current result | Remaining acceptance |
-|---|---|---|---|---|
-| Server connection aliases share one queue | `AccessTests.test_registered_connection_aliases_share_one_queue` | Local, separate Python processes | Covered | Repeat through two installed projects against one real server infobase. |
-| File connection aliases share one queue | `AccessTests.test_registered_file_aliases_share_one_queue_across_projects` | Local, separate Python processes and fixture workspaces; not installed ITL projects | Covered | Repeat through two installed projects using the real file-base aliases configured by those projects. |
-| Two local processes and two project workspaces serialize one resource in FIFO order | `AccessTests.test_different_projects_wait_in_order_for_the_same_database` | Local, separate OS processes and fixture workspaces; not installed ITL projects | Covered | No additional protocol fixture is required. Installed entrypoints remain part of file/server acceptance. |
-| Two hosts use one shared coordinator | Protocol uses one filesystem authority and never falls back to a local queue | Static/local only | Not run | Two Windows execution hosts, one secured SMB directory supporting cross-client byte locks and atomic rename, synchronized clocks for diagnostics, and the same coordinator path/configuration on both hosts. |
-| A crashed admitted owner remains fail-closed | `AccessTests.test_crashed_owner_blocks_replay_even_after_os_released_its_lock`; `RemotePerformance.Tests.ps1` native parent-process crash | Local, separate Python and PowerShell processes | Covered | Repeat with an installed operation that actually starts 1C; server recovery also needs the configured `recovery-observe` provider. |
-| A live owner cannot be recovered or displaced | `RecoveryTests.test_live_owner_cannot_be_recovered`; `RemotePerformance.Tests.ps1` holder checks | Local, separate processes | Covered | Repeat across two real hosts to prove SMB ownership visibility. |
-| A dead waiter is removed without executing and does not block its successor | `AccessTests.test_crashed_waiter_can_be_skipped_because_it_was_never_admitted`; cancelled-waiter regressions in Python, Go, and PowerShell | Local, separate processes | Covered | Repeat once through installed entrypoints; no 1C mutation is needed for the dead waiter itself. |
-| An unrelated database progresses while another resource is owned or recovering | `AccessTests.test_unrelated_database_does_not_wait_for_a_busy_database`; `RecoveryTests.test_live_verification_releases_waiters_in_order_without_replay`; native host and source-sync regressions | Local, separate processes | Covered | Repeat across real hosts and installed projects to cover shared-authority routing. |
-| A multi-resource request never retains a partial reservation | `AccessTests.test_multi_database_admission_is_atomic_and_order_independent`; `RecoveryTests.test_unproven_or_partial_verification_never_releases_resource_set` | Local, separate processes | Covered | Installed multi-database operations remain acceptance evidence, not a protocol gap. |
-| Root-only and partial object locks report contention without losing prior outcomes | `ConfigRepositoryRootLock.Tests.ps1`, `ConfigRepositoryLockReport.Tests.ps1`, and the Release E2E root-lock roundtrip | Local fixtures plus one existing single-environment E2E route | Partially covered | Two installed projects on separate hosts and repository users, one holding the configuration root and the other requesting a partial object set; verify bounded failure, exact foreign owner, preserved partial outcomes, cleanup, and successful retry. |
+- `LOCAL PASS`: deterministic source/fixture evidence on the exact candidate.
+- `PENDING LIVE`: requires an installed disposable 1C/host contour and is not
+  implied by local tests.
+- `SEPARATE DELIVERY`: registration, publication or installation state, never a
+  substitute for runtime acceptance.
 
-## Live acceptance prerequisites and assertions
+| # | Scenario | Required evidence | Current source evidence |
+|---|---|---|---|
+| 1 | Stale legacy tickets/indexes/recovery markers, no live owner | Cutover removes only obsolete state and the next helper reaches its native phase | `ExecutionGuardCutover.Tests.ps1`; installed upgrade remains `PENDING LIVE` |
+| 2 | Two jobs, same exact base | Second reports `waiting-for-base`, then runs after first releases and revalidates input | Python execution-guard/job tests: `LOCAL PASS` |
+| 3 | Jobs on different bases | Concurrent progress | Python execution-guard tests: `LOCAL PASS` |
+| 4 | Owner dies before native side effect | OS handle releases and waiter proceeds without ticket repair | Python process-boundary tests: `LOCAL PASS` |
+| 5 | Owned child hangs | Deadline/cancel closes exact owned tree; waiter proceeds | Supervisor/Job Object fixture: `LOCAL PASS`; real 1C `PENDING LIVE` |
+| 6 | Caller dies, supervisor remains | Supervisor completes bounded cleanup | Host fixture: `LOCAL PASS` |
+| 7 | Supervisor dies | Job Object closes owned activity; next supervisor checks current processes | Windows fixture: `LOCAL PASS`; real 1C `PENDING LIVE` |
+| 8 | Dev/test job interrupted after an effect | Result remains interrupted; next command starts without rollback/recovery gate and does not replay old effect | Job-state tests: `LOCAL PASS`; installed 1C `PENDING LIVE` |
+| 9 | Foreign or unidentified 1C process | No force-kill; bounded conflict only for exact base; unrelated base/update continues | Drain/cutover ownership tests: `LOCAL PASS`; real server process `PENDING LIVE` |
+| 10 | Refresh-lite fingerprint unchanged | No execution guard is created | Refresh selection fixture: `LOCAL PASS` |
+| 11 | Refresh waits for branch base | No master/Git/runtime writer held while waiting; state revalidated afterward | Lifecycle/guard fixture: `LOCAL PASS`; installed contention `PENDING LIVE` |
+| 12 | Refresh-all with one busy base | Other branches complete; aliases of the same base serialize | Multi-branch fixture required: `PENDING LIVE` |
+| 13 | Multi-resource execution | All-or-none ordered acquisition, no partial hold | Python and Go guard tests: `LOCAL PASS` |
+| 14 | Wait cancellation | Only waiter is cancelled; owner remains | Python and Go guard tests: `LOCAL PASS` |
+| 15 | Broken/missing diagnostic JSON | No live conflict means next command starts | Python guard tests: `LOCAL PASS` |
+| 16 | File path contains spaces and Cyrillic together | Canonical identity, native argv and UTF-8 output remain exact | Python/PowerShell focused fixtures: `LOCAL PASS` |
+| 17 | Server base execution host | Only configured host may execute; conflicting topology fails before start | Configuration fixture: `LOCAL PASS`; server contour `PENDING LIVE` |
+| 18 | Upgrade active branches from old helpers | Master-owned cutover bypasses old locks, replaces managed files and commits each changed worktree before enabling v2, then removes obsolete state | Multi-worktree cutover fixture with preserved staged user change: `LOCAL PASS`; real old installation `PENDING LIVE` |
+| 19 | Nested measurement/source capture and facade/broker/native | Signed context is a resource subset and cannot reacquire or expand parent guard | Python and Go nested-context tests: `LOCAL PASS` |
+| 20 | Cleanup cannot stop live conflict | Bounded exact-base error; later command starts after activity ends without resetting error state | Drain fixture: `LOCAL PASS`; real 1C `PENDING LIVE` |
+| 21 | Interrupted check/load | Never becomes passed/fresh evidence; later check/refresh is allowed normally | Verification/load checkpoint fixtures: `LOCAL PASS` |
 
-The live run is deliberately not automated from an arbitrary developer checkout.
-It needs named disposable projects, infobases, credentials/providers, and hosts.
-Before running it, record the exact package commit, installed workflow version,
-coordinator UNC path, host identities, file/server connection identities, and the
-configuration repository users. The coordinator share must be tested for byte
-lock exclusion and atomic rename from both hosts before starting 1C work.
+## Delivery boundary
 
-For each file and server contour, start the first operation from project A and
-observe an admitted ticket. Start the conflicting operation from project B and
-host B, then prove it is waiting on that exact ticket and has not launched 1C.
-Also run an unrelated database operation to completion while the conflict is
-held. Exercise orderly release, waiter crash, admitted-owner crash, rejection of
-recovery while the owner is live, verified recovery after the owner is dead, and
-FIFO admission after recovery. Tokens must not appear in logs or reports.
-
-For repository contention, use a disposable repository state that requires one
-root-only request followed by partial object requests. The second user must be a
-real foreign repository owner. Prove that the conflict is bounded and names the
-foreign owner, already captured outcomes remain recorded, cleanup releases only
-owned work, and the same public action succeeds after the foreign lock is
-released. A mocked Designer log or a single-host roundtrip is supporting fixture
-evidence, not completion of this row.
+Source tests and `RegisterChange` prove only the registered source candidate.
+`PublishDevelop`, installed refresh, file/server live runs and Release qualification
+are separate states and require their own authorization and evidence.

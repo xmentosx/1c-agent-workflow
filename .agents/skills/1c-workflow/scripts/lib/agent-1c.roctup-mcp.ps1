@@ -911,8 +911,8 @@ function Invoke-DevBranchDefaultMcpSetup {
     $state = Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default "")
 
     Write-ItlBranchMcpClientConfig -State $state
-    Write-Host "ROCTUP tools are available through itl-roctup-data resolve_tool/call_tool/finish_database_access; the backend starts on the first inner call."
-    Write-Host "Vanessa UI tools are available through itl-vanessa-ui resolve_tool/call_tool/finish_database_access; the backend starts on the first inner call."
+    Write-Host "ROCTUP tools are available through itl-roctup-data resolve_tool/call_tool; each inner call has its own execution guard."
+    Write-Host "Vanessa UI tools are available through itl-vanessa-ui resolve_tool/call_tool; each inner call has its own execution guard."
     return (Read-DevBranchState -Name (Get-StateValue -State $state -Name "devBranchName" -Default ""))
 }
 

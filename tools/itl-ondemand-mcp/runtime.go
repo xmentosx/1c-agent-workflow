@@ -22,30 +22,24 @@ import (
 )
 
 type runtime struct {
-	mu                      sync.Mutex
-	catalog                 *loadedCatalog
-	broker                  backendBroker
-	projectRoot             string
-	family                  string
-	instanceID              string
-	idle                    time.Duration
-	catalogWait             time.Duration
-	vanessaConnectWait      time.Duration
-	logger                  *slog.Logger
-	progressMu              sync.Mutex
-	progress                map[string]*progressRoute
-	progressSerial          atomic.Uint64
-	progressWriteMu         sync.Mutex
-	databaseGateOnce        sync.Once
-	databaseGate            chan struct{}
-	databaseFinishMu        sync.Mutex
-	databaseOwner           *databasePipeOwner
-	databasePlan            *facadeDatabasePlan
-	databaseParent          *databaseAccessProof
-	databasePhaseLock       *runtimeReadLock
-	databaseFinishing       bool
-	databaseNativePending   bool
-	databaseRetainInherited bool
+	mu                 sync.Mutex
+	catalog            *loadedCatalog
+	broker             backendBroker
+	projectRoot        string
+	family             string
+	instanceID         string
+	idle               time.Duration
+	catalogWait        time.Duration
+	vanessaConnectWait time.Duration
+	logger             *slog.Logger
+	progressMu         sync.Mutex
+	progress           map[string]*progressRoute
+	progressSerial     atomic.Uint64
+	progressWriteMu    sync.Mutex
+	databaseGateOnce   sync.Once
+	databaseGate       chan struct{}
+	executionOwner     *executionGuardOwner
+	executionPlan      *facadeExecutionPlan
 
 	backend           *backendInfo
 	session           *mcp.ClientSession
@@ -115,15 +109,18 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 
 	ctx, finishDatabaseCall, err := r.beginDatabaseCall(ctx, req.Params.Meta)
 	if err != nil {
-		code := "INFOBASE_ACCESS_ADMISSION_FAILED"
-		if strings.Contains(err.Error(), "ITL_ONDEMAND_RUNTIME_LOCK") {
-			code = "ITL_ONDEMAND_RUNTIME_LOCK"
-		}
+		code := "EXECUTION_GUARD_ADMISSION_FAILED"
 		return toolError(code, err.Error(), nil), nil
 	}
 	defer func() {
-		if err := finishDatabaseCall(); err != nil {
-			callResult, callError = toolError("INFOBASE_ACCESS_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
+		terminal, message := "succeeded", ""
+		if callError != nil {
+			terminal, message = "failed", callError.Error()
+		} else if callResult != nil && callResult.IsError {
+			terminal, message = "failed", resultText(callResult)
+		}
+		if err := finishDatabaseCall(terminal, message); err != nil {
+			callResult, callError = toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
 		}
 	}()
 
@@ -141,9 +138,9 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	if r.session != nil && r.backend != nil && r.backend.PID > 0 {
 		statePath := filepath.Join(r.projectRoot, ".agent-1c", "mcp", "ondemand", r.family, r.instanceID+".json")
 		if _, statErr := os.Stat(statePath); os.IsNotExist(statErr) {
-			if r.databaseOwner != nil {
+			if r.executionOwner != nil {
 				r.mu.Unlock()
-				return toolError("ITL_ONDEMAND_RUNTIME_STATE_MISSING", "registered native runtime state disappeared; ownership and cleanup evidence are retained", nil), nil
+				return toolError("ITL_ONDEMAND_RUNTIME_STATE_MISSING", "registered native runtime state disappeared during the current call", nil), nil
 			}
 			_ = r.session.Close()
 			r.clearProgress(r.session)
@@ -247,9 +244,15 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.attachVanessaTestClientMetaLocked(retryResult)
 		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
 		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route))
+		if retryErr != nil {
+			retryErr = r.cleanupFailedDatabaseCallLocked(ctx, retryErr)
+		}
 		r.completeCallLocked()
 		r.mu.Unlock()
 		if retryErr != nil {
+			if strings.Contains(retryErr.Error(), "EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED") {
+				return toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", retryErr.Error(), nil), nil
+			}
 			return toolError("ITL_ONDEMAND_BACKEND_RECOVERY_RETRY_FAILED", retryErr.Error(), map[string]any{
 				"action": "retry-tool-call", "automaticRetryPerformed": true, "automaticRetryLimit": 1,
 				"tool": toolName, "previousInstanceId": recovery.PreviousInstanceID, "instanceId": recovery.InstanceID,
@@ -260,9 +263,15 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		}
 		return recoveredResult(retryResult, recovery), nil
 	}
+	if err != nil {
+		err = r.cleanupFailedDatabaseCallLocked(ctx, err)
+	}
 	r.completeCallLocked()
 	r.mu.Unlock()
 	if err != nil {
+		if strings.Contains(err.Error(), "EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED") {
+			return toolError("EXECUTION_GUARD_CLEANUP_UNCONFIRMED", err.Error(), nil), nil
+		}
 		if forwardedProtocolError != nil {
 			return forwardedProtocolError, nil
 		}
@@ -369,7 +378,6 @@ func (r *runtime) recoverLocked(ctx context.Context, failedSession *mcp.ClientSe
 	if err := r.enterDatabasePreparationMode(ctx); err != nil {
 		return nil, err
 	}
-	r.databaseNativePending = r.databaseOwner != nil
 	info, err := r.broker.Recover(ctx, previousBackend, replacementInstanceID)
 	if err != nil {
 		return nil, err
@@ -535,7 +543,6 @@ func (r *runtime) ensureLocked(ctx context.Context) error {
 		return err
 	}
 	r.logger.Info("ensure backend", "family", r.family, "instanceId", r.instanceID, "stage", "broker-start")
-	r.databaseNativePending = r.databaseOwner != nil
 	info, err := r.broker.Ensure(ctx)
 	if err != nil {
 		return err
@@ -780,30 +787,27 @@ func (r *runtime) armIdleLocked() {
 }
 
 func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
-	unlock, err := r.lockDatabaseCalls(ctx)
+	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed || (r.backend == nil && r.databaseOwner == nil) || r.active > 0 || r.generation != generation {
-		return nil
+	if r.closed || r.backend == nil || r.active > 0 || r.generation != generation {
+		r.mu.Unlock()
+		return finish("succeeded", "")
 	}
 	if time.Now().Before(r.idleDeadline) {
 		r.armIdleLocked()
-		return nil
+		r.mu.Unlock()
+		return finish("succeeded", "")
 	}
 	r.stopping = true
 	err = r.stopDatabaseBackendLocked(ctx, false)
 	r.stopping = false
 	if err != nil {
 		r.armIdleLocked()
+		r.mu.Unlock()
+		_ = finish("failed", err.Error())
 		return err
 	}
 	if r.session != nil {
@@ -814,30 +818,27 @@ func (r *runtime) stopIdle(ctx context.Context, generation uint64) error {
 	r.backend = nil
 	r.timer = nil
 	r.logger.Info("idle backend cleanup completed", "lastCallCompletedAt", r.lastCallCompleted, "reason", "idle")
-	return nil
+	r.mu.Unlock()
+	return finish("succeeded", "")
 }
 
 func (r *runtime) stop(ctx context.Context) error {
-	unlock, err := r.lockDatabaseCalls(ctx)
+	ctx, finish, err := r.beginDatabaseCall(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer unlock()
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.timer != nil {
 		r.timer.Stop()
 		r.timer = nil
 	}
 	if err := r.stopDatabaseBackendLocked(ctx, true); err != nil {
+		r.mu.Unlock()
+		_ = finish("failed", err.Error())
 		return err
 	}
-	return r.releaseDatabasePhaseLocked()
+	r.mu.Unlock()
+	return finish("succeeded", "")
 }
 
 func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) *mcp.CallToolResult {
@@ -1247,7 +1248,7 @@ func (r *runtime) close(ctx context.Context) error {
 		// Retain backend/native evidence for recovery, and do not hold r.mu
 		// while the MCP transport waits for its reader to finish.
 		r.mu.Lock()
-		session, owner := r.session, r.databaseOwner
+		session, owner := r.session, r.executionOwner
 		if session != nil {
 			r.clearProgress(session)
 			r.session = nil

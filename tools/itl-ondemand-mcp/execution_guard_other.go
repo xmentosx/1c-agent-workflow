@@ -4,4 +4,4 @@ package main
 
 import "os/exec"
 
-func hideDatabaseHost(command *exec.Cmd) {}
+func hideExecutionGuardHost(command *exec.Cmd) {}

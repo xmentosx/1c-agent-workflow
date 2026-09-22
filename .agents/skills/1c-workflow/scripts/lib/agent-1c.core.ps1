@@ -341,7 +341,6 @@ function Write-RunStatus {
         resultManifestPath = $(if ($script:RunResultManifestPath) { [string]$script:RunResultManifestPath } else { "" })
         sourceIntegrityReportPath = $(if ($script:RunSourceIntegrityReportPath) { [string]$script:RunSourceIntegrityReportPath } else { "" })
         activeVanessaRun = $script:ActiveVanessaRunEvidence
-        activeDatabaseRecovery = $script:ActiveDatabaseRecoveryEvidence
     }
 
     Write-Utf8TextAtomic -Path $script:ResolvedRunStatusPath -Value (($payload | ConvertTo-Json -Depth 5) + [Environment]::NewLine)
@@ -409,7 +408,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "database-access-blocked", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "execution-conflict", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -439,20 +438,9 @@ function Set-RunFailureContextFromMessage {
         Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
         return
     }
-    $interventionPrefix = 'INFOBASE_ACCESS_INTERVENTION_REQUIRED: '
-    if ($Message.StartsWith($interventionPrefix, [StringComparison]::Ordinal)) {
-        try { $blocker = $Message.Substring($interventionPrefix.Length) | ConvertFrom-Json -ErrorAction Stop }
-        catch { $blocker = $null }
-        if ($null -ne $blocker -and [int](Get-StateValue -State $blocker -Name 'schemaVersion' -Default 0) -eq 1) {
-            $script:RunBlockerClassification = [string](Get-StateValue -State $blocker -Name 'classification' -Default '')
-            $script:RunBlockerRequiresUserDecision = [bool](Get-StateValue -State $blocker -Name 'requiresUserDecision' -Default $true)
-            $script:RunBlockerRetryOriginal = [bool](Get-StateValue -State $blocker -Name 'retryOriginalCommandAfterResolution' -Default $true)
-            $script:RunBlockerAction = Get-StateValue -State $blocker -Name 'requiredAction' -Default $null
-            $script:RunBlockerOwner = Get-StateValue -State $blocker -Name 'owner' -Default $null
-            $action = $(if ($script:RunBlockerClassification -eq 'agent-owned-handoff-required') { 'finish-owned-database-access' } else { 'resolve-database-access-blocker-with-user' })
-            Set-RunFailureContext -Category 'database-access-blocked' -RequiredAction $action
-            return
-        }
+    if ($Message -match '^(?i:EXECUTION_GUARD_(?:EXTERNAL_CONFLICT|WAIT_TIMEOUT))\b') {
+        Set-RunFailureContext -Category 'execution-conflict' -RequiredAction 'wait-for-exact-base-activity-or-cancel-the-current-operation'
+        return
     }
 
     $verificationActions = @("check-dev-branch", "verify-dev-branch", "deploy-and-test")
@@ -530,18 +518,10 @@ function Set-RunStage {
 function Test-Agent1cActionRequiresLifecycleLock {
     param([string]$RequestedAction)
 
-    if ($RequestedAction -eq 'recover-interrupted-database-access') {
-        # The original lifecycle owner is already dead. Trusted recovery is
-        # authorized by its exact coordinator ticket and must not reacquire the
-        # abandoned lifecycle/runtime locks before it can release that ticket.
-        return $false
-    }
-
     if ($RequestedAction -eq 'stop-vanessa-profile' -and
         (Get-Command Test-VanessaInteractiveProfileHasOwner -CommandType Function -ErrorAction SilentlyContinue) -and
         (Test-VanessaInteractiveProfileHasOwner)) {
-        # The persistent owner performs strict stop under its existing database
-        # and runtime leases. Taking the writer lock here would block that stop.
+        # The persistent owner performs an exact strict stop itself.
         return $false
     }
 
@@ -562,32 +542,25 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "vibecoding1c-mcp-status",
         "status-vanessa-profile"
     )
-    # These actions mutate only facade-owned runtime state while the caller
-    # already holds the shared runtime lease. Reacquiring runtime-mcp.lock here
-    # would deadlock the nested helper against its own facade call.
-    $facadeRuntimeLeaseActions = @(
+    # These actions are nested under the call-scoped execution guard owned by
+    # the facade. They must not acquire a lifecycle lock while the call runs.
+    $facadeExecutionActions = @(
         "start-vanessa-profile",
-        "internal-ondemand-access-plan",
+        "internal-ondemand-execution-plan",
         "internal-ondemand-ensure",
         "internal-ondemand-ensure-test-client",
         "internal-ondemand-mark-running",
         "internal-ondemand-recover",
-        "internal-ondemand-recover-stop",
         "internal-ondemand-stop"
     )
     if ($readOnlyActions -contains $RequestedAction) { return $false }
-    if ($facadeRuntimeLeaseActions -contains $RequestedAction) { return $false }
+    if ($facadeExecutionActions -contains $RequestedAction) { return $false }
     return $true
 }
 
 function Get-Agent1cLifecycleLockPath {
     param([string]$WorktreePath)
     return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\lifecycle.lock")
-}
-
-function Get-Agent1cRuntimeMcpLockPath {
-    param([string]$WorktreePath)
-    return (Join-Path (Resolve-Agent1cFullPath -Path $WorktreePath) ".agent-1c\locks\runtime-mcp.lock")
 }
 
 function Get-Agent1cLifecycleOperationStatePath {
@@ -691,14 +664,16 @@ function Get-Agent1cLifecycleOperationLockScopes {
 
     $candidatePaths = @($script:ProjectRoot)
     if ($RequestedAction -eq "sync-dev-branches") {
-        $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
         $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
-        if ($null -ne $admissionVariable -and $null -ne $admissionVariable.Value -and $admissionVariable.Value.operation -eq 'sync-dev-branches') {
-            # Waiting pinned these participants before local locks. Never switch
-            # to a newly edited request or moved worktree while acquiring locks.
-            $candidatePaths = @($admissionVariable.Value.plan.syncParticipants.project)
-        } elseif ($null -ne $requestVariable -and $requestVariable.Value) {
-            $scope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name $DevBranchName)
+        if ($null -ne $requestVariable -and $requestVariable.Value) {
+            $currentScope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name $DevBranchName)
+            $frozenVariable = Get-Variable -Name BranchSourceSyncFrozenScope -Scope Script -ErrorAction SilentlyContinue
+            if ($null -ne $frozenVariable -and $null -ne $frozenVariable.Value) {
+                if (-not (Test-BranchSourceSyncScopeEquivalent -First $frozenVariable.Value -Second $currentScope)) {
+                    throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
+                }
+                $scope = $frozenVariable.Value
+            } else { $scope = $currentScope }
             $candidatePaths = @($scope.states.worktreePath)
         } elseif (-not $PeerDevBranchName) {
             throw "sync-dev-branches requires -PeerDevBranchName."
@@ -1038,15 +1013,6 @@ function Enter-Agent1cLifecycleOperation {
             }
             [pscustomobject]@{ worktreePath = $scope; lockPath = $lockPath; share = [IO.FileShare]::Read; kind = "lifecycle" }
         }
-        # Test actions coordinate the exact infobase through a phase-aware
-        # database ticket. Keeping this coarse project writer for their whole
-        # lifetime would unnecessarily stop read-only ROCTUP calls during tests.
-        if ($RequestedAction -notin @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) {
-            foreach ($scope in $scopes) {
-                $runtimeLockPath = Get-Agent1cRuntimeMcpLockPath -WorktreePath $scope
-                [pscustomobject]@{ worktreePath = $scope; lockPath = $runtimeLockPath; share = [IO.FileShare]::None; kind = "runtime-mcp" }
-            }
-        }
     }
     $handles = @($lease.handles)
     $scopes = @($handles | ForEach-Object { $_.worktreePath } | Select-Object -Unique)
@@ -1085,7 +1051,6 @@ function Enter-Agent1cLifecycleOperation {
         errorCode = ""
         errorMessage = ""
         activeVanessaRun = $null
-        activeDatabaseRecovery = $null
         recoveredOperationId = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.operationId } else { "" })
         recoveredOperationArchivePath = $(if ($null -ne $recoveredOperation) { [string]$recoveredOperation.archivePath } else { "" })
     }
@@ -1236,57 +1201,6 @@ function Complete-Agent1cLifecycleOperation {
     }
 }
 
-function Publish-Agent1cDatabaseRecoveryEvidence {
-    param([Parameter(Mandatory = $true)][object]$Admission)
-
-    if ($null -eq $script:LifecycleOperationRecord -or
-        [string]::IsNullOrWhiteSpace($script:LifecycleOperationStatePath) -or
-        [string]::IsNullOrWhiteSpace($script:LifecycleOperationId)) {
-        throw 'LIFECYCLE_DATABASE_RECOVERY_EVIDENCE_INVALID: active lifecycle operation is required.'
-    }
-    $proof = Get-StateValue -State $Admission.owner -Name 'proof' -Default $null
-    $coordinator = Resolve-Agent1cFullPath -Path ([string](Get-StateValue -State $proof -Name 'coordinator' -Default ''))
-    $ticket = [string](Get-StateValue -State $proof -Name 'ticket' -Default '')
-    $operation = [string](Get-StateValue -State $Admission -Name 'operation' -Default '')
-    if (-not $coordinator -or $ticket -cnotmatch '^[a-f0-9]{32}$' -or -not $operation) {
-        throw 'LIFECYCLE_DATABASE_RECOVERY_EVIDENCE_INVALID: coordinator, ticket, and operation are required.'
-    }
-    $evidence = [pscustomobject][ordered]@{
-        schemaVersion = 1
-        operationId = $script:LifecycleOperationId
-        operation = $operation
-        projectRoot = $script:ProjectRoot
-        coordinator = $coordinator
-        ticket = $ticket
-        publishedAt = (Get-Date).ToString('o')
-    }
-    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
-    if ($null -eq $record -or [string]$record['operationId'] -cne $script:LifecycleOperationId -or
-        [string]$record['status'] -cne 'running' -or [string]$record['action'] -cne $operation) {
-        throw "LIFECYCLE_OPERATION_CONTINUATION_INVALID reason='cannot publish database recovery evidence' operationId='$($script:LifecycleOperationId)'"
-    }
-    $record['activeDatabaseRecovery'] = $evidence
-    $record['updatedAt'] = (Get-Date).ToString('o')
-    $script:LifecycleOperationRecord = $record
-    $script:ActiveDatabaseRecoveryEvidence = $evidence
-    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
-    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) { Write-RunStatus -Status 'running' }
-}
-
-function Clear-Agent1cDatabaseRecoveryEvidence {
-    if ($null -eq $script:ActiveDatabaseRecoveryEvidence) { return }
-    $record = Read-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath
-    if ($null -ne $record -and [string]$record['operationId'] -ceq $script:LifecycleOperationId -and
-        [string]$record['status'] -ceq 'running') {
-        $record['activeDatabaseRecovery'] = $null
-        $record['updatedAt'] = (Get-Date).ToString('o')
-        $script:LifecycleOperationRecord = $record
-        Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
-    }
-    $script:ActiveDatabaseRecoveryEvidence = $null
-    if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) { Write-RunStatus -Status 'running' }
-}
-
 function Publish-Agent1cVanessaRunEvidence {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -1350,6 +1264,101 @@ function Exit-Agent1cLifecycleOperation {
         try { $script:LifecycleOperationHandles[$index].stream.Dispose() } catch {}
     }
     $script:LifecycleOperationHandles = @()
+}
+
+function Get-Agent1cExecutionInputFingerprint {
+    param([Parameter(Mandatory = $true)][object[]]$Admissions)
+
+    $head = ''
+    if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git') -ErrorAction SilentlyContinue) {
+        $head = [string](& git -C $script:ProjectRoot rev-parse HEAD 2>$null)
+        if ($LASTEXITCODE -ne 0) { throw 'EXECUTION_PHASE_HEAD_UNAVAILABLE' }
+        $head = $head.Trim()
+    }
+    $environmentPath = Join-Path $script:ProjectRoot '.dev.env'
+    $environmentHash = $(if (Test-Path -LiteralPath $environmentPath -PathType Leaf) {
+        (Get-FileHash -LiteralPath $environmentPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else { 'missing' })
+    $targets = @($Admissions | ForEach-Object {
+        $kind = [string](Get-StateValue -State $_ -Name 'infoBaseKind' -Default '')
+        $path = [string](Get-StateValue -State $_ -Name 'infoBasePath' -Default '')
+        if ($kind -eq 'file') { $path = Resolve-Agent1cFullPath -Path $path }
+        ($kind.ToLowerInvariant() + '|' + $path.Trim().TrimEnd('/','\').ToLowerInvariant())
+    } | Sort-Object -Unique)
+    $text = ([ordered]@{schemaVersion=1;projectRoot=$script:ProjectRoot;head=$head;environmentSha256=$environmentHash;targets=$targets} | ConvertTo-Json -Depth 5 -Compress)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $digest = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))).Replace('-','').ToLowerInvariant() }
+    finally { $sha.Dispose() }
+    return [pscustomobject]@{digest=$digest;head=$head;environmentSha256=$environmentHash;targets=$targets}
+}
+
+function Suspend-Agent1cLifecycleOperationForExecutionWait {
+    param([Parameter(Mandatory = $true)][object[]]$Admissions, [Parameter(Mandatory = $true)][string]$Purpose)
+
+    $continuationVariable = Get-Variable -Name LifecycleOperationIsContinuation -Scope Script -ErrorAction SilentlyContinue
+    $handlesVariable = Get-Variable -Name LifecycleOperationHandles -Scope Script -ErrorAction SilentlyContinue
+    $recordVariable = Get-Variable -Name LifecycleOperationRecord -Scope Script -ErrorAction SilentlyContinue
+    $isContinuation = $null -ne $continuationVariable -and [bool]$continuationVariable.Value
+    $handles = @($(if ($null -ne $handlesVariable) { $handlesVariable.Value }))
+    $recordValue = $(if ($null -ne $recordVariable) { $recordVariable.Value } else { $null })
+    if ($isContinuation -or $handles.Count -eq 0 -or $null -eq $recordValue) {
+        return [pscustomobject]@{suspended=$false;fingerprint=$null}
+    }
+    $record = $recordValue
+    $scopes = @($record.lockScopes)
+    $fingerprint = Get-Agent1cExecutionInputFingerprint -Admissions $Admissions
+    $checkpointId = [guid]::NewGuid().ToString('N')
+    $checkpointPath = Join-Path $script:ProjectRoot ('.agent-1c/execution-checkpoints/' + $checkpointId + '.json')
+    $checkpoint = [ordered]@{
+        schemaVersion=1;checkpointId=$checkpointId;operationId=$script:LifecycleOperationId
+        action=[string]$record.action;purpose=$Purpose;projectRoot=$script:ProjectRoot
+        lockScopes=$scopes;fingerprint=$fingerprint;status='waiting-for-base'
+        createdAt=[DateTime]::UtcNow.ToString('o');updatedAt=[DateTime]::UtcNow.ToString('o')
+    }
+    Write-Agent1cLifecycleOperationRecord -Path $checkpointPath -Record $checkpoint
+    $record['status'] = 'waiting-execution'
+    $record['phase'] = 'execution.waiting-for-base'
+    $record['detail'] = "purpose='$Purpose' checkpoint='$checkpointPath'"
+    $record['updatedAt'] = (Get-Date).ToString('o')
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    Exit-Agent1cLifecycleOperation
+    return [pscustomobject]@{suspended=$true;record=$record;statePath=$script:LifecycleOperationStatePath
+        scopes=$scopes;fingerprint=$fingerprint;checkpoint=$checkpoint;checkpointPath=$checkpointPath}
+}
+
+function Resume-Agent1cLifecycleOperationAfterExecutionWait {
+    param([Parameter(Mandatory = $true)][object]$Checkpoint, [Parameter(Mandatory = $true)][object[]]$Admissions)
+
+    if (-not [bool]$Checkpoint.suspended) { return }
+    $lease = Wait-Agent1cLockSet -RequestedAction ([string]$Checkpoint.record.action) -GetRequests {
+        foreach ($scope in @($Checkpoint.scopes)) {
+            $lockPath = Get-Agent1cLifecycleLockPath -WorktreePath ([string]$scope)
+            Ensure-Agent1cLifecycleLocksIgnored -WorktreePath ([string]$scope)
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lockPath) | Out-Null
+            [pscustomobject]@{worktreePath=[string]$scope;lockPath=$lockPath;share=[IO.FileShare]::Read;kind='lifecycle'}
+        }
+    }
+    $script:LifecycleOperationHandles = @($lease.handles)
+    $fresh = Get-Agent1cExecutionInputFingerprint -Admissions $Admissions
+    if ([string]$fresh.digest -cne [string]$Checkpoint.fingerprint.digest) {
+        Exit-Agent1cLifecycleOperation
+        $Checkpoint.checkpoint['status'] = 'input-changed'
+        $Checkpoint.checkpoint['updatedAt'] = [DateTime]::UtcNow.ToString('o')
+        $Checkpoint.checkpoint['freshFingerprint'] = $fresh
+        Write-Agent1cLifecycleOperationRecord -Path $Checkpoint.checkpointPath -Record $Checkpoint.checkpoint
+        throw "EXECUTION_PHASE_INPUT_CHANGED checkpoint='$($Checkpoint.checkpointPath)'"
+    }
+    $record = $Checkpoint.record
+    $record['status'] = 'running'
+    $record['phase'] = 'execution.running'
+    $record['detail'] = "purpose='$($Checkpoint.checkpoint.purpose)' checkpoint='$($Checkpoint.checkpointPath)'"
+    $record['updatedAt'] = (Get-Date).ToString('o')
+    $script:LifecycleOperationRecord = $record
+    $script:LifecycleOperationStatePath = [string]$Checkpoint.statePath
+    Write-Agent1cLifecycleOperationRecord -Path $script:LifecycleOperationStatePath -Record $record
+    $Checkpoint.checkpoint['status'] = 'resumed'
+    $Checkpoint.checkpoint['updatedAt'] = [DateTime]::UtcNow.ToString('o')
+    Write-Agent1cLifecycleOperationRecord -Path $Checkpoint.checkpointPath -Record $Checkpoint.checkpoint
 }
 
 function Write-Agent1cLifecycleOperationStatusLines {
@@ -7838,15 +7847,6 @@ function Invoke-Enterprise {
             $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $record
             if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
         }
-        if ($null -ne $result -and [bool](Get-StateValue -State $result -Name 'launcherExited' -Default $false) -and
-            $null -ne $nativeOperationEvidence.record -and $null -ne $nativeOperationEvidence.record.persistence -and
-            $nativeOperationEvidence.record.startAttempted -and -not $nativeOperationEvidence.record.quiescenceConfirmed) {
-            # A persistent cross-process database lease cannot be released from
-            # launcher exit alone. Ordinary one-shot Enterprise calls also need
-            # two live scope observations when they run under that owner.
-            $ownedReleaseConfirmed = Confirm-OneCNativeRunProcessRelease -Record $nativeOperationEvidence.record
-            if (-not $ownedReleaseConfirmed) { throw 'ENTERPRISE_NATIVE_RUN_CLEANUP_UNCONFIRMED' }
-        }
         if (-not $probeCleanupConfirmed) {
             Confirm-OneCNativeOperationRelease -Record $nativeOperationEvidence.record -LauncherExited $false -OwnedProcessesReleased $false -Evidence ''
             throw 'ENTERPRISE_OWNED_PROCESS_PROBE_CLEANUP_FAILED'
@@ -7872,10 +7872,6 @@ function Invoke-Enterprise {
     }
     if ($RequireOwnedProcessRelease -and -not $ownedReleaseConfirmed) {
         throw "ENTERPRISE_OWNED_PROCESS_RELEASE_UNCONFIRMED pid=$($result.processId) log=$logPath"
-    }
-
-    if ($null -ne $nativeOperationEvidence.record -and $null -ne $nativeOperationEvidence.record.persistence) {
-        Complete-OneCNativeOperationOutcome -Record $nativeOperationEvidence.record -Status succeeded
     }
 
     return $logPath

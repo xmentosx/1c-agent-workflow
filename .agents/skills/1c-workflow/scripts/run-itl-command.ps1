@@ -337,73 +337,6 @@ function Restore-RunnerStatusFromTerminalLifecycle {
     return $Status
 }
 
-function Get-InterruptedDatabaseRecoveryEvidence {
-    param(
-        [object]$LifecycleRecord,
-        [object]$RunStatus,
-        [string]$Action,
-        [string]$ProjectRoot
-    )
-    $evidence = Get-ObjectValue -Object $LifecycleRecord -Name 'activeDatabaseRecovery' -Default $null
-    if ($null -eq $evidence) {
-        return [pscustomobject]@{ present = $false; valid = $false; reason = ''; evidence = $null }
-    }
-    $operationId = [string](Get-ObjectValue -Object $LifecycleRecord -Name 'operationId' -Default '')
-    $coordinator = [string](Get-ObjectValue -Object $evidence -Name 'coordinator' -Default '')
-    $ticket = [string](Get-ObjectValue -Object $evidence -Name 'ticket' -Default '')
-    $reason = ''
-    if ([int](Get-ObjectValue -Object $evidence -Name 'schemaVersion' -Default 0) -ne 1 -or
-        [string](Get-ObjectValue -Object $evidence -Name 'operationId' -Default '') -cne $operationId -or
-        [string](Get-ObjectValue -Object $evidence -Name 'operation' -Default '') -cne $Action -or
-        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $evidence -Name 'projectRoot' -Default '')) -Second $ProjectRoot) -or
-        -not [IO.Path]::IsPathRooted($coordinator) -or $ticket -cnotmatch '^[a-f0-9]{32}$') {
-        $reason = 'exact lifecycle database recovery evidence is incomplete or inconsistent'
-    }
-    $statusEvidence = Get-ObjectValue -Object $RunStatus -Name 'activeDatabaseRecovery' -Default $null
-    if (-not $reason -and $null -ne $statusEvidence -and
-        [string](Get-ObjectValue -Object $statusEvidence -Name 'ticket' -Default '') -cne $ticket) {
-        $reason = 'run status and lifecycle operation identify different database recovery tickets'
-    }
-    return [pscustomobject]@{ present = $true; valid = -not [bool]$reason; reason = $reason; evidence = $evidence }
-}
-
-function Invoke-InterruptedDatabaseRecovery {
-    param(
-        [string]$HelperPath,
-        [string]$ProjectRoot,
-        [object]$EvidenceResult,
-        [string]$LogPath
-    )
-    $evidence = $EvidenceResult.evidence
-    $arguments = @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $HelperPath,
-        '-ProjectRoot', $ProjectRoot,
-        '-Action', 'recover-interrupted-database-access',
-        '-InterruptedDatabaseCoordinator', ([string]$evidence.coordinator),
-        '-InterruptedDatabaseTicket', ([string]$evidence.ticket)
-    )
-    $output = @(& powershell @arguments 2>&1)
-    $code = if ($LASTEXITCODE -is [int]) { [int]$LASTEXITCODE } else { 1 }
-    if ($output.Count -gt 0) {
-        [IO.File]::AppendAllText(
-            $LogPath,
-            ([Environment]::NewLine + '[runner interrupted database recovery]' + [Environment]::NewLine +
-                ($output -join [Environment]::NewLine) + [Environment]::NewLine),
-            $utf8
-        )
-    }
-    $marker = 'ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT='
-    $result = $null
-    foreach ($line in @($output)) {
-        $text = [string]$line
-        if (-not $text.StartsWith($marker, [StringComparison]::Ordinal)) { continue }
-        try { $result = $text.Substring($marker.Length) | ConvertFrom-Json -ErrorAction Stop } catch { $result = $null }
-    }
-    $valid = $null -ne $result -and [string](Get-ObjectValue -Object $result -Name 'status' -Default '') -ceq 'released' -and
-        [string](Get-ObjectValue -Object $result -Name 'reason' -Default '') -ceq 'recovery-verified'
-    return [pscustomobject]@{ succeeded = ($code -eq 0 -and $valid); exitCode = $code; result = $result }
-}
-
 function Get-InterruptedVanessaRunEvidence {
     param(
         [object]$LifecycleRecord,
@@ -880,11 +813,6 @@ $statusPath = ""
 $logPath = ""
 $runnerFailureMessage = ""
 $runnerFailureNoProgressSeconds = 0
-$runnerRecoveryStatus = ""
-$runnerRecoveryOwnedProcessesStopped = @()
-$runnerRecoveryForeignProcessesStopped = @()
-$runnerRecoveryDatabaseReleased = $false
-$runnerRecoveryRetryOriginalCommand = $false
 
 if ($windowed) {
     $launcherPath = Join-Path $PSScriptRoot "run-agent-1c-window.ps1"
@@ -1076,42 +1004,16 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
         $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
         $lifecycleRecord = Get-RunnerOwnedLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot
         if ($null -ne $lifecycleRecord) {
-            $databaseEvidence = Get-InterruptedDatabaseRecoveryEvidence -LifecycleRecord $lifecycleRecord -RunStatus $status -Action $action -ProjectRoot $projectRoot
-            $databaseRecoverySucceeded = $false
-            if ($databaseEvidence.present -and $databaseEvidence.valid) {
-                $databaseRecovery = Invoke-InterruptedDatabaseRecovery -HelperPath $helperPath -ProjectRoot $projectRoot -EvidenceResult $databaseEvidence -LogPath $logPath
-                $databaseRecoverySucceeded = [bool]$databaseRecovery.succeeded
-                if ($databaseRecoverySucceeded) {
-                    $attempts = @((Get-ObjectValue -Object $databaseRecovery.result -Name 'recoveryAttempts' -Default @()))
-                    $attempt = if ($attempts.Count -gt 0) { $attempts[-1] } else { $null }
-                    $recoveryEvidence = Get-ObjectValue -Object $attempt -Name 'evidence' -Default $null
-                    $runnerRecoveryStatus = 'completed'
-                    $runnerRecoveryOwnedProcessesStopped = @((Get-ObjectValue -Object $recoveryEvidence -Name 'ownedProcessesStopped' -Default @()) | ForEach-Object { [int]$_ })
-                    $runnerRecoveryForeignProcessesStopped = @((Get-ObjectValue -Object $recoveryEvidence -Name 'foreignProcessesStopped' -Default @()) | ForEach-Object { [int]$_ })
-                    $runnerRecoveryDatabaseReleased = $true
-                    $runnerRecoveryRetryOriginalCommand = $true
-                    Set-ObjectValue -Object $lifecycleRecord -Name 'activeDatabaseRecovery' -Value $null
-                    Set-ObjectValue -Object $lifecycleRecord -Name 'activeVanessaRun' -Value $null
-                    $message += " Exact interrupted database/native recovery succeeded; retry the original command."
+            $evidenceResult = Get-InterruptedVanessaRunEvidence -LifecycleRecord $lifecycleRecord -RunStatus $status -HelperProcessId $helperProcess.Id -ProjectRoot $projectRoot
+            if ($evidenceResult.present -and $evidenceResult.valid) {
+                $recovery = Invoke-InterruptedVanessaRunRecovery -HelperPath $helperPath -ProjectRoot $projectRoot -EvidenceResult $evidenceResult -LogPath $logPath
+                $message += if ($recovery.succeeded) {
+                    " Exact interrupted Vanessa process cleanup succeeded."
                 } else {
-                    $message += " Exact interrupted database/native recovery failed with code $($databaseRecovery.exitCode)."
+                    " Exact interrupted Vanessa process cleanup failed with code $($recovery.exitCode); broad cleanup was not attempted."
                 }
-            } elseif ($databaseEvidence.present) {
-                $message += " Interrupted database/native recovery was not attempted because $($databaseEvidence.reason)."
-            }
-
-            if (-not $databaseRecoverySucceeded) {
-                $evidenceResult = Get-InterruptedVanessaRunEvidence -LifecycleRecord $lifecycleRecord -RunStatus $status -HelperProcessId $helperProcess.Id -ProjectRoot $projectRoot
-                if ($evidenceResult.present -and $evidenceResult.valid) {
-                    $recovery = Invoke-InterruptedVanessaRunRecovery -HelperPath $helperPath -ProjectRoot $projectRoot -EvidenceResult $evidenceResult -LogPath $logPath
-                    $message += if ($recovery.succeeded) {
-                        " Exact interrupted Vanessa fallback cleanup succeeded."
-                    } else {
-                        " Exact interrupted Vanessa fallback cleanup failed with code $($recovery.exitCode); broad cleanup was not attempted."
-                    }
-                } elseif ($evidenceResult.present) {
-                    $message += " Interrupted Vanessa fallback cleanup was not attempted because $($evidenceResult.reason); broad cleanup was not attempted."
-                }
+            } elseif ($evidenceResult.present) {
+                $message += " Interrupted Vanessa cleanup was not attempted because $($evidenceResult.reason); broad cleanup was not attempted."
             }
             Complete-RunnerOwnedLifecycleRecord -Path $lifecyclePath -Record $lifecycleRecord -ExitCode $effectiveExitCode -Message $message -Phase $runnerStage -ErrorCode $runnerErrorCode
         }
@@ -1139,18 +1041,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     Set-ObjectValue -Object $status -Name "errorMessage" -Value $message
     Set-ObjectValue -Object $status -Name "errorCode" -Value $runnerErrorCode
     Set-ObjectValue -Object $status -Name "errorCategory" -Value "runner"
-    Set-ObjectValue -Object $status -Name "requiredAction" -Value $(if ($runnerRecoveryRetryOriginalCommand) { "retry-original-command" } else { "" })
-    Set-ObjectValue -Object $status -Name "recoveryStatus" -Value $runnerRecoveryStatus
-    Set-ObjectValue -Object $status -Name "ownedProcessesStopped" -Value @($runnerRecoveryOwnedProcessesStopped)
-    Set-ObjectValue -Object $status -Name "foreignProcessesStopped" -Value @($runnerRecoveryForeignProcessesStopped)
-    Set-ObjectValue -Object $status -Name "databaseReleased" -Value $runnerRecoveryDatabaseReleased
-    Set-ObjectValue -Object $status -Name "retryOriginalCommand" -Value $runnerRecoveryRetryOriginalCommand
-    if ($runnerRecoveryStatus -eq "completed") {
-        Set-ObjectValue -Object $status -Name "activeDatabaseRecovery" -Value $null
-        Set-ObjectValue -Object $status -Name "activeVanessaRun" -Value $null
-    }
+    Set-ObjectValue -Object $status -Name "requiredAction" -Value ""
     Set-ObjectValue -Object $status -Name "blockerRequiresUserDecision" -Value $false
-    Set-ObjectValue -Object $status -Name "blockerRetryOriginalCommand" -Value $runnerRecoveryRetryOriginalCommand
+    Set-ObjectValue -Object $status -Name "blockerRetryOriginalCommand" -Value $false
     Set-ObjectValue -Object $status -Name "stage" -Value $runnerStage
     Set-ObjectValue -Object $status -Name "stageDetail" -Value $detail
     if ($runnerFailureMessage) {

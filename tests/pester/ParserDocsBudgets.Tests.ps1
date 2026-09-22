@@ -153,27 +153,26 @@
         foreach ($skillId in @('itl-roctup-1c-data', 'itl-vanessa-ui-mcp', 'itl-performance', 'itl-remote-runner')) {
             $skillTexts[$skillId] = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\$skillId\SKILL.md") -Raw -Encoding UTF8
             $skillTexts[$skillId] | Should -Match '## Database Access Handoff'
-            $skillTexts[$skillId] | Should -Match 'finish_database_access'
-            $skillTexts[$skillId] | Should -Match 'Never (finish or stop|release) a foreign holder'
-            $skillTexts[$skillId] | Should -Match 'Idle timeout( or client exit)? is an abandonment fallback, not a normal handoff'
+            $skillTexts[$skillId] | Should -Match '(call-scoped guard|execution guard)'
+            $skillTexts[$skillId] | Should -Match 'Never .*foreign holder'
+            $skillTexts[$skillId] | Should -Not -Match 'finish_database_access'
         }
 
-        $skillTexts['itl-roctup-1c-data'] | Should -Match 'continue this task''s current ROCTUP phase and postpone the next phase.*finish the phase'
-        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'continue this task''s current UI phase and postpone the next phase.*finish the UI phase'
+        $skillTexts['itl-roctup-1c-data'] | Should -Match 'Do not create or finish a retained database phase'
+        $skillTexts['itl-vanessa-ui-mcp'] | Should -Match 'Do not create or finish a retained UI database phase'
         foreach ($skillId in @('itl-performance', 'itl-remote-runner')) {
-            $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*status.*cancel.*recovery contract'
-            $skillTexts[$skillId] | Should -Match 'do not call `finish_database_access`.*live job'
+            $skillTexts[$skillId] | Should -Match 'bounded helper or (measurement|remote) job.*execution guard'
+            $skillTexts[$skillId] | Should -Match 'without a generic recovery gate'
         }
 
         $userRules = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\USER-RULES.append.md') -Raw -Encoding UTF8
-        $userRules | Should -Match 'either retain owned activity and postpone, or finish it through its exact owner'
-        $userRules | Should -Match 'never await its idle timeout'
-        $userRules | Should -Match 'Let bounded jobs finish or cancel them through their owner'
-        $userRules | Should -Match 'Never release foreign work'
-        $userRules | Should -Match 'database-access-blocked'
-        $userRules | Should -Match 'agent-owned-handoff-required.*blockerAction'
-        $userRules | Should -Match 'user-decision-or-external-action.*ask only'
-        $userRules | Should -Match 'Never force-unlock'
+        $userRules | Should -Match 'Let bounded database executions finish or cancel them through their exact owner'
+        $userRules | Should -Match 'Let bounded database executions finish or cancel them through their exact owner'
+        $userRules | Should -Match 'waiting-for-base.*normal serialization'
+        $userRules | Should -Match 'Never stop a foreign or ambiguously identified 1C process'
+        $userRules | Should -Match 'old database-access tickets as authority'
+        $userRules | Should -Match 'execution-conflict.*exact external activity'
+        $userRules | Should -Match 'without recovery or manual unlock'
     }
 
     It "documentation budgets keep review thresholds below hard limits" {

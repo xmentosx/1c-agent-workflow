@@ -13,16 +13,13 @@ $buildRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $buildHelperPath = Join-Path $buildRepositoryRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
 . $buildHelperPath -ProjectRoot $buildSourceRoot -Action help *> $null
 . (Join-Path $buildRepositoryRoot 'scripts/vanessa-build-runtime.ps1')
-. (Join-Path $buildRepositoryRoot '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
 
 $buildBases = @(Get-VanessaBuildDatabasePlan -WorkRoot $buildWorkRoot)
 $buildManifest = Get-Content -LiteralPath $buildRequest.manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$buildSavedProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
 $buildSavedScratch = [Environment]::GetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', 'Process')
 $buildSavedUser = [Environment]::GetEnvironmentVariable('ITL_VANESSA_BUILD_USER', 'Process')
 $buildSavedPlatform = [Environment]::GetEnvironmentVariable('PLATFORM_PATH', 'Process')
 $buildPreviousJournal = $script:OneCNativeOperationJournal
-$buildOwner = $null
 $buildJournal = $null
 $buildFailure = $null
 $buildRuntimeResult = [ordered]@{ schemaVersion = 1; succeeded = $false; released = $false; bases = $buildBases; adapters = @(); stages = @(); nativeOperations = @(); templateSha256 = '' }
@@ -42,17 +39,8 @@ try {
             -DestinationPath (Join-Path $buildRuntimeRoot ([IO.Path]::GetFileName($flow.path))) `
             -ExpectedSha256 $pin[0].sha256 -SingleBuild:$flow.single
     }
-    $buildSettings = Get-ItlDatabaseAccessSettings
-    $buildAccessRequest = [ordered]@{
-        schemaVersion = 1; coordinator = $buildSettings.coordinator; bases = $buildBases; timeout = $buildSettings.waitTimeoutSeconds; nativeJournalProtocol = 1; accessMode = 'mutation-exclusive'
-        owner = @{ project = $buildWorkRoot; operation = 'build-vanessa-automation'; requestId = [guid]::NewGuid().ToString('N') }
-    }
-    if ($buildSavedProof) { $buildAccessRequest.inherited = $buildSavedProof | ConvertFrom-Json -ErrorAction Stop }
     $buildJournal = New-OneCNativeOperationJournal -Resources $buildBases
-    $buildOwner = Start-ItlDatabaseAccessHost -Python $buildSettings.python -Request $buildAccessRequest
-    $buildJournal.owner = $buildOwner
     $script:OneCNativeOperationJournal = $buildJournal
-    [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($buildOwner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
     [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_USER', $buildTemplate.user, 'Process')
     [Environment]::SetEnvironmentVariable('PLATFORM_PATH', [string]$buildRequest.platformExe, 'Process')
 
@@ -83,11 +71,7 @@ try {
     $buildFailure = $_
 } finally {
     try {
-        if ($null -eq $buildOwner) { $buildRuntimeResult.released = $true }
-        elseif (Test-OneCNativeOperationJournalReleased -Journal $buildJournal) {
-            $buildRelease = Complete-ItlDatabaseAccessHost -Owner $buildOwner
-            $buildRuntimeResult.released = $buildRelease.status -eq 'released'
-        } else { Close-ItlDatabaseAccessHost -Owner $buildOwner }
+        $buildRuntimeResult.released = $null -eq $buildJournal -or (Test-OneCNativeOperationJournalReleased -Journal $buildJournal)
     } catch {
         $buildRuntimeResult.released = $false
         if ($null -eq $buildFailure) { $buildFailure = $_ }
@@ -96,7 +80,6 @@ try {
         $buildRuntimeResult.nativeOperations = @($buildJournal.entries | Select-Object id, purpose, admissions, startAttempted, processId, launcherExited, quiescenceConfirmed, releaseEvidence)
     }
     $script:OneCNativeOperationJournal = $buildPreviousJournal
-    [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $buildSavedProof, 'Process')
     [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildSavedScratch, 'Process')
     [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_USER', $buildSavedUser, 'Process')
     [Environment]::SetEnvironmentVariable('PLATFORM_PATH', $buildSavedPlatform, 'Process')
