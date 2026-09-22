@@ -59,7 +59,7 @@ function Stop-CutoverOwnedRuntime([string]$StatePath) {
     }
 }
 
-function Remove-ExecutionGuardLegacyState([string]$Root) {
+function Remove-ExecutionGuardLegacyState([string]$Root, [switch]$AllowHeldRuntimeLock) {
     $rootFull = Get-CutoverFullPath $Root
     $runtimeRoot = Join-Path $rootFull '.agent-1c\mcp\ondemand'
     if (Test-Path -LiteralPath $runtimeRoot -PathType Container) {
@@ -82,7 +82,20 @@ function Remove-ExecutionGuardLegacyState([string]$Root) {
         '.agent-1c\locks\ondemand-start.lock'
     )) {
         $target = Assert-CutoverChildPath -Root $rootFull -Path (Join-Path $rootFull $relative)
-        if (Test-Path -LiteralPath $target -PathType Leaf) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
+        try {
+            Remove-Item -LiteralPath $target -Force -ErrorAction Stop
+        } catch [IO.IOException] {
+            if ($AllowHeldRuntimeLock -and $relative -eq '.agent-1c\locks\runtime-mcp.lock') {
+                # The pre-cutover update-workflow parent owns this exclusive
+                # legacy lease while its fresh child installs v2. The file is
+                # no longer consulted after the generation marker is enabled;
+                # a later cutover removes it once the parent has exited.
+                Write-Warning "Preserved the current operation's held legacy runtime lock '$target' during execution-guard cutover."
+                continue
+            }
+            throw
+        }
     }
 }
 
@@ -174,6 +187,7 @@ function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRo
     }
     $oldHead = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('rev-parse', 'HEAD') -Capture
     $temporaryIndex = Join-Path ([IO.Path]::GetTempPath()) ('itl-execution-guard-cutover-' + [guid]::NewGuid().ToString('N') + '.index')
+    $previousIndexExists = Test-Path -LiteralPath 'Env:GIT_INDEX_FILE'
     $previousIndex = [Environment]::GetEnvironmentVariable('GIT_INDEX_FILE', 'Process')
     $managedPaths = @($directoryPaths + $filePaths | ForEach-Object { $_.Replace('\', '/') })
     try {
@@ -187,7 +201,8 @@ function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRo
             Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('update-ref', $branchRef, $newHead, $oldHead)
         }
     } finally {
-        [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $previousIndex, 'Process')
+        if ($previousIndexExists) { [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $previousIndex, 'Process') }
+        else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $temporaryIndex -PathType Leaf) { Remove-Item -LiteralPath $temporaryIndex -Force -ErrorAction SilentlyContinue }
     }
     Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('reset', '--quiet', 'HEAD', '--') + $managedPaths)
@@ -232,7 +247,11 @@ if ($PrepareManagedWorktrees) {
     foreach ($root in $roots) { Assert-CutoverWorktreeReady -WorktreeRoot $root }
 }
 
-foreach ($root in $roots) { Remove-ExecutionGuardLegacyState -Root $root }
+foreach ($root in $roots) {
+    $allowHeldRuntimeLock = $PrepareManagedWorktrees -and
+        [string]::Equals($root, $projectFull, [StringComparison]::OrdinalIgnoreCase)
+    Remove-ExecutionGuardLegacyState -Root $root -AllowHeldRuntimeLock:$allowHeldRuntimeLock
+}
 
 if ($PrepareManagedWorktrees) {
     foreach ($root in @($roots | Where-Object { -not [string]::Equals($_, $projectFull, [StringComparison]::OrdinalIgnoreCase) })) {

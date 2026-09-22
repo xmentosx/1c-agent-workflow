@@ -74,6 +74,45 @@
         Test-Path -LiteralPath (Join-Path $repo '.agent-1c/execution-guard-generation.json') | Should -BeFalse
     }
 
+    It 'allows the managed main worktree to finish cutover under its legacy parent runtime lease' {
+        $repo = Join-Path $TestDrive 'Главный проект с legacy runtime lease'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        & git -C $repo init --quiet
+        & git -C $repo symbolic-ref HEAD refs/heads/master
+        & git -C $repo config user.email 'cutover@example.invalid'
+        & git -C $repo config user.name 'Execution Guard Cutover Test'
+        foreach ($relative in @(
+            '.agents/skills/1c-workflow', '.agents/skills/1c-workflow-fast', '.agents/skills/product-docs',
+            '.agents/skills/itl-roctup-1c-data', '.agents/skills/itl-vanessa-ui-mcp', '.agents/skills/itl-remote-runner',
+            '.agents/skills/itl-remote-agent', '.agents/skills/itl-performance', 'docs/itl-workflow', 'templates'
+        )) {
+            $directory = Join-Path $repo $relative
+            New-Item -ItemType Directory -Path $directory -Force | Out-Null
+            [IO.File]::WriteAllText((Join-Path $directory 'fixture.txt'), 'fixture', [Text.UTF8Encoding]::new($false))
+        }
+        foreach ($relative in @('install-agent-1c-workflow.ps1', 'AGENT-INSTALL.md')) {
+            [IO.File]::WriteAllText((Join-Path $repo $relative), 'fixture', [Text.UTF8Encoding]::new($false))
+        }
+        [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
+        & git -C $repo add --all
+        & git -C $repo commit --quiet -m 'fixture'
+
+        $legacyLock = Join-Path $repo '.agent-1c/locks/runtime-mcp.lock'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $legacyLock) -Force | Out-Null
+        $legacyHandle = [IO.File]::Open($legacyLock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+        try {
+            $result = & $cutover -ProjectRoot $repo -PackageRoot $repo -PrepareManagedWorktrees -WarningVariable cutoverWarnings
+        } finally {
+            $legacyHandle.Dispose()
+        }
+
+        $result.status | Should -Be 'completed'
+        Test-Path -LiteralPath $legacyLock | Should -BeTrue
+        ($cutoverWarnings -join "`n") | Should -Match "current operation's held legacy runtime lock"
+        $marker = Get-Content -LiteralPath (Join-Path $repo '.agent-1c/execution-guard-generation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $marker.generation | Should -Be 'execution-guards-v2'
+    }
+
     It 'updates every managed worktree with the source-owned runner before enabling v2' {
         $repo = Join-Path $TestDrive 'Главный проект'
         $branchRoot = Join-Path $TestDrive 'Ветка с пробелом'
