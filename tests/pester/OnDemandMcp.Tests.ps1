@@ -150,7 +150,7 @@ Describe "ITL on-demand MCP facade" {
         [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.14"
         [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.14"
         [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.14/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "8ca6cf063510756f349204efcc8c8bbfd152630d40471d5397b99e18b4a5e37a"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "a9d70c96d26b0007ce0db125066beca577e9eff756f2115ce47c2b10538af7e1"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
