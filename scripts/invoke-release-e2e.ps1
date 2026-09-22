@@ -938,6 +938,8 @@ function Test-E2EStagePassed {
 }
 
 function Test-E2ERestartWorktreeClean {
+    param([AllowEmptyString()][string]$LegacyRunRelative = "")
+
     $ownedRuntimePathspecs = @(
         ":(literal).agent-1c/execution-guard-generation.json",
         ":(glob).agent-1c/execution-guard-generation.json.*",
@@ -951,6 +953,11 @@ function Test-E2ERestartWorktreeClean {
         ":(exclude,glob).agent-1c/execution-guard-generation.json.*",
         ":(exclude,glob).agent-1c/execution-checkpoints/**"
     )
+    if ($LegacyRunRelative) {
+        $normalizedLegacyRun = $LegacyRunRelative.Replace('\', '/').Trim('/')
+        $ownedRuntimeExclusions += ":(exclude,literal)$normalizedLegacyRun"
+        $ownedRuntimeExclusions += ":(exclude,glob)$normalizedLegacyRun/**"
+    }
     $unexpectedStatus = @(& git -C $worktreePath status --porcelain=v1 --untracked-files=all -- . @ownedRuntimeExclusions)
     return $LASTEXITCODE -eq 0 -and $unexpectedStatus.Count -eq 0
 }
@@ -1503,15 +1510,16 @@ foreach ($name in @(
         $script:e2eUnsafeActionProtectionConfirmation[$name] = $property.Value
     }
 }
-$worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
+$restartLegacyRunRelative = ""
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
-    $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
-    $worktreeStatus = @($worktreeStatus | Where-Object {
-        $statusPath = if ([string]$_ -and ([string]$_).Length -gt 3) { ([string]$_).Substring(3).Trim('"').Replace('\', '/') } else { "" }
-        $statusPath -ne $legacyRunRelative -and -not $statusPath.StartsWith("$legacyRunRelative/", [StringComparison]::OrdinalIgnoreCase)
-    })
+    $restartLegacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
 }
-if ($worktreeStatus.Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
+$worktreeClean = if ($ResumeMode -eq "Restart") {
+    Test-E2ERestartWorktreeClean -LegacyRunRelative $restartLegacyRunRelative
+} else {
+    @(& git -C $worktreePath status --porcelain --untracked-files=all).Count -eq 0
+}
+if (-not $worktreeClean) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
 $aiRulesCommit = (& git -C $AiRulesSource rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $aiRulesCommit) { throw "Release ai_rules source is not a readable Git checkout: $AiRulesSource" }
 $aiRulesTree = (& git -C $AiRulesSource rev-parse 'HEAD^{tree}').Trim()

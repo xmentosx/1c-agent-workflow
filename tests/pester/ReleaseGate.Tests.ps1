@@ -560,11 +560,9 @@ Describe "Release E2E orchestration" {
         $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
         $oldSeedParallelFixture = $env:ITL_TEST_RELEASE_SEED_PARALLEL
         $oldServerResetFixture = $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE
-        $oldRestoreGenerationMarker = $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER
         $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = "true"
         $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
         $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = "true"
-        $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "false"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $aiRulesRoot init *> $null
@@ -690,13 +688,6 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
         if (-not $PreserveReleaseSnapshotApplicationProof) { throw "Release E2E must preserve the immutable snapshot/state application proof." }
         $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "mock snapshot is missing" }
-        if ($env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER -eq "true") {
-            [IO.File]::WriteAllText(
-                (Join-Path $ProjectRoot ".agent-1c\execution-guard-generation.json"),
-                '{"schemaVersion":1,"generation":"release-restart-fixture"}',
-                [Text.UTF8Encoding]::new($false)
-            )
-        }
     }
     "release-e2e-prepare-ondemand" {
         $lockPath = Join-Path $ProjectRoot ".agent-1c\dependency-lock.json"
@@ -1198,17 +1189,17 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             [System.IO.File]::WriteAllText($preferredCheckpointPath, $checkpointJson, [System.Text.UTF8Encoding]::new($false))
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyRunRoot) | Out-Null
             Move-Item -LiteralPath $preferredRunRoot -Destination $legacyRunRoot
+            [IO.File]::WriteAllText(
+                (Join-Path $worktreeRoot ".agent-1c\execution-guard-generation.json"),
+                '{"schemaVersion":1,"generation":"release-restart-fixture"}',
+                [Text.UTF8Encoding]::new($false)
+            )
             @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -BeGreaterThan 0
 
             $restartSummaryPath = Join-Path $tempRoot "restart-summary.json"
-            $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "true"
-            try {
-                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
-                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
-                $LASTEXITCODE | Should -Be 0
-            } finally {
-                $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "false"
-            }
+            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
+                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
+            $LASTEXITCODE | Should -Be 0
             $restartSummary = Get-Content -LiteralPath $restartSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $restartSummary.status | Should -Be "passed"
             $restartSummary.checkpointWasResumed | Should -BeFalse
@@ -1258,7 +1249,6 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = $oldOnDemandFixture
             $env:ITL_TEST_RELEASE_SEED_PARALLEL = $oldSeedParallelFixture
             $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = $oldServerResetFixture
-            $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = $oldRestoreGenerationMarker
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
