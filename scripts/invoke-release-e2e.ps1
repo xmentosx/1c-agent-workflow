@@ -937,6 +937,24 @@ function Test-E2EStagePassed {
     return $true
 }
 
+function Test-E2ERestartWorktreeClean {
+    $ownedRuntimePathspecs = @(
+        ":(literal).agent-1c/execution-guard-generation.json",
+        ":(glob).agent-1c/execution-guard-generation.json.*",
+        ":(glob).agent-1c/execution-checkpoints/**"
+    )
+    $trackedOwnedRuntime = @(& git -C $worktreePath ls-files -- @ownedRuntimePathspecs)
+    if ($LASTEXITCODE -ne 0 -or $trackedOwnedRuntime.Count -gt 0) { return $false }
+
+    $ownedRuntimeExclusions = @(
+        ":(exclude,literal).agent-1c/execution-guard-generation.json",
+        ":(exclude,glob).agent-1c/execution-guard-generation.json.*",
+        ":(exclude,glob).agent-1c/execution-checkpoints/**"
+    )
+    $unexpectedStatus = @(& git -C $worktreePath status --porcelain=v1 --untracked-files=all -- . @ownedRuntimeExclusions)
+    return $LASTEXITCODE -eq 0 -and $unexpectedStatus.Count -eq 0
+}
+
 function Sync-E2EWorktreeFromMaster {
     $masterBranch = "master"
     $projectConfigPath = Join-Path $worktreePath ".agent-1c\project.json"
@@ -2135,7 +2153,12 @@ if ($checkpoint) {
             Set-E2ERunPaths -Root $preferredReleaseRunRoot
             $usingLegacyRunRoot = $false
         }
-        if (@(& git -C $worktreePath status --porcelain --untracked-files=all).Count -gt 0) {
+        # Snapshot restore can advance the execution-guard generation before a
+        # legacy baseline has learned the current runtime ignore paths. Permit
+        # only those exact untracked runtime paths here; tracked runtime state
+        # and every unrelated worktree change remain blocking. The subsequent
+        # script-owned master refresh installs the current ignore contract.
+        if (-not (Test-E2ERestartWorktreeClean)) {
             throw "RELEASE_E2E_RESUME_STATE_MISMATCH: scripted Restart did not restore a clean E2E worktree."
         }
         $checkpoint = $null

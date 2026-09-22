@@ -560,9 +560,11 @@ Describe "Release E2E orchestration" {
         $oldOnDemandFixture = $env:ITL_TEST_RELEASE_ONDEMAND_PROBE
         $oldSeedParallelFixture = $env:ITL_TEST_RELEASE_SEED_PARALLEL
         $oldServerResetFixture = $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE
+        $oldRestoreGenerationMarker = $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER
         $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = "true"
         $env:ITL_TEST_RELEASE_SEED_PARALLEL = "true"
         $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = "true"
+        $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "false"
         try {
             New-Item -ItemType Directory -Force -Path $mainRoot, $aiRulesRoot | Out-Null
             & git -C $aiRulesRoot init *> $null
@@ -688,6 +690,13 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
         if (-not $PreserveReleaseSnapshotApplicationProof) { throw "Release E2E must preserve the immutable snapshot/state application proof." }
         $snapshotPath = Join-Path $ProjectRoot $ReleaseSnapshotPath
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) { throw "mock snapshot is missing" }
+        if ($env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER -eq "true") {
+            [IO.File]::WriteAllText(
+                (Join-Path $ProjectRoot ".agent-1c\execution-guard-generation.json"),
+                '{"schemaVersion":1,"generation":"release-restart-fixture"}',
+                [Text.UTF8Encoding]::new($false)
+            )
+        }
     }
     "release-e2e-prepare-ondemand" {
         $lockPath = Join-Path $ProjectRoot ".agent-1c\dependency-lock.json"
@@ -1167,6 +1176,10 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             # Restart is the explicit destructive rollback path. It must accept
             # a clean externally advanced branch HEAD, while Auto above remains
             # fail-closed for identity or expected-HEAD drift.
+            Add-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/execution-guard-generation.json"
+            & git -C $mainRoot add .gitignore
+            & git -C $mainRoot commit -m "fixture: ignore current execution generation" *> $null
+            $LASTEXITCODE | Should -Be 0
             Add-Content -LiteralPath (Join-Path $worktreeRoot "README.md") -Encoding ASCII -Value "external clean advance"
             & git -C $worktreeRoot add README.md
             & git -C $worktreeRoot commit -m "test: externally advance clean E2E branch" *> $null
@@ -1188,15 +1201,23 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -BeGreaterThan 0
 
             $restartSummaryPath = Join-Path $tempRoot "restart-summary.json"
-            & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
-                -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
-            $LASTEXITCODE | Should -Be 0
+            $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "true"
+            try {
+                & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") `
+                    -ProjectRoot $mainRoot -AiRulesSource $aiRulesRoot -HelperPath $helperPath -OutputPath $restartSummaryPath -ResumeMode Restart
+                $LASTEXITCODE | Should -Be 0
+            } finally {
+                $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = "false"
+            }
             $restartSummary = Get-Content -LiteralPath $restartSummaryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $restartSummary.status | Should -Be "passed"
             $restartSummary.checkpointWasResumed | Should -BeFalse
             @($restartSummary.executedStages) | Should -Contain "config-cadence"
             Test-Path -LiteralPath $legacyRunRoot | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $preferredRunRoot "checkpoint.json") -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $worktreeRoot ".agent-1c\execution-guard-generation.json") -PathType Leaf | Should -BeTrue
+            (& git -C $worktreeRoot check-ignore ".agent-1c/execution-guard-generation.json") | Should -Be ".agent-1c/execution-guard-generation.json"
+            @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -Be 0
 
             # A configured server proof remains testable, but omitting the
             # server stand must produce explicit unverified evidence and pass.
@@ -1237,6 +1258,7 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $env:ITL_TEST_RELEASE_ONDEMAND_PROBE = $oldOnDemandFixture
             $env:ITL_TEST_RELEASE_SEED_PARALLEL = $oldSeedParallelFixture
             $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = $oldServerResetFixture
+            $env:ITL_TEST_RELEASE_RESTORE_GENERATION_MARKER = $oldRestoreGenerationMarker
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
