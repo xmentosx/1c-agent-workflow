@@ -32,6 +32,17 @@ func TestWaitForStateCountRetriesTransientStateReadFailure(t *testing.T) {
 	}
 }
 
+func TestFacadeTerminationBudgetOutlivesOwnedCleanup(t *testing.T) {
+	if facadeTerminateDuration-facadeCleanupTimeout < 30*time.Second {
+		t.Fatalf("facade termination budget %s must outlive owned cleanup budget %s by at least 30s", facadeTerminateDuration, facadeCleanupTimeout)
+	}
+	command := facadeCommand("itl-ondemand-mcp.exe", "vanessa-ui", `D:\Git\project`, `D:\Git\catalog.json`, `D:\Git\agent-1c.ps1`, 5*time.Second)
+	joined := strings.Join(command.Args, " ")
+	if !strings.Contains(joined, "--cleanup-timeout "+facadeCleanupTimeout.String()) {
+		t.Fatalf("facade command does not bind the owned cleanup budget: %s", joined)
+	}
+}
+
 func TestFirstOSWindowTitleUsesVanessaListResult(t *testing.T) {
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Для снятия скриншотов найдено 1 окон:\n  -dev_test / 1С:Предприятие"}}}
 	if got := firstOSWindowTitle(result); got != "dev_test / 1С:Предприятие" {

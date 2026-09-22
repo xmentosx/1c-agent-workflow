@@ -39,9 +39,13 @@ type probeSession struct {
 }
 
 const (
-	gatewayCallTool        = "call_tool"
-	gatewayPublicToolCount = 3
+	gatewayCallTool = "call_tool"
+
+	facadeCleanupTimeout    = 90 * time.Second
+	facadeTerminateDuration = 2 * time.Minute
 )
+
+const gatewayPublicToolCount = 3
 
 func main() {
 	if err := run(); err != nil {
@@ -316,10 +320,10 @@ func callInnerTool(ctx context.Context, session *mcp.ClientSession, name string,
 }
 
 func connect(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) (*probeSession, error) {
-	command := exec.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String())
+	command := facadeCommand(exe, family, projectRoot, catalog, helper, idleTimeout)
 	command.Stderr = os.Stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-live-probe", Version: "0.1.0"}, nil)
-	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: time.Minute}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: facadeTerminateDuration}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect facade: %w", err)
 	}
@@ -338,6 +342,10 @@ func connect(ctx context.Context, exe, family, projectRoot, catalog, helper stri
 		cursor = page.NextCursor
 	}
 	return &probeSession{session: session, count: count}, nil
+}
+
+func facadeCommand(exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) *exec.Cmd {
+	return exec.Command(exe, "serve", "--family", family, "--project-root", projectRoot, "--catalog", catalog, "--helper", helper, "--idle-timeout", idleTimeout.String(), "--cleanup-timeout", facadeCleanupTimeout.String())
 }
 
 func catalogToolCount(path string) (int, error) {
