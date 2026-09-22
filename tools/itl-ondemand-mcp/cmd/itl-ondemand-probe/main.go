@@ -39,13 +39,14 @@ type probeSession struct {
 }
 
 const (
-	gatewayCallTool = "call_tool"
+	gatewayCallTool        = "call_tool"
+	gatewayPublicToolCount = 3
+)
 
+const (
 	facadeCleanupTimeout    = 90 * time.Second
 	facadeTerminateDuration = 2 * time.Minute
 )
-
-const gatewayPublicToolCount = 3
 
 func main() {
 	if err := run(); err != nil {
