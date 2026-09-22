@@ -44,9 +44,18 @@ const (
 )
 
 const (
-	facadeCleanupTimeout    = 90 * time.Second
-	facadeTerminateDuration = 2 * time.Minute
+	facadeCleanupTimeout     = 90 * time.Second
+	facadeTerminateDuration  = 2 * time.Minute
+	defaultProbeTimeout      = 10 * time.Minute
+	vanessaSmokeProbeTimeout = 30 * time.Minute
 )
+
+func probeTimeout(vanessaSmoke bool) time.Duration {
+	if vanessaSmoke {
+		return vanessaSmokeProbeTimeout
+	}
+	return defaultProbeTimeout
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -89,7 +98,7 @@ func run() error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout(*vanessaSmoke))
 	defer cancel()
 	connected := make([]*probeSession, 0, *instances)
 	connectedTestClients := 0

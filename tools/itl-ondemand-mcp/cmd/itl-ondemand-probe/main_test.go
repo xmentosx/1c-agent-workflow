@@ -43,6 +43,15 @@ func TestFacadeTerminationBudgetOutlivesOwnedCleanup(t *testing.T) {
 	}
 }
 
+func TestVanessaSmokeProbeTimeoutCoversMultiSessionWorkflow(t *testing.T) {
+	if got := probeTimeout(false); got != 10*time.Minute {
+		t.Fatalf("ordinary probe timeout=%s, want 10m", got)
+	}
+	if got := probeTimeout(true); got < 20*time.Minute {
+		t.Fatalf("Vanessa smoke probe timeout=%s, must cover multiple sequential facade sessions", got)
+	}
+}
+
 func TestFirstOSWindowTitleUsesVanessaListResult(t *testing.T) {
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Для снятия скриншотов найдено 1 окон:\n  -dev_test / 1С:Предприятие"}}}
 	if got := firstOSWindowTitle(result); got != "dev_test / 1С:Предприятие" {
