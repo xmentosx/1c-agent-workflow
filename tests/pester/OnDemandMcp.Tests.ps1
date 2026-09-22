@@ -114,20 +114,21 @@ Describe "ITL on-demand MCP facade" {
 
     It "pins compatible catalogs and keeps development-worktree endpoint assets isolated from main" {
         $manifest = Get-Content -LiteralPath (Join-Path $AssetRoot "compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        $manifest.facadeVersion | Should -Be "0.4.13"
-        $manifest.minimumFacadeVersion | Should -Be "0.4.13"
+        $manifest.facadeVersion | Should -Be "0.4.14"
+        $manifest.minimumFacadeVersion | Should -Be "0.4.14"
         $mainSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\main.go") -Raw -Encoding UTF8
         $gatewaySource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\gateway.go") -Raw -Encoding UTF8
         $databaseRuntimeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\database_runtime.go") -Raw -Encoding UTF8
-        $mainSource | Should -Match 'const version = "0\.4\.13"'
+        $mainSource | Should -Match 'const version = "0\.4\.14"'
         $mainSource | Should -Match '"gateway"'
         $gatewaySource | Should -Match 'gatewayResolveTool\s*=\s*"resolve_tool"'
         $gatewaySource | Should -Match 'gatewayCallTool\s*=\s*"call_tool"'
         $probeSource = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
-        $probeSource | Should -Match 'gatewayPublicToolCount = 3'
+        $probeSource | Should -Match 'gatewayPublicToolCount = 2'
         $probeSource | Should -Match 'item.count != gatewayPublicToolCount'
-        $gatewaySource | Should -Match 'addDatabaseAccessControlTool\(server, rt\)'
-        $databaseRuntimeSource | Should -Match 'finishDatabaseAccessTool\s*=\s*"finish_database_access"'
+        $gatewaySource | Should -Not -Match 'finish_database_access'
+        $databaseRuntimeSource | Should -Match 'beginDatabaseCall'
+        $databaseRuntimeSource | Should -Match 'acquireExecutionGuard'
         $gatewaySource | Should -Match 'ArgumentsJSON\s+\*string\s+`json:"argumentsJson,omitempty"`'
         $gatewaySource | Should -Match '"additionalProperties":\s*true'
         $manifest.families.roctup.backendVersions.roctup | Should -Be "v1.7.1"
@@ -146,10 +147,10 @@ Describe "ITL on-demand MCP facade" {
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.version | Should -Be "1.3.9.131"
         $manifest.families.'vanessa-ui'.embeddedDependencies.vanessaExt.sha256 | Should -Match '^[0-9a-f]{64}$'
         $lock = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.13"
-        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.13"
-        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.13/itl-ondemand-mcp-windows-amd64.exe"
-        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "18cd3155fd75e739b6a6ed156b2ffeb18bcefb804252dead6928b28137945c42"
+        [string]$lock.dependencies.itlOndemandMcp.version | Should -Be "0.4.14"
+        [string]$lock.dependencies.itlOndemandMcp.releaseTag | Should -Be "itl-ondemand-mcp-v0.4.14"
+        [string]$lock.dependencies.itlOndemandMcp.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/itl-ondemand-mcp-v0.4.14/itl-ondemand-mcp-windows-amd64.exe"
+        [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Be "a9d70c96d26b0007ce0db125066beca577e9eff756f2115ce47c2b10538af7e1"
         [string]$lock.dependencies.itlOndemandMcp.sha256 | Should -Not -Be "45debfd236dcb1b1b00dcfbf5343e236be05884cba0f00e42eb94ae72d1cfb13"
         foreach ($family in @("roctup", "vanessa-ui")) {
             $definition = $manifest.families.$family
@@ -327,13 +328,13 @@ Describe "ITL on-demand MCP facade" {
             }
             $mismatch | Should -Match "ITL_ONDEMAND_FACADE_LOCK_MISMATCH"
 
-            $lock.dependencies.itlOndemandMcp.version = "0.4.13"
+            $lock.dependencies.itlOndemandMcp.version = "0.4.14"
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($lock | ConvertTo-Json -Depth 20)
             $resolved = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlOnDemandMcpExecutablePath -AllowMissing
             }
-            $resolved | Should -Be (Join-Path $installRoot "0.4.13\itl-ondemand-mcp-windows-amd64.exe")
+            $resolved | Should -Be (Join-Path $installRoot "0.4.14\itl-ondemand-mcp-windows-amd64.exe")
             $resolved | Should -Not -Match ([regex]::Escape("\0.4.2\"))
         } finally {
             [Environment]::SetEnvironmentVariable("ITL_ONDEMAND_MCP_INSTALL_ROOT", $oldInstallRoot, "Process")
@@ -365,7 +366,7 @@ Describe "ITL on-demand MCP facade" {
                 $installRoot = Join-Path $tempRoot "localapp\ondemand"
                 function Get-ItlOnDemandMcpInstallRoot { return $installRoot }
 
-                $version = "0.4.13"
+                $version = "0.4.14"
                 $assetName = "itl-ondemand-mcp-windows-amd64.exe"
                 $targetDirectory = Join-Path $installRoot $version
                 $targetPath = Join-Path $targetDirectory $assetName
@@ -385,7 +386,7 @@ Describe "ITL on-demand MCP facade" {
                 Install-ItlOnDemandMcp
             }
 
-            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.13\itl-ondemand-mcp-windows-amd64.exe")
+            $result.path | Should -Be (Join-Path $tempRoot "localapp\ondemand\0.4.14\itl-ondemand-mcp-windows-amd64.exe")
             $result.sha256 | Should -Match '^[a-f0-9]{64}$'
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -416,13 +417,13 @@ Describe "ITL on-demand MCP facade" {
                 function Get-DependencyLockEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.13"
+                        version = "0.4.14"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $cachedSha256
                     }
                 }
-                $targetPath = Join-Path $installRoot "0.4.13\itl-ondemand-mcp-windows-amd64.exe"
+                $targetPath = Join-Path $installRoot "0.4.14\itl-ondemand-mcp-windows-amd64.exe"
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetPath) | Out-Null
                 [IO.File]::WriteAllBytes($targetPath, $cachedBytes)
                 Install-ItlOnDemandMcp
@@ -457,7 +458,7 @@ Describe "ITL on-demand MCP facade" {
                 function Get-DependencyLockEntry {
                     param([string]$Name)
                     return [pscustomobject]@{
-                        version = "0.4.13"
+                        version = "0.4.14"
                         assetName = "itl-ondemand-mcp-windows-amd64.exe"
                         url = "https://example.invalid/itl-ondemand-mcp.exe"
                         sha256 = $sourceSha256
@@ -620,91 +621,44 @@ Describe "ITL on-demand MCP facade" {
         Test-Agent1cActionRequiresLifecycleLock -RequestedAction "internal-ondemand-stop-all" | Should -BeTrue
     }
 
-    It "requires an inherited recovery proof before recover-stop can touch runtime state" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ondemand-recover-proof-" + [guid]::NewGuid().ToString("N"))
+    It "exposes execution planning without legacy recovery operations" {
+        $tokens = $null; $parseErrors = $null
+        $entrypointAst = [Management.Automation.Language.Parser]::ParseFile($HelperPath, [ref]$tokens, [ref]$parseErrors)
+        @($parseErrors) | Should -BeNullOrEmpty
+        $operationParameter = @($entrypointAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq 'InternalOnDemandOperation' })[0]
+        $operations = @($operationParameter.Attributes | Where-Object TypeName -Match ValidateSet | ForEach-Object PositionalArguments | ForEach-Object { [string]$_.Value })
+        $operations | Should -Contain 'execution-plan'
+        $operations | Should -Not -Contain 'access-plan'
+        $operations | Should -Not -Contain 'recover-stop'
+    }
+
+    It "does not interpret legacy database ownership environment" {
+        $savedLegacy = $env:ITL_DATABASE_ACCESS_CONTEXT
         try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-            $message = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                try {
-                    Invoke-ItlOnDemandBackendBroker -Operation recover-stop -Family vanessa-ui -InstanceId ('a' * 32)
-                } catch { return $_.Exception.Message }
-                return ''
-            }
-            $message | Should -Be 'ITL_ONDEMAND_RECOVERY_PROOF_REQUIRED'
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
+            $env:ITL_DATABASE_ACCESS_CONTEXT = '{"schemaVersion":1,"proof":{"token":"stale-secret"}}'
+            $text = Get-Content -LiteralPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1') -Raw -Encoding UTF8
+            $text | Should -Not -Match 'ITL_DATABASE_ACCESS_CONTEXT'
+            $text | Should -Not -Match 'ITL_INFOBASE_ACCESS_LEASE'
+        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $savedLegacy }
     }
 
-    It "uses mutation-exclusive inheritance for recovery without changing ordinary functional access" {
-        $plan = [pscustomobject]@{accessMode='functional-test'}
-        Resolve-ItlOnDemandInheritedAccessMode -Invocation ([pscustomobject]@{
-            proof=[pscustomobject]@{purpose='operation'}
-        }) -Plan $plan | Should -Be 'functional-test'
-        Resolve-ItlOnDemandInheritedAccessMode -Invocation ([pscustomobject]@{
-            proof=[pscustomobject]@{purpose='recovery';accessMode='mutation-exclusive'}
-        }) -Plan $plan | Should -Be 'mutation-exclusive'
-    }
-
-    It "reports an absent planned service as missing rather than falsely exclusive" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl ondemand recovery observation " + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
-            Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
-            $samples = & {
-                . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                function Get-OneCProcessInfo { @() }
-                function Start-Sleep {}
-                $servicePath = Join-Path $tempRoot 'vanessa-service-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-                New-Item -ItemType Directory -Force -Path $servicePath | Out-Null
-                $plan = [pscustomobject]@{
-                    bases = @([pscustomobject]@{kind='file';path=$servicePath})
-                    servicePlan = [pscustomobject]@{path=$servicePath}
-                }
-                @(Get-ItlOnDemandRecoveryResourceSamples -Plan $plan)
-            }
-            $samples | Should -HaveCount 2
-            foreach ($sample in $samples) {
-                $sample.resources | Should -HaveCount 1
-                $sample.resources[0].databasePresent | Should -BeFalse
-                $sample.resources[0].exclusive | Should -BeFalse
-                $sample.resources[0].sessionCount | Should -Be 0
-            }
-        } finally {
-            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    It "recovers an orphaned facade when runtime state is already absent" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl orphan recovery путь " + [guid]::NewGuid().ToString("N"))
-        $savedContext = $env:ITL_DATABASE_ACCESS_CONTEXT
+    It "does not turn absent idle runtime state into an execution gate" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl absent idle runtime путь " + [guid]::NewGuid().ToString("N"))
         try {
             New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot ".agent-1c") | Out-Null
             Set-Content -LiteralPath (Join-Path $tempRoot ".agent-1c\project.json") -Encoding UTF8 -Value '{"aiRules":{"tools":["codex"]}}'
             $lines = @(& {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
-                function Start-ItlOnDemandInheritedDatabaseAccess { [pscustomobject]@{owner=$null;plan=$null} }
-                function Complete-ItlOnDemandInheritedDatabaseAccess { }
                 function Read-ItlOnDemandRuntimeState { return $null }
-                function Get-ItlOnDemandRecoveryResourceSamples { @([pscustomobject]@{sample=1},[pscustomobject]@{sample=2}) }
                 function Remove-ItlOnDemandOrphanPortLeases { @([pscustomobject]@{family='vanessa-mcp';port=48101}) }
                 $instance = 'a' * 32
-                $plan = [pscustomobject]@{schemaVersion=1;family='vanessa-ui';projectRoot=$tempRoot;instanceId=$instance;auxiliaryContour='';python='python';bases=@([pscustomobject]@{kind='file';path=(Join-Path $tempRoot 'База с пробелом')});accessMode='functional-test';servicePlan=$null}
-                $proof = [pscustomobject]@{coordinator=(Join-Path $tempRoot 'координатор');ticket=('b'*32);token=('c'*64);purpose='recovery';accessMode='mutation-exclusive'}
-                $env:ITL_DATABASE_ACCESS_CONTEXT = ([pscustomobject]@{schemaVersion=1;proof=$proof;plan=$plan} | ConvertTo-Json -Depth 12 -Compress)
-                Invoke-ItlOnDemandBackendBroker -Operation recover-stop -Family vanessa-ui -InstanceId $instance
+                Invoke-ItlOnDemandBackendBroker -Operation stop -Family vanessa-ui -InstanceId $instance
             })
             $marker = [string](@($lines | Where-Object { [string]$_ -like 'ITL_ONDEMAND_RESULT=*' })[-1])
             $result = $marker.Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json
             $result.status | Should -Be 'stopped'
-            $result.recoveryEvidence.ownedRuntimeCleanup | Should -Be 'runtime-state-absent-live-quiescence-confirmed'
-            @($result.recoveryEvidence.samples).Count | Should -Be 2
-            @($result.recoveryEvidence.orphanPortCleanup).Count | Should -Be 1
-            $result.recoveryEvidence.orphanPortCleanupError | Should -Be ''
+            $result.status | Should -BeIn @('stopped','already-stopped')
         } finally {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = $savedContext
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1703,7 +1657,9 @@ Describe "ITL on-demand MCP facade" {
     }
 }
 
-Describe 'On-demand complete database admission plan' {
+
+
+Describe 'On-demand execution guard plan' {
     BeforeAll {
         $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
         $helper = Join-Path $repo '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
@@ -1716,301 +1672,62 @@ Describe 'On-demand complete database admission plan' {
         . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1')
     }
     BeforeEach {
-        $root = Join-Path $TestDrive ('Базы разных операций ' + [guid]::NewGuid().ToString('N'))
+        $root = Join-Path $TestDrive ('Execution guard путь ' + [guid]::NewGuid().ToString('N'))
         $script:ProjectRoot = $root
-        $primary = [pscustomobject]@{devBranchName='test'; infoBaseKind='file'; devBranchInfoBasePath=(Join-Path $root 'основная база')}
+        $guardRoot = Join-Path $root 'execution-guards-v2'
+        $primary = [pscustomobject]@{devBranchName='test';infoBaseKind='file';devBranchInfoBasePath=(Join-Path $root 'основная база')}
         $instanceId = 'a' * 32
         Mock Read-CurrentDevBranchStateForRoctupMcp { $primary }
         Mock Read-ItlOnDemandRuntimeState { $null }
-        Mock Get-Setting { param($EnvName, $ConfigName, $Default) $Default }
-        Mock Get-AuxiliaryContour { [pscustomobject]@{name='aux';baseMode='attached-readonly'} }
-        Mock Get-AuxiliaryContourConnection { [pscustomobject]@{kind='file';path=(Join-Path $root 'внешняя база');user='private-user';password='private-password'} }
-        Mock Invoke-Designer { throw 'Planning must not launch Designer.' }
-        Mock Start-ItlOnDemandBackendInstance { throw 'Planning must not launch a backend.' }
-        Mock Stop-ItlOnDemandBackendInstance { throw 'Planning must not stop a backend.' }
-        Mock Update-DevBranchState { throw 'Planning must not update branch state.' }
+        Mock Get-Setting { param($EnvName,$ConfigName,$Default) if ($EnvName -eq 'ITL_EXECUTION_GUARD_ROOT') { $guardRoot } else { $Default } }
+        Mock Start-ItlOnDemandBackendInstance { throw 'planning must not start runtime' }
     }
 
-    It 'plans only the primary ROCTUP target without touching any database or coordinator' {
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.accessMode | Should -Be 'shared-read'
+    It 'plans exact resources without creating guard state or runtime locks' {
+        $plan = Get-ItlOnDemandExecutionPlan -Family roctup -InstanceId $instanceId
+        $plan.schemaVersion | Should -Be 2
         @($plan.bases).Count | Should -Be 1
-        $plan.bases[0].path | Should -Be $primary.devBranchInfoBasePath
-        $plan.coordinator | Should -Be $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT
-        $plan.scope | Should -Be 'execution-host-only'
-        $plan.servicePlan | Should -BeNullOrEmpty
-        (Test-Path -LiteralPath $root) | Should -BeFalse
-        Should -Invoke Invoke-Designer -Times 0
-        Should -Invoke Update-DevBranchState -Times 0
-    }
-
-    It 'does not require or reserve an unused primary database for auxiliary ROCTUP' {
-        $primary.devBranchInfoBasePath = ''
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId -AuxiliaryContour aux
-        @($plan.bases).Count | Should -Be 1
-        $plan.targetBase.path | Should -Be (Join-Path $root 'внешняя база')
-        $plan.primaryBase | Should -BeNullOrEmpty
-        ($plan | ConvertTo-Json -Depth 20) | Should -Not -Match 'private-password|private-user'
-    }
-
-    It 'includes primary tooling auxiliary target and the pinned new Vanessa manager atomically' {
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId -AuxiliaryContour aux
-        $plan.accessMode | Should -Be 'functional-test'
-        @($plan.bases).Count | Should -Be 3
-        @($plan.bases.path) | Should -Contain $primary.devBranchInfoBasePath
-        @($plan.bases.path) | Should -Contain (Join-Path $root 'внешняя база')
-        @($plan.bases.path) | Should -Contain $plan.servicePlan.path
-        $again = Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId -AuxiliaryContour aux -PreviousServicePlan $plan.servicePlan
-        $again.servicePlan.generation | Should -Be $plan.servicePlan.generation
-        ($again.bases | ConvertTo-Json -Compress) | Should -Be ($plan.bases | ConvertTo-Json -Compress)
-        (Test-Path -LiteralPath $root) | Should -BeFalse
-    }
-
-    It 'also reserves a replaced runtimes manager while deduplicating the shared target' {
-        $oldManager = Join-Path $root 'прежняя служебная база'
-        Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{infoBasePath=$primary.devBranchInfoBasePath;managerInfoBaseKind='file';managerInfoBasePath=$oldManager} }
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId
-        @($plan.bases).Count | Should -Be 3
-        @($plan.bases.path) | Should -Contain $oldManager
-        Should -Invoke Stop-ItlOnDemandBackendInstance -Times 0
-    }
-
-    It 'rejects unknown legacy target identity instead of guessing its backend family' {
-        Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{infoBasePath='unknown old target';managerInfoBaseKind='file';managerInfoBasePath=(Join-Path $root 'manager')} }
-        { Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId } | Should -Throw '*DATABASE_IDENTITY_REQUIRED*'
-        Should -Invoke Stop-ItlOnDemandBackendInstance -Times 0
-    }
-
-    It 'uses the configured common authority and rejects invalid waiting budgets' {
-        $authority = Join-Path $root 'общий координатор'
-        Mock Get-Setting { param($EnvName, $ConfigName, $Default) if ($EnvName -eq 'ITL_INFOBASE_ACCESS_ROOT') { $authority } else { $Default } }
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator | Should -Be $authority
-        $plan.coordinator | Should -Not -Be $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT
-        $plan.scope | Should -Be 'configured-authority'
-        (Test-Path -LiteralPath $authority) | Should -BeFalse
-        Mock Get-Setting { param($EnvName, $ConfigName, $Default) if ($EnvName -eq 'ITL_INFOBASE_ACCESS_WAIT_TIMEOUT_SECONDS') { 'NaN' } else { $Default } }
-        { Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId } | Should -Throw '*TIMEOUT_INVALID*'
-    }
-
-    It 'returns a structured broker plan without acquiring the runtime-start lock' {
-        $line = Invoke-ItlOnDemandBackendBroker -Operation access-plan -Family roctup -InstanceId $instanceId
-        $line | Should -Match '^ITL_ONDEMAND_RESULT='
-        $value = $line.Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json
-        $value.status | Should -Be 'planned'
-        @($value.databaseAccess.bases).Count | Should -Be 1
-        (Test-Path -LiteralPath $root) | Should -BeFalse
+        $plan.targetBase.path | Should -Be $primary.devBranchInfoBasePath
+        $plan.guardRoot | Should -Match 'execution-guards-v2'
+        (Test-Path -LiteralPath $plan.guardRoot) | Should -BeFalse
+        (Test-Path -LiteralPath (Join-Path $root '.agent-1c/locks/ondemand-start.lock')) | Should -BeFalse
         Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
     }
 
-    It 'revalidates native inherited ownership before starting and preserves the outer reservation' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $request = @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $parent = Start-ItlDatabaseAccessHost -Request $request
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            Mock Start-ItlOnDemandBackendInstance { [pscustomobject]@{status='readiness';family='roctup'} }
-            $line = Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId
-            $line | Should -Match 'readiness'
-            $line | Should -Not -Match ([regex]::Escape($parent.proof.token))
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1
-            { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
-            (Complete-ItlDatabaseAccessHost -Owner $parent).status | Should -Be 'released'
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
+    It 'returns the execution plan through the private broker without runtime start' {
+        $line = Invoke-ItlOnDemandBackendBroker -Operation execution-plan -Family roctup -InstanceId $instanceId
+        $value = $line.Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json
+        $value.status | Should -Be 'planned'
+        $value.executionGuard.schemaVersion | Should -Be 2
+        @($value.executionGuard.bases).Count | Should -Be 1
+        (Test-Path -LiteralPath (Join-Path $root '.agent-1c/locks/ondemand-start.lock')) | Should -BeFalse
+        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
     }
 
-    It 'rejects a changed target outside inherited resources before any start lock or native work' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $parent = Start-ItlDatabaseAccessHost -Request @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
+    It 'rejects malformed signed invocation before backend work' {
+        $saved = $env:ITL_EXECUTION_INVOCATION
         try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            $primary.devBranchInfoBasePath = Join-Path $root 'другая база'
-            { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*DATABASE_PLAN_CHANGED*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
-            (Test-Path -LiteralPath (Join-Path $root '.agent-1c/locks/ondemand-start.lock')) | Should -BeFalse
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'cannot use a released parent or escalate a single-instance context to stop-all' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $parent = Start-ItlDatabaseAccessHost -Request @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            { Invoke-ItlOnDemandBackendBroker -Operation stop-all -Family roctup } | Should -Throw '*DATABASE_SCOPE_INVALID*'
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-            { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*INFOBASE_ACCESS_*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'stops the recorded Vanessa databases without planning a new manager or releasing the parent' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $target = New-ItlOnDemandDatabaseConnection -Kind file -Path $primary.devBranchInfoBasePath
-        $manager = New-ItlOnDemandDatabaseConnection -Kind file -Path (Join-Path $root 'старая служебная база')
-        $plan = [pscustomobject]@{schemaVersion=1;family='vanessa-ui';projectRoot=$root;auxiliaryContour='';python='python';coordinator=(Join-Path $root 'координатор доступа');bases=@($target,$manager);targetBase=$target;servicePlan=$null}
-        $request = @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $parent = Start-ItlDatabaseAccessHost -Request $request
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{pid=4242;port=48111;infoBaseKind='file';infoBasePath=$target.path;managerInfoBaseKind='file';managerInfoBasePath=$manager.path} }
-            Mock Get-VanessaServiceInfoBasePlan { throw 'Cleanup must not require the manager template.' }
-            Mock Stop-ItlOnDemandBackendInstance { [pscustomobject]@{status='stopped'} }
-            Invoke-ItlOnDemandBackendBroker -Operation stop -Family vanessa-ui -InstanceId $instanceId | Should -Match 'stopped'
-            Should -Invoke Get-VanessaServiceInfoBasePlan -Times 0
-            Should -Invoke Stop-ItlOnDemandBackendInstance -Times 1
-            { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*WAIT_TIMEOUT*'
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'accepts only the same pinned manager and forwards its fresh reuse proof after creation' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $managerPlan = [pscustomobject]@{schemaVersion=1;kind='file';path=(Join-Path $root 'служебная база');generation=('b'*32);reuse=$false;inputSha256=('c'*64);template=[pscustomobject]@{sha256=('d'*64);user='service'}}
-        Mock Get-VanessaServiceInfoBasePlan { $managerPlan }
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family vanessa-ui -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $parent = Start-ItlDatabaseAccessHost -Request @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            $managerPlan.reuse = $true
-            $managerPlan.inputSha256 = 'e'*64
-            Mock Start-ItlOnDemandBackendInstance { [pscustomobject]@{status='readiness'} }
-            Invoke-ItlOnDemandBackendBroker -Operation ensure -Family vanessa-ui -InstanceId $instanceId | Should -Match 'readiness'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -ParameterFilter { $ServiceAdmissionPlan.reuse -and $ServiceAdmissionPlan.inputSha256 -eq ('e'*64) }
-            $managerPlan.template.sha256 = 'f'*64
-            { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family vanessa-ui -InstanceId $instanceId } | Should -Throw '*DATABASE_PLAN_CHANGED*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'cleans up inherited pipe admission when the local start lock is busy without releasing its parent' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $request = @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $parent = Start-ItlDatabaseAccessHost -Request $request
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        $lock = $null
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            $locks = Join-Path $root '.agent-1c/locks'
-            New-Item -ItemType Directory -Path $locks -Force | Out-Null
-            $lock = [IO.File]::Open((Join-Path $locks 'ondemand-start.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
-            { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
-            { Start-ItlDatabaseAccessHost -Request $request -OnProgress {} } | Should -Throw '*WAIT_TIMEOUT*'
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-            $next = Start-ItlDatabaseAccessHost -Request $request
-            try { Complete-ItlDatabaseAccessHost -Owner $next | Out-Null } finally { Close-ItlDatabaseAccessHost -Owner $next }
-        } finally {
-            if ($null -ne $lock) { $lock.Dispose() }
-            $env:ITL_DATABASE_ACCESS_CONTEXT = $saved
-            Close-ItlDatabaseAccessHost -Owner $parent
-        }
-    }
-
-    It 'retains inherited recovery debt when the native start itself fails without cleanup proof' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $request = @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $parent = Start-ItlDatabaseAccessHost -Request $request
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            Mock Start-ItlOnDemandBackendInstance { throw 'native start cleanup is unproven' }
-            { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*native start cleanup is unproven*'
-            Should -Invoke Start-ItlOnDemandBackendInstance -Times 1 -Exactly
-            (Complete-ItlDatabaseAccessHost -Owner $parent).status | Should -Be 'needs-attention'
-            { Start-ItlDatabaseAccessHost -Request $request } | Should -Throw '*RECOVERY_REQUIRED*'
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'does not confirm native cleanup from absent incomplete or replaced runtime state' {
-        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $plan = Get-ItlOnDemandDatabaseAccessPlan -Family roctup -InstanceId $instanceId
-        $plan.coordinator = Join-Path $root 'координатор доступа'
-        $parent = Start-ItlDatabaseAccessHost -Request @{schemaVersion=1;coordinator=$plan.coordinator;bases=$plan.bases;owner=@{operation='test-parent'};timeout=0}
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan} | ConvertTo-Json -Depth 30 -Compress
-            { Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId $instanceId -ExpectedPid 4242 -ExpectedPort 48111 } | Should -Throw '*STOP_UNCONFIRMED*'
-            Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{pid=0;port=48111;infoBaseKind='file';infoBasePath=$primary.devBranchInfoBasePath} }
-            { Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId $instanceId -ExpectedPid -1 } | Should -Throw '*STOP_UNCONFIRMED*'
-            Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{pid=5151;port=48111;infoBaseKind='file';infoBasePath=$primary.devBranchInfoBasePath} }
-            { Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId $instanceId -ExpectedPid 4242 -ExpectedPort 48111 } | Should -Throw '*STOP_IDENTITY_CHANGED*'
-            Mock Read-ItlOnDemandRuntimeState { [pscustomobject]@{pid=4242;port=48111;processStartTime='2026-09-09T00:02:00Z';infoBaseKind='file';infoBasePath=$primary.devBranchInfoBasePath} }
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan;expectedBackend=@{instanceId=$instanceId;processStartTime='2026-09-09T00:01:00Z'}} | ConvertTo-Json -Depth 30 -Compress
-            { Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId $instanceId -ExpectedPid 4242 -ExpectedPort 48111 } | Should -Throw '*STOP_IDENTITY_CHANGED*'
-            Should -Invoke Stop-ItlOnDemandBackendInstance -Times 0
-            $env:ITL_DATABASE_ACCESS_CONTEXT = @{schemaVersion=1;proof=$parent.proof;plan=$plan;expectedBackend=@{instanceId=$instanceId;processStartTime='2026-09-09T00:02:00Z'}} | ConvertTo-Json -Depth 30 -Compress
-            Mock Stop-ItlOnDemandBackendInstance { [pscustomobject]@{status='stopped'} }
-            Invoke-ItlOnDemandBackendBroker -Operation stop -Family roctup -InstanceId $instanceId -ExpectedPid 4242 -ExpectedPort 48111 | Should -Match 'stopped'
-            Should -Invoke Stop-ItlOnDemandBackendInstance -Times 1
-            Complete-ItlDatabaseAccessHost -Owner $parent | Out-Null
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved; Close-ItlDatabaseAccessHost -Owner $parent }
-    }
-
-    It 'rejects malformed or foreign private context without disclosing it' {
-        $saved = $env:ITL_DATABASE_ACCESS_CONTEXT
-        try {
-            foreach ($raw in @('{private-secret', '{}', '{"schemaVersion":1,"proof":{"token":"private-secret"},"plan":{"schemaVersion":1,"family":"vanessa-ui"}}')) {
-                $env:ITL_DATABASE_ACCESS_CONTEXT = $raw
-                { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*ITL_ONDEMAND_DATABASE_CONTEXT_INVALID*'
+            foreach ($raw in @('{broken','{}','{"schemaVersion":2,"context":{},"plan":{"schemaVersion":2,"family":"vanessa-ui"}}')) {
+                $env:ITL_EXECUTION_INVOCATION = $raw
+                { Invoke-ItlOnDemandBackendBroker -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*ITL_ONDEMAND_EXECUTION_CONTEXT_INVALID*'
             }
             Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
-        } finally { $env:ITL_DATABASE_ACCESS_CONTEXT = $saved }
+        } finally { $env:ITL_EXECUTION_INVOCATION = $saved }
     }
 
-    It 'runs the public planning helper while the runtime lock is held exclusively' {
-        New-Item -ItemType Directory -Path (Join-Path $root '.agent-1c/dev-branches') -Force | Out-Null
-        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dev-branches/test.json'), ($primary | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
-        & git -C $root init --initial-branch=itldev/test | Out-Null
-        $LASTEXITCODE | Should -Be 0
-        & git -C $root -c user.name=Fixture -c user.email=fixture@example.invalid commit --allow-empty -m fixture | Out-Null
-        $LASTEXITCODE | Should -Be 0
-        $locks = Join-Path $root '.agent-1c/locks'
-        New-Item -ItemType Directory -Path $locks -Force | Out-Null
-        $lock = [IO.File]::Open((Join-Path $locks 'runtime-mcp.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-        $process = New-Object Diagnostics.Process
-        try {
-            $start = New-Object Diagnostics.ProcessStartInfo
-            $start.FileName = 'powershell.exe'
-            $start.Arguments = Join-NativeCommandLineArguments -Arguments @('-NoProfile','-File',$helper,'-ProjectRoot',$root,'-InternalOnDemandOperation','access-plan','-InternalOnDemandFamily','roctup','-InternalOnDemandInstanceId',$instanceId)
-            $start.UseShellExecute = $false; $start.CreateNoWindow = $true
-            $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
-            $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
-            $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
-            $process.StartInfo = $start
-            [void]$process.Start()
-            $stdout = $process.StandardOutput.ReadToEndAsync()
-            $stderr = $process.StandardError.ReadToEndAsync()
-            $process.WaitForExit(15000) | Should -BeTrue
-            $process.ExitCode | Should -Be 0 -Because $stderr.Result
-            $line = @($stdout.Result -split '\r?\n' | Where-Object { $_.StartsWith('ITL_ONDEMAND_RESULT=') })
-            $line.Count | Should -Be 1
-            $value = $line[0].Substring('ITL_ONDEMAND_RESULT='.Length) | ConvertFrom-Json
-            $value.databaseAccess.targetBase.path | Should -Be $primary.devBranchInfoBasePath
-            (Test-Path -LiteralPath (Join-Path $locks 'ondemand-start.lock')) | Should -BeFalse
-            (Test-Path -LiteralPath $primary.devBranchInfoBasePath) | Should -BeFalse
-        } finally {
-            if (-not $process.HasExited) { $process.Kill(); [void]$process.WaitForExit(5000) }
-            $process.Dispose()
-            $lock.Dispose()
-        }
+    It 'rejects target expansion when revalidating an inherited call' {
+        $plan = Get-ItlOnDemandExecutionPlan -Family roctup -InstanceId $instanceId
+        $invocation = [pscustomobject]@{schemaVersion=2;context=[pscustomobject]@{encoded='signed';key='private'};plan=$plan}
+        $primary.devBranchInfoBasePath = Join-Path $root 'другая база'
+        { Confirm-ItlOnDemandExecutionInvocation -Invocation $invocation -Operation ensure -Family roctup -InstanceId $instanceId } | Should -Throw '*PLAN_CHANGED*'
+        Should -Invoke Start-ItlOnDemandBackendInstance -Times 0
+    }
+
+    It 'does not expose retained ownership or the old public handoff' {
+        $gateway = Get-Content -LiteralPath (Join-Path $repo 'tools/itl-ondemand-mcp/gateway.go') -Raw -Encoding UTF8
+        $runtime = Get-Content -LiteralPath (Join-Path $repo 'tools/itl-ondemand-mcp/database_runtime.go') -Raw -Encoding UTF8
+        $gateway | Should -Not -Match 'finish_database_access'
+        $runtime | Should -Match 'beginDatabaseCall'
+        $runtime | Should -Not -Match 'retained'
     }
 }

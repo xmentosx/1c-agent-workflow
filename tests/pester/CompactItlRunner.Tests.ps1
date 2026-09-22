@@ -122,34 +122,6 @@ exit 1
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "preserves database blocker classification and exact handoff action" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl blocker путь " + [guid]::NewGuid().ToString("N"))
-        try {
-            $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
-            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
-            Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
-param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
-$blockerAction = [ordered]@{kind='finish-owned-on-demand';family='vanessa-ui';instanceId=('a'*32);tool='finish_database_access'}
-$payload = [ordered]@{schemaVersion=1;status='failed';action=$Action;stage='database-access.blocked';stageDetail='live owner';errorMessage='INFOBASE_ACCESS_INTERVENTION_REQUIRED';errorCategory='database-access-blocked';requiredAction='finish-owned-database-access';exitCode=1;lastLogPath='';blockerClassification='agent-owned-handoff-required';blockerRequiresUserDecision=$false;blockerRetryOriginalCommand=$true;blockerAction=$blockerAction;blockerOwner=@{operation='ondemand-vanessa-ui'}}
-[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
-exit 1
-'@
-            Push-Location $tempRoot
-            try { $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot 'run-itl-command.ps1') -Arguments @('--','-Action','refresh-dev-branch-lite') }
-            finally { Pop-Location }
-            $processResult.exitCode | Should -Be 1
-            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
-            $summary.errorCategory | Should -Be 'database-access-blocked'
-            $summary.nextAction | Should -Be 'finish-owned-database-access'
-            $summary.blockerClassification | Should -Be 'agent-owned-handoff-required'
-            $summary.blockerRequiresUserDecision | Should -BeFalse
-            $summary.blockerRetryOriginalCommand | Should -BeTrue
-            $summary.blockerAction.tool | Should -Be 'finish_database_access'
-            $summary.blockerOwner.operation | Should -Be 'ondemand-vanessa-ui'
-        } finally { if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force } }
-    }
-
     It "preserves a complete long repository-lock report and recovery action on failure" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('itl partial report захват с пробелом ' + [guid]::NewGuid().ToString('N'))
         try {
@@ -916,7 +888,7 @@ exit 7
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "recovers an exact lifecycle-owned Vanessa run after helper exit" {
+    It "cleans an exact lifecycle-owned Vanessa run after helper exit" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-vanessa-recovery-" + [guid]::NewGuid().ToString("N"))
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
@@ -957,7 +929,7 @@ exit 0
             $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
             $summary.status | Should -Be "failed"
             $summary.stage | Should -Be "runner.helper-exited"
-            $summary.error | Should -Match "Exact interrupted Vanessa fallback cleanup succeeded"
+            $summary.error | Should -Match "Exact interrupted Vanessa process cleanup succeeded"
 
             $marker = Get-Content -LiteralPath (Join-Path $tempRoot "cleanup-marker.json") -Raw -Encoding UTF8 | ConvertFrom-Json
             $marker.infoBasePath | Should -Be (Join-Path $tempRoot ".agent-1c\infobases\vanessa-service")
@@ -969,63 +941,6 @@ exit 0
             $lifecycle.phase | Should -Be "runner.helper-exited"
             $lifecycle.errorCode | Should -Be "LIFECYCLE_OPERATION_HELPER_EXITED"
             $lifecycle.finishedAt | Should -Not -BeNullOrEmpty
-        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-
-    It "prefers the durable database recovery ticket after helper exit" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-compact-database-recovery-" + [guid]::NewGuid().ToString("N"))
-        try {
-            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
-            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
-            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
-param(
-    [string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,
-    [string]$InterruptedDatabaseCoordinator,[string]$InterruptedDatabaseTicket,
-    [string]$InterruptedVanessaInfoBasePath,[string]$InterruptedVanessaTestClientInfoBasePath,
-    [string]$InterruptedVanessaRunParamsPath,[string]$InterruptedVanessaTestPorts
-)
-$utf8 = [Text.UTF8Encoding]::new($false)
-if ($Action -eq 'recover-interrupted-database-access') {
-    $marker = [ordered]@{coordinator=$InterruptedDatabaseCoordinator;ticket=$InterruptedDatabaseTicket}
-    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'database-recovery-marker.json'),(($marker | ConvertTo-Json)+[Environment]::NewLine),$utf8)
-    $result = [ordered]@{status='released';reason='recovery-verified';recoveryAttempts=@([ordered]@{evidence=[ordered]@{ownedProcessesStopped=@(40112);foreignProcessesStopped=@()}})}
-    Write-Output ('ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT=' + ($result | ConvertTo-Json -Depth 8 -Compress))
-    exit 0
-}
-if ($Action -eq 'cleanup-interrupted-vanessa-run') {
-    [IO.File]::WriteAllText((Join-Path $ProjectRoot 'unexpected-vanessa-fallback.txt'),'unexpected',$utf8)
-    exit 0
-}
-$operationId = [guid]::NewGuid().ToString('N')
-$ticket = 'a' * 32
-$coordinator = Join-Path $ProjectRoot '.agent-1c\database-access'
-$lifecyclePath = Join-Path $ProjectRoot '.agent-1c\locks\lifecycle-operation.json'
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $lifecyclePath),$coordinator | Out-Null
-$recovery = [ordered]@{schemaVersion=1;operationId=$operationId;operation=$Action;projectRoot=$ProjectRoot;coordinator=$coordinator;ticket=$ticket;publishedAt=(Get-Date).ToString('o')}
-$lifecycle = [ordered]@{schemaVersion=1;status='running';operationId=$operationId;action=$Action;projectRoot=$ProjectRoot;worktreePath=$ProjectRoot;pid=$PID;continuationPid=0;phase='vanessa.run';activeDatabaseRecovery=$recovery}
-$status = [ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;stage='vanessa.run';activeDatabaseRecovery=$recovery}
-[IO.File]::WriteAllText($lifecyclePath,(($lifecycle | ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
-[IO.File]::WriteAllText($RunStatusPath,(($status | ConvertTo-Json -Depth 8)+[Environment]::NewLine),$utf8)
-exit 0
-'@
-            Push-Location $tempRoot
-            try {
-                $processResult = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--","-Action","check-dev-branch")
-            } finally { Pop-Location }
-            $processResult.exitCode | Should -Be 1
-            $summary = ($processResult.stdout -join "`n") | ConvertFrom-Json
-            $summary.error | Should -Match "Exact interrupted database/native recovery succeeded"
-            $summary.nextAction | Should -Be "retry-original-command"
-            $summary.recoveryStatus | Should -Be "completed"
-            @($summary.ownedProcessesStopped) | Should -Be @(40112)
-            @($summary.foreignProcessesStopped) | Should -HaveCount 0
-            $summary.databaseReleased | Should -BeTrue
-            $summary.retryOriginalCommand | Should -BeTrue
-            Test-Path -LiteralPath (Join-Path $tempRoot "unexpected-vanessa-fallback.txt") | Should -BeFalse
-            $marker = Get-Content -LiteralPath (Join-Path $tempRoot "database-recovery-marker.json") -Raw -Encoding UTF8 | ConvertFrom-Json
-            $marker.ticket | Should -Be ("a" * 32)
-            $marker.coordinator | Should -Be (Join-Path $tempRoot ".agent-1c\database-access")
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
@@ -1137,7 +1052,7 @@ exit 0
             $summary = (Get-Content -LiteralPath $runnerStdout -Raw -Encoding UTF8).Trim() | ConvertFrom-Json
             $summary.status | Should -Be "failed"
             $summary.stage | Should -Be "runner.helper-exited"
-            $summary.error | Should -Match "Exact interrupted Vanessa fallback cleanup succeeded"
+            $summary.error | Should -Match "Exact interrupted Vanessa process cleanup succeeded"
             $terminalStatus = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $terminalStatus.status | Should -Be "failed"
             $terminalStatus.finishedAt | Should -Not -BeNullOrEmpty

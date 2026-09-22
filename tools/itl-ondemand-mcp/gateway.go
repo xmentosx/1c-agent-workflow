@@ -40,7 +40,6 @@ type gatewayResolution struct {
 }
 
 func addGatewayTools(server *mcp.Server, rt *runtime) {
-	addDatabaseAccessControlTool(server, rt)
 	server.AddTool(gatewayResolveDefinition(rt.family), func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return resolveGatewayTool(rt.catalog, rt.family, req.Params.Arguments), nil
 	})
@@ -61,47 +60,8 @@ func addGatewayTools(server *mcp.Server, rt *runtime) {
 	})
 }
 
-func addDatabaseAccessControlTool(server *mcp.Server, rt *runtime) {
-	server.AddTool(finishDatabaseAccessDefinition(rt.family), func(ctx context.Context, _ *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		alreadyReleased, err := rt.finishDatabaseAccess(ctx)
-		if err != nil {
-			return toolError("INFOBASE_ACCESS_FINISH_UNCONFIRMED", err.Error(), map[string]any{
-				"releaseAction": databaseReleaseAction(rt.family, rt.instanceID),
-			}), nil
-		}
-		payload := map[string]any{
-			"status": "released", "alreadyReleased": alreadyReleased,
-			"family": rt.family, "instanceId": rt.instanceID,
-		}
-		encoded, _ := json.Marshal(payload)
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: string(encoded)}}, StructuredContent: payload}, nil
-	})
-}
-
 func validateFacadeCatalog(catalog *loadedCatalog) error {
-	if err := catalog.ensureIndexes(); err != nil {
-		return err
-	}
-	if catalog.tools[finishDatabaseAccessTool] != nil {
-		return fmt.Errorf("catalog contains reserved facade tool %q", finishDatabaseAccessTool)
-	}
-	return nil
-}
-
-func databaseReleaseAction(family, instanceID string) map[string]any {
-	return map[string]any{
-		"kind": "finish-owned-on-demand", "family": family,
-		"tool": finishDatabaseAccessTool, "instanceId": instanceID,
-	}
-}
-
-func finishDatabaseAccessDefinition(family string) *mcp.Tool {
-	return &mcp.Tool{
-		Name:        finishDatabaseAccessTool,
-		Description: "Finish this " + family + " facade's owned database-access phase. Stops only its exact owned runtime and releases its database/runtime leases after cleanup is proven. Retry this tool if cleanup is unconfirmed.",
-		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
-		Annotations: &mcp.ToolAnnotations{DestructiveHint: gatewayBool(false), OpenWorldHint: gatewayBool(false), IdempotentHint: true},
-	}
+	return catalog.ensureIndexes()
 }
 
 func gatewayResolveDefinition(family string) *mcp.Tool {

@@ -2,16 +2,16 @@
 
 Use `repair-dev-branch-tooling` through the compact runner for a ready development
 branch whose Vanessa or YAxUnit prerequisites are absent, inactive or stale.
-It stops only branch-owned runtime, uses lifecycle and per-infobase admission,
+It stops only branch-owned runtime, uses lifecycle locks and a call-scoped exact-base execution guard,
 and restores pinned extensions without resetting the database or changing tests.
 Do not call internal installation functions or edit state, locks or repair counts.
 
-Before taking lifecycle locks, repair reserves the target database, recorded
-runtime cleanup databases and the exact planned service-base generation in the
-shared database queue. It waits for other owners and retains admission through
-repair and cleanup. Test-profile databases and test classification are not repair
-prerequisites; a broken test manifest must not prevent restoring the tools.
-Changed database addresses after waiting require a new plan before any mutation.
+Repair plans the target database, recorded runtime cleanup databases and exact
+service-base generation before native work. It releases lifecycle locks while
+waiting, acquires the complete resource set all-or-none, then reacquires locks and
+revalidates the plan. Test-profile databases and test classification are not
+repair prerequisites; a broken test manifest must not prevent restoring the tools.
+Changed database addresses after waiting stop before mutation.
 
 Database replacement invalidates both installation receipts before mutation and
 advances the target generation. Legacy receipts require reconciliation once.

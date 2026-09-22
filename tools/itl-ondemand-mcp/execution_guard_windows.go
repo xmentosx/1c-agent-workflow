@@ -5,6 +5,6 @@ import (
 	"syscall"
 )
 
-func hideDatabaseHost(command *exec.Cmd) {
+func hideExecutionGuardHost(command *exec.Cmd) {
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 }

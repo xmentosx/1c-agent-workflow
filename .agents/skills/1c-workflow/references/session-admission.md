@@ -34,7 +34,6 @@ allowed slot can therefore leave capture waiting until timeout. Closing or
 restarting it requires an adapter lifecycle contract that preserves the scenario;
 it is not an automatic capacity-recovery action.
 
-Session capacity is separate from ownership of an entire database operation.
-The shared operation coordinator must also prevent another task from updating,
-restoring or measuring the same database during a measurement series. Available
-session capacity alone does not establish an isolated measurement environment.
+Session capacity is separate from execution ownership. The exact-base execution
+guard serializes incompatible live native phases; available session capacity
+alone does not establish an isolated measurement environment.

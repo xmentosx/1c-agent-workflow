@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "recover-interrupted-database-access", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
@@ -117,8 +117,7 @@ param(
     [string]$OperationId = "",
     [int]$OperationOwnerPid = 0,
     [switch]$OperationContinuation,
-    [ValidateRange(0,1)][int]$DatabaseContinuationProtocol = 0,
-    [ValidateSet("", "access-plan", "ensure", "ensure-test-client", "mark-running", "recover", "recover-stop", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
+    [ValidateSet("", "execution-plan", "ensure", "ensure-test-client", "mark-running", "recover", "stop", "stop-all")][string]$InternalOnDemandOperation = "",
     [ValidateSet("", "roctup", "vanessa-ui")][string]$InternalOnDemandFamily = "",
     [string]$InternalOnDemandInstanceId = "",
     [string]$InternalOnDemandCatalogSha256 = "",
@@ -126,8 +125,6 @@ param(
     [string]$InternalOnDemandReplacementInstanceId = "",
     [int]$InternalOnDemandExpectedPid = 0,
     [int]$InternalOnDemandExpectedPort = 0,
-    [string]$InterruptedDatabaseCoordinator = "",
-    [string]$InterruptedDatabaseTicket = "",
     [string]$InterruptedVanessaInfoBasePath = "",
     [string]$InterruptedVanessaTestClientInfoBasePath = "",
     [string]$InterruptedVanessaRunParamsPath = "",
@@ -392,7 +389,6 @@ $script:LifecycleOperationOwnerPid = $OperationOwnerPid
 $script:LifecycleOperationTerminalWrittenByContinuation = $false
 $script:LifecycleWaitCancelled = $false
 $script:ActiveVanessaRunEvidence = $null
-$script:ActiveDatabaseRecoveryEvidence = $null
 $script:ActiveAuxiliaryVanessaContext = $null
 $script:ActiveVerificationSelectionPlan = $null
 
@@ -429,10 +425,7 @@ foreach ($moduleFile in $script:Agent1cModuleFiles) {
     . $modulePath
 }
 
-$script:VanessaCleanupDatabaseAdmission = $null
-$script:DevBranchMutationDatabaseAdmission = $null
 $script:InitDatabaseSettingsReady = $false
-$databaseAdmissionPlanningError = $null
 try {
     if ($Action -eq "init-project" -and $InitMode -eq "wizard") {
         Confirm-InitWizardProjectRoot
@@ -449,20 +442,8 @@ try {
     Import-DotEnv -Path $lifecycleEnvPath
     Read-ProjectConfig
     $requestedLifecycleAction = $(if ($InternalOnDemandOperation) { "internal-ondemand-$InternalOnDemandOperation" } else { $Action })
-    if ($requestedLifecycleAction -eq 'stop-dev-branch-test-clients') {
-        $script:VanessaCleanupDatabaseAdmission = Start-ItlVanessaCleanupDatabaseAdmission
-    }
-    if ($requestedLifecycleAction -in @('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')) {
-        # Resolve inputs without acquiring resources. An invalid source context
-        # must still receive the lifecycle's conflict/continuation diagnostics,
-        # then fail before any action or native call. Admission failures (wait,
-        # cancellation, recovery debt) are never deferred into a local lock.
-        $databaseAdmissionPreparation = $null
-        try { $databaseAdmissionPreparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $requestedLifecycleAction -CheckSourcePreflight }
-        catch { $databaseAdmissionPlanningError = $_ }
-        if ($null -eq $databaseAdmissionPlanningError) {
-            $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $requestedLifecycleAction -Preparation $databaseAdmissionPreparation
-        }
+    if ($requestedLifecycleAction -eq 'sync-dev-branches') {
+        $script:BranchSourceSyncFrozenScope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name $DevBranchName)
     }
     Enter-Agent1cLifecycleOperation `
         -RequestedAction $requestedLifecycleAction `
@@ -473,16 +454,9 @@ try {
     if ($lifecycleEnvBefore -cne $lifecycleEnvAfter) {
         throw "LIFECYCLE_INPUT_CHANGED .dev.env changed during lock acquisition. Repeat the same helper to resolve the current target."
     }
-    # All action preconditions run after admission with current configuration.
+    # All action preconditions run with the current configuration. Exact
+    # database execution is admitted only at the native phase boundary.
     Read-ProjectConfig
-    if ($null -ne $databaseAdmissionPlanningError) { throw $databaseAdmissionPlanningError }
-    if ($DatabaseContinuationProtocol -ne 0 -and $null -eq $script:DevBranchMutationDatabaseAdmission) {
-        throw 'NATIVE_CONTINUATION_ADMISSION_REQUIRED: the fresh helper did not join the parent database plan.'
-    }
-    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
-        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $requestedLifecycleAction)
-        Publish-Agent1cDatabaseRecoveryEvidence -Admission $script:DevBranchMutationDatabaseAdmission
-    }
     Initialize-GitIndexLockTracking
     Set-RunStage -Stage "start" -Detail "Starting helper action '$requestedLifecycleAction'"
 
@@ -540,7 +514,6 @@ try {
         "check-auxiliary-contour" { Check-AuxiliaryContour }
         "export-auxiliary-contour-result" { Export-AuxiliaryContourResult }
         "reset-auxiliary-contour" { Reset-AuxiliaryContour }
-        "recover-interrupted-database-access" { Invoke-InterruptedDatabaseAccessRecovery }
         "cleanup-interrupted-vanessa-run" { Invoke-InterruptedDevBranchVanessaRunCleanup }
         "stop-dev-branch-test-clients" { Stop-DevBranchTestClients }
         "start-vanessa-profile" { Start-DevBranchVanessaInteractiveProfile | Out-Null }
@@ -586,9 +559,6 @@ try {
         "release-e2e-config-repository-lock-roundtrip" { Invoke-ReleaseE2EConfigRepositoryLockRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     } }
-    Complete-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission
-    Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
-    Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {
@@ -648,10 +618,4 @@ try {
         }
     }
     exit 1
-} finally {
-    try { Exit-Agent1cLifecycleOperation } finally {
-        try { Complete-ItlVanessaCleanupDatabaseAdmission -Admission $script:VanessaCleanupDatabaseAdmission } finally {
-            Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-        }
-    }
-}
+} finally { Exit-Agent1cLifecycleOperation }

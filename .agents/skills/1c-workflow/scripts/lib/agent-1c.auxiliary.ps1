@@ -435,25 +435,24 @@ function Get-ItlAuxiliaryDatabasePlan {
 
 function Stop-AuxiliaryContourRuntimeBeforeMutation {
     param([Parameter(Mandatory = $true)][object]$Contour, [Parameter(Mandatory = $true)][object]$Connection, [string]$Reason)
-    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    $admission = if ($null -ne $admissionVariable) { $admissionVariable.Value } else { $null }
-    if ($null -eq $admission) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State (Get-ItlDevBranchMutationDatabaseState -Operation $admission.operation)
-    if ($Connection.kind -cne $admission.plan.target.kind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $Connection.path -Second $admission.plan.target.path) -or
-        $Contour.name -cne $admission.plan.auxiliaryContour) { throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: auxiliary drain target differs from the admitted operation.' }
-    $record = Add-OneCNativeOperationRecord -Journal $admission.journal -Purpose 'owned-runtime-drain' `
-        -Admissions @([pscustomobject]@{infoBaseKind=$Connection.kind;infoBasePath=$Connection.path;requiredSessions=0;expectedChildRole=''})
-    $record.startAttempted = $true
-    Save-OneCNativeOperationRecord -Record $record
-    Set-RunStage -Stage "auxiliary.stop-runtime" -Detail "Stopping owned auxiliary runtime before $Reason; foreign sessions are preserved."
-    Stop-ItlOnDemandBackends -InfoBasePath $Connection.path -Strict
+    $script:OneCExecutionDrainRequest = [pscustomobject]@{
+        drainKind='auxiliary';contour=$Contour;infoBaseKind=$Connection.kind;infoBasePath=$Connection.path;reason=$Reason
+    }
+    Set-RunStage -Stage 'auxiliary.drain-planned' -Detail "Owned auxiliary runtime drain will run after execution guard admission for $Reason."
+}
+
+function Invoke-AuxiliaryOwnedRuntimeDrainUnderExecutionGuard {
+    param([Parameter(Mandatory = $true)][object]$Request)
+    Set-RunStage -Stage 'auxiliary.stop-runtime' -Detail "Stopping owned auxiliary runtime before $($Request.reason); foreign sessions are preserved."
+    Stop-ItlOnDemandBackends -InfoBasePath $Request.infoBasePath -Strict
     $remainingOwned = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
-        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $Connection.path
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $Request.infoBasePath
     })
     if ($remainingOwned.Count -gt 0) { throw 'ITL_AUXILIARY_RUNTIME_DRAIN_FAILED: owned backend remains after cleanup.' }
-    Confirm-OneCNativeOperationRelease -Record $record -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'strict-auxiliary-runtime-owner-cleanup'
-    Wait-ItlDevBranchMutationExternalSessions -Admission $admission -InfoBaseKind $Connection.kind -InfoBasePath $Connection.path
+    $external = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $Request.infoBaseKind -InfoBasePath $Request.infoBasePath)
+    if ($external.Count -gt 0) {
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: auxiliary='$($Request.contour.name)' pids='$(@($external.pid) -join ',')'"
+    }
 }
 
 function Get-AuxiliaryContourFingerprint {

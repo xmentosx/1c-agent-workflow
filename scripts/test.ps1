@@ -12,9 +12,9 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$originalInfobaseAccessFallbackRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", "Process")
+$originalExecutionGuardFallbackRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", "Process")
 $fixtureRuntimeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-pester-local-" + [guid]::NewGuid().ToString("N"))
-[Environment]::SetEnvironmentVariable("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", (Join-Path $fixtureRuntimeRoot "infobase-access"), "Process")
+[Environment]::SetEnvironmentVariable("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", (Join-Path $fixtureRuntimeRoot "execution-guards-v2"), "Process")
 Push-Location $repoRoot
 try {
     if ($Path.Count -gt 0) {
@@ -88,7 +88,7 @@ try {
     }
 } finally {
     Pop-Location
-    [Environment]::SetEnvironmentVariable("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", $originalInfobaseAccessFallbackRoot, "Process")
+    [Environment]::SetEnvironmentVariable("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", $originalExecutionGuardFallbackRoot, "Process")
     if (Test-Path -LiteralPath $fixtureRuntimeRoot -PathType Container) {
         Remove-Item -LiteralPath $fixtureRuntimeRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

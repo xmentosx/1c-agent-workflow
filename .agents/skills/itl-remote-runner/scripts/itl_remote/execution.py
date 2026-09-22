@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import base64
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,7 @@ from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_me
 from .common import ResourceContext, beneath, process_identity
 from .jobs import authorize, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
-from .access import target_access
-from .access_autorecovery import root_lease
+from .execution_guard import ExecutionGuard, target_execution
 from .deadlines import Deadline, budgets
 
 
@@ -93,7 +93,7 @@ def capture_provenance(run, request, scenario, target, *, executor=None):
     return {"path": path.name, "sha256": digest(path)}
 
 
-def run_measurement(package, target, run, request, scenario, cancelled, progress, *, access_lease=None, access_scope=None, cancel_path=None, provenance_reference=None):
+def run_measurement(package, target, run, request, scenario, cancelled, progress, *, execution_guard=None, cancel_path=None, provenance_reference=None):
     run = Path(run)
     run.mkdir(parents=True, exist_ok=True)
     provenance = capture_provenance(run, request, scenario, target)
@@ -109,9 +109,12 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     if scenario.get("diagnostics") is not None:
         context["diagnostics"] = scenario["diagnostics"]
     child_environment = {"ITL_RUN_CONTEXT": str(variables["context"])}
-    if access_lease:
-        context["accessLease"] = access_lease.proof()
-        child_environment["ITL_INFOBASE_ACCESS_LEASE"] = json.dumps(context["accessLease"])
+    if execution_guard:
+        child_context = execution_guard.context()
+        context["executionContext"] = child_context["encoded"]
+        context["executionContextKey"] = base64.urlsafe_b64encode(child_context["key"]).decode("ascii")
+        child_environment["ITL_EXECUTION_CONTEXT"] = context["executionContext"]
+        child_environment["ITL_EXECUTION_CONTEXT_KEY"] = context["executionContextKey"]
     # This file is machine-local, not included in the user-facing result archive.
     write_json(variables["context"], context)
     commands = scenario["commands"]
@@ -144,10 +147,13 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     result.update(database)
     result["operationEvidence"] = ({"status": "notRequested"} if scenario.get("diagnostics") is None else
                                    {"status": "running", "iterations": []})
-    if access_lease:
-        result["access"] = {"scope": access_scope, "ticket": access_lease.record["ticket"],
-                            "resources": access_lease.record["resources"], "accessMode": access_lease.access_mode,
-                            "waitSeconds": access_lease.wait_seconds}
+    if execution_guard:
+        result["execution"] = {"protocol": "execution-guards-v2",
+                               "executionId": execution_guard.execution_id,
+                               "operation": execution_guard.operation,
+                               "resources": execution_guard.resources,
+                               "waitSeconds": max(0.0, time.monotonic() - execution_guard.wait_started)
+                               if execution_guard.wait_started is not None else 0.0}
 
     def persist_progress():
         # Public evidence is independent of the private context and final result.
@@ -162,7 +168,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
             verified = any(item["iteration"] == evidence["iteration"] and item["status"] == "verified"
                            for item in result["iterations"])
             snapshot["profiles"].append({**evidence, "workloadVerified": verified})
-        for key in ("access", "sourceManifest", "sourceResolution", "error", "finishedAt"):
+        for key in ("execution", "sourceManifest", "sourceResolution", "error", "finishedAt"):
             if key in result:
                 snapshot[key] = result[key]
         write_json(run / "progress.json", snapshot)
@@ -400,7 +406,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
     except Exception as error:
         if current_iteration is not None and current_iteration["status"] == "running":
             current_iteration.update(status="failed", error=str(error), finishedAt=stamp())
-        result["status"] = "cancelled" if str(error) == "CANCELLED" else "needs-attention"
+        result["status"] = "cancelled" if str(error) == "CANCELLED" else "failed"
         result["error"] = str(error)
         result["cleanupErrors"].extend(getattr(error, "cleanup_errors", []))
     finally:
@@ -424,7 +430,7 @@ def run_measurement(package, target, run, request, scenario, cancelled, progress
         except Exception as error:
             result["cleanupErrors"].append(str(error))
         if result["cleanupErrors"]:
-            result["status"] = "needs-attention"
+            result["status"] = "failed"
         if result["operationEvidence"]["status"] == "running":
             result["operationEvidence"]["status"] = "notExecuted"
         result["finishedAt"] = stamp()
@@ -509,10 +515,10 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                     current_owner = process_identity(state.get("ownerPid"))
                 except (WorkError, TypeError, ValueError):
                     current_owner = None
-                error = ("INTERRUPTED_OWNER_IDENTITY_MISMATCH: inspect effects; no automatic replay"
+                error = ("INTERRUPTED_OWNER_IDENTITY_MISMATCH: previous execution was not replayed"
                          if isinstance(expected_owner, dict) and current_owner != expected_owner else
-                         "INTERRUPTED_OWNER: inspect effects; no automatic replay")
-                state.update(status="needs-attention", error=error, updatedAt=stamp(),
+                         "INTERRUPTED_OWNER: previous execution was not replayed")
+                state.update(status="interrupted", error=error, updatedAt=stamp(),
                              reconciliation={"expectedOwner": expected_owner, "observedOwner": current_owner,
                                              "workloadReplayed": False})
                 write_json(spool / "state" / (identifier + ".json"), state)
@@ -525,14 +531,17 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             state.update(status="cancelled", updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
-        access = target_access(target)
+        execution = target_execution(target)
         provenance = capture_provenance(spool / "runs" / identifier, request, scenario, target,
                                         executor="agent" if via_agent else "worker")
         profile_path = spool / "profile.json"
         profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
         executor_identity = process_identity(os.getpid())
         def waiting(record):
-            state.update(status="waiting-for-base", phase="admission", access=record, ownerPid=os.getpid(),
+            state.update(status="waiting-for-base", phase="admission",
+                         execution={key: record.get(key) for key in
+                                    ("protocol", "executionId", "operation", "resources", "state", "waitSeconds")},
+                         ownerPid=os.getpid(),
                          ownerIdentity=executor_identity, updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
         def progress(phase):
@@ -541,21 +550,15 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             write_json(spool / "state" / (identifier + ".json"), state)
         result = None
         try:
-            inherited = json.loads(os.environ["ITL_INFOBASE_ACCESS_LEASE"]) if os.environ.get("ITL_INFOBASE_ACCESS_LEASE") else None
-            lease_owner = {"jobId": identifier, "workspace": target["workspace"],
-                           "operation": "measure", "spool": str(spool),
-                           "recoveryBinding": {"requestSha256": identity(request), "targetSha256": identity(target)}}
-            lease_context = (root_lease(access["coordinator"], access["bases"], lease_owner,
-                                       timeout=access["timeout"], cancelled=cancelled,
-                                       progress=waiting, access_mode=access["accessMode"])
-                             if inherited is None else
-                             contextlib.nullcontext(None))
-            if inherited is not None:
-                from .access import Lease
-                lease_context = Lease(access["coordinator"], access["bases"], lease_owner,
-                                      timeout=access["timeout"], cancelled=cancelled,
-                                      progress=waiting, inherited=inherited, access_mode=access["accessMode"])
-            with lease_context as lease:
+            inherited = os.environ.get("ITL_EXECUTION_CONTEXT")
+            inherited_key = (base64.urlsafe_b64decode(os.environ["ITL_EXECUTION_CONTEXT_KEY"].encode("ascii"))
+                             if inherited else None)
+            guard_context = ExecutionGuard(execution["root"], execution["resources"], "measure",
+                                           execution_id=identifier, timeout=execution["waitTimeoutSeconds"],
+                                           cancelled=cancelled, progress=waiting,
+                                           cancel_path=spool / "control" / (identifier + ".cancel.json"),
+                                           inherited_context=inherited, context_key=inherited_key)
+            with guard_context as guard:
                 # Revalidate immutable inputs and target authorization after the
                 # queue. Actual loaded configuration/data checks belong to prepare.
                 try:
@@ -563,40 +566,36 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                     if profile_fingerprint and digest(profile_path) != profile_fingerprint:
                         raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED: worker profile changed during admission")
                     current_target = authorize(request, scenario, profile)
-                    if target_access(current_target) != access:
-                        raise WorkError("INFOBASE_ACCESS_TARGET_CHANGED")
+                    if target_execution(current_target) != execution:
+                        raise WorkError("EXECUTION_GUARD_TARGET_CHANGED")
                     if capture_provenance(spool / "runs" / identifier, request, scenario, current_target) != provenance:
                         raise WorkError("MEASUREMENT_PROVENANCE_CHANGED: retained bytes changed while waiting")
                 except Exception:
                     # Only immutable-input checks ran inside this boundary.
                     # No runtime, source capture or restoration was started;
                     # an ordinary preflight failure must not create native debt.
-                    lease.release()
                     raise
-                state["access"] = {"coordinator": str(lease.coordinator.root), "ticket": lease.record["ticket"],
-                                   "resources": lease.record["resources"], "scope": access["scope"],
-                                   "accessMode": lease.access_mode}
+                state["execution"] = {"protocol": "execution-guards-v2", "executionId": guard.execution_id,
+                                      "operation": guard.operation, "resources": guard.resources}
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
-                                         progress, access_lease=lease, access_scope=access["scope"],
+                                         progress, execution_guard=guard,
                                          cancel_path=spool / "control" / (identifier + ".cancel.json"), provenance_reference=provenance)
-                release_status = lease.release(cleanup_errors=result["cleanupErrors"])
-                if release_status == "needs-attention" and not result["cleanupErrors"]:
-                    result["status"] = "needs-attention"
-                    result["cleanupErrors"].append("INFOBASE_ACCESS_NESTED_CLEANUP_UNCONFIRMED")
-                    result["error"] = result.get("error") or "INFOBASE_ACCESS_NESTED_CLEANUP_UNCONFIRMED"
-                    write_json(spool / "runs" / identifier / "result.json", result)
-                state.update(status=result["status"], phase="finished", access=result.get("access"),
+                terminal = ("succeeded" if result["status"] in ("completed", "partial") else
+                            "cancelled" if result["status"] == "cancelled" else "failed")
+                guard.terminal(terminal, error=result.get("error"),
+                               artifacts=[str(spool / "runs" / identifier / "result.json")])
+                state.update(status=result["status"], phase="finished", execution=result.get("execution"),
                              result=str(spool / "runs" / identifier / "result.json"), updatedAt=stamp())
                 if result.get("error"):
                     state["error"] = result["error"]
                 write_json(spool / "state" / (identifier + ".json"), state)
         except WorkError as error:
-            state.update(status="cancelled" if str(error) == "INFOBASE_ACCESS_CANCELLED" else "needs-attention",
+            state.update(status="cancelled" if str(error) in ("EXECUTION_GUARD_CANCELLED", "CANCELLED") else "failed",
                          error=str(error), updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
-    if result["status"] == "needs-attention" and request["route"] == "auto" and profile.get("agentFallback") and not via_agent:
+    if result["status"] == "failed" and request["route"] == "auto" and profile.get("agentFallback") and not via_agent:
         from .agents import dispatch
         dispatch(spool, request, profile, scenario, diagnosis=True)
     return state

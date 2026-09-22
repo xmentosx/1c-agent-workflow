@@ -9,8 +9,6 @@
         Remove-Variable BranchSyncRequestPath, DevBranchName, PeerDevBranchName -Scope Local
         $script:groupSaveImplementation = (Get-Command Save-BranchSourceSyncGroupPlan).ScriptBlock
         $script:groupLoadImplementation = (Get-Command Invoke-BranchSourceSyncLoad).ScriptBlock
-        . (Join-Path $context.RepoRoot '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1')
-        $script:groupPython = (Get-Command python -CommandType Application | Select-Object -First 1).Source
     }
     BeforeEach {
         $script:groupRoot = Join-Path $TestDrive ('Группа веток ' + [guid]::NewGuid().ToString('N'))
@@ -50,7 +48,6 @@
         Write-Utf8Text -Path $script:BranchSyncRequestPath -Value (@{schemaVersion=1;peers=@('peer-a','peer-b');recipients=@('primary','peer-a','peer-b')} | ConvertTo-Json)
         Set-ProjectContext -Root $script:primaryRoot
         $script:groupLoads = @(); $script:groupReport = ''; $script:groupFailWrites = $false
-        $script:groupPhaseOwner = $null
         Mock Read-DevBranchState {
             param($Name)
             if (-not $Name) { $Name = (Get-CurrentBranch) -replace '^itldev/', '' }
@@ -69,11 +66,6 @@
         Mock Assert-OneCConfigurationSourceIntegrity {}
         Mock Assert-DevBranchSourceSyncLifecycleReady {}
         Mock Get-ItlOnDemandRuntimeInstances { @() }
-        Mock Get-ItlDatabaseAccessSettings { [pscustomobject]@{coordinator=(Join-Path $script:groupRoot 'Общая очередь');waitTimeoutSeconds=0;python=''} }
-        Mock Assert-ItlBranchSourceSyncDatabaseAdmission {
-            param($State)
-            @($script:DevBranchMutationDatabaseAdmission.plan.syncParticipants | Where-Object { $_.branch -ceq $State.devBranch -and $_.project -ieq $script:ProjectRoot }).Count | Should -Be 1
-        }
         Mock Invoke-BranchSourceSyncLoad {
             param($State, $ExportPath, $OtherBranch, $GroupId)
             $script:groupLoads += $State.devBranchName
@@ -84,15 +76,11 @@
         Mock Set-RunStage {}
         Mock Set-RunFailureContext {}
         Mock Write-AndSetRunUserReport { param($Lines) $script:groupReport = $Lines -join "`n" }
-        $script:DevBranchMutationDatabaseAdmission = [pscustomobject]@{operation='sync-dev-branches';plan=(Get-ItlBranchSourceSyncDatabasePlan -State (Read-DevBranchState -Name primary));completed=$false}
+        $script:BranchSourceSyncFrozenScope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name primary)
     }
     AfterEach {
-        if ($null -ne $script:groupPhaseOwner -and -not $script:groupPhaseOwner.closed) {
-            if ($script:groupPhaseOwner.process.HasExited) { Close-ItlDatabaseAccessHost $script:groupPhaseOwner }
-            else { Complete-ItlDatabaseAccessHost $script:groupPhaseOwner | Out-Null }
-        }
         $script:BranchSyncRequestPath = ''
-        $script:DevBranchMutationDatabaseAdmission = $null
+        $script:BranchSourceSyncFrozenScope = $null
         Set-ProjectContext -Root $context.RepoRoot
     }
 
@@ -119,7 +107,7 @@
 
     It 'collects both peer inputs into the initiator without distributing to unselected peers' {
         Write-Utf8Text -Path $script:BranchSyncRequestPath -Value (@{schemaVersion=1;peers=@('peer-a','peer-b');recipients=@('primary')} | ConvertTo-Json)
-        $script:DevBranchMutationDatabaseAdmission.plan = Get-ItlBranchSourceSyncDatabasePlan -State (Read-DevBranchState -Name primary)
+        $script:BranchSourceSyncFrozenScope = Get-BranchSourceSyncScope -State (Read-DevBranchState -Name primary)
         Sync-DevBranches
         $script:groupLoads | Should -Be @('primary')
         foreach ($name in @('peer-a','peer-b')) {
@@ -179,7 +167,7 @@
 
     It 'uses the frozen lock set and rejects a changed group request before checkpoints' {
         Write-Utf8Text -Path $script:BranchSyncRequestPath -Value (@{schemaVersion=1;peers=@('peer-a');recipients=@('primary')} | ConvertTo-Json)
-        @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction sync-dev-branches) | Should -HaveCount 3
+        { @(Get-Agent1cLifecycleOperationLockScopes -RequestedAction sync-dev-branches) } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED*'
         { Sync-DevBranches } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED*'
         foreach ($name in $script:groupProjects.Keys) {
             ([string](Get-GitOutputAt -Root $script:groupProjects[$name] -Arguments @('rev-parse','HEAD'))).Trim() | Should -Be $script:groupHeads[$name]
@@ -202,13 +190,13 @@
         $script:groupReport | Should -Match 'успешно'
     }
 
-    It 'retains completed recipients and refuses to invent a missing database completion receipt' {
-        # An older/opaque loader has no phase protocol. Its unknown outcome must
-        # remain protected; modern acknowledged phases are exercised below.
+    It 'retains completed recipients and refuses to invent a missing load completion checkpoint' {
+        # An older or opaque loader has no operation-local phase checkpoint. Its
+        # unknown outcome remains protected without creating generic recovery state.
         Mock Invoke-BranchSourceSyncLoad { param($LoadContext) $LoadContext.member.loadProgress = $null; throw 'native load outcome unknown' } -ParameterFilter { $State.devBranchName -eq 'peer-a' }
         { Sync-DevBranches } | Should -Throw '*native load outcome unknown*'
         $script:groupLoads | Should -Be @('primary')
-        { Sync-DevBranches } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED*'
+        { Sync-DevBranches } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_LOAD_STATE_INVALID*'
         $script:groupLoads | Should -Be @('primary')
         Should -Invoke Invoke-BranchSourceSyncLoad -Times 1 -Exactly -ParameterFilter { $State.devBranchName -eq 'peer-a' }
         $script:groupReport | Should -Not -Match 'успешно'
@@ -254,163 +242,6 @@
         Get-CurrentCommit | Should -Be $script:groupHeads.primary
         Read-Utf8Text (Join-Path $script:primaryRoot 'src/cf/primary.bsl') | Should -Be 'uncommitted primary source'
         $script:groupLoads | Should -HaveCount 0
-    }
-
-    Context 'Acknowledged native phases through the real pipe owner' {
-        BeforeEach {
-            $script:groupNormalizes = @(); $script:groupFailRuntime = $true
-            $script:groupPhaseRequest = @{schemaVersion=1;coordinator=$script:DevBranchMutationDatabaseAdmission.plan.coordinator
-                timeout=0;nativeJournalProtocol=1;bases=@($script:DevBranchMutationDatabaseAdmission.plan.bases)
-                owner=@{operation='sync-dev-branches';project=$script:primaryRoot;parentPid=$PID}}
-            $script:groupPhaseOwner = Start-ItlDatabaseAccessHost -Python $script:groupPython -Request $script:groupPhaseRequest
-            $script:DevBranchMutationDatabaseAdmission | Add-Member -NotePropertyName owner -NotePropertyValue $script:groupPhaseOwner -Force
-            Mock Invoke-BranchSourceSyncLoad {
-                param($State, $ExportPath, $OtherBranch, $GroupId, $LoadContext)
-                & $script:groupLoadImplementation -State $State -ExportPath $ExportPath -OtherBranch $OtherBranch -GroupId $GroupId -LoadContext $LoadContext
-            }
-            Mock Sync-DevBranchContextToDotEnv {}
-            Mock Ensure-DevBranchEventLogBaseline { param($State) $State }
-            Mock Ensure-DevBranchEventLogPendingCursor {}
-            Mock Load-ConfigFromFiles {
-                param($State, $ExportPath)
-                $script:groupLoads += $State.devBranchName
-                Write-Utf8Text -Path (Join-Path $script:ProjectRoot "$ExportPath/ConfigDumpInfo.xml") -Value "loaded cursor-$($State.devBranchName)"
-                [pscustomobject]@{sourceFingerprint=[string](Get-ConfigSourceFingerprint -ExportPath $ExportPath).fingerprint
-                    currentCommit=(Get-CurrentCommit);loaded=$true;loadModeUsed='full';listFile='';lastLogPath=''
-                    partialLogPath='';fullFallbackLogPath='';partialError='';fullFallbackError=''
-                    designerInvoked=$true;enterpriseInvoked=$false}
-            }
-            Mock Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
-                param($State, $LoadResult, $Updates)
-                $script:groupNormalizes += $State.devBranchName
-                $LoadResult.enterpriseInvoked = $true
-                $Updates['fixtureNormalized'] = $true
-            }
-            Mock Invoke-DevBranchMcpRestartAfterInfobaseLoad {
-                if ($script:groupFailRuntime) { throw 'injected runtime refresh failure' }
-            }
-            Mock Add-VerificationStaleIfNeeded {}
-        }
-
-        It 'continues after runtime failure without repeating Designer or Enterprise and commits each owned cursor' {
-            { Sync-DevBranches } | Should -Throw '*injected runtime refresh failure*'
-            $script:groupLoads | Should -Be @('primary')
-            $script:groupNormalizes | Should -Be @('primary')
-            Complete-ItlDatabaseAccessHost $script:groupPhaseOwner | Out-Null
-            $script:groupPhaseOwner = Start-ItlDatabaseAccessHost -Python $script:groupPython -Request $script:groupPhaseRequest
-            $script:DevBranchMutationDatabaseAdmission.owner = $script:groupPhaseOwner
-            $script:groupFailRuntime = $false
-            Sync-DevBranches
-            $script:groupLoads | Should -Be @('primary','peer-a','peer-b')
-            $script:groupNormalizes | Should -Be @('primary','peer-a','peer-b')
-            foreach ($name in $script:groupProjects.Keys) {
-                $state = Read-DevBranchState -Name $name
-                $state.fixtureNormalized | Should -BeTrue
-                $state.enterpriseInvoked | Should -BeTrue
-                Invoke-BranchSourceSyncProject -Root $script:groupProjects[$name] -ScriptBlock {
-                    Read-Utf8Text (Join-Path $script:ProjectRoot 'src/cf/ConfigDumpInfo.xml') | Should -Be "loaded cursor-$name"
-                    Assert-CleanGit
-                }
-            }
-        }
-
-        It 'reads the coordinator receipt after local saving fails immediately after successful loading' {
-            $script:groupFailRuntime = $false
-            Mock Save-BranchSourceSyncGroupPlan {
-                param($Plan)
-                if ($null -ne $Plan.members[0].loadProgress -and @($Plan.members[0].loadProgress.completed).Count -gt 0) { $script:groupFailWrites = $true }
-                if ($script:groupFailWrites) { throw 'injected completed phase save loss' }
-                & $script:groupSaveImplementation -Plan $Plan
-            }
-            { Sync-DevBranches } | Should -Throw '*injected completed phase save loss*'
-            $script:groupLoads | Should -Be @('primary')
-            $script:groupNormalizes | Should -HaveCount 0
-            Complete-ItlDatabaseAccessHost $script:groupPhaseOwner | Out-Null
-            $script:groupPhaseOwner = Start-ItlDatabaseAccessHost -Python $script:groupPython -Request $script:groupPhaseRequest
-            $script:DevBranchMutationDatabaseAdmission.owner = $script:groupPhaseOwner
-            Mock Save-BranchSourceSyncGroupPlan { param($Plan) & $script:groupSaveImplementation -Plan $Plan }
-            Sync-DevBranches
-            $script:groupLoads | Should -Be @('primary','peer-a','peer-b')
-            $script:groupNormalizes | Should -Be @('primary','peer-a','peer-b')
-        }
-
-        It 'retries consume acknowledgement after durable phase save and pipe loss without replaying the phase' {
-            $script:groupFailRuntime = $false
-            $script:consumeImplementation = (Get-Command Confirm-ItlDatabaseSourceSyncPhaseConsumed).ScriptBlock
-            $script:consumeCalls = 0
-            Mock Confirm-ItlDatabaseSourceSyncPhaseConsumed {
-                param($Owner, $Ticket, $StepId)
-                $script:consumeCalls++
-                if ($script:consumeCalls -eq 1) { throw 'injected consume pipe loss' }
-                & $script:consumeImplementation -Owner $Owner -Ticket $Ticket -StepId $StepId
-            }
-            { Sync-DevBranches } | Should -Throw '*injected consume pipe loss*'
-            $script:groupLoads | Should -Be @('primary')
-            Sync-DevBranches
-            $script:groupLoads | Should -Be @('primary','peer-a','peer-b')
-            $script:consumeCalls | Should -BeGreaterThan 1
-        }
-
-        It 'preserves a foreign cursor edit after completed load instead of absorbing it into the continuation' {
-            { Sync-DevBranches } | Should -Throw '*injected runtime refresh failure*'
-            Write-Utf8Text -Path (Join-Path $script:primaryRoot 'src/cf/ConfigDumpInfo.xml') -Value 'foreign cursor edit'
-            $script:groupFailRuntime = $false
-            { Sync-DevBranches } | Should -Throw '*SOURCE_SYNC_CURSOR_CHANGED_AFTER_LOAD*'
-            Read-Utf8Text (Join-Path $script:primaryRoot 'src/cf/ConfigDumpInfo.xml') | Should -Be 'foreign cursor edit'
-            $script:groupLoads | Should -Be @('primary')
-            $script:groupNormalizes | Should -Be @('primary')
-        }
-
-        It 'retains the committed cursor when local phase persistence fails after its Git commit' {
-            $script:groupFailRuntime = $false
-            Mock Save-BranchSourceSyncGroupPlan {
-                param($Plan)
-                if ($null -ne $Plan.members[0].loadProgress -and @($Plan.members[0].loadProgress.completed | Where-Object name -eq cursor).Count) { $script:groupFailWrites = $true }
-                if ($script:groupFailWrites) { throw 'injected cursor phase save loss' }
-                & $script:groupSaveImplementation -Plan $Plan
-            }
-            { Sync-DevBranches } | Should -Throw '*injected cursor phase save loss*'
-            $head = Get-CurrentCommit
-            Mock Save-BranchSourceSyncGroupPlan { param($Plan) & $script:groupSaveImplementation -Plan $Plan }
-            Sync-DevBranches
-            Get-CurrentCommit | Should -Be $head
-            $script:groupLoads | Should -Be @('primary','peer-a','peer-b')
-            (Read-DevBranchState -Name primary).lastBranchSourceSyncGroupCommit | Should -Be $head
-        }
-
-        It 'does not replay a modern load whose native journal advanced without a phase completion' {
-            Mock Load-ConfigFromFiles {
-                param($State)
-                $script:groupLoads += $State.devBranchName
-                $base = @{kind='file';path=$State.devBranchInfoBasePath}
-                $native = @{schemaVersion=1;journalId=[guid]::NewGuid().ToString('N');id=[guid]::NewGuid().ToString('N')
-                    ticket=$script:groupPhaseOwner.proof.ticket;createdAt='2026-09-10T00:00:00Z';updatedAt='2026-09-10T00:00:01Z'
-                    hostName=[Environment]::MachineName;ownerPid=$PID;operation='sync-dev-branches';project=$script:primaryRoot
-                    purpose='designer-designer-command';resources=@($base);resourceIds=@()
-                    helperInputs=@(@{path=(Join-Path $script:groupRepoRoot '.agents/skills/itl-remote-runner/scripts/DatabaseAccess.ps1');sha256=('a'*64)})
-                    admissions=@(@{kind='file';path=$base.path;requiredSessions=1;expectedChildRole=''})
-                    startAttempted=$true;processId=0;launcherExited=$true;quiescenceConfirmed=$true
-                    releaseEvidence='fixture launcher exited; high-level result unknown';ownedProcessScopes=@();recoveryRequiresLiveVerification=$true}
-                Publish-ItlDatabaseNativeOperation -Owner $script:groupPhaseOwner -Record $native | Out-Null
-                throw 'injected load lost its result'
-            }
-            { Sync-DevBranches } | Should -Throw '*injected load lost its result*'
-            Complete-ItlDatabaseAccessHost $script:groupPhaseOwner | Out-Null
-            $script:groupPhaseOwner = Start-ItlDatabaseAccessHost -Python $script:groupPython -Request $script:groupPhaseRequest
-            $script:DevBranchMutationDatabaseAdmission.owner = $script:groupPhaseOwner
-            { Sync-DevBranches } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED*'
-            $script:groupLoads | Should -Be @('primary')
-            $script:groupNormalizes | Should -HaveCount 0
-            $script:groupReport | Should -Match 'phase=load'
-        }
-
-        It 'rejects a changed coordinator before continuing an interrupted group' {
-            { Sync-DevBranches } | Should -Throw '*injected runtime refresh failure*'
-            $script:DevBranchMutationDatabaseAdmission.plan.coordinator = Join-Path $script:groupRoot 'Другая очередь'
-            Mock Get-ItlDatabaseAccessSettings { [pscustomobject]@{coordinator=$script:DevBranchMutationDatabaseAdmission.plan.coordinator;waitTimeoutSeconds=0;python=''} }
-            { Sync-DevBranches } | Should -Throw '*DEV_BRANCH_SOURCE_SYNC_COORDINATOR_CHANGED*'
-            $script:groupLoads | Should -Be @('primary')
-        }
     }
 
     It 'rejects malformed explicit group membership: <case>' -ForEach @(

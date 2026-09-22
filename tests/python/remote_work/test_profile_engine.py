@@ -111,7 +111,7 @@ class ProfileEngineTests(unittest.TestCase):
 
     def test_failed_debugger_start_cleanup_is_not_reported_as_empty_cleanup(self):
         state, result = self.execute(fail_cleanup=True)
-        self.assertEqual("needs-attention", state["status"])
+        self.assertEqual("failed", state["status"])
         self.assertEqual(["detach unproven"], result["cleanupErrors"])
 
     def source_policy(self, policy, modules=None):
@@ -151,9 +151,12 @@ class ProfileEngineTests(unittest.TestCase):
             order.append('capture')
             test.assertEqual("source-capture", snapshot.context["phase"]["name"])
             test.assertTrue((test.run / "000-profile/verification.json").is_file())
-            proof = snapshot.context["accessLease"]
-            owner = read_json(Path(proof["coordinator"]) / "tickets" / (proof["ticket"] + ".json"))
-            test.assertEqual("running", owner["status"])
+            import base64
+            from itl_remote.execution_guard import canonical_resources, decode_execution_context
+            key = base64.urlsafe_b64decode(snapshot.context["executionContextKey"].encode("ascii"))
+            owner = decode_execution_context(snapshot.context["executionContext"], key,
+                                             canonical_resources([snapshot.context["target"]["infoBase"]]))
+            test.assertEqual("one", owner["executionId"])
             return {**source.snapshot, "cleanupErrors": []}
         with patch("itl_remote.source_capture.Snapshot.run", captured), \
                 patch("itl_remote.vanessa.quiesce", quiesce):
@@ -187,7 +190,7 @@ class ProfileEngineTests(unittest.TestCase):
         self.source_policy("required")
         with patch("itl_remote.source_capture.Snapshot.run", return_value={"status": "failed", "error": "read denied", "cleanupErrors": ["exit unproven"]}):
             state, result = self.execute()
-        self.assertEqual("needs-attention", state["status"])
+        self.assertEqual("failed", state["status"])
         self.assertEqual("SOURCE_ANALYSIS_REQUIREMENT_UNSATISFIED", result["error"])
         self.assertEqual(["exit unproven"], result["cleanupErrors"])
         self.assertEqual(1, len(result["profiles"]))

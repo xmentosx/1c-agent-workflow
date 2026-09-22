@@ -819,27 +819,6 @@ exit 0
         $result.requiredAction | Should -Be "update-dev-branch-base"
     }
 
-    It "classifies database owner handoff as continuation instead of workflow repair" {
-        $result = & {
-            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
-            $script:RunErrorCategory = ""; $script:RunRequiredAction = ""; $script:RunBlockerClassification = ""
-            $script:RunBlockerRequiresUserDecision = $false; $script:RunBlockerRetryOriginal = $false; $script:RunBlockerAction = $null; $script:RunBlockerOwner = $null
-            $payload = [ordered]@{schemaVersion=1;classification='agent-owned-handoff-required';reason='live-owned-on-demand-holder';requiresUserDecision=$false
-                retryOriginalCommandAfterResolution=$true;requiredAction=@{kind='finish-owned-on-demand';family='vanessa-ui';instanceId=('a'*32);tool='finish_database_access'}
-                owner=@{project=$RepoRoot;operation='ondemand-vanessa-ui'};workflowChangeRequired=$false}
-            Set-RunFailureContextFromMessage -Message ('INFOBASE_ACCESS_INTERVENTION_REQUIRED: ' + ($payload | ConvertTo-Json -Depth 8 -Compress)) -RequestedAction 'refresh-dev-branch-lite'
-            [pscustomobject]@{category=$script:RunErrorCategory;requiredAction=$script:RunRequiredAction;classification=$script:RunBlockerClassification
-                requiresUserDecision=$script:RunBlockerRequiresUserDecision;retry=$script:RunBlockerRetryOriginal;action=$script:RunBlockerAction;owner=$script:RunBlockerOwner}
-        }
-        $result.category | Should -Be 'database-access-blocked'
-        $result.requiredAction | Should -Be 'finish-owned-database-access'
-        $result.classification | Should -Be 'agent-owned-handoff-required'
-        $result.requiresUserDecision | Should -BeFalse
-        $result.retry | Should -BeTrue
-        $result.action.tool | Should -Be 'finish_database_access'
-        $result.owner.operation | Should -Be 'ondemand-vanessa-ui'
-    }
-
     It "routes failed check config loads to verification repair without suggesting refresh recovery" {
         $message = "ITL_CONFIG_LOAD_FAILED: partial and full fallback config loads both failed. Inspect and correct the reported configuration source error, then repeat /itl-check. Do not run refresh-dev-branch or sync-master as recovery."
         $result = & {
@@ -5567,10 +5546,7 @@ try {
                 }
 
                 try { Initialize-Project *> $null }
-                finally {
-                    Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-                    Exit-Agent1cLifecycleOperation
-                }
+                finally { Exit-Agent1cLifecycleOperation }
 
                 [pscustomobject]@{
                     status = @(Get-EffectiveGitStatusLines -StatusLines (& git -C $script:ProjectRoot status --porcelain))

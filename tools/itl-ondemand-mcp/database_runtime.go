@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,50 +13,36 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// Production brokers always implement this boundary. Protocol-only fake
-// brokers may omit it; integration fixtures implement it with the real host.
-type databasePlanningBroker interface {
-	DatabaseAccessPlan(context.Context) (*facadeDatabasePlan, error)
-	DatabaseRuntimeRoot() string
+// The name remains local to the facade while the wire contract is execution
+// scoped. A protocol-only fake broker may omit planning entirely.
+type executionPlanningBroker interface {
+	ExecutionPlan(context.Context) (*facadeExecutionPlan, error)
+	ExecutionRuntimeRoot() string
 }
 
-const databaseProofMetaKey = "itlDatabaseAccess"
+const executionContextMetaKey = "itlExecutionContext"
+const executionContextKeyMetaKey = "itlExecutionContextKey"
 
-const finishDatabaseAccessTool = "finish_database_access"
-
-func databaseParentProof(meta mcp.Meta) (*databaseAccessProof, error) {
-	var raw []byte
-	if value, ok := meta[databaseProofMetaKey]; ok {
-		var err error
-		raw, err = json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("INFOBASE_ACCESS_INHERITED_PROOF_INVALID")
-		}
-	} else if value := os.Getenv("ITL_INFOBASE_ACCESS_LEASE"); value != "" {
-		raw = []byte(value)
-	} else {
+func executionParentContext(meta mcp.Meta) (*executionContextProof, error) {
+	encoded, _ := meta[executionContextMetaKey].(string)
+	key, _ := meta[executionContextKeyMetaKey].(string)
+	if encoded == "" {
+		encoded = os.Getenv("ITL_EXECUTION_CONTEXT")
+		key = os.Getenv("ITL_EXECUTION_CONTEXT_KEY")
+	}
+	if encoded == "" && key == "" {
 		return nil, nil
 	}
-	var proof databaseAccessProof
-	if json.Unmarshal(raw, &proof) != nil || proof.Coordinator == "" || len(proof.Ticket) != 32 || proof.Token == "" ||
-		(proof.Purpose != "" && proof.Purpose != "operation") {
-		return nil, fmt.Errorf("INFOBASE_ACCESS_INHERITED_PROOF_INVALID")
+	if encoded == "" || key == "" {
+		return nil, fmt.Errorf("EXECUTION_CONTEXT_INVALID")
 	}
-	if proof.Purpose == "" {
-		proof.Purpose = "operation"
-	}
-	mode, err := normalizeDatabaseAccessMode(proof.AccessMode)
-	if err != nil {
-		return nil, fmt.Errorf("INFOBASE_ACCESS_INHERITED_PROOF_INVALID")
-	}
-	proof.AccessMode = mode
-	return &proof, nil
+	return &executionContextProof{Encoded: encoded, Key: key}, nil
 }
 
 func publicBackendMeta(meta mcp.Meta) mcp.Meta {
 	result := make(mcp.Meta, len(meta))
 	for key, value := range meta {
-		if key != databaseProofMetaKey {
+		if key != executionContextMetaKey && key != executionContextKeyMetaKey {
 			result[key] = value
 		}
 	}
@@ -63,7 +50,7 @@ func publicBackendMeta(meta mcp.Meta) mcp.Meta {
 }
 
 func (r *runtime) lockDatabaseCalls(ctx context.Context) (func(), error) {
-	if _, coordinated := r.broker.(databasePlanningBroker); !coordinated {
+	if _, coordinated := r.broker.(executionPlanningBroker); !coordinated {
 		return func() {}, nil
 	}
 	r.databaseGateOnce.Do(func() { r.databaseGate = make(chan struct{}, 1) })
@@ -79,209 +66,92 @@ func (r *runtime) lockDatabaseCalls(ctx context.Context) (func(), error) {
 	}
 }
 
-// Ordering: per-backend serialization -> global database admission -> local
-// runtime read lock. A top-level facade retains the runtime read lock between
-// calls until an explicit finish or terminal close proves cleanup.
-func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context.Context, func() error, error) {
-	r.mu.Lock()
-	finishing := r.databaseFinishing
-	r.mu.Unlock()
-	if finishing {
-		return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
-	}
+// One MCP tool call is one database execution. Backend lifetime is independent:
+// an idle warmed backend never retains this guard between calls.
+func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context.Context, func(string, string) error, error) {
 	unlock, err := r.lockDatabaseCalls(ctx)
 	if err != nil {
 		return ctx, nil, err
 	}
-	r.mu.Lock()
-	finishing = r.databaseFinishing
-	r.mu.Unlock()
-	if finishing {
-		unlock()
-		return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
+	planner, coordinated := r.broker.(executionPlanningBroker)
+	if !coordinated {
+		return ctx, func(string, string) error { unlock(); return nil }, nil
 	}
-	planner, coordinated := r.broker.(databasePlanningBroker)
-	if coordinated {
-		parent, err := databaseParentProof(meta)
-		if err != nil {
-			unlock()
-			return ctx, nil, err
-		}
-		if r.databaseRetainInherited && parent == nil {
-			unlock()
-			return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_PROFILE_OUTER_OWNERSHIP_REQUIRED")
-		}
-		if r.databaseOwner == nil {
-			plan, err := planner.DatabaseAccessPlan(ctx)
-			if err != nil {
-				unlock()
-				return ctx, nil, err
-			}
-			identity := r.databaseOwnerIdentity()
-			if threadID, ok := meta["openai/threadId"].(string); ok && threadID != "" {
-				identity["threadId"] = threadID
-			}
-			accessMode, err := normalizeDatabaseAccessMode(plan.AccessMode)
-			if err != nil {
-				unlock()
-				return ctx, nil, err
-			}
-			plan.AccessMode = accessMode
-			if parent != nil && r.family == "vanessa-ui" {
-				// An inherited facade cannot upgrade the outer ticket. Preserve the
-				// previous fail-closed contract: Vanessa preparation is admitted only
-				// when its caller already owns an exclusive operation lease.
-				accessMode = "mutation-exclusive"
-			}
-			owner, err := acquireDatabasePipeOwner(ctx, plan.Python, planner.DatabaseRuntimeRoot(), databaseAccessRequest{
-				SchemaVersion: 1, Coordinator: plan.Coordinator, Bases: plan.Bases, Timeout: plan.WaitTimeoutSeconds,
-				Owner: identity, Inherited: parent, AccessMode: accessMode,
-			}, func(event databaseAccessEvent) {
-				r.logger.Info("waiting for database access", "status", event.Status, "resources", event.Resources, "blockers", event.Blockers)
-			})
-			if err != nil {
-				unlock()
-				return ctx, nil, err
-			}
-			r.databaseOwner, r.databasePlan, r.databaseParent = owner, plan, parent
-			r.databaseNativePending = plan.RuntimePresent
-		} else {
-			if !sameDatabaseParent(r.databaseParent, parent) {
-				unlock()
-				return ctx, nil, fmt.Errorf("INFOBASE_ACCESS_BACKEND_OWNER_CHANGED")
-			}
-			if err := r.databaseOwner.Validate(ctx); err != nil {
-				unlock()
-				return ctx, nil, err
-			}
-			fresh, err := planner.DatabaseAccessPlan(withDatabaseInvocation(ctx, r.databaseOwner.Proof, r.databasePlan))
-			if err != nil {
-				unlock()
-				return ctx, nil, err
-			}
-			if !sameDatabasePlan(r.databasePlan, fresh) {
-				unlock()
-				return ctx, nil, fmt.Errorf("ITL_ONDEMAND_DATABASE_PLAN_CHANGED: cached backend target or manager inputs changed")
-			}
-		}
-		ctx = withDatabaseInvocation(ctx, r.databaseOwner.Proof, r.databasePlan)
-	}
-	retainPhase := coordinated && (r.databaseParent == nil || r.databaseRetainInherited)
-	var callLock *runtimeReadLock
-	if retainPhase {
-		err = r.ensureDatabasePhaseLock()
-	} else {
-		callLock, err = acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
-	}
+	plan, err := planner.ExecutionPlan(ctx)
 	if err != nil {
-		if coordinated && !r.databaseNativePending {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if releaseErr := r.releaseDatabaseOwner(cleanupCtx); releaseErr != nil {
-				err = fmt.Errorf("%v; database release: %w", err, releaseErr)
-			}
-		}
 		unlock()
-		return ctx, nil, fmt.Errorf("ITL_ONDEMAND_RUNTIME_LOCK: %w", err)
+		return ctx, nil, err
 	}
-	return ctx, func() error {
+	parent, err := executionParentContext(meta)
+	if err != nil {
+		unlock()
+		return ctx, nil, err
+	}
+	executionID, err := newExecutionID()
+	if err != nil {
+		unlock()
+		return ctx, nil, err
+	}
+	request := executionGuardRequest{SchemaVersion: 1, Root: plan.GuardRoot, Bases: plan.Bases,
+		Operation: "ondemand-" + r.family + "-call", ExecutionID: executionID,
+		Timeout: plan.WaitTimeoutSeconds}
+	if parent != nil {
+		request.InheritedContext, request.InheritedContextKey = parent.Encoded, parent.Key
+	}
+	owner, err := acquireExecutionGuard(ctx, plan.Python, planner.ExecutionRuntimeRoot(), request, func(event executionGuardEvent) {
+		r.logger.Info("waiting for database execution", "status", event.Status,
+			"resources", event.Resources, "waitSeconds", event.WaitSeconds)
+	})
+	if err != nil {
+		unlock()
+		return ctx, nil, err
+	}
+	ctx = withExecutionInvocation(ctx, owner.Proof, plan)
+	fresh, err := planner.ExecutionPlan(ctx)
+	if err != nil || !sameExecutionPlan(plan, fresh) {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		releaseErr := owner.Release(cleanupCtx, "failed", "ITL_ONDEMAND_EXECUTION_PLAN_CHANGED")
+		unlock()
+		if err != nil {
+			return ctx, nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_CHANGED: %w", err)
+		}
+		if releaseErr != nil {
+			return ctx, nil, releaseErr
+		}
+		return ctx, nil, fmt.Errorf("ITL_ONDEMAND_EXECUTION_PLAN_CHANGED")
+	}
+	r.mu.Lock()
+	r.executionOwner, r.executionPlan = owner, plan
+	r.mu.Unlock()
+	return ctx, func(result, message string) error {
 		defer unlock()
-		if callLock != nil {
-			defer callLock.Close()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if result == "" {
+			result = "succeeded"
 		}
-		if !coordinated {
-			return nil
-		}
+		err := owner.Release(cleanupCtx, result, message)
 		r.mu.Lock()
-		defer r.mu.Unlock()
-		if (r.databaseParent != nil && !r.databaseRetainInherited) || r.session == nil {
-			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
-			defer cancel()
-			if err := r.stopDatabaseBackendLocked(cleanupCtx, true); err != nil {
-				return err
-			}
-			if retainPhase {
-				return r.releaseDatabasePhaseLocked()
-			}
+		if r.executionOwner == owner {
+			r.executionOwner, r.executionPlan = nil, nil
 		}
-		return nil
+		r.mu.Unlock()
+		return err
 	}, nil
 }
 
-func (r *runtime) databaseOwnerIdentity() map[string]any {
-	return map[string]any{
-		"project": r.projectRoot, "operation": "ondemand-" + r.family, "requestId": r.instanceID,
-		"lifecycle": "on-demand", "releaseAction": databaseReleaseAction(r.family, r.instanceID),
-	}
-}
-
-// Called without r.mu. The database gate serializes production admissions;
-// r.mu protects the retained handle from finish/close and test-only brokers.
-func (r *runtime) ensureDatabasePhaseLock() error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.databaseFinishing {
-		return fmt.Errorf("INFOBASE_ACCESS_FINISH_IN_PROGRESS")
-	}
-	if r.databasePhaseLock != nil {
-		return nil
-	}
-	lock, err := acquireRuntimeReadLock(filepath.Join(r.projectRoot, ".agent-1c", "locks", "runtime-mcp.lock"))
-	if err != nil {
-		return err
-	}
-	r.databasePhaseLock = lock
-	return nil
-}
-
-// Called with r.mu held, after owned native/database cleanup was proven.
-func (r *runtime) releaseDatabasePhaseLocked() error {
-	if r.databasePhaseLock == nil {
-		return nil
-	}
-	if err := r.databasePhaseLock.Close(); err != nil {
-		return err
-	}
-	r.databasePhaseLock = nil
-	return nil
-}
-
-func (r *runtime) finishDatabaseAccess(ctx context.Context) (bool, error) {
-	r.databaseFinishMu.Lock()
-	defer r.databaseFinishMu.Unlock()
-	r.mu.Lock()
-	alreadyReleased := r.databasePhaseLock == nil && r.databaseOwner == nil && r.backend == nil && r.session == nil && !r.databaseNativePending
-	r.databaseFinishing = true
-	r.mu.Unlock()
-	if err := r.stop(ctx); err != nil {
-		// Keep the facade fenced after an unproven finish. A repeated finish may
-		// retry exact owned cleanup; ordinary database calls remain rejected.
-		return false, err
-	}
-	r.mu.Lock()
-	r.databaseFinishing = false
-	r.mu.Unlock()
-	return alreadyReleased, nil
-}
-
-func sameDatabaseParent(first, second *databaseAccessProof) bool {
-	if first == nil || second == nil {
-		return first == second
-	}
-	return first.Ticket == second.Ticket && first.Token == second.Token && first.Purpose == second.Purpose && first.AccessMode == second.AccessMode &&
-		strings.EqualFold(filepath.Clean(first.Coordinator), filepath.Clean(second.Coordinator))
-}
-
-func sameDatabasePlan(first, second *facadeDatabasePlan) bool {
-	if first == nil || second == nil || first.Family != second.Family ||
+func sameExecutionPlan(first, second *facadeExecutionPlan) bool {
+	if first == nil || second == nil || first.Family != second.Family || first.ExecutionHost != second.ExecutionHost ||
 		!strings.EqualFold(filepath.Clean(first.ProjectRoot), filepath.Clean(second.ProjectRoot)) ||
-		!strings.EqualFold(filepath.Clean(first.Coordinator), filepath.Clean(second.Coordinator)) ||
-		first.AuxiliaryContour != second.AuxiliaryContour || first.AccessMode != second.AccessMode ||
+		!strings.EqualFold(filepath.Clean(first.GuardRoot), filepath.Clean(second.GuardRoot)) ||
+		first.AuxiliaryContour != second.AuxiliaryContour ||
 		!sameDatabaseConnection(first.TargetBase, second.TargetBase) {
 		return false
 	}
 	if (first.PrimaryBase == nil) != (second.PrimaryBase == nil) ||
-		(first.PrimaryBase != nil && !sameDatabaseConnection(*first.PrimaryBase, *second.PrimaryBase)) {
+		(first.PrimaryBase != nil && !sameDatabaseConnection(*first.PrimaryBase, *second.PrimaryBase)) ||
+		len(first.Bases) != len(second.Bases) {
 		return false
 	}
 	for _, connection := range second.Bases {
@@ -314,83 +184,34 @@ func sameDatabasePlan(first, second *facadeDatabasePlan) bool {
 			if json.Unmarshal(raw, &before) != nil {
 				return false
 			}
-		} else {
-			if json.Unmarshal(raw, &after) != nil {
-				return false
-			}
+		} else if json.Unmarshal(raw, &after) != nil {
+			return false
 		}
 	}
 	if before == nil || after == nil {
 		return before == after
 	}
 	return before.Generation == after.Generation && before.Template == after.Template &&
-		sameDatabaseConnection(databaseConnection{Kind: before.Kind, Path: before.Path}, databaseConnection{Kind: after.Kind, Path: after.Path})
+		sameDatabaseConnection(databaseConnection{Kind: before.Kind, Path: before.Path},
+			databaseConnection{Kind: after.Kind, Path: after.Path})
 }
 
 func sameDatabaseConnection(first, second databaseConnection) bool {
 	return first.Kind == second.Kind && strings.EqualFold(strings.TrimRight(first.Path, "\\/"), strings.TrimRight(second.Path, "\\/"))
 }
 
-func (r *runtime) transitionDatabaseMode(ctx context.Context, accessMode string) error {
-	if r.databaseOwner == nil || r.databasePlan == nil || r.databaseOwner.AccessMode == accessMode {
-		return nil
-	}
-	if r.databaseParent != nil {
-		if accessMode == "mutation-exclusive" && r.databaseOwner.AccessMode != "mutation-exclusive" {
-			return fmt.Errorf("INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT")
-		}
-		return nil
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	timeout := r.databasePlan.WaitTimeoutSeconds
-	if deadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(deadline).Seconds()
-		if remaining <= 0 {
-			return context.DeadlineExceeded
-		}
-		if timeout > 0 && remaining < timeout {
-			timeout = remaining
-		}
-	}
-	err := r.databaseOwner.Transition(ctx, accessMode, timeout, func(event databaseAccessEvent) {
-		r.logger.Info("waiting for database access mode", "status", event.Status, "accessMode", accessMode,
-			"resources", event.Resources, "blockers", event.Blockers)
-	})
-	if err != nil {
-		return fmt.Errorf("INFOBASE_ACCESS_MODE_TRANSITION_FAILED: %w", err)
-	}
-	return nil
-}
+// Exclusive v2 guards have no access-mode transitions. Preparation and normal
+// calls share the same outer execution until the atomic result is complete.
+func (r *runtime) enterDatabasePreparationMode(context.Context) error { return nil }
+func (r *runtime) restoreDatabaseRuntimeMode(context.Context) error   { return nil }
 
-func (r *runtime) enterDatabasePreparationMode(ctx context.Context) error {
-	if r.family != "vanessa-ui" {
-		return nil
-	}
-	return r.transitionDatabaseMode(ctx, "mutation-exclusive")
-}
-
-func (r *runtime) restoreDatabaseRuntimeMode(ctx context.Context) error {
-	if r.databasePlan == nil {
-		return nil
-	}
-	return r.transitionDatabaseMode(ctx, r.databasePlan.AccessMode)
-}
-
-// Called under the database gate and r.mu, with the runtime read lock held.
-func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, releaseOwner bool) error {
-	if r.databaseOwner != nil {
-		if err := r.databaseOwner.Validate(ctx); err != nil {
-			return err
-		}
-		ctx = withDatabaseInvocation(ctx, r.databaseOwner.Proof, r.databasePlan)
-	}
-	if r.backend != nil || r.databaseNativePending {
+// Called under the per-runtime gate and r.mu. Guard release belongs to the
+// outer call, never to backend idle cleanup.
+func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, _ bool) error {
+	if r.backend != nil {
 		if err := r.broker.Stop(ctx); err != nil {
 			return err
 		}
-		r.databaseNativePending = false
 	}
 	if r.session != nil {
 		_ = r.session.Close()
@@ -402,38 +223,26 @@ func (r *runtime) stopDatabaseBackendLocked(ctx context.Context, releaseOwner bo
 		r.timer.Stop()
 		r.timer = nil
 	}
-	if releaseOwner {
-		return r.releaseDatabaseOwner(ctx)
-	}
 	return nil
 }
 
-func (r *runtime) releaseDatabaseOwner(ctx context.Context) error {
-	if r.databaseOwner == nil {
-		return nil
-	}
-	if r.databaseNativePending {
-		return fmt.Errorf("INFOBASE_ACCESS_NATIVE_CLEANUP_UNCONFIRMED")
-	}
-	status, err := r.databaseOwner.Release(ctx, nil)
-	if err != nil {
-		return err
-	}
-	if status != "released" {
-		return fmt.Errorf("INFOBASE_ACCESS_RELEASE_UNCONFIRMED")
-	}
-	r.databaseOwner, r.databasePlan, r.databaseParent = nil, nil, nil
-	return nil
-}
-
-// Startup failure cleanup retains the explicit proof while dropping an expired
-// phase deadline. Its success is remembered so a missing state is not mistaken
-// for either live work or an independently proven stop on the next attempt.
 func (r *runtime) stopBrokerAfterFailure(ctx context.Context) {
 	cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if err := r.broker.Stop(preserveDatabaseInvocation(ctx, cleanup)); err == nil {
-		r.databaseNativePending = false
+	if err := r.broker.Stop(preserveExecutionInvocation(ctx, cleanup)); err == nil {
 		r.backend = nil
 	}
+}
+
+// A transport error or deadline leaves the inner side effect uncertain. Stop
+// the exact owned backend while the outer execution guard is still held; only
+// then may the deferred guard release admit the next same-base call.
+func (r *runtime) cleanupFailedDatabaseCallLocked(callContext context.Context, callError error) error {
+	cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cleanup = preserveExecutionInvocation(callContext, cleanup)
+	if err := r.stopDatabaseBackendLocked(cleanup, true); err != nil {
+		return errors.Join(callError, fmt.Errorf("EXECUTION_GUARD_OWNED_CALL_CLEANUP_UNCONFIRMED: %w", err))
+	}
+	return callError
 }

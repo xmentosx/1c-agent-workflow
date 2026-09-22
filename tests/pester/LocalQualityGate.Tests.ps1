@@ -55,9 +55,26 @@ Describe "Local quality gate contract" {
         @($retired.tests) | Should -Be @("tests/pester/ParserDocsBudgets.Tests.ps1")
         $retiredDelivery = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/SourceDelivery.Tests.ps1")
         @($retiredDelivery.tests) | Should -Be @("tests/pester/SourceDeliveryPublish.Tests.ps1")
+        foreach ($retiredExecutionTest in @(
+            "AuxiliaryDatabaseAdmission", "DatabaseAccessModes", "DevBranchMutationAdmission",
+            "DevBranchVerificationAdmission", "InitializationDatabaseAdmission", "LifecycleDatabaseContinuation",
+            "MasterDatabaseAdmission", "OneCDatabaseRestorationJournal", "OneCFileRestorationJournal",
+            "OneCNativeJournalPersistence", "OneCNativeOperationJournal", "OneCNativeRecoveryGeneration",
+            "OneCNativeRunOwnership", "VanessaCleanupAdmission"
+        )) {
+            $retiredExecution = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/pester/$retiredExecutionTest.Tests.ps1")
+            @($retiredExecution.unknownPaths) | Should -BeNullOrEmpty
+            @($retiredExecution.tests).Count | Should -Be 1
+        }
         $sourceRules = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("AGENTS.md")
         @($sourceRules.tests) | Should -Contain "tests/pester/ParserDocsBudgets.Tests.ps1"
         @($sourceRules.tests) | Should -Not -Contain "tests/pester/SourceDeliveryPublish.Tests.ps1"
+        $cutover = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/execution-guard-cutover.ps1")
+        @($cutover.contracts.id) | Should -Contain "lifecycle"
+        @($cutover.tests) | Should -Contain "tests/pester/ExecutionGuardCutover.Tests.ps1"
+        $retiredProducer = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @("tests/database-access-producers.json")
+        @($retiredProducer.contracts.id) | Should -Contain "remote-performance"
+        @($retiredProducer.tests) | Should -Contain "tests/pester/RemotePerformance.Tests.ps1"
         $roctupOnly = Resolve-QualityContractsForPaths -Catalog $catalog -Paths @(".agents/skills/1c-workflow/scripts/lib/agent-1c.roctup-mcp.ps1")
         @($roctupOnly.contracts.id) | Should -Be @("roctup-port-lifecycle")
         @($roctupOnly.tests) | Should -Be @("tests/pester/ArtifactCacheIsolation.Tests.ps1", "tests/pester/RoctupPortLifecycle.Tests.ps1")
@@ -228,14 +245,14 @@ Describe "Local quality gate contract" {
         $oneAction = $entrypoint.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Update-AuxiliaryContour | Out-Null }')
         $oneActionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $oneAction -BaselineText $entrypoint
         $oneActionImpact.fallback | Should -BeFalse
-        @($oneActionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1")
+        @($oneActionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1")
 
         $twoActions = $oneAction.
             Replace('"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus }', '"vibecoding1c-mcp-status" { Show-Vibecoding1cMcpStatus | Out-Null }')
         $actionImpact = Resolve-Agent1cSemanticImpact -Catalog $catalog -CurrentText $twoActions -BaselineText $entrypoint
         $actionImpact.fallback | Should -BeFalse
         @($actionImpact.impacts.name) | Should -Be @("update-auxiliary-contour", "vibecoding1c-mcp-status")
-        @($actionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1", "tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1")
+        @($actionImpact.tests) | Should -Be @("tests/pester/Agent1cEntrypoint.Tests.ps1", "tests/pester/AuxiliaryContours.Tests.ps1", "tests/pester/McpConfig.Tests.ps1", "tests/pester/OnDemandMcp.Tests.ps1")
         @($actionImpact.tests).Count | Should -BeLessThan @($catalog.contracts | Where-Object id -eq "lifecycle").tests.Count
 
         $parameterText = $entrypoint.Replace('[string]$AuxiliaryDisplayName = ""', '[string]$AuxiliaryDisplayName = "semantic probe"')
@@ -370,6 +387,7 @@ Describe "Local quality gate contract" {
                 "tests\pester\TestSupport.ps1",
                 "tests\pester\Agent1cEntrypoint.Tests.ps1",
                 "tests\pester\AuxiliaryContours.Tests.ps1",
+                "tests\pester\ExecutionGuardCutover.Tests.ps1",
                 "tests\pester\McpConfig.Tests.ps1",
                 "tests\pester\SourceDeliveryRunIndex.Tests.ps1",
                 "tests\pester\SourceDeliveryRefCleanup.Tests.ps1"
@@ -393,7 +411,7 @@ Describe "Local quality gate contract" {
             $run.exitCode | Should -Be 0 -Because ((@($run.stdout) + @($run.stderr)) -join [Environment]::NewLine)
             $selection = ($run.stdout -join [Environment]::NewLine) | ConvertFrom-Json
             @($selection.semanticImpacts | ForEach-Object { "$($_.kind):$($_.name):$($_.owner)" }) | Should -Be @('action:update-auxiliary-contour:auxiliary')
-            @($selection.tests) | Should -Be @('tests/pester/Agent1cEntrypoint.Tests.ps1', 'tests/pester/AuxiliaryContours.Tests.ps1', 'tests/pester/AuxiliaryDatabaseAdmission.Tests.ps1')
+            @($selection.tests) | Should -Be @('tests/pester/Agent1cEntrypoint.Tests.ps1', 'tests/pester/AuxiliaryContours.Tests.ps1')
             @($selection.additionalInputs) | Should -Be @($entrypoint)
 
             $broken = $text.Replace('"update-auxiliary-contour" { Update-AuxiliaryContour }', '"update-auxiliary-contour" { Show-Help }')
@@ -689,47 +707,46 @@ Get-PesterShardFileSha256 -Path `$Path
         $runner | Should -Match '\$resetModulePathForWindowsPowerShell = \[string\]\$PSVersionTable\.PSEdition -eq "Core"'
         $worker | Should -Match 'SpecialFolder\]::MyDocuments'
         $worker | Should -Match 'Invoke-Pester -Configuration'
-        $worker | Should -Match '\$env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "infobase-access"'
+        $worker | Should -Match '\$env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT\s*=\s*Join-Path \$fixtureRuntimeRoot "execution-guards-v2"'
         $localRunner | Should -Match '& powershell\.exe @runnerArguments'
         $localRunner | Should -Match 'itl-pester-local-'
-        $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT", \$originalInfobaseAccessFallbackRoot, "Process"\)'
+        $localRunner | Should -Match 'SetEnvironmentVariable\("ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT", \$originalExecutionGuardFallbackRoot, "Process"\)'
     }
-    It "preserves an explicit coordinator while isolating the Pester worker fallback" {
+    It "preserves an explicit execution guard root while isolating the Pester worker fallback" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl gate isolation Тест " + [guid]::NewGuid().ToString("N"))
         $testRoot = Join-Path $root "tests\pester"
-        $poisonRoot = Join-Path $root "Внешний coordinator"
-        $ticketRoot = Join-Path $poisonRoot "tickets"
+        $poisonRoot = Join-Path $root "Внешний execution guard"
         $planPath = Join-Path $root "plan.json"
         $junitPath = Join-Path $root "pester.xml"
         $resultPath = Join-Path $root "result.json"
         $testPath = Join-Path $testRoot "Isolation.Tests.ps1"
-        $originalAccessRoot = [Environment]::GetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", "Process")
-        $originalPoisonRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", "Process")
+        $originalGuardRoot = [Environment]::GetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", "Process")
+        $originalPoisonRoot = [Environment]::GetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", "Process")
         try {
-            New-Item -ItemType Directory -Force -Path $testRoot, $ticketRoot | Out-Null
-            [IO.File]::WriteAllText((Join-Path $ticketRoot "layout.json"), '{"schemaVersion":2}', [Text.UTF8Encoding]::new($false))
+            New-Item -ItemType Directory -Force -Path $testRoot, $poisonRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $poisonRoot "sentinel.json"), '{"schemaVersion":2}', [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText($testPath, @'
-Describe "Pester worker database coordinator isolation" {
-    It "uses a worker-private coordinator" {
-        $env:ITL_INFOBASE_ACCESS_ROOT | Should -Be $env:ITL_TEST_POISON_ACCESS_ROOT
-        $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT | Should -Not -Be $env:ITL_TEST_POISON_ACCESS_ROOT
-        $env:ITL_TEST_INFOBASE_ACCESS_FALLBACK_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]infobase-access$'
+Describe "Pester worker execution guard isolation" {
+    It "uses a worker-private fallback without overriding an explicit root" {
+        $env:ITL_EXECUTION_GUARD_ROOT | Should -Be $env:ITL_TEST_POISON_GUARD_ROOT
+        $env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT | Should -Not -Be $env:ITL_TEST_POISON_GUARD_ROOT
+        $env:ITL_TEST_EXECUTION_GUARD_FALLBACK_ROOT | Should -Match 'itl-pester-worker-\d+-[a-f0-9]+[\\/]execution-guards-v2$'
     }
 }
 '@, [Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText($planPath, (([ordered]@{ worker=7; paths=@($testPath) } | ConvertTo-Json -Depth 4) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-            $poisonHash = (Get-FileHash -LiteralPath (Join-Path $ticketRoot "layout.json") -Algorithm SHA256).Hash
-            [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $poisonRoot, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", $poisonRoot, "Process")
+            $poisonHash = (Get-FileHash -LiteralPath (Join-Path $poisonRoot "sentinel.json") -Algorithm SHA256).Hash
+            [Environment]::SetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", $poisonRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", $poisonRoot, "Process")
 
             $result = Invoke-TestPowerShellFile -FilePath (Join-Path $RepoRoot "scripts\run-pester-shard.ps1") -Arguments @("-PlanPath", $planPath, "-JunitPath", $junitPath, "-ResultPath", $resultPath)
 
             $result.exitCode | Should -Be 0 -Because $result.combinedText
             (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
-            (Get-FileHash -LiteralPath (Join-Path $ticketRoot "layout.json") -Algorithm SHA256).Hash | Should -Be $poisonHash
+            (Get-FileHash -LiteralPath (Join-Path $poisonRoot "sentinel.json") -Algorithm SHA256).Hash | Should -Be $poisonHash
         } finally {
-            [Environment]::SetEnvironmentVariable("ITL_INFOBASE_ACCESS_ROOT", $originalAccessRoot, "Process")
-            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_ACCESS_ROOT", $originalPoisonRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_EXECUTION_GUARD_ROOT", $originalGuardRoot, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_TEST_POISON_GUARD_ROOT", $originalPoisonRoot, "Process")
             Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }

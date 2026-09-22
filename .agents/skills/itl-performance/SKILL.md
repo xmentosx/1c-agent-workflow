@@ -19,9 +19,9 @@ By default collect one warmup, three unprofiled timings and one separate profile
 
 ## Database Access Handoff
 
-Before submitting an incompatible measurement, explicitly choose one path for any database phase this task already owns: continue that phase and postpone the measurement, or finish it through its owning surface. Use `finish_database_access` on the same ROCTUP/Vanessa facade, or the existing exact stop action for an owned interactive profile, and wait for confirmed release. Never release a foreign holder; report its owner as the blocker and leave its processes and lease intact. Idle timeout is an abandonment fallback, not a normal handoff.
+Before submitting a measurement, declare its complete exact database resource set. A conflicting call or job waits visibly on the execution guard and proceeds after bounded owned cleanup. An idle ROCTUP or Vanessa backend is not an owner. Never release a foreign holder; report the exact external conflict and leave its processes intact.
 
-Once a bounded helper or measurement job starts, let it own access through completion. Observe its existing status, use its supported cancel only when cancellation is intended, and follow its recovery contract after interruption; do not call `finish_database_access` as a shortcut around a live job.
+Once a bounded helper or measurement job starts, let it retain the execution guard through completion or confirmed terminal owned cleanup. Observe its existing status and use its supported cancel only when cancellation is intended. Do not replay an interrupted modifying job or bypass a live owner; a later independent command is admitted after cleanup without a generic recovery gate.
 
 ## Execute and interpret
 

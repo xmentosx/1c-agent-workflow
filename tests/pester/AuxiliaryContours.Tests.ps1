@@ -17,7 +17,6 @@
                 schemaVersion = 1
                 auxiliaryContours = $AuxiliaryContours
                 aiRules = [ordered]@{ tools = @("codex") }
-                databaseAccess = [ordered]@{ coordinator = ".agent-1c/infobase-access" }
             }
             Set-Content -LiteralPath (Join-Path $root ".agent-1c\project.json") -Encoding UTF8 -Value (($config | ConvertTo-Json -Depth 12) + "`n")
             & git -C $root init *> $null

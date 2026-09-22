@@ -112,6 +112,8 @@
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/locks/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/runtime/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/event-log-cursors/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-checkpoints/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-guard-generation.json.*"))
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -542,9 +544,7 @@ try {
         }
     }
 
-    It "writes terminal run status when a fresh child rejects <Case> before entering its body" -ForEach @(
-        @{Case='argument binding'}, @{Case='database ownership protocol'}
-    ) {
+    It "writes terminal run status when a fresh child rejects argument binding before entering its body" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("Передача старому helper " + [guid]::NewGuid().ToString("N"))
         $childPath = Join-Path $tempRoot "invalid-child.ps1"
         $wrapperPath = Join-Path $tempRoot "invoke-parent.ps1"
@@ -573,8 +573,7 @@ param(
     [string]$ProjectRoot,
     [string]$ChildPath,
     [string]$StatusPath,
-    [string]$LogPath,
-    [string]$Case
+    [string]$LogPath
 )
 . $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null
 $Action = "check-dev-branch"
@@ -587,24 +586,10 @@ $script:Agent1cReexecArguments = @(
     "-RunStatusPath", $RunStatusPath,
     "-RunLogPath", $RunLogPath
 )
-if ($Case -eq 'database ownership protocol') {
-    $base = [pscustomobject]@{kind='file';path=(Join-Path $ProjectRoot 'Общая база')}
-    $preparation = [pscustomobject]@{operation=$Action;plan=[pscustomobject]@{target=$base;bases=@($base)}
-        settings=[pscustomobject]@{coordinator=(Join-Path $ProjectRoot 'Очередь');python=(Get-Command python -CommandType Application | Select-Object -First 1).Source;waitTimeoutSeconds=0}}
-    $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $Action -Preparation $preparation
-    [IO.File]::WriteAllText(
-        (Join-Path $ProjectRoot 'admission-ticket.txt'),
-        [string]$script:DevBranchMutationDatabaseAdmission.owner.public.ticket,
-        [Text.UTF8Encoding]::new($false))
-}
 Enter-Agent1cLifecycleOperation -RequestedAction $Action
 try {
-    $phase = if ($Case -eq 'database ownership protocol') { 'accepted' } else { 'rejected' }
-    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", $phase)
-} finally {
-    try { Complete-ItlDevBranchMutationDatabaseAdmission $script:DevBranchMutationDatabaseAdmission }
-    finally { Exit-Agent1cLifecycleOperation }
-}
+    Invoke-Agent1cFreshProcess -ScriptPath $ChildPath -AdditionalArguments @("-LifecyclePhase", "rejected")
+} finally { Exit-Agent1cLifecycleOperation }
 '@
 
             # Windows PowerShell reads script literals through the ANSI code
@@ -617,8 +602,7 @@ try {
                 "-ProjectRoot", $tempRoot,
                 "-ChildPath", $childPath,
                 "-StatusPath", $statusPath,
-                "-LogPath", $logPath,
-                "-Case", $Case
+                "-LogPath", $logPath
             )
 
             $result.exitCode | Should -Be 1
@@ -626,18 +610,6 @@ try {
             $result.combinedText | Should -Match "childExitCode='1'"
             $result.combinedText | Should -Match ([regex]::Escape($childPath))
             $result.combinedText | Should -Not -Match "CHILD_BODY_MUST_NOT_RUN"
-            if ($Case -eq 'database ownership protocol') {
-                $result.combinedText | Should -Match 'DatabaseContinuationProtocol'
-                $ticketId = [IO.File]::ReadAllText((Join-Path $tempRoot 'admission-ticket.txt'), [Text.Encoding]::UTF8)
-                $activeTicketPath = Join-Path $tempRoot ("Очередь/tickets/{0}.json" -f $ticketId)
-                $archiveTicketPath = Join-Path $tempRoot ("Очередь/ticket-archive/{0}/{1}.json" -f $ticketId.Substring(0, 2), $ticketId)
-                $activeTicketPath | Should -Not -Exist
-                $archiveTicketPath | Should -Exist
-                $ticket = Get-Content -LiteralPath $archiveTicketPath -Raw -Encoding UTF8 | ConvertFrom-Json
-                $ticket.status | Should -Be 'released'
-                @($ticket.nativeJournal.producers.PSObject.Properties) | Should -HaveCount 1
-            }
-
             $status = Get-Content -LiteralPath $statusPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $status.status | Should -Be "failed"
             [int]$status.exitCode | Should -Be 1

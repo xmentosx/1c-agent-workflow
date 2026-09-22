@@ -234,7 +234,7 @@ class SourceReuseTests(unittest.TestCase):
         fixture = self.engine([absent])
         with patch("itl_remote.source_capture.Snapshot", side_effect=AssertionError("no measured module to capture")):
             state, result = fixture.execute()
-        self.assertEqual("needs-attention", state["status"])
+        self.assertEqual("failed", state["status"])
         self.assertEqual("SOURCE_ANALYSIS_REQUIREMENT_UNSATISFIED", result["error"])
         self.assertFalse(result["sourceResolution"]["captureAttempted"])
         self.assertEqual([absent], result["profiles"][0]["sourceAnalysis"]["missingSelections"])

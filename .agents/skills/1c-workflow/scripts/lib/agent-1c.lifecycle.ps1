@@ -653,19 +653,6 @@ function Invoke-Agent1cFreshProcess {
         $reexecArguments.Add("-OperationContinuation") | Out-Null
     }
 
-    $databaseAdmissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $databaseAdmissionVariable -and $null -ne $databaseAdmissionVariable.Value -and
-        -not $databaseAdmissionVariable.Value.completed) {
-        if (-not $continuesLifecycleOperation -or $null -eq $databaseAdmissionVariable.Value.continuation) {
-            throw 'NATIVE_CONTINUATION_CONTEXT_REQUIRED'
-        }
-        Assert-OneCNativeOperationJournalOwner -Journal $databaseAdmissionVariable.Value.journal
-        # Old helpers must reject this argument before executing the action;
-        # accepting the inherited lease without its resource plan is unsafe.
-        $reexecArguments.Add('-DatabaseContinuationProtocol') | Out-Null
-        $reexecArguments.Add('1') | Out-Null
-    }
-
     $arguments = @(
         "-NoProfile",
         "-ExecutionPolicy", "Bypass",
@@ -706,9 +693,6 @@ function Invoke-Agent1cFreshProcess {
             $script:LifecycleOperationTerminalWrittenByContinuation = $true
             if ([string]$terminal["status"] -eq "failed" -and $exitCode -eq 0) {
                 $exitCode = 1
-            }
-            if ($exitCode -eq 0 -and [string]$terminal['status'] -eq 'succeeded' -and $null -ne $databaseAdmissionVariable) {
-                Publish-ItlDevBranchLifecycleCompletion -Admission $databaseAdmissionVariable.Value
             }
         }
     }
@@ -2291,26 +2275,6 @@ function Get-ItlMasterDatabasePlan {
     }
 }
 
-function Assert-ItlMasterDatabaseAdmission {
-    param([object]$Admission)
-    if ($null -eq $Admission -or $Admission.completed -or -not $Admission.plan.PSObject.Properties['masterPlan'] -or $null -eq $Admission.plan.masterPlan) {
-        throw 'INFOBASE_ACCESS_MASTER_ADMISSION_REQUIRED'
-    }
-    $planned = $Admission.plan.masterPlan
-    $current = Get-ItlSourceDatabasePlan
-    if (-not [string]::Equals($planned.project, $current.project, [StringComparison]::OrdinalIgnoreCase) -or
-        $planned.source.kind -cne $current.source.kind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $planned.source.path -Second $current.source.path)) {
-        throw 'INFOBASE_ACCESS_MASTER_PLAN_CHANGED: source project or database changed after admission.'
-    }
-    foreach ($base in $current.bases) {
-        if (@($Admission.plan.bases | Where-Object {
-            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
-        }).Count -eq 0) { throw 'INFOBASE_ACCESS_MASTER_PLAN_CHANGED: source or seed resource is outside the admitted plan.' }
-    }
-    Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
-}
-
 function Get-BranchSourceSyncScope {
     param([object]$State)
     $requestVariable = Get-Variable -Name BranchSyncRequestPath -ErrorAction SilentlyContinue
@@ -2365,10 +2329,21 @@ function Get-BranchSourceSyncScope {
     return [pscustomobject]@{group=[bool]$requestPath;requestPath=$requestPath;requestHash=$hash;names=@($names);recipients=@($targets);states=$states}
 }
 
+function Test-BranchSourceSyncScopeEquivalent {
+    param([AllowNull()][object]$First, [AllowNull()][object]$Second)
+    if ($null -eq $First -or $null -eq $Second) { return $false }
+    if ([bool]$First.group -ne [bool]$Second.group -or
+        [string]$First.requestHash -cne [string]$Second.requestHash -or
+        (@($First.names) -join [char]0) -cne (@($Second.names) -join [char]0) -or
+        (@($First.recipients) -join [char]0) -cne (@($Second.recipients) -join [char]0)) { return $false }
+    $firstPaths = @($First.states | ForEach-Object { (Resolve-Agent1cFullPath -Path ([string]$_.worktreePath)).ToLowerInvariant() })
+    $secondPaths = @($Second.states | ForEach-Object { (Resolve-Agent1cFullPath -Path ([string]$_.worktreePath)).ToLowerInvariant() })
+    return (($firstPaths -join [char]0) -ceq ($secondPaths -join [char]0))
+}
+
 function Get-ItlBranchSourceSyncDatabasePlan {
     param([object]$State)
     $scope = Get-BranchSourceSyncScope -State $State
-    $access = Get-ItlDatabaseAccessSettings
     $exportPath = Get-DevBranchSourceSyncExportPath -State $State
     $bases = @(); $participants = @()
     $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
@@ -2377,10 +2352,6 @@ function Get-ItlBranchSourceSyncDatabasePlan {
             Assert-DevBranchSourceSyncCompatibility -PrimaryState $State -PeerState $member | Out-Null
             $memberPlan = Invoke-InProjectContext -Root $member.worktreePath -ScriptBlock {
                 Assert-DevelopmentBranchWorktreeContext -State $member -Operation 'sync-dev-branches'
-                $memberAccess = Get-ItlDatabaseAccessSettings
-                if (-not [string]::Equals([IO.Path]::GetFullPath($access.coordinator), [IO.Path]::GetFullPath($memberAccess.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
-                    throw 'INFOBASE_ACCESS_SYNC_COORDINATOR_MISMATCH: all branches must use the same database access authority.'
-                }
                 if ((Get-DevBranchSourceSyncExportPath -State $member) -cne $exportPath) { throw 'DEV_BRANCH_SOURCE_SYNC_PATH_MISMATCH: source roots differ between projects.' }
                 Get-ItlDevBranchMutationDatabasePlan -State $member -Operation update-dev-branch-base
             }
@@ -2393,7 +2364,7 @@ function Get-ItlBranchSourceSyncDatabasePlan {
     $unique = @{}
     foreach ($base in $bases) { $unique[($base.kind + '|' + $base.path).ToLowerInvariant()] = $base }
     return [pscustomobject]@{target=$participants[0].target;bases=@($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] })
-        syncParticipants=$participants;coordinator=[IO.Path]::GetFullPath($access.coordinator);syncScope=$scope}
+        syncParticipants=$participants;syncScope=$scope}
 }
 
 function Get-ItlDevBranchMutationDatabasePlan {
@@ -2458,23 +2429,7 @@ function Get-ItlDevBranchMutationDatabasePlan {
     return [pscustomobject]@{ target = $plan.target; bases = @($unique.Keys | Sort-Object | ForEach-Object { $unique[$_] }); servicePlan = $servicePlan; serviceTarget = $plan.target; serviceReserveGeneration = $reserve; masterPlan = $master }
 }
 
-function Get-ItlDevBranchMutationDatabaseState {
-    param([string]$Operation)
-    # Standalone auxiliary maintenance resolves its own connection and does not
-    # require an initialized primary development database. Auxiliary tests do.
-    if ($Operation -in @('sync-master', 'init-project', 'new-dev-branch', 'new-extension-dev-branch', 'update-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour')) { return $null }
-    if ($Operation -in @('initialize-dev-branch-runtime','adopt-dev-worktree')) {
-        return Get-ItlInitializationDatabaseState -Operation $Operation
-    }
-    if ($Operation -eq 'fork-dev-branch') {
-        $branch = Get-CurrentBranch
-        if ($branch -notlike 'itldev/*') { throw 'DEV_BRANCH_FORK_SOURCE_BRANCH_REQUIRED' }
-        return Read-DevBranchState -Name $branch.Substring('itldev/'.Length)
-    }
-    return Read-DevBranchState -Name $DevBranchName
-}
-
-function Get-ItlInitializationDatabaseState {
+function Get-ItlInitializationExecutionState {
     param([string]$Operation = 'initialize-dev-branch-runtime')
     Require-Value 'DevBranchName' $DevBranchName | Out-Null
     $safe = ConvertTo-SafeName $DevBranchName
@@ -2492,7 +2447,7 @@ function Get-ItlInitializationDatabaseState {
     $statePath = Find-DevBranchStateFile -SafeDevBranchName $safe
     if ($statePath) { $values = ConvertTo-Agent1cHashtable -Object (Read-DevBranchStateFile -Path $statePath) }
     # Derive the future target by the same inputs as Initialize-DevBranchRuntime;
-    # an existing state cannot redirect admission to a different old database.
+    # an existing state cannot redirect execution to a different old database.
     $values['devBranchName'] = $DevBranchName
     $values['safeDevBranchName'] = $safe
     $values['devBranch'] = $(if ($DevBranch) { $DevBranch } else { "itldev/$safe" })
@@ -2503,303 +2458,36 @@ function Get-ItlInitializationDatabaseState {
     return [pscustomobject]$values
 }
 
-function Get-ItlDatabaseContinuationContext {
-    param([string]$Operation)
-    $protocol = Get-Variable -Name DatabaseContinuationProtocol -ErrorAction SilentlyContinue
-    if ($null -eq $protocol -or $protocol.Value -eq 0) { return $null }
-    $text = [Environment]::GetEnvironmentVariable('ITL_DATABASE_CONTINUATION', 'Process')
-    if (-not $OperationContinuation -or -not $text -or $text.Length -gt 65536) { throw 'NATIVE_CONTINUATION_CONTEXT_REQUIRED' }
-    try { $context = $text | ConvertFrom-Json -ErrorAction Stop }
-    catch { throw 'NATIVE_CONTINUATION_CONTEXT_INVALID' }
-    if ($context.plan.schemaVersion -notin @(1,2) -or ($context.plan.schemaVersion -eq 2 -and -not $context.plan.PSObject.Properties['resourceRoles']) -or
-        $context.plan.operation -cne $Operation -or
-        -not [string]::Equals([IO.Path]::GetFullPath($context.plan.project),[IO.Path]::GetFullPath($script:ProjectRoot),[StringComparison]::OrdinalIgnoreCase) -or
-        @($context.plan.bases).Count -eq 0 -or $context.reference.ticket -cnotmatch '^[a-f0-9]{32}$' -or
-        $context.reference.producerId -cnotmatch '^[a-f0-9]{32}$' -or $context.reference.sha256 -cnotmatch '^[a-f0-9]{64}$') {
-        throw 'NATIVE_CONTINUATION_CONTEXT_INVALID'
-    }
-    return $context
-}
+function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard {
+    param([Parameter(Mandatory = $true)][object]$Request)
 
-function Publish-ItlDevBranchContinuationPlan {
-    param([object]$Admission, [AllowNull()][object]$Parent = $null)
-    $journal = $Admission.journal
-    if ($null -eq $journal.persistence) {
-        $journal.persistence = New-OneCNativeJournalPersistence -Resources $journal.resources -Owner $journal.owner
-    }
-    $generation = ''; $reserve = ''
-    if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = [string]$Admission.plan.servicePlan.generation }
-    if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { $reserve = [string]$Admission.plan.serviceReserveGeneration }
-    $roles = [Collections.Generic.List[object]]::new()
-    if ($Admission.plan.PSObject.Properties['resourceRoles']) {
-        foreach ($role in @($Admission.plan.resourceRoles)) {
-            $roles.Add([pscustomobject]@{kind=[string]$role.kind;path=[string]$role.path;role=[string]$role.role})
-        }
-    } else {
-        foreach ($serviceGeneration in @($generation, $reserve) | Where-Object { $_ } | Select-Object -Unique) {
-            $expectedServicePath = Join-Path $script:ProjectRoot ('.agent-1c/infobases/vanessa-service-' + $serviceGeneration)
-            $matches = @($Admission.plan.bases | Where-Object { $_.kind -ceq 'file' -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $expectedServicePath) })
-            if ($matches.Count -ne 1) { throw 'NATIVE_CONTINUATION_RESOURCE_ROLE_INVALID' }
-            $roles.Add([pscustomobject]@{kind=[string]$matches[0].kind;path=[string]$matches[0].path;role='vanessa-service'})
-        }
-        if ($Admission.plan.PSObject.Properties['masterPlan'] -and $null -ne $Admission.plan.masterPlan -and
-            $Admission.plan.masterPlan.PSObject.Properties['seed'] -and $null -ne $Admission.plan.masterPlan.seed) {
-            $roles.Add([pscustomobject]@{kind=[string]$Admission.plan.masterPlan.seed.kind;path=[string]$Admission.plan.masterPlan.seed.path;role='branch-seed'})
-        }
-    }
-    $record = [pscustomobject]@{schemaVersion=2;operation=$Admission.operation;project=[IO.Path]::GetFullPath($script:ProjectRoot)
-        target=$Admission.plan.target;bases=@($Admission.plan.bases);serviceGeneration=$generation;serviceReserveGeneration=$reserve
-        resourceRoles=@($roles);helperInputs=@($journal.persistence.helperInputs)}
-    return Publish-ItlDatabaseContinuationPlan -Owner $Admission.owner -Record $record -Parent $Parent
-}
-
-function Get-ItlDevBranchMutationAdmissionPreparation {
-    param([string]$Operation = 'update-dev-branch-base', [switch]$CheckSourcePreflight)
-    $settingsReady = Get-Variable -Name InitDatabaseSettingsReady -Scope Script -ErrorAction SilentlyContinue
-    if ($Operation -eq 'init-project' -and ($null -eq $settingsReady -or -not $settingsReady.Value)) { return $null }
-    if ($Operation -in @('new-dev-branch','new-extension-dev-branch')) { Assert-MasterWorktreeContext -Operation $Operation }
-    if ($Operation -eq 'new-extension-dev-branch' -and $null -ne (Get-PreparedExtensionDevBranchState)) { return $null }
-    if ($Operation -in @('new-dev-branch','new-extension-dev-branch') -and
-        $null -ne (Read-BranchSeedManifest -AllowMissing)) {
-        # With a retained seed, branch creation has no source-database work.
-        # Its runtime handoff reserves the future target after releasing Git locks.
-        return $null
-    }
-    $state = Get-ItlDevBranchMutationDatabaseState -Operation $Operation
-    if ($null -ne $state) { Assert-DevelopmentBranchWorktreeContext -State $state -Operation $Operation }
-    if ($CheckSourcePreflight -and $Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) {
-        # Source prerequisites do not need a database lease. Preserve their
-        # diagnostics before planning a launch, including legacy branch state.
-        # The action repeats this read-only check after waiting for admission.
-        $trigger = $(if ($Operation -eq 'deploy-and-test') { 'command' } elseif ($VerificationTrigger) { $VerificationTrigger } else { 'command' })
-        $explicit = $(if ($ExplicitVerificationComponent) { @($ExplicitVerificationComponent) } else { @() })
-        Assert-ItlVerificationRepairScope -Trigger $trigger
-        Assert-VanessaVerificationPreflight -Trigger $trigger -ExplicitComponents $explicit
-    }
-    if ($Operation -eq 'lock-config-repository-objects' -and (
-        -not (Get-SourceUsesRepository) -or (Get-DevBranchKind -State $state) -ne 'configuration' -or
-        (Get-DevBranchInitializationStatus -State $state) -ne 'ready')) {
-        # The action owns these diagnostics; do not reserve an unrelated base
-        # before it rejects a non-repository or unsupported branch.
-        return $null
-    }
-    # A profile or another backend owner keeps its lease until normal release.
-    # Never stop that owner merely to make this request enter the database.
-    $continuation = Get-ItlDatabaseContinuationContext -Operation $Operation
-    $generation = if ($null -ne $continuation) {
-        if ($continuation.plan.serviceReserveGeneration) { [string]$continuation.plan.serviceReserveGeneration } else { [string]$continuation.plan.serviceGeneration }
-    } else { '' }
-    $reserve = if ($null -ne $continuation) { [string]$continuation.plan.serviceReserveGeneration } else { '' }
-    $plan = Get-ItlDevBranchMutationDatabasePlan -State $state -Operation $Operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
-    $accessMode = if ($Operation -in @('check-dev-branch', 'verify-dev-branch', 'deploy-and-test')) { 'functional-test' } else { 'mutation-exclusive' }
-    $plan | Add-Member -NotePropertyName accessMode -NotePropertyValue $accessMode -Force
-    if ($null -ne $continuation) {
-        if ($plan.target.kind -cne $continuation.plan.target.kind -or
-            -not (Test-ItlOnDemandInfoBaseMatch -First $plan.target.path -Second $continuation.plan.target.path)) {
-            throw 'NATIVE_CONTINUATION_PLAN_CHANGED: target differs from the admitted parent.'
-        }
-        foreach ($base in $plan.bases) {
-            if (@($continuation.plan.bases | Where-Object { $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path) }).Count -eq 0) {
-                throw 'NATIVE_CONTINUATION_PLAN_CHANGED: a database is outside the admitted parent plan.'
-            }
-        }
-        $plan.bases = @($continuation.plan.bases)
-        $plan | Add-Member -NotePropertyName serviceReserveGeneration -NotePropertyValue $continuation.plan.serviceReserveGeneration -Force
-        if ($continuation.plan.schemaVersion -eq 2) {
-            $plan | Add-Member -NotePropertyName resourceRoles -NotePropertyValue @($continuation.plan.resourceRoles) -Force
-        }
-    }
-    $settings = Get-ItlDatabaseAccessSettings
-    return [pscustomobject]@{operation=$Operation;plan=$plan;settings=$settings;continuationParent=$(if($null -ne $continuation){$continuation.reference}else{$null})}
-}
-
-function Invoke-InterruptedDatabaseAccessRecovery {
-    if ($InterruptedDatabaseTicket -cnotmatch '^[a-f0-9]{32}$' -or
-        [string]::IsNullOrWhiteSpace($InterruptedDatabaseCoordinator)) {
-        throw 'ITL_INTERRUPTED_DATABASE_RECOVERY_EVIDENCE_INVALID'
-    }
-    $requestedCoordinator = Resolve-Agent1cFullPath -Path $InterruptedDatabaseCoordinator
-    $settings = Get-ItlDatabaseAccessSettings
-    $expectedCoordinator = Resolve-Agent1cFullPath -Path ([string]$settings.coordinator)
-    if (-not [string]::Equals($requestedCoordinator, $expectedCoordinator, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_COORDINATOR_CHANGED expected='$expectedCoordinator' actual='$requestedCoordinator'"
-    }
-
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/PythonRuntime.ps1')
-    $python = Resolve-ItlPythonExecutable -Python ([string]$settings.python)
-    $remoteWork = Resolve-Agent1cFullPath -Path (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/remote_work.py')
-    $captured = Invoke-ItlNativeProcessCapture -FilePath $python -Arguments @(
-        '-B', '-X', 'utf8', $remoteWork, 'access-recover-workflow',
-        '--coordinator', $requestedCoordinator, '--ticket', $InterruptedDatabaseTicket
-    )
-    $combined = (([string]$captured.stdout) + [Environment]::NewLine + ([string]$captured.stderr)).Trim()
-    if ([int]$captured.exitCode -ne 0) {
-        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_FAILED exitCode=$($captured.exitCode) detail='$(Protect-VanessaVerificationDiagnosticText -Text $combined -MaxLength 1500)'"
-    }
-    $result = $null
-    foreach ($line in @(([string]$captured.stdout -split "\r?\n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
-        try { $result = $line | ConvertFrom-Json -ErrorAction Stop } catch {}
-    }
-    if ($null -eq $result -or [string](Get-StateValue -State $result -Name 'status' -Default '') -cne 'released' -or
-        [string](Get-StateValue -State $result -Name 'reason' -Default '') -cne 'recovery-verified') {
-        throw "ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT_INVALID detail='$(Protect-VanessaVerificationDiagnosticText -Text $combined -MaxLength 1500)'"
-    }
-    $json = $result | ConvertTo-Json -Depth 20 -Compress
-    Write-Host "ITL_INTERRUPTED_DATABASE_RECOVERY_RESULT=$json"
-    return $result
-}
-
-function Start-ItlDevBranchMutationDatabaseAdmission {
-    param([ValidateSet('update-dev-branch-base', 'lock-config-repository-objects', 'check-dev-branch', 'verify-dev-branch', 'update-auxiliary-contour', 'check-auxiliary-contour', 'dump-auxiliary-contour', 'export-auxiliary-contour-result', 'reset-auxiliary-contour', 'export-dev-branch-result', 'dump-dev-branch-extension', 'repair-dev-branch-tooling', 'init-dev-branch-extension', 'release-e2e-extension-smoke', 'reset-dev-branch', 'refresh-dev-branch-lite', 'refresh-dev-branch', 'sync-master', 'update1cbase', 'loadfrom1cbase', 'getconfigfiles', 'deploy-and-test', 'sync-dev-branches', 'initialize-dev-branch-runtime', 'adopt-dev-worktree', 'new-dev-branch', 'new-extension-dev-branch', 'fork-dev-branch', 'init-project')][string]$Operation = 'update-dev-branch-base', [string]$CancelPath = '', [AllowNull()][object]$Preparation = $null)
-    if (-not $PSBoundParameters.ContainsKey('Preparation')) { $Preparation = Get-ItlDevBranchMutationAdmissionPreparation -Operation $Operation }
-    if ($null -eq $Preparation) { return $null }
-    if ($Preparation.operation -cne $Operation) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: prepared operation differs from the request.' }
-    $plan = $Preparation.plan
-    $settings = $Preparation.settings
-    $planAccessMode = [string](Get-StateValue -State $plan -Name 'accessMode' -Default 'mutation-exclusive')
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    $previousProof = [Environment]::GetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', 'Process')
-    $request = [ordered]@{ schemaVersion = 1; coordinator = $settings.coordinator; bases = $plan.bases; timeout = $settings.waitTimeoutSeconds; nativeJournalProtocol = 1; accessMode = $planAccessMode
-        autoRecovery = -not [bool]$previousProof
-        owner = @{ project = $script:ProjectRoot; operation = $Operation; requestId = [guid]::NewGuid().ToString('N') } }
-    if ($previousProof) {
-        try { $request.inherited = $previousProof | ConvertFrom-Json -ErrorAction Stop } catch { throw 'INFOBASE_ACCESS_INHERITED_PROOF_INVALID' }
-        if ((Get-StateValue -State $request.inherited -Name 'purpose' -Default 'operation') -eq 'recovery') {
-            if ($Operation -cne 'reset-dev-branch' -or -not $Preparation.PSObject.Properties['continuationParent'] -or
-                $null -eq $Preparation.continuationParent) { throw 'NATIVE_RESET_RECOVERY_CONTINUATION_REQUIRED' }
-            $request.purpose = 'recovery'
-        }
-    }
-    $owner = Start-ItlDatabaseAccessHost -Python $settings.python -Request $request -CancelPath $CancelPath
-    $admission = [pscustomobject]@{
-        owner = $owner; plan = $plan; journal = (New-OneCNativeOperationJournal -Resources $plan.bases -Owner $owner); operation = $Operation
-        previousJournal = $script:OneCNativeOperationJournal; previousProof = $previousProof
-        previousContinuation = [Environment]::GetEnvironmentVariable('ITL_DATABASE_CONTINUATION', 'Process'); continuation = $null
-        completed = $false; servicePlanApplied = $false; waitTimeoutSeconds = $settings.waitTimeoutSeconds; cancelPath = $CancelPath
-        accessMode = [string]$owner.public.accessMode; inherited = [bool]$previousProof
-    }
+    $state = $Request.state
+    $infoBaseKind = [string]$Request.infoBaseKind
+    $infoBasePath = [string]$Request.infoBasePath
+    $reason = [string]$Request.reason
+    Set-RunStage -Stage 'config-load.stop-owned-runtime' -Detail "Stopping workflow-owned sessions for the exact development branch infobase before $reason."
     try {
-        $parent = if ($Preparation.PSObject.Properties['continuationParent']) { $Preparation.continuationParent } else { $null }
-        $admission.continuation = Publish-ItlDevBranchContinuationPlan -Admission $admission -Parent $parent
-        [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
-        [Environment]::SetEnvironmentVariable('ITL_DATABASE_CONTINUATION', ($admission.continuation | ConvertTo-Json -Depth 20 -Compress), 'Process')
-        $script:OneCNativeOperationJournal = $admission.journal
-        return $admission
+        Invoke-DevBranchVanessaRuntimeRelease -State $state -Reason $reason | Out-Null
+        Stop-ItlOnDemandBackends -Family 'roctup' -InfoBasePath $infoBasePath -Strict
+        $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $state
+        if ($roctupRuntime.processAlive) {
+            Stop-RoctupMcpForState -State $state -Quiet -RequireOwnership -SkipClientConfig | Out-Null
+        }
     } catch {
-        $admissionError = $_
-        try { Complete-ItlDatabaseAccessHost -Owner $owner | Out-Null }
-        catch { Close-ItlDatabaseAccessHost -Owner $owner }
-        throw $admissionError
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: exact owned cleanup is unconfirmed; foreign sessions were preserved. $($_.Exception.Message)"
     }
-}
-
-function Assert-ItlDevBranchMutationDatabaseAdmission {
-    param([object]$Admission, [object]$State)
-    if ($null -eq $Admission -or $Admission.completed) { throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED' }
-    $generation = ''
-    if ($Admission.plan.PSObject.Properties['servicePlan'] -and $null -ne $Admission.plan.servicePlan) { $generation = $Admission.plan.servicePlan.generation }
-    $reserve = if ($Admission.plan.PSObject.Properties['serviceReserveGeneration']) { [string]$Admission.plan.serviceReserveGeneration } else { '' }
-    $operation = $Admission.operation
-    $expectedTarget = $Admission.plan.target
-    if ($operation -eq 'sync-dev-branches') {
-        # Revalidate this participant in its own project context. Manager bases
-        # are reserved for cleanup, but cannot become source-load targets.
-        $participant = @($Admission.plan.syncParticipants | Where-Object {
-            $_.branch -ceq [string]$State.devBranch -and
-            [string]::Equals($_.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -and
-            [string]::Equals($_.project, [IO.Path]::GetFullPath($State.worktreePath), [StringComparison]::OrdinalIgnoreCase)
-        })
-        if ($participant.Count -ne 1) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization participant changed.' }
-        $access = Get-ItlDatabaseAccessSettings
-        if (-not [string]::Equals($Admission.plan.coordinator, [IO.Path]::GetFullPath($access.coordinator), [StringComparison]::OrdinalIgnoreCase)) {
-            throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization coordinator changed.'
-        }
-        $expectedTarget = $participant[0].target
-        if ((Get-DevBranchSourceSyncExportPath -State $State) -cne $participant[0].exportPath) {
-            throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: synchronization source root changed.'
-        }
-        $operation = 'update-dev-branch-base'
+    $remainingOwned = @(Get-OwnVanessaTestProcesses -State $state -RequireInspection)
+    $remainingBackends = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
+        Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
+    })
+    if ($remainingOwned.Count -gt 0 -or $remainingBackends.Count -gt 0) {
+        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: workflow-owned runtime remains (tests=$($remainingOwned.Count), ondemand=$($remainingBackends.Count))."
     }
-    $fresh = Get-ItlDevBranchMutationDatabasePlan -State $State -Operation $operation -ServiceGeneration $generation -ServiceReserveGeneration $reserve
-    if ($fresh.target.kind -cne $expectedTarget.kind -or
-        -not (Test-ItlOnDemandInfoBaseMatch -First $fresh.target.path -Second $expectedTarget.path)) {
-        throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: target changed while waiting.'
+    $foreign = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
+    if ($foreign.Count -gt 0) {
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: exact base has $($foreign.Count) unidentified live session(s); no foreign process was stopped."
     }
-    foreach ($base in $fresh.bases) {
-        if (@($Admission.plan.bases | Where-Object {
-            $_.kind -ceq $base.kind -and (Test-ItlOnDemandInfoBaseMatch -First $_.path -Second $base.path)
-        }).Count -eq 0) { throw 'INFOBASE_ACCESS_MUTATION_PLAN_CHANGED: manager resource appeared while waiting.' }
-    }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    Assert-ItlDatabaseAccessHost -Owner $Admission.owner
-}
-
-function Set-ItlDevBranchDatabaseAccessMode {
-    param([ValidateSet('functional-test', 'mutation-exclusive')][string]$AccessMode, [object]$State = $null)
-
-    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    $admission = if ($null -ne $variable) { $variable.Value } else { $null }
-    if ($null -eq $admission -or $admission.completed) { return }
-    if ($null -eq $State) { $State = Get-ItlDevBranchMutationDatabaseState -Operation $admission.operation }
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $State
-    if ($admission.inherited) {
-        if ($AccessMode -eq 'mutation-exclusive' -and $admission.accessMode -ne 'mutation-exclusive') {
-            throw 'INFOBASE_ACCESS_INHERITED_MODE_INSUFFICIENT: borrowed shared access cannot authorize database mutation.'
-        }
-        return [pscustomobject]@{accessMode=$admission.accessMode;inherited=$true}
-    }
-    if ($admission.accessMode -ceq $AccessMode) { return [pscustomobject]@{accessMode=$AccessMode;inherited=$false} }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    $changed = Set-ItlDatabaseAccessMode -Owner $admission.owner -AccessMode $AccessMode -CancelPath $admission.cancelPath
-    $admission.accessMode = [string]$changed.accessMode
-    [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', ($admission.owner.proof | ConvertTo-Json -Depth 40 -Compress), 'Process')
-    return $changed
-}
-
-function Publish-ItlDevBranchLifecycleCompletion {
-    param([AllowNull()][object]$Admission)
-    if ($null -eq $Admission -or $Admission.operation -notin @('sync-master','reset-dev-branch','refresh-dev-branch','refresh-dev-branch-lite','initialize-dev-branch-runtime','adopt-dev-worktree','new-dev-branch','new-extension-dev-branch','fork-dev-branch','init-project')) { return }
-    if ($Admission.completed -or -not (Test-OneCNativeOperationJournalReleased -Journal $Admission.journal)) {
-        throw 'NATIVE_LIFECYCLE_COMPLETION_NATIVE_WORK_PENDING'
-    }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    Publish-ItlDatabaseLifecycleCompletion -Owner $Admission.owner | Out-Null
-}
-
-function Complete-ItlDevBranchMutationDatabaseAdmission {
-    param([AllowNull()][object]$Admission)
-    if ($null -eq $Admission -or $Admission.completed) { return }
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    try {
-        if (-not (Test-OneCNativeOperationJournalReleased -Journal $Admission.journal)) {
-            Close-ItlDatabaseAccessHost -Owner $Admission.owner
-            throw 'INFOBASE_ACCESS_NATIVE_CLEANUP_UNCONFIRMED'
-        }
-        $released = Complete-ItlDatabaseAccessHost -Owner $Admission.owner
-        if ($released.status -ne 'released') { throw 'INFOBASE_ACCESS_RELEASE_UNCONFIRMED' }
-        Clear-Agent1cDatabaseRecoveryEvidence
-    } finally {
-        $script:OneCNativeOperationJournal = $Admission.previousJournal
-        [Environment]::SetEnvironmentVariable('ITL_INFOBASE_ACCESS_LEASE', $Admission.previousProof, 'Process')
-        [Environment]::SetEnvironmentVariable('ITL_DATABASE_CONTINUATION', $Admission.previousContinuation, 'Process')
-        $Admission.completed = $true
-    }
-}
-
-function Wait-ItlDevBranchMutationExternalSessions {
-    param([object]$Admission, [string]$InfoBaseKind, [string]$InfoBasePath)
-    $timer = [Diagnostics.Stopwatch]::StartNew()
-    $nextNotice = 0.0
-    while (@(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $InfoBaseKind -InfoBasePath $InfoBasePath).Count -gt 0) {
-        Assert-OneCNativeOperationJournalOwner -Journal $Admission.journal
-        if ($Admission.cancelPath -and (Test-Path -LiteralPath $Admission.cancelPath)) { throw 'INFOBASE_ACCESS_PARENT_CANCELLED' }
-        if ($timer.Elapsed.TotalSeconds -ge $Admission.waitTimeoutSeconds) { throw 'INFOBASE_ACCESS_EXTERNAL_SESSIONS_WAIT_TIMEOUT: external sessions remain; no foreign process was stopped.' }
-        if ($timer.Elapsed.TotalSeconds -ge $nextNotice) {
-            Write-Host 'INFOBASE_ACCESS_EXTERNAL_SESSIONS_WAIT: waiting for sessions outside this operation to exit.'
-            $nextNotice = $timer.Elapsed.TotalSeconds + 5
-        }
-        Start-Sleep -Milliseconds 250
-    }
+    Write-Host "Workflow-owned sessions stopped before $reason; unidentified processes were not terminated."
 }
 
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {
@@ -2819,91 +2507,8 @@ function Stop-DevBranchRuntimeBeforeInfobaseMutation {
     }
 
     $infoBaseKind = [string](Get-StateValue -State $State -Name "infoBaseKind" -Default "file")
-    $mutationAdmissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    $mutationAdmission = if ($null -ne $mutationAdmissionVariable) { $mutationAdmissionVariable.Value } else { $null }
-    $drainRecord = $null
-    if ($null -ne $mutationAdmission) {
-        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $mutationAdmission -State $State
-        $drainTargets = @($mutationAdmission.plan.target)
-        if ($mutationAdmission.operation -eq 'sync-dev-branches') {
-            $drainTargets = @($mutationAdmission.plan.syncParticipants | Where-Object {
-                $_.branch -ceq [string]$State.devBranch -and
-                [string]::Equals($_.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)
-            } | ForEach-Object { $_.target })
-        }
-        if ($mutationAdmission.operation -eq 'check-auxiliary-contour' -and $null -ne $mutationAdmission.plan.serviceTarget) {
-            # Auxiliary verification prepares primary branch tooling through
-            # this existing path; other profile bases are not mutation targets.
-            $drainTargets += $mutationAdmission.plan.serviceTarget
-        }
-        if (@($drainTargets | Where-Object {
-            $_.kind -ceq $infoBaseKind -and (Test-ItlOnDemandInfoBaseMatch -First $infoBasePath -Second $_.path)
-        }).Count -eq 0) {
-            throw 'INFOBASE_ACCESS_NATIVE_TARGET_NOT_RESERVED: runtime drain target differs from the admitted mutation.'
-        }
-        Set-ItlDevBranchDatabaseAccessMode -AccessMode mutation-exclusive -State $State | Out-Null
-        $drainRecord = Add-OneCNativeOperationRecord -Journal $mutationAdmission.journal -Purpose 'owned-runtime-drain' `
-            -Admissions @([pscustomobject]@{ infoBaseKind = $infoBaseKind; infoBasePath = $infoBasePath; requiredSessions = 0; expectedChildRole = '' })
-        $drainRecord.startAttempted = $true
-        Save-OneCNativeOperationRecord -Record $drainRecord
-    }
-    Set-RunStage -Stage "config-load.stop-runtime" -Detail "Stopping 1C sessions for the exact development branch infobase before $Reason."
-    $ownedCleanupError = ""
-    try {
-        Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
-        Stop-ItlOnDemandBackends -Family "roctup" -InfoBasePath $infoBasePath -Strict
-        $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
-        if ($roctupRuntime.processAlive) {
-            Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
-        }
-    } catch {
-        $ownedCleanupError = $_.Exception.Message
-        if ($null -ne $mutationAdmission) { throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED: owned cleanup is unconfirmed; foreign sessions are preserved. $ownedCleanupError" }
-        Write-Warning "Workflow-owned cleanup could not prove ownership before exact-infobase cleanup: $ownedCleanupError"
-    }
-
-    try {
-        if ($null -ne $mutationAdmission) {
-            $remainingOwned = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
-            $remainingBackends = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
-                Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
-            })
-            if ($remainingOwned.Count -gt 0 -or $remainingBackends.Count -gt 0) { throw 'Owned runtime remains after strict cleanup.' }
-            Confirm-OneCNativeOperationRelease -Record $drainRecord -LauncherExited $true -OwnedProcessesReleased $true -Evidence 'strict-runtime-owner-cleanup'
-            Wait-ItlDevBranchMutationExternalSessions -Admission $mutationAdmission -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath
-            $sessionCleanup = [pscustomobject]@{ stopped = 0 }
-        } else {
-            $sessionCleanup = Stop-OneCInfoBaseSessionProcesses `
-                -InfoBaseKind $infoBaseKind `
-                -InfoBasePath $infoBasePath `
-                -Reason $Reason
-        }
-
-        if ($ownedCleanupError) {
-            # Exact-infobase cleanup can recover from an ownership mismatch. In
-            # that case re-run the regular owners only to release stale state.
-            Invoke-DevBranchVanessaRuntimeRelease -State $State -Reason $Reason | Out-Null
-            Stop-ItlOnDemandBackends -InfoBasePath $infoBasePath -Strict
-            $roctupRuntime = Get-RoctupMcpRuntimeInfo -State $State
-            if ($roctupRuntime.processAlive) {
-                Stop-RoctupMcpForState -State $State -Quiet -RequireOwnership -SkipClientConfig | Out-Null
-            }
-        }
-
-        $remainingSessions = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
-        $remainingTests = @(Get-OwnVanessaTestProcesses -State $State -RequireInspection)
-        $remainingOnDemand = @(Get-ItlOnDemandRuntimeInstances -Strict | Where-Object {
-            Test-ItlOnDemandInfoBaseMatch -First ([string]$_.infoBasePath) -Second $infoBasePath
-        })
-        if ($remainingSessions.Count -gt 0 -or $remainingTests.Count -gt 0 -or $remainingOnDemand.Count -gt 0) {
-            throw "processes remain after cleanup (sessions=$($remainingSessions.Count), tests=$($remainingTests.Count), ondemand=$($remainingOnDemand.Count))."
-        }
-    } catch {
-        $ownedDetail = if ($ownedCleanupError) { " initialOwnedCleanup='$ownedCleanupError'" } else { "" }
-        throw "ITL_INFOBASE_RUNTIME_DRAIN_FAILED reason='$Reason' infoBasePath='$infoBasePath' detail='$($_.Exception.Message)'$ownedDetail"
-    }
-
-    Write-Host "Exact development branch infobase sessions stopped before $Reason. Stopped local sessions: $($sessionCleanup.stopped)."
+    $script:OneCExecutionDrainRequest = [pscustomobject]@{state=$State;infoBaseKind=$infoBaseKind;infoBasePath=$infoBasePath;reason=$Reason}
+    Set-RunStage -Stage 'config-load.drain-planned' -Detail "Owned exact-base runtime drain will run after execution guard admission for $Reason."
 }
 
 function Restore-DevBranchInfobaseFromSnapshot {
@@ -2929,61 +2534,6 @@ function Restore-DevBranchInfobaseFromSnapshot {
         Invoke-Designer @arguments | Out-Null
     }
     finally { if ($null -ne $snapshotReadLease) { $snapshotReadLease.Dispose() } }
-}
-
-function New-OneCExtensionRecoveryContext {
-    param([object]$State, [string]$SnapshotPath, [string]$SourcePath, [bool]$SourceExisted,
-        [AllowNull()][byte[]]$OriginalStateBytes = $null)
-    if ($null -eq $script:OneCNativeOperationJournal -or $null -eq $script:OneCNativeOperationJournal.owner) { return $null }
-    $source = Assert-ExportPathInsideProject -ExportPath $SourcePath
-    $SnapshotPath = [IO.Path]::GetFullPath($SnapshotPath)
-    if ([IO.Path]::GetDirectoryName($SnapshotPath) -ine (Assert-ExportPathInsideProject -ExportPath '.agent-1c/snapshots') -or
-        [IO.Path]::GetExtension($SnapshotPath) -ine '.dt' -or
-        [IO.Path]::GetDirectoryName($source) -ine (Assert-ExportPathInsideProject -ExportPath 'src/cfe')) { throw 'ONEC_RECOVERY_CONTEXT_SCOPE_INVALID' }
-    if ((Test-Path -LiteralPath $source -PathType Container) -ne $SourceExisted -or
-        (Test-Path -LiteralPath $source -PathType Leaf)) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_CHANGED' }
-    if (Test-Path -LiteralPath $source -PathType Container) {
-        if (@(Get-ChildItem -LiteralPath $source -Force).Count) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_NOT_EMPTY' }
-    } elseif ($SourceExisted) { throw 'ONEC_RECOVERY_SOURCE_BASELINE_CHANGED' }
-    $stateRoot = [string](Get-StateValue -State $State -Name 'stateProjectRoot' -Default $script:ProjectRoot)
-    $safeName = [string](Get-StateValue -State $State -Name 'safeDevBranchName' -Default (ConvertTo-SafeName $State.devBranchName))
-    if (-not $safeName -or $safeName.IndexOfAny([char[]]@('/','\')) -ge 0 -or $safeName -in @('.','..')) { throw 'ONEC_RECOVERY_CONTEXT_SCOPE_INVALID' }
-    $statePath = Join-Path $stateRoot ('.agent-1c/dev-branches/' + $safeName + '.json')
-    $envPath = Join-Path $script:ProjectRoot '.dev.env'
-    $manifestPath = $SnapshotPath + '.recovery.json'
-    $destinations = @($manifestPath, ($SnapshotPath + '.state.json'), ($SnapshotPath + '.env'), ($SnapshotPath + '.project.json'))
-    foreach ($path in $destinations) { if (Test-Path -LiteralPath $path) { throw 'ONEC_RECOVERY_CONTEXT_ALREADY_EXISTS' } }
-    $stateBytes = if ($null -ne $OriginalStateBytes) { $OriginalStateBytes } else { [IO.File]::ReadAllBytes($statePath) }
-    $envExisted = Test-Path -LiteralPath $envPath -PathType Leaf
-    $configuration = $script:Config | ConvertTo-Json -Depth 40
-    $platform = Get-PlatformPath
-    $platformHash = (Get-FileHash -LiteralPath $platform -Algorithm SHA256).Hash.ToLowerInvariant()
-    $created = [Collections.Generic.List[string]]::new()
-    function Write-RecoveryContextFile([string]$Path,[byte[]]$Bytes) {
-        $stream = [IO.File]::Open($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-        $created.Add($Path)
-        try { $stream.Write($Bytes,0,$Bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-    }
-    try {
-    Write-RecoveryContextFile ($SnapshotPath + '.state.json') $stateBytes
-    if ($envExisted) { Write-RecoveryContextFile ($SnapshotPath + '.env') ([IO.File]::ReadAllBytes($envPath)) }
-    Write-RecoveryContextFile ($SnapshotPath + '.project.json') ([Text.UTF8Encoding]::new($false).GetBytes($configuration))
-    $manifest = [ordered]@{schemaVersion=1;kind='extension-initialization';project=[IO.Path]::GetFullPath($script:ProjectRoot)
-        state=[ordered]@{destination=[IO.Path]::GetFullPath($statePath);snapshotPath=($SnapshotPath + '.state.json');sha256=(Get-FileHash -LiteralPath ($SnapshotPath + '.state.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
-        environment=[ordered]@{destination=$envPath;existed=$envExisted;snapshotPath=$(if($envExisted){$SnapshotPath + '.env'}else{''});sha256=$(if($envExisted){(Get-FileHash -LiteralPath ($SnapshotPath + '.env') -Algorithm SHA256).Hash.ToLowerInvariant()}else{''})}
-        configuration=[ordered]@{snapshotPath=($SnapshotPath + '.project.json');sha256=(Get-FileHash -LiteralPath ($SnapshotPath + '.project.json') -Algorithm SHA256).Hash.ToLowerInvariant()}
-        source=[ordered]@{path=$source;existed=$SourceExisted}
-        platform=[ordered]@{path=$platform;sha256=$platformHash}
-        absentFileResources=@($script:OneCNativeOperationJournal.resources | Where-Object {
-            $_.kind -ceq 'file' -and -not (Test-Path -LiteralPath $_.path)
-        } | ForEach-Object { [ordered]@{kind='file';path=[string]$_.path} })
-    }
-    Write-RecoveryContextFile $manifestPath ([Text.UTF8Encoding]::new($false).GetBytes(($manifest | ConvertTo-Json -Depth 12)))
-    return [pscustomobject]@{path=$manifestPath;sha256=(Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()}
-    } catch {
-        foreach ($path in $created) { if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop } }
-        throw
-    }
 }
 
 function Remove-CompletedInfobaseSnapshot {
@@ -5879,6 +5429,12 @@ function Assert-WorkflowSourceAiRulesInstallable {
     }
 }
 
+function Invoke-WorkflowExecutionGuardCutover {
+    $cutoverPath = Join-Path $script:ProjectRoot '.agents\skills\1c-workflow\scripts\execution-guard-cutover.ps1'
+    if (-not (Test-Path -LiteralPath $cutoverPath -PathType Leaf)) { throw 'EXECUTION_GUARD_CUTOVER_ENTRYPOINT_MISSING' }
+    & $cutoverPath -ProjectRoot $script:ProjectRoot -PackageRoot $script:ProjectRoot -PrepareManagedWorktrees | Out-Null
+}
+
 function Update-WorkflowPackage {
     Write-Section "Update ITL workflow package"
     if ($LifecyclePhase -notin @("", "pre-copy", "post-copy")) {
@@ -5985,6 +5541,8 @@ function Update-WorkflowPackage {
     }
     Set-RunStage -Stage "workflow-update.commit" -Detail "Committing the managed workflow update in master."
     $commitResult = Commit-WorkflowUpdate -Source $workflowSource -AiRulesPathsBefore $aiRulesPathsBefore -ClientSurfacePathsBefore $clientSurfacePathsBefore
+    Set-RunStage -Stage "workflow-update.execution-guard-cutover" -Detail "Updating managed helpers in every active worktree before enabling execution guards v2."
+    Invoke-WorkflowExecutionGuardCutover
     Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation "update-workflow" | Out-Null
     Write-WorkflowUpdateFollowUp -Source $workflowSource -CommitResult $commitResult
     Set-RunStage -Stage "workflow-update.complete" -Detail "Managed workflow update committed and verified clean."
@@ -8128,9 +7686,10 @@ function Initialize-Project {
     Apply-BootstrapWorkflowPackageProvenance | Out-Null
     Sync-WorkflowManagedDependencyLockEntries | Out-Null
     # Wizard/JSON preparation establishes the real connection. Release the
-    # settings/Git phase before waiting, then reserve that exact source/seed set.
+    # settings/Git phase and reacquire only lifecycle ownership; each later
+    # native call obtains its own exact execution guard.
     $script:InitDatabaseSettingsReady = $true
-    Enter-ItlInitializationDatabasePhase -Operation 'init-project'
+    Enter-ItlInitializationNativePhase -Operation 'init-project'
     $dumpWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.commit-dump") -and (Test-InitDumpArtifactsReady))
     $unsafeActionProtectionWasCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.unsafe-action-protection-complete"))
     $interactiveQuestionsWereCompleted = ($InitMode -eq "resume" -and (Test-InitStageAtLeast -Stage $resumeStage -Expected "init.interactive-complete"))
@@ -8282,10 +7841,6 @@ function Sync-Master {
     Assert-CleanGit
     Checkout-Master
     Clear-DevBranchContext
-    $databaseAdmission = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -ne $databaseAdmission -and $null -ne $databaseAdmission.Value) {
-        Assert-ItlMasterDatabaseAdmission -Admission $databaseAdmission.Value
-    }
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
@@ -9444,12 +8999,6 @@ function Initialize-DevBranchRuntime {
         $rootPath = Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)
         $DevBranchInfoBasePath = Join-Path $rootPath $SafeDevBranchName
     }
-    $admissionState = Get-ItlInitializationDatabaseState
-    $admissionState.infoBaseKind = $kind
-    $admissionState.devBranchInfoBasePath = $DevBranchInfoBasePath
-    $admissionState.worktreePath = $WorktreePath
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $admissionState
-
     $publishDefault = Get-WebPublishByDefault
     $publicationEnabled = ($PublishToWeb -or $publishDefault)
     $publicationAuto = ($PublishToWeb -or ($publishDefault -and (Get-WebPublishAuto)))
@@ -10707,10 +10256,9 @@ function Initialize-ForkedDevBranchRuntime {
         Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safeName
     }
     Assert-DevBranchForkInfoBaseIsolated -SourceState $sourceState -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
-    $admissionState = Get-ItlInitializationDatabaseState
-    $admissionState.infoBaseKind = [string]$Snapshot.infoBaseKind
-    $admissionState.devBranchInfoBasePath = $targetInfoBasePath
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State $admissionState
+    $executionState = Get-ItlInitializationExecutionState
+    $executionState.infoBaseKind = [string]$Snapshot.infoBaseKind
+    $executionState.devBranchInfoBasePath = $targetInfoBasePath
     Install-DevBranchForkDependencyLock -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot | Out-Null
     $targetHistoryRoot = Join-Path $script:ProjectRoot ".agent-1c\fork-history\$($Snapshot.forkId)"
     $stateHash = New-ForkedDevBranchState `
@@ -10719,7 +10267,7 @@ function Initialize-ForkedDevBranchRuntime {
         -TargetInfoBasePath $targetInfoBasePath `
         -TargetHistoryRoot $targetHistoryRoot `
         -MainProjectRoot $MainProjectRoot `
-        -TargetState $admissionState
+        -TargetState $executionState
     $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "fork-initializing"
 
     try {
@@ -10840,11 +10388,6 @@ function Invoke-ForkDevBranchRuntimeAfterSnapshot {
     Set-RunStage -Stage "fork.snapshot-complete" -Detail "Fork snapshot completed; releasing source locks before target restoration."
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Exit-Agent1cLifecycleOperation
-    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
-        Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
-        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-        $script:DevBranchMutationDatabaseAdmission = $null
-    }
     Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
         Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime' -LifecycleAction 'fork-dev-branch'
         Initialize-ForkedDevBranchRuntime -Snapshot $Snapshot -MainProjectRoot $MainProjectRoot | Out-Null
@@ -10953,28 +10496,16 @@ function Enter-ItlInitializationRuntimeAdmission {
     param([Parameter(Mandatory=$true)][string]$Operation, [string]$LifecycleAction = $Operation)
     $envFile = Join-Path $script:ProjectRoot '.dev.env'
     $envBefore = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
-    $script:DevBranchMutationDatabaseAdmission = Start-ItlDevBranchMutationDatabaseAdmission -Operation $Operation
-    try {
-        Enter-Agent1cLifecycleOperation -RequestedAction $LifecycleAction
-        $envAfter = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
-        if ($envBefore -cne $envAfter) { throw 'LIFECYCLE_INPUT_CHANGED: .dev.env changed during initialization admission; repeat the same helper.' }
-        Read-ProjectConfig
-        Assert-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission -State (Get-ItlDevBranchMutationDatabaseState -Operation $Operation)
-    } catch {
-        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-        throw
-    }
+    Enter-Agent1cLifecycleOperation -RequestedAction $LifecycleAction
+    $envAfter = if (Test-Path -LiteralPath $envFile) { Read-Utf8Text -Path $envFile } else { $null }
+    if ($envBefore -cne $envAfter) { throw 'LIFECYCLE_INPUT_CHANGED: .dev.env changed during initialization lock acquisition; repeat the same helper.' }
+    Read-ProjectConfig
 }
 
-function Enter-ItlInitializationDatabasePhase {
+function Enter-ItlInitializationNativePhase {
     param([Parameter(Mandatory=$true)][string]$Operation)
     Complete-Agent1cLifecycleOperation -Status 'succeeded' -ExitCode 0
     Exit-Agent1cLifecycleOperation
-    if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
-        Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
-        Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-        $script:DevBranchMutationDatabaseAdmission = $null
-    }
     Enter-ItlInitializationRuntimeAdmission -Operation $Operation
 }
 
@@ -10993,11 +10524,6 @@ function Invoke-DevBranchRuntimeAfterGitPhase {
         Set-RunStage -Stage "branch.git-phase-complete" -Detail "Git worktree phase completed; releasing the main lifecycle lock before branch runtime initialization."
         Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
         Exit-Agent1cLifecycleOperation
-        if ($null -ne $script:DevBranchMutationDatabaseAdmission) {
-            Publish-ItlDevBranchLifecycleCompletion -Admission $script:DevBranchMutationDatabaseAdmission
-            Complete-ItlDevBranchMutationDatabaseAdmission -Admission $script:DevBranchMutationDatabaseAdmission
-            $script:DevBranchMutationDatabaseAdmission = $null
-        }
         Invoke-InProjectContext -Root $WorktreePath -ScriptBlock {
             Enter-ItlInitializationRuntimeAdmission -Operation 'initialize-dev-branch-runtime'
             Initialize-DevBranchRuntime `
@@ -11471,8 +10997,7 @@ function Init-DevBranchExtension {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "1C snapshot was not created: $snapshotPath"
         }
-        $recoveryContext = New-OneCExtensionRecoveryContext -State $state -SnapshotPath $snapshotPath -SourcePath $absoluteDumpPath -SourceExisted $targetExisted
-        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -Policy on-failure -RecoveryContext $recoveryContext
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -Policy on-failure
         $snapshotCreated = $true
 
         if ($ExtensionInitMode -eq "Empty") {
@@ -12045,7 +11570,7 @@ function Save-BranchSourceSyncGroupPlan {
 }
 
 function New-BranchSourceSyncGroupPlan {
-    param([object]$Scope, [object]$Admission)
+    param([object]$Scope, [object]$DatabasePlan)
     $id = [guid]::NewGuid().ToString('N')
     $members = @()
     # Checkpoints precede source transfer. If preparation is interrupted, a new
@@ -12053,26 +11578,24 @@ function New-BranchSourceSyncGroupPlan {
     # any source propagation or database update.
     foreach ($state in $Scope.states) {
         Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
-            Assert-BranchSourceSyncChangesScoped -ExportPath $Admission.plan.syncParticipants[0].exportPath | Out-Null
+            Assert-BranchSourceSyncChangesScoped -ExportPath $DatabasePlan.syncParticipants[0].exportPath | Out-Null
         }
     }
     foreach ($state in $Scope.states) {
         $head = Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
-            Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
-            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $Admission.plan.syncParticipants[0].project
+            Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $DatabasePlan.syncParticipants[0].project
             Save-DevBranchCheckpoint -Operation sync-dev-branches -Message "chore: checkpoint before source group $id" | Out-Null
             Get-CurrentCommit
         }
-        $participant = @($Admission.plan.syncParticipants | Where-Object { $_.branch -ceq $state.devBranch })[0]
+        $participant = @($DatabasePlan.syncParticipants | Where-Object { $_.branch -ceq $state.devBranch })[0]
         $members += [pscustomobject]@{name=[string]$state.devBranchName;branch=[string]$state.devBranch;project=[string]$state.worktreePath
             head=$head;target=$participant.target;recipient=($Scope.recipients -icontains [string]$state.devBranchName)
             resultCommit='';sourceStatus='pending';loadStatus='pending';loadedHead='';loadProgress=$null}
         Invoke-Git @('update-ref', "refs/itl/source-sync/$id/source-$($members.Count - 1)", $head)
     }
     $plan = [pscustomobject]@{schemaVersion=1;id=$id;project=[IO.Path]::GetFullPath($script:ProjectRoot)
-        coordinator=$Admission.plan.coordinator
         requestPath=$Scope.requestPath;requestHash=$Scope.requestHash;names=@($Scope.names);recipients=@($Scope.recipients)
-        exportPath=$Admission.plan.syncParticipants[0].exportPath;members=$members;aggregate=$members[0].head;nextPeer=1
+        exportPath=$DatabasePlan.syncParticipants[0].exportPath;members=$members;aggregate=$members[0].head;nextPeer=1
         phase='aggregating';pending=$null;conflict=$null;fingerprint='';validationSource='';error='';createdAt=(Get-Date).ToUniversalTime().ToString('o');updatedAt=''}
     Save-BranchSourceSyncGroupPlan -Plan $plan
     Update-DevBranchState -State (Read-DevBranchState -Name $members[0].name) -Updates @{pendingBranchSourceGroupId=$id}
@@ -12089,10 +11612,6 @@ function Read-BranchSourceSyncGroupPlan {
     finally { $sha.Dispose() }
     if ($envelope.schemaVersion -ne 1 -or $hash -cne $envelope.sha256) { throw 'DEV_BRANCH_SOURCE_SYNC_PLAN_INTEGRITY_FAILED' }
     $plan = $envelope.payload | ConvertFrom-Json
-    if (-not $plan.PSObject.Properties['coordinator'] -or
-        -not [string]::Equals($plan.coordinator, $script:DevBranchMutationDatabaseAdmission.plan.coordinator, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'DEV_BRANCH_SOURCE_SYNC_COORDINATOR_CHANGED: resume through the original database authority; the saved admission must not be bypassed.'
-    }
     if ($plan.schemaVersion -ne 1 -or $plan.id -cne $id -or $plan.requestHash -cne $Scope.requestHash -or
         -not [string]::Equals($plan.project, [IO.Path]::GetFullPath($script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase) -or
         @($plan.members).Count -ne @($Scope.states).Count -or ($plan.names -join [char]0) -cne ($Scope.names -join [char]0) -or
@@ -12126,7 +11645,6 @@ function Invoke-BranchSourceSyncGroupInstall {
     Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
         $state = Read-DevBranchState -Name $member.name
         Assert-DevelopmentBranchWorktreeContext -State $state -Operation sync-dev-branches
-        Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
         Install-BranchSourceSyncTree -ExpectedHead $member.head -PreviousSource $PreviousSource -DesiredCommit $DesiredCommit `
             -ExportPath $Plan.exportPath -CommitHead:$CommitHead
     }
@@ -12199,12 +11717,9 @@ function Invoke-BranchSourceSyncLoadPhase {
         [scriptblock]$Action, [switch]$ReplaySafe)
     if ($null -eq $Context) { return (& $Action) }
     $progress = $Context.member.loadProgress
-    $owner = $script:DevBranchMutationDatabaseAdmission.owner
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
     $completed = @($progress.completed | Where-Object { $_.name -ceq $Name })
     if ($completed.Count -gt 1) { throw 'SOURCE_SYNC_PHASE_DUPLICATE' }
     if ($completed.Count -eq 1) {
-        Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $completed[0].ticket -StepId $completed[0].stepId | Out-Null
         return (Copy-BranchSourceSyncPhaseResult -Value $completed[0].result)
     }
     $order = @('load','normalize','runtime','cursor','state')
@@ -12213,31 +11728,22 @@ function Invoke-BranchSourceSyncLoadPhase {
     }
     if ($null -ne $progress.pending) {
         $pending = $progress.pending
-        if ($pending.record.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
-        $observation = Get-ItlDatabaseSourceSyncPhase -Owner $owner -Ticket $pending.ticket -Record $pending.record
-        if ($observation.completed) {
-            $progress.completed = @($progress.completed) + @([pscustomobject]@{
-                name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $observation.result)})
-            $progress.pending = $null
-            Save-BranchSourceSyncLoadProgress -Context $Context
-            Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $pending.ticket -StepId $pending.record.stepId | Out-Null
-            return $observation.result
-        }
-        if (-not $observation.canStart -and -not ($ReplaySafe -and $observation.canResumeLocalSteps)) {
-            throw "DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED: $($Context.member.branch); phase=$Name; ticket=$($pending.ticket). The native phase has no completion receipt; do not replay it."
-        }
+        if ($pending.step -cne $Name) { throw 'SOURCE_SYNC_PHASE_ORDER_CHANGED' }
+        # The saved plan is an operation-specific checkpoint, not ownership.
+        # A repeated sync command is an explicit new attempt; record the
+        # interrupted attempt before invoking the phase again.
         $progress.attempts = @($progress.attempts) + @([pscustomobject]@{
-            name=$Name;ticket=$pending.ticket;stepId=$pending.record.stepId;noNativeWork=[bool]$observation.canStart})
+            name=$Name;stepId=$pending.stepId;status='interrupted';replaySafe=[bool]$ReplaySafe})
         $progress.pending = $null
+        Save-BranchSourceSyncLoadProgress -Context $Context
     }
     $record = [pscustomobject]@{schemaVersion=2;groupId=$Context.plan.id;stepId=[guid]::NewGuid().ToString('N')
         step=$Name;status='running';project=$Context.plan.project;member=$Context.member.name
         members=@($Context.plan.members | ForEach-Object { [pscustomobject]@{name=$_.name;project=$_.project;target=$_.target} })
         sourceFingerprint=$Context.plan.fingerprint;sourceCommit=$Context.member.resultCommit;exportPath=$Context.plan.exportPath
         contentKind=$Context.contentKind;extensionName=$Context.extensionName;result=@{}}
-    $progress.pending = [pscustomobject]@{ticket=$owner.proof.ticket;record=$record}
+    $progress.pending = $record
     Save-BranchSourceSyncLoadProgress -Context $Context
-    Publish-ItlDatabaseSourceSyncPhase -Owner $owner -Record $record | Out-Null
     if ($Name -eq 'load') {
         $cursorPath = "$($Context.plan.exportPath)/ConfigDumpInfo.xml"
         $expectedCursor = Get-GitObjectIdForTreePath -Treeish $Context.member.resultCommit -RepoPath $cursorPath
@@ -12249,16 +11755,10 @@ function Invoke-BranchSourceSyncLoadPhase {
         Assert-BranchSourceSyncCursorIndex -CursorPath $cursorPath -AllowedObjectIds @($expectedCursor)
     }
     $result = & $Action
-    # Keep the pending intent unchanged until the authority acknowledges the
-    # successful return. If local saving fails, the next helper reads that receipt.
-    $finished = [pscustomobject](ConvertTo-Agent1cHashtable -Object $record)
-    $finished.status = 'completed'; $finished.result = $result
-    Publish-ItlDatabaseSourceSyncPhase -Owner $owner -Record $finished | Out-Null
     $progress.completed = @($progress.completed) + @([pscustomobject]@{
-        name=$Name;ticket=$owner.proof.ticket;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
+        name=$Name;stepId=$record.stepId;result=(Copy-BranchSourceSyncPhaseResult -Value $result)})
     $progress.pending = $null
     Save-BranchSourceSyncLoadProgress -Context $Context
-    Confirm-ItlDatabaseSourceSyncPhaseConsumed -Owner $owner -Ticket $owner.proof.ticket -StepId $record.stepId | Out-Null
     return $result
 }
 
@@ -12398,15 +11898,6 @@ function Assert-DevBranchSourceSyncLifecycleReady {
     throw "DEV_BRANCH_SOURCE_SYNC_PENDING_LIFECYCLE: role='$Role' branch='$branch' worktree='$worktreePath' operation='$operation' stage='$stage'. Source synchronization cannot replace a different helper-owned lifecycle operation."
 }
 
-function Assert-ItlBranchSourceSyncDatabaseAdmission {
-    param([object]$State)
-    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $variable -or $null -eq $variable.Value -or $variable.Value.operation -cne 'sync-dev-branches') {
-        throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED: synchronization requires both databases before lifecycle locks.'
-    }
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $variable.Value -State $State
-}
-
 function Assert-BranchSourceSyncGroupResolution {
     param([object]$Plan)
     if ((Get-CurrentCommit) -cne $Plan.members[0].head) { throw 'DEV_BRANCH_SOURCE_SYNC_PRIMARY_MOVED' }
@@ -12440,7 +11931,6 @@ function Write-BranchSourceSyncGroupReport {
     $lines.Add('## Групповая синхронизация исходников')
     Add-RunUserReportLine -Lines $lines -Label 'Результат' -Value $(if ($Plan.phase -eq 'complete' -and -not $Plan.error) { 'успешно' } else { 'не завершено' })
     Add-RunUserReportLine -Lines $lines -Label 'План' -Value (Get-BranchSourceSyncGroupPlanPath -Id $Plan.id)
-    if ($Plan.PSObject.Properties['coordinator']) { Add-RunUserReportLine -Lines $lines -Label 'Координатор баз' -Value $Plan.coordinator }
     Add-RunUserReportLine -Lines $lines -Label 'Этап' -Value $Plan.phase
     Add-RunUserReportLine -Lines $lines -Label 'Получатели общего результата' -Value ($Plan.recipients -join ', ')
     if ($Plan.fingerprint) { Add-RunUserReportLine -Lines $lines -Label 'Fingerprint результата' -Value $Plan.fingerprint }
@@ -12449,7 +11939,7 @@ function Write-BranchSourceSyncGroupReport {
         Add-RunUserReportLine -Lines $lines -Label $member.branch -Value "источник @ $($member.head); $delivery"
         if ($member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress -and $null -ne $member.loadProgress.pending) {
             $pendingPhase = $member.loadProgress.pending
-            Add-RunUserReportLine -Lines $lines -Label 'Незавершённый этап' -Value "$($pendingPhase.record.step); ticket=$($pendingPhase.ticket); step=$($pendingPhase.record.stepId)"
+            Add-RunUserReportLine -Lines $lines -Label 'Незавершённый этап' -Value "$($pendingPhase.step); step=$($pendingPhase.stepId)"
         }
     }
     if ($Plan.error) { Add-RunUserReportLine -Lines $lines -Label 'Причина остановки' -Value $Plan.error }
@@ -12461,24 +11951,24 @@ function Sync-DevBranchSourceGroup {
     $primaryState = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $primaryState -Operation sync-dev-branches
     $scope = Get-BranchSourceSyncScope -State $primaryState
-    $admissionVariable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $admissionVariable -or $null -eq $admissionVariable.Value -or $admissionVariable.Value.operation -cne 'sync-dev-branches') {
-        throw 'INFOBASE_ACCESS_MUTATION_ADMISSION_REQUIRED'
+    if (-not $scope.group) { throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_REQUIRED' }
+    $frozenVariable = Get-Variable -Name BranchSourceSyncFrozenScope -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $frozenVariable -and $null -ne $frozenVariable.Value -and
+        -not (Test-BranchSourceSyncScopeEquivalent -First $frozenVariable.Value -Second $scope)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
     }
-    $admission = $admissionVariable.Value
-    if (-not $scope.group -or $scope.requestHash -cne $admission.plan.syncScope.requestHash -or
-        ($scope.names -join [char]0) -cne ($admission.plan.syncScope.names -join [char]0)) {
-        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs while waiting.'
+    $databasePlan = Get-ItlBranchSourceSyncDatabasePlan -State $primaryState
+    if (-not (Test-BranchSourceSyncScopeEquivalent -First $scope -Second $databasePlan.syncScope)) {
+        throw 'DEV_BRANCH_SOURCE_SYNC_REQUEST_CHANGED: repeat the original request without changing its inputs.'
     }
     foreach ($state in $scope.states) {
         Invoke-BranchSourceSyncProject -Root $state.worktreePath -ScriptBlock {
-            Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
             Assert-DevBranchSourceSyncLifecycleReady -State $state -Role peer -SyncWorktreePath $primaryState.worktreePath
             if ($null -ne (Get-PendingBranchSourceSync -State $state)) { throw 'DEV_BRANCH_SOURCE_SYNC_PAIR_PENDING: complete the saved pair synchronization first.' }
         }
     }
     $plan = Read-BranchSourceSyncGroupPlan -State $primaryState -Scope $scope
-    if ($null -eq $plan) { $plan = New-BranchSourceSyncGroupPlan -Scope $scope -Admission $admission }
+    if ($null -eq $plan) { $plan = New-BranchSourceSyncGroupPlan -Scope $scope -DatabasePlan $databasePlan }
     try {
         $plan.error = ''
         if ($null -ne $plan.pending) {
@@ -12556,7 +12046,6 @@ function Sync-DevBranchSourceGroup {
             foreach ($member in @($plan.members | Where-Object { $_.recipient })) {
                 $observation = Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
                     $state = Read-DevBranchState -Name $member.name
-                    Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
                     if ($member.loadStatus -eq 'loading' -and $member.PSObject.Properties['loadProgress'] -and $null -ne $member.loadProgress) {
                         Assert-BranchSourceSyncLoadSource -Plan $plan -Member $member
                     } else { Assert-CleanGit }
@@ -12572,7 +12061,7 @@ function Sync-DevBranchSourceGroup {
                     (Get-StateValue $observation.state 'lastBranchSourceSyncGroupCommit' '') -ceq $observation.head
                 if (-not $hasReceipt) {
                     if ($member.loadStatus -eq 'loading' -and (-not $member.PSObject.Properties['loadProgress'] -or $null -eq $member.loadProgress)) {
-                        throw "DEV_BRANCH_SOURCE_SYNC_LOAD_UNCONFIRMED: $($member.branch); inspect the native operation through the supported database recovery helper before continuing. Completed recipients will not be replayed."
+                        throw "DEV_BRANCH_SOURCE_SYNC_LOAD_STATE_INVALID: $($member.branch); the saved operation checkpoint is incomplete."
                     }
                     if ($member.loadStatus -ne 'loading') {
                         $member | Add-Member -NotePropertyName loadProgress -NotePropertyValue ([pscustomobject]@{schemaVersion=1;completed=@();pending=$null;attempts=@()}) -Force
@@ -12595,7 +12084,6 @@ function Sync-DevBranchSourceGroup {
             Invoke-BranchSourceSyncProject -Root $member.project -ScriptBlock {
                 Assert-CleanGit
                 $state = Read-DevBranchState -Name $member.name
-                Assert-ItlBranchSourceSyncDatabaseAdmission -State $state
                 if ($member.loadStatus -ne 'loaded' -or (Get-CurrentCommit) -cne $member.loadedHead -or
                     [string](Get-ConfigSourceFingerprint -ExportPath $plan.exportPath).fingerprint -cne $plan.fingerprint -or
                     (Get-StateValue $state 'lastBranchSourceSyncGroupId' '') -cne $plan.id -or
@@ -12630,13 +12118,6 @@ function Sync-DevBranches {
     $syncWorktreePath = [string](Get-StateValue -State $primaryState -Name "worktreePath" -Default $script:ProjectRoot)
     Assert-DevBranchSourceSyncLifecycleReady -State $primaryState -Role "primary" -SyncWorktreePath $syncWorktreePath
     Assert-DevBranchSourceSyncLifecycleReady -State $peerState -Role "peer" -SyncWorktreePath $syncWorktreePath
-    Assert-ItlBranchSourceSyncDatabaseAdmission -State $primaryState
-    $environmentBefore = [Environment]::GetEnvironmentVariables('Process')
-    try {
-        Invoke-InProjectContext -Root $peerState.worktreePath -ScriptBlock {
-            Assert-ItlBranchSourceSyncDatabaseAdmission -State $peerState
-        }
-    } finally { Restore-ItlProcessEnvironment -Snapshot $environmentBefore }
     $pending = Get-PendingBranchSourceSync -State $primaryState
 
     if ($null -ne $pending) {
@@ -13715,87 +13196,11 @@ function Assert-DevBranchResetResumeInputs {
     }
 }
 
-function Get-DevBranchResetCheckpointContext {
-    param([Parameter(Mandatory)][object]$State)
-    $phase = [string]$State.resetPhase
-    $manifest = if ($phase -ne 'archive-pending') {
-        $path = Join-Path ([string]$State.resetArchivePath) 'manifest.json'
-        [pscustomobject]@{path=$path;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
-    } else { $null }
-    return [pscustomobject]@{
-        schemaVersion=1;project=[IO.Path]::GetFullPath($script:ProjectRoot);mainProject=[IO.Path]::GetFullPath((Get-MainWorktreePath))
-        branch=[string]$State.devBranch;branchName=[string]$State.devBranchName
-        target=[pscustomobject]@{kind=[string]$State.infoBaseKind;path=[string]$State.devBranchInfoBasePath}
-        oldHead=[string]$State.resetOldHead;masterCommit=[string]$State.resetMasterCommit;masterTree=[string]$State.resetMasterTree
-        masterFingerprint=[string]$State.resetMasterFingerprint;masterConfigTree=[string]$State.resetMasterConfigTreeObjectId
-        archivePath=[string]$State.resetArchivePath;seed=$State.resetSeedIdentity;phase=$phase
-        newHead=[string](Get-StateValue -State $State -Name 'resetNewHead' -Default '');archiveManifest=$manifest
-    }
-}
-
-function Publish-DevBranchResetCheckpoint {
-    param([Parameter(Mandatory)][object]$State)
-    $variable = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-    if ($null -eq $variable -or $null -eq $variable.Value) { return }
-    $admission = $variable.Value
-    if ($admission.operation -cne 'reset-dev-branch' -or $admission.completed) { throw 'NATIVE_RESET_ADMISSION_REQUIRED' }
-    Assert-ItlDevBranchMutationDatabaseAdmission -Admission $admission -State $State
-    . (Join-Path $PSScriptRoot '../../../itl-remote-runner/scripts/DatabaseAccess.ps1')
-    Publish-ItlDatabaseResetCheckpoint -Owner $admission.owner -Record (Get-DevBranchResetCheckpointContext -State $State) | Out-Null
-}
-
-function Get-DevBranchResetRecoveryState {
-    param([Parameter(Mandatory)][object]$State, [Parameter(Mandatory)][object]$Context)
-    $actual = Get-DevBranchResetCheckpointContext -State $State
-    foreach ($name in @('project','mainProject','branch','branchName','oldHead','masterCommit','masterTree',
-        'masterFingerprint','masterConfigTree','archivePath')) {
-        if ([string]$actual.$name -cne [string]$Context.$name) { throw "NATIVE_RESET_RECOVERY_INPUT_CHANGED: $name" }
-    }
-    foreach ($name in @('kind','path')) {
-        if ([string]$actual.target.$name -cne [string]$Context.target.$name) { throw "NATIVE_RESET_RECOVERY_TARGET_CHANGED: $name" }
-    }
-    foreach ($name in @('schemaVersion','sourceKey','syncId','artifactKind','artifactPath','artifactSha256','artifactBytes',
-        'configurationFingerprint','baselinePath','baselineHash','baselineSha256')) {
-        if ([string]$actual.seed.$name -cne [string]$Context.seed.$name) { throw "NATIVE_RESET_RECOVERY_SEED_CHANGED: $name" }
-    }
-    $phases = @('archive-pending','archive-complete','git-reset-complete','runtime-initializing','complete')
-    $confirmed = [Array]::IndexOf($phases, [string]$Context.phase)
-    $saved = [Array]::IndexOf($phases, [string]$actual.phase)
-    if ($confirmed -lt 0 -or $saved -notin @($confirmed, ($confirmed + 1))) { throw 'NATIVE_RESET_RECOVERY_PHASE_CHANGED' }
-    if ($confirmed -ge 1 -and ($actual.archiveManifest.path -cne $Context.archiveManifest.path -or
-        $actual.archiveManifest.sha256 -cne $Context.archiveManifest.sha256)) { throw 'NATIVE_RESET_RECOVERY_ARCHIVE_CHANGED' }
-    if ($confirmed -ge 2 -and $actual.newHead -cne $Context.newHead) { throw 'NATIVE_RESET_RECOVERY_HEAD_CHANGED' }
-    # State may have reached the next phase immediately before the pipe ACK.
-    # Resume from the confirmed phase in memory. Existing idempotent lifecycle
-    # steps validate/reuse the archive and exact master commit themselves.
-    $effective = ConvertTo-Agent1cHashtable -Object $State
-    $effective['resetStatus'] = 'resetting'
-    $effective['resetPhase'] = [string]$Context.phase
-    $effective['resetNewHead'] = [string]$Context.newHead
-    return [pscustomobject]$effective
-}
-
 function Reset-DevBranch {
-    param([AllowNull()][object]$RecoveryContext = $null)
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "reset-dev-branch"
     if ((Get-DevBranchKind -State $state) -ne "configuration") {
         throw "RESET_DEV_BRANCH_EXTENSION_UNSUPPORTED: only configuration branches are supported."
-    }
-
-    if ($null -ne $RecoveryContext) {
-        $recoveryAdmission = Get-Variable -Name DevBranchMutationDatabaseAdmission -Scope Script -ErrorAction SilentlyContinue
-        if ($null -eq $recoveryAdmission -or $null -eq $recoveryAdmission.Value -or
-            (Get-StateValue -State $recoveryAdmission.Value.owner.proof -Name 'purpose' -Default '') -cne 'recovery') {
-            throw 'NATIVE_RESET_RECOVERY_ADMISSION_REQUIRED'
-        }
-        $state = Get-DevBranchResetRecoveryState -State $state -Context $RecoveryContext
-        if ($RecoveryContext.phase -eq 'complete') {
-            Assert-CleanGit
-            if ((Get-CurrentCommit) -cne $RecoveryContext.newHead) { throw 'NATIVE_RESET_RECOVERY_HEAD_CHANGED' }
-            Assert-DevBranchResetArchiveReady -ArchivePath $state.resetArchivePath -OldHead $state.resetOldHead -MasterCommit $state.resetMasterCommit | Out-Null
-            return
-        }
     }
 
     $resetStatus = [string](Get-StateValue -State $state -Name "resetStatus" -Default "")
@@ -13844,14 +13249,12 @@ function Reset-DevBranch {
         if (-not (Test-GitCommitExists $masterCommit)) {
             throw "RESET_DEV_BRANCH_MASTER_COMMIT_MISSING: $masterCommit"
         }
-        Publish-DevBranchResetCheckpoint -State $state
         $phase = [string](Get-StateValue -State $state -Name "resetPhase" -Default "archive-pending")
         if ($phase -eq "archive-pending") {
             $archive = New-DevBranchResetArchive -State $state -MasterCommit $masterCommit -OldHead ([string]$state.resetOldHead) -ArchivePath ([string]$state.resetArchivePath)
             Update-DevBranchState -State $state -Updates @{ resetPhase = "archive-complete"; resetArchiveDtPath = [string]$archive.dtPath; resetArchiveManifestPath = [string]$archive.manifestPath }
             $state = Read-DevBranchState -Name $DevBranchName
             $phase = "archive-complete"
-            Publish-DevBranchResetCheckpoint -State $state
         }
         if ($phase -eq "archive-complete") {
             Set-RunStage -Stage "reset.git" -Detail "Replacing the branch tree with the exact local master tree."
@@ -13865,7 +13268,6 @@ function Reset-DevBranch {
             Update-DevBranchState -State $state -Updates @{ resetPhase = "git-reset-complete"; resetNewHead = $newHead }
             $state = Read-DevBranchState -Name $DevBranchName
             $phase = "git-reset-complete"
-            Publish-DevBranchResetCheckpoint -State $state
             $changedRuntime = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', [string]$state.resetOldHead, 'HEAD', '--',
                 '.agents/skills/1c-workflow/scripts', '.agents/skills/1c-workflow/assets/vanessa-service', '.agents/skills/itl-remote-runner/scripts'))
             if ($changedRuntime.Count -gt 0) {
@@ -13905,7 +13307,6 @@ function Reset-DevBranch {
             Add-DevBranchResetTransientStateClearUpdates -State $state -Updates $clear
             Update-DevBranchState -State $state -Updates $clear
             $state = Read-DevBranchState -Name $DevBranchName
-            Publish-DevBranchResetCheckpoint -State $state
             $state = Initialize-DevBranchEventLogBaseline -State $state -SeedBaselinePath ([string]$seed.baselinePath)
             # No shared seed paths are read after installing the event-log baseline.
             # Release before re-entering main: a seed writer may already own main.
@@ -13924,7 +13325,6 @@ function Reset-DevBranch {
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
             Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
-            Publish-DevBranchResetCheckpoint -State (Read-DevBranchState -Name $DevBranchName)
         }
 
         $completed = Read-DevBranchState -Name $DevBranchName
@@ -14568,8 +13968,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
         if (-not (Test-Path -LiteralPath $snapshotPath -PathType Leaf)) {
             throw "Release extension smoke snapshot was not created: $snapshotPath"
         }
-        $recoveryContext = New-OneCExtensionRecoveryContext -State $state -SnapshotPath $snapshotPath -SourcePath $dumpPath -SourceExisted (Test-Path -LiteralPath $dumpPath -PathType Container) -OriginalStateBytes $originalStateBytes
-        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath -RecoveryContext $recoveryContext
+        $snapshotDuty = Register-OneCDatabaseRestorationDuty -State $state -SnapshotPath $snapshotPath
         $snapshotCreated = $true
 
         Enable-ReleaseE2EExtensionState
@@ -15032,7 +14431,6 @@ function Invoke-DevBranchCheck {
     $state = Ensure-DevBranchEventLogBaseline -State $state
     $eventLogCursor = Ensure-DevBranchEventLogPendingCursor -State $state -Reason "check-dev-branch"
     Update-DevBranchBase
-    Set-ItlDevBranchDatabaseAccessMode -AccessMode functional-test -State $state | Out-Null
     Restore-ConfigDumpInfoLoadSnapshot -Snapshot $dumpInfoSnapshot
     Invoke-ItlVerificationCycle `
         -Trigger $trigger `

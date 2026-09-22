@@ -26,11 +26,11 @@ func launchProfileOwner(executable string, args []string, projectRoot string) (p
 	}
 	defer log.Close()
 	command := exec.Command(executable, args...)
-	hideDatabaseHost(command)
+	hideExecutionGuardHost(command)
 	command.Stdout, command.Stderr = log, log
 	// A manual owner must own its reservation itself. It may not accidentally
 	// adopt a short-lived invoking process's environment or private broker proof.
-	command.Env, err = databaseBrokerEnvironment(context.Background())
+	command.Env, err = executionBrokerEnvironment(context.Background())
 	if err != nil {
 		return profileProcessIdentity{}, err
 	}
