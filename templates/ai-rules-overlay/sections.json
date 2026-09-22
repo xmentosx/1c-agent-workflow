@@ -995,10 +995,10 @@
                               "path":  "content/skills/1c-metadata-manage/tools/1c-meta-validate/scripts/meta-validate.ps1",
                               "requirementId":  "ITL-METADATA-VALIDATOR-001",
                               "disposition":  "resolved",
-                              "reason":  "Resolve ITL-METADATA-VALIDATOR-001 for r33 by treating exported Form descriptors as structurally valid metadata roots.",
+                              "reason":  "Resolve ITL-METADATA-VALIDATOR-001 for r36 by accepting exported Template descriptors and IntegrationService roots for structural validation while workflow owns aggregate context.",
                               "upstreamSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb",
                               "baselineSha256":  "63a97e7c6467c74b3cec2d29424b2bf00570287b3d012417491d63eba8d86deb",
-                              "resultSha256":  "dd9780dbd54636d2430ac4a61950888894db12e4bd5c9c7afef72109d7ade4d0"
+                              "resultSha256":  "bb0dfe864be451a602ab3694e3586cf11bae7a42249f702cad9f3aac2b1774f0"
                           },
                           {
                               "path":  "content/skills/1c-metadata-manage/tools/1c-uuid-check/scripts/uuid-check.ps1",
@@ -1381,7 +1381,7 @@
                           {
                               "path":  "scripts/check.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "rewrite",
+                              "disposition":  "resolved",
                               "reason":  "Set an explicit UTF-8 console boundary before redirected fork qualification launches nested PowerShell checks.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "7852bd14c53e76e0fa7c443a100d1c55699760892b07242a773f13fe0fd0bd37",
@@ -1462,7 +1462,7 @@
                           {
                               "path":  "tests/ReleaseTooling.Tests.ps1",
                               "requirementId":  "ITL-INFRA-001",
-                              "disposition":  "rewrite",
+                              "disposition":  "resolved",
                               "reason":  "Regress the explicit UTF-8 boundary required by redirected fork qualification.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "e5075157ed846e4c7f5c0bdb47550ef3c266dd20a143289fd391b9add789d1b1",
@@ -1742,10 +1742,10 @@
                               "path":  "tests/MetadataIntegrityValidators.Tests.ps1",
                               "requirementId":  "ITL-METADATA-VALIDATOR-001",
                               "disposition":  "downstream-only",
-                              "reason":  "Add the focused r33 regressions for metadata identity definitions, references, explicit lifecycle deltas, duplicate uuid attributes, and Form descriptors.",
+                              "reason":  "Add focused metadata identity, explicit lifecycle delta, Form, Template, and IntegrationService descriptor regressions through r36.",
                               "upstreamSha256":  "\u003cabsent\u003e",
                               "baselineSha256":  "\u003cabsent\u003e",
-                              "resultSha256":  "27d5a7010677ca1d259d76e09e064c8d7b15a5d52176c0fc6c114d0ec5be3962"
+                              "resultSha256":  "da244ef8cce4743a36a1876bdab3c8b0dcf0d4576a66f1b70a14d8bcf35c0408"
                           },
                           {
                               "path":  "tests/ValidatorExecutionPolicy.Tests.ps1",

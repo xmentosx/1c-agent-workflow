@@ -50,6 +50,12 @@ The contract is activated only by `init-project` or an authoritative `sync-maste
 
 Before a workflow-owned checkpoint, configuration load, repository transfer plan, or completion of a merge, ITL inspects only the changed `.bsl` and `.xml` paths already reported by Git. If the corresponding local `master` blob uses one homogeneous line-ending style, ITL restores that style automatically without changing file content. New files, binary data, `ConfigDumpInfo.xml`, and references with mixed or ambiguous line endings are skipped; this repair does not block the operation or request user action.
 
+Semantic source-integrity starts from that same changed-path set. A changed
+`Templates/<Name>.xml` descriptor or `Templates/<Name>/Ext/Template.xml`
+payload expands only to its exact owning metadata object, descriptor, and XML
+payload. It never enumerates or validates every template or every configuration
+file merely because one aggregate changed.
+
 Managed source-only maintenance references:
 
 - `local-quality-gate.md` — local Fast/Full checks;
