@@ -12661,7 +12661,12 @@ function Get-ConfigRepositoryLockOutcome {
         [string]$LogPath,
         [bool]$Succeeded,
         [object]$RootOutcome = $null,
-        [string]$CurrentOwner = ''
+        [string]$CurrentOwner = '',
+        [string[]]$BlockedByRoot = @(),
+        [string[]]$NotAttempted = @(),
+        [bool]$ObjectOperationAttempted = $true,
+        [int]$ObjectRequestedCount = -1,
+        [ValidateSet('', 'succeeded', 'failed')][string]$OverallStatus = ''
     )
     $byName = @{}
     $items = @(foreach ($item in @($Plan.items)) {
@@ -12678,7 +12683,7 @@ function Get-ConfigRepositoryLockOutcome {
     # explicit absence list is still valid per-object evidence.
     if ($starts -le 1) {
         foreach ($line in @($text -split '\r?\n')) {
-            $name = ''; $status = ''; $owner = ''
+            $name = ''; $reportedName = ''; $status = ''; $owner = ''
             if ($line -eq 'Объекты, отсутствующие в обеих конфигурациях:') { $inAbsentList = $true; continue }
             if ($inAbsentList -and [string]::IsNullOrWhiteSpace($line)) { $inAbsentList = $false; continue }
             if ($line -eq '---- Начало операции с хранилищем конфигурации ----') { $inOperation = $true; $inAbsentList = $false; continue }
@@ -12689,10 +12694,19 @@ function Get-ConfigRepositoryLockOutcome {
             } elseif ($inOperation -and $line -match '^Объект захвачен для редактирования:\s*(.+?)\s*$') {
                 $name = $Matches[1].Trim(); $status = 'captured'
             }
-            if ($name) { $name = ConvertTo-ConfigRepositoryLogObjectName -Name $name }
+            if ($name) {
+                $reportedName = $name
+                $name = ConvertTo-ConfigRepositoryLogObjectName -Name $name
+                # A root-only request contains exactly one platform identity, but
+                # Designer reports the configured application name instead of the
+                # canonical Configuration/Конфигурация label on some builds.
+                if (-not $byName.ContainsKey($name) -and $items.Count -eq 1 -and $items[0].name -eq 'Конфигурация') {
+                    $name = 'Конфигурация'
+                }
+            }
             if ($name -and $byName.ContainsKey($name)) {
                 $entry = $byName[$name]
-                $entry.observations = @($entry.observations) + [pscustomobject]@{ status = $status; owner = $owner }
+                $entry.observations = @($entry.observations) + [pscustomobject]@{ status = $status; owner = $owner; reportedName = $reportedName }
             }
         }
     }
@@ -12723,13 +12737,35 @@ function Get-ConfigRepositoryLockOutcome {
         $entry = $byName['Конфигурация']
         $entry.status = $rootEntry.status; $entry.owner = $rootEntry.owner; $entry.observations = $rootEntry.observations
     }
+    foreach ($name in @($BlockedByRoot)) {
+        if ($byName.ContainsKey($name)) {
+            $byName[$name].status = 'blocked-by-root'
+            $byName[$name].owner = ''
+            $byName[$name].observations = @()
+        }
+    }
+    foreach ($name in @($NotAttempted)) {
+        if ($byName.ContainsKey($name)) {
+            $byName[$name].status = 'not-attempted'
+            $byName[$name].owner = ''
+            $byName[$name].observations = @()
+        }
+    }
     $requiredBy = if ($null -ne $Plan.PSObject.Properties['rootLockRequiredBy']) { @($Plan.rootLockRequiredBy) } else { @() }
+    if ($ObjectRequestedCount -lt 0) { $ObjectRequestedCount = @($Plan.items).Count }
+    $operationStatus = if ($OverallStatus) { $OverallStatus } elseif ($Succeeded) { 'succeeded' } else { 'failed' }
     return [pscustomobject]@{
         schemaVersion = 1; baseCommit = [string]$Plan.baseCommit
-        operationStatus = $(if ($Succeeded) { 'succeeded' } else { 'failed' })
+        operationStatus = $operationStatus
         logPath = $LogPath; operationEndObserved = $ended
         lockSuccessObserved = $lockSuccessObserved; lockCompletionEvidenceValid = $lockCompletionEvidenceValid; items = $items
         rootLockRequiredBy = @($requiredBy); rootOperation = $RootOutcome
+        objectOperation = [pscustomobject]@{
+            attempted = $ObjectOperationAttempted
+            requestedCount = $ObjectRequestedCount
+            status = $(if (-not $ObjectOperationAttempted) { 'not-attempted' } elseif ($Succeeded) { 'succeeded' } else { 'failed' })
+            logPath = $LogPath
+        }
     }
 }
 
@@ -12750,14 +12786,29 @@ function Write-ConfigRepositoryLockOutcomeReport {
     if (@($Outcome.rootLockRequiredBy).Count -gt 0) {
         $Lines.Add(''); $Lines.Add('### Зависимость новых объектов от корня конфигурации')
         $Lines.Add('Корень запрашивается отдельно, без дочерних объектов. Его захват не означает захват новых объектов.')
-        foreach ($name in $Outcome.rootLockRequiredBy) { $Lines.Add('- ' + $name) }
         if ($null -eq $Outcome.rootOperation) {
-            $Lines.Add('Операция с корнем не завершилась успешно; захват остальных объектов не запускался.')
+            $Lines.Add('Результат отдельной операции с корнем отсутствует.')
         } else {
+            $rootEntry = @($Outcome.rootOperation.items | Where-Object name -eq 'Конфигурация')[0]
+            $reportedRootName = @($rootEntry.observations | ForEach-Object { $_.reportedName } | Where-Object { $_ } | Select-Object -First 1)
+            $rootNameDetail = if ($reportedRootName.Count -gt 0 -and $reportedRootName[0] -notin @('Configuration', 'Конфигурация')) { " (в журнале 1С: $($reportedRootName[0]))" } else { '' }
+            switch ([string]$rootEntry.status) {
+                'captured' { $Lines.Add("Корень конфигурации$rootNameDetail захвачен этой командой.") }
+                'already-owned' { $Lines.Add("Корень конфигурации$rootNameDetail уже был захвачен текущим пользователем $($rootEntry.owner).") }
+                'conflict' { $Lines.Add("Корень конфигурации$rootNameDetail не захвачен: занят пользователем $($rootEntry.owner).") }
+                default { $Lines.Add("Результат захвата корня конфигурации$rootNameDetail не подтверждён журналом 1С.") }
+            }
             Add-RunUserReportLine -Lines $Lines -Label 'Лог операции с корнем' -Value $Outcome.rootOperation.logPath
         }
+        $blockedCount = @($Outcome.items | Where-Object status -eq 'blocked-by-root').Count
+        if ($blockedCount -gt 0) {
+            $Lines.Add("Из-за недоступного корня не запускался захват только зависимых новых объектов: $blockedCount.")
+        }
+        if ($null -ne $Outcome.objectOperation -and $Outcome.objectOperation.attempted) {
+            $Lines.Add("Захват остальных независимых объектов был запущен: $($Outcome.objectOperation.requestedCount).")
+        }
     }
-    $sections = [ordered]@{ captured = 'Захваченные этой командой объекты'; 'already-owned' = 'Уже захвачены текущим пользователем'; conflict = 'Не захвачены: заняты другими пользователями'; absent = 'Отсутствуют в обеих конфигурациях'; unconfirmed = 'Результат захвата не подтверждён' }
+    $sections = [ordered]@{ captured = 'Захваченные этой командой объекты'; 'already-owned' = 'Уже захвачены текущим пользователем'; conflict = 'Не захвачены: заняты другими пользователями'; 'blocked-by-root' = 'Не захвачены: недоступен корень конфигурации'; absent = 'Отсутствуют в обеих конфигурациях'; 'not-attempted' = 'Захват не выполнялся'; unconfirmed = 'Результат захвата не подтверждён' }
     foreach ($status in $sections.Keys) {
         $entries = @($Outcome.items | Where-Object status -eq $status)
         if ($entries.Count -eq 0) { continue }
@@ -12859,60 +12910,117 @@ function Lock-ConfigRepositoryObjects {
     }
     New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
     $hasRootDependency = $null -ne $plan.PSObject.Properties['rootLockRequiredBy'] -and @($plan.rootLockRequiredBy).Count -gt 0
-    $objectPlan = if ($hasRootDependency) { [pscustomobject]@{ items = @($plan.items | Where-Object name -ne 'Конфигурация') } } else { $plan }
-    $objectListPath = Write-ConfigRepositoryObjectList -Plan $objectPlan -Path (Join-Path $runRoot "repository-objects.xml")
+    $allObjectItems = if ($hasRootDependency) { @($plan.items | Where-Object name -ne 'Конфигурация') } else { @($plan.items) }
     $rootOutcome = $null
-    Set-RunStage -Stage "repository-lock.designer" -Detail "Locking the exact changed configuration objects in the source repository."
-    # A launch failure before a new log exists must not reuse an earlier operation.
-    $script:LastLogPath = ''
-    try {
-        if ($hasRootDependency) {
-            $rootPlan = [pscustomobject]@{ baseCommit = $plan.baseCommit; items = @($plan.items | Where-Object name -eq 'Конфигурация') }
-            $rootListPath = Write-ConfigRepositoryObjectList -Plan $rootPlan -Path (Join-Path $runRoot 'repository-root-objects.xml')
-            Add-RunUserReportLine -Lines $report -Label 'Файл захвата корня' -Value $rootListPath
-            Set-RunStage -Stage 'repository-lock.root' -Detail 'Locking only the configuration root required by new top-level objects.'
-            Invoke-ConfigRepositoryObjectOperation -Operation '/ConfigurationRepositoryLock' -ObjectListPath $rootListPath
-            $rootLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
-            if ($rootLogPath) {
-                $preservedRootLogPath = Join-Path $runRoot 'repository-root-lock.log'
-                Move-Item -LiteralPath $rootLogPath -Destination $preservedRootLogPath
-                $rootLogPath = $preservedRootLogPath
-            }
-            $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootLogPath -Succeeded $true -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
-            $script:LastLogPath = ''
-            Set-RunStage -Stage 'repository-lock.designer' -Detail 'Locking the remaining exact changed configuration objects after the root operation.'
-        }
-        Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
-        $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
-    } catch {
-        $designerError = $_.Exception.Message
-        $redactedLogPath = ""
+    $rootError = ''
+    $rootConflictSummary = ''
+    $blockedByRoot = @()
+    $notAttempted = @()
+    $objectItems = @($allObjectItems)
+    if ($hasRootDependency) {
+        $rootPlan = [pscustomobject]@{ baseCommit = $plan.baseCommit; items = @($plan.items | Where-Object name -eq 'Конфигурация') }
+        $rootListPath = Write-ConfigRepositoryObjectList -Plan $rootPlan -Path (Join-Path $runRoot 'repository-root-objects.xml')
+        Add-RunUserReportLine -Lines $report -Label 'Файл захвата корня' -Value $rootListPath
+        Set-RunStage -Stage 'repository-lock.root' -Detail 'Locking only the configuration root required by new top-level objects.'
+        # A launch failure before a new log exists must not reuse an earlier operation.
+        $script:LastLogPath = ''
+        $rootSucceeded = $false
         try {
+            Invoke-ConfigRepositoryObjectOperation -Operation '/ConfigurationRepositoryLock' -ObjectListPath $rootListPath
+            $rootSucceeded = $true
+        } catch {
+            $rootError = $_.Exception.Message
+        }
+        $rootRawLogPath = [string]$script:LastLogPath
+        $rootLogPath = ''
+        try {
+            $rootLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
+        } catch {
+            if (-not $rootError) { $rootError = $_.Exception.Message }
+            $rootLogPath = ''
+        }
+        if ($rootLogPath) {
+            $preservedRootLogPath = Join-Path $runRoot 'repository-root-lock.log'
+            Move-Item -LiteralPath $rootLogPath -Destination $preservedRootLogPath
+            $rootLogPath = $preservedRootLogPath
+        }
+        $rootDiagnosticLogPath = if ($rootLogPath) { $rootLogPath } else { $rootRawLogPath }
+        $rootOutcome = Get-ConfigRepositoryLockOutcome -Plan $rootPlan -LogPath $rootDiagnosticLogPath -Succeeded $rootSucceeded -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
+        # Persist and expose only the redacted copy even when parsing had to use
+        # the native log because redaction could not be written.
+        $rootOutcome.logPath = $rootLogPath
+        if ($rootError) {
+            $rootConflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $rootDiagnosticLogPath
+            if ($rootConflictSummary) {
+                $blockedByRoot = @($plan.rootLockRequiredBy)
+                $objectItems = @($allObjectItems | Where-Object { $blockedByRoot -notcontains [string]$_.name })
+            } else {
+                # An unclassified native/transport failure can leave mutation
+                # state uncertain. Do not launch another mutation in that case.
+                $notAttempted = @($allObjectItems | ForEach-Object { [string]$_.name })
+                $objectItems = @()
+            }
+        }
+    }
+
+    $objectPlan = [pscustomobject]@{ items = @($objectItems) }
+    $objectListPath = Write-ConfigRepositoryObjectList -Plan $objectPlan -Path (Join-Path $runRoot 'repository-objects.xml')
+    $objectOperationAttempted = $objectItems.Count -gt 0
+    $objectSucceeded = $false
+    $objectError = ''
+    $objectConflictSummary = ''
+    $redactedLogPath = ''
+    if ($objectOperationAttempted) {
+        Set-RunStage -Stage 'repository-lock.designer' -Detail "Locking $($objectItems.Count) exact changed configuration objects independently of unavailable objects."
+        $script:LastLogPath = ''
+        try {
+            Invoke-ConfigRepositoryObjectOperation -Operation "/ConfigurationRepositoryLock" -ObjectListPath $objectListPath
             $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot
         } catch {
-            $redactedLogPath = ""
+            $objectError = $_.Exception.Message
+            try { $redactedLogPath = Write-ConfigRepositoryLockRedactedLog -RunRoot $runRoot } catch { $redactedLogPath = '' }
         }
+        $objectSucceeded = -not $objectError
         $diagnosticLogPath = if ($redactedLogPath) { $redactedLogPath } else { [string]$script:LastLogPath }
-        $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $false -RootOutcome $rootOutcome -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
-        Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
-        $conflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
+        if (-not $objectSucceeded) {
+            $objectConflictSummary = Get-ConfigRepositoryLockConflictSummary -LogPath $diagnosticLogPath
+        }
+    }
+
+    $overallSucceeded = -not $rootError -and (-not $objectOperationAttempted -or $objectSucceeded)
+    if ($overallSucceeded) {
+        Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
+        Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
+    }
+    $outcomeLogPath = if ($objectOperationAttempted) { $redactedLogPath } elseif ($null -ne $rootOutcome) { [string]$rootOutcome.logPath } else { '' }
+    $outcome = Get-ConfigRepositoryLockOutcome `
+        -Plan $plan `
+        -LogPath $outcomeLogPath `
+        -Succeeded $objectSucceeded `
+        -RootOutcome $rootOutcome `
+        -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER') `
+        -BlockedByRoot $blockedByRoot `
+        -NotAttempted $notAttempted `
+        -ObjectOperationAttempted $objectOperationAttempted `
+        -ObjectRequestedCount $objectItems.Count `
+        -OverallStatus $(if ($overallSucceeded) { 'succeeded' } else { 'failed' })
+    Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
+
+    if (-not $overallSucceeded) {
+        $conflictSummary = @($rootConflictSummary, $objectConflictSummary | Where-Object { $_ } | Select-Object -Unique) -join ' '
         if ($conflictSummary) {
-            if ($redactedLogPath) { $script:LastLogPath = $redactedLogPath }
+            if ($outcomeLogPath) { $script:LastLogPath = $outcomeLogPath }
             Set-RunStage -Stage "repository-lock.conflict" -Detail $conflictSummary
             Set-RunFailureContext `
                 -Category "runner" `
                 -RequiredAction "Освободите перечисленные объекты в хранилище или согласуйте это с указанными пользователями, затем повторите /itl-lock-objects."
-            $logDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
+            $logDetail = if ($outcomeLogPath) { " Редактированный лог: $outcomeLogPath" } else { "" }
             throw "$conflictSummary$logDetail"
         }
-        $redactedLogDetail = if ($redactedLogPath) { " Редактированный лог: $redactedLogPath" } else { "" }
-        throw "$designerError$redactedLogDetail"
+        $failure = if ($objectError) { $objectError } else { $rootError }
+        $redactedLogDetail = if ($outcomeLogPath) { " Редактированный лог: $outcomeLogPath" } else { "" }
+        throw "$failure$redactedLogDetail"
     }
-
-    Add-RunUserReportLine -Lines $report -Label "Исходная база" -Value (Get-SourceInfoBasePath)
-    Add-RunUserReportLine -Lines $report -Label "Пользователь хранилища" -Value (Get-EnvValue -Name "REPOSITORY_USER")
-    $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $redactedLogPath -Succeeded $true -RootOutcome $rootOutcome -CurrentOwner (Get-EnvValue -Name 'REPOSITORY_USER')
-    Write-ConfigRepositoryLockOutcomeReport -Lines $report -Outcome $outcome -RunRoot $runRoot -ObjectListPath $objectListPath
 }
 
 function Invoke-ReleaseE2EConfigRepositoryLockRoundtrip {
