@@ -241,6 +241,60 @@ exit 0
             }
         }
 
+        function New-LifecycleTemplateIntegrityFixture {
+            $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl Макет с пробелом " + [guid]::NewGuid().ToString("N"))
+            $configRoot = Join-Path $tempRoot "src\cf"
+            $reportRoot = Join-Path $configRoot "Reports\ОтчетСКД"
+            $templateRoot = Join-Path $reportRoot "Templates\ОсновнаяСхемаКомпоновкиДанных"
+            New-Item -ItemType Directory -Force -Path (Join-Path $templateRoot "Ext"), (Join-Path $configRoot "Catalogs") | Out-Null
+            $configurationPath = Join-Path $configRoot "Configuration.xml"
+            $ownerPath = Join-Path $configRoot "Reports\ОтчетСКД.xml"
+            $descriptorPath = Join-Path $reportRoot "Templates\ОсновнаяСхемаКомпоновкиДанных.xml"
+            $payloadPath = Join-Path $templateRoot "Ext\Template.xml"
+            $unrelatedPath = Join-Path $configRoot "Catalogs\Неизмененный.xml"
+            [IO.File]::WriteAllText($configurationPath, '<MetaDataObject><Configuration uuid="10ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($ownerPath, @'
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.20">
+  <Report uuid="20ffa7c3-3d5d-4edd-9ebe-1acc0592d242">
+    <Properties>
+      <Name>ОтчетСКД</Name>
+      <MainDataCompositionSchema>Report.ОтчетСКД.Template.ОсновнаяСхемаКомпоновкиДанных</MainDataCompositionSchema>
+    </Properties>
+    <ChildObjects><Template>ОсновнаяСхемаКомпоновкиДанных</Template></ChildObjects>
+  </Report>
+</MetaDataObject>
+'@, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($descriptorPath, @'
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" version="2.20">
+  <Template uuid="30ffa7c3-3d5d-4edd-9ebe-1acc0592d242">
+    <Properties>
+      <Name>ОсновнаяСхемаКомпоновкиДанных</Name>
+      <TemplateType>DataCompositionSchema</TemplateType>
+    </Properties>
+  </Template>
+</MetaDataObject>
+'@, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($payloadPath, '<DataCompositionSchema xmlns="http://v8.1c.ru/8.1/data-composition-system/schema" />', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($unrelatedPath, '<MetaDataObject><Catalog uuid="40ffa7c3-3d5d-4edd-9ebe-1acc0592d242" /></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot init *> $null
+            & git -C $tempRoot config user.email "test@example.com"
+            & git -C $tempRoot config user.name "Test User"
+            & git -C $tempRoot config core.autocrlf false
+            & git -C $tempRoot add .
+            & git -C $tempRoot commit -m "base template aggregate" *> $null
+
+            return [pscustomobject]@{
+                root = $tempRoot
+                ownerPath = $ownerPath
+                ownerRepoPath = "src/cf/Reports/ОтчетСКД.xml"
+                descriptorPath = $descriptorPath
+                descriptorRepoPath = "src/cf/Reports/ОтчетСКД/Templates/ОсновнаяСхемаКомпоновкиДанных.xml"
+                payloadPath = $payloadPath
+                payloadRepoPath = "src/cf/Reports/ОтчетСКД/Templates/ОсновнаяСхемаКомпоновкиДанных/Ext/Template.xml"
+                unrelatedPath = $unrelatedPath
+            }
+        }
+
         function New-LifecycleMergeFormIntegrityFixture {
             $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl Форма с пробелом " + [guid]::NewGuid().ToString("N"))
             $configRoot = Join-Path $tempRoot "src\cf"
@@ -6695,6 +6749,96 @@ if (`$?) { exit 0 } else { exit 1 }
             $paths | Should -Not -Contain "Unchanged.xml"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "expands only a changed Template <Change> to its owner, descriptor, and DCS payload" -TestCases @(
+        @{ Change = "descriptor" }
+        @{ Change = "payload" }
+    ) {
+        param($Change)
+        $fixture = New-LifecycleTemplateIntegrityFixture
+        try {
+            $result = & {
+                param($Fixture, $Change)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $script:CapturedTemplateValidatorCalls = [Collections.Generic.List[object]]::new()
+                $script:CapturedTemplateUuidPaths = @()
+                function Get-OneCConfigurationSourceValidatorPath { return "configuration-validator" }
+                function Get-OneCSourceIntegrityValidatorPath {
+                    param([string]$Validator)
+                    return "$Validator-validator"
+                }
+                function Invoke-OneCSourceIntegrityValidator {
+                    param([string]$Validator, [string]$ScriptPath, [string[]]$Arguments, [switch]$SupportsOutFile)
+                    $validatedPath = ""
+                    foreach ($parameter in @("-ObjectPath", "-TemplatePath")) {
+                        $index = [Array]::IndexOf($Arguments, $parameter)
+                        if ($index -ge 0) { $validatedPath = [string]$Arguments[$index + 1]; break }
+                    }
+                    $script:CapturedTemplateValidatorCalls.Add([pscustomobject]@{ validator = $Validator; path = $validatedPath }) | Out-Null
+                    if ($Validator -ceq "uuid") {
+                        $listIndex = [Array]::IndexOf($Arguments, "-IncludePathList")
+                        $script:CapturedTemplateUuidPaths = @(Get-Content -LiteralPath $Arguments[$listIndex + 1] -Encoding UTF8)
+                    }
+                    return [pscustomobject]@{ exitCode = 0; details = "ok" }
+                }
+
+                $changedRepoPath = if ($Change -eq "descriptor") { $Fixture.descriptorRepoPath } else { $Fixture.payloadRepoPath }
+                Assert-OneCConfigurationSourceIntegrity -ExportPath "src/cf" -AdditionalRelativePaths @($changedRepoPath.Substring("src/cf/".Length))
+                [pscustomobject]@{
+                    calls = @($script:CapturedTemplateValidatorCalls)
+                    uuidPaths = @($script:CapturedTemplateUuidPaths)
+                    changedRepoPath = $changedRepoPath
+                }
+            } $fixture $Change
+
+            $metadataPaths = @($result.calls | Where-Object validator -eq "metadata" | ForEach-Object path | Sort-Object)
+            $expectedMetadataPaths = @($fixture.descriptorPath, $fixture.ownerPath)
+            $expectedMetadataPaths = @($expectedMetadataPaths | Sort-Object)
+            $metadataPaths | Should -Be $expectedMetadataPaths
+            @($result.calls | Where-Object { $_.validator -eq "skd" -and $_.path -ceq $fixture.payloadPath }) | Should -HaveCount 1
+            @($result.calls | Where-Object path -eq $fixture.unrelatedPath) | Should -HaveCount 0
+            $result.uuidPaths | Should -Contain "Configuration.xml"
+            $result.uuidPaths | Should -Contain $result.changedRepoPath.Substring("src/cf/".Length)
+            $result.uuidPaths | Should -HaveCount 2
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects an inconsistent Template aggregate: <Case>" -TestCases @(
+        @{ Case = "missing owner registration"; ExpectedCode = "template-owner-registration-invalid" }
+        @{ Case = "descriptor name differs from path"; ExpectedCode = "template-name-path-mismatch" }
+        @{ Case = "TemplateType differs from payload"; ExpectedCode = "template-payload-type-mismatch" }
+        @{ Case = "owner main schema reference is unresolved"; ExpectedCode = "template-owner-reference-unresolved" }
+    ) {
+        param($Case, $ExpectedCode)
+        $fixture = New-LifecycleTemplateIntegrityFixture
+        try {
+            $codes = & {
+                param($Fixture, $Case)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                if ($Case -eq "missing owner registration") {
+                    $source = [IO.File]::ReadAllText($Fixture.ownerPath, [Text.Encoding]::UTF8)
+                    [IO.File]::WriteAllText($Fixture.ownerPath, $source.Replace("<Template>ОсновнаяСхемаКомпоновкиДанных</Template>", "<Template>ДругойМакет</Template>"), [Text.UTF8Encoding]::new($false))
+                } elseif ($Case -eq "descriptor name differs from path") {
+                    $source = [IO.File]::ReadAllText($Fixture.descriptorPath, [Text.Encoding]::UTF8)
+                    [IO.File]::WriteAllText($Fixture.descriptorPath, $source.Replace("<Name>ОсновнаяСхемаКомпоновкиДанных</Name>", "<Name>ДругаяСхема</Name>"), [Text.UTF8Encoding]::new($false))
+                } elseif ($Case -eq "TemplateType differs from payload") {
+                    $source = [IO.File]::ReadAllText($Fixture.descriptorPath, [Text.Encoding]::UTF8)
+                    [IO.File]::WriteAllText($Fixture.descriptorPath, $source.Replace("<TemplateType>DataCompositionSchema</TemplateType>", "<TemplateType>SpreadsheetDocument</TemplateType>"), [Text.UTF8Encoding]::new($false))
+                } else {
+                    $source = [IO.File]::ReadAllText($Fixture.ownerPath, [Text.Encoding]::UTF8)
+                    [IO.File]::WriteAllText($Fixture.ownerPath, $source.Replace(".Template.ОсновнаяСхемаКомпоновкиДанных", ".Template.НесуществующаяСхема"), [Text.UTF8Encoding]::new($false))
+                }
+                $scope = Resolve-OneCTemplateSourceIntegrityScope -CandidatePaths @($Fixture.descriptorRepoPath) -ProjectRoot $Fixture.root
+                return @($scope.issues | ForEach-Object code)
+            } $fixture $Case
+
+            $codes | Should -Contain $ExpectedCode
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

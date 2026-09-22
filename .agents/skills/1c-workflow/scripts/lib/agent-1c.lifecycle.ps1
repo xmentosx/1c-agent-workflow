@@ -1079,6 +1079,167 @@ function Get-OneCSourceIntegrityCandidatePaths {
     )
 }
 
+function New-OneCTemplateSourceIntegrityIssue {
+    param(
+        [string]$Code,
+        [string]$Path,
+        [string]$TemplateName,
+        [string]$Detail
+    )
+
+    return [pscustomobject]@{
+        validator = "template-aggregate"
+        code = $Code
+        path = $Path
+        symbol = $TemplateName
+        lines = @()
+        detail = $Detail
+    }
+}
+
+function Resolve-OneCTemplateSourceIntegrityScope {
+    param(
+        [string[]]$CandidatePaths,
+        [string]$ProjectRoot
+    )
+
+    $paths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($candidatePath in @($CandidatePaths)) { [void]$paths.Add(([string]$candidatePath).Replace("\", "/")) }
+    $contexts = @{}
+    foreach ($candidatePath in @($CandidatePaths)) {
+        $normalizedPath = ([string]$candidatePath).Replace("\", "/")
+        $ownerStem = ""
+        $templateName = ""
+        if ($normalizedPath -match '^(?<owner>.+)/Templates/(?<name>[^/]+)\.xml$') {
+            $ownerStem = [string]$Matches["owner"]
+            $templateName = [string]$Matches["name"]
+        } elseif ($normalizedPath -match '^(?<owner>.+)/Templates/(?<name>[^/]+)/Ext/Template\.xml$') {
+            $ownerStem = [string]$Matches["owner"]
+            $templateName = [string]$Matches["name"]
+        } else {
+            continue
+        }
+
+        $descriptorRepoPath = "$ownerStem/Templates/$templateName.xml"
+        if (-not $contexts.ContainsKey($descriptorRepoPath)) {
+            $contexts[$descriptorRepoPath] = [pscustomobject]@{
+                name = $templateName
+                ownerRepoPath = "$ownerStem.xml"
+                descriptorRepoPath = $descriptorRepoPath
+                payloadRepoPath = "$ownerStem/Templates/$templateName/Ext/Template.xml"
+            }
+        }
+    }
+
+    $issues = [System.Collections.Generic.List[object]]::new()
+    $xmlPayloadRoots = @{
+        DataCompositionSchema = "DataCompositionSchema"
+        SpreadsheetDocument = "document"
+        HTMLDocument = "Help"
+        GraphicalSchema = "GraphicalSchema"
+    }
+    foreach ($context in @($contexts.Values)) {
+        $descriptorPath = Join-Path $ProjectRoot ($context.descriptorRepoPath.Replace("/", "\"))
+        $ownerPath = Join-Path $ProjectRoot ($context.ownerRepoPath.Replace("/", "\"))
+        $payloadPath = Join-Path $ProjectRoot ($context.payloadRepoPath.Replace("/", "\"))
+
+        if (-not (Test-Path -LiteralPath $descriptorPath -PathType Leaf)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-descriptor-missing" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor is missing for the changed template aggregate.")) | Out-Null
+            continue
+        }
+        [void]$paths.Add($context.descriptorRepoPath)
+
+        $descriptor = [System.Xml.XmlDocument]::new()
+        try {
+            $descriptor.Load($descriptorPath)
+        } catch {
+            # The ordinary XML route reports the parse error for this expanded path.
+            continue
+        }
+        $templateNode = $descriptor.DocumentElement.SelectSingleNode("*[local-name()='Template']")
+        if ($null -eq $templateNode) { continue }
+        $descriptorNameNode = $templateNode.SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+        $descriptorName = if ($null -ne $descriptorNameNode) { [string]$descriptorNameNode.InnerText } else { "" }
+        if (-not [string]::Equals($descriptorName, [string]$context.name, [System.StringComparison]::Ordinal)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-name-path-mismatch" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor Name '$descriptorName' does not exactly match path name '$($context.name)'.")) | Out-Null
+        }
+
+        $templateTypeNode = $templateNode.SelectSingleNode("*[local-name()='Properties']/*[local-name()='TemplateType']")
+        $templateType = if ($null -ne $templateTypeNode) { ([string]$templateTypeNode.InnerText).Trim() } else { "" }
+        if ([string]::IsNullOrWhiteSpace($templateType)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-type-missing" -Path $context.descriptorRepoPath -TemplateName $context.name -Detail "Template descriptor has no TemplateType.")) | Out-Null
+        } elseif ($xmlPayloadRoots.ContainsKey($templateType)) {
+            if (-not (Test-Path -LiteralPath $payloadPath -PathType Leaf)) {
+                $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-payload-missing" -Path $context.payloadRepoPath -TemplateName $context.name -Detail "TemplateType '$templateType' requires Ext/Template.xml.")) | Out-Null
+            } else {
+                [void]$paths.Add($context.payloadRepoPath)
+                $payload = [System.Xml.XmlDocument]::new()
+                try {
+                    $payload.Load($payloadPath)
+                    $payloadRoot = [string]$payload.DocumentElement.LocalName
+                    $expectedRoot = [string]$xmlPayloadRoots[$templateType]
+                    if (-not [string]::Equals($payloadRoot, $expectedRoot, [System.StringComparison]::Ordinal)) {
+                        $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-payload-type-mismatch" -Path $context.payloadRepoPath -TemplateName $context.name -Detail "TemplateType '$templateType' expects payload root '$expectedRoot', found '$payloadRoot'.")) | Out-Null
+                    } elseif ($templateType -ne "DataCompositionSchema") {
+                        Write-Warning -Message "template:$($context.payloadRepoPath):[WARN] TEMPLATE_PAYLOAD_VALIDATION_STRUCTURAL_ONLY TemplateType=$templateType root=$payloadRoot" -WarningAction Continue
+                    }
+                } catch {
+                    # The ordinary XML route reports the parse error for this expanded path.
+                }
+            }
+        } else {
+            Write-Warning -Message "template:$($context.descriptorRepoPath):[WARN] TEMPLATE_PAYLOAD_VALIDATION_DESCRIPTOR_ONLY TemplateType=$templateType" -WarningAction Continue
+        }
+
+        if (-not (Test-Path -LiteralPath $ownerPath -PathType Leaf)) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-missing" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "Owning metadata object is missing for the template aggregate.")) | Out-Null
+            continue
+        }
+        [void]$paths.Add($context.ownerRepoPath)
+
+        $owner = [System.Xml.XmlDocument]::new()
+        try {
+            $owner.Load($ownerPath)
+        } catch {
+            # The ordinary XML route reports the parse error for this expanded path.
+            continue
+        }
+        $ownerNode = @($owner.DocumentElement.ChildNodes | Where-Object { $_.NodeType -eq [System.Xml.XmlNodeType]::Element } | Select-Object -First 1)
+        if ($ownerNode.Count -eq 0) { continue }
+        $ownerType = [string]$ownerNode[0].LocalName
+        $ownerNameNode = $ownerNode[0].SelectSingleNode("*[local-name()='Properties']/*[local-name()='Name']")
+        $ownerName = if ($null -ne $ownerNameNode) { [string]$ownerNameNode.InnerText } else { "" }
+        $registrationNames = @(
+            $ownerNode[0].SelectNodes("*[local-name()='ChildObjects']/*[local-name()='Template']") |
+                ForEach-Object { ([string]$_.InnerText).Trim() }
+        )
+        $exactRegistrations = @($registrationNames | Where-Object { [string]::Equals($_, [string]$context.name, [System.StringComparison]::Ordinal) })
+        if ($exactRegistrations.Count -ne 1) {
+            $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-registration-invalid" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "Owner must register template '$($context.name)' exactly once; exact registrations found: $($exactRegistrations.Count).")) | Out-Null
+        }
+
+        $mainSchemaNode = $ownerNode[0].SelectSingleNode("*[local-name()='Properties']/*[local-name()='MainDataCompositionSchema']")
+        $mainSchema = if ($null -ne $mainSchemaNode) { ([string]$mainSchemaNode.InnerText).Trim() } else { "" }
+        if ($mainSchema) {
+            $ownerPrefix = "$ownerType.$ownerName.Template."
+            if (-not $mainSchema.StartsWith($ownerPrefix, [System.StringComparison]::Ordinal)) {
+                $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-reference-invalid" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "MainDataCompositionSchema '$mainSchema' does not belong to '$ownerType.$ownerName'.")) | Out-Null
+            } else {
+                $referencedTemplate = $mainSchema.Substring($ownerPrefix.Length)
+                $referenceRegistrations = @($registrationNames | Where-Object { [string]::Equals($_, $referencedTemplate, [System.StringComparison]::Ordinal) })
+                if ($referenceRegistrations.Count -ne 1) {
+                    $issues.Add((New-OneCTemplateSourceIntegrityIssue -Code "template-owner-reference-unresolved" -Path $context.ownerRepoPath -TemplateName $context.name -Detail "MainDataCompositionSchema '$mainSchema' does not resolve to an exactly registered Template.")) | Out-Null
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        paths = @($paths | Sort-Object)
+        issues = @($issues)
+    }
+}
+
 function Get-OneCBslDeclarationRecords {
     param([AllowEmptyString()][string]$Text)
 
@@ -1260,6 +1421,11 @@ function Assert-OneCConfigurationSourceIntegrity {
                 -AdditionalPaths $AdditionalPaths `
                 -AdditionalRelativePaths $AdditionalRelativePaths
         )
+        $templateScope = Resolve-OneCTemplateSourceIntegrityScope -CandidatePaths $candidatePaths -ProjectRoot $projectRoot
+        $candidatePaths = @($templateScope.paths)
+        foreach ($templateIssue in @($templateScope.issues)) {
+            $issues.Add($templateIssue) | Out-Null
+        }
         $uuidCandidatePaths = @(
             Get-OneCSourceIntegrityCandidatePaths `
                 -ExportPath $ExportPath `
