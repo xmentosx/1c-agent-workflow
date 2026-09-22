@@ -111,6 +111,11 @@ Workflow фиксирует версии `agent-browser` и Windows-MCP в `.age
 | `DEV_BRANCH_INFOBASE_ROOT` | Корень копий баз | пусто = `.agent-1c/infobases/dev-branches` | user |
 | `BRANCH_SEED_ROOT` | Корень единственного latest-only seed; внутри данные разделяются по hash identity source | пусто = `.agent-1c/branch-seed` | user |
 | `DEV_BRANCH_WORKTREE_ROOT` | Родительский каталог worktree | пусто = рядом с проектом; папка `<project>-<safe-branch>` | user |
+| `ITL_ARTIFACT_CLEANUP_ENABLED` | Автоочистка после успешных операций | `true`/`false`, default `true` | user |
+| `ITL_RESULT_ARTIFACT_KEEP_COUNT` | Последние CF/CFE с манифестами на ветку/контур | целое 1–3650, default `3` | user |
+| `ITL_RECOVERY_ARCHIVE_KEEP_COUNT` | Последние архивы восстановления на ветку/контур | целое 1–3650, default `2` | user |
+| `ITL_RUN_ARTIFACT_KEEP_COUNT` | Минимум завершённых прогонов каждого типа | целое 1–3650, default `3` | user |
+| `ITL_RUNTIME_ARTIFACT_RETENTION_DAYS` | Минимальный возраст лишних завершённых прогонов | дни 1–3650, default `7` | user |
 | `DEV_BRANCH_UNSAFE_ACTION_PROTECTION_SETUP` | Fallback-подтверждение для копии при отсутствии master-маркера | `manual-confirm`/`skip`, default `manual-confirm` | user/init |
 
 ## Веб-публикация

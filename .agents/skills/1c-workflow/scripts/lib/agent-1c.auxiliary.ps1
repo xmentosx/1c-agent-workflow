@@ -649,6 +649,9 @@ function Reset-AuxiliaryContour {
         New-Item -ItemType Directory -Force -Path $archiveRoot | Out-Null
         $archivePath = Join-Path $archiveRoot ("$($contour.name)-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
         Move-Item -LiteralPath $resolved -Destination $archivePath
+        $archiveManifest = [ordered]@{ schemaVersion = 1; kind = 'auxiliary-reset'; status = 'ready'; branchKey = (Get-AuxiliaryContourBranchKey); contour = $contour.name; archivedAt = (Get-Date).ToString('o') }
+        try { Write-Utf8TextAtomic -Path (Join-Path $archivePath 'itl-archive.json') -Value (($archiveManifest | ConvertTo-Json -Depth 4) + [Environment]::NewLine) }
+        catch { Write-Warning "Auxiliary archive retention marker unavailable; archive will be retained: $archivePath. $($_.Exception.Message)" }
     }
     $statePath = Get-AuxiliaryContourStatePath -Contour $contour
     if (Test-Path -LiteralPath $statePath -PathType Leaf) { Remove-Item -LiteralPath $statePath -Force }

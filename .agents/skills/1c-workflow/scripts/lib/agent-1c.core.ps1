@@ -2632,6 +2632,8 @@ function Ensure-GitIgnore {
         ".agent-1c/runtime/",
         ".agent-1c/branch-dumps/",
         ".agent-1c/branch-archives/",
+        ".agent-1c/branch-deletions/",
+        ".agent-1c/auxiliary-archives/",
         ".agent-1c/config-dump/",
         ".agent-1c/extension-dump/",
         ".agent-1c/extension-init/",

@@ -1,0 +1,12 @@
+---
+description: Очистить старые артефакты ITL в текущем worktree
+agent: code
+---
+
+Run from the selected ITL project worktree. First show the read-only plan:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action clean-artifacts -CleanupDryRun
+```
+
+Explain the candidate count and bytes, then run the same command without `-CleanupDryRun` when the user requested cleanup. The helper deletes only validated, unreferenced ITL-owned artifacts beyond the `.dev.env` limits; it never touches source files or the shared immutable dependency cache. Report any leftovers printed by the helper. From `master`, branch-reset archives are also considered.

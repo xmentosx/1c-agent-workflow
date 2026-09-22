@@ -1,11 +1,13 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
+    [ValidateSet("help", "doctor", "validate", "validate-test-classification", "check-tools", "list-platforms", "detect-web-publication", "detect-apache", "configure-web-publication", "publish-dev-branch", "install-vanessa-automation", "install-yaxunit", "repair-dev-branch-tooling", "install-agent-browser", "install-windows-mcp", "install-ui-tools", "ui-tools-status", "begin-verification-repair", "vibecoding1c-mcp-setup", "vibecoding1c-mcp-update", "vibecoding1c-mcp-status", "vibecoding1c-mcp-start", "vibecoding1c-mcp-stop", "vibecoding1c-mcp-select", "vibecoding1c-mcp-refresh-registry", "vibecoding1c-mcp-rotate-keys", "vibecoding1c-mcp-ensure-model", "vibecoding1c-mcp-write-client-config", "sync-client-mcp", "context-benchmark", "update-workflow", "update-ai-rules", "itl-litemode", "itl-repository-mode", "itl-switch-client", "update1cbase", "loadfrom1cbase", "getconfigfiles", "deploy-and-test", "cleanup-interrupted-vanessa-run", "stop-dev-branch-test-clients", "start-vanessa-profile", "status-vanessa-profile", "stop-vanessa-profile", "init-project", "sync-master", "get-dev-workspace-plan", "get-dev-workspace-close-plan", "set-dev-workspace-deregistration", "adopt-dev-worktree", "initialize-dev-branch-runtime", "new-dev-branch", "new-extension-dev-branch", "fork-dev-branch", "sync-dev-branches", "configure-dev-branch-unsafe-action-protection", "init-dev-branch-extension", "set-dev-branch-extension", "dump-dev-branch-extension", "activate-dev-branch-context", "update-dev-branch-base", "check-dev-branch", "verify-dev-branch", "status", "clean-artifacts", "delete-dev-branch", "configure-auxiliary-contour", "status-auxiliary-contours", "update-auxiliary-contour", "dump-auxiliary-contour", "check-auxiliary-contour", "export-auxiliary-contour-result", "reset-auxiliary-contour", "refresh-dev-branch", "refresh-dev-branch-lite", "refresh-all-dev-branches", "reset-dev-branch", "lock-config-repository-objects", "export-dev-branch-result", "close-dev-branch", "switch-master", "switch-dev-branch", "list-dev-branches", "release-e2e-snapshot", "release-e2e-restore", "release-e2e-prepare-ondemand", "release-e2e-config-roundtrip", "release-e2e-config-repository-lock-roundtrip", "release-e2e-extension-smoke")]
     [string]$Action = "help",
 
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$ConfigPath,
     [string]$DevBranchName,
+    [switch]$CleanupDryRun,
+    [switch]$ConfirmBranchDeletion,
     [string]$PeerDevBranchName,
     [string]$BranchSyncRequestPath,
     [string]$DevBranch,
@@ -413,6 +415,8 @@ $script:Agent1cModuleFiles = @(
     "agent-1c.context-diagnostics.ps1",
     "agent-1c.ondemand-mcp.ps1",
     "agent-1c.auxiliary.ps1",
+    "agent-1c.artifact-retention.ps1",
+    "agent-1c.branch-deletion.ps1",
     "agent-1c.verification-modes.ps1",
     "agent-1c.legacy-bridges.ps1",
     "agent-1c.ai-rules-migration.ps1"
@@ -506,7 +510,9 @@ try {
         "loadfrom1cbase" { Invoke-ItlLoadFrom1cBaseBridge }
         "getconfigfiles" { Invoke-ItlGetConfigFilesBridge }
         "deploy-and-test" { Invoke-ItlDeployAndTestBridge }
-        "status" { Show-WorkflowStatus }
+        "status" { Show-WorkflowStatus; Show-ItlArtifactFootprint }
+        "clean-artifacts" { Invoke-ItlArtifactCleanup -DryRun:$CleanupDryRun | Out-Null }
+        "delete-dev-branch" { Remove-ItlDevBranch -Name $DevBranchName -Confirmed:$ConfirmBranchDeletion }
         "configure-auxiliary-contour" { Configure-AuxiliaryContour }
         "status-auxiliary-contours" { Show-AuxiliaryContoursStatus }
         "update-auxiliary-contour" { Update-AuxiliaryContour }
@@ -559,6 +565,9 @@ try {
         "release-e2e-config-repository-lock-roundtrip" { Invoke-ReleaseE2EConfigRepositoryLockRoundtrip }
         "release-e2e-extension-smoke" { Invoke-ReleaseE2EExtensionSmoke }
     } }
+    if ($Action -in @('export-dev-branch-result', 'close-dev-branch', 'export-auxiliary-contour-result', 'reset-dev-branch', 'reset-auxiliary-contour', 'check-dev-branch', 'verify-dev-branch', 'check-auxiliary-contour', 'refresh-dev-branch', 'refresh-dev-branch-lite', 'sync-master')) {
+        try { Invoke-ItlArtifactCleanup -Automatic | Out-Null } catch { Write-Warning "ITL artifact cleanup skipped: $($_.Exception.Message)" }
+    }
     Complete-Agent1cLifecycleOperation -Status "succeeded" -ExitCode 0
     Write-RunStatus -Status "succeeded" -ExitCode 0
 } catch {

@@ -205,26 +205,26 @@
 
     It "keeps workflow-owned client context growth visible and attributable" {
         $expectedRendered = @{
-            "master/codex" = @{ files = 20; maxBytes = 30965 }
-            "master/kilocode" = @{ files = 10; maxBytes = 29995 }
-            "master/claude-code" = @{ files = 10; maxBytes = 29865 }
-            "master/cursor" = @{ files = 10; maxBytes = 29865 }
-            "master/opencode" = @{ files = 11; maxBytes = 40868 }
-            "master/kimi" = @{ files = 10; maxBytes = 30080 }
-            "master/qwen" = @{ files = 10; maxBytes = 29865 }
-            "master/command-code" = @{ files = 10; maxBytes = 29865 }
-            "master/cline" = @{ files = 10; maxBytes = 30080 }
-            "master/pi" = @{ files = 10; maxBytes = 29865 }
-            "dev/codex" = @{ files = 28; maxBytes = 49898 }
-            "dev/kilocode" = @{ files = 14; maxBytes = 48608 }
-            "dev/claude-code" = @{ files = 14; maxBytes = 48426 }
-            "dev/cursor" = @{ files = 14; maxBytes = 48426 }
-            "dev/opencode" = @{ files = 15; maxBytes = 61888 }
-            "dev/kimi" = @{ files = 14; maxBytes = 48693 }
-            "dev/qwen" = @{ files = 14; maxBytes = 48426 }
-            "dev/command-code" = @{ files = 14; maxBytes = 48426 }
-            "dev/cline" = @{ files = 14; maxBytes = 48693 }
-            "dev/pi" = @{ files = 14; maxBytes = 48426 }
+            "master/codex" = @{ files = 24; maxBytes = 32973 }
+            "master/kilocode" = @{ files = 12; maxBytes = 31819 }
+            "master/claude-code" = @{ files = 12; maxBytes = 31663 }
+            "master/cursor" = @{ files = 12; maxBytes = 31663 }
+            "master/opencode" = @{ files = 13; maxBytes = 42692 }
+            "master/kimi" = @{ files = 12; maxBytes = 31916 }
+            "master/qwen" = @{ files = 12; maxBytes = 31663 }
+            "master/command-code" = @{ files = 12; maxBytes = 31663 }
+            "master/cline" = @{ files = 12; maxBytes = 31916 }
+            "master/pi" = @{ files = 12; maxBytes = 31663 }
+            "dev/codex" = @{ files = 30; maxBytes = 50842 }
+            "dev/kilocode" = @{ files = 15; maxBytes = 49468 }
+            "dev/claude-code" = @{ files = 15; maxBytes = 49273 }
+            "dev/cursor" = @{ files = 15; maxBytes = 49273 }
+            "dev/opencode" = @{ files = 16; maxBytes = 62748 }
+            "dev/kimi" = @{ files = 15; maxBytes = 49555 }
+            "dev/qwen" = @{ files = 15; maxBytes = 49273 }
+            "dev/command-code" = @{ files = 15; maxBytes = 49273 }
+            "dev/cline" = @{ files = 15; maxBytes = 49555 }
+            "dev/pi" = @{ files = 15; maxBytes = 49273 }
         }
 
         $rendered = & {
@@ -561,8 +561,8 @@
     It "has context-specific Kilo command templates for the public surface" {
         $templateRoot = Join-Path $RepoRoot ".agents\skills\1c-workflow\kilo-command-templates"
         $expected = @{
-            common = @("itl.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
-            master = @("itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-repository-mode.md.template", "itl-switch-client.md.template")
+            common = @("itl.md.template", "itl-clean.md.template", "itl-litemode.md.template", "itl-status.md.template", "itl-sync-master.md.template", "itl-update-workflow.md.template")
+            master = @("itl-delete-branch.md.template", "itl-new-config-branch.md.template", "itl-new-extension-branch.md.template", "itl-refresh-all.md.template", "itl-repository-mode.md.template", "itl-switch-client.md.template")
             dev = @("itl-check.md.template", "itl-fork-branch.md.template", "itl-lock-objects.md.template", "itl-refresh.md.template", "itl-refresh-lite.md.template", "itl-reset-branch.md.template", "itl-result.md.template", "itl-sync-branches.md.template", "itl-verify-fix.md.template")
         }
 

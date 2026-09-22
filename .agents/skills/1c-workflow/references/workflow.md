@@ -14,6 +14,8 @@ master:
   /itl-new-extension-branch <name>
   /itl-sync-master
   /itl-refresh-all
+  /itl-clean
+  /itl-delete-branch <name>
   /itl-update-workflow
   /itl-switch-client <client>
   /itl-repository-mode <workflow|external|status>
@@ -22,6 +24,7 @@ master:
 itldev/*:
   /itl
   /itl-status
+  /itl-clean
   /itl-check
   /itl-verify-fix
   /itl-refresh

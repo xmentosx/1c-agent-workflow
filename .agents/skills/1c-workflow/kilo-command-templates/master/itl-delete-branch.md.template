@@ -1,0 +1,12 @@
+---
+description: Полностью удалить локальную ветку разработки и её worktree
+agent: code
+---
+
+Run only from the ITL `master` worktree. Ask once whether the user wants to delete the exact named `itldev/<safe-name>` branch, its complete worktree including uncommitted and ignored files, branch infobase, launcher entry and owned archives. After affirmative confirmation, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action delete-dev-branch -DevBranchName <safe-name> -ConfirmBranchDeletion
+```
+
+The helper performs no merge, verification or clean-worktree prerequisite. If interrupted or partially blocked, repeat the same command; its main-worktree journal keeps exact targets. Report every leftover, especially server infobases or manual web publications. Never delete remote refs or shared immutable cache as part of this command.

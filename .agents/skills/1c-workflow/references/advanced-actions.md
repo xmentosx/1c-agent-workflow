@@ -86,10 +86,12 @@ reset-dev-branch
 lock-config-repository-objects
 export-dev-branch-result
 close-dev-branch
+delete-dev-branch
 switch-master
 switch-dev-branch
 list-dev-branches
 status
+clean-artifacts
 configure-auxiliary-contour
 status-auxiliary-contours
 update-auxiliary-contour
