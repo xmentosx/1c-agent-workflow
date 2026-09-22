@@ -938,6 +938,31 @@ function Test-E2EStagePassed {
     return $true
 }
 
+function Test-E2ERestartWorktreeClean {
+    param([AllowEmptyString()][string]$LegacyRunRelative = "")
+
+    $ownedRuntimePathspecs = @(
+        ":(literal).agent-1c/execution-guard-generation.json",
+        ":(glob).agent-1c/execution-guard-generation.json.*",
+        ":(glob).agent-1c/execution-checkpoints/**"
+    )
+    $trackedOwnedRuntime = @(& git -C $worktreePath ls-files -- @ownedRuntimePathspecs)
+    if ($LASTEXITCODE -ne 0 -or $trackedOwnedRuntime.Count -gt 0) { return $false }
+
+    $ownedRuntimeExclusions = @(
+        ":(exclude,literal).agent-1c/execution-guard-generation.json",
+        ":(exclude,glob).agent-1c/execution-guard-generation.json.*",
+        ":(exclude,glob).agent-1c/execution-checkpoints/**"
+    )
+    if ($LegacyRunRelative) {
+        $normalizedLegacyRun = $LegacyRunRelative.Replace('\', '/').Trim('/')
+        $ownedRuntimeExclusions += ":(exclude,literal)$normalizedLegacyRun"
+        $ownedRuntimeExclusions += ":(exclude,glob)$normalizedLegacyRun/**"
+    }
+    $unexpectedStatus = @(& git -C $worktreePath status --porcelain=v1 --untracked-files=all -- . @ownedRuntimeExclusions)
+    return $LASTEXITCODE -eq 0 -and $unexpectedStatus.Count -eq 0
+}
+
 function Sync-E2EWorktreeFromMaster {
     $masterBranch = "master"
     $projectConfigPath = Join-Path $worktreePath ".agent-1c\project.json"
@@ -1486,15 +1511,16 @@ foreach ($name in @(
         $script:e2eUnsafeActionProtectionConfirmation[$name] = $property.Value
     }
 }
-$worktreeStatus = @(& git -C $worktreePath status --porcelain --untracked-files=all)
+$restartLegacyRunRelative = ""
 if ($usingLegacyRunRoot -and $ResumeMode -eq "Restart") {
-    $legacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
-    $worktreeStatus = @($worktreeStatus | Where-Object {
-        $statusPath = if ([string]$_ -and ([string]$_).Length -gt 3) { ([string]$_).Substring(3).Trim('"').Replace('\', '/') } else { "" }
-        $statusPath -ne $legacyRunRelative -and -not $statusPath.StartsWith("$legacyRunRelative/", [StringComparison]::OrdinalIgnoreCase)
-    })
+    $restartLegacyRunRelative = $releaseRunRoot.Substring($worktreePath.TrimEnd('\', '/').Length).TrimStart('\', '/').Replace('\', '/')
 }
-if ($worktreeStatus.Count -gt 0) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
+$worktreeClean = if ($ResumeMode -eq "Restart") {
+    Test-E2ERestartWorktreeClean -LegacyRunRelative $restartLegacyRunRelative
+} else {
+    @(& git -C $worktreePath status --porcelain --untracked-files=all).Count -eq 0
+}
+if (-not $worktreeClean) { throw "RELEASE_E2E_RESUME_STATE_MISMATCH: E2E worktree must be clean before release verification." }
 $aiRulesCommit = (& git -C $AiRulesSource rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $aiRulesCommit) { throw "Release ai_rules source is not a readable Git checkout: $AiRulesSource" }
 $aiRulesTree = (& git -C $AiRulesSource rev-parse 'HEAD^{tree}').Trim()
@@ -2154,7 +2180,12 @@ if ($checkpoint) {
             Set-E2ERunPaths -Root $preferredReleaseRunRoot
             $usingLegacyRunRoot = $false
         }
-        if (@(& git -C $worktreePath status --porcelain --untracked-files=all).Count -gt 0) {
+        # Snapshot restore can advance the execution-guard generation before a
+        # legacy baseline has learned the current runtime ignore paths. Permit
+        # only those exact untracked runtime paths here; tracked runtime state
+        # and every unrelated worktree change remain blocking. The subsequent
+        # script-owned master refresh installs the current ignore contract.
+        if (-not (Test-E2ERestartWorktreeClean)) {
             throw "RELEASE_E2E_RESUME_STATE_MISMATCH: scripted Restart did not restore a clean E2E worktree."
         }
         $checkpoint = $null

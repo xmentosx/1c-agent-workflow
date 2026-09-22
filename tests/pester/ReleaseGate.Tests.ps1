@@ -1175,6 +1175,10 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             # Restart is the explicit destructive rollback path. It must accept
             # a clean externally advanced branch HEAD, while Auto above remains
             # fail-closed for identity or expected-HEAD drift.
+            Add-Content -LiteralPath (Join-Path $mainRoot ".gitignore") -Encoding ASCII -Value ".agent-1c/execution-guard-generation.json"
+            & git -C $mainRoot add .gitignore
+            & git -C $mainRoot commit -m "fixture: ignore current execution generation" *> $null
+            $LASTEXITCODE | Should -Be 0
             Add-Content -LiteralPath (Join-Path $worktreeRoot "README.md") -Encoding ASCII -Value "external clean advance"
             & git -C $worktreeRoot add README.md
             & git -C $worktreeRoot commit -m "test: externally advance clean E2E branch" *> $null
@@ -1193,6 +1197,11 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             [System.IO.File]::WriteAllText($preferredCheckpointPath, $checkpointJson, [System.Text.UTF8Encoding]::new($false))
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $legacyRunRoot) | Out-Null
             Move-Item -LiteralPath $preferredRunRoot -Destination $legacyRunRoot
+            [IO.File]::WriteAllText(
+                (Join-Path $worktreeRoot ".agent-1c\execution-guard-generation.json"),
+                '{"schemaVersion":1,"generation":"release-restart-fixture"}',
+                [Text.UTF8Encoding]::new($false)
+            )
             @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -BeGreaterThan 0
 
             $restartSummaryPath = Join-Path $tempRoot "restart-summary.json"
@@ -1205,6 +1214,9 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             @($restartSummary.executedStages) | Should -Contain "config-cadence"
             Test-Path -LiteralPath $legacyRunRoot | Should -BeFalse
             Test-Path -LiteralPath (Join-Path $preferredRunRoot "checkpoint.json") -PathType Leaf | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $worktreeRoot ".agent-1c\execution-guard-generation.json") -PathType Leaf | Should -BeTrue
+            (& git -C $worktreeRoot check-ignore ".agent-1c/execution-guard-generation.json") | Should -Be ".agent-1c/execution-guard-generation.json"
+            @(& git -C $worktreeRoot status --porcelain --untracked-files=all).Count | Should -Be 0
 
             # A configured server proof remains testable, but omitting the
             # server stand must produce explicit unverified evidence and pass.
