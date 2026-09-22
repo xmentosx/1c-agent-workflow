@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +62,16 @@ type executionGuardOwner struct {
 	waitErr   error
 }
 
+var executionIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+func newExecutionID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("EXECUTION_ID_GENERATION_FAILED: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
+}
+
 func acquireExecutionGuard(ctx context.Context, python, runtimeRoot string, request executionGuardRequest,
 	progress func(executionGuardEvent)) (*executionGuardOwner, error) {
 	if err := ctx.Err(); err != nil {
@@ -105,7 +118,7 @@ func acquireExecutionGuard(ctx context.Context, python, runtimeRoot string, requ
 				progress(event)
 			}
 		case "admitted":
-			if event.ExecutionID == "" || event.ExecutionContext == "" || event.ExecutionContextKey == "" || len(event.Resources) == 0 {
+			if !executionIDPattern.MatchString(event.ExecutionID) || event.ExecutionContext == "" || event.ExecutionContextKey == "" || len(event.Resources) == 0 {
 				_ = owner.Close()
 				return nil, errors.New("EXECUTION_GUARD_HOST_PROOF_INVALID")
 			}

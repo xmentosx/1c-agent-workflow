@@ -129,6 +129,9 @@ func TestNestedOnDemandCallUsesSignedParentContextWithoutReacquisition(t *testin
 	}
 	defer finishParent("succeeded", "")
 	proof := parentRuntime.executionOwner.Proof
+	if !executionIDPattern.MatchString(proof.ID) {
+		t.Fatalf("parent context exposed a non-canonical execution id: %q", proof.ID)
+	}
 
 	childRuntime, childBroker := newExecutionRuntimeFixture(t)
 	childBroker.plan.GuardRoot = parentRuntime.executionPlan.GuardRoot

@@ -87,8 +87,13 @@ func (r *runtime) beginDatabaseCall(ctx context.Context, meta mcp.Meta) (context
 		unlock()
 		return ctx, nil, err
 	}
+	executionID, err := newExecutionID()
+	if err != nil {
+		unlock()
+		return ctx, nil, err
+	}
 	request := executionGuardRequest{SchemaVersion: 1, Root: plan.GuardRoot, Bases: plan.Bases,
-		Operation: "ondemand-" + r.family + "-call", ExecutionID: r.instanceID + "-" + fmt.Sprint(time.Now().UnixNano()),
+		Operation: "ondemand-" + r.family + "-call", ExecutionID: executionID,
 		Timeout: plan.WaitTimeoutSeconds}
 	if parent != nil {
 		request.InheritedContext, request.InheritedContextKey = parent.Encoded, parent.Key
