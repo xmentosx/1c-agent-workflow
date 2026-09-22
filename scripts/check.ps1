@@ -110,6 +110,7 @@ $releaseContext = $null
 $releaseDevelopProof = $null
 $releaseFullProof = $null
 $continuationProof = $null
+$selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
 
 function Add-StageResult {
     param(
@@ -1076,7 +1077,6 @@ try {
     }
 
     if ($effectiveMode -eq "Release") {
-        $selectedReleaseCapabilities = @($ReleaseCapabilities -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object -Unique)
         Add-ReusedStage -Name "develop-e2e" -Reason "exact or ancestor same-tree Develop qualification" -Detail $developQualificationFullPath
         if ($selectedReleaseCapabilities.Count -eq 0 -or $selectedReleaseCapabilities -contains "ondemand-mcp") {
         Invoke-GateStage -Name "ondemand-mcp-catalogs" -Reason "real backend catalogs are mandatory for the on-demand capability" -Detail "assets/ondemand-mcp/compatibility.json" -Body {

@@ -54,6 +54,8 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match 'Add-SelectedReleaseE2ECapability'
         $e2eText | Should -Match 'if \(Test-ReleaseE2ECapabilitySelected -Name "ondemand-mcp"\)'
         $checkText | Should -Match 'ReleaseCapabilities'
+        ([regex]::Matches($checkText, '\$selectedReleaseCapabilities\s*=\s*@\(\$ReleaseCapabilities -split')).Count | Should -Be 1
+        $checkText.IndexOf('$selectedReleaseCapabilities = @($ReleaseCapabilities -split') | Should -BeLessThan $checkText.IndexOf('Push-Location $repoRoot')
         $e2eText | Should -Match 'Get-WorkflowContinuationProof'
         $e2eText | Should -Match 'previousRunnerSha256'
         $e2eText | Should -Match 'continuationBoundaryStage'
