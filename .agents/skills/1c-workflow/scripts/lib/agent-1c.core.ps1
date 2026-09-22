@@ -1271,9 +1271,16 @@ function Get-Agent1cExecutionInputFingerprint {
 
     $head = ''
     if (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git') -ErrorAction SilentlyContinue) {
-        $head = [string](& git -C $script:ProjectRoot rev-parse HEAD 2>$null)
-        if ($LASTEXITCODE -ne 0) { throw 'EXECUTION_PHASE_HEAD_UNAVAILABLE' }
-        $head = $head.Trim()
+        # Fresh initialization creates the repository before its first source
+        # dump commit. Its unborn branch is a valid, stable execution input;
+        # retain the symbolic branch so a concurrent branch change is detected.
+        if (Test-GitHasAnyCommit) {
+            $head = Get-CurrentCommit
+        } else {
+            $headBranch = Get-GitHeadBranch
+            if (-not $headBranch) { throw 'EXECUTION_PHASE_HEAD_UNAVAILABLE' }
+            $head = 'unborn:' + $headBranch
+        }
     }
     $environmentPath = Join-Path $script:ProjectRoot '.dev.env'
     $environmentHash = $(if (Test-Path -LiteralPath $environmentPath -PathType Leaf) {

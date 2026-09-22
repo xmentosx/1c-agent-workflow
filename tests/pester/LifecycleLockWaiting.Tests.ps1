@@ -253,7 +253,7 @@ try {
         $remoteDestination = Join-Path $TestDrive 'itl-remote-runner'
         if (-not (Test-Path -LiteralPath $remoteDestination)) { Copy-Item -LiteralPath $remoteSource -Destination $remoteDestination -Recurse }
         $fixtureConfig = [ordered]@{fixtureTarget='old';testsPath='tests/features'}
-        & git -C $root init --quiet
+        & git -C $root init --quiet --initial-branch=master
         & git -C $root -c user.name=Test -c user.email=test@example.com commit --allow-empty --quiet -m init
         & git -C $root switch --quiet -c itldev/wait
         New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c/dev-branches'),(Join-Path $root 'tests/features') | Out-Null
@@ -297,6 +297,29 @@ function Invoke-Enterprise { throw 'Unexpected native Enterprise in config-wait 
                 $job | Stop-Job
                 $job | Remove-Job -Force
             }
+        }
+    }
+
+    It 'fingerprints an unborn repository before the first initialization dump commit' {
+        $root = Join-Path $TestDrive 'первичная инициализация'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        & git -C $root init --quiet
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $admissions = @([pscustomobject]@{
+                infoBaseKind = 'file'
+                infoBasePath = (Join-Path $root 'Исходная база')
+            })
+
+            $before = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $again = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $before.head | Should -Be 'unborn:master'
+            $again.digest | Should -Be $before.digest
+
+            & git -C $root -c user.name=Test -c user.email=test@example.com commit --allow-empty --quiet -m init
+            $after = Get-Agent1cExecutionInputFingerprint -Admissions $admissions
+            $after.head | Should -Match '^[a-f0-9]{40}$'
+            $after.digest | Should -Not -Be $before.digest
         }
     }
 
