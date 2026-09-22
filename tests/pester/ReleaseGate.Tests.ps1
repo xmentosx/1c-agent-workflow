@@ -90,7 +90,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Not -Match 'AppendAllText\(\$configurationPathB'
         $e2eText | Should -Match 'Primary failure: \$proofError'
         $seedStageText = Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\seed-parallel.ps1") -Raw -Encoding UTF8
-        $seedStageText | Should -Match 'seed-parallel" -Version 5'
+        $seedStageText | Should -Match 'seed-parallel" -Version 6'
         $seedStageText | Should -Match 'src/cf/CommonModules/\[\^/\]\+/Ext/Module\\\.bsl'
         $seedStageText | Should -Match 'Get-RepositoryGitPathList.*"-z"'
         $seedStageText | Should -Not -Match 'tests/'

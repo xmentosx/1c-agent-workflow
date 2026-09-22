@@ -291,5 +291,8 @@ Describe 'Delivery v3 immutable selective plan' {
             $expectedPaths = @($definition.paths) + @("scripts/release-e2e/$([string]$definition.moduleFile)")
             @($stage.paths | Sort-Object) | Should -Be @($expectedPaths | Sort-Object)
         }
+        $seedParallel = @($catalog.stages | Where-Object { [string]$_.id -eq 'seed-parallel' })[0]
+        [int]$seedParallel.version | Should -Be 6
+        [int]$seedParallel.budgetSeconds | Should -Be 1800
     }
 }

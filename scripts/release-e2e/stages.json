@@ -3,8 +3,8 @@
   "stages": [
     {
       "id": "seed-parallel",
-      "version": 5,
-      "budgetSeconds": 1200,
+      "version": 6,
+      "budgetSeconds": 1800,
       "dependsOn": [],
       "paths": [
         ".agents/skills/1c-workflow/scripts/agent-1c.ps1",
