@@ -23,12 +23,16 @@
         [IO.File]::WriteAllText($source, '<Configuration/>', [Text.UTF8Encoding]::new($false))
 
         $result = & $cutover -ProjectRoot $root
+        $second = & $cutover -ProjectRoot $root
 
         $result.status | Should -Be 'completed'
+        $second.status | Should -Be 'completed'
         foreach ($relative in $oldRoots) { Test-Path -LiteralPath (Join-Path $root $relative) | Should -BeFalse }
         (Get-Content -LiteralPath $source -Raw -Encoding UTF8) | Should -Be '<Configuration/>'
         $marker = Get-Content -LiteralPath (Join-Path $root '.agent-1c/execution-guard-generation.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         $marker.generation | Should -Be 'execution-guards-v2'
+        @(Get-ChildItem -LiteralPath (Split-Path -Parent (Join-Path $root '.agent-1c/execution-guard-generation.json')) -File |
+            Where-Object { $_.Name -like 'execution-guard-generation.json.*' }).Count | Should -Be 0
     }
 
     It 'does not stop a live process when exact ownership markers are absent' {

@@ -104,9 +104,26 @@ function Enable-ExecutionGuardGeneration([string]$Root) {
     $marker = Join-Path $rootFull '.agent-1c\execution-guard-generation.json'
     [void][IO.Directory]::CreateDirectory((Split-Path -Parent $marker))
     $temporary = $marker + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $backup = $marker + '.' + [guid]::NewGuid().ToString('N') + '.bak'
     [IO.File]::WriteAllText($temporary, (([ordered]@{schemaVersion=1;generation='execution-guards-v2';updatedAtUtc=[datetime]::UtcNow.ToString('o')} | ConvertTo-Json -Compress) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
-    if (Test-Path -LiteralPath $marker -PathType Leaf) { [IO.File]::Replace($temporary, $marker, $null) }
-    else { [IO.File]::Move($temporary, $marker) }
+    $replaceCompleted = $false
+    try {
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            # Windows PowerShell's .NET Framework rejects a null backup path.
+            # Keep an exact same-directory backup until replacement succeeds.
+            [IO.File]::Replace($temporary, $marker, $backup)
+            $replaceCompleted = $true
+        } else {
+            [IO.File]::Move($temporary, $marker)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+        if ($replaceCompleted -and (Test-Path -LiteralPath $backup -PathType Leaf)) {
+            Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Invoke-CutoverGit([string]$Root, [string[]]$Arguments, [switch]$Capture) {
