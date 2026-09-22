@@ -1,6 +1,6 @@
 # Measurement recipes
 
-The engine measures on the execution host regardless of `local`, `ssh` or `agent`. The controller never times a chat response or SSH transfer. `pack` defaults to `time+profile`, one warmup, three unprofiled repeats and one separate diagnostic profile. Choose `--mode time` for timing alone or `--mode profile` for one profile. Preserve explicit user counts.
+The engine measures on the execution host regardless of local/worker runner, pull/SSH/exchange connection, optional bulk folder, or agent policy. The controller never times a chat response or file transfer. `pack` defaults to `time+profile`, one warmup, three unprofiled repeats and one separate diagnostic profile. Choose `--mode time` for timing alone or `--mode profile` for one profile. Preserve explicit user counts.
 
 Every product run must select an explicit `target.infoBase`. The public result records a credential-free hash of its declared kind/path as `databaseIdentity` and records `databaseTopology` as `file` or `server`. `dataIdentity` describes the dataset state; it is not a substitute for the base identity. A target alias, checkout, machine or report filename is also insufficient. Legacy/calibration output without this binding may be inspected by itself but must not participate in comparison.
 

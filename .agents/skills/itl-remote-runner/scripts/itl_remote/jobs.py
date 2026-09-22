@@ -77,13 +77,34 @@ def parameters(scenario, supplied):
     return result
 
 
+def execution_contract(request):
+    route = request.get("route")
+    if route is not None:
+        mapping = {"local": ("local", "off"), "ssh": ("worker", "off"),
+                   "auto": ("worker", "diagnosis-on-failure"), "agent": ("worker", "requested")}
+        if route not in mapping or "runner" in request or "agentPolicy" in request:
+            raise WorkError("INVALID_EXECUTION_CONTRACT")
+        runner, policy = mapping[route]
+        return {"runner": runner, "agentPolicy": policy, "legacyRoute": route}
+    runner, policy = request.get("runner"), request.get("agentPolicy", "off")
+    if runner not in ("local", "worker") or policy not in ("off", "requested", "diagnosis-on-failure"):
+        raise WorkError("INVALID_EXECUTION_CONTRACT")
+    if runner == "local" and policy != "off":
+        raise WorkError("LOCAL_AGENT_POLICY_INVALID")
+    return {"runner": runner, "agentPolicy": policy, "legacyRoute": None}
+
+
 def pack(scenario_path, destination, *, target, values=None, mode="time+profile", route="auto",
-         repeats=3, warmups=1, operations=None, identifier=None, parent=None):
+         runner=None, agent_policy=None, repeats=3, warmups=1, operations=None, identifier=None, parent=None):
     scenario_path = Path(scenario_path).resolve()
     scenario = read_json(scenario_path)
     validate_scenario(scenario)
-    if mode not in ("time", "profile", "time+profile") or route not in ("local", "auto", "ssh", "agent"):
-        raise WorkError("INVALID_MODE_OR_ROUTE")
+    if mode not in ("time", "profile", "time+profile"):
+        raise WorkError("INVALID_MODE")
+    if runner is not None or agent_policy is not None:
+        if route is not None and route != "auto":
+            raise WorkError("LEGACY_ROUTE_WITH_EXECUTION_CONTRACT")
+        route = None
     if mode == "time" and scenario.get("sourceAnalysis", "none") != "none":
         raise WorkError("SOURCE_ANALYSIS_REQUIRES_PROFILE")
     if not 1 <= repeats <= 1000 or not 0 <= warmups <= 100:
@@ -103,10 +124,15 @@ def pack(scenario_path, destination, *, target, values=None, mode="time+profile"
             files[str(relative).replace("\\", "/")] = {"sha256": digest(copied), "bytes": copied.stat().st_size}
         write_json(stage / "scenario.json", scenario)
         request = {"schemaVersion": scenario["schemaVersion"], "id": job_id(identifier or uuid.uuid4().hex), "parentId": parent,
-                   "createdAt": stamp(), "target": target, "route": route, "mode": mode,
+                   "createdAt": stamp(), "target": target, "mode": mode,
                    "parameters": parameters(scenario, values or {}), "repeats": repeats, "warmups": warmups,
                    "operations": sorted(set(operations or ["measure"])), "files": files,
                    "scenarioSha256": digest(stage / "scenario.json")}
+        if route is None:
+            request.update(runner=runner or "worker", agentPolicy=agent_policy or "off")
+        else:
+            request["route"] = route
+        execution_contract(request)
         if scenario["mutates"] and "write-data" not in request["operations"]:
             raise WorkError("WRITE_DATA_AUTHORIZATION_REQUIRED")
         if "update" in scenario["commands"] and "update" not in request["operations"]:
@@ -125,8 +151,9 @@ def validate_package(package):
     job_id(request.get("id"))
     if request.get("schemaVersion") not in (1, 2):
         raise WorkError("JOB_SCHEMA_UNSUPPORTED")
-    if request.get("mode") not in ("time", "profile", "time+profile") or request.get("route") not in ("local", "auto", "ssh", "agent"):
-        raise WorkError("INVALID_MODE_OR_ROUTE")
+    if request.get("mode") not in ("time", "profile", "time+profile"):
+        raise WorkError("INVALID_MODE")
+    execution_contract(request)
     if type(request.get("repeats")) is not int or not 1 <= request["repeats"] <= 1000 or type(request.get("warmups")) is not int or not 0 <= request["warmups"] <= 100:
         raise WorkError("INVALID_REPETITIONS")
     if "measure" not in request.get("operations", []):

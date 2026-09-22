@@ -1,5 +1,6 @@
 """Behavioral regressions for portable local/remote jobs. No live 1C or paid AI."""
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
-from itl_remote import agents, bootstrap, common, execution, jobs, profiling, transport
+from itl_remote import agents, bootstrap, common, execution, jobs, profiling, pull, transport, updates
 from itl_remote.common import (FileLock, OwnedProcess, WorkError, digest, read_json,
                                resolve_resource_limits, resource_violation, write_json)
 
@@ -237,6 +238,117 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertEqual("completed", result["status"], result)
         self.assertFalse((destination / "context.json").exists())
         self.assertTrue((destination / "download-manifest.json").exists())
+
+    def test_pull_worker_uses_optional_folder_for_blobs_and_pull_for_control(self):
+        server, thread, url = pull.start_broker()
+        controller = self.root / "контроллер подключения.json"
+        worker = self.root / "воркер подключения.json"
+        bulk = self.root / "Синхронизируемая папка"
+        bulk.mkdir()
+        pairing = bootstrap.pair(url, controller, worker, worker_id="terminal-user",
+                                 controller_folder=bulk, worker_folder=bulk, threshold_bytes=1)
+        self.assertEqual("terminal-user", pairing["workerId"])
+        self.assertNotIn("token", pairing)
+        _, package = self.package("pull-job", runner="worker", agent_policy="off")
+        runtime = RUNTIME / "remote_work.py"
+        process = subprocess.Popen([sys.executable, "-X", "utf8", str(runtime), "worker",
+                                    "--spool", str(self.spool), "--connection", str(worker),
+                                    "--persistent", "--max-jobs", "10", "--max-lifetime-seconds", "30"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        connection = transport.Connection(read_json(controller))
+        try:
+            sent = connection.send(package)
+            self.assertEqual("folder", sent["transferChannels"]["workload.py"])
+            deadline = time.monotonic() + 15
+            state = None
+            while time.monotonic() < deadline:
+                state = connection.call({"operation": "status", "id": "pull-job"})
+                if state["status"] in ("completed", "partial", "cancelled", "failed", "interrupted",
+                                       "needs-attention"):
+                    break
+                time.sleep(0.05)
+            self.assertEqual("completed", state["status"], state)
+            output = self.root / "Результат через pull"
+            result = connection.collect("pull-job", output)
+            self.assertEqual("completed", result["status"], result)
+            self.assertTrue(any((bulk / "itl-results").glob("*")))
+            self.assertEqual("connected", read_json(self.spool / "pull-connection.json")["status"])
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_unavailable_optional_folder_falls_back_to_pull_without_a_new_job(self):
+        server, thread, url = pull.start_broker()
+        controller = self.root / "controller-fallback.json"
+        worker = self.root / "worker-fallback.json"
+        controller_bulk = self.root / "Папка контроллера"
+        worker_bulk = self.root / "Еще не синхронизированная папка воркера"
+        controller_bulk.mkdir()
+        worker_bulk.mkdir()
+        bootstrap.pair(url, controller, worker, worker_id="folder-fallback",
+                       controller_folder=controller_bulk, worker_folder=worker_bulk, threshold_bytes=1)
+        _, package = self.package("same-job", runner="worker", agent_policy="off")
+        process = subprocess.Popen([sys.executable, "-X", "utf8", str(RUNTIME / "remote_work.py"), "worker",
+                                    "--spool", str(self.spool), "--connection", str(worker),
+                                    "--persistent", "--max-jobs", "10", "--max-lifetime-seconds", "30"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            sent = transport.Connection(read_json(controller)).send(package)
+            self.assertEqual("pull", sent["transferChannels"]["workload.py"])
+            self.assertEqual("same-job", sent["id"])
+            self.assertEqual(1, len(list((self.spool / "jobs").iterdir())))
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_new_execution_contract_separates_runner_from_agent_policy(self):
+        request, _ = self.package("modern", runner="worker", agent_policy="off")
+        self.assertNotIn("route", request)
+        self.assertEqual({"runner": "worker", "agentPolicy": "off", "legacyRoute": None},
+                         jobs.execution_contract(request))
+        legacy, _ = self.package("legacy-ssh", route="ssh")
+        self.assertEqual("worker", jobs.execution_contract(legacy)["runner"])
+        self.assertEqual("off", jobs.execution_contract(legacy)["agentPolicy"])
+
+    def test_runner_contract_rejects_the_wrong_execution_owner(self):
+        request, package = self.package("local-only", runner="local", agent_policy="off")
+        with self.assertRaisesRegex(WorkError, "REMOTE_SEND_REQUIRES_WORKER_RUNNER"):
+            transport.Connection(read_json(self.spool / "connection.json")).send(package)
+        jobs.submit(package, self.spool)
+        with self.assertRaisesRegex(WorkError, "EXECUTION_RUNNER_MISMATCH"):
+            execution.execute_job(self.spool, request["id"], self.profile, expected_runner="worker")
+
+    def test_pull_requires_tls_beyond_loopback(self):
+        with self.assertRaisesRegex(WorkError, "PULL_TLS_REQUIRED_FOR_NON_LOOPBACK_LISTENER"):
+            pull.start_broker("0.0.0.0", 0)
+        with self.assertRaisesRegex(WorkError, "PULL_TLS_CERTIFICATE_AND_KEY_REQUIRED"):
+            pull.start_broker(certificate=self.root / "server.pem")
+        with self.assertRaisesRegex(WorkError, "PULL_TLS_REQUIRED"):
+            bootstrap.pair("http://remote.example:8765", self.root / "controller.json",
+                           self.root / "worker.json")
+
+    def test_pull_broker_rejects_an_unpaired_identity(self):
+        allowed_path = self.root / "allowed-controller.json"
+        allowed = {"schemaVersion": 1, "transport": "pull",
+                   "pull": {"url": "http://127.0.0.1:1", "workerId": "allowed-worker",
+                            "token": "a" * 32, "timeoutSeconds": 1}}
+        write_json(allowed_path, allowed)
+        server, thread, url = pull.start_broker(connections=[allowed_path])
+        try:
+            rejected = json.loads(json.dumps(allowed))
+            rejected["pull"].update(url=url, token="b" * 32)
+            with self.assertRaisesRegex(WorkError, "PULL_AUTH_INVALID"):
+                transport.Connection(rejected).call({"operation": "probe"})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def test_nonrepeatable_default_does_not_repeat_for_profile(self):
         self.scenario["repeatable"] = False
@@ -481,9 +593,10 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertEqual("stale", worker["status"])
         self.assertEqual("heartbeat-expired", worker["liveness"])
 
-    def test_prepared_worker_launcher_is_explicitly_one_shot(self):
+    def test_prepared_worker_launcher_keeps_legacy_worker_one_shot(self):
         launcher = (self.spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")
-        self.assertIn(" worker --once --spool ", launcher)
+        self.assertIn("worker_supervisor.py", launcher)
+        self.assertNotIn(" --persistent", launcher)
 
     def test_probe_marks_dead_worker_heartbeat_stale(self):
         write_json(self.spool / "worker.json", {"status": "ready", "pid": 999999999})
@@ -507,6 +620,8 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertEqual(1, worker["jobsProcessed"])
         self.assertEqual(worker["pid"], worker["processIdentity"]["pid"])
         self.assertRegex(worker["processIdentity"]["creationId"], "^(windows-filetime|proc-start):")
+        self.assertEqual(common.current_user_identity(), worker["sessionIdentity"]["user"])
+        self.assertEqual(common.current_user_identity(), read_json(self.spool / "profile.json")["workerOwner"])
 
     def test_worker_refreshes_identity_heartbeat_during_a_long_job(self):
         _, package = self.package(values={"delay": 8})
@@ -641,7 +756,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         import zipfile
         created = scaffold(self.source, "calibration")
         request = jobs.pack(created["scenario"], self.root / "calibration-package", target="fixture",
-                            mode="time", repeats=1, warmups=0)
+                            mode="time", runner="local", agent_policy="off", repeats=1, warmups=0)
         archive = self.root / "bundle.zip"
         bootstrap.export_bundle(REPO, archive)
         extracted = self.root / "portable bundle"
@@ -689,6 +804,127 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         with self.assertRaisesRegex(WorkError, "PORTABLE_PYTHON_ARCHIVE_HASH_MISMATCH"):
             bootstrap.export_bundle(root, rejected, package)
         self.assertFalse(rejected.exists())
+
+    def test_worker_stages_newer_verified_generation_without_overwriting_live_runtime(self):
+        import zipfile
+        self.profile["workerUpdatePolicy"] = "compatible"
+        write_json(self.spool / "profile.json", self.profile)
+        original = self.root / "worker-current.zip"
+        bootstrap.export_bundle(REPO, original)
+        candidate = self.root / "worker-next.zip"
+        with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
+            values = {info.filename: source.read(info.filename) for info in source.infolist()}
+            version_name = ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py"
+            values[version_name] = values[version_name].replace(b'VERSION = "1.1.0"', b'VERSION = "1.2.0"')
+            manifest = json.loads(values["bundle-manifest.json"])
+            manifest["version"] = "1.2.0"
+            manifest["files"][version_name] = {"sha256": hashlib.sha256(values[version_name]).hexdigest(),
+                                                "bytes": len(values[version_name])}
+            values["bundle-manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+            for name, value in values.items():
+                output.writestr(name, value)
+        entry = {"sha256": digest(candidate), "bytes": candidate.stat().st_size}
+        blob = transport.blob_path(self.spool, entry["sha256"])
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        blob.write_bytes(candidate.read_bytes())
+        staged = updates.stage(self.spool, {"operation": "stage-update", **entry}, {})
+        self.assertEqual("worker-update-staged", staged["status"])
+        pending = read_json(self.spool / "runtime/pending.json")
+        self.assertEqual("1.2.0", pending["version"])
+        self.assertTrue(Path(pending["runtime"]).is_file())
+        self.assertTrue(Path(pending["supervisor"]).is_file())
+        self.assertNotEqual(Path(pending["runtime"]), RUNTIME / "remote_work.py")
+
+    def test_worker_update_rejects_a_tampered_manifest_entry(self):
+        import zipfile
+        self.profile["workerUpdatePolicy"] = "compatible"
+        write_json(self.spool / "profile.json", self.profile)
+        original = self.root / "worker-original.zip"
+        bootstrap.export_bundle(REPO, original)
+        candidate = self.root / "worker-tampered.zip"
+        runtime_name = ".agents/skills/itl-remote-runner/scripts/remote_work.py"
+        with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
+            for info in source.infolist():
+                value = source.read(info.filename)
+                if info.filename == "bundle-manifest.json":
+                    manifest = json.loads(value)
+                    manifest["version"] = "1.2.0"
+                    value = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+                elif info.filename == runtime_name:
+                    value += b"\n# tampered\n"
+                output.writestr(info.filename, value)
+        entry = {"sha256": digest(candidate), "bytes": candidate.stat().st_size}
+        blob = transport.blob_path(self.spool, entry["sha256"])
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        blob.write_bytes(candidate.read_bytes())
+        with self.assertRaisesRegex(WorkError, "WORKER_UPDATE_FILE_HASH_MISMATCH"):
+            updates.stage(self.spool, {"operation": "stage-update", **entry}, {})
+        self.assertFalse((self.spool / "runtime/pending.json").exists())
+
+    def test_pull_preparation_generates_persistent_supervised_user_launcher(self):
+        server, thread, url = pull.start_broker()
+        try:
+            controller = self.root / "controller.json"
+            worker = self.root / "worker.json"
+            bootstrap.pair(url, controller, worker, worker_id="standard-user")
+            spool = self.root / "worker pull spool"
+            prepared = bootstrap.prepare(spool, self.profile_path, worker)
+            launcher = (spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")
+            self.assertIn("worker_supervisor.py", launcher)
+            self.assertIn(" --connection ", launcher)
+            self.assertIn(" --persistent", launcher)
+            self.assertEqual("compatible", prepared["workerUpdatePolicy"])
+            self.assertEqual("compatible", read_json(spool / "profile.json")["workerUpdatePolicy"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_worker_supervisor_rolls_back_an_unstartable_pending_generation(self):
+        write_json(self.spool / "runtime/pending.json",
+                   {"schemaVersion": 1, "version": "1.2.0", "archiveSha256": "a" * 64,
+                    "runtime": str(self.root / "missing runtime.py"),
+                    "supervisor": str(RUNTIME / "worker_supervisor.py"), "stagedAt": common.stamp()})
+        completed = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "worker_supervisor.py"),
+                                    "--spool", str(self.spool),
+                                    "--bootstrap-runtime", str(RUNTIME / "remote_work.py")],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("pending-runtime-missing", read_json(self.spool / "runtime/rollback.json")["reason"])
+        self.assertFalse((self.spool / "runtime/pending.json").exists())
+
+    def test_worker_supervisor_applies_update_staged_by_running_worker_without_user_restart(self):
+        current_runtime = self.root / "current worker.py"
+        trial_runtime = self.root / "trial worker.py"
+        sha = "b" * 64
+        trial_runtime.write_text('''import json, pathlib, sys
+arguments = sys.argv[1:]
+confirmation = pathlib.Path(arguments[arguments.index("--confirm-path") + 1])
+generation = arguments[arguments.index("--generation") + 1]
+confirmation.parent.mkdir(parents=True, exist_ok=True)
+confirmation.write_text(json.dumps({"archiveSha256": generation}), encoding="utf-8")
+''', encoding="utf-8")
+        current_runtime.write_text('''import json, pathlib, sys
+arguments = sys.argv[1:]
+spool = pathlib.Path(arguments[arguments.index("--spool") + 1])
+pending = {"schemaVersion": 1, "version": "1.2.0", "archiveSha256": "''' + sha + '''",
+           "runtime": r"''' + str(trial_runtime) + '''", "supervisor": "fixture",
+           "stagedAt": "fixture"}
+path = spool / "runtime" / "pending.json"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(pending), encoding="utf-8")
+''', encoding="utf-8")
+        write_json(self.spool / "runtime/current.json",
+                   {"schemaVersion": 1, "version": "1.1.0", "runtime": str(current_runtime)})
+        completed = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "worker_supervisor.py"),
+                                    "--spool", str(self.spool),
+                                    "--bootstrap-runtime", str(current_runtime)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        selected = read_json(self.spool / "runtime/current.json")
+        self.assertEqual("1.2.0", selected["version"])
+        self.assertEqual(str(trial_runtime), selected["runtime"])
+        self.assertFalse((self.spool / "runtime/pending.json").exists())
 
     def test_prepared_worker_preserves_immutable_interpreter_and_native_exit(self):
         launcher = (self.spool / "Start-Worker.ps1").read_text(encoding="utf-8-sig")

@@ -4,7 +4,7 @@
 установка и live acceptance учитываются раздельно.
 Область: database admission, lifecycle/runtime locks, on-demand MCP, remote jobs,
 `update-workflow`, `refresh-dev-branch`, `refresh-dev-branch-lite` и
-`refresh-all-dev-branches`.  
+`refresh-all-dev-branches`.
 Публикация: этот план не разрешает публикацию в `develop` или `master`; каждая
 реализационная волна проходит обычную локальную регистрацию отдельно.
 

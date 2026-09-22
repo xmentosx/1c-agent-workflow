@@ -1,4 +1,4 @@
-"""Content-addressed transfer over SSH stdin or a configured exchange directory."""
+"""Content-addressed transfer over pull, SSH compatibility, or local exchange."""
 from __future__ import annotations
 
 import base64
@@ -6,10 +6,9 @@ import json
 from pathlib import Path
 import re
 import shutil
-import sys
 
 from .common import FileLock, WorkError, beneath, capture, digest, read_json, stamp, write_json
-from .jobs import status, submit, validate_package
+from .jobs import execution_contract, status, submit, validate_package
 
 CHUNK = 512 * 1024
 
@@ -136,6 +135,9 @@ class Connection:
     def call(self, message):
         if self.profile["transport"] == "exchange":
             return endpoint(self.profile["spool"], message)
+        if self.profile["transport"] == "pull":
+            from .pull import PullConnection
+            return PullConnection(self.profile).call(message)
         if self.profile["transport"] != "ssh":
             raise WorkError("UNKNOWN_TRANSPORT")
         config = self.profile["ssh"]
@@ -163,24 +165,63 @@ class Connection:
             raise WorkError(data["error"])
         return data
 
+    def _bulk_folders(self, size):
+        if self.profile.get("transport") != "pull":
+            return []
+        from .pull import _bulk_folders
+        values = _bulk_folders(self.profile)
+        return [values[name] for name in sorted(values)
+                if size >= int(values[name].get("thresholdBytes", 64 * 1024 * 1024))]
+
+    def _publish_bulk(self, source, entry, kind):
+        from .pull import _copy_verified
+        for folder in self._bulk_folders(entry["bytes"]):
+            root = Path(folder["path"])
+            destination = beneath(root, "%s/%s" % (kind, entry["sha256"]))
+            try:
+                _copy_verified(source, destination, entry["bytes"], entry["sha256"])
+                return folder, destination
+            except (OSError, WorkError):
+                continue
+        return None, None
+
+    def _put_blob(self, source, entry):
+        folder, _ = self._publish_bulk(source, entry, "itl-blobs")
+        if folder is not None:
+            try:
+                self.call({"operation": "adopt-blob", "folderId": folder["id"], **entry})
+                return "folder"
+            except WorkError:
+                # A synchronized folder is only an accelerator. Pull remains the
+                # authoritative control channel and safe transfer fallback.
+                pass
+        with Path(source).open("rb") as stream:
+            offset = 0
+            while True:
+                chunk = stream.read(CHUNK)
+                final = offset + len(chunk) == entry["bytes"]
+                self.call({"operation": "put", **entry, "offset": offset, "final": final,
+                           "data": base64.b64encode(chunk).decode("ascii")})
+                offset += len(chunk)
+                if final:
+                    break
+        return "pull" if self.profile.get("transport") == "pull" else self.profile["transport"]
+
     def send(self, package):
         request, scenario = validate_package(package)
+        if execution_contract(request)["runner"] != "worker":
+            raise WorkError("REMOTE_SEND_REQUIRES_WORKER_RUNNER")
         missing = set(self.call({"operation": "missing", "files": list(request["files"].values())})["missing"])
+        channels = {}
         for relative, entry in request["files"].items():
             if entry["sha256"] not in missing:
                 continue
-            with beneath(Path(package) / "input", relative).open("rb") as stream:
-                offset = 0
-                while True:
-                    chunk = stream.read(CHUNK)
-                    final = offset + len(chunk) == entry["bytes"]
-                    self.call({"operation": "put", **entry, "offset": offset, "final": final,
-                               "data": base64.b64encode(chunk).decode("ascii")})
-                    offset += len(chunk)
-                    if final:
-                        break
+            channels[relative] = self._put_blob(beneath(Path(package) / "input", relative), entry)
             missing.remove(entry["sha256"])
-        return self.call({"operation": "commit", "request": request, "scenario": scenario})
+        result = self.call({"operation": "commit", "request": request, "scenario": scenario})
+        if channels and isinstance(result, dict):
+            result = dict(result, transferChannels=channels)
+        return result
 
     def collect(self, identifier, destination, *, allow_partial=False):
         destination = Path(destination)
@@ -196,24 +237,56 @@ class Connection:
         if not result_available and not allow_partial:
             raise WorkError("RESULT_NOT_READY")
         destination.mkdir(parents=True)
+        channels = {}
         for entry in inventory:
             path = beneath(destination, entry["path"])
             path.parent.mkdir(parents=True, exist_ok=True)
-            offset = 0
-            with path.open("wb") as stream:
-                while offset < entry["bytes"]:
-                    chunk = base64.b64decode(self.call({"operation": "read-result", "id": identifier,
-                                                       "path": entry["path"], "offset": offset,
-                                                       "bytes": min(CHUNK, entry["bytes"] - offset)})["data"], validate=True)
-                    if not chunk or offset + len(chunk) > entry["bytes"]:
-                        raise WorkError("RESULT_TRANSFER_INCOMPLETE")
-                    stream.write(chunk)
-                    offset += len(chunk)
+            folder = None
+            for candidate in self._bulk_folders(entry["bytes"]):
+                try:
+                    self.call({"operation": "export-result", "folderId": candidate["id"], "id": identifier,
+                               "path": entry["path"], "bytes": entry["bytes"], "sha256": entry["sha256"]})
+                    source = beneath(candidate["path"], "itl-results/" + entry["sha256"])
+                    if source.is_file() and source.stat().st_size == entry["bytes"] and digest(source) == entry["sha256"]:
+                        shutil.copyfile(source, path)
+                        folder = candidate
+                        channels[entry["path"]] = "folder:" + candidate["id"]
+                        break
+                except (OSError, WorkError):
+                    continue
+            if folder is None:
+                channels[entry["path"]] = ("pull" if self.profile.get("transport") == "pull"
+                                             else self.profile["transport"])
+                offset = 0
+                with path.open("wb") as stream:
+                    while offset < entry["bytes"]:
+                        chunk = base64.b64decode(self.call({"operation": "read-result", "id": identifier,
+                                                           "path": entry["path"], "offset": offset,
+                                                           "bytes": min(CHUNK, entry["bytes"] - offset)})["data"], validate=True)
+                        if not chunk or offset + len(chunk) > entry["bytes"]:
+                            raise WorkError("RESULT_TRANSFER_INCOMPLETE")
+                        stream.write(chunk)
+                        offset += len(chunk)
             if digest(path) != entry["sha256"]:
                 raise WorkError("RESULT_HASH_MISMATCH")
         manifest = {"jobId": identifier, "files": inventory, "resultAvailable": result_available,
                     "collectionStatus": "result" if result_available else "partial",
+                    "transferChannels": channels,
                     "observedAt": response.get("observedAt"), "observedJob": response.get("observedJob"),
                     "observationErrors": response.get("observationErrors", [])}
         write_json(destination / "download-manifest.json", manifest)
         return read_json(destination / "result.json") if result_available else manifest
+
+    def stage_update(self, bundle):
+        if self.profile.get("transport") != "pull":
+            raise WorkError("WORKER_SELF_UPDATE_PULL_REQUIRED")
+        bundle = Path(bundle).resolve()
+        if not bundle.is_file():
+            raise WorkError("UPDATE_BUNDLE_MISSING")
+        entry = {"sha256": digest(bundle), "bytes": bundle.stat().st_size}
+        missing = self.call({"operation": "missing", "files": [entry]})["missing"]
+        channel = "existing"
+        if entry["sha256"] in missing:
+            channel = self._put_blob(bundle, entry)
+        result = self.call({"operation": "stage-update", **entry})
+        return dict(result, transferChannel=channel) if isinstance(result, dict) else result

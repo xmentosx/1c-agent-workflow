@@ -151,6 +151,7 @@ class _OsHandle:
         self.root = Path(root)
         self.key = key
         self.handle = None
+        self.owned = False
         self.stream = None
 
     @property
@@ -165,22 +166,12 @@ class _OsHandle:
         if self.handle is not None or self.stream is not None:
             raise WorkError("EXECUTION_GUARD_HANDLE_REUSED")
         if os.name == "nt":
-            import ctypes as c
-            from ctypes import wintypes as w
-            kernel = c.WinDLL("kernel32", use_last_error=True)
-            kernel.CreateMutexW.argtypes = [c.c_void_p, w.BOOL, w.LPCWSTR]
-            kernel.CreateMutexW.restype = w.HANDLE
-            kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
-            kernel.WaitForSingleObject.restype = w.DWORD
-            handle = kernel.CreateMutexW(None, False, self.name)
-            if not handle:
-                raise c.WinError(c.get_last_error())
-            result = kernel.WaitForSingleObject(handle, 0)
+            self._open_windows()
+            result = self.kernel.WaitForSingleObject(self.handle, 0)
             if result not in (0, 0x80):
-                kernel.CloseHandle(handle)
+                self.close()
                 return False
-            self.handle = handle
-            self.kernel = kernel
+            self.owned = True
             return True
         import fcntl
         path = self.root / "locks" / (hashlib.sha256(self.key.encode("utf-8")).hexdigest() + ".lock")
@@ -194,11 +185,35 @@ class _OsHandle:
         self.stream = stream
         return True
 
-    def release(self):
+    def _open_windows(self):
+        import ctypes as c
+        from ctypes import wintypes as w
+        kernel = c.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateMutexW.argtypes = [c.c_void_p, w.BOOL, w.LPCWSTR]
+        kernel.CreateMutexW.restype = w.HANDLE
+        kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+        kernel.WaitForSingleObject.restype = w.DWORD
+        kernel.ReleaseMutex.argtypes = [w.HANDLE]
+        kernel.ReleaseMutex.restype = w.BOOL
+        kernel.CloseHandle.argtypes = [w.HANDLE]
+        kernel.CloseHandle.restype = w.BOOL
+        handle = kernel.CreateMutexW(None, False, self.name)
+        if not handle:
+            raise c.WinError(c.get_last_error())
+        self.handle = handle
+        self.kernel = kernel
+
+    def close(self):
         if self.handle is not None:
-            self.kernel.ReleaseMutex(self.handle)
             self.kernel.CloseHandle(self.handle)
             self.handle = None
+            self.owned = False
+
+    def release(self):
+        if self.handle is not None:
+            if self.owned:
+                self.kernel.ReleaseMutex(self.handle)
+            self.close()
         if self.stream is not None:
             import fcntl
             with contextlib.suppress(OSError):
@@ -378,6 +393,34 @@ class ExecutionGuard:
             queue_lock.release()
 
     def _try_handles(self):
+        if os.name == "nt" and len(self.resources) > 1:
+            import ctypes as c
+            from ctypes import wintypes as w
+            if len(self.resources) > 64:
+                raise WorkError("EXECUTION_GUARD_RESOURCE_LIMIT_EXCEEDED")
+            opened = []
+            try:
+                for resource in self.resources:
+                    handle = _OsHandle(self.root, resource)
+                    handle._open_windows()
+                    opened.append(handle)
+                kernel = opened[0].kernel
+                kernel.WaitForMultipleObjects.argtypes = [w.DWORD, c.POINTER(w.HANDLE),
+                                                           w.BOOL, w.DWORD]
+                kernel.WaitForMultipleObjects.restype = w.DWORD
+                raw_handles = (w.HANDLE * len(opened))(
+                    *(handle.handle for handle in opened))
+                result = kernel.WaitForMultipleObjects(len(opened), raw_handles, True, 0)
+                if result != 0 and not 0x80 <= result < 0x80 + len(opened):
+                    return False
+                for handle in opened:
+                    handle.owned = True
+                self.handles = opened
+                opened = []
+                return True
+            finally:
+                for handle in opened:
+                    handle.close()
         acquired = []
         try:
             for resource in self.resources:

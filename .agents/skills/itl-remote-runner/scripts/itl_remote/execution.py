@@ -1,4 +1,4 @@
-"""The same measurement engine runs locally, in the SSH worker and for an AI agent."""
+"""The same measurement engine runs locally or in a worker, optionally agent-orchestrated."""
 from __future__ import annotations
 
 import contextlib
@@ -14,7 +14,7 @@ import time
 from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_memory_snapshot,
                      identity, read_json, resolve_resource_limits, stamp, write_json)
 from .common import ResourceContext, beneath, process_identity
-from .jobs import authorize, job_id, status, validate_package
+from .jobs import authorize, execution_contract, job_id, status, validate_package
 from .profiling import Rdbg, prepare_debug_server, required_profile_types, profile_client_type
 from .execution_guard import ExecutionGuard, target_execution
 from .deadlines import Deadline, budgets
@@ -62,12 +62,14 @@ def capture_provenance(run, request, scenario, target, *, executor=None):
     """Retain public input evidence before waiting or starting any runtime."""
     path = Path(run) / "provenance.json"
     database = database_binding(target)
+    execution = execution_contract(request)
     record = {"schemaVersion": 1, "jobId": request["id"], "parentId": request.get("parentId"),
               "requestSha256": identity(request), "scenarioSha256": request["scenarioSha256"],
               "scenarioInputsSha256": identity(request["files"]), "files": request["files"],
               "scenarioId": scenario["id"], "parameters": request["parameters"],
               "mode": request["mode"], "repeats": request["repeats"], "warmups": request["warmups"],
-              "operations": request["operations"], "requestedRoute": request["route"],
+              "operations": request["operations"], "runner": execution["runner"],
+              "agentPolicy": execution["agentPolicy"], "requestedRoute": execution["legacyRoute"],
               "targetName": request["target"], "host": platform.node(), "pythonVersion": platform.python_version(),
               "adapter": scenario.get("adapter", "command"), "readiness": scenario["readyDescription"],
               "phaseTimeoutSeconds": budgets(scenario), "repeatable": scenario["repeatable"], "mutates": scenario["mutates"],
@@ -497,12 +499,15 @@ def compare(left, right):
             "sourceIdentity": [left.get("sourceIdentity"), right.get("sourceIdentity")]}
 
 
-def execute_job(spool, identifier, profile, *, via_agent=False):
+def execute_job(spool, identifier, profile, *, via_agent=False, expected_runner=None):
     spool = Path(spool).resolve()
     identifier = job_id(identifier)
     request, scenario = validate_package(spool / "jobs" / identifier)
     authorize(request, scenario, profile)
-    if request["route"] == "agent" and not via_agent:
+    requested_execution = execution_contract(request)
+    if expected_runner is not None and requested_execution["runner"] != expected_runner:
+        raise WorkError("EXECUTION_RUNNER_MISMATCH")
+    if requested_execution["agentPolicy"] == "requested" and not via_agent:
         from .agents import dispatch
         return dispatch(spool, request, profile, scenario)
     # One claim per job prevents replay without serializing unrelated databases.
@@ -533,7 +538,7 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
             return state
         execution = target_execution(target)
         provenance = capture_provenance(spool / "runs" / identifier, request, scenario, target,
-                                        executor="agent" if via_agent else "worker")
+                                        executor="agent" if via_agent else requested_execution["runner"])
         profile_path = spool / "profile.json"
         profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
         executor_identity = process_identity(os.getpid())
@@ -595,7 +600,9 @@ def execute_job(spool, identifier, profile, *, via_agent=False):
                          error=str(error), updatedAt=stamp())
             write_json(spool / "state" / (identifier + ".json"), state)
             return state
-    if result["status"] == "failed" and request["route"] == "auto" and profile.get("agentFallback") and not via_agent:
+    if (result["status"] == "failed" and
+            requested_execution["agentPolicy"] == "diagnosis-on-failure" and
+            profile.get("agentFallback") and not via_agent):
         from .agents import dispatch
         dispatch(spool, request, profile, scenario, diagnosis=True)
     return state

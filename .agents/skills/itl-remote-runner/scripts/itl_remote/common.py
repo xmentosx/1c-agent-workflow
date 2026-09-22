@@ -101,6 +101,58 @@ def stamp():
     return datetime.now(timezone.utc).isoformat()
 
 
+def current_user_identity():
+    """Stable per-user owner without locale-sensitive command output."""
+    if os.name != "nt":
+        return {"kind": "uid", "value": str(os.getuid())}
+    import ctypes as c
+    from ctypes import wintypes as w
+    kernel, advapi = c.WinDLL("kernel32", use_last_error=True), c.WinDLL("advapi32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.LocalFree.argtypes = [c.c_void_p]
+    kernel.LocalFree.restype = c.c_void_p
+    token = w.HANDLE()
+    advapi.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, c.POINTER(w.HANDLE)]
+    advapi.GetTokenInformation.argtypes = [w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.POINTER(w.DWORD)]
+    if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, c.byref(token)):
+        raise WorkError("WORKER_USER_IDENTITY_UNAVAILABLE")
+    try:
+        size = w.DWORD()
+        advapi.GetTokenInformation(token, 1, None, 0, c.byref(size))
+        if not size.value:
+            raise WorkError("WORKER_USER_IDENTITY_UNAVAILABLE")
+        buffer = c.create_string_buffer(size.value)
+        if not advapi.GetTokenInformation(token, 1, buffer, size, c.byref(size)):
+            raise WorkError("WORKER_USER_IDENTITY_UNAVAILABLE")
+        sid_pointer = c.cast(buffer, c.POINTER(c.c_void_p))[0]
+        value = w.LPWSTR()
+        advapi.ConvertSidToStringSidW.argtypes = [c.c_void_p, c.POINTER(w.LPWSTR)]
+        if not advapi.ConvertSidToStringSidW(sid_pointer, c.byref(value)):
+            raise WorkError("WORKER_USER_IDENTITY_UNAVAILABLE")
+        try:
+            return {"kind": "windows-sid", "value": value.value}
+        finally:
+            kernel.LocalFree(value)
+    finally:
+        kernel.CloseHandle(token)
+
+
+def current_session_identity():
+    result = {"user": current_user_identity()}
+    if os.name == "nt":
+        import ctypes as c
+        from ctypes import wintypes as w
+        session = w.DWORD()
+        kernel = c.WinDLL("kernel32", use_last_error=True)
+        if not kernel.ProcessIdToSessionId(os.getpid(), c.byref(session)):
+            raise WorkError("WORKER_SESSION_IDENTITY_UNAVAILABLE")
+        result["windowsSessionId"] = int(session.value)
+    else:
+        result["processGroupId"] = os.getpgrp()
+    return result
+
+
 def _validated_resource_limits(values):
     allowed = set(DEFAULT_RESOURCE_LIMITS) | {"byOperation"}
     if not isinstance(values, dict) or set(values) - allowed:
