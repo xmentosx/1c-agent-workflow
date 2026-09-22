@@ -207,10 +207,19 @@ function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRo
     $previousIndexExists = Test-Path -LiteralPath 'Env:GIT_INDEX_FILE'
     $previousIndex = [Environment]::GetEnvironmentVariable('GIT_INDEX_FILE', 'Process')
     $managedPaths = @($directoryPaths + $filePaths | ForEach-Object { $_.Replace('\', '/') })
+    $runtimeIndexPaths = @(
+        ':(literal).agent-1c/execution-guard-generation.json',
+        ':(glob).agent-1c/execution-guard-generation.json.*',
+        ':(glob).agent-1c/execution-checkpoints/**'
+    )
     try {
         [Environment]::SetEnvironmentVariable('GIT_INDEX_FILE', $temporaryIndex, 'Process')
         Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('read-tree', $oldHead)
         Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('add', '-A', '-f', '--') + $managedPaths)
+        # A pre-v2 helper could checkpoint these workflow-owned runtime files
+        # before the branch had the new ignore contract. Repair that exact
+        # pollution in the cutover commit without deleting the live evidence.
+        Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('rm', '-r', '-f', '--cached', '--ignore-unmatch', '--') + $runtimeIndexPaths)
         $tree = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('write-tree') -Capture
         $oldTree = Invoke-CutoverGit -Root $WorktreeRoot -Arguments @('rev-parse', "$oldHead^{tree}") -Capture
         if ($tree -cne $oldTree) {
@@ -222,7 +231,7 @@ function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRo
         else { Remove-Item -LiteralPath 'Env:GIT_INDEX_FILE' -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $temporaryIndex -PathType Leaf) { Remove-Item -LiteralPath $temporaryIndex -Force -ErrorAction SilentlyContinue }
     }
-    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('reset', '--quiet', 'HEAD', '--') + $managedPaths)
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('reset', '--quiet', 'HEAD', '--') + $managedPaths + $runtimeIndexPaths)
 }
 
 function Get-CutoverGitWorktrees([string]$Root) {

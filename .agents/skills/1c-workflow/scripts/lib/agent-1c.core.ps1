@@ -592,7 +592,13 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         Resolve-Agent1cFullPath -Path (Join-Path $resolvedWorktree $commonGitDirectoryText)
     }
     $excludePath = Join-Path $commonGitDirectory "info\exclude"
-    $ignoreLines = @(".agent-1c/locks/", ".agent-1c/runtime/", ".agent-1c/event-log-cursors/")
+    $ignoreLines = @(
+        ".agent-1c/locks/",
+        ".agent-1c/runtime/",
+        ".agent-1c/event-log-cursors/",
+        ".agent-1c/execution-checkpoints/",
+        ".agent-1c/execution-guard-generation.json.*"
+    )
     $existingLines = @()
     if (Test-Path -LiteralPath $excludePath -PathType Leaf -ErrorAction SilentlyContinue) {
         $existingLines = @(Read-Utf8Lines -Path $excludePath | ForEach-Object { ([string]$_).Trim() })
@@ -2616,6 +2622,9 @@ function Ensure-GitIgnore {
         ".agent-1c/event-log-cursors/",
         ".agent-1c/event-log-checks/",
         ".agent-1c/runs/",
+        ".agent-1c/execution-guard-generation.json",
+        ".agent-1c/execution-guard-generation.json.*",
+        ".agent-1c/execution-checkpoints/",
         ".agent-1c/vanessa-authoring/",
         ".agent-1c/verification-repair/",
         ".agent-1c/verification-selection/",

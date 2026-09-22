@@ -158,6 +158,13 @@
         }
         [IO.File]::WriteAllText((Join-Path $branchRoot 'notes.txt'), 'user staged change', [Text.UTF8Encoding]::new($false))
         & git -C $branchRoot add notes.txt
+        $trackedCheckpoint = Join-Path $branchRoot '.agent-1c/execution-checkpoints/legacy.json'
+        $trackedMarkerTemporary = Join-Path $branchRoot '.agent-1c/execution-guard-generation.json.legacy.tmp'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $trackedCheckpoint) -Force | Out-Null
+        [IO.File]::WriteAllText($trackedCheckpoint, '{"status":"resumed"}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($trackedMarkerTemporary, 'temporary marker', [Text.UTF8Encoding]::new($false))
+        & git -C $branchRoot add -f -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
+        & git -C $branchRoot commit --quiet -m 'fixture: accidentally track execution runtime' -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
 
         $result = & $cutover -ProjectRoot $repo -PackageRoot $package -PrepareManagedWorktrees
 
@@ -167,6 +174,9 @@
         (& git -C $branchRoot log -1 --pretty=%s) | Should -Be 'chore: activate execution guards v2'
         (& git -C $branchRoot status --porcelain) | Should -Be 'M  notes.txt'
         (Get-Content -LiteralPath (Join-Path $branchRoot 'notes.txt') -Raw -Encoding UTF8) | Should -Be 'user staged change'
+        Test-Path -LiteralPath $trackedCheckpoint | Should -BeTrue
+        Test-Path -LiteralPath $trackedMarkerTemporary | Should -BeTrue
+        @(& git -C $branchRoot ls-files -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp') | Should -BeNullOrEmpty
         (Get-Content -LiteralPath (Join-Path $unmanagedRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -Raw -Encoding UTF8) | Should -Be 'old helper'
         Test-Path -LiteralPath (Join-Path $unmanagedRoot '.agent-1c/execution-guard-generation.json') | Should -BeFalse
         foreach ($root in @($repo, $branchRoot)) {

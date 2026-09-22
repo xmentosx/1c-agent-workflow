@@ -112,6 +112,8 @@
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/locks/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/runtime/"))
             $excludeText | Should -Match ([regex]::Escape(".agent-1c/event-log-cursors/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-checkpoints/"))
+            $excludeText | Should -Match ([regex]::Escape(".agent-1c/execution-guard-generation.json.*"))
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

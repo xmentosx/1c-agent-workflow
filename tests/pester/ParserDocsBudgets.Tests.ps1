@@ -1133,6 +1133,8 @@
         $HelperText | Should -Match ([regex]::Escape($requiredPath))
         $requiredPaths = @(
             ".tx/",
+            ".agent-1c/execution-guard-generation.json.*",
+            ".agent-1c/execution-checkpoints/",
             ".agent-1c/branch-dumps/",
             ".agent-1c/config-dump/",
             ".agent-1c/extension-dump/",
