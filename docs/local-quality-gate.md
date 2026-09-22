@@ -151,8 +151,9 @@ Component preflight не хранит булево «нужен Release»: он 
 
 Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 минут; Develop
 `upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
-из `scripts/release-e2e/stages.json` для каждой capability. Timeout не расширяет
-маршрут и не удаляет checkpoint.
+из `scripts/release-e2e/stages.json` для каждой capability. Этот бюджет включает
+как основное доказательство, так и обязательную очистку принадлежащих stage
+ресурсов. Timeout не расширяет маршрут и не удаляет checkpoint.
 
 ```powershell
 .\scripts\source-delivery.ps1 -Action PublishDevelop `
