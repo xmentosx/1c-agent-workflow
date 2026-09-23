@@ -135,6 +135,10 @@ identity: `statusReader` — коммит прочитанного кода,
 
 Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит DAG со статусами
 `execute`, `reuse` и `blocked`, fingerprints входов, зависимости и бюджеты.
+Develop stage допускает `reuse` только для того же дерева кандидата: его
+статическая и маршрутная qualification восстанавливается по exact-tree ключу.
+При новом дереве план включает время `upgrade`/`fresh`, даже если файлы их
+владельцев не менялись. Release capability сохраняет независимый fingerprint.
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
 `-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который

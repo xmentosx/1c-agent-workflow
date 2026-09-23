@@ -345,16 +345,21 @@ function New-DeliveryQualityPlanForCandidate {
     if (@($journeyPlan.unknownPaths).Count -gt 0) { throw "QUALITY_OWNER_MISSING: $(@($journeyPlan.unknownPaths) -join ', ')" }
     $stages = [Collections.Generic.List[object]]::new()
     $developEnvironment = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
-    $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests))
+    # check.ps1 restores Develop static and journey proofs for the exact tree.
+    # Include that tree in immutable stage keys so a plan never budgets old-tree
+    # evidence as reuse while the child must execute a new journey.
+    $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests)) -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree })
     $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint
-    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=900; inputFingerprint=$staticFingerprint; execution=$(if($staticProof){"reuse"}else{"execute"}); reason=$(if($staticProof){"matching stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
+    $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
+    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=900; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
     foreach ($journey in @($journeyPlan.journeys)) {
         $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
         $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })
         $stageId = "develop.$journey"
-        $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity $developEnvironment
+        $fingerprint = Get-DeliveryInputFingerprint -StageId $stageId -Version 1 -CandidateRoot $CandidateRoot -Pattern $routePatterns -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree; environment=$developEnvironment })
         $proof = Test-DeliveryStageEvidence -StageId $stageId -Fingerprint $fingerprint
-        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=$(if($journey -eq "upgrade"){1200}else{2100}); inputFingerprint=$fingerprint; execution=$(if($proof){"reuse"}else{"execute"}); reason=$(if($proof){"matching stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
+        $reusable = $proof -and [string]$proof.candidate.tree -ceq $CandidateTree
+        $stages.Add([pscustomobject][ordered]@{ id=$stageId; version=1; mode="Develop"; dependsOn=@("develop.static"); budgetSeconds=$(if($journey -eq "upgrade"){1200}else{2100}); inputFingerprint=$fingerprint; execution=$(if($reusable){"reuse"}else{"execute"}); reason=$(if($reusable){"matching exact-tree stage evidence"}else{"owner-selected Develop journey"}) }) | Out-Null
     }
     $orderedReleaseCapabilities = @()
     if ($RequireRelease -or @($ReleaseCapability).Count -gt 0) {
@@ -498,6 +503,6 @@ function Restore-DeliveryPlanQualification {
     $records = @($reusedDevelop | ForEach-Object { Test-DeliveryStageEvidence -StageId ([string]$_.id) -Fingerprint ([string]$_.inputFingerprint) })
     if ($records.Count -ne $reusedDevelop.Count -or @($records | Where-Object { -not $_ }).Count -gt 0) { return $false }
     $trees = @($records | ForEach-Object { [string]$_.candidate.tree } | Sort-Object -Unique)
-    if ($trees.Count -ne 1 -or $trees[0] -notmatch '^[a-f0-9]{40}$') { return $false }
+    if ($trees.Count -ne 1 -or $trees[0] -cne [string]$Plan.candidate.tree) { return $false }
     return Restore-DeliveryQualification -CandidateRoot $CandidateRoot -Tree $trees[0]
 }

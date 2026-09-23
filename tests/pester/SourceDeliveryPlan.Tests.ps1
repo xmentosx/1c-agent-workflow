@@ -79,6 +79,38 @@ Describe 'Delivery v3 immutable selective plan' {
         $saved = Save-DeliveryQualityPlan -Plan $first; $first.createdAt = [DateTime]::UtcNow.AddMinutes(1).ToString('o'); (Save-DeliveryQualityPlan -Plan $first) | Should -Be $saved
     }
 
+    It 'budgets Develop journeys again when matching owner evidence belongs to an older tree' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@('upgrade','fresh'); unknownPaths=@() } }
+
+        $oldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $proof = Join-Path $TestDrive 'older-tree-proof.json'
+        [IO.File]::WriteAllText($proof, '{"status":"passed"}', [Text.UTF8Encoding]::new($false))
+        foreach ($stage in $oldPlan.stages) {
+            Save-DeliveryStageEvidence -Stage $stage -CandidateCommit $repo.commit -CandidateTree $repo.tree -ProofPath $proof | Out-Null
+        }
+        $reusedOldPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        @($reusedOldPlan.stages.execution | Select-Object -Unique) | Should -Be @('reuse')
+
+        [IO.File]::WriteAllText((Join-Path $repo.root 'harness.ps1'), "'h2'", [Text.UTF8Encoding]::new($false))
+        & git -C $repo.root add harness.ps1
+        & git -C $repo.root commit --quiet -m 'change delivery harness'
+        $newCommit = (& git -C $repo.root rev-parse HEAD).Trim()
+        $newTree = (& git -C $repo.root rev-parse 'HEAD^{tree}').Trim()
+        $newPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $newCommit -CandidateTree $newTree
+
+        @($newPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
+        $newPlan.executedBudgetSeconds | Should -Be 4200
+        (Get-DeliveryPlanGateBudgetSeconds -Plan $newPlan -Mode Develop) | Should -Be 4200
+        $newPlan.stages[1].inputFingerprint | Should -Not -Be $oldPlan.stages[1].inputFingerprint
+        $reusedOldPlan.candidate.tree = $newTree
+        (Restore-DeliveryPlanQualification -Plan $reusedOldPlan -CandidateRoot $repo.root) | Should -BeFalse
+    }
+
     It 'blocks an unknown path without inventing a full fallback' {
         $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
         Mock Get-QualityContractCatalog { $catalog }; Mock Test-QualityContractCatalog { $true }
