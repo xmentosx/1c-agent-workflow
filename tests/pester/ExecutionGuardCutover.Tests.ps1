@@ -131,9 +131,10 @@
         New-Item -ItemType Directory -Path (Split-Path -Parent $oldHelper) -Force | Out-Null
         [IO.File]::WriteAllText($oldHelper, 'old helper', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $oldHelper) 'old-only.ps1'), 'legacy helper', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $oldHelper) 'stable.txt'), "same LF`n", [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $repo 'notes.txt'), 'original', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $repo '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
-        & git -C $repo add --all
+        & git -C $repo -c core.safecrlf=false add --all
         & git -C $repo commit --quiet -m 'fixture'
         & git -C $repo branch 'itldev/cutover'
         & git -C $repo worktree add --quiet $branchRoot 'itldev/cutover'
@@ -153,6 +154,7 @@
         $newHelper = Join-Path $package '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
         New-Item -ItemType Directory -Path (Split-Path -Parent $newHelper) -Force | Out-Null
         [IO.File]::WriteAllText($newHelper, 'new v2 helper', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $newHelper) 'stable.txt'), "same LF`n", [Text.UTF8Encoding]::new($false))
         foreach ($relative in @('install-agent-1c-workflow.ps1', 'AGENT-INSTALL.md')) {
             [IO.File]::WriteAllText((Join-Path $package $relative), "v2:$relative", [Text.UTF8Encoding]::new($false))
         }

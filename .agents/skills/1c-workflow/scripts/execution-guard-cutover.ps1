@@ -244,6 +244,12 @@ function Update-CutoverManagedWorktree([string]$PackageRoot, [string]$WorktreeRo
         if (Test-Path -LiteralPath $temporaryIndex -PathType Leaf) { Remove-Item -LiteralPath $temporaryIndex -Force -ErrorAction SilentlyContinue }
     }
     Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('reset', '--quiet', 'HEAD', '--') + $managedPaths + $runtimeIndexPaths)
+    # The source package is copied as bytes. On Windows, a copied LF file can
+    # remain marked dirty after reset even when Git's normalized blob matches
+    # the cutover commit. Refresh only the paths owned by this cutover.
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('diff', '--quiet', '--') + $managedPaths)
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('-c', 'core.safecrlf=false', 'add', '-u', '--') + $managedPaths)
+    Invoke-CutoverGit -Root $WorktreeRoot -Arguments (@('diff', '--cached', '--quiet', '--') + $managedPaths)
 }
 
 function Get-CutoverGitWorktrees([string]$Root) {
