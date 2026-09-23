@@ -22,7 +22,7 @@ function Get-DeliveryCanonicalJsonSha256 {
 function Get-DeliveryPlanIdentity {
     param([Parameter(Mandatory = $true)][object]$Plan)
     return [ordered]@{
-        protocolVersion=1; supervisorCommit=[string]$Plan.supervisor.commit
+        protocolVersion=1; supervisorCommit=[string]$Plan.supervisor.commit; supervisorChannel=[string]$Plan.supervisor.channel
         candidateCommit=[string]$Plan.candidate.commit; candidateTree=[string]$Plan.candidate.tree; baseCommit=[string]$Plan.candidate.baseCommit
         requireRelease=[bool]$Plan.requireRelease; releaseCapabilities=@($Plan.releaseCapabilities); paths=@($Plan.paths); contracts=@($Plan.contracts); stages=@($Plan.stages | ForEach-Object {
             [ordered]@{ id=[string]$_.id; version=[int]$_.version; mode=[string]$_.mode; dependsOn=@($_.dependsOn); budgetSeconds=[int]$_.budgetSeconds; alwaysExecute=[bool]($_.PSObject.Properties["alwaysExecute"] -and [bool]$_.alwaysExecute); inputFingerprint=[string]$_.inputFingerprint }
@@ -182,6 +182,12 @@ function Resolve-DeliveryRequiredReleaseCapabilities {
     return @($Catalog.stages | Where-Object { $selected.Contains([string]$_.id) } | ForEach-Object { [string]$_.id })
 }
 
+function Get-DeliverySupervisorChannel {
+    $channel = Get-Variable -Name DeliverySupervisorChannel -Scope Script -ErrorAction SilentlyContinue
+    if ($channel -and [string]$channel.Value -in @("develop", "master")) { return [string]$channel.Value }
+    return "master"
+}
+
 function Get-DeliveryPlanSemanticDotEnvNames {
     return @(
         'PLATFORM_PATH','PLATFORM_ARGS','IBCMD_ARGS','ONEC_MAX_CONCURRENT_SESSIONS',
@@ -312,7 +318,7 @@ function New-DeliveryQualityPlanForCandidate {
         $watch.Stop()
         $plan = [pscustomobject][ordered]@{
             schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
-            supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
+            supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; channel=(Get-DeliverySupervisorChannel); bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
             requireRelease=$customReleaseRequired; releaseCapabilities=@($customReleaseCapabilities); paths=$paths; contracts=@("custom-gate-fixture"); stages=$stages; executedBudgetSeconds=[int]$stages.Count; planningDurationMs=[int64]$watch.ElapsedMilliseconds
         }
         $plan.planId = Get-DeliveryCanonicalJsonSha256 -Value (Get-DeliveryPlanIdentity -Plan $plan)
@@ -328,7 +334,7 @@ function New-DeliveryQualityPlanForCandidate {
         })
         $plan = [pscustomobject][ordered]@{
             schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="blocked"; createdAt=[DateTime]::UtcNow.ToString("o")
-            supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
+            supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; channel=(Get-DeliverySupervisorChannel); bootstrap=[bool]$script:DeliverySupervisorBootstrap }; candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
             requireRelease=[bool]($RequireRelease -or @($ReleaseCapability).Count -gt 0); releaseCapabilities=@($ReleaseCapability | Sort-Object -Unique); paths=@($paths); contracts=@(); stages=$blockedStages; blockers=@($selection.unknownPaths | ForEach-Object { "QUALITY_OWNER_MISSING: $_" })
             executedBudgetSeconds=0; planningDurationMs=[int64]$watch.ElapsedMilliseconds
         }
@@ -374,7 +380,7 @@ function New-DeliveryQualityPlanForCandidate {
     foreach ($stage in @($stages)) { if ([string]$stage.execution -eq "execute") { $executedBudget += [int]$stage.budgetSeconds } }
     $plan = [pscustomobject][ordered]@{
         schemaVersion=1; kind="itl-delivery-plan"; planId=""; status="ready"; createdAt=[DateTime]::UtcNow.ToString("o")
-        supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+        supervisor=[ordered]@{ commit=$script:DeliverySupervisorCommit; channel=(Get-DeliverySupervisorChannel); bootstrap=[bool]$script:DeliverySupervisorBootstrap }
         candidate=[ordered]@{ commit=$CandidateCommit; tree=$CandidateTree; baseCommit=$BaseCommit }
         requireRelease=[bool]($orderedReleaseCapabilities.Count -gt 0); releaseCapabilities=$orderedReleaseCapabilities; paths=@($paths); contracts=@($selection.contracts | ForEach-Object { [string]$_.id }); stages=@($stages)
         executedBudgetSeconds=$executedBudget; planningDurationMs=[int64]$watch.ElapsedMilliseconds

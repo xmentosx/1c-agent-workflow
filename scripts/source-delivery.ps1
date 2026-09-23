@@ -92,40 +92,77 @@ function Resolve-DeliveryBootstrapCommonGitDirectory {
     return [IO.Path]::GetFullPath($commonDirectory)
 }
 
+function Get-DeliveryBootstrapTrackingCommit {
+    param([Parameter(Mandatory = $true)][string]$Branch)
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $value = @(& git -C $candidateRoot rev-parse "refs/remotes/$Remote/$Branch" 2>$null)
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($exitCode -ne 0 -or $value.Count -ne 1 -or [string]$value[0] -notmatch '^[a-f0-9]{40}$') { return "" }
+    return [string]$value[0]
+}
+
+function Test-DeliveryBootstrapAncestor {
+    param([Parameter(Mandatory = $true)][string]$Ancestor, [Parameter(Mandatory = $true)][string]$Descendant)
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & git -C $candidateRoot merge-base --is-ancestor $Ancestor $Descendant 2>$null
+    $isAncestor = $LASTEXITCODE -eq 0
+    $ErrorActionPreference = $previousErrorActionPreference
+    return $isAncestor
+}
+
 $supervisorRoot = ""
 $supervisorPath = $localSupervisor
 $supervisorCommit = ""
 $bootstrapSupervisor = $true
 try {
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $remoteMaster = @(& git -C $candidateRoot rev-parse "refs/remotes/$Remote/master" 2>$null)
-    $remoteMasterExitCode = $LASTEXITCODE
-    $ErrorActionPreference = $previousErrorActionPreference
-    if ($remoteMasterExitCode -eq 0 -and $remoteMaster.Count -eq 1 -and $remoteMaster[0] -match '^[a-f0-9]{40}$') {
-        $currentMasterCommit = [string]$remoteMaster[0]
-        $supervisorCommit = $currentMasterCommit
-        if ($ResumePlan) {
-            if ($ResumePlan -notmatch '^[a-f0-9]{64}$') { throw "DELIVERY_RESUME_PLAN_INVALID: plan id must be a lowercase SHA256." }
-            $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
-            $resumePlanPath = Join-Path $commonGitPath "itl\plans\v1\$ResumePlan.json"
-            if (-not (Test-Path -LiteralPath $resumePlanPath -PathType Leaf)) { throw "DELIVERY_RESUME_PLAN_MISSING: $resumePlanPath" }
-            try { $savedPlan = Get-Content -LiteralPath $resumePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json }
-            catch { throw "DELIVERY_RESUME_PLAN_INVALID: saved plan is unreadable: $($_.Exception.Message)" }
-            $recordedSupervisor = [string]$savedPlan.supervisor.commit
-            if ([int]$savedPlan.schemaVersion -ne 1 -or [string]$savedPlan.kind -ne "itl-delivery-plan" -or
-                [string]$savedPlan.planId -cne $ResumePlan -or $recordedSupervisor -notmatch '^[a-f0-9]{40}$') {
-                throw "DELIVERY_RESUME_PLAN_INVALID: saved plan identity or supervisor commit is invalid."
+    $requestedChannel = if ($Action -in @("Plan", "PublishDevelop")) { "develop" } else { "master" }
+    $selectedChannel = $requestedChannel
+    $recordedSupervisor = ""
+    if ($ResumePlan) {
+        if ($ResumePlan -notmatch '^[a-f0-9]{64}$') { throw "DELIVERY_RESUME_PLAN_INVALID: plan id must be a lowercase SHA256." }
+        $commonGitPath = Resolve-DeliveryBootstrapCommonGitDirectory -RepositoryRoot $candidateRoot
+        $resumePlanPath = Join-Path $commonGitPath "itl\plans\v1\$ResumePlan.json"
+        if (-not (Test-Path -LiteralPath $resumePlanPath -PathType Leaf)) { throw "DELIVERY_RESUME_PLAN_MISSING: $resumePlanPath" }
+        try { $savedPlan = Get-Content -LiteralPath $resumePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json }
+        catch { throw "DELIVERY_RESUME_PLAN_INVALID: saved plan is unreadable: $($_.Exception.Message)" }
+        $recordedSupervisor = [string]$savedPlan.supervisor.commit
+        if ([int]$savedPlan.schemaVersion -ne 1 -or [string]$savedPlan.kind -ne "itl-delivery-plan" -or
+            [string]$savedPlan.planId -cne $ResumePlan -or $recordedSupervisor -notmatch '^[a-f0-9]{40}$') {
+            throw "DELIVERY_RESUME_PLAN_INVALID: saved plan identity or supervisor commit is invalid."
+        }
+        $recordedChannel = if ($savedPlan.supervisor.PSObject.Properties.Name -contains "channel") { [string]$savedPlan.supervisor.channel } else { "" }
+        if ($recordedChannel) {
+            if ($recordedChannel -notin @("develop", "master") -or
+                ($recordedChannel -ne $requestedChannel -and -not ($Action -eq "PublishDevelop" -and $recordedChannel -eq "master"))) {
+                throw "DELIVERY_RESUME_PLAN_INVALID: supervisor channel '$recordedChannel' is incompatible with $Action."
             }
-            $ErrorActionPreference = "Continue"
-            & git -C $candidateRoot merge-base --is-ancestor $recordedSupervisor $currentMasterCommit 2>$null
-            $trustedSupervisor = $LASTEXITCODE -eq 0
-            $ErrorActionPreference = $previousErrorActionPreference
-            if (-not $trustedSupervisor) {
-                throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: recorded supervisor '$recordedSupervisor' is not an ancestor of origin/master '$currentMasterCommit'."
+            $selectedChannel = $recordedChannel
+        } else {
+            $masterTip = Get-DeliveryBootstrapTrackingCommit -Branch "master"
+            $developTip = Get-DeliveryBootstrapTrackingCommit -Branch "develop"
+            if ($masterTip -and (Test-DeliveryBootstrapAncestor -Ancestor $recordedSupervisor -Descendant $masterTip)) {
+                $selectedChannel = "master"
+            } elseif ($requestedChannel -eq "develop" -and $developTip -and
+                (Test-DeliveryBootstrapAncestor -Ancestor $recordedSupervisor -Descendant $developTip)) {
+                $selectedChannel = "develop"
+            } else {
+                throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: recorded supervisor '$recordedSupervisor' is not an ancestor of a permitted authority channel."
+            }
+        }
+    }
+    $authorityTip = Get-DeliveryBootstrapTrackingCommit -Branch $selectedChannel
+    if ($authorityTip) {
+        $supervisorCommit = $authorityTip
+        if ($ResumePlan) {
+            if (-not (Test-DeliveryBootstrapAncestor -Ancestor $recordedSupervisor -Descendant $authorityTip)) {
+                throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: recorded supervisor '$recordedSupervisor' is not an ancestor of origin/$selectedChannel '$authorityTip'."
             }
             $supervisorCommit = $recordedSupervisor
         }
+        $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         & git -C $candidateRoot cat-file -e "$supervisorCommit`:scripts/source-delivery-supervisor.ps1" 2>$null
         $supervisorExists = $LASTEXITCODE -eq 0
@@ -138,16 +175,38 @@ try {
             $bootstrapSupervisor = $false
         }
     }
+    $customGateFixture = [bool]$GateScript -and
+        [IO.Path]::GetFullPath($GateScript) -ne [IO.Path]::GetFullPath((Join-Path $candidateRoot "scripts\check.ps1"))
+    if ($selectedChannel -eq "develop" -and $bootstrapSupervisor -and -not $customGateFixture) {
+        throw "DELIVERY_DEVELOP_SUPERVISOR_UNAVAILABLE: origin/develop must contain a published source-delivery supervisor."
+    }
+    if ($ResumePlan -and $bootstrapSupervisor) {
+        throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: the recorded supervisor is unavailable from origin/$selectedChannel."
+    }
     if (-not $supervisorCommit) {
+        $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         $supervisorCommit = @(& git -C $candidateRoot rev-parse HEAD 2>$null) | Select-Object -First 1
+        $headExitCode = $LASTEXITCODE
         $ErrorActionPreference = $previousErrorActionPreference
+        if ($headExitCode -ne 0 -or [string]$supervisorCommit -notmatch '^[a-f0-9]{40}$') {
+            throw "Unable to resolve the bootstrap delivery supervisor from the source checkout."
+        }
     }
     $arguments = @{}
     foreach ($entry in $PSBoundParameters.GetEnumerator()) { $arguments[$entry.Key] = $entry.Value }
     $arguments["RepositoryRoot"] = $candidateRoot
     $arguments["SupervisorCommit"] = $supervisorCommit
     $arguments["BootstrapSupervisor"] = $bootstrapSupervisor
+    # The first published develop supervisor may predate this parameter. Pass
+    # the selected authority channel only when that pinned script supports it.
+    $tokens = $null
+    $parseErrors = $null
+    $supervisorAst = [Management.Automation.Language.Parser]::ParseFile($supervisorPath, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors.Count -gt 0) { throw "Delivery supervisor script has parse errors: $supervisorPath" }
+    if ($supervisorAst.ParamBlock -and @($supervisorAst.ParamBlock.Parameters | Where-Object { $_.Name.VariablePath.UserPath -eq "SupervisorChannel" }).Count -gt 0) {
+        $arguments["SupervisorChannel"] = $selectedChannel
+    }
     & $supervisorPath @arguments
 } finally {
     if ($supervisorRoot -and (Test-Path -LiteralPath $supervisorRoot -PathType Container)) {

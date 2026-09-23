@@ -52,6 +52,7 @@ BeforeAll {
 Describe 'Delivery v3 immutable selective plan' {
     BeforeEach {
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
+        $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
         $script:ResumePlan = ''
         $script:ApproveLongPlan = ''
@@ -85,6 +86,22 @@ Describe 'Delivery v3 immutable selective plan' {
         $plan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
         $plan.status | Should -Be 'blocked'; @($plan.stages.execution) | Should -Be @('blocked'); @($plan.stages.reason) | Should -Match 'QUALITY_OWNER_MISSING'
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*QUALITY_OWNER_MISSING*'
+    }
+
+    It 'pins the authority channel into the immutable plan identity' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+
+        $masterPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:DeliverySupervisorChannel = 'develop'
+        $developPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $masterPlan.supervisor.channel | Should -Be 'master'
+        $developPlan.supervisor.channel | Should -Be 'develop'
+        $developPlan.planId | Should -Not -Be $masterPlan.planId
     }
 
     It 'selects only requested Release capabilities and their dependencies' {
