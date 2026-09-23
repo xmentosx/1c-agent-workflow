@@ -8711,8 +8711,10 @@ if (`$?) { exit 0 } else { exit 1 }
 
             New-TestBranchSeedFixture -ProjectRoot $tempRoot -SourceInfoBasePath $sourceBase
             $env:APPDATA = Join-Path $tempRoot "appdata"
-            & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $tempRoot -Action new-dev-branch -DevBranchName "Fixture Branch" *> $null
-            $LASTEXITCODE | Should -Be 0
+            $createResult = Invoke-TestPowerShellFile -FilePath $HelperPath -Arguments @("-ProjectRoot", $tempRoot, "-Action", "new-dev-branch", "-DevBranchName", "Fixture Branch")
+            if ($createResult.exitCode -ne 0) {
+                throw "Fixture branch creation failed: $($createResult.combinedText)"
+            }
 
             ((& git -C $tempRoot branch --show-current).Trim()) | Should -Be "master"
             (Test-Path -LiteralPath $worktreePath -PathType Container) | Should -Be $true
