@@ -32,6 +32,50 @@ func TestWaitForStateCountRetriesTransientStateReadFailure(t *testing.T) {
 	}
 }
 
+func TestFacadeTerminationBudgetOutlivesOwnedCleanup(t *testing.T) {
+	if facadeTerminateDuration-facadeCleanupTimeout < 30*time.Second {
+		t.Fatalf("facade termination budget %s must outlive owned cleanup budget %s by at least 30s", facadeTerminateDuration, facadeCleanupTimeout)
+	}
+	command := facadeCommand("itl-ondemand-mcp.exe", "vanessa-ui", `D:\Git\project`, `D:\Git\catalog.json`, `D:\Git\agent-1c.ps1`, 5*time.Second)
+	joined := strings.Join(command.Args, " ")
+	if !strings.Contains(joined, "--cleanup-timeout "+facadeCleanupTimeout.String()) {
+		t.Fatalf("facade command does not bind the owned cleanup budget: %s", joined)
+	}
+}
+
+func TestVanessaSmokeProbeTimeoutCoversMultiSessionWorkflow(t *testing.T) {
+	if got := probeTimeout(false); got != 10*time.Minute {
+		t.Fatalf("ordinary probe timeout=%s, want 10m", got)
+	}
+	if got := probeTimeout(true); got < 20*time.Minute {
+		t.Fatalf("Vanessa smoke probe timeout=%s, must cover multiple sequential facade sessions", got)
+	}
+}
+
+func TestOwnedExitMeasurementExcludesOnlyProvenExecutionGuardWait(t *testing.T) {
+	log := []byte("unrelated output\n" +
+		`{"msg":"waiting for database execution","waitSeconds":0}` + "\n" +
+		`{"msg":"waiting for database execution","waitSeconds":52.25}` + "\n")
+	guard, err := executionGuardWait(log)
+	if err != nil || guard != 52250*time.Millisecond {
+		t.Fatalf("guard=%s err=%v", guard, err)
+	}
+	exit, err := effectiveExitWait(60*time.Second, guard)
+	if err != nil || exit != 7750*time.Millisecond {
+		t.Fatalf("exit=%s err=%v", exit, err)
+	}
+	withoutProof, err := effectiveExitWait(60*time.Second, 0)
+	if err != nil || withoutProof <= 15*time.Second {
+		t.Fatalf("unproven 60s close was hidden: exit=%s err=%v", withoutProof, err)
+	}
+	if _, err := effectiveExitWait(time.Second, 2*time.Second); err == nil {
+		t.Fatal("guard wait longer than close was accepted")
+	}
+	if _, err := executionGuardWait([]byte(`{"msg":"waiting for database execution","waitSeconds":-1}`)); err == nil {
+		t.Fatal("invalid guard evidence was accepted")
+	}
+}
+
 func TestFirstOSWindowTitleUsesVanessaListResult(t *testing.T) {
 	result := &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Для снятия скриншотов найдено 1 окон:\n  -dev_test / 1С:Предприятие"}}}
 	if got := firstOSWindowTitle(result); got != "dev_test / 1С:Предприятие" {
