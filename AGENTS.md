@@ -37,7 +37,8 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 ## Context budget
 
 - Start from Routing and targeted `rg`; open one matching contract or reference and needed ranges. Widen one layer only for a concrete gap; stop when evidence suffices. Do not bulk-read skills, docs, tests, or outputs.
-- Browse or use MCP only when external or current state is required; read ignored runtime only for a named run or artifact. Documentation budgets protect routing and readability. Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget. Remove duplication or route detail first; if necessary meaning exceeds a hard limit, propose an explicit limit change with a short rationale.
+- Browse or use MCP only when external or current state is required; read ignored runtime only for a named run or artifact.
+- Documentation budgets protect routing and readability. Before changing a rule, compare its trigger, required action or prohibition, exceptions, precedence, and failure outcome; identify intended semantic changes. A review warning calls for inspection, not compression. Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget. Remove proven duplication or route situational detail first; keep mandatory always-on rules loaded. If necessary meaning exceeds a hard limit, update the explicit limit with a short rationale and measured context delta in the same change. See `docs/package-architecture.md`.
 
 ## Verification
 
