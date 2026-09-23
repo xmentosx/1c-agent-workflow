@@ -640,6 +640,9 @@ function Publish-AccumulatedDevelop {
             Clear-DevelopPublicationStageFailure -Attempt $attempt -Stage "Release"
             Set-DevelopPublicationPhase -Attempt $attempt -Phase "candidate-built"
         }
+        if ($RequireRelease -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 2) {
+            Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path
+        }
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 1) {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "Develop"
             Assert-DevelopPublicationOperationBudget -StartedAt $operationStartedAt -NextStage "Develop"
@@ -683,6 +686,14 @@ function Publish-AccumulatedDevelop {
             $attempt.componentPublication = $null
             Set-DevelopPublicationPhase -Attempt $attempt -Phase $(if ($RequireRelease) { "release-qualified" } else { "develop-qualified" })
         }
+        if (-not $script:ComponentFinalizerScript -and (Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -ge 3) {
+            try { [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $worktree.path) }
+            catch {
+                if ($_.Exception.Message -notlike 'Required owned asset*') { throw }
+                $attempt.componentPublication = $null
+                Set-DevelopPublicationPhase -Attempt $attempt -Phase $(if ($RequireRelease) { "release-qualified" } else { "develop-qualified" })
+            }
+        }
         $componentPublication = $attempt.componentPublication
         if ((Get-DevelopPublicationPhaseRank -Phase ([string]$attempt.phase)) -lt 3) {
             Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "component-finalizer"
@@ -697,6 +708,9 @@ function Publish-AccumulatedDevelop {
             }
         }
         $installability = Assert-DevelopCandidateInstallable -CandidateRoot $worktree.path
+        if (-not $script:ComponentFinalizerScript) {
+            [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $worktree.path)
+        }
         Assert-DevelopPublicationStageMayRun -Attempt $attempt -Stage "push"
         try {
             $push = Invoke-WorktreeGit -Root $worktree.path -Arguments @("push", $script:Remote, "HEAD:refs/heads/develop") -AllowFailure

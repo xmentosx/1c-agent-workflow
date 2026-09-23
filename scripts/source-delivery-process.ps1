@@ -553,6 +553,45 @@ function Invoke-SourceGate {
     }
 }
 
+function Assert-DeliveryReleaseStandReady {
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
+    if ($script:DeliveryCustomGateBoundary) { return }
+    if (-not $E2EProjectRoot -or -not $AiRulesSource) { throw 'Release stand preflight requires the configured E2E project and exact controlled-fork checkout.' }
+    $runner = Join-Path $CandidateRoot 'scripts\test-release-readiness.ps1'
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Release stand preflight is missing from the candidate: $runner" }
+    $logRoot = Join-Path $CandidateRoot 'build\test-results\delivery'
+    New-Item -ItemType Directory -Force -Path $logRoot | Out-Null
+    $output = Join-Path $logRoot 'release-stand-preflight.json'
+    Remove-Item -LiteralPath $output -Force -ErrorAction SilentlyContinue
+    $stdout = Join-Path $logRoot 'release-stand-preflight.stdout.log'
+    $stderr = Join-Path $logRoot 'release-stand-preflight.stderr.log'
+    $arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $runner,
+        '-Mode', 'Release', '-RepositoryRoot', $CandidateRoot, '-E2EProjectRoot', ([IO.Path]::GetFullPath($E2EProjectRoot)),
+        '-AiRulesSource', ([IO.Path]::GetFullPath($AiRulesSource)), '-ResumeMode', $ReleaseResumeMode, '-OutputPath', $output)
+    $quoted = @($arguments | ForEach-Object { ConvertTo-DeliveryNativeArgument -Value ([string]$_) })
+    $process = $null; $job = [IntPtr]::Zero; $priorError = ''
+    try {
+        $started = Start-DeliveryProcess -ArgumentList ($quoted -join ' ') -WorkingDirectory $CandidateRoot -StandardOutputPath $stdout -StandardErrorPath $stderr
+        $process = $started.process; $job = [IntPtr]$started.jobHandle
+        if (-not $process.WaitForExit(300000)) {
+            Stop-DeliveryProcessTree -Process $process
+            throw "Release stand preflight exceeded five minutes. See $stdout and $stderr"
+        }
+        $process.Refresh()
+        if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw "Release stand preflight returned without context. See $stdout and $stderr" }
+        $context = Get-Content -LiteralPath $output -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([string]$context.status -cne 'passed' -or [int]$process.ExitCode -ne 0) {
+            $issues = @($context.issues | ForEach-Object { "$($_.code): $($_.message) Recovery: $($_.recovery)" }) -join '; '
+            throw "Release stand is not ready before Develop: $issues. See $output"
+        }
+    } catch { $priorError = $_.Exception.Message; throw } finally {
+        $closeError = $null
+        try { Close-DeliveryProcessJob -JobHandle $job -Process $process -PriorErrorMessage $priorError } catch { $closeError = $_ }
+        Stop-DeliveryProcessTree -Process $process
+        if ($closeError) { throw $closeError }
+    }
+}
+
 function Get-DeliveryOperationLockPath {
     return Join-Path (Get-DeliveryCommonGitDirectory) "itl\delivery-operation"
 }

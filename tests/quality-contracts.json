@@ -231,6 +231,15 @@
       "tests": ["tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/ImmutableDownloadRetry.Tests.ps1"]
     },
     {
+      "id": "release-stand-recovery",
+      "owner": "disposable Release stand fork and config cutover",
+      "gate": "targeted",
+      "budgetSeconds": 180,
+      "primaryTest": "tests/pester/ReleaseStandRecovery.Tests.ps1",
+      "paths": ["scripts/rebuild-release-e2e-stand.ps1"],
+      "tests": ["tests/pester/ReleaseStandRecovery.Tests.ps1"]
+    },
+    {
       "id": "release-runtime",
       "owner": "release and live journey",
       "gate": "develop",

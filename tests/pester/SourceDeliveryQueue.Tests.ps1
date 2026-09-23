@@ -1,6 +1,35 @@
 ﻿BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
 
 Describe "Source develop queue and delivery" {
+It "checks the Release stand before Develop and all owned URLs before push, including resume" {
+        $body = (Get-DeliveryFunctionDefinitions -Names @('Publish-AccumulatedDevelop')).Extent.Text
+        $stand = $body.IndexOf('Assert-DeliveryReleaseStandReady -CandidateRoot $worktree.path')
+        $develop = $body.IndexOf('Invoke-SourceGate -Mode "Develop"')
+        $finalizer = $body.IndexOf('Invoke-ComponentPublicationFinalizer -CandidateRoot $worktree.path')
+        $remote = $body.LastIndexOf('Assert-DeliveryOwnedAssetsPublished -CandidateRoot $worktree.path')
+        $push = $body.IndexOf('"push", $script:Remote, "HEAD:refs/heads/develop"')
+        $stand | Should -BeGreaterThan -1
+        $stand | Should -BeLessThan $develop
+        $finalizer | Should -BeLessThan $remote
+        $remote | Should -BeLessThan $push
+        $body | Should -Match 'Get-DevelopPublicationPhaseRank.*-ge 3'
+    }
+It "rejects a historical supervisor that cannot publish the paired CFE" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DeliveryBootstrapPairedAssetSupport')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = $TestDrive
+            $templateRoot = Join-Path $candidateRoot 'templates'
+            New-Item -ItemType Directory -Force -Path $templateRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $templateRoot 'dependency-lock.json'), '{"dependencies":{"vanessaMcp":{"vaExtension":{"url":"https://example.invalid/paired.cfe"}}}}', [Text.UTF8Encoding]::new($false))
+            $script:supervisorComponent = '# historical ZIP-only finalizer'
+            function Invoke-RepositoryGit { return [pscustomobject]@{ exitCode=0; stdout=$script:supervisorComponent } }
+            { Assert-DeliveryBootstrapPairedAssetSupport -SupervisorCommit ('a' * 40) } |
+                Should -Throw '*DELIVERY_SUPERVISOR_ASSET_UNSUPPORTED*'
+            $script:supervisorComponent = 'function Copy-DeliveryVanessaPairedExtensionFromArchive {}'
+            { Assert-DeliveryBootstrapPairedAssetSupport -SupervisorCommit ('b' * 40) } |
+                Should -Not -Throw
+        }
+    }
 It "parses the orchestrator and exposes the bounded delivery actions" {
         $tokens = $null
         $errors = $null
