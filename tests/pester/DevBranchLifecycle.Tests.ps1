@@ -2686,6 +2686,23 @@ try {
         } | Should -Throw "*DEV_BRANCH_FORK_INFOBASE_NOT_ISOLATED*"
     }
 
+    It "restores copied fork evidence references from the ordered path map" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $state = [ordered]@{}
+            $evidencePaths = [pscustomobject]@{
+                lastVerifiedReportPath = "reports/check.md"
+                lastVanessaLogPath = "logs/vanessa.log"
+            }
+            Set-DevBranchForkEvidenceReferences -State $state -EvidencePaths $evidencePaths -TargetHistoryRoot "C:\fork history"
+            $state
+        }
+
+        $result.lastVerifiedReportPath | Should -Be "C:\fork history\reports\check.md"
+        $result.lastVanessaLogPath | Should -Be "C:\fork history\logs\vanessa.log"
+        $result.lastVerificationLogPath | Should -Be ""
+    }
+
     It "copies file fork bases atomically and preserves the DoNotCopy marker" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-fork-base-" + [guid]::NewGuid().ToString("N"))
         try {

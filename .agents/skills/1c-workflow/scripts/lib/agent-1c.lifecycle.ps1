@@ -10340,6 +10340,29 @@ function Restore-DevBranchForkInfoBase {
     return $true
 }
 
+function Set-DevBranchForkEvidenceReferences {
+    param(
+        [Parameter(Mandatory = $true)][System.Collections.IDictionary]$State,
+        [AllowNull()][object]$EvidencePaths,
+        [Parameter(Mandatory = $true)][string]$TargetHistoryRoot
+    )
+
+    $paths = ConvertTo-Agent1cHashtable -Object $EvidencePaths
+    foreach ($fieldName in @(
+        "lastVerifiedReportPath", "lastVerificationLogPath",
+        "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
+        "lastYAxUnitReportPath", "lastYAxUnitLogPath",
+        "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
+        "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
+    )) {
+        $State[$fieldName] = if ($paths.Contains($fieldName)) {
+            Join-Path $TargetHistoryRoot (([string]$paths[$fieldName]).Replace("/", [IO.Path]::DirectorySeparatorChar))
+        } else {
+            ""
+        }
+    }
+}
+
 function Install-DevBranchForkDependencyLock {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -10479,20 +10502,7 @@ function Initialize-ForkedDevBranchRuntime {
         $stateHash["eventLogBaselineSegmentCount"] = [int]$baseline.cache.segmentCount
         $stateHash["lastVanessaEventLogBaselinePath"] = $baselinePath
 
-        $evidencePaths = ConvertTo-Agent1cHashtable -Object $Snapshot.evidencePaths
-        foreach ($fieldName in @(
-            "lastVerifiedReportPath", "lastVerificationLogPath",
-            "lastDiagnosticVerificationReportPath", "lastDiagnosticVerificationLogPath",
-            "lastYAxUnitReportPath", "lastYAxUnitLogPath",
-            "lastVanessaReportPath", "lastVanessaLogPath", "lastVanessaStatusPath",
-            "lastVanessaEventLogNewErrorsPath", "eventLogDebtReportPath"
-        )) {
-            if ($evidencePaths.ContainsKey($fieldName)) {
-                $stateHash[$fieldName] = Join-Path $targetHistoryRoot (([string]$evidencePaths[$fieldName]).Replace("/", [IO.Path]::DirectorySeparatorChar))
-            } else {
-                $stateHash[$fieldName] = ""
-            }
-        }
+        Set-DevBranchForkEvidenceReferences -State $stateHash -EvidencePaths $Snapshot.evidencePaths -TargetHistoryRoot $targetHistoryRoot
 
         $launcher = Register-DevBranchInLauncher `
             -InfoBaseKind ([string]$Snapshot.infoBaseKind) `
