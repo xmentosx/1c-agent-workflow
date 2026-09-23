@@ -477,7 +477,8 @@ exit 0
     It "dispatches real classification and preserves its <Case> result without verification proof" -TestCases @(
         @{ Case='ready'; HelperExit=0; ErrorPattern='' },
         @{ Case='missing-suite'; HelperExit=1; ErrorPattern='Unclassified Vanessa feature' },
-        @{ Case='unowned-path'; HelperExit=1; ErrorPattern='VERIFICATION_SUITE_OWNERS_MISSING' }
+        @{ Case='unowned-path'; HelperExit=1; ErrorPattern='VERIFICATION_SUITE_OWNERS_MISSING' },
+        @{ Case='source-without-git'; HelperExit=1; ErrorPattern='YAXUNIT_APPLICABILITY_BASELINE_MISSING' }
     ) {
         param($Case, $HelperExit, $ErrorPattern)
         $tempRoot = Join-Path $TestDrive ("Классификация команды " + $Case)
@@ -497,6 +498,11 @@ exit 0
             $owners = if ($Case -eq 'unowned-path') { @() } else { @('src/cf/**') }
             @{ schemaVersion=1; suites=@(@{id='example';purpose='acceptance';featurePaths=@('tests/features/Example.feature');ownerPaths=$owners}) } |
                 ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $tempRoot 'tests/verification-suites.branch.json') -Encoding UTF8
+        }
+        if ($Case -eq 'source-without-git') {
+            $sourceRoot = Join-Path $tempRoot 'src/cf'
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $sourceRoot 'Module.bsl') -Value 'Процедура Проверка() КонецПроцедуры' -Encoding UTF8
         }
         Set-Content -LiteralPath $proofPath -Value '{"tree":"unchanged-existing-proof"}' -Encoding UTF8
         $proofHash = (Get-FileHash -LiteralPath $proofPath).Hash

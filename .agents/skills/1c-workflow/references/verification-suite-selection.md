@@ -115,6 +115,47 @@ not erase or replace the last complete acceptance proof.
 
 ## YAxUnit catalog
 
+The workflow records an exact Git commit when a development branch first adopts
+this applicability rule, including when its first action is `/itl-check` rather
+than refresh. A branch that existed before the update keeps all BSL at that
+commit as a legacy baseline. Dirty BSL present at first adoption is preserved
+by exact source OID until it changes again. Missing YAxUnit tests for this
+pre-adoption content do not become mandatory, and refresh remains usable. The
+inventory marks `legacyBaseline=true`.
+Only later branch-owned BSL changes under the configured CF/CFE roots need an
+applicability decision. Accepted unchanged master input is excluded. A deleted
+module needs no new decision. Resetting a branch for a new task starts a fresh
+baseline at its reset HEAD.
+
+For each later changed production BSL, the agent first inspects the decision
+points and searches existing YAxUnit and Vanessa coverage. Reuse or strengthen
+a sufficient `default-fast` group; add one focused group only for a contract
+that has no adequate coverage. If unit testing is genuinely inapplicable (for
+example the changed behavior requires a real form or session), put an exact
+`notApplicable` entry in the branch catalog with the current source blob OID
+printed by the inventory and a concrete reason. Example:
+
+```json
+{
+  "schemaVersion": 1,
+  "notApplicable": [
+    {
+      "path": "src/cf/CommonModules/SessionCommand/Ext/Module.bsl",
+      "sourceOid": "0123456789abcdef0123456789abcdef01234567",
+      "reason": "Only the interactive form command changes; the existing Vanessa scenario checks it."
+    }
+  ]
+}
+```
+
+The OID binds the decision to the exact BSL content and must be reconsidered
+when that content changes. It is not a waiver for an algorithm that can be
+tested locally. The agent owns this classification and runs
+`validate-test-classification` before the final check; it does not ask the user
+to author a catalog or choose a test framework. Catalog decisions do not create
+new test processes or per-file reports. The normal check still runs all fast
+YAxUnit groups in one session and keeps its final unfiltered verification.
+
 When `tests/yaxunit` contains exported test `Module.bsl` files, commit
 `tests/yaxunit-suites.branch.json` (or the genuinely shared variant). Every
 test module must match exactly one group and every group must identify its

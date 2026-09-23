@@ -4828,7 +4828,7 @@ function Get-VerificationFingerprint {
     $paths = @(Get-VerificationFingerprintScopePaths)
     $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec $paths)
     $treeish = New-VerificationEffectiveTree -ChangedPaths $changedPaths
-    $parts = @("v3")
+    $parts = @("v4")
     foreach ($path in $paths) {
         $normalized = ($path -replace "\\", "/").Trim("/")
         if ($normalized) {

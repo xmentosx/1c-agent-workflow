@@ -339,6 +339,7 @@ function Invoke-ItlVerificationCycle {
     $selectionPlan = $null
     if (-not $script:ActiveAuxiliaryVanessaContext -and ($vanessa.run -or $yaxunit.run)) {
         Assert-VerificationClassificationReady -Reason "check-dev-branch preflight" -RequireVanessa:$vanessa.run -RequireYAxUnit:$yaxunit.run | Out-Null
+        $state = Read-DevBranchState -Name $DevBranchName
     }
     if ($recordFullProof -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
         if ($vanessa.run) {

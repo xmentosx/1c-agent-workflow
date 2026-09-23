@@ -2107,7 +2107,7 @@ exit 0
                 }
             }
 
-            $result.dirty | Should -Match "^v3\|"
+            $result.dirty | Should -Match "^v4\|"
             @($result.cachedBefore) | Should -HaveCount 0
             @($result.cachedAfter) | Should -HaveCount 0
             $result.staged | Should -BeExactly $result.dirty
@@ -2648,7 +2648,7 @@ try {
                 targetSafeName = "fork"
                 targetGitBranch = "itldev/fork"
                 targetWorktreePath = "C:\fork"
-                sourceCommit = "abc123"
+                sourceCommit = ('a' * 40)
                 forkId = "fork-id"
                 sourceGitBranch = "itldev/source"
                 sourceBranchName = "source"
@@ -2663,6 +2663,8 @@ try {
         $result.lastVerificationStatus | Should -Be "passed"
         $result.lastVerifiedFingerprint | Should -Be "v3|exact"
         $result.lastVerifiedReportPath | Should -Be "C:\evidence\report.md"
+        $result.yaxunitApplicabilityBaseline.commit | Should -Be ('a' * 40)
+        $result.yaxunitApplicabilityBaseline.legacy | Should -BeTrue
         $result.launcherInfoBaseId | Should -Be ""
         $result.roctupMcpPid | Should -Be ""
         $result.roctupMcpPort | Should -Be 0
@@ -8507,7 +8509,15 @@ if (`$?) { exit 0 } else { exit 1 }
             function Assert-DevelopmentBranchWorktreeContext {}
             function Assert-DevBranchExtensionInitialized {}
             function Assert-CleanGit {}
-            function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40) } }
+            function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ("a" * 40); branchCommit = ("b" * 40) } }
+            function Update-DevBranchState {
+                param([object]$State, [hashtable]$Updates)
+                foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+            }
+            function Update-VerificationSuiteInventory {
+                param([string]$Reason, [switch]$EvaluateApplicability)
+                [pscustomobject]@{ yaxunit = [pscustomobject]@{ legacyBaseline = $true } }
+            }
             function Sync-DevBranchContextToDotEnv {}
             function Sync-WorkflowManagedDependencyLockEntries {}
             function Install-VanessaAutomation {}
