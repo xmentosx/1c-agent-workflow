@@ -43,6 +43,19 @@ function Get-SourceGateHardBudgetSeconds {
     return [int]$property.Value + 300
 }
 
+function Get-SourceGateSupervisionBudgetSeconds {
+    param(
+        [Parameter(Mandatory = $true)][string]$Mode,
+        [Parameter(Mandatory = $true)][string]$WorkingRoot,
+        [int]$PlanBudgetSeconds = 0,
+        [switch]$InjectedGate
+    )
+
+    if ($InjectedGate -and $PlanBudgetSeconds -gt 0) { return $PlanBudgetSeconds }
+    $childAllowance = Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:$InjectedGate
+    return [Math]::Max($childAllowance, $PlanBudgetSeconds)
+}
+
 function Test-DeliveryProcessCreationIdentity {
     param([int]$ProcessId, [datetime]$CreatedAt)
     try {
@@ -504,7 +517,7 @@ function Invoke-SourceGate {
         $processJob = [IntPtr]$started.jobHandle
         Update-DeliveryOperation -Values @{ mode = $Mode; workingRoot = $WorkingRoot; gatePid = [int]$process.Id; gateProcessStartedAt = $process.StartTime.ToUniversalTime().ToString("o"); gateStatus = "running" }
         $authoritativeGate = Join-Path $WorkingRoot "scripts\check.ps1"
-        $hardSeconds = if ($HardBudgetSeconds -gt 0) { $HardBudgetSeconds } else { Get-SourceGateHardBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -AllowMissingCatalog:($gate -ne $authoritativeGate) }
+        $hardSeconds = Get-SourceGateSupervisionBudgetSeconds -Mode $Mode -WorkingRoot $WorkingRoot -PlanBudgetSeconds $HardBudgetSeconds -InjectedGate:($gate -ne $authoritativeGate)
         $watch = [Diagnostics.Stopwatch]::StartNew(); $lastLength = -1L; $lastProgress = [DateTime]::UtcNow
         while (-not $process.WaitForExit(5000)) {
             $length = 0L

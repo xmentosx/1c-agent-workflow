@@ -32,6 +32,16 @@ It "keeps the delivery wrapper budget above the authoritative child gate budget"
         (Get-SourceGateHardBudgetSeconds -Mode 'Targeted' -WorkingRoot $RepoRoot -AllowMissingCatalog) | Should -Be 7500
     }
 
+It "does not shorten an authoritative Develop or Release gate to a reused plan estimate" {
+        foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Get-SourceGateHardBudgetSeconds', 'Get-SourceGateSupervisionBudgetSeconds'))) {
+            Invoke-Expression $definition.Extent.Text
+        }
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be 5700
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be 7500
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 6000) | Should -Be 6000
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900 -InjectedGate) | Should -Be 900
+    }
+
 It "bounds taskkill teardown and keeps a direct kill fallback" {
         $definition = Get-DeliveryFunctionDefinitions -Names @('Stop-DeliveryProcessTree') | Select-Object -First 1
         $definition | Should -Not -BeNullOrEmpty
