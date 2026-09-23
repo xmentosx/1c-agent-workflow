@@ -155,6 +155,24 @@ never weaken the task goal, safety, diagnostics, tests, database work, evidence,
 or completion gates, and it must not add a model call or cumulative token ledger
 merely to estimate savings.
 
+### Rule changes under documentation budgets
+
+Before editing a workflow rule, identify its authoritative owner and loading
+boundary. Compare the old and proposed trigger, required or forbidden action,
+exceptions, precedence, and failure or result state. Record intended semantic
+changes in the change description; preserve the other parts of the contract.
+Keep rules that must apply to every task in an always-on surface. Move only
+situational detail to a reference that the relevant route actually opens.
+
+A documentation review threshold is a signal to inspect context cost, not an
+instruction to shorten text. First remove proven duplication or route detail on
+demand. If complete meaning still exceeds a hard limit, update that file's
+budget in the same change with a short rationale and a measured before/after
+delta. Measure source-only rules separately from installed client surfaces.
+Text or marker assertions protect selected anchors but do not prove semantic
+equivalence; use a focused behavioral contract when the rule governs a
+verifiable safety or completion path. Do not add tests that only repeat prose.
+
 ## Runtime check blocking policy
 
 A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.

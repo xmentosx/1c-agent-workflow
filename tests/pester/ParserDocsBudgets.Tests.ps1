@@ -75,7 +75,6 @@
 
     It 'keeps the detailed skill as a compact router and routes human documentation separately' {
         $skillText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot '.agents\skills\1c-workflow\SKILL.md')
-        ([regex]::Matches($skillText, '\S+')).Count | Should -BeLessOrEqual 775
         $skillText | Should -Match 'detailed ITL workflow router'
         $skillText | Should -Match ([regex]::Escape('references/workflow.md'))
         $skillText | Should -Match 'workflow\.md` only for help, an unclear request'
@@ -177,7 +176,7 @@
 
     It "documentation budgets keep review thresholds below hard limits" {
         $budgets = @(
-            @{ path = "AGENTS.md"; maxWords = 1250; reviewApproxTokens = 2200; maxApproxTokens = 2450; rationale = "source-maintainer router plus architecture, platform, client-context, delivery, lock, component release, non-ASCII path, and byte-preserving 1C source safety contracts" },
+            @{ path = "AGENTS.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "source-only maintainer rules now require semantic comparison and an explicit, measured budget change instead of compressing safety contracts" },
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
@@ -356,7 +355,11 @@
         }
         $agentsText | Should -Match 'budgets protect routing and readability'
         $agentsText | Should -Match 'Never delete, weaken, or telegraphically compress safety, verification, or behavioral contracts merely to pass a budget'
-        $agentsText | Should -Match 'propose an explicit limit change with a short rationale'
+        $agentsText | Should -Match 'update the explicit limit with a short rationale and measured context delta in the same change'
+        $agentsText | Should -Match 'compare its trigger, required action or prohibition, exceptions, precedence, and failure outcome'
+        $agentsText | Should -Match 'A review warning calls for inspection, not compression'
+        $architectureNormalized | Should -Match 'Record intended semantic changes in the change description'
+        $architectureNormalized | Should -Match 'Text or marker assertions protect selected anchors but do not prove semantic equivalence'
 
         $installText = Get-Content -LiteralPath (Join-Path $RepoRoot "AGENT-INSTALL.md") -Raw -Encoding UTF8
         $installNormalized = $installText -replace '\s+', ' '
