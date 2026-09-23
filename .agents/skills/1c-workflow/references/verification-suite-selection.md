@@ -166,8 +166,9 @@ YAxUnit groups in one session and keeps its final unfiltered verification.
 When `tests/yaxunit` contains exported test `Module.bsl` files, commit
 `tests/yaxunit-suites.branch.json` (or the genuinely shared variant). Every
 test module must match exactly one group and every group must identify its
-production owners. Declare ordinary registration infrastructure separately in
-`registrationPaths`; it is not a test group:
+production owners. Declare a separate ordinary registration module, when one
+exists, in `registrationPaths`; it is not a test group. Leave the list empty
+when test modules register themselves through exported `ИсполняемыеСценарии`:
 
 ```json
 {
@@ -192,9 +193,12 @@ production owners. Declare ordinary registration infrastructure separately in
 }
 ```
 
-`default-fast` groups remain registered in the exported
-`ИсполняемыеСценарии` and run together in one ordinary YAxUnit session.
+`default-fast` groups must either be referenced by ordinary registration or
+provide their own exported `ИсполняемыеСценарии` in a discoverable common
+module. The latter needs a runnable client or server context and must not set
+`ServerCall=true`. All fast groups run together in one ordinary YAxUnit session.
 `explicit-benchmark` modules must be separate common modules and must not be
-referenced by any `registrationPaths`; they run only through an explicit project
-benchmark harness. Adding or renaming a module without updating this catalog
-blocks the normal check before 1C starts.
+referenced by any `registrationPaths` or export their own
+`ИсполняемыеСценарии`; they run only through an explicit project benchmark
+harness. Adding or renaming a module without updating this catalog blocks the
+normal check before 1C starts.

@@ -1,4 +1,4 @@
-function Get-YAxUnitInstallRoot {
+﻿function Get-YAxUnitInstallRoot {
     $value = Get-Setting -EnvName "YAXUNIT_INSTALL_ROOT" -ConfigName "yaxunit.installRoot" -Default ".agent-1c/tools/yaxunit"
     return (Resolve-ProjectPath ([string]$value))
 }
@@ -58,6 +58,49 @@ function Get-YAxUnitModuleNameFromPath {
     $match = [regex]::Match($normalized, '(?i)(?:^|/)CommonModules/([^/]+)/Ext/Module\.bsl$')
     if (-not $match.Success) { return "" }
     return $match.Groups[1].Value
+}
+
+function Test-YAxUnitExecutableScenariosExport {
+    param([string]$ModulePath)
+
+    $text = Read-Utf8Text -Path (Resolve-ProjectPath $ModulePath)
+    return [regex]::IsMatch($text, '(?im)^\s*Процедура\s+ИсполняемыеСценарии\s*\(\s*\)\s*Экспорт\b')
+}
+
+function Test-YAxUnitSelfRegisteredModule {
+    param([string]$ModulePath)
+
+    if (-not (Test-YAxUnitExecutableScenariosExport -ModulePath $ModulePath)) { return $false }
+    $normalized = ($ModulePath -replace '\\', '/').TrimStart('/')
+    $match = [regex]::Match($normalized, '(?i)^(.+)/CommonModules/([^/]+)/Ext/Module\.bsl$')
+    if (-not $match.Success) { return $false }
+    $metadataPath = Resolve-ProjectPath "$($match.Groups[1].Value)/CommonModules/$($match.Groups[2].Value).xml"
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) { return $false }
+    try {
+        $metadata = [xml](Read-Utf8Text -Path $metadataPath)
+        $properties = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='CommonModule']/*[local-name()='Properties']")
+        if ($null -eq $properties) { return $false }
+        $serverCall = $properties.SelectSingleNode("*[local-name()='ServerCall']")
+        if ($null -eq $serverCall -or $serverCall.InnerText.Trim() -ine 'false') { return $false }
+        foreach ($context in @('Server', 'ClientManagedApplication', 'ClientOrdinaryApplication')) {
+            $node = $properties.SelectSingleNode("*[local-name()='$context']")
+            if ($null -ne $node -and $node.InnerText.Trim() -ieq 'true') { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
+function Test-YAxUnitRegistrationReference {
+    param([string]$ModulePath, [string[]]$RegistrationTexts)
+
+    $moduleName = Get-YAxUnitModuleNameFromPath -Path $ModulePath
+    if (-not $moduleName) { return $false }
+    $pattern = '(?i)(?<![\p{L}\p{N}_])' + [regex]::Escape($moduleName) + '\s*\.'
+    foreach ($registrationText in @($RegistrationTexts)) {
+        $withoutComments = [regex]::Replace([string]$registrationText, '(?m)//[^\r\n]*', '')
+        if ([regex]::IsMatch($withoutComments, $pattern)) { return $true }
+    }
+    return $false
 }
 
 function Read-YAxUnitSuiteCatalog {
@@ -181,8 +224,10 @@ function Read-YAxUnitSuiteCatalog {
         }
 
         $explicitAssignments = @($assignments.ToArray() | Where-Object purpose -eq "explicit-benchmark")
-        if ($explicitAssignments.Count -gt 0 -and $registrationPaths.Count -eq 0) {
-            $issues.Add("Explicit benchmark groups require registrationPaths so ordinary YAxUnit registration can be checked.")
+        foreach ($assignment in $explicitAssignments) {
+            if (Test-YAxUnitExecutableScenariosExport -ModulePath ([string]$assignment.path)) {
+                $issues.Add("Explicit benchmark module '$($assignment.path)' exports ИсполняемыеСценарии and would join ordinary YAxUnit execution.")
+            }
         }
         foreach ($registrationRepoPath in @($registrationPaths)) {
             $registrationFullPath = Resolve-ProjectPath $registrationRepoPath
@@ -197,7 +242,7 @@ function Read-YAxUnitSuiteCatalog {
                     $issues.Add("Explicit benchmark module must use CommonModules/<name>/Ext/Module.bsl: $($assignment.path)")
                     continue
                 }
-                if ($moduleName -and $registrationText.IndexOf($moduleName, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                if (Test-YAxUnitRegistrationReference -ModulePath ([string]$assignment.path) -RegistrationTexts @($registrationText)) {
                     $issues.Add("Explicit benchmark module '$moduleName' is referenced by ordinary registration '$registrationRepoPath'.")
                 }
             }

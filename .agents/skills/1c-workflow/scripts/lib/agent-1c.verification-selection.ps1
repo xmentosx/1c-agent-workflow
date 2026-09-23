@@ -1,4 +1,4 @@
-function Get-VerificationSelectionStateRoot {
+﻿function Get-VerificationSelectionStateRoot {
     return (Resolve-ProjectPath ".agent-1c/verification-selection")
 }
 
@@ -772,10 +772,10 @@ function Get-YAxUnitProductionApplicability {
     $acceptedMasterInput = Get-VerificationAcceptedMasterInput -ChangedPaths $changedPaths -CurrentTree $currentTree
     $issues = [Collections.Generic.List[string]]::new()
     $decisions = [Collections.Generic.List[object]]::new()
-    $registrationTexts = @{}
+    $registrationTexts = [Collections.Generic.List[string]]::new()
     foreach ($registrationPath in @(Get-VerificationCatalogValue -Value $Catalog -Name "registrationPaths" -Default @())) {
         $registrationText = Read-Utf8Text -Path (Resolve-ProjectPath ([string]$registrationPath))
-        $registrationTexts[[string]$registrationPath] = [regex]::Replace($registrationText, '(?m)//[^\r\n]*', '')
+        $registrationTexts.Add($registrationText)
     }
     foreach ($changedPathValue in $changedPaths) {
         $path = ([string]$changedPathValue -replace "\\", "/").TrimStart("/")
@@ -804,12 +804,9 @@ function Get-YAxUnitProductionApplicability {
             foreach ($group in $groups) {
                 $modules = @($Catalog.assignments | Where-Object { $_.groupId -eq $group.id -and $_.purpose -eq "default-fast" })
                 foreach ($module in $modules) {
-                    $moduleName = Get-YAxUnitModuleNameFromPath -Path ([string]$module.path)
-                    $callPattern = '(?i)(?<![\p{L}\p{N}_])' + [regex]::Escape($moduleName) + '\s*\.'
-                    if (-not $moduleName -or @($registrationTexts.Values | Where-Object {
-                        [regex]::IsMatch($_, $callPattern)
-                    }).Count -eq 0) {
-                        $issues.Add("YAxUnit default-fast module '$($module.path)' for '$path' is not found in registrationPaths.")
+                    if (-not (Test-YAxUnitRegistrationReference -ModulePath ([string]$module.path) -RegistrationTexts @($registrationTexts.ToArray())) -and
+                        -not (Test-YAxUnitSelfRegisteredModule -ModulePath ([string]$module.path))) {
+                        $issues.Add("YAxUnit default-fast module '$($module.path)' for '$path' has neither an ordinary registration reference nor a discoverable exported ИсполняемыеСценарии.")
                     }
                 }
             }

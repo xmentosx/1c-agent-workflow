@@ -1,4 +1,4 @@
-Describe "YAxUnit verification" {
+﻿Describe "YAxUnit verification" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -197,5 +197,29 @@ Describe "YAxUnit verification" {
         $result.classificationComplete | Should -BeFalse
         @($result.assignments | Where-Object groupId -eq '__registration__').Count | Should -Be 1
         @($result.issues) -join "`n" | Should -Match 'referenced by ordinary registration'
+    }
+
+    It "accepts an unregistered explicit benchmark and rejects self-registration" {
+        $tempRoot = Join-Path $TestDrive "benchmark-self-registration"
+        $benchmarkRoot = Join-Path $tempRoot "tests\yaxunit\CommonModules\PlanCalculationBenchmark\Ext"
+        New-Item -ItemType Directory -Force -Path $benchmarkRoot | Out-Null
+        $benchmarkPath = Join-Path $benchmarkRoot "Module.bsl"
+        [IO.File]::WriteAllText($benchmarkPath, "Procedure AddTests() Export`nEndProcedure", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $tempRoot "tests\yaxunit-suites.branch.json"), '{"schemaVersion":1,"registrationPaths":[],"groups":[{"id":"benchmark","purpose":"explicit-benchmark","modulePaths":["tests/yaxunit/CommonModules/PlanCalculationBenchmark/Ext/Module.bsl"],"ownerPaths":["src/cf/CommonModules/PlanCalculation/**"]}]}', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Get-Setting { param([string]$Default) return $Default }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Get-VerificationRepoRelativePath { param([string]$Path) $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\'); $full = [IO.Path]::GetFullPath($Path); ($full.Substring($root.Length + 1) -replace '\\', '/') }
+            function Test-VerificationRepoPathPattern { param([string]$Path, [string]$Pattern) [Management.Automation.WildcardPattern]::new($Pattern, [Management.Automation.WildcardOptions]::IgnoreCase).IsMatch($Path) }
+            $unregistered = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+            [IO.File]::WriteAllText($benchmarkPath, "Процедура ИсполняемыеСценарии() Экспорт`nКонецПроцедуры", [Text.UTF8Encoding]::new($false))
+            $selfRegistered = Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+            [pscustomobject]@{ unregistered = $unregistered; selfRegistered = $selfRegistered }
+        }
+        $result.unregistered.classificationComplete | Should -BeTrue
+        $result.selfRegistered.classificationComplete | Should -BeFalse
+        @($result.selfRegistered.issues) -join "`n" | Should -Match 'exports ИсполняемыеСценарии'
     }
 }

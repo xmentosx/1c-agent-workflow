@@ -79,11 +79,15 @@
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-yax-applicability-" + [guid]::NewGuid().ToString('N'))
         try {
             $registrationPath = Join-Path $tempRoot 'tests\yaxunit\CommonModules\ИсполняемыеСценарии\Ext\Module.bsl'
+            $testModulePath = Join-Path $tempRoot 'tests\yaxunit\CommonModules\TestsSelection\Ext\Module.bsl'
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $registrationPath) | Out-Null
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $testModulePath) | Out-Null
             [IO.File]::WriteAllText($registrationPath, 'TestsSelection.AddTests();', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($testModulePath, "Процедура ДобавитьТесты() Экспорт`nКонецПроцедуры", [Text.UTF8Encoding]::new($false))
             $result = & {
                 $script:ProjectRoot = $tempRoot
                 $DevBranchName = 'current'
+                . $YAxUnitModule
                 . $SelectionModule
                 function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $false } } }
                 function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
@@ -112,7 +116,54 @@
             $result.registered.classificationComplete | Should -BeTrue
             $result.registered.decisions[0].decision | Should -Be 'required'
             $result.missing.classificationComplete | Should -BeFalse
-            $result.missing.issues[0] | Should -Match 'not found in registrationPaths'
+            $result.missing.issues[0] | Should -Match 'neither an ordinary registration reference nor a discoverable exported'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts a discoverable self-registered server module without registrationPaths" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl yaxunit self registration " + [guid]::NewGuid().ToString('N'))
+        try {
+            $moduleRepoPath = 'tests/yaxunit/CommonModules/ТестВыбора/Ext/Module.bsl'
+            $modulePath = Join-Path $tempRoot ($moduleRepoPath -replace '/', '\')
+            $metadataPath = Join-Path $tempRoot 'tests\yaxunit\CommonModules\ТестВыбора.xml'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $modulePath) | Out-Null
+            [IO.File]::WriteAllText($modulePath, "Процедура ИсполняемыеСценарии() Экспорт`nКонецПроцедуры", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($metadataPath, '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"><CommonModule><Properties><Server>true</Server><ServerCall>false</ServerCall></Properties></CommonModule></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+            $result = & {
+                $script:ProjectRoot = $tempRoot
+                $DevBranchName = 'current'
+                . $YAxUnitModule
+                . $SelectionModule
+                function Read-DevBranchState { param($Name) [pscustomobject]@{ yaxunitApplicabilityBaseline = [pscustomobject]@{ schemaVersion = 1; commit = ('1' * 40); legacy = $false } } }
+                function Get-StateValue { param($State, $Name, $Default) if ($null -eq $State -or $null -eq $State.PSObject.Properties[$Name]) { return $Default }; return $State.$Name }
+                function Get-GitOutput { '2' * 40 }
+                function Get-VerificationSelectionEffectiveTree { '3' * 40 }
+                function Get-VerificationSelectionChangedPaths { param($BaseTree, $CurrentTree) @('src/cf/CommonModules/Selection/Ext/Module.bsl') }
+                function Get-VerificationAcceptedMasterInput { param($ChangedPaths, $CurrentTree) [pscustomobject]@{ importedPaths = @() } }
+                function Get-VerificationConfigurationMetadataRoots { [pscustomobject]@{ configurationRoots = @('src/cf'); extensionRoots = @() } }
+                function Get-GitObjectIdForTreePath { param($Treeish, $RepoPath) '4' * 40 }
+                function Resolve-ProjectPath { param($Path) Join-Path $script:ProjectRoot $Path }
+                function Read-Utf8Text { param($Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+                function Test-YAxUnitSuitePresent { $true }
+                $catalog = [pscustomobject]@{
+                    groups = @([pscustomobject]@{ id = 'selection'; purpose = 'default-fast'; ownerPaths = @('src/cf/CommonModules/Selection/**') })
+                    assignments = @([pscustomobject]@{ groupId = 'selection'; purpose = 'default-fast'; path = $moduleRepoPath })
+                    registrationPaths = @()
+                    notApplicable = @()
+                }
+                $selfRegistered = Get-YAxUnitProductionApplicability -Catalog $catalog
+                [IO.File]::WriteAllText($metadataPath, '<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"><CommonModule><Properties><Server>true</Server><ServerCall>true</ServerCall></Properties></CommonModule></MetaDataObject>', [Text.UTF8Encoding]::new($false))
+                $undiscoverable = Get-YAxUnitProductionApplicability -Catalog $catalog
+                [IO.File]::WriteAllText($modulePath, '// Процедура ИсполняемыеСценарии() Экспорт', [Text.UTF8Encoding]::new($false))
+                $commentOnly = Get-YAxUnitProductionApplicability -Catalog $catalog
+                [pscustomobject]@{ selfRegistered = $selfRegistered; undiscoverable = $undiscoverable; commentOnly = $commentOnly }
+            }
+            $result.selfRegistered.classificationComplete | Should -BeTrue
+            $result.selfRegistered.decisions[0].decision | Should -Be 'required'
+            $result.undiscoverable.classificationComplete | Should -BeFalse
+            $result.commentOnly.classificationComplete | Should -BeFalse
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
