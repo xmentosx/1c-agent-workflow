@@ -6796,9 +6796,11 @@ if (`$?) { exit 0 } else { exit 1 }
             } $fixture $Change
 
             $metadataPaths = @($result.calls | Where-Object validator -eq "metadata" | ForEach-Object path | Sort-Object)
-            $expectedMetadataPaths = @($fixture.descriptorPath, $fixture.ownerPath)
+            # The Template aggregate is checked above; the generic metadata validator cannot parse its descriptor.
+            $expectedMetadataPaths = @($fixture.ownerPath)
             $expectedMetadataPaths = @($expectedMetadataPaths | Sort-Object)
             $metadataPaths | Should -Be $expectedMetadataPaths
+            @($result.calls | Where-Object path -eq $fixture.descriptorPath) | Should -HaveCount 0
             @($result.calls | Where-Object { $_.validator -eq "skd" -and $_.path -ceq $fixture.payloadPath }) | Should -HaveCount 1
             @($result.calls | Where-Object path -eq $fixture.unrelatedPath) | Should -HaveCount 0
             $result.uuidPaths | Should -Contain "Configuration.xml"

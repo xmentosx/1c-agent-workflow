@@ -1341,6 +1341,7 @@ function Get-OneCXmlValidationKind {
             switch ([string]$objectNode[0].LocalName) {
                 "Subsystem" { "subsystem"; break }
                 "XDTOPackage" { "xdto"; break }
+                "Template" { ""; break }
                 default { "metadata"; break }
             }
             break
