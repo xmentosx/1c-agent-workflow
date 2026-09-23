@@ -1,6 +1,66 @@
-BeforeAll { . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1") }
+BeforeAll {
+    . (Join-Path $PSScriptRoot "SourceDelivery.TestSupport.ps1")
+
+    function New-DeliveryCapabilityFixture {
+        param([string[]]$MissingComponent = @())
+        $fixture = New-DeliveryFixture
+        $catalogRoot = Join-Path $fixture.root 'scripts\release-e2e'
+        New-Item -ItemType Directory -Force -Path $catalogRoot | Out-Null
+        $catalog = [ordered]@{ schemaVersion=1; stages=@(
+            [ordered]@{ id='config-cadence'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('README.md') },
+            [ordered]@{ id='extension-smoke'; version=1; budgetSeconds=10; dependsOn=@('config-cadence'); paths=@('README.md') },
+            [ordered]@{ id='ondemand-mcp'; version=1; budgetSeconds=10; dependsOn=@(); paths=@('README.md') }
+        ) }
+        Set-Content -LiteralPath (Join-Path $catalogRoot 'stages.json') -Encoding UTF8 -Value ($catalog | ConvertTo-Json -Depth 8)
+        $vanessaCapabilities = @(if ('vanessaAutomation' -in $MissingComponent) { 'extension-smoke' })
+        $onDemandCapabilities = @(if ('itlOndemandMcp' -in $MissingComponent) { 'ondemand-mcp' })
+        $plan = [ordered]@{
+            status='planned'; requiredReleaseCapabilities=@($vanessaCapabilities) + @($onDemandCapabilities)
+            components=@(
+                [ordered]@{ name='aiRules1c'; status='matched'; requiredReleaseCapabilities=@() },
+                [ordered]@{ name='vanessaAutomation'; status=$(if($vanessaCapabilities.Count){'missing'}else{'matched'}); requiredReleaseCapabilities=@($vanessaCapabilities) },
+                [ordered]@{ name='itlOndemandMcp'; status=$(if($onDemandCapabilities.Count){'missing'}else{'matched'}); requiredReleaseCapabilities=@($onDemandCapabilities) }
+            )
+        }
+        Set-Content -LiteralPath "$($fixture.finalizer).plan.json" -Encoding UTF8 -Value ($plan | ConvertTo-Json -Depth 8)
+        New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root 'tests\pester') | Out-Null
+        Set-Content -LiteralPath (Join-Path $fixture.root 'tests\pester\Capability.Tests.ps1') -Encoding UTF8 -Value "Describe 'capability fixture' { It 'works' { `$true | Should -BeTrue } }"
+        & git -C $fixture.root add --all
+        & git -C $fixture.root commit --quiet -m 'test: capability candidate' *> $null
+        Invoke-DeliveryTestPowerShell -Arguments @('-Action','RegisterChange','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"')) | Out-Null
+        return $fixture
+    }
+}
 
 Describe "Source develop queue and delivery" {
+    It 'requires only on-demand Release proof before finalizer and push without RequireRelease' {
+            $fixture = $null; $oldFailure = $env:ITL_TEST_FAIL_DELIVERY_RELEASE
+            try {
+                $fixture = New-DeliveryCapabilityFixture -MissingComponent @('itlOndemandMcp')
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'true'
+                $failed = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"'),'-ComponentFinalizerScript',('"' + $fixture.finalizer + '"')) -AllowFailure
+                $failed.exitCode | Should -Not -Be 0
+                @((Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-release-capabilities.log') -Encoding UTF8)) | Should -Be @('ondemand-mcp')
+                Test-Path -LiteralPath $fixture.finalizerLog | Should -BeFalse
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
+                @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -Not -BeNullOrEmpty
+
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = 'false'
+                $published = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-GateScript',('"' + $fixture.gate + '"'),'-ComponentFinalizerScript',('"' + $fixture.finalizer + '"'))
+                $payload = $published.stdout | ConvertFrom-Json
+                @($payload.releaseCapabilities) | Should -Be @('ondemand-mcp')
+                $payload.fullReleaseQualified | Should -BeFalse
+                $payload.masterReleased | Should -BeFalse
+                @((Get-Content -LiteralPath (Join-Path $fixture.root 'build\gate-release-capabilities.log') -Encoding UTF8)) | Should -Be @('ondemand-mcp','ondemand-mcp')
+                (Get-Content -LiteralPath $fixture.finalizerLog -Encoding UTF8 | Select-Object -Last 1 | ConvertFrom-Json).releaseQualified | Should -BeTrue
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $payload.commit
+                @(& git -C $fixture.root for-each-ref refs/itl/develop-queue) | Should -BeNullOrEmpty
+            } finally {
+                $env:ITL_TEST_FAIL_DELIVERY_RELEASE = $oldFailure
+                Remove-DeliveryFixture -Fixture $fixture
+            }
+        }
+
     It "keeps function names unique across the split delivery implementation" {
             $names = foreach ($path in $DeliverySourcePaths) {
                 $tokens = $null

@@ -111,6 +111,9 @@ Describe 'Delivery v3 immutable selective plan' {
         @($vanessaPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke')
         @($vanessaPlan.stages.id | Where-Object { $_ -like 'release.*' }) | Should -Be @('release.config-cadence','release.extension-smoke')
 
+        $combinedPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        @($combinedPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
+
         $fullPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -RequireRelease
         @($fullPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
     }

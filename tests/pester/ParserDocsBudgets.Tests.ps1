@@ -333,8 +333,8 @@
         }
         $agentsText | Should -Match '`Fast` is a deprecated alias for `Smoke`'
         $agentsText | Should -Match 'integrates the queue, qualifies and finalizes an installable candidate'
-        $agentsText | Should -Match ([regex]::Escape('"Publish" never implies master'))
-        $agentsText | Should -Match '`-RequireRelease`.*master must remain unchanged'
+        $agentsText | Should -Match 'without changing `master`'
+        $agentsText | Should -Match '`-RequireRelease`.*full catalog'
         $agentsText | Should -Match 'Passed `Develop` already contains exact-tree Full/static proof'
         $agentsText | Should -Match 'queue is empty and local `develop` equals `origin/develop`'
         $agentsText | Should -Match 'Do not ask which gate to run'

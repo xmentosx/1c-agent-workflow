@@ -558,6 +558,13 @@ function Invoke-OnDemandMcpComponentPublicationFinalize {
 function Get-OwnedComponentPublicationPlan {
     param([string]$CandidateRoot, [string]$CandidateCommit)
     if ($script:ComponentFinalizerScript) {
+        $fixturePlanPath = "$($script:ComponentFinalizerScript).plan.json"
+        if (Test-Path -LiteralPath $fixturePlanPath -PathType Leaf) {
+            $fixturePlan = Get-Content -LiteralPath $fixturePlanPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ([string]$fixturePlan.status -cne "planned") { throw "Component finalizer fixture plan must be planned." }
+            $fixturePlan | Add-Member -NotePropertyName candidateCommit -NotePropertyValue $CandidateCommit -Force
+            return $fixturePlan
+        }
         return [pscustomobject]@{ status = "planned"; requiredReleaseCapabilities = @(); components = @("test-seam") }
     }
     $lock = (Get-Content -LiteralPath (Join-Path $CandidateRoot "templates\dependency-lock.json") -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies
