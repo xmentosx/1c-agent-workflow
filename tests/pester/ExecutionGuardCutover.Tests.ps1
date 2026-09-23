@@ -166,6 +166,11 @@
         & git -C $branchRoot add -f -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
         & git -C $branchRoot commit --quiet -m 'fixture: accidentally track execution runtime' -- '.agent-1c/execution-checkpoints/legacy.json' '.agent-1c/execution-guard-generation.json.legacy.tmp'
 
+        # The managed add emits a successful Git stderr warning on Windows.
+        [IO.File]::WriteAllText((Join-Path $package '.agents/skills/1c-workflow/v2.txt'), "v2`n", [Text.UTF8Encoding]::new($false))
+        & git -C $repo config core.autocrlf true
+        & git -C $repo config core.safecrlf warn
+
         $result = & $cutover -ProjectRoot $repo -PackageRoot $package -PrepareManagedWorktrees
 
         $result.worktrees | Should -HaveCount 2

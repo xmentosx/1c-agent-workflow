@@ -127,11 +127,23 @@ function Enable-ExecutionGuardGeneration([string]$Root) {
 }
 
 function Invoke-CutoverGit([string]$Root, [string[]]$Arguments, [switch]$Capture) {
-    $output = @(& git -C $Root @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 wraps native stderr warnings as ErrorRecords.
+        # Git's exit code, not a successful command's warning, decides failure.
+        $ErrorActionPreference = 'Continue'
+        $output = @(& git -C $Root @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    if ($exitCode -ne 0) {
         throw "EXECUTION_GUARD_CUTOVER_GIT_FAILED: git $($Arguments -join ' ') in '$Root': $($output -join [Environment]::NewLine)"
     }
-    if ($Capture) { return (($output -join [Environment]::NewLine).Trim()) }
+    if ($Capture) {
+        $stdout = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+        return (($stdout -join [Environment]::NewLine).Trim())
+    }
 }
 
 function Get-CutoverManagedDirectoryPaths {
