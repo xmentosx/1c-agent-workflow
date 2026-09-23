@@ -499,7 +499,7 @@ class ResourceContext:
 class OwnedProcess:
     """Keep descendants in a Windows job (or POSIX process group), never kill by name."""
     def __init__(self, argv, cwd, output, env=None, resource_limits=None, telemetry=None, *,
-                 resource_context_id=None, input_data=None):
+                 resource_context_id=None, input_data=None, stderr_output=None):
         self.argv = native_args(argv)
         if input_data is not None and (not isinstance(input_data, bytes) or len(input_data) > 4096):
             raise WorkError('OWNED_PROCESS_PRIVATE_INPUT_INVALID')
@@ -519,9 +519,10 @@ class OwnedProcess:
         if breach:
             raise WorkError("RESOURCE_LIMIT_EXCEEDED: " + json.dumps(breach, ensure_ascii=False))
         self.log = Path(output).open("ab")
+        self.stderr_log = Path(stderr_output).open("ab") if stderr_output is not None else None
         self.job = None
         windows_powershell = Path(self.argv[0]).name.lower() in ('powershell', 'powershell.exe')
-        kwargs = dict(cwd=cwd, stdout=self.log, stderr=self.log,
+        kwargs = dict(cwd=cwd, stdout=self.log, stderr=self.stderr_log or self.log,
                       env=native_environment(env, windows_powershell=windows_powershell), shell=False)
         if input_data is not None:
             kwargs['stdin'] = subprocess.PIPE
@@ -543,6 +544,8 @@ class OwnedProcess:
                 self.process.kill()
                 self.process.wait()
             self.log.close()
+            if self.stderr_log is not None:
+                self.stderr_log.close()
             raise
 
     def _own_windows_process(self):
@@ -727,6 +730,8 @@ class OwnedProcess:
         with contextlib.suppress(subprocess.TimeoutExpired):
             self.process.wait(timeout=5)
         self.log.close()
+        if self.stderr_log is not None:
+            self.stderr_log.close()
 
     def __enter__(self):
         return self

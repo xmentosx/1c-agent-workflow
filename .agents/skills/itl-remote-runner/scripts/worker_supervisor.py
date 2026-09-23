@@ -29,6 +29,16 @@ def _run(command):
     return subprocess.call(command)
 
 
+def _restart_after_limit(args, exit_code):
+    if not args.persistent or exit_code != 0:
+        return False
+    path = args.spool / "worker.json"
+    try:
+        return read_json(path).get("reason") in ("max-jobs", "max-lifetime")
+    except (OSError, ValueError):
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spool", required=True, type=Path)
@@ -46,58 +56,63 @@ def main():
         selected = Path(value.get("runtime", ""))
         return value, selected if selected.is_file() else args.bootstrap_runtime.resolve()
 
-    current, current_runtime = current_state()
-    if not pending_path.exists():
-        exit_code = _run(_command(current_runtime, args))
-        # A running worker stages an update, then exits at its next idle
-        # boundary. Apply that pending generation in this same supervisor
-        # invocation so no user relaunch is required.
-        if not pending_path.exists():
-            return exit_code
+    while True:
         current, current_runtime = current_state()
+        if not pending_path.exists():
+            exit_code = _run(_command(current_runtime, args))
+            # A running worker stages an update, then exits at its next idle
+            # boundary. A normal lifetime/job cap also restarts inside this
+            # same explicit user-started window.
+            if pending_path.exists():
+                continue
+            if _restart_after_limit(args, exit_code):
+                continue
+            return exit_code
 
-    pending = read_json(pending_path)
-    trial_runtime = Path(pending.get("runtime", ""))
-    confirmation = runtime_root / ("confirmed-" + str(pending.get("archiveSha256", "invalid")) + ".json")
-    confirmation.unlink(missing_ok=True)
-    if not trial_runtime.is_file():
-        write_json(runtime_root / "rollback.json",
-                   {"status": "rolled-back", "reason": "pending-runtime-missing", "at": stamp(),
-                    "pending": pending, "current": current})
-        pending_path.unlink(missing_ok=True)
-        return _run(_command(current_runtime, args))
+        pending = read_json(pending_path)
+        trial_runtime = Path(pending.get("runtime", ""))
+        confirmation = runtime_root / ("confirmed-" + str(pending.get("archiveSha256", "invalid")) + ".json")
+        confirmation.unlink(missing_ok=True)
+        if not trial_runtime.is_file():
+            write_json(runtime_root / "rollback.json",
+                       {"status": "rolled-back", "reason": "pending-runtime-missing", "at": stamp(),
+                        "pending": pending, "current": current})
+            pending_path.unlink(missing_ok=True)
+            continue
 
-    process = subprocess.Popen(_command(trial_runtime, args, pending.get("archiveSha256"), confirmation))
-    deadline = time.monotonic() + min(max(args.trial_timeout_seconds, 1), 120)
-    confirmed = False
-    while time.monotonic() < deadline and process.poll() is None:
-        if confirmation.exists():
+        process = subprocess.Popen(_command(trial_runtime, args, pending.get("archiveSha256"), confirmation))
+        deadline = time.monotonic() + min(max(args.trial_timeout_seconds, 1), 120)
+        confirmed = False
+        while time.monotonic() < deadline and process.poll() is None:
+            if confirmation.exists():
+                value = read_json(confirmation)
+                confirmed = value.get("archiveSha256") == pending.get("archiveSha256")
+                if confirmed:
+                    break
+            time.sleep(0.1)
+        if not confirmed and confirmation.exists():
             value = read_json(confirmation)
             confirmed = value.get("archiveSha256") == pending.get("archiveSha256")
-            if confirmed:
-                break
-        time.sleep(0.1)
-    if not confirmed and confirmation.exists():
-        value = read_json(confirmation)
-        confirmed = value.get("archiveSha256") == pending.get("archiveSha256")
-    if confirmed:
-        write_json(current_path, dict(pending, confirmedAt=stamp()))
-        pending_path.unlink(missing_ok=True)
-        return process.wait()
+        if confirmed:
+            write_json(current_path, dict(pending, confirmedAt=stamp()))
+            pending_path.unlink(missing_ok=True)
+            exit_code = process.wait()
+            if pending_path.exists() or _restart_after_limit(args, exit_code):
+                continue
+            return exit_code
 
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10)
-    write_json(runtime_root / "rollback.json",
-               {"status": "rolled-back", "reason": "trial-not-confirmed", "at": stamp(),
-                "pending": pending, "current": current, "trialExitCode": process.returncode})
-    pending_path.unlink(missing_ok=True)
-    confirmation.unlink(missing_ok=True)
-    return _run(_command(current_runtime, args))
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+        write_json(runtime_root / "rollback.json",
+                   {"status": "rolled-back", "reason": "trial-not-confirmed", "at": stamp(),
+                    "pending": pending, "current": current, "trialExitCode": process.returncode})
+        pending_path.unlink(missing_ok=True)
+        confirmation.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

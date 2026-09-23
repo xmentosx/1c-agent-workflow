@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 from pathlib import Path
 import platform
+import re
 import secrets
 import shutil
 import sys
+import tempfile
 import uuid
 import zipfile
 from datetime import datetime, timezone
 
 from . import VERSION
 from .common import (WorkError, current_user_identity, digest, process_identity, process_is_alive, read_json,
-                     resolve_resource_limits, stamp, write_json)
+                     publish_path, resolve_resource_limits, stamp, write_json)
 
 
 WORKER_HEARTBEAT_MAX_AGE_SECONDS = 5.0
@@ -35,7 +39,7 @@ def inspect(spool):
               "host": platform.node(), "spool": str(spool), "ssh": shutil.which("ssh"),
               "powershell": shutil.which("pwsh") or shutil.which("powershell"),
               "worker": None, "pull": None, "runtime": {"current": None, "pending": None},
-              "targets": [], "agentConfigured": False}
+              "targets": [], "agentConfigured": False, "hostCommandsEnabled": False}
     if (spool / "worker.json").exists():
         result["worker"] = read_json(spool / "worker.json")
         worker = result["worker"]
@@ -64,6 +68,9 @@ def inspect(spool):
                               "operations": target.get("allowedOperations", []), "profilingConfigured": bool(target.get("rdbg"))}
                              for name, target in profile.get("targets", {}).items()]
         result["agentConfigured"] = bool(profile.get("agent"))
+        host_commands = profile.get("hostCommands")
+        result["hostCommandsEnabled"] = (isinstance(host_commands, dict) and
+                                         host_commands.get("enabled") is True)
         result["workerUpdatePolicy"] = profile.get("workerUpdatePolicy", "disabled")
     if (spool / "pull-connection.json").exists():
         result["pull"] = read_json(spool / "pull-connection.json")
@@ -77,14 +84,19 @@ def inspect(spool):
     return result
 
 
-def prepare(spool, configuration, worker_connection=None, update_policy=None):
+def prepare(spool, configuration, worker_connection=None, update_policy=None, *, resume=False):
     spool = Path(spool).resolve()
     profile = read_json(configuration)
-    if profile.get("schemaVersion") != 1 or not profile.get("targets"):
+    host_commands = profile.get("hostCommands", {})
+    if (profile.get("schemaVersion") != 1 or not isinstance(host_commands, dict) or
+            not isinstance(profile.get("targets", {}), dict) or
+            (not profile.get("targets") and host_commands.get("enabled") is not True)):
         raise WorkError("WORKER_PROFILE_TARGETS_REQUIRED")
-    if (spool / "profile.json").exists():
-        raise WorkError("WORKER_ALREADY_CONFIGURED: edit its private profile explicitly")
-    for target in profile["targets"].values():
+    if host_commands.get("enabled") is not None and type(host_commands["enabled"]) is not bool:
+        raise WorkError("HOST_COMMANDS_PROFILE_INVALID")
+    if host_commands.get("enabled") is True:
+        resolve_resource_limits(host_commands)
+    for target in profile.get("targets", {}).values():
         if not Path(target["workspace"]).is_dir() or not target.get("allowedOperations"):
             raise WorkError("TARGET_WORKSPACE_OR_OPERATIONS_MISSING")
         resolve_resource_limits(target, target["allowedOperations"])
@@ -105,7 +117,17 @@ def prepare(spool, configuration, worker_connection=None, update_policy=None):
     profile["workerOwner"] = current_user_identity()
     spool.mkdir(parents=True, exist_ok=True)
     profile["profilePath"] = str(spool / "profile.json")
-    write_json(spool / "profile.json", profile)
+    existing_profile = spool / "profile.json"
+    if existing_profile.exists():
+        if not resume:
+            raise WorkError("WORKER_ALREADY_CONFIGURED: edit its private profile explicitly")
+        if read_json(existing_profile) != profile or (spool / "worker.json").exists():
+            raise WorkError("WORKER_RESUME_PROFILE_OR_OWNER_MISMATCH")
+        jobs_dir = spool / "jobs"
+        if jobs_dir.is_dir() and any(jobs_dir.iterdir()):
+            raise WorkError("WORKER_RESUME_JOB_STATE_EXISTS")
+    else:
+        write_json(existing_profile, profile)
     script = Path(__file__).resolve().parent.parent / "remote_work.py"
     supervisor = script.parent / "worker_supervisor.py"
     if not supervisor.is_file():
@@ -113,11 +135,16 @@ def prepare(spool, configuration, worker_connection=None, update_policy=None):
     worker_connection_path = None
     if connection is not None:
         worker_connection_path = spool / "worker-connection.json"
+        if worker_connection_path.exists() and read_json(worker_connection_path) != connection:
+            raise WorkError("WORKER_RESUME_CONNECTION_MISMATCH")
         write_json(worker_connection_path, connection)
     runtime_root = spool / "runtime"
-    write_json(runtime_root / "current.json",
-               {"schemaVersion": 1, "version": VERSION, "runtime": str(script),
-                "supervisor": str(supervisor), "bootstrap": True})
+    current_path = runtime_root / "current.json"
+    current = {"schemaVersion": 1, "version": VERSION, "runtime": str(script),
+               "supervisor": str(supervisor), "bootstrap": True}
+    if current_path.exists() and read_json(current_path) != current:
+        raise WorkError("WORKER_RESUME_RUNTIME_MISMATCH")
+    write_json(current_path, current)
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
     launcher = ("$ErrorActionPreference='Stop'\n$env:PYTHONUTF8='1'\n$env:PYTHONIOENCODING='utf-8'\n"
                 "$env:PYTHONDONTWRITEBYTECODE='1'\n$env:PYTHONNOUSERSITE='1'\n$env:PYTHONHOME=$null\n"
@@ -212,3 +239,67 @@ def export_bundle(repository, output, python_archive=None):
         import json
         archive.writestr("bundle-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
     return {"path": str(output), "sha256": digest(output), "files": len(entries), "version": VERSION}
+
+
+def onboard(bundle, worker_connection, profile, destination, name, *, ca_certificate=None,
+            trusted_transfer=False):
+    """Stage one user-started launcher in an explicitly trusted transfer folder."""
+    if not trusted_transfer:
+        raise WorkError("ONBOARD_TRUSTED_TRANSFER_REQUIRED")
+    if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}", name):
+        raise WorkError("ONBOARD_NAME_INVALID")
+    bundle = Path(bundle).resolve(strict=True)
+    worker_connection = Path(worker_connection).resolve(strict=True)
+    profile = Path(profile).resolve(strict=True)
+    destination = Path(destination).resolve()
+    if destination.exists():
+        raise WorkError("ONBOARD_DESTINATION_EXISTS")
+    connection_value = read_json(worker_connection)
+    from .pull import _pull
+    pull = _pull(connection_value)
+    if connection_value.get("transport") != "pull":
+        raise WorkError("WORKER_CONNECTION_PULL_REQUIRED")
+    profile_value = read_json(profile)
+    if (profile_value.get("schemaVersion") != 1 or
+            not isinstance(profile_value.get("targets", {}), dict) or
+            not isinstance(profile_value.get("hostCommands"), dict) or
+            profile_value["hostCommands"].get("enabled") is not True):
+        raise WorkError("ONBOARD_HOST_COMMANDS_NOT_ENABLED")
+    if ca_certificate is not None:
+        ca_certificate = Path(ca_certificate).resolve(strict=True)
+        if not pull["url"].startswith("https://"):
+            raise WorkError("ONBOARD_CA_REQUIRES_HTTPS")
+    starter = ".agents/skills/itl-remote-runner/scripts/Start-Worker-Onboard.ps1"
+    with zipfile.ZipFile(bundle) as archive:
+        manifest = json.loads(archive.read("bundle-manifest.json"))
+        if starter not in manifest.get("files", {}):
+            raise WorkError("ONBOARD_LAUNCHER_MISSING_FROM_BUNDLE")
+        script_bytes = archive.read(starter)
+        if hashlib.sha256(script_bytes).hexdigest() != manifest["files"][starter]["sha256"]:
+            raise WorkError("ONBOARD_LAUNCHER_HASH_MISMATCH")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=".itl-onboard-", dir=destination.parent))
+    try:
+        shutil.copyfile(bundle, stage / "bundle.zip")
+        shutil.copyfile(worker_connection, stage / "worker-connection.json")
+        shutil.copyfile(profile, stage / "profile.json")
+        if ca_certificate is not None:
+            shutil.copyfile(ca_certificate, stage / "controller-ca.pem")
+        (stage / "Start-Worker.ps1").write_bytes(script_bytes)
+        (stage / "Start-Worker.cmd").write_bytes(
+            b'@echo off\r\npushd "%~dp0" || exit /b 1\r\n'
+            b'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-Worker.ps1"\r\n'
+            b'set "itlExit=%errorlevel%"\r\npopd\r\nexit /b %itlExit%\r\n')
+        write_json(stage / "onboard.json", {"schemaVersion": 1, "name": name,
+                   "bundleSha256": digest(stage / "bundle.zip"),
+                   "connectionSha256": digest(stage / "worker-connection.json"),
+                   "profileSha256": digest(stage / "profile.json"),
+                   "caSha256": digest(stage / "controller-ca.pem") if ca_certificate else None,
+                   "createdAt": stamp()})
+        publish_path(stage, destination)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
+    return {"status": "user-start-required", "launcher": str(destination / "Start-Worker.cmd"),
+            "statusFile": str(destination / "bootstrap-status.json"),
+            "workerId": pull["workerId"], "bundleSha256": digest(bundle)}

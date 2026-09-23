@@ -7,7 +7,8 @@ param(
     [switch]$EnableSsh,
     [string]$RemoteAddress='LocalSubnet',
     [string]$Python = '',
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$Resume
 )
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
@@ -29,6 +30,7 @@ if ($Profile) {
     $prepareArguments = @((Join-Path $PSScriptRoot 'remote_work.py'), 'prepare', '--spool', $Spool, '--profile', $Profile)
     if ($WorkerConnection) { $prepareArguments += @('--worker-connection', $WorkerConnection) }
     if ($UpdatePolicy) { $prepareArguments += @('--update-policy', $UpdatePolicy) }
+    if ($Resume) { $prepareArguments += '--resume' }
     $code = Invoke-ItlPythonCommand -Python $python -Arguments $prepareArguments
     if ($code -ne 0) { throw 'WORKER_PREPARATION_FAILED' }
 } else {

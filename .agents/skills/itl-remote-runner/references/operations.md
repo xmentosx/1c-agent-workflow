@@ -8,6 +8,28 @@ Use `-Python <executable>` or `ITL_PYTHON_EXECUTABLE` for an explicit Python 3.1
 
 ## Prepare once
 
+For first use on a host, prefer the one-launcher route. The controller prepares the
+TLS endpoint and `pair` halves, exports the current bundle with
+`Invoke-RemoteWork.ps1 export` (which includes pinned Python), and writes a
+private profile with `schemaVersion: 1`, `targets: {}` and explicit
+`hostCommands: {"enabled": true}` only when broad user-session access was
+authorized. Then run `onboard --bundle <bundle.zip> --worker-connection
+<worker.json> --profile <profile.json> --destination <new trusted transfer folder>
+--name <host-user alias> --trusted-transfer`, adding `--ca-certificate <PEM>` for
+a private TLS CA. The transfer folder must be restricted to the intended
+controller and worker user because it temporarily contains the pairing token.
+Start `pull-serve` with the controller half. The remote user starts only the
+generated `Start-Worker.cmd` in their interactive Windows session. Do not ask
+them to copy a token, choose a 1C path, run a network check, or report console
+text. Observe the launcher's `bootstrap-status.json` in the transfer folder
+and then `remote --action probe --connection <controller.json>`. The launcher
+copies inputs to `%LOCALAPPDATA%/ITL/remote-work/<name>`, verifies hashes,
+prepares pinned Python without elevation, and starts the persistent worker.
+It reports startup and pull connection errors to the status file. This first
+host connection needs no 1C target; define exact base/profile details after
+the worker is reachable. A missing trusted initial transfer channel is a real
+pairing prerequisite; do not publish the token in a broadly writable folder.
+
 Inspect 1C and the user's permitted workspace/base. Resolve the profile from the shared contract. The normal worker is user-local and outbound: it needs no administrator rights, Windows service, inbound listener, firewall change or SSH server. `Prepare-RemoteHost.ps1` remains available for offline Python preparation; `-EnableSsh` is an explicit administrator-only compatibility operation and is never implied by remote-worker setup.
 
 Choose the pull broker's stable URL and create private controller and worker halves. The returned JSON deliberately omits the bearer token; protect both generated files and transfer only the worker half to its Windows user. `--controller-folder` and `--worker-folder` are optional corresponding paths to one synchronized/shared folder and can be added later.
@@ -50,6 +72,26 @@ Use `probe --spool ...` locally or `remote --connection ... --action probe` remo
 
 For the paired remote worker, package with `--runner worker --agent-policy off` and use
 `send --package <package> --connection <controller.json>`.
+
+For authorized SSH-like work without SSH, place a UTF-8 command specification
+beside its input files and use `host-pack --spec <command.json> --output
+<new-package>`, then `send`, `remote --action status`, and `remote --action
+collect` for the returned ID. Example specification:
+
+```json
+{"schemaVersion":1,"argv":["powershell.exe","-NoProfile","-File","{input}/inspect.ps1"],"files":["inspect.ps1"],"timeoutSeconds":300}
+```
+
+`argv` is an argument array, not shell text. `cwd` may be an absolute host path
+or start with `{input}`/`{run}`; omitted `cwd` uses the private run directory.
+Scripts should set UTF-8 explicitly before decoding native output. The worker
+collects `stdout.log`, `stderr.log`, `result.json`, provenance and files written
+under `{run}`. A nonzero exit or timeout is a failed job with its exit/error
+preserved; cancellation stops its owned process tree. The same ID and package
+may be resent after uncertain delivery, but a running or interrupted command
+is never executed twice. The user-started supervisor renews bounded workers
+while its window remains open. Host commands have the Windows user's access;
+use exact-target ITL jobs and guarded launchers for 1C activity.
 
 `runner local` requires direct execution in the current user session. `runner worker` requires deterministic queued execution by the user-started worker; sending a local package or executing a worker package through the local entrypoint fails before launch. `agent-policy requested` asks that worker to dispatch the same runtime contract to the configured remote agent; `diagnosis-on-failure` permits only the existing bounded diagnostic fallback. Old `--route local|auto|ssh|agent` packages remain accepted and normalize to this split contract. Transport is selected only by the connection used by `send`, not by the immutable job package.
 

@@ -503,6 +503,11 @@ def execute_job(spool, identifier, profile, *, via_agent=False, expected_runner=
     spool = Path(spool).resolve()
     identifier = job_id(identifier)
     request, scenario = validate_package(spool / "jobs" / identifier)
+    if request.get("kind") == "host-command":
+        if via_agent or expected_runner == "local":
+            raise WorkError("EXECUTION_RUNNER_MISMATCH")
+        from .host_commands import execute as execute_host_command
+        return execute_host_command(spool, identifier, profile)
     authorize(request, scenario, profile)
     requested_execution = execution_contract(request)
     if expected_runner is not None and requested_execution["runner"] != expected_runner:

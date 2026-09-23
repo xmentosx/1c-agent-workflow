@@ -14,7 +14,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
-from itl_remote import agents, bootstrap, common, execution, jobs, profiling, pull, transport, updates
+from itl_remote import agents, bootstrap, common, execution, host_commands, jobs, profiling, pull, transport, updates
 from itl_remote.common import (FileLock, OwnedProcess, WorkError, digest, read_json,
                                resolve_resource_limits, resource_violation, write_json)
 
@@ -85,6 +85,163 @@ class RuntimeTests(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_host_command_uses_worker_queue_and_collects_unicode_output(self):
+        self.profile["hostCommands"] = {"enabled": True}
+        source = self.root / "команда в папке"
+        source.mkdir()
+        (source / "run.py").write_text(
+            "import pathlib,sys\n"
+            "pathlib.Path(sys.argv[1], 'created.txt').write_text('готово', encoding='utf-8')\n"
+            "print('привет')\nprint('ошибка диагностики', file=sys.stderr)\n", encoding="utf-8")
+        spec = source / "command.json"
+        write_json(spec, {"schemaVersion": 1, "argv": [sys.executable, "-X", "utf8",
+                   "{input}/run.py", "{run}"], "files": ["run.py"], "timeoutSeconds": 30})
+        package = self.root / "командный пакет"
+        host_commands.pack(spec, package, identifier="host-one")
+        jobs.submit(package, self.spool)
+        result = execution.execute_job(self.spool, "host-one", self.profile, expected_runner="worker")
+        self.assertEqual("completed", result["status"], result)
+        collected = self.root / "собранный результат"
+        transport.Connection({"transport": "exchange", "spool": str(self.spool)}).collect("host-one", collected)
+        self.assertEqual("привет\n", (collected / "stdout.log").read_text(encoding="utf-8"))
+        self.assertEqual("ошибка диагностики\n", (collected / "stderr.log").read_text(encoding="utf-8"))
+        self.assertEqual("готово", (collected / "created.txt").read_text(encoding="utf-8"))
+        self.assertEqual("completed", execution.execute_job(self.spool, "host-one", self.profile)["status"])
+
+    def test_host_command_requires_explicit_worker_authorization(self):
+        source = self.root / "host spec"
+        source.mkdir()
+        spec = source / "command.json"
+        write_json(spec, {"schemaVersion": 1, "argv": [sys.executable, "--version"]})
+        package = self.root / "host package"
+        host_commands.pack(spec, package, identifier="host-disabled")
+        jobs.submit(package, self.spool)
+        with self.assertRaisesRegex(WorkError, "HOST_COMMANDS_NOT_AUTHORIZED"):
+            execution.execute_job(self.spool, "host-disabled", self.profile, expected_runner="worker")
+        self.assertEqual("queued", jobs.status(self.spool, "host-disabled")["status"])
+
+    def test_interrupted_host_command_is_not_replayed_after_owner_loss(self):
+        self.profile["hostCommands"] = {"enabled": True}
+        source = self.root / "command source"
+        source.mkdir()
+        marker = self.root / "must not be created.txt"
+        spec = source / "command.json"
+        write_json(spec, {"schemaVersion": 1, "argv": [sys.executable, "-c",
+                          "from pathlib import Path; Path(%r).write_text('bad')" % str(marker)]})
+        package = self.root / "interrupted package"
+        host_commands.pack(spec, package, identifier="lost-owner")
+        jobs.submit(package, self.spool)
+        write_json(self.spool / "state/lost-owner.json", {"id": "lost-owner", "status": "running",
+                   "ownerPid": 99999999, "ownerIdentity": {"creationId": "old"}})
+        state = execution.execute_job(self.spool, "lost-owner", self.profile, expected_runner="worker")
+        self.assertEqual("interrupted", state["status"])
+        self.assertFalse(marker.exists())
+        self.assertEqual("interrupted", execution.execute_job(self.spool, "lost-owner", self.profile)["status"])
+
+    def test_cancelled_host_command_never_launches(self):
+        self.profile["hostCommands"] = {"enabled": True}
+        source = self.root / "cancel source"
+        source.mkdir()
+        marker = self.root / "cancel marker.txt"
+        spec = source / "command.json"
+        write_json(spec, {"schemaVersion": 1, "argv": [sys.executable, "-c",
+                          "from pathlib import Path; Path(%r).write_text('bad')" % str(marker)]})
+        package = self.root / "cancel package"
+        host_commands.pack(spec, package, identifier="cancel-host")
+        jobs.submit(package, self.spool)
+        jobs.cancel(self.spool, "cancel-host")
+        state = execution.execute_job(self.spool, "cancel-host", self.profile, expected_runner="worker")
+        self.assertEqual("cancelled", state["status"])
+        self.assertFalse(marker.exists())
+
+    def test_onboarding_emits_one_launcher_and_never_prints_pairing_secret(self):
+        bundle = self.root / "portable bundle.zip"
+        bootstrap.export_bundle(REPO, bundle)
+        controller = self.root / "controller.json"
+        worker = self.root / "worker.json"
+        bootstrap.pair("https://controller.example:8765", controller, worker, worker_id="ufa-user")
+        profile = self.root / "host-profile.json"
+        write_json(profile, {"schemaVersion": 1, "targets": {}, "hostCommands": {"enabled": True}})
+        destination = self.root / "Обмен Яндекс" / "Старт UFA"
+        with self.assertRaisesRegex(WorkError, "ONBOARD_TRUSTED_TRANSFER_REQUIRED"):
+            bootstrap.onboard(bundle, worker, profile, destination, "ufa")
+        result = bootstrap.onboard(bundle, worker, profile, destination, "ufa", trusted_transfer=True)
+        self.assertEqual("user-start-required", result["status"])
+        self.assertNotIn("token", result)
+        self.assertEqual(read_json(worker)["pull"]["workerId"], result["workerId"])
+        self.assertTrue((destination / "Start-Worker.cmd").is_file())
+        self.assertTrue((destination / "Start-Worker.ps1").is_file())
+        self.assertEqual(digest(bundle), read_json(destination / "onboard.json")["bundleSha256"])
+        self.assertEqual(read_json(worker), read_json(destination / "worker-connection.json"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows user-session launcher")
+    def test_one_launcher_handles_multiple_host_commands_and_reports_status(self):
+        server, thread, url = pull.start_broker()
+        bundle = self.root / "worker bundle.zip"
+        bootstrap.export_bundle(REPO, bundle)
+        controller = self.root / "controller.json"
+        worker = self.root / "worker.json"
+        bootstrap.pair(url, controller, worker, worker_id="one-click-user")
+        profile = self.root / "host-profile.json"
+        write_json(profile, {"schemaVersion": 1, "targets": {}, "hostCommands": {"enabled": True},
+                             "workerLimits": {"maxJobs": 1, "maxLifetimeSeconds": 30}})
+        destination = self.root / "Обмен Яндекс" / "Пуск UFA"
+        staged = bootstrap.onboard(bundle, worker, profile, destination, "one-click", trusted_transfer=True)
+        environment = dict(os.environ, LOCALAPPDATA=str(self.root / "private local"),
+                           ITL_PYTHON_EXECUTABLE=sys.executable)
+        process = subprocess.Popen(["cmd.exe", "/c", staged["launcher"]], cwd=self.root,
+                                   env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        connection = transport.Connection(read_json(controller))
+        try:
+            deadline = time.monotonic() + 40
+            observed = None
+            while time.monotonic() < deadline:
+                status_file = destination / "bootstrap-status.json"
+                if status_file.exists():
+                    observed = read_json(status_file)
+                    if observed["phase"] in ("connected", "failed"):
+                        break
+                time.sleep(0.2)
+            self.assertEqual("connected", observed["phase"], observed)
+            for index in (1, 2):
+                source = self.root / ("command " + str(index))
+                source.mkdir()
+                spec = source / "command.json"
+                if index == 1:
+                    command = {"schemaVersion": 1, "argv": [sys.executable, "-X", "utf8", "-c",
+                               "print('команда 1')"]}
+                else:
+                    script = source / "script.ps1"
+                    script.write_bytes(b"\xef\xbb\xbf" +
+                                       "[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)\n"
+                                       "Write-Output 'команда 2'\n".encode("utf-8"))
+                    command = {"schemaVersion": 1, "argv": ["powershell.exe", "-NoProfile",
+                               "-ExecutionPolicy", "Bypass", "-File", "{input}/script.ps1"],
+                               "files": ["script.ps1"]}
+                write_json(spec, command)
+                package = self.root / ("package " + str(index))
+                identifier = "one-click-%s" % index
+                host_commands.pack(spec, package, identifier=identifier)
+                connection.send(package)
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    state = connection.call({"operation": "status", "id": identifier})
+                    if state["status"] in ("completed", "failed", "interrupted"):
+                        break
+                    time.sleep(0.1)
+                self.assertEqual("completed", state["status"], state)
+                output = self.root / ("result " + str(index))
+                connection.collect(identifier, output)
+                self.assertEqual("команда %s\n" % index,
+                                 (output / "stdout.log").read_text(encoding="utf-8"))
+        finally:
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+            process.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def package(self, name="one", **kwargs):
         scenario = self.source / "scenario.json"
@@ -279,6 +436,57 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_paired_pull_worker_executes_host_command_without_remote_input(self):
+        self.profile["hostCommands"] = {"enabled": True}
+        write_json(self.spool / "profile.json", self.profile)
+        server, thread, url = pull.start_broker()
+        controller = self.root / "host-controller.json"
+        worker = self.root / "host-worker.json"
+        bootstrap.pair(url, controller, worker, worker_id="host-session")
+        source = self.root / "скрипт для UFA"
+        source.mkdir()
+        (source / "script.py").write_text("print('сеанс доступен')\n", encoding="utf-8")
+        spec = source / "command.json"
+        write_json(spec, {"schemaVersion": 1, "argv": [sys.executable, "-X", "utf8", "{input}/script.py"],
+                          "files": ["script.py"]})
+        package = self.root / "pull host package"
+        host_commands.pack(spec, package, identifier="host-pull")
+        process = subprocess.Popen([sys.executable, "-X", "utf8", str(RUNTIME / "remote_work.py"), "worker",
+                                    "--spool", str(self.spool), "--connection", str(worker),
+                                    "--persistent", "--max-lifetime-seconds", "30"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        connection = transport.Connection(read_json(controller))
+        try:
+            connection.send(package)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                state = connection.call({"operation": "status", "id": "host-pull"})
+                if state["status"] in ("completed", "failed", "interrupted"):
+                    break
+                time.sleep(0.05)
+            self.assertEqual("completed", state["status"], state)
+            result = self.root / "host result"
+            connection.collect("host-pull", result)
+            self.assertEqual("сеанс доступен\n", (result / "stdout.log").read_text(encoding="utf-8"))
+        finally:
+            process.terminate()
+            process.wait(timeout=10)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_prepare_resume_requires_identical_unstarted_private_profile(self):
+        spool = self.root / "recoverable preparation"
+        first = bootstrap.prepare(spool, self.profile_path)
+        self.assertEqual(first["launcher"], bootstrap.prepare(spool, self.profile_path, resume=True)["launcher"])
+        changed = self.root / "changed profile.json"
+        edited = read_json(self.profile_path)
+        edited["hostCommands"] = {"enabled": True}
+        write_json(changed, edited)
+        with self.assertRaisesRegex(WorkError, "WORKER_RESUME_PROFILE_OR_OWNER_MISMATCH"):
+            bootstrap.prepare(spool, changed, resume=True)
+        self.assertEqual(read_json(spool / "profile.json")["targets"], self.profile["targets"])
 
     def test_unavailable_optional_folder_falls_back_to_pull_without_a_new_job(self):
         server, thread, url = pull.start_broker()
@@ -815,9 +1023,9 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
             values = {info.filename: source.read(info.filename) for info in source.infolist()}
             version_name = ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py"
-            values[version_name] = values[version_name].replace(b'VERSION = "1.1.0"', b'VERSION = "1.2.0"')
+            values[version_name] = values[version_name].replace(b'VERSION = "1.2.0"', b'VERSION = "1.3.0"')
             manifest = json.loads(values["bundle-manifest.json"])
-            manifest["version"] = "1.2.0"
+            manifest["version"] = "1.3.0"
             manifest["files"][version_name] = {"sha256": hashlib.sha256(values[version_name]).hexdigest(),
                                                 "bytes": len(values[version_name])}
             values["bundle-manifest.json"] = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
@@ -830,7 +1038,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         staged = updates.stage(self.spool, {"operation": "stage-update", **entry}, {})
         self.assertEqual("worker-update-staged", staged["status"])
         pending = read_json(self.spool / "runtime/pending.json")
-        self.assertEqual("1.2.0", pending["version"])
+        self.assertEqual("1.3.0", pending["version"])
         self.assertTrue(Path(pending["runtime"]).is_file())
         self.assertTrue(Path(pending["supervisor"]).is_file())
         self.assertNotEqual(Path(pending["runtime"]), RUNTIME / "remote_work.py")
@@ -848,7 +1056,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
                 value = source.read(info.filename)
                 if info.filename == "bundle-manifest.json":
                     manifest = json.loads(value)
-                    manifest["version"] = "1.2.0"
+                    manifest["version"] = "1.3.0"
                     value = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
                 elif info.filename == runtime_name:
                     value += b"\n# tampered\n"
@@ -882,7 +1090,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
 
     def test_worker_supervisor_rolls_back_an_unstartable_pending_generation(self):
         write_json(self.spool / "runtime/pending.json",
-                   {"schemaVersion": 1, "version": "1.2.0", "archiveSha256": "a" * 64,
+                   {"schemaVersion": 1, "version": "1.3.0", "archiveSha256": "a" * 64,
                     "runtime": str(self.root / "missing runtime.py"),
                     "supervisor": str(RUNTIME / "worker_supervisor.py"), "stagedAt": common.stamp()})
         completed = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "worker_supervisor.py"),
@@ -892,6 +1100,23 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("pending-runtime-missing", read_json(self.spool / "runtime/rollback.json")["reason"])
         self.assertFalse((self.spool / "runtime/pending.json").exists())
+
+    def test_persistent_supervisor_restarts_after_bounded_worker_limit(self):
+        runtime = self.root / "bounded worker.py"
+        runtime.write_text('''import json, pathlib, sys
+args = sys.argv[1:]
+spool = pathlib.Path(args[args.index("--spool") + 1])
+counter = spool / "starts.txt"
+count = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(count))
+(spool / "worker.json").write_text(json.dumps({"reason": "max-jobs" if count == 1 else "finished"}))
+''', encoding="utf-8")
+        write_json(self.spool / "runtime/current.json", {"runtime": str(runtime)})
+        completed = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "worker_supervisor.py"),
+                                    "--spool", str(self.spool), "--bootstrap-runtime", str(runtime),
+                                    "--persistent"], capture_output=True, timeout=20)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("2", (self.spool / "starts.txt").read_text())
 
     def test_worker_supervisor_applies_update_staged_by_running_worker_without_user_restart(self):
         current_runtime = self.root / "current worker.py"
@@ -907,7 +1132,7 @@ confirmation.write_text(json.dumps({"archiveSha256": generation}), encoding="utf
         current_runtime.write_text('''import json, pathlib, sys
 arguments = sys.argv[1:]
 spool = pathlib.Path(arguments[arguments.index("--spool") + 1])
-pending = {"schemaVersion": 1, "version": "1.2.0", "archiveSha256": "''' + sha + '''",
+pending = {"schemaVersion": 1, "version": "1.3.0", "archiveSha256": "''' + sha + '''",
            "runtime": r"''' + str(trial_runtime) + '''", "supervisor": "fixture",
            "stagedAt": "fixture"}
 path = spool / "runtime" / "pending.json"
@@ -915,14 +1140,14 @@ path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(pending), encoding="utf-8")
 ''', encoding="utf-8")
         write_json(self.spool / "runtime/current.json",
-                   {"schemaVersion": 1, "version": "1.1.0", "runtime": str(current_runtime)})
+                   {"schemaVersion": 1, "version": "1.2.0", "runtime": str(current_runtime)})
         completed = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "worker_supervisor.py"),
                                     "--spool", str(self.spool),
                                     "--bootstrap-runtime", str(current_runtime)],
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         self.assertEqual(0, completed.returncode, completed.stderr)
         selected = read_json(self.spool / "runtime/current.json")
-        self.assertEqual("1.2.0", selected["version"])
+        self.assertEqual("1.3.0", selected["version"])
         self.assertEqual(str(trial_runtime), selected["runtime"])
         self.assertFalse((self.spool / "runtime/pending.json").exists())
 

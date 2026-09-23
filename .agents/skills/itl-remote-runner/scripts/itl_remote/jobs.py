@@ -149,6 +149,9 @@ def validate_package(package):
     package = Path(package)
     request = read_json(package / "request.json")
     job_id(request.get("id"))
+    if request.get("kind") == "host-command":
+        from .host_commands import validate_package as validate_host_command
+        return validate_host_command(package, request)
     if request.get("schemaVersion") not in (1, 2):
         raise WorkError("JOB_SCHEMA_UNSUPPORTED")
     if request.get("mode") not in ("time", "profile", "time+profile"):

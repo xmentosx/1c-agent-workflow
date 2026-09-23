@@ -328,6 +328,19 @@ class PullWorker:
     def start(self):
         self.thread.start()
 
+    def _publish_connection(self, value):
+        write_json(self.spool / "pull-connection.json", value)
+        try:
+            profile = read_json(self.spool / "profile.json")
+            path = profile.get("bootstrapStatusPath")
+            if isinstance(path, str) and Path(path).is_absolute():
+                write_json(path, {"schemaVersion": 1, "phase": value["status"],
+                                  "detail": value.get("error", ""), "workerId": value["workerId"],
+                                  "updatedAt": value["updatedAt"]})
+        except (OSError, ValueError, WorkError):
+            # Diagnostics on an optional transfer folder never stop pull.
+            pass
+
     def stop(self):
         self.stop_event.set()
         self.thread.join(timeout=10)
@@ -362,13 +375,12 @@ class PullWorker:
         return endpoint(self.spool, message)
 
     def _run(self):
-        status_path = self.spool / "pull-connection.json"
         while not self.stop_event.is_set():
             try:
                 call = _http_json(self.config, "/v1/pull",
                                   {"workerId": self.pull["workerId"], "waitSeconds": 2}, timeout=10)
-                write_json(status_path, {"status": "connected", "updatedAt": stamp(),
-                                         "workerId": self.pull["workerId"]})
+                self._publish_connection({"status": "connected", "updatedAt": stamp(),
+                                          "workerId": self.pull["workerId"]})
                 if not call:
                     continue
                 try:
@@ -379,6 +391,6 @@ class PullWorker:
                            {"workerId": self.pull["workerId"], "requestId": call.get("id"),
                             "response": response}, timeout=15)
             except WorkError as error:
-                write_json(status_path, {"status": "disconnected", "updatedAt": stamp(),
-                                         "workerId": self.pull["workerId"], "error": str(error)})
+                self._publish_connection({"status": "disconnected", "updatedAt": stamp(),
+                                          "workerId": self.pull["workerId"], "error": str(error)})
                 self.stop_event.wait(1.0)

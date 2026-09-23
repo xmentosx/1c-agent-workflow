@@ -97,6 +97,7 @@ def main():
     command.add_argument("--profile", required=True)
     command.add_argument("--worker-connection")
     command.add_argument("--update-policy", choices=["disabled", "compatible"])
+    command.add_argument("--resume", action="store_true", help="Resume only an identical incomplete preparation")
     command = commands.add_parser("pair")
     command.add_argument("--url", required=True)
     command.add_argument("--controller-output", required=True)
@@ -105,6 +106,15 @@ def main():
     command.add_argument("--controller-folder")
     command.add_argument("--worker-folder")
     command.add_argument("--threshold-bytes", type=int, default=64 * 1024 * 1024)
+    command = commands.add_parser("onboard")
+    command.add_argument("--bundle", required=True, help="Portable export with pinned Python archive")
+    command.add_argument("--worker-connection", required=True)
+    command.add_argument("--profile", required=True)
+    command.add_argument("--destination", required=True, help="New trusted transfer folder")
+    command.add_argument("--name", required=True, help="Private per-user installation name")
+    command.add_argument("--ca-certificate")
+    command.add_argument("--trusted-transfer", action="store_true",
+                         help="Confirm the folder is restricted to the intended controller and worker user")
     command = commands.add_parser("pull-serve")
     command.add_argument("--listen", default="127.0.0.1")
     command.add_argument("--port", type=int, default=8765)
@@ -134,6 +144,10 @@ def main():
     command.add_argument("--operation", action="append", default=None)
     command.add_argument("--id")
     command.add_argument("--parent")
+    command = commands.add_parser("host-pack")
+    command.add_argument("--spec", required=True, help="JSON argv, optional cwd, timeoutSeconds and input files")
+    command.add_argument("--output", required=True)
+    command.add_argument("--id")
     for name in ("submit", "send"):
         command = commands.add_parser(name)
         command.add_argument("--package", required=True)
@@ -184,12 +198,20 @@ def main():
                          agent_policy=None if args.route else args.agent_policy,
                          repeats=args.repeats, warmups=args.warmups,
                          operations=args.operation, identifier=args.id, parent=args.parent)
+    if args.command == "host-pack":
+        from itl_remote.host_commands import pack
+        return pack(args.spec, args.output, identifier=args.id)
     if args.command == "prepare":
-        return bootstrap.prepare(args.spool, args.profile, args.worker_connection, args.update_policy)
+        return bootstrap.prepare(args.spool, args.profile, args.worker_connection, args.update_policy,
+                                 resume=args.resume)
     if args.command == "pair":
         return bootstrap.pair(args.url, args.controller_output, args.worker_output,
                               worker_id=args.worker_id, controller_folder=args.controller_folder,
                               worker_folder=args.worker_folder, threshold_bytes=args.threshold_bytes)
+    if args.command == "onboard":
+        return bootstrap.onboard(args.bundle, args.worker_connection, args.profile, args.destination,
+                                 args.name, ca_certificate=args.ca_certificate,
+                                 trusted_transfer=args.trusted_transfer)
     if args.command == "pull-serve":
         from itl_remote.pull import serve
         return serve(args.listen, args.port, certificate=args.certificate, private_key=args.private_key,
