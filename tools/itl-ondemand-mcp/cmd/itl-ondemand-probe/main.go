@@ -1,17 +1,21 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -36,6 +40,81 @@ type probeSession struct {
 	session *mcp.ClientSession
 	count   int
 	state   *runtimeState
+	stderr  *probeStderr
+}
+
+type probeStderr struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (s *probeStderr) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Write(p)
+}
+
+func (s *probeStderr) offset() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Len()
+}
+
+func (s *probeStderr) since(offset int) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return bytes.Clone(s.data.Bytes()[offset:])
+}
+
+func executionGuardWait(log []byte) (time.Duration, error) {
+	var maximum time.Duration
+	for _, line := range bytes.Split(log, []byte{'\n'}) {
+		if !bytes.Contains(line, []byte(`"msg":"waiting for database execution"`)) {
+			continue
+		}
+		var event struct {
+			Message     string  `json:"msg"`
+			WaitSeconds float64 `json:"waitSeconds"`
+		}
+		if err := json.Unmarshal(line, &event); err != nil {
+			return 0, fmt.Errorf("invalid execution guard wait evidence: %w", err)
+		}
+		if event.Message != "waiting for database execution" || math.IsNaN(event.WaitSeconds) ||
+			math.IsInf(event.WaitSeconds, 0) || event.WaitSeconds < 0 {
+			return 0, fmt.Errorf("invalid execution guard wait evidence")
+		}
+		wait := time.Duration(event.WaitSeconds * float64(time.Second))
+		if wait > maximum {
+			maximum = wait
+		}
+	}
+	return maximum, nil
+}
+
+func effectiveExitWait(wall, guard time.Duration) (time.Duration, error) {
+	if guard < 0 || guard > wall {
+		return 0, fmt.Errorf("execution guard wait %s exceeds facade close time %s", guard, wall)
+	}
+	return wall - guard, nil
+}
+
+func (s *probeSession) closeMeasured() (time.Duration, time.Duration, time.Duration, error) {
+	offset := s.stderr.offset()
+	started := time.Now()
+	closeErr := s.session.Close()
+	wall := time.Since(started)
+	guard, evidenceErr := executionGuardWait(s.stderr.since(offset))
+	if evidenceErr != nil {
+		return 0, guard, wall, evidenceErr
+	}
+	exitWait, measureErr := effectiveExitWait(wall, guard)
+	if measureErr != nil {
+		return 0, guard, wall, measureErr
+	}
+	if closeErr != nil {
+		return 0, guard, wall, closeErr
+	}
+	return exitWait, guard, wall, nil
 }
 
 const (
@@ -104,17 +183,29 @@ func run() error {
 	connectedTestClients := 0
 	maxConcurrentSessions := 0
 	ownedProcessExitWait := time.Duration(0)
+	maximumGuardWait := time.Duration(0)
+	maximumFacadeCloseWait := time.Duration(0)
 	observeConcurrency := func() {
 		current := len(connected) + connectedTestClients
 		if current > maxConcurrentSessions {
 			maxConcurrentSessions = current
 		}
 	}
-	observeExitWait := func(started time.Time) {
-		elapsed := time.Since(started)
-		if elapsed > ownedProcessExitWait {
-			ownedProcessExitWait = elapsed
+	closeObserved := func(item *probeSession) error {
+		exitWait, guardWait, wallWait, err := item.closeMeasured()
+		if err != nil {
+			return err
 		}
+		if exitWait > ownedProcessExitWait {
+			ownedProcessExitWait = exitWait
+		}
+		if guardWait > maximumGuardWait {
+			maximumGuardWait = guardWait
+		}
+		if wallWait > maximumFacadeCloseWait {
+			maximumFacadeCloseWait = wallWait
+		}
+		return nil
 	}
 	vanessaFileAuthoringOutcome := ""
 	var vanessaFileAuthoringCalls []string
@@ -139,12 +230,9 @@ func run() error {
 		}
 		var result *mcp.CallToolResult
 		if index > 0 {
-			previousSession := connected[len(connected)-2].session
+			previous := connected[len(connected)-2]
 			releasePrevious := func() error {
-				closeStarted := time.Now()
-				closeErr := previousSession.Close()
-				observeExitWait(closeStarted)
-				return closeErr
+				return closeObserved(previous)
 			}
 			var releasedPrevious bool
 			result, releasedPrevious, err = callWithFacadeHandoff(ctx, item.session, releasePrevious, *tool, arguments, 2*time.Second)
@@ -213,15 +301,13 @@ func run() error {
 	}
 
 	if *instances == 2 && !secondSurvived {
-		closeStarted := time.Now()
-		if err := connected[0].session.Close(); err != nil {
+		if err := closeObserved(connected[0]); err != nil {
 			return fmt.Errorf("close first facade: %w", err)
 		}
 		connected = connected[1:]
 		if _, err := waitForStateCount(runtimeRoot, 1, 30*time.Second); err != nil {
 			return fmt.Errorf("first facade cleanup: %w", err)
 		}
-		observeExitWait(closeStarted)
 		result, err := callInnerTool(ctx, connected[0].session, *tool, arguments)
 		if err != nil || result.IsError {
 			return fmt.Errorf("second facade stopped with the first: err=%v result=%#v", err, result)
@@ -242,9 +328,8 @@ func run() error {
 			return fmt.Errorf("post-idle restart: %w", err)
 		}
 	}
-	closeStarted := time.Now()
 	for _, item := range connected {
-		if err := item.session.Close(); err != nil {
+		if err := closeObserved(item); err != nil {
 			return fmt.Errorf("close facade: %w", err)
 		}
 	}
@@ -252,7 +337,6 @@ func run() error {
 	if _, err := waitForStateCount(runtimeRoot, 0, 30*time.Second); err != nil {
 		return fmt.Errorf("EOF cleanup: %w", err)
 	}
-	observeExitWait(closeStarted)
 
 	evidence := map[string]any{
 		"schemaVersion": 2, "family": *family, "publicToolCount": gatewayPublicToolCount, "catalogToolCount": expectedCount,
@@ -260,6 +344,7 @@ func run() error {
 		"serializedFacadeHandoffPassed": serializedFacadeHandoffPassed,
 		"cleanupPassed":                 true, "idleCleanupPassed": idleCleanupPassed, "vanessaUiSmokePassed": *vanessaSmoke,
 		"maxConcurrentSessions": maxConcurrentSessions, "ownedProcessExitWaitMs": ownedProcessExitWait.Milliseconds(),
+		"executionGuardWaitMs": maximumGuardWait.Milliseconds(), "facadeCloseWaitMs": maximumFacadeCloseWait.Milliseconds(),
 		"capturedAt": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	if *vanessaSmoke {
@@ -331,7 +416,8 @@ func callInnerTool(ctx context.Context, session *mcp.ClientSession, name string,
 
 func connect(ctx context.Context, exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) (*probeSession, error) {
 	command := facadeCommand(exe, family, projectRoot, catalog, helper, idleTimeout)
-	command.Stderr = os.Stderr
+	stderr := &probeStderr{}
+	command.Stderr = io.MultiWriter(os.Stderr, stderr)
 	client := mcp.NewClient(&mcp.Implementation{Name: "itl-ondemand-live-probe", Version: "0.1.0"}, nil)
 	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: command, TerminateDuration: facadeTerminateDuration}, nil)
 	if err != nil {
@@ -351,7 +437,7 @@ func connect(ctx context.Context, exe, family, projectRoot, catalog, helper stri
 		}
 		cursor = page.NextCursor
 	}
-	return &probeSession{session: session, count: count}, nil
+	return &probeSession{session: session, count: count, stderr: stderr}, nil
 }
 
 func facadeCommand(exe, family, projectRoot, catalog, helper string, idleTimeout time.Duration) *exec.Cmd {

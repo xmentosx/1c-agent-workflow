@@ -445,6 +445,11 @@ Release сохраняет provenance/immutable dependencies, live MCP и Vaness
 isolation, `maxConcurrentSessions <= 3`, измеренный `ownedProcessExitWaitMs`,
 snapshot rollback, config/extension roundtrip, fresh passed check, CF/CFE SHA и
 cleanup. Он требует существующий Develop proof и не повторяет standard journeys.
+On-demand probe отдельно записывает полное время `facadeCloseWaitMs` и
+подтверждённое логом ожидание общей базы `executionGuardWaitMs`.
+`ownedProcessExitWaitMs` остаётся ограниченным 15 секундами временем закрытия
+после вычета только доказанного ожидания guard; непротоколируемая задержка
+закрытия продолжает блокировать Release.
 Серверные инфобазы остаются поддерживаемым runtime-контуром. Если все три поля
 `serverProjectRoot`, `serverWorktreePath` и `serverDevBranchName` отсутствуют,
 Release явно записывает `server-reset: unverified` и продолжает публикацию; это
