@@ -145,6 +145,73 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "runs existing acceptance coverage for pre-adoption source without demanding new suite owners" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl legacy branch " + [guid]::NewGuid().ToString('N'))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests\features') | Out-Null
+            $feature = Join-Path $tempRoot 'tests\features\Existing.feature'
+            [IO.File]::WriteAllText($feature, 'Функционал: Existing', [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $tempRoot 'tests\verification-suites.branch.json'),
+                '{"schemaVersion":1,"suites":[{"id":"existing","purpose":"acceptance","featurePaths":["tests/features/Existing.feature"],"ownerPaths":["src/cf/Owned/**"]}]}',
+                [Text.UTF8Encoding]::new($false))
+            $result = & {
+                $script:ProjectRoot = $tempRoot
+                $script:AdoptionCommit = 'a' * 40
+                $script:CurrentTree = 'b' * 40
+                $script:ChangedPaths = @()
+                $script:ChangeLegacy = $false
+                $script:LegacyPath = 'src/cf/CommonForms/Старая Форма/Ext/Form/Module.bsl'
+                $script:DeletedPath = 'src/cf/Catalogs/Удаленный.xml'
+                $script:DirtyPath = 'src/cf/Catalogs/Старый.xml'
+                $script:AdoptionState = [pscustomobject]@{
+                    yaxunitApplicabilityBaseline = [pscustomobject]@{
+                        schemaVersion = 1; commit = $script:AdoptionCommit; legacy = $true
+                        legacySourceOids = @([pscustomobject]@{ path = $script:DirtyPath; sourceOid = '2' * 40 })
+                    }
+                }
+                function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+                function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $script:ProjectRoot $Path } }
+                function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+                function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
+                . $ModulePath
+                function Get-VerificationSelectionEffectiveTree { $script:CurrentTree }
+                function Get-VerificationSelectionChangedPaths { param([string]$BaseTree, [string]$CurrentTree) @($script:ChangedPaths) }
+                function Get-VerificationAcceptedMasterInput { param([string[]]$ChangedPaths, [string]$CurrentTree) [pscustomobject]@{ importedPaths = @(); acceptedCommit = '' } }
+                function Get-VerificationConfigurationMetadataRoots { [pscustomobject]@{ configurationRoots = @('src/cf'); extensionRoots = @('src/cfe'); primaryExtensionsRoot = 'src/cfe' } }
+                function Get-GitObjectIdForTreePath {
+                    param([string]$Treeish, [string]$RepoPath)
+                    if ($RepoPath -eq $script:DeletedPath) { return '<missing>' }
+                    if ($RepoPath -eq $script:DirtyPath) { if ($Treeish -eq $script:AdoptionCommit) { return '<missing>' }; return ('2' * 40) }
+                    if ($RepoPath -eq $script:LegacyPath) { if ($Treeish -eq $script:CurrentTree -and $script:ChangeLegacy) { return ('3' * 40) }; return ('1' * 40) }
+                    return '<missing>'
+                }
+                function Read-DevBranchState { param([string]$Name) $script:AdoptionState }
+                function Get-StateValue { param($State, [string]$Name, $Default) if ($null -ne $State -and $State.PSObject.Properties[$Name]) { return $State.$Name }; return $Default }
+                function Get-YAxUnitTestsPath { 'tests/yaxunit' }
+                function Get-YAxUnitSuiteCatalogPaths { @() }
+                function Get-VanessaFeaturesPath { 'tests/features' }
+                $initial = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                Complete-VerificationSelectionProof -Plan $initial
+                $script:ChangedPaths = @($script:LegacyPath, $script:DeletedPath, $script:DirtyPath)
+                $legacy = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                $script:ChangeLegacy = $true
+                $changed = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                $script:ChangeLegacy = $false
+                $script:AdoptionState.yaxunitApplicabilityBaseline.legacy = $false
+                $reset = New-VerificationSelectionPlan -ApplicationFeatureFiles @($feature)
+                [pscustomobject]@{ legacy = $legacy; changed = $changed; reset = $reset }
+            }
+            $result.legacy.mode | Should -Be 'full' -Because $result.legacy.reason
+            $result.legacy.reason | Should -Match 'legacy paths=3'
+            @($result.legacy.selectedFeatureFiles) | Should -Contain $feature
+            $result.changed.mode | Should -Be 'classification-required'
+            $result.changed.reason | Should -Match 'Старая Форма'
+            $result.reset.mode | Should -Be 'classification-required'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "requires classification without selecting files for an ambiguous catalog" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-invalid-" + [guid]::NewGuid().ToString("N"))
         try {

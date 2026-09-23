@@ -380,6 +380,38 @@ function Get-VerificationAcceptedMasterInput {
     return $result
 }
 
+function Get-VerificationLegacySourceBaseline {
+    if (-not (Get-Command Read-DevBranchState -ErrorAction SilentlyContinue) -or
+        -not (Get-Command Get-StateValue -ErrorAction SilentlyContinue)) { return $null }
+    try {
+        $branchVariable = Get-Variable -Name DevBranchName -Scope Script -ErrorAction SilentlyContinue
+        $branchName = if ($null -ne $branchVariable) { [string]$branchVariable.Value } else { '' }
+        $state = Read-DevBranchState -Name $branchName
+        $baseline = Get-StateValue -State $state -Name 'yaxunitApplicabilityBaseline' -Default $null
+    } catch { return $null }
+    if ($null -eq $baseline -or -not [bool](Get-StateValue -State $baseline -Name 'legacy' -Default $false)) { return $null }
+    $commit = [string](Get-StateValue -State $baseline -Name 'commit' -Default '')
+    if ([int](Get-StateValue -State $baseline -Name 'schemaVersion' -Default 0) -ne 1 -or
+        $commit -notmatch '^[a-f0-9]{40}$') {
+        throw 'YAXUNIT_APPLICABILITY_BASELINE_MISSING: the managed branch needs its workflow adoption baseline.'
+    }
+    return $baseline
+}
+
+function Test-VerificationLegacySourcePath {
+    param([object]$Baseline, [string]$CurrentTree, [string]$Path)
+
+    if ($null -eq $Baseline) { return $false }
+    $roots = Get-VerificationConfigurationMetadataRoots
+    $sourceRoots = @(@($roots.configurationRoots) + @($roots.extensionRoots) | Where-Object { $_ } | Sort-Object -Unique)
+    if (@($sourceRoots | Where-Object { $Path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { return $false }
+    $currentOid = Get-GitObjectIdForTreePath -Treeish $CurrentTree -RepoPath $Path
+    $adoptionOid = Get-GitObjectIdForTreePath -Treeish ([string]$Baseline.commit) -RepoPath $Path
+    if ($currentOid -ceq $adoptionOid) { return $true }
+    $legacySourceOids = if ($Baseline.PSObject.Properties['legacySourceOids']) { @($Baseline.legacySourceOids) } else { @() }
+    return @($legacySourceOids | Where-Object { $_.path -ieq $Path -and $_.sourceOid -ceq $currentOid }).Count -gt 0
+}
+
 function Get-VerificationConfigurationMetadataRoots {
     $configurationRoots = [Collections.Generic.List[string]]::new()
     $extensionRoots = [Collections.Generic.List[string]]::new()
@@ -552,8 +584,10 @@ function New-VerificationSelectionPlan {
     }
 
     $acceptedMasterInput = Get-VerificationAcceptedMasterInput -ChangedPaths $changedPaths -CurrentTree $currentTree
+    $legacyBaseline = Get-VerificationLegacySourceBaseline
     $fullReasons = [Collections.Generic.List[string]]::new()
     $classificationReasons = [Collections.Generic.List[string]]::new()
+    $legacyPathCount = 0
     $selectedIds = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($suiteProof in $acceptanceSuites) {
         $prior = @($provedSuites | Where-Object { [string](Get-VerificationCatalogValue -Value $_ -Name "id" -Default "") -eq [string]$suiteProof.id })
@@ -606,6 +640,10 @@ function New-VerificationSelectionPlan {
             })
             if ($yaxunitOwnerMatches.Count -gt 0) { continue }
             if ($changedPath -cin $acceptedMasterInput.importedPaths) { continue }
+            if (Test-VerificationLegacySourcePath -Baseline $legacyBaseline -CurrentTree $currentTree -Path $changedPath) {
+                $legacyPathCount++
+                continue
+            }
             $classificationReasons.Add("Changed verification-relevant path '$changedPath' has no suite owner.")
             continue
         }
@@ -619,6 +657,9 @@ function New-VerificationSelectionPlan {
     if ($classificationReasons.Count -gt 0) { return (& $newClassificationRequiredPlan ($classificationReasons -join '; ')) }
     if ($acceptedMasterInput.importedPaths.Count -gt 0) {
         $fullReasons.Add("Accepted master input at '$($acceptedMasterInput.acceptedCommit)' requires complete existing acceptance coverage; imported paths=$($acceptedMasterInput.importedPaths.Count). No new master tests were authored.")
+    }
+    if ($legacyPathCount -gt 0) {
+        $fullReasons.Add("Pre-adoption branch source requires complete existing acceptance coverage; legacy paths=$legacyPathCount. No new branch tests are required for unchanged legacy content.")
     }
     if ($fullReasons.Count -gt 0) { return (& $newFullPlan ($fullReasons -join '; ')) }
 
@@ -705,8 +746,7 @@ function Get-YAxUnitProductionApplicability {
         $legacySources = [Collections.Generic.List[object]]::new()
         foreach ($changedPathValue in @(Get-VerificationSelectionChangedPaths -BaseTree $adoptionTree -CurrentTree $currentTree)) {
             $path = ([string]$changedPathValue -replace "\\", "/").TrimStart("/")
-            if ($path -notmatch '(?i)\.bsl$' -or
-                @($sourceRoots | Where-Object { $path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
+            if (@($sourceRoots | Where-Object { $path.StartsWith("$_/", [StringComparison]::OrdinalIgnoreCase) }).Count -eq 0) { continue }
             $sourceOid = Get-GitObjectIdForTreePath -Treeish $currentTree -RepoPath $path
             if ($sourceOid -match '^[a-f0-9]{40}$') {
                 $legacySources.Add([pscustomobject]@{ path = $path; sourceOid = $sourceOid })

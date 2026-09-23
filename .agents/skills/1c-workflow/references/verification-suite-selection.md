@@ -94,6 +94,13 @@ matrix. A new or changed suite has its own semantic fingerprint, so it remains
 the only selected suite on every failed fix-and-retry iteration instead of
 restarting the previously proved acceptance set.
 
+When an old proof predates workflow adoption, an unowned CF/CFE path whose
+current content exactly matches the legacy adoption baseline (including an old
+deletion or recorded dirty source OID) selects the complete existing acceptance
+set without demanding a new suite owner. A later branch-owned change to that
+path still requires classification. Test feature and catalog classification is
+unchanged.
+
 Changes outside the verification fingerprint do not force Vanessa. YAxUnit-only
 test changes are handled by the YAxUnit contour and do not select Vanessa. When
 ordinary YAxUnit execution is planned, a changed production path owned by a
@@ -118,7 +125,7 @@ not erase or replace the last complete acceptance proof.
 The workflow records an exact Git commit when a development branch first adopts
 this applicability rule, including when its first action is `/itl-check` rather
 than refresh. A branch that existed before the update keeps all BSL at that
-commit as a legacy baseline. Dirty BSL present at first adoption is preserved
+commit as a legacy baseline. Dirty CF/CFE source present at first adoption is preserved
 by exact source OID until it changes again. Missing YAxUnit tests for this
 pre-adoption content do not become mandatory, and refresh remains usable. The
 inventory marks `legacyBaseline=true`.
