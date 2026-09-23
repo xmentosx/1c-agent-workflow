@@ -651,6 +651,40 @@ public static class $typeName
         Test-Path -LiteralPath $snap | Should -BeTrue
     }
 
+    It 'registers the sealed capability generation when Release has no result artifact' {
+        $root = New-LedgerRepository
+        $output = Join-Path $root 'build/test-results/local'
+        $capabilityDirectory = Join-Path $root '.agent-1c/runs/release-e2e-capabilities/run/generation'
+        New-Item -ItemType Directory -Path $output, $capabilityDirectory -Force | Out-Null
+        $manifestPath = Join-Path $capabilityDirectory 'manifest.json'
+        [IO.File]::WriteAllText($manifestPath, '{}', [Text.UTF8Encoding]::new($false))
+        $reportPath = Join-Path $output 'release-e2e-summary.json'
+        $report = [ordered]@{
+            status = 'passed'
+            projectRoot = $root
+            worktreePath = $root
+            snapshots = [ordered]@{}
+            onDemandMcpEvidencePath = ''
+            artifactRetention = [ordered]@{
+                status = 'not-run'
+                retainedResultArtifact = ''
+                retainedResultManifest = ''
+                retainedCapabilityManifest = $manifestPath
+            }
+        }
+        [IO.File]::WriteAllText($reportPath, ($report | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $output 'check-summary.json'), (@{ e2eReportPath = $reportPath } | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+
+        Register-DeliveryGateResources -Plan ([pscustomobject]@{ planId = 'capability-only' }) -CandidateRoot $root -Mode Release | Out-Null
+
+        $generation = @((Read-DeliveryResourceLedger).resources | Where-Object kind -eq 'capability-generation')
+        @($generation).Count | Should -Be 1
+        $generation[0].state | Should -Be 'active'
+        $generation[0].identity.manifestPath | Should -Be $manifestPath
+        $generation[0].identity.manifestSha256 | Should -Be (Get-DeliveryFileSha256 -Path $manifestPath)
+        @((Read-DeliveryResourceLedger).resources | Where-Object kind -eq 'release-artifact').Count | Should -Be 0
+    }
+
     It 'keeps failed-gate journaling best effort while successful-gate journaling remains mandatory' {
         $root=New-LedgerRepository
         Mock Register-DeliveryGateResourcesCore { throw 'ledger write unavailable' }
@@ -900,8 +934,11 @@ Describe 'Delivery resource ledger compaction' {
         $removed = New-ExactRemovedResource -Sequence 11 -UnknownValue 'restart'
         $ledger = [pscustomobject][ordered]@{ schemaVersion=1; resources=@($removed); updatedAt='' }
         Write-DeliveryResourceLedger -Ledger $ledger | Out-Null
+        # A crash after archive write starts from the persisted ledger shape.
+        # ConvertFrom-Json may retype ISO timestamps before compaction.
+        $persistedRemoved = @((Read-DeliveryResourceLedger).resources)[0]
         $prefix = ([string]$removed.resourceId).Substring(0, 2)
-        $payload = [pscustomobject][ordered]@{ schemaVersion=1; kind='itl-delivery-resource-archive'; prefix=$prefix; resources=@($removed) }
+        $payload = [pscustomobject][ordered]@{ schemaVersion=1; kind='itl-delivery-resource-archive'; prefix=$prefix; resources=@($persistedRemoved) }
         $content = ($payload | ConvertTo-Json -Depth 24 -Compress) + [Environment]::NewLine
         $sha = Get-DeliveryTextSha256 -Text $content
         $archiveRoot = Get-DeliveryResourceArchiveRoot

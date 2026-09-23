@@ -134,7 +134,15 @@ New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
 $startedAt = [DateTime]::UtcNow
 $failure = $null
 $cleanupFailures = @()
-$artifactRetention = [ordered]@{ status = "not-run"; removedFiles = 0; removedDirectories = 0; reclaimedBytes = 0 }
+$artifactRetention = [ordered]@{
+    status = "not-run"
+    removedFiles = 0
+    removedDirectories = 0
+    reclaimedBytes = 0
+    retainedResultArtifact = ""
+    retainedResultManifest = ""
+    retainedCapabilityManifest = ""
+}
 $resultManifestPath = ""
 $artifactPath = ""
 $artifactSha256 = ""
@@ -2870,6 +2878,7 @@ try {
     }
     $sealedCapabilityPath = Save-E2ECapabilityCache
     Set-E2ECheckpointCapabilityEvidence -ManifestPath $sealedCapabilityPath
+    $artifactRetention["retainedCapabilityManifest"] = $sealedCapabilityPath
     $checkpoint["status"] = "passed"
     Write-E2ECheckpoint
     if ($artifactPath -and $resultManifestPath) {
