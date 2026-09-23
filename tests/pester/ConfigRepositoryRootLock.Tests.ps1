@@ -155,7 +155,7 @@ Describe 'Configuration root lock dependencies' {
                 $lines = @('---- Начало операции с хранилищем конфигурации ----')
                 if ($script:Requests.Count -eq 1) {
                     if (-not $silentRoot) {
-                        $lines += if ($failurePhase -eq 1) { 'Объект захвачен для редактирования другим пользователем: Конфигурация (ЧужойВладелец)' } else { 'Объект захвачен для редактирования: Конфигурация' }
+                        $lines += if ($failurePhase -eq 1) { 'Объект захвачен для редактирования другим пользователем: УправлениеПроектамиКОРП (ЧужойВладелец)' } else { 'Объект захвачен для редактирования: УправлениеПроектамиКОРП' }
                     }
                 } else {
                     $lines = @('Объекты, отсутствующие в обеих конфигурациях:', 'Константа.Новая') + $lines
@@ -174,11 +174,20 @@ Describe 'Configuration root lock dependencies' {
         @($result.requests[0].SelectNodes('//*[local-name()="Object"]')).Count | Should -Be 0
         $result.report | Should -Match 'Константа.Новая'
         if ($failurePhase -eq 1) {
-            @($result.requests).Count | Should -Be 1
+            @($result.requests).Count | Should -Be 2
             $result.error | Should -Match 'ЧужойВладелец'
-            $result.report | Should -Match 'захват остальных объектов не запускался'
+            $result.report | Should -Match 'УправлениеПроектамиКОРП'
+            $result.report | Should -Match 'Корень конфигурации.*не захвачен.*ЧужойВладелец'
+            $result.report | Should -Match 'недоступного корня не запускался захват только зависимых новых объектов: 1'
+            $result.report | Should -Match 'Захват остальных независимых объектов был запущен: 1'
+            @($result.requests[1].Objects.Object).Count | Should -Be 1
+            @($result.requests[1].Objects.Object)[0].fullName | Should -Be 'Справочник.Существующий'
             @($result.outcome.items | Where-Object name -eq 'Конфигурация')[0].status | Should -Be 'conflict'
-            @($result.outcome.items | Where-Object name -eq 'Константа.Новая')[0].status | Should -Be 'unconfirmed'
+            @($result.outcome.items | Where-Object name -eq 'Константа.Новая')[0].status | Should -Be 'blocked-by-root'
+            @($result.outcome.items | Where-Object name -eq 'Справочник.Существующий')[0].status | Should -Be 'captured'
+            $result.outcome.objectOperation.attempted | Should -BeTrue
+            $result.outcome.objectOperation.requestedCount | Should -Be 1
+            Test-Path -LiteralPath $result.outcome.rootOperation.logPath | Should -BeTrue
         } else {
             if ($failurePhase -eq 2) { $result.error | Should -Match 'ЧужойВладелец' } else { $result.error | Should -BeNullOrEmpty }
             @($result.requests).Count | Should -Be 2
@@ -189,6 +198,51 @@ Describe 'Configuration root lock dependencies' {
             @($result.outcome.items | Where-Object name -eq 'Константа.Новая')[0].status | Should -Be 'absent'
             Test-Path -LiteralPath $result.outcome.rootOperation.logPath | Should -BeTrue
         }
+    }
+
+    It 'does not continue after an unclassified root launch failure' {
+        $root = Join-Path $TestDrive 'Неизвестный сбой корня с пробелом'
+        New-RootLockFixture $root
+        Write-RootLockMetadata $root 'Constants' 'Constant' 'Новая'
+        Write-RootLockConfiguration $root '<Constant>Новая</Constant>'
+        Write-RootLockMetadata $root 'Catalogs' 'Catalog' 'Существующий' '22222222-2222-4222-8222-222222222222' '<ChildObjects />'
+        $result = & {
+            . $script:RootLockHelper -ProjectRoot $root -Action help *> $null
+            function Get-MasterBranch { 'master' }
+            function Read-DevBranchState { [pscustomobject]@{ devBranch = 'itldev/root-lock'; devBranchKind = 'configuration'; initializationStatus = 'ready' } }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Repair-OneCSourceLineEndings {}
+            function Get-SourceUsesRepository { $true }
+            function Get-SourceInfoBasePath { 'source' }
+            function Get-InfoBaseKind { 'file' }
+            function Get-ExportPath { 'src/cf' }
+            function New-RepositoryConnectionArgs { @() }
+            function Get-EnvValue { param($Name) 'TestOwner' }
+            function Set-RunStage {}
+            $script:Requests = [Collections.Generic.List[object]]::new()
+            function Invoke-Designer {
+                param($InfoBasePath, $InfoBaseKind, $DesignerArgs)
+                $script:Requests.Add([xml](Read-Utf8Text -Path $DesignerArgs[2]))
+                $script:LastLogPath = Join-Path $root 'unknown-root-failure.log'
+                Write-Utf8Text -Path $script:LastLogPath -Value (@(
+                    '---- Начало операции с хранилищем конфигурации ----',
+                    '---- Операция с хранилищем конфигурации завершена ----',
+                    'Ошибка соединения с хранилищем конфигурации'
+                ) -join "`r`n")
+                throw 'repository connection failed'
+            }
+            $errorText = ''
+            try { Lock-ConfigRepositoryObjects 6>$null } catch { $errorText = $_.Exception.Message }
+            $outcomePath = @(Get-ChildItem -LiteralPath (Join-Path $root '.agent-1c/runs') -Recurse -Filter repository-lock-result.json)[0].FullName
+            [pscustomobject]@{ requests = @($script:Requests); error = $errorText; report = $script:RunUserReport; outcome = (Read-Utf8Text -Path $outcomePath | ConvertFrom-Json) }
+        }
+        @($result.requests).Count | Should -Be 1
+        $result.error | Should -Match 'repository connection failed'
+        $result.report | Should -Match '### Захват не выполнялся'
+        @($result.outcome.items | Where-Object name -eq 'Константа.Новая')[0].status | Should -Be 'not-attempted'
+        @($result.outcome.items | Where-Object name -eq 'Справочник.Существующий')[0].status | Should -Be 'not-attempted'
+        $result.outcome.objectOperation.attempted | Should -BeFalse
+        $result.outcome.objectOperation.requestedCount | Should -Be 0
     }
 
     It 'detects a replacement UUID at the same path and deduplicates an existing root module dependency' {

@@ -1387,15 +1387,18 @@ ordinary export planning retains its existing behavior.
 The serializer uses the separate `<Configuration includeChildObjects="false"/>`
 element, as documented in the platform's official
 [object-list examples](https://kb.1ci.com/1C_Enterprise_Platform/Guides/Administrator_Guides/1C_Enterprise_8.3.27_Administrator_Guide/Appendix_3._Description_and_location_of_internal_files/3.31._Object_list_file/3.31.5._Examples/?language=en).
-The helper makes a root-only request before requesting the other objects. A root
-failure leaves the second request unattempted. A later failure retains the
-root's separate redacted log and observed outcome in the full report. New objects
-absent from the source configuration remain absent; root ownership does not
-turn them into individually captured objects. Native exit zero without a
-per-object observation remains unconfirmed in the outcome inventory.
+The helper makes a root-only request before requesting the other objects. A
+classified foreign-owner conflict skips only the dependent top-level additions
+and still requests all independent changed objects. An unclassified root launch,
+transport or timeout failure stops before another mutation because the first
+result is uncertain. Both paths retain the root's separate redacted log and
+observed owner/outcome in the full report. New objects absent from the source
+configuration remain absent; root ownership does not turn them into individually
+captured objects. Native exit zero without a per-object observation remains
+unconfirmed in the outcome inventory.
 
-Seventeen focused root/report tests pass, plus the three retained lifecycle
-transfer/lock cases. Coverage includes eight top-level categories, one root for
+Focused root/report tests pass, plus the retained lifecycle transfer/lock cases.
+Coverage includes eight top-level categories, one root for
 multiple additions, Cyrillic and whitespace in the same paths, nested additions,
 renames, replacement identity, ambiguity before mutation, root/second-phase
 conflicts and preservation of both phase outcomes. These are source and fixture
