@@ -64,6 +64,7 @@ Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-modes.log') -Encod
 Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-candidates.log') -Encoding UTF8 -Value ("$Mode " + (& git rev-parse HEAD).Trim())
 if ($Mode -eq 'Targeted') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-target-bases.log') -Encoding UTF8 -Value $BaseRef }
 if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-resume.log') -Encoding UTF8 -Value $ReleaseResumeMode }
+if ($Mode -eq 'Release') { Add-Content -LiteralPath (Join-Path $PSScriptRoot 'build\gate-release-capabilities.log') -Encoding UTF8 -Value $ReleaseCapabilities }
 if ($Mode -eq 'Full') {
     $qualification = Join-Path (Get-Location) 'build\test-results\qualification'
     New-Item -ItemType Directory -Force -Path $qualification | Out-Null

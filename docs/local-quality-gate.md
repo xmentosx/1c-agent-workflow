@@ -107,20 +107,24 @@ Develop proof закрывают reuse. Это продолжение по finge
 
 ## Публикация develop
 
-`source-delivery.ps1` является bootstrap-shim. Он читает
-`refs/remotes/origin/master`, создаёт detached worktree и передаёт управление
-`source-delivery-supervisor.ps1` из стабильного `master`. Supervisor один владеет
+`source-delivery.ps1` является bootstrap-shim. Для `Plan` и `PublishDevelop` он
+закрепляет уже опубликованный `refs/remotes/origin/develop`, для публикации в
+`master` — `refs/remotes/origin/master`, создаёт detached worktree и передаёт
+управление supervisor этого канала. Supervisor один владеет
 очередью, immutable plan, evidence, checkpoint, resource ledger и push; код
 кандидата запускается отдельным процессом и может только выполнить актуальные
-проверки. Пока supervisor впервые ещё отсутствует в `master`, shim явно помечает
-одноразовый bootstrap-режим; после первого выпуска candidate-копия supervisor
-никогда не выбирается.
+проверки. Отсутствие опубликованного develop-supervisor блокирует обычные `Plan`
+и `PublishDevelop`; candidate-копия не подставляется. Исключение — явно заданный
+подменный `-GateScript` для изолированного процессного fixture. Одноразовый
+bootstrap-режим остаётся и для master-канала до появления supervisor.
 
 `Status` не является исполняющим supervisor: read-only вызов использует файл из
 текущего checkout без создания worktree. Поэтому диагностика выводит две разные
-identity: `statusReader` — коммит прочитанного кода, `authoritySupervisor` (и
-совместимый alias `supervisor`) — коммит `origin/master`, который будет владеть
-lock, очередью и публикацией. `cleanupPolicy` отдельно показывает каналы
+identity: `statusReader` — коммит прочитанного кода,
+`developAuthoritySupervisor` и `masterAuthoritySupervisor` — опубликованные
+коммиты соответствующих каналов. Совместимые `authoritySupervisor` и
+`supervisor` остаются master-identity; для `PublishDevelop` смотреть именно
+`developAuthoritySupervisor`. `cleanupPolicy` отдельно показывает каналы
 исполнения очистки.
 
 Перед дорогим запуском маршрут можно получить без публикации:
@@ -134,8 +138,11 @@ Plan хранится в `.git/itl/plans/v1/<planId>.json` и содержит D
 Неизвестный путь создаёт blocker `QUALITY_OWNER_MISSING`; автоматического Full
 fallback нет. Повтор публикации может закрепить identity через
 `-ResumePlan <planId>`. Shim при таком продолжении загружает supervisor, который
-записан в immutable plan, и принимает его только как предка текущего
-`origin/master`; новый plan без `-ResumePlan` всегда использует текущий master.
+записан в immutable plan, и принимает его только как предка опубликованного
+tip того же authority-канала. Старые планы без поля канала сохраняют master
+authority, если их supervisor предок `origin/master`; иначе для
+`PublishDevelop` принимается только предок `origin/develop`. Новый plan без
+`-ResumePlan` использует текущий опубликованный tip выбранного канала.
 Если сумма выполняемых стадий больше 60 минут, нужно явно
 передать `-ApproveLongPlan <planId>`. `Plan` выполняет тот же read-only preflight
 owned components, что и публикация, поэтому автоматическое повышение до Release
@@ -200,10 +207,13 @@ commit и локальный ref входят в durable checkpoint: повто�
 gate восстанавливает их и не повторяет preliminary `Develop` или promoter.
 Любой другой непрошедший compatibility status закрыто блокирует публикацию.
 
-Если `develop` должен получить только release-qualified кандидат, к той же
-команде добавляется `-RequireRelease`. Оркестратор последовательно выполняет
-`Develop` и `Release` на одном временном commit и делает единственный push лишь
-после двух успехов. Ошибка любой стадии не двигает remote и не очищает очередь.
+Если необходима полная Release-проверка независимо от недостающих owned assets,
+к той же команде добавляется `-RequireRelease`. Это не флаг сохранения `master`:
+`PublishDevelop` никогда его не обновляет. Без флага отсутствующие owned assets
+автоматически выбирают только свои Release capabilities с зависимостями. При
+выбранных Release-стадиях оркестратор выполняет `Develop` и `Release` на одном
+временном commit и делает единственный push лишь после двух успехов. Ошибка
+любой стадии не двигает remote и не очищает очередь.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из
 qualification cache, поэтому после ошибки `Release` он не запускается заново.
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`

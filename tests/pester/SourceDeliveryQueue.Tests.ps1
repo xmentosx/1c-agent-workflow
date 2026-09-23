@@ -31,39 +31,113 @@ It "resolves the repository root after parameter binding in Windows PowerShell 5
         $status.statusReader.commit | Should -Be ((& git -C $RepoRoot rev-parse HEAD).Trim())
         $status.authoritySupervisor.role | Should -Be 'lock-queue-push-owner'
         $status.supervisor.commit | Should -Be $status.authoritySupervisor.commit
+        $status.developAuthoritySupervisor.commit | Should -Be ((& git -C $RepoRoot rev-parse refs/remotes/origin/develop).Trim())
+        $status.masterAuthoritySupervisor.commit | Should -Be ((& git -C $RepoRoot rev-parse refs/remotes/origin/master).Trim())
         $status.cleanupPolicy.manualDefault | Should -Be 'develop'
         $status.cleanupPolicy.publishDevelop | Should -Be 'develop'
         $status.cleanupPolicy.releaseMaster | Should -Be 'master'
         @($status.cleanupPolicy.promoteRelease) | Should -Be @('develop', 'master')
     }
 
-It "runs the immutable origin master supervisor while the candidate checkout contains different delivery code" {
+It "runs the published develop supervisor for Plan and PublishDevelop, and master for release" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
-            & git -C $fixture.root switch --quiet -c master $fixture.base
             $supervisorDirectory = Join-Path $fixture.root 'scripts'; New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
-            $stableSupervisor = @'
+            $developSupervisor = @'
 [CmdletBinding()]
-param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor)
-[pscustomobject]@{ status='stable-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]$SupervisorChannel,[switch]$BootstrapSupervisor)
+[pscustomobject]@{ status='develop-supervisor'; action=$Action; candidateRoot=$RepositoryRoot; supervisorCommit=$SupervisorCommit; channel=$SupervisorChannel; bootstrap=[bool]$BootstrapSupervisor } | ConvertTo-Json
 '@
-            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $stableSupervisor, [Text.UTF8Encoding]::new($false))
-            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: stable supervisor'
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $developSupervisor, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: published develop supervisor'
+            $developCommit = (& git -C $fixture.root rev-parse HEAD).Trim(); & git -C $fixture.root push --quiet origin HEAD:develop
+            & git -C $fixture.root switch --quiet -c master $fixture.base
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "param([string]`$Action,[string]`$RepositoryRoot,[string]`$SupervisorCommit,[switch]`$BootstrapSupervisor); [pscustomobject]@{ status='master-supervisor'; action=`$Action; supervisorCommit=`$SupervisorCommit } | ConvertTo-Json", [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: published master supervisor'
             $masterCommit = (& git -C $fixture.root rev-parse HEAD).Trim(); & git -C $fixture.root push --quiet origin HEAD:master
             & git -C $fixture.root switch --quiet develop
-            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
             [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "throw 'candidate supervisor must not execute'", [Text.UTF8Encoding]::new($false))
             & git -C $fixture.root add scripts/source-delivery-supervisor.ps1; & git -C $fixture.root commit --quiet -m 'test: candidate supervisor differs'
             & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
 
-            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"'))
-            $payload = $result.stdout | ConvertFrom-Json
-            $payload.status | Should -Be 'stable-supervisor'; $payload.supervisorCommit | Should -Be $masterCommit; $payload.bootstrap | Should -BeFalse
+            foreach ($action in @('Plan','PublishDevelop')) {
+                $payload = (Invoke-DeliveryTestPowerShell -Arguments @('-Action',$action,'-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
+                $payload.status | Should -Be 'develop-supervisor'
+                $payload.supervisorCommit | Should -Be $developCommit
+                $payload.channel | Should -Be 'develop'
+                $payload.bootstrap | Should -BeFalse
+            }
+            foreach ($action in @('PromoteRelease','ReleaseMaster')) {
+                $payload = (Invoke-DeliveryTestPowerShell -Arguments @('-Action',$action,'-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
+                $payload.status | Should -Be 'master-supervisor'
+                $payload.supervisorCommit | Should -Be $masterCommit
+            }
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $developCommit
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/master).Trim() | Should -Be $masterCommit
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 
-It "pins ResumePlan to its recorded trusted supervisor after origin master advances" {
+It "fails closed when published develop has no supervisor outside a custom gate fixture" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            $result = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"')) -AllowFailure
+            $result.exitCode | Should -Not -Be 0
+            $result.stderr | Should -Match 'DELIVERY_DEVELOP_SUPERVISOR_UNAVAILABLE'
+            (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $fixture.base
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+It "resumes the pinned develop supervisor after develop advances, including a channel-less transition plan" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            $supervisorDirectory = Join-Path $fixture.root 'scripts'
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            $recordedText = @'
+[CmdletBinding()]
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor,[string]$ResumePlan)
+[pscustomobject]@{ status='recorded-develop'; supervisorCommit=$SupervisorCommit; resumePlan=$ResumePlan } | ConvertTo-Json
+'@
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $recordedText, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: recorded develop supervisor'
+            $recordedCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
+
+            $latestText = $recordedText.Replace('recorded-develop','latest-develop')
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $latestText, [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: latest develop supervisor'
+            $latestCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
+
+            $planRoot = Join-Path $fixture.root '.git\itl\plans\v1'
+            New-Item -ItemType Directory -Force -Path $planRoot | Out-Null
+            foreach ($case in @(
+                [pscustomobject]@{ id=('d' * 64); channel='develop' },
+                [pscustomobject]@{ id=('e' * 64); channel='' }
+            )) {
+                $supervisor = [ordered]@{ commit=$recordedCommit }
+                if ($case.channel) { $supervisor.channel = $case.channel }
+                $plan = [ordered]@{ schemaVersion=1; kind='itl-delivery-plan'; planId=$case.id; supervisor=$supervisor }
+                [IO.File]::WriteAllText((Join-Path $planRoot "$($case.id).json"), (($plan | ConvertTo-Json -Depth 6) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
+                $resumed = (Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$case.id)).stdout | ConvertFrom-Json
+                $resumed.status | Should -Be 'recorded-develop'
+                $resumed.supervisorCommit | Should -Be $recordedCommit
+            }
+            $fresh = (Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"'))).stdout | ConvertFrom-Json
+            $fresh.status | Should -Be 'latest-develop'
+            $fresh.supervisorCommit | Should -Be $latestCommit
+            $wrongAction = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PromoteRelease','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',('d' * 64)) -AllowFailure
+            $wrongAction.exitCode | Should -Not -Be 0
+            $wrongAction.stderr | Should -Match 'DELIVERY_RESUME_PLAN_INVALID'
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
+    }
+
+It "pins a legacy master ResumePlan after master advances while a fresh Plan uses develop" {
         $fixture = $null
         try {
             $fixture = New-DeliveryFixture
@@ -72,8 +146,8 @@ It "pins ResumePlan to its recorded trusted supervisor after origin master advan
             New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
             $recordedSupervisorText = @'
 [CmdletBinding()]
-param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]$BootstrapSupervisor,[string]$ResumePlan)
-[pscustomobject]@{ status='recorded-supervisor'; supervisorCommit=$SupervisorCommit; resumePlan=$ResumePlan } | ConvertTo-Json
+param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[string]$SupervisorChannel,[switch]$BootstrapSupervisor,[string]$ResumePlan)
+[pscustomobject]@{ status='recorded-supervisor'; supervisorCommit=$SupervisorCommit; channel=$SupervisorChannel; resumePlan=$ResumePlan } | ConvertTo-Json
 '@
             [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), $recordedSupervisorText, [Text.UTF8Encoding]::new($false))
             & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
@@ -101,18 +175,26 @@ param([string]$Action,[string]$RepositoryRoot,[string]$SupervisorCommit,[switch]
             $latestCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
             & git -C $fixture.root push --quiet origin HEAD:master
             & git -C $fixture.root switch --quiet develop
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "param([string]`$Action,[string]`$RepositoryRoot,[string]`$SupervisorCommit,[switch]`$BootstrapSupervisor); [pscustomobject]@{ status='develop-supervisor'; supervisorCommit=`$SupervisorCommit } | ConvertTo-Json", [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1
+            & git -C $fixture.root commit --quiet -m 'test: published develop supervisor'
+            $developCommit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
             & git -C $fixture.root fetch --quiet origin master:refs/remotes/origin/master
 
             $resumed = Invoke-DeliveryTestPowerShell -Arguments @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$planId)
             $resumedPayload = $resumed.stdout | ConvertFrom-Json
             $resumedPayload.status | Should -Be 'recorded-supervisor'
             $resumedPayload.supervisorCommit | Should -Be $recordedCommit
+            $resumedPayload.channel | Should -Be 'master'
             $resumedPayload.resumePlan | Should -Be $planId
 
             $fresh = Invoke-DeliveryTestPowerShell -Arguments @('-Action','Plan','-RepositoryRoot',('"' + $fixture.root + '"'))
             $freshPayload = $fresh.stdout | ConvertFrom-Json
-            $freshPayload.status | Should -Be 'latest-supervisor'
-            $freshPayload.supervisorCommit | Should -Be $latestCommit
+            $freshPayload.status | Should -Be 'develop-supervisor'
+            $freshPayload.supervisorCommit | Should -Be $developCommit
+            $latestCommit | Should -Not -Be $developCommit
         } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 

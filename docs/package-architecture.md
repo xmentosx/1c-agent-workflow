@@ -11,10 +11,26 @@ This source-only document describes the package layout for maintainers. It is no
 - `templates` contains tracked project defaults, ignored-file additions, dependency locks, and project guidance overlays.
 - `install-agent-1c-workflow.ps1` installs the managed package and starts monitored initialization.
 - `scripts/check.ps1` and `scripts/test-ai-rules-compatibility.ps1` own source-repository qualification.
-- `scripts/source-delivery.ps1` bootstraps the stable supervisor from
-  `origin/master`; `source-delivery-supervisor.ps1` owns publication authority,
+- `scripts/source-delivery.ps1` pins the stable supervisor from the already
+  published `origin/develop` for `Plan`/`PublishDevelop` and from `origin/master`
+  for master publication; `source-delivery-supervisor.ps1` owns publication authority,
   while `source-delivery-plan.ps1` and `source-delivery-resources.ps1` own the
   immutable selective plan/evidence and common-Git resource ledger.
+
+The develop authority boundary is channel-local, not candidate-local: the
+supervisor is the tracked published tip before the operation, never the queued
+candidate or a dirty checkout. It alone holds the existing operation lease and
+mutates the queue, checkpoint, resource ledger, and remote ref. The immutable
+plan pins its authority channel and commit; recovery uses that exact commit and
+requires ancestry in the same channel. Plans made before this distinction keep
+their recorded master authority, while channel-less plans from the first
+develop-controller transition are accepted only when the recorded commit is
+already trusted by `origin/develop`. Master promotion and release stay under
+master authority. This changes no lock, state machine, installed state, client
+surface, platform prerequisite, or cancellation rule. The canary is a divergent
+master/develop fixture proving routing and resume before the normal Targeted
+registration; rollback is to the previous published develop controller for an
+existing plan, never a manual queue or checkpoint rewrite.
 
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 

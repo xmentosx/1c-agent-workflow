@@ -24,6 +24,8 @@ param(
     [string]$ResumePlan = "",
     [string]$ApproveLongPlan = "",
     [string]$SupervisorCommit = "",
+    [ValidateSet("develop", "master")]
+    [string]$SupervisorChannel = "",
     [string]$StatusReaderCommit = "",
     [switch]$CleanupExecutor,
     [ValidateSet("Develop", "Master")]
@@ -62,6 +64,7 @@ $script:ComponentFinalizerScript = if ($ComponentFinalizerScript) { [System.IO.P
 $script:CompatibilityPromoterScript = if ($CompatibilityPromoterScript) { [System.IO.Path]::GetFullPath($CompatibilityPromoterScript) } else { Join-Path $script:Root "scripts\promote-ai-rules-compatibility.ps1" }
 $script:QueueRoot = "refs/itl/develop-queue"
 $script:DeliverySupervisorCommit = $SupervisorCommit
+$script:DeliverySupervisorChannel = if ($SupervisorChannel) { $SupervisorChannel } elseif ($Action -in @("Plan", "PublishDevelop")) { "develop" } else { "master" }
 $script:DeliverySupervisorBootstrap = [bool]$BootstrapSupervisor
 $script:DeliveryCustomGateBoundary = [bool]$GateScript -and $script:GateScript -ne (Join-Path $script:Root "scripts\check.ps1")
 
@@ -138,6 +141,8 @@ try {
                 statusReader = [pscustomobject]@{ commit=$StatusReaderCommit; role="read-only-inspector"; workingTreeDirty=$statusReaderDirty }
                 authoritySupervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
                 supervisor = [pscustomobject]@{ commit=$script:DeliverySupervisorCommit; role="lock-queue-push-owner"; bootstrap=[bool]$script:DeliverySupervisorBootstrap }
+                developAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/develop") } catch { "" }); role="develop-lock-queue-push-owner" }
+                masterAuthoritySupervisor = [pscustomobject]@{ commit=$(try { Get-GitValue -Arguments @("rev-parse", "refs/remotes/$script:Remote/master") } catch { "" }); role="master-lock-queue-push-owner" }
                 cleanupPolicy = [pscustomobject]@{ manualDefault="develop"; publishDevelop="develop"; releaseMaster="master"; promoteRelease=@("develop", "master") }
                 queue = @(Get-QueueEntries | ForEach-Object { [pscustomobject]@{ id=$_.id; base=$_.base; head=$_.head } })
                 activeOperation = (Get-DeliveryOperationStatus)

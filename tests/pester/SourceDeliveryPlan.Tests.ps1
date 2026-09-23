@@ -52,6 +52,7 @@ BeforeAll {
 Describe 'Delivery v3 immutable selective plan' {
     BeforeEach {
         $script:DeliverySupervisorCommit = '1111111111111111111111111111111111111111'
+        $script:DeliverySupervisorChannel = 'master'
         $script:DeliverySupervisorBootstrap = $false
         $script:ResumePlan = ''
         $script:ApproveLongPlan = ''
@@ -87,6 +88,22 @@ Describe 'Delivery v3 immutable selective plan' {
         { Assert-DeliveryQualityPlanMayRun -Plan $plan } | Should -Throw '*QUALITY_OWNER_MISSING*'
     }
 
+    It 'pins the authority channel into the immutable plan identity' {
+        $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
+        $script:GateScript = Join-Path $repo.root 'check.ps1'
+        Mock Get-QualityContractCatalog { $catalog }
+        Mock Test-QualityContractCatalog { $true }
+        Mock Resolve-QualityContractsForPaths { [pscustomobject]@{ contracts=@($catalog.contracts[0]); tests=@('tests/pester/Runtime.Tests.ps1'); unknownPaths=@() } }
+        Mock Resolve-DevelopE2EJourneyPlan { [pscustomobject]@{ journeys=@(); unknownPaths=@() } }
+
+        $masterPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $script:DeliverySupervisorChannel = 'develop'
+        $developPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree
+        $masterPlan.supervisor.channel | Should -Be 'master'
+        $developPlan.supervisor.channel | Should -Be 'develop'
+        $developPlan.planId | Should -Not -Be $masterPlan.planId
+    }
+
     It 'selects only requested Release capabilities and their dependencies' {
         $repo = New-PlanRepository; $script:Root = $repo.root; $catalog = New-PlanCatalog
         $script:GateScript = Join-Path $repo.root 'check.ps1'
@@ -110,6 +127,9 @@ Describe 'Delivery v3 immutable selective plan' {
         $vanessaPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability 'extension-smoke'
         @($vanessaPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke')
         @($vanessaPlan.stages.id | Where-Object { $_ -like 'release.*' }) | Should -Be @('release.config-cadence','release.extension-smoke')
+
+        $combinedPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -ReleaseCapability @('extension-smoke','ondemand-mcp')
+        @($combinedPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
 
         $fullPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $repo.commit -CandidateTree $repo.tree -RequireRelease
         @($fullPlan.releaseCapabilities) | Should -Be @('config-cadence','extension-smoke','ondemand-mcp')
