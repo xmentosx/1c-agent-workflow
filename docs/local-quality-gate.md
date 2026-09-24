@@ -163,7 +163,7 @@ Component preflight не хранит булево «нужен Release»: он 
 и его зависимость `config-cadence`. Явный `-RequireRelease` выбирает весь каталог.
 `verification-refresh` и `result-cleanup` всегда свежие, когда они выбраны.
 
-Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 минут; Develop
+Delivery-бюджеты: planning — 30 секунд; Develop static — 45 минут; Develop
 `upgrade` — 20 минут, `fresh` — 35 минут; Release использует отдельный hard budget
 из `scripts/release-e2e/stages.json` для каждой capability. Этот бюджет включает
 как основное доказательство, так и обязательную очистку принадлежащих stage
@@ -180,9 +180,9 @@ Delivery-бюджеты: planning — 30 секунд; static/no-live — 15 м�
 до получения plan: маршрут дороже часа всё равно остановится без явного
 `-ApproveLongPlan`.
 
-Полный Pester inventory имеет hard budget 30 минут: обязательные процессные
-source-delivery fixtures на текущем стенде измеренно не укладываются в прежние
-1300 секунд. Каталог `pester-shards` входит в progress fingerprint, поэтому
+Полный Pester inventory имеет hard budget 45 минут: на текущем стенде 30 минут
+истекли при ещё выполнявшемся `ReleaseGate.Tests.ps1` и двух оставшихся
+последовательных файлах. Каталог `pester-shards` входит в progress fingerprint, поэтому
 лимит не скрывает зависание: отсутствие новых worker/result-артефактов по-прежнему
 останавливает стадию отдельным no-progress watchdog.
 

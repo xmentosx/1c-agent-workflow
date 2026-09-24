@@ -1,4 +1,4 @@
-BeforeAll {
+﻿BeforeAll {
     . (Join-Path $PSScriptRoot 'TestSupport.ps1')
     $context = Initialize-WorkflowPesterContext
     $RepoRoot = $context.RepoRoot
@@ -41,6 +41,7 @@ BeforeAll {
         $contract = [pscustomobject]@{ id='runtime'; paths=@('runtime.ps1'); tests=@('tests/pester/Runtime.Tests.ps1') }
         [pscustomobject]@{
             contracts=@($contract)
+            budgets=[pscustomobject]@{ fullHardSeconds=2400 }
             developJourneys=[pscustomobject]@{
                 names=@('upgrade','fresh'); fullPaths=@('orchestrator.ps1')
                 routes=[pscustomobject]@{ upgrade=[pscustomobject]@{contracts=@('runtime')}; fresh=[pscustomobject]@{contracts=@('runtime')} }
@@ -104,8 +105,9 @@ Describe 'Delivery v3 immutable selective plan' {
         $newPlan = New-DeliveryQualityPlanForCandidate -CandidateRoot $repo.root -BaseCommit $repo.base -CandidateCommit $newCommit -CandidateTree $newTree
 
         @($newPlan.stages.execution | Select-Object -Unique) | Should -Be @('execute')
-        $newPlan.executedBudgetSeconds | Should -Be 4200
-        (Get-DeliveryPlanGateBudgetSeconds -Plan $newPlan -Mode Develop) | Should -Be 4200
+        $newPlan.stages[0].budgetSeconds | Should -Be 2400
+        $newPlan.executedBudgetSeconds | Should -Be 5700
+        (Get-DeliveryPlanGateBudgetSeconds -Plan $newPlan -Mode Develop) | Should -Be 5700
         $newPlan.stages[1].inputFingerprint | Should -Not -Be $oldPlan.stages[1].inputFingerprint
         $reusedOldPlan.candidate.tree = $newTree
         (Restore-DeliveryPlanQualification -Plan $reusedOldPlan -CandidateRoot $repo.root) | Should -BeFalse

@@ -1,4 +1,4 @@
-Set-StrictMode -Version Latest
+﻿Set-StrictMode -Version Latest
 $script:DeliveryTrackedPathCache = @{}
 
 function Get-DeliveryPlanRoot {
@@ -351,7 +351,7 @@ function New-DeliveryQualityPlanForCandidate {
     $staticFingerprint = Get-DeliveryInputFingerprint -StageId "develop.static" -Version 1 -CandidateRoot $CandidateRoot -Pattern @("tests/quality-contracts.json", "scripts/invoke-pester-shards.ps1", "scripts/run-pester-shard.ps1") -ExactPath (@($paths) + @($selection.tests)) -ExternalIdentity ([ordered]@{ candidateTree=$CandidateTree })
     $staticProof = Test-DeliveryStageEvidence -StageId "develop.static" -Fingerprint $staticFingerprint
     $staticReusable = $staticProof -and [string]$staticProof.candidate.tree -ceq $CandidateTree
-    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=900; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
+    $stages.Add([pscustomobject][ordered]@{ id="develop.static"; version=1; mode="Develop"; dependsOn=@(); budgetSeconds=[int]$catalog.budgets.fullHardSeconds; inputFingerprint=$staticFingerprint; execution=$(if($staticReusable){"reuse"}else{"execute"}); reason=$(if($staticReusable){"matching exact-tree stage evidence"}else{"selected owner tests and static qualification"}) }) | Out-Null
     foreach ($journey in @($journeyPlan.journeys)) {
         $routeContractIds = @($catalog.developJourneys.routes.$journey.contracts | ForEach-Object { [string]$_ })
         $routePatterns = @($catalog.contracts | Where-Object { [string]$_.id -in $routeContractIds } | ForEach-Object { @($_.paths) })

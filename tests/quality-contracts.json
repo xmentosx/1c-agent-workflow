@@ -7,9 +7,9 @@
     "targetedTargetSeconds": 300,
     "targetedHardSeconds": 1200,
     "fullTargetSeconds": 600,
-    "fullHardSeconds": 1800,
+    "fullHardSeconds": 2700,
     "developTargetSeconds": 1500,
-    "developHardSeconds": 5400,
+    "developHardSeconds": 6600,
     "releaseTargetSeconds": 3600,
     "releaseHardSeconds": 7200
   },
