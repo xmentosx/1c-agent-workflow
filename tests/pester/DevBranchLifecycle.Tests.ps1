@@ -437,8 +437,9 @@ try {
 @echo off
 :nextArg
 if "%~1"=="" exit /b 0
-if /I "%~1"=="/C" (
-  set "ITL_PROOF_PARAMS=%~2"
+set "ITL_ARG=%~1"
+if /I "%ITL_ARG:~0,2%"=="/C" (
+  set "ITL_PROOF_PARAMS=%ITL_ARG:~2%"
   powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedProof
   exit /b %ERRORLEVEL%
 )
@@ -625,7 +626,7 @@ goto nextArg
     }
 
     It "copies both dev branch auto-update EPFs but launches only the main EPF after a real load" {
-        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-auto-update-epf-test-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-auto-update-epf-Путь с пробелом-" + [guid]::NewGuid().ToString("N"))
 
         try {
             $sourceRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
@@ -656,8 +657,8 @@ goto nextArg
                         [int]$TimeoutSeconds
                     )
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
-                    $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
-                    $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
+                    $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
                     @{ schemaVersion = 1; runId = $runParams.runId; status = "passed"; updateResult = "Успешно"; errorMessage = ""; errorDetails = "" } |
                         ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                     $script:EnterpriseCalls += [pscustomobject]@{
@@ -696,7 +697,8 @@ goto nextArg
             $enterpriseCalls.calls[0].infoBasePath | Should -Be "C:\bases\branch"
             $enterpriseCalls.calls[0].infoBaseKind | Should -Be "file"
             $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/Execute"
-            $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/C"
+            $enterpriseCalls.calls[0].enterpriseArgs.Count | Should -Be 3
+            $enterpriseCalls.calls[0].enterpriseArgs[2] | Should -Match '^/C.+Путь с пробелом.+\.params\.json$'
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
             $enterpriseCalls.calls[0].timeoutSeconds | Should -Be 900
@@ -762,8 +764,8 @@ goto nextArg
                 function Get-SourceInfoBasePath { return "C:\bases\source" }
                 function Invoke-Enterprise {
                     param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password, [string[]]$EnterpriseArgs, [switch]$RequireOwnedProcessRelease, [int]$TimeoutSeconds)
-                    $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
-                    $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
+                    $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
                     $script:LastLogPath = Join-Path $Root "auto-update.log"
                     @{ schemaVersion = 1; runId = $runParams.runId; status = "failed"; updateResult = ""; errorMessage = "Тип не является подмножеством типа значений ПВХ"; errorDetails = "упо_ОбновлениеИнформационнойБазы.ПерейтиНаВерсию_5_0_3_55()" } |
                         ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
@@ -784,7 +786,7 @@ goto nextArg
     }
 
     It "rejects missing and mismatched EPF results despite a zero native exit" {
-        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-auto-update-proof-" + [guid]::NewGuid().ToString("N"))
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-auto-update-proof-Путь с пробелом-" + [guid]::NewGuid().ToString("N"))
         try {
             $toolRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
             New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
@@ -798,8 +800,8 @@ goto nextArg
                     param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password, [string[]]$EnterpriseArgs, [switch]$RequireOwnedProcessRelease, [int]$TimeoutSeconds)
                     $script:LastLogPath = Join-Path $Root "auto-update.log"
                     if ($script:ProofMode -eq "mismatched") {
-                        $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
-                        $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                        $commandArgument = @($EnterpriseArgs | Where-Object { $_ -clike "/C*" } | Select-Object -First 1)[0]
+                        $runParams = Get-Content -LiteralPath $commandArgument.Substring(2) -Raw -Encoding UTF8 | ConvertFrom-Json
                         @{ schemaVersion = 1; runId = "different-run"; status = "passed"; updateResult = "Успешно" } |
                             ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                     }

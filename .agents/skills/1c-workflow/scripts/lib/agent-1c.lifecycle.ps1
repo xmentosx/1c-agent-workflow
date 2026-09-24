@@ -2038,7 +2038,7 @@ function Invoke-DevBranchEnterpriseAutoUpdate {
             -InfoBaseKind $State.infoBaseKind `
             -User $User `
             -Password $Password `
-            -EnterpriseArgs @("/Execute", $epfPath, "/C", $paramsPath) `
+            -EnterpriseArgs @("/Execute", $epfPath, "/C$paramsPath") `
             -RequireOwnedProcessRelease `
             -TimeoutSeconds $timeoutSeconds | Out-Null
     } catch {
