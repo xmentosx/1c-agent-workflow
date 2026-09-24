@@ -106,6 +106,34 @@ function Write-BranchSeedManifest {
     Write-Utf8Text -Path $paths.manifestPath -Value (($Manifest | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
 }
 
+function Set-BranchSeedSourceGenerationId {
+    param(
+        [Parameter(Mandatory)][object]$Manifest,
+        [Parameter(Mandatory)][string]$SourceGenerationId
+    )
+
+    if (-not $SourceGenerationId) { return $Manifest }
+    $writerIntent = Open-BranchSeedWriterIntent
+    $lease = $null
+    try {
+        $lease = Open-BranchSeedLease -Mode write
+        $current = Read-BranchSeedManifest
+        if ([string]$current.status -ne "ready" -or
+            [string]$current.syncId -cne [string]$Manifest.syncId -or
+            [string]$current.configurationFingerprint -cne [string]$Manifest.configurationFingerprint) {
+            throw "BRANCH_SEED_GENERATION_UPDATE_STALE: the compatible seed changed before its source generation could be recorded."
+        }
+        $updated = [ordered]@{}
+        foreach ($property in $current.PSObject.Properties) { $updated[$property.Name] = $property.Value }
+        $updated["sourceGenerationId"] = $SourceGenerationId
+        Write-BranchSeedManifest -Manifest $updated
+        return (Read-BranchSeedManifest)
+    } finally {
+        if ($null -ne $lease) { $lease.Dispose() }
+        $writerIntent.Dispose()
+    }
+}
+
 function Open-BranchSeedLease {
     param(
         [ValidateSet("read", "write")]
@@ -438,7 +466,9 @@ function Invoke-NewBranchSeedCore {
     param(
         [string]$ConfigurationFingerprint,
         [int]$ConfigurationFileCount = 0,
-        [switch]$DumpConfigurationFromSeed
+        [switch]$DumpConfigurationFromSeed,
+        [string]$SourceGenerationId = "",
+        [switch]$IncrementalFromCurrentExport
     )
 
     $paths = Get-BranchSeedPaths
@@ -519,9 +549,24 @@ function Invoke-NewBranchSeedCore {
         if ($DumpConfigurationFromSeed -and $kind -eq "file") {
             Set-RunStage -Stage "seed.dump-config" -Detail "Dumping the configuration from the rebuilt branch seed"
             $seedInfoBasePath = Split-Path -Parent $paths.artifactPath
-            $dumpResult = Dump-ConfigToFilesFromInfoBase -InfoBasePath $seedInfoBasePath -InfoBaseKind "file"
+            $dumpArguments = @{ InfoBasePath = $seedInfoBasePath; InfoBaseKind = "file" }
+            if ($IncrementalFromCurrentExport) { $dumpArguments.IncrementalFromCurrentExport = $true }
+            try {
+                $dumpResult = Dump-ConfigToFilesFromInfoBase @dumpArguments
+            } catch {
+                $incrementalFailure = $_.Exception.Message
+                if (-not $IncrementalFromCurrentExport -or
+                    $incrementalFailure -match 'TIMEOUT|STALL|cleanup|rollback') {
+                    throw
+                }
+                Write-Warning "BRANCH_SEED_INCREMENTAL_DUMP_FALLBACK: $incrementalFailure"
+                $dumpResult = Dump-ConfigToFilesFromInfoBase -InfoBasePath $seedInfoBasePath -InfoBaseKind "file"
+            }
             Set-RunStage -Stage "seed.fingerprint" -Detail "Calculating the rebuilt branch seed fingerprint"
             $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            if ($ConfigurationFingerprint -and $configSource.fingerprint -cne $ConfigurationFingerprint) {
+                throw "BRANCH_SEED_CONFIGURATION_MISMATCH: source fingerprint $ConfigurationFingerprint differs from the copied seed fingerprint $($configSource.fingerprint)."
+            }
             $ConfigurationFingerprint = $configSource.fingerprint
             $ConfigurationFileCount = $configSource.fileCount
             Remove-BranchSeedFileRuntimeSidecars -ArtifactPath $paths.artifactPath
@@ -544,6 +589,7 @@ function Invoke-NewBranchSeedCore {
             artifactBytes = $artifactBytes
             configurationFingerprint = $ConfigurationFingerprint
             configurationFileCount = $ConfigurationFileCount
+            sourceGenerationId = $SourceGenerationId
             baselinePath = $paths.baselinePath
             baselineHash = $baselineHash
             baselineCount = @($baseline.signatures).Count
@@ -599,7 +645,9 @@ function New-BranchSeed {
     param(
         [string]$ConfigurationFingerprint,
         [int]$ConfigurationFileCount = 0,
-        [switch]$DumpConfigurationFromSeed
+        [switch]$DumpConfigurationFromSeed,
+        [string]$SourceGenerationId = "",
+        [switch]$IncrementalFromCurrentExport
     )
 
     $arguments = @{}
@@ -615,12 +663,9 @@ function Ensure-BranchSeed {
         [string]$Policy,
         [string]$ConfigurationFingerprint,
         [int]$ConfigurationFileCount = 0,
-        [switch]$TrustProvidedConfigurationFingerprint
+        [string]$SourceGenerationId = "",
+        [switch]$IncrementalFromCurrentExport
     )
-
-    if ($TrustProvidedConfigurationFingerprint -and -not $ConfigurationFingerprint) {
-        throw "BRANCH_SEED_TRUSTED_FINGERPRINT_MISSING: a source-authoritative fingerprint is required when the seed validation dump is skipped."
-    }
 
     if ($Policy -eq "EnsureCompatible") {
         $existing = Read-BranchSeedManifest -AllowMissing
@@ -629,15 +674,20 @@ function Ensure-BranchSeed {
         }
         if ((Test-BranchSeedArtifactReady -Manifest $existing) -and [string]$existing.configurationFingerprint -ceq $ConfigurationFingerprint) {
             Write-Host "Compatible branch seed reused: $($existing.artifactPath)"
+            if ($SourceGenerationId -and [string]$existing.sourceGenerationId -cne $SourceGenerationId) {
+                return (Set-BranchSeedSourceGenerationId -Manifest $existing -SourceGenerationId $SourceGenerationId)
+            }
             return $existing
         }
     }
-    # Full refresh has just dumped the source base. The copied seed is the
-    # same point-in-time base by contract, so repeating that dump is waste.
-    return (New-BranchSeed `
-        -ConfigurationFingerprint $ConfigurationFingerprint `
-        -ConfigurationFileCount $ConfigurationFileCount `
-        -DumpConfigurationFromSeed:((Get-InfoBaseKind) -eq "file" -and -not $TrustProvidedConfigurationFingerprint))
+    $buildArguments = @{
+        ConfigurationFingerprint = $ConfigurationFingerprint
+        ConfigurationFileCount = $ConfigurationFileCount
+        DumpConfigurationFromSeed = (Get-InfoBaseKind) -eq "file"
+    }
+    if ($SourceGenerationId) { $buildArguments.SourceGenerationId = $SourceGenerationId }
+    if ($IncrementalFromCurrentExport) { $buildArguments.IncrementalFromCurrentExport = $true }
+    return (New-BranchSeed @buildArguments)
 }
 
 function Restore-DevBranchFromSeed {

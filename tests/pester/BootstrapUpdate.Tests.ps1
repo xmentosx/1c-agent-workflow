@@ -3026,7 +3026,7 @@ Start-Sleep -Seconds 20
         }
     }
 
-    It "resumes pre-interactive work in order and skips a dump proven complete by commit stage" {
+    It "resumes init stages and preserves file and server export routes" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-resume-stage-" + [guid]::NewGuid().ToString("N"))
 
         try {
@@ -3034,8 +3034,15 @@ Start-Sleep -Seconds 20
             Set-Content -LiteralPath (Join-Path $tempRoot "src\cf\ConfigDumpInfo.xml") -Encoding UTF8 -Value "<dump />"
 
             $results = @{}
-            foreach ($resumeStage in @("init.check-tools", "init.dump-config", "init.commit-dump")) {
-                $statusPath = Join-Path $tempRoot ("$($resumeStage.Replace('.', '-')).json")
+            $cases = @(
+                @{ name = "init.check-tools"; stage = "init.check-tools"; kind = "file" },
+                @{ name = "init.dump-config"; stage = "init.dump-config"; kind = "file" },
+                @{ name = "init.commit-dump"; stage = "init.commit-dump"; kind = "file" },
+                @{ name = "server"; stage = "init.dump-config"; kind = "server" }
+            )
+            foreach ($case in $cases) {
+                $resumeStage = $case.stage
+                $statusPath = Join-Path $tempRoot ("$($case.name.Replace('.', '-')).json")
                 $status = [ordered]@{
                     schemaVersion = 1
                     status = "failed"
@@ -3046,13 +3053,14 @@ Start-Sleep -Seconds 20
                 }
                 Set-Content -LiteralPath $statusPath -Encoding UTF8 -Value ($status | ConvertTo-Json)
 
-                $results[$resumeStage] = & {
-                    param($Helper, $Root, $ResumeStatus)
+                $results[$case.name] = & {
+                    param($Helper, $Root, $ResumeStatus, $SourceKind)
                     . $Helper -ProjectRoot $Root -Action help *> $null
                     $InitMode = "resume"
                     $ResumeRunStatusPath = $ResumeStatus
                     $RunStatusPath = ""
                     $calls = [System.Collections.Generic.List[string]]::new()
+                    $script:FixtureResumeHasSeed = $ResumeStatus -like '*init-commit-dump.json'
 
                     function Write-Section { param([string]$Text) }
                     function Set-RunStage { param([string]$Stage, [string]$Detail = "") }
@@ -3070,19 +3078,31 @@ Start-Sleep -Seconds 20
                     function Install-VanessaMcpArtifacts { $calls.Add("cache-vanessa") | Out-Null; return $null }
                     function Install-ItlOnDemandMcp { $calls.Add("install-ondemand") | Out-Null; return $null }
                     function Get-DevBranchInfoBaseRoot { return ".agent-1c/infobases/dev-branches" }
+                    function Get-InfoBaseKind { return $SourceKind }
                     function Ensure-GitRepository { $calls.Add("ensure-git") | Out-Null }
                     function Ensure-GitIgnore { }
                     function Checkout-Master { }
                     function Get-SourceUsesRepository { return $true }
                     function Update-BaseFromRepository { $calls.Add("repository-update") | Out-Null }
-                    function Dump-ConfigToFiles {
-                        $calls.Add("dump") | Out-Null
-                        return [pscustomobject]@{ exportPath = "src/cf"; absoluteExportPath = (Join-Path $Root "src\cf"); incremental = $true; logPath = "" }
+                    function Get-SourceConfigurationGenerationId {
+                        if ($SourceKind -eq "server") { throw "Server initialization must not request a file generation ID" }
+                        return ("a" * 40)
                     }
-                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "fixture"; fileCount = 1 } }
-                    function Read-BranchSeedManifest { return $null }
-                    function Test-BranchSeedArtifactReady { return $false }
-                    function Ensure-BranchSeed { return [pscustomobject]@{ status = "ready"; syncId = "fixture" } }
+                    function Dump-ConfigToFiles {
+                        if ($SourceKind -ne "server") { throw "The file source infobase must not be exported during initialization" }
+                        $calls.Add("source-dump") | Out-Null
+                        return [pscustomobject]@{exportPath="src/cf"}
+                    }
+                    function Get-ConfigSourceFingerprint { return [pscustomobject]@{fingerprint="server"; fileCount=1} }
+                    function Ensure-BranchSeed {
+                        $calls.Add($(if ($SourceKind -eq "server") { "server-seed" } else { "seed-dump" })) | Out-Null
+                        return [pscustomobject]@{ status = "ready"; syncId = "fixture" }
+                    }
+                    function Read-BranchSeedManifest {
+                        if ($script:FixtureResumeHasSeed) { return [pscustomobject]@{status='ready'; syncId='existing'} }
+                        return $null
+                    }
+                    function Test-BranchSeedArtifactReady { param($Manifest); return $null -ne $Manifest }
                     function Commit-AuthoritativeExportPathIfChanged { param([string]$Message, [string]$ExportPath); $calls.Add("commit-dump") | Out-Null; return $false }
                     function Assert-BaselineDumpCommitted { param([string]$ExportPath) }
                     function Test-InitAiRulesReady { return $true }
@@ -3104,7 +3124,7 @@ Start-Sleep -Seconds 20
 
                     Initialize-Project
                     return @($calls)
-                } $HelperPath $tempRoot $statusPath
+                } $HelperPath $tempRoot $statusPath $case.kind
             }
 
             $legacyCalls = $results["init.check-tools"]
@@ -3118,13 +3138,16 @@ Start-Sleep -Seconds 20
             $results["init.dump-config"] | Should -Contain "check-tools"
             $results["init.dump-config"] | Should -Contain "mcp-selection:False"
             $results["init.dump-config"] | Should -Contain "repository-update"
-            $results["init.dump-config"] | Should -Contain "dump"
+            $results["init.dump-config"] | Should -Contain "seed-dump"
             $results["init.commit-dump"] | Should -Not -Contain "check-tools"
             $results["init.commit-dump"] | Should -Not -Contain "repository-update"
-            $results["init.commit-dump"] | Should -Not -Contain "dump"
+            $results["init.commit-dump"] | Should -Not -Contain "seed-dump"
             $results["init.commit-dump"] | Should -Contain "commit-dump"
             $results["init.commit-dump"] | Should -Not -Contain "install-ai-rules"
             $results["init.commit-dump"] | Should -Contain "git-clean"
+            $results["server"] | Should -Contain "source-dump"
+            $results["server"] | Should -Contain "server-seed"
+            $results["server"] | Should -Not -Contain "seed-dump"
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

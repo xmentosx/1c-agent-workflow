@@ -2306,7 +2306,8 @@ function Dump-ConfigToFilesFromInfoBase {
         [string]$InfoBasePath,
         [ValidateSet("file", "server")]
         [string]$InfoBaseKind,
-        [switch]$IncludeRepositoryConnection
+        [switch]$IncludeRepositoryConnection,
+        [switch]$IncrementalFromCurrentExport
     )
 
     $exportPath = Get-ExportPath
@@ -2323,13 +2324,22 @@ function Dump-ConfigToFilesFromInfoBase {
         throw "Configuration dump target is a file: $absoluteExportPath"
     }
 
+    $useIncremental = $IncrementalFromCurrentExport -and $targetExisted -and
+        (Test-Path -LiteralPath (Join-Path $absoluteExportPath "Configuration.xml") -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $absoluteExportPath "ConfigDumpInfo.xml") -PathType Leaf)
     try {
         New-Item -ItemType Directory -Force -Path $stagedPath | Out-Null
+        if ($useIncremental) {
+            foreach ($entry in Get-ChildItem -LiteralPath $absoluteExportPath -Force -ErrorAction Stop) {
+                Copy-Item -LiteralPath $entry.FullName -Destination $stagedPath -Recurse -Force -ErrorAction Stop
+            }
+        }
         $designerArgs = @()
         if ($IncludeRepositoryConnection) {
             $designerArgs += New-RepositoryConnectionArgs
         }
         $designerArgs += @("/DumpConfigToFiles", $stagedPath, "-Format", "Hierarchical")
+        if ($useIncremental) { $designerArgs += "-update" }
 
         Invoke-Designer `
             -InfoBasePath $InfoBasePath `
@@ -2365,7 +2375,7 @@ function Dump-ConfigToFilesFromInfoBase {
         return [pscustomobject]@{
             exportPath = $exportPath
             absoluteExportPath = $absoluteExportPath
-            incremental = $false
+            incremental = [bool]$useIncremental
             transactional = $true
             logPath = $script:LastLogPath
         }
@@ -2387,11 +2397,39 @@ function Dump-ConfigToFilesFromInfoBase {
     }
 }
 
+function Get-SourceConfigurationGenerationId {
+    if ((Get-InfoBaseKind) -ne "file") { return "" }
+    try {
+        $logPath = Invoke-Designer `
+            -InfoBasePath (Get-SourceInfoBasePath) `
+            -InfoBaseKind "file" `
+            -DesignerArgs @("/GetConfigGenerationID")
+        $logText = Read-Utf8Text -Path $logPath
+        $matches = [regex]::Matches($logText, '(?i)(?<![0-9a-f])[0-9a-f]{40}(?![0-9a-f])')
+        if ($matches.Count -ne 1) {
+            throw "SOURCE_GENERATION_ID_AMBIGUOUS: expected one 40-character identifier in the Designer log, found $($matches.Count)."
+        }
+        return $matches[0].Value.ToLowerInvariant()
+    } catch {
+        Write-Warning "SOURCE_GENERATION_ID_UNAVAILABLE: $($_.Exception.Message). The full export path remains available."
+        return ""
+    }
+}
+
 function Dump-ConfigToFiles {
     return (Dump-ConfigToFilesFromInfoBase `
         -InfoBasePath (Get-SourceInfoBasePath) `
         -InfoBaseKind (Get-InfoBaseKind) `
         -IncludeRepositoryConnection:(Get-SourceUsesRepository))
+}
+
+function Get-ExistingAuthoritativeExportResult {
+    return [pscustomobject]@{
+        exportPath = Get-ExportPath
+        absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
+        incremental = $false
+        logPath = $script:LastLogPath
+    }
 }
 
 function Dump-ExtensionToFiles {
@@ -7873,6 +7911,7 @@ function Test-InitStageAtLeast {
         "init.git",
         "init.repository-update",
         "init.dump-config",
+        "init.seed",
         "init.commit-dump",
         "init.install-ai-rules",
         "init.guidance",
@@ -8004,20 +8043,23 @@ function Initialize-Project {
     if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.repository-update" -Detail "Applying the source repository update policy"
         $sourceRepositoryUpdated = Update-BaseFromRepository
-        Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
-        $dumpResult = Dump-ConfigToFiles
-        Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
-        Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
-        Ensure-BranchSeed `
-            -Policy "Rebuild" `
-            -ConfigurationFingerprint $configSource.fingerprint `
-            -ConfigurationFileCount $configSource.fileCount | Out-Null
-        $dumpResult = [pscustomobject]@{
-            exportPath = Get-ExportPath
-            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
-            incremental = $false
-            logPath = $script:LastLogPath
+        if ((Get-InfoBaseKind) -eq "file") {
+            $sourceGenerationId = Get-SourceConfigurationGenerationId
+            Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed and dumping its configuration"
+            Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint "" `
+                -SourceGenerationId $sourceGenerationId | Out-Null
+            $dumpResult = Get-ExistingAuthoritativeExportResult
+        } else {
+            Set-RunStage -Stage "init.dump-config" -Detail "Dumping the server source configuration"
+            $dumpResult = Dump-ConfigToFiles
+            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            Set-RunStage -Stage "init.seed" -Detail "Rebuilding the server branch seed"
+            Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint $configSource.fingerprint `
+                -ConfigurationFileCount $configSource.fileCount | Out-Null
         }
     } else {
         $dumpResult = [pscustomobject]@{
@@ -8028,13 +8070,20 @@ function Initialize-Project {
         }
         $existingSeed = Read-BranchSeedManifest -AllowMissing
         if ($null -eq $existingSeed -or -not (Test-BranchSeedArtifactReady -Manifest $existingSeed)) {
-            Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
-            Ensure-BranchSeed `
-                -Policy "Rebuild" `
-                -ConfigurationFingerprint $configSource.fingerprint `
-                -ConfigurationFileCount $configSource.fileCount | Out-Null
+            if ((Get-InfoBaseKind) -eq "file") {
+                $sourceGenerationId = Get-SourceConfigurationGenerationId
+                Ensure-BranchSeed `
+                    -Policy "Rebuild" `
+                    -ConfigurationFingerprint "" `
+                    -SourceGenerationId $sourceGenerationId | Out-Null
+            } else {
+                $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+                Ensure-BranchSeed `
+                    -Policy "Rebuild" `
+                    -ConfigurationFingerprint $configSource.fingerprint `
+                    -ConfigurationFileCount $configSource.fileCount | Out-Null
+            }
         }
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: export 1C configuration from repository" } else { "sync: export current 1C configuration from source infobase" }
@@ -8107,15 +8156,44 @@ function Sync-Master {
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
     $sourceRepositoryUpdated = Update-BaseFromRepository
-    if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
+    $kind = Get-InfoBaseKind
+    $sourceGenerationId = if ($kind -eq "file") { Get-SourceConfigurationGenerationId } else { "" }
+    $dumpResult = $null
+    if ($SeedPolicy -eq "Rebuild" -and $kind -eq "file") {
         Set-RunStage -Stage "sync-master.seed" -Detail "Rebuilding the branch seed from the source infobase"
-        $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
-        $dumpResult = [pscustomobject]@{
-            exportPath = Get-ExportPath
-            absoluteExportPath = Assert-ExportPathInsideProject (Get-ExportPath)
-            incremental = $false
-            logPath = $script:LastLogPath
+        $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -SourceGenerationId $sourceGenerationId
+        $dumpResult = Get-ExistingAuthoritativeExportResult
+    } elseif ($SeedPolicy -eq "EnsureCompatible" -and $kind -eq "file" -and $sourceGenerationId) {
+        $existingSeed = Read-BranchSeedManifest -AllowMissing
+        $exportRoot = Assert-ExportPathInsideProject (Get-ExportPath)
+        $exportReady = (Test-Path -LiteralPath (Join-Path $exportRoot "Configuration.xml") -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -PathType Leaf)
+        if ($exportReady -and (Test-BranchSeedArtifactReady -Manifest $existingSeed) -and
+            [string]$existingSeed.sourceGenerationId -ceq $sourceGenerationId) {
+            Set-RunStage -Stage "sync-master.seed" -Detail "Reusing the compatible branch seed and configuration export"
+            $seed = $existingSeed
+        } elseif ($null -ne $existingSeed -and [string]$existingSeed.status -eq "failed") {
+            throw "BRANCH_SEED_FAILED: explicit /itl-sync-master is required to recover the seed. Error: $($existingSeed.failureEvidence)"
+        } elseif ($null -eq $existingSeed -or [string]$existingSeed.sourceGenerationId) {
+            Set-RunStage -Stage "sync-master.seed" -Detail "Refreshing the branch seed and configuration export"
+            $seed = Ensure-BranchSeed `
+                -Policy "Rebuild" `
+                -ConfigurationFingerprint "" `
+                -SourceGenerationId $sourceGenerationId `
+                -IncrementalFromCurrentExport:$exportReady
+        } else {
+            Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative configuration for a legacy seed"
+            $dumpResult = Dump-ConfigToFiles
+            Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
+            $seed = Ensure-BranchSeed `
+                -Policy "EnsureCompatible" `
+                -ConfigurationFingerprint $configSource.fingerprint `
+                -ConfigurationFileCount $configSource.fileCount `
+                -SourceGenerationId $sourceGenerationId
         }
+        if (-not $dumpResult) { $dumpResult = Get-ExistingAuthoritativeExportResult }
     } else {
         Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
@@ -8126,7 +8204,7 @@ function Sync-Master {
             -Policy $SeedPolicy `
             -ConfigurationFingerprint $configSource.fingerprint `
             -ConfigurationFileCount $configSource.fileCount `
-            -TrustProvidedConfigurationFingerprint
+            -SourceGenerationId $sourceGenerationId
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"

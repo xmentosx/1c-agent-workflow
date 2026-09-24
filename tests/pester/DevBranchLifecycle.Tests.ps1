@@ -3573,6 +3573,7 @@ try {
         $syncBody = $sync.Groups["body"].Value
         $seedBody = $seedCore.Groups["body"].Value
         $seedWrapperBody = $seedWrapper.Groups["body"].Value
+        $syncBody | Should -Match '(?s)Get-SourceConfigurationGenerationId.*?sourceGenerationId.*?IncrementalFromCurrentExport'
         $syncBody | Should -Match '(?s)sync-master\.dump-config.*?Dump-ConfigToFiles.*?sync-master\.fingerprint.*?Get-ConfigSourceFingerprint.*?sync-master\.seed.*?Ensure-BranchSeed'
         $syncBody | Should -Match '(?s)sync-master\.commit.*?Commit-AuthoritativeExportPathIfChanged'
         $seedBody | Should -Match '(?s)seed\.dump-config.*?Dump-ConfigToFilesFromInfoBase.*?seed\.fingerprint.*?Get-ConfigSourceFingerprint'
@@ -5806,7 +5807,13 @@ try {
                     return $false
                 }
 
+                function Get-SourceConfigurationGenerationId { return ("a" * 40) }
+
                 function Dump-ConfigToFiles {
+                    throw "The source infobase must not be exported during initialization"
+                }
+
+                function Ensure-BranchSeed {
                     $exportPath = "src/cf"
                     $absoluteExportPath = Resolve-ProjectPath $exportPath
                     New-Item -ItemType Directory -Force -Path $absoluteExportPath | Out-Null
@@ -5814,15 +5821,6 @@ try {
                     Write-Utf8Text -Path (Join-Path $absoluteExportPath "Configuration.xml") -Value "<configuration />`n"
                     $script:LastLogPath = Join-Path $script:ProjectRoot "empty-dump.log"
                     Write-Utf8Text -Path $script:LastLogPath -Value ""
-                    return [pscustomobject]@{
-                        exportPath = $exportPath
-                        absoluteExportPath = $absoluteExportPath
-                        incremental = $false
-                        logPath = $script:LastLogPath
-                    }
-                }
-
-                function Ensure-BranchSeed {
                     return [pscustomobject]@{ status = "ready"; syncId = "test-fixture" }
                 }
 

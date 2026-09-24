@@ -1669,6 +1669,115 @@
         $result.exportEvidence[0].artifacts.Count | Should -Be 3
     }
 
+    It "updates a copied full export in staging from the seed infobase" {
+        $fixtureRoot = Join-Path $TestDrive "Обновление исходников с пробелом"
+        $targetPath = Join-Path $fixtureRoot "src\cf"
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Encoding UTF8 -Value "old-configuration"
+        Set-Content -LiteralPath (Join-Path $targetPath "ConfigDumpInfo.xml") -Encoding UTF8 -Value "old-cursor"
+        Set-Content -LiteralPath (Join-Path $targetPath "Unchanged.xml") -Encoding UTF8 -Value "unchanged"
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return "src/cf" }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = [string]$DesignerArgs[1]
+                $script:observed = [pscustomobject]@{
+                    base = $InfoBasePath
+                    update = $DesignerArgs -contains "-update"
+                    cursor = (Get-Content -LiteralPath (Join-Path $stage "ConfigDumpInfo.xml") -Raw).Trim()
+                    unchangedExists = Test-Path -LiteralPath (Join-Path $stage "Unchanged.xml")
+                }
+                Set-Content -LiteralPath (Join-Path $stage "Configuration.xml") -Encoding UTF8 -Value "new-configuration"
+                Set-Content -LiteralPath (Join-Path $stage "ConfigDumpInfo.xml") -Encoding UTF8 -Value "new-cursor"
+            }
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot "копия seed") -InfoBaseKind file -IncrementalFromCurrentExport
+            [pscustomobject]@{
+                observed = $script:observed
+                dump = $dump
+                configuration = (Get-Content -LiteralPath (Join-Path $targetPath "Configuration.xml") -Raw).Trim()
+                unchangedExists = Test-Path -LiteralPath (Join-Path $targetPath "Unchanged.xml")
+            }
+        }
+        $result.observed.base | Should -Be (Join-Path $fixtureRoot "копия seed")
+        $result.observed.update | Should -BeTrue
+        $result.observed.cursor | Should -Be "old-cursor"
+        $result.observed.unchangedExists | Should -BeTrue
+        $result.dump.incremental | Should -BeTrue
+        $result.configuration | Should -Be "new-configuration"
+        $result.unchangedExists | Should -BeTrue
+    }
+
+    It "accepts a successful incremental dump whose files remain unchanged" {
+        $fixtureRoot = Join-Path $TestDrive "unchanged-incremental-dump"
+        $basePath = Join-Path $fixtureRoot "base"
+        $platformPath = Join-Path $fixtureRoot "1cv8.exe"
+        $dumpPath = Join-Path $fixtureRoot "staged"
+        New-Item -ItemType Directory -Force -Path $basePath, $dumpPath | Out-Null
+        New-Item -ItemType File -Force -Path $platformPath, (Join-Path $basePath "1Cv8.1CD") | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:Config = [pscustomobject]@{
+                platformPath = $platformPath; logsPath = "logs"; designerMaxWorkingSetMb = 0
+                designerOperationTimeoutSeconds = 10; designerDumpStabilitySeconds = 0
+            }
+            function Invoke-BoundedDesignerDumpArtifactState {
+                return [pscustomobject]@{ready=$true; signature="unchanged"; latestWriteTimeUtcTicks=[DateTime]::UtcNow.Ticks}
+            }
+            function Receive-DesignerDumpArtifactScan {
+                return [pscustomobject]@{
+                    status="completed"
+                    value=[pscustomobject]@{ready=$true; signature="unchanged"; latestWriteTimeUtcTicks=[DateTime]::UtcNow.Ticks}
+                }
+            }
+            function Test-DesignerInvocationReleased {
+                param($ProbeState, $ProbeContext)
+                $ProbeState.processesReleaseConfirmed = [bool]$ProbeContext.launcherExited
+                return [bool]$ProbeContext.launcherExited
+            }
+            function Invoke-NativeProcessAndWaitResult {
+                param([string[]]$Arguments, [scriptblock]$CompletionProbe)
+                $outIndex = [Array]::IndexOf($Arguments, "/Out")
+                Write-Utf8Text -Path $Arguments[$outIndex + 1] -Value "completed"
+                $script:whileRunning = [bool](& $CompletionProbe ([pscustomobject]@{launcherExited=$false; launcherExitCode=0; processId=7010}))
+                $script:afterExit = [bool](& $CompletionProbe ([pscustomobject]@{launcherExited=$true; launcherExitCode=0; processId=7010}))
+                return [pscustomobject]@{
+                    processId=7010; exitCode=0; timedOut=$false; memoryLimitExceeded=$false
+                    memoryMonitorFailed=$false; memoryMonitorError=""; terminationError=""
+                    launcherExited=$true; launcherExitCode=0; completedByProbe=$script:afterExit
+                }
+            }
+            Invoke-Designer -InfoBasePath $basePath -InfoBaseKind file -DesignerArgs @(
+                "/DumpConfigToFiles", $dumpPath, "-Format", "Hierarchical", "-update"
+            ) 6>$null | Out-Null
+            [pscustomobject]@{whileRunning=$script:whileRunning; afterExit=$script:afterExit}
+        }
+        $result.whileRunning | Should -BeFalse
+        $result.afterExit | Should -BeTrue
+    }
+
+    It "parses the source generation ID from the guarded Designer log" {
+        $fixtureRoot = Join-Path $TestDrive "Поколение конфигурации"
+        New-Item -ItemType Directory -Force -Path $fixtureRoot | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-InfoBaseKind { return "file" }
+            function Get-SourceInfoBasePath { return (Join-Path $fixtureRoot "исходная база") }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $script:observed = [pscustomobject]@{base=$InfoBasePath; kind=$InfoBaseKind; command=$DesignerArgs[0]}
+                $log = Join-Path $fixtureRoot "generation.log"
+                Write-Utf8Text -Path $log -Value ("Идентификатор: " + ("A" * 40) + "`n")
+                return $log
+            }
+            [pscustomobject]@{id=(Get-SourceConfigurationGenerationId); observed=$script:observed}
+        }
+        $result.id | Should -Be ("a" * 40)
+        $result.observed.base | Should -Be (Join-Path $fixtureRoot "исходная база")
+        $result.observed.kind | Should -Be "file"
+        $result.observed.command | Should -Be "/GetConfigGenerationID"
+    }
+
     It "keeps workflow source export evidence outside Git status" {
         (Get-Content -LiteralPath (Join-Path $RepoRoot ".gitignore") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))

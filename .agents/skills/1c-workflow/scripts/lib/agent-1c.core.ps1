@@ -7265,7 +7265,9 @@ function Invoke-Designer {
         $subProbeTimeoutSeconds = Get-DesignerCompletionProbeTimeoutSeconds
         $stabilitySeconds = Get-DesignerDumpStabilitySeconds
         $initialDumpState = Invoke-BoundedDesignerDumpArtifactState -Path $operationTarget -TimeoutSeconds $subProbeTimeoutSeconds
-        $initialSignature = [string]$initialDumpState.signature
+        # An incremental dump may legitimately leave every file unchanged.
+        # The owned invocation must still finish before the copied tree counts as complete.
+        $initialSignature = if ($DesignerArgs -contains "-update") { "" } else { [string]$initialDumpState.signature }
         $artifactProbeState = New-DesignerArtifactProbeState -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $invocationProbeState = New-DesignerInvocationProbeState -LauncherProcessId 0 -SubProbeTimeoutSeconds $subProbeTimeoutSeconds
         $completionProbe = {

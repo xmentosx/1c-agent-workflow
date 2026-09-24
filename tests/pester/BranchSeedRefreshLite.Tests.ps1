@@ -43,15 +43,18 @@
                     return [pscustomobject]@{ fingerprint = "fingerprint"; fileCount = 7 }
                 }
 
-                $first = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $first = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
                 [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](4, 5, 6, 7))
                 Set-Content -LiteralPath (Join-Path $sourceRoot "DoNotCopy.txt") -Encoding ASCII -Value "source-marker-two"
-                $second = New-BranchSeed -ConfigurationFingerprint "old" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $second = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
+                $confirmed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "fingerprint" -SourceGenerationId ("b" * 40)
                 $branchInfoBasePath = Join-Path $tempRoot "branch base"
                 Restore-DevBranchFromSeed -DevBranchName "feature" -DevBranchInfoBasePath $branchInfoBasePath | Out-Null
                 [pscustomobject]@{
                     firstSyncId = [string]$first.syncId
                     secondSyncId = [string]$second.syncId
+                    confirmedSyncId = [string]$confirmed.syncId
+                    confirmedGenerationId = [string]$confirmed.sourceGenerationId
                     manifest = $second
                     artifacts = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -File -Filter "1Cv8.1CD")
                     rawLogs = @(Get-ChildItem -LiteralPath $seedRoot -Recurse -Directory -Filter "1Cv8Log")
@@ -63,6 +66,8 @@
             }
 
             $result.firstSyncId | Should -Not -Be $result.secondSyncId
+            $result.confirmedSyncId | Should -Be $result.secondSyncId
+            $result.confirmedGenerationId | Should -Be ("b" * 40)
             $result.manifest.status | Should -Be "ready"
             $result.manifest.configurationFingerprint | Should -Be "fingerprint"
             @($result.artifacts).Count | Should -Be 1
@@ -123,7 +128,7 @@
                     return [pscustomobject]@{ fingerprint = "detached"; fileCount = 1 }
                 }
 
-                $manifest = New-BranchSeed -ConfigurationFingerprint "attached" -ConfigurationFileCount 1 -DumpConfigurationFromSeed
+                $manifest = New-BranchSeed -ConfigurationFingerprint "" -ConfigurationFileCount 0 -DumpConfigurationFromSeed
                 [pscustomobject]@{
                     manifest = $manifest
                     unbindCalls = @($script:unbindCalls)
@@ -224,7 +229,7 @@
         }
     }
 
-    It "trusts the already dumped source fingerprint during refresh but still validates an explicit seed rebuild" {
+    It "validates a rebuilt file seed even when a source fingerprint was supplied" {
         & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Read-BranchSeedManifest { return $null }
@@ -239,17 +244,186 @@
                 }
             }
 
-            $refreshSeed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "source-fingerprint" -ConfigurationFileCount 17 -TrustProvidedConfigurationFingerprint
+            $refreshSeed = Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "source-fingerprint" -ConfigurationFileCount 17
             $explicitSeed = Ensure-BranchSeed -Policy Rebuild -ConfigurationFingerprint "" -ConfigurationFileCount 0
 
             $refreshSeed.fingerprint | Should -Be "source-fingerprint"
             $refreshSeed.fileCount | Should -Be 17
-            $refreshSeed.dumpedFromSeed | Should -BeFalse
+            $refreshSeed.dumpedFromSeed | Should -BeTrue
             $explicitSeed.dumpedFromSeed | Should -BeTrue
 
             $lifecycleText = Read-Utf8Text -Path (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.lifecycle.ps1")
             $syncBody = [regex]::Match($lifecycleText, '(?s)function Sync-Master\s*\{.*?(?=\r?\nfunction )').Value
-            $syncBody | Should -Match '(?s)Dump-ConfigToFiles.*?Ensure-BranchSeed.*?-TrustProvidedConfigurationFingerprint'
+            $syncBody | Should -Not -Match 'TrustProvidedConfigurationFingerprint'
+        }
+    }
+
+    It "rejects a copied seed whose configuration differs from the source export" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-mismatch-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourceRoot = Join-Path $tempRoot "исходная база"
+            $seedRoot = Join-Path $tempRoot "общий seed"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Get-BranchSeedRoot { return $seedRoot }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
+                function Get-MainWorktreePath { return $RepoRoot }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ signatures = @(); errorCount = 0; reader = "fixture"; failureEvidence = "" }
+                }
+                function Dump-ConfigToFilesFromInfoBase { return [pscustomobject]@{ exportPath = "src/cf" } }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "different"; fileCount = 1 } }
+                $failure = ""
+                try { New-BranchSeed -ConfigurationFingerprint "expected" -DumpConfigurationFromSeed | Out-Null }
+                catch { $failure = $_.Exception.Message }
+                [pscustomobject]@{
+                    failure = $failure
+                    manifest = Read-BranchSeedManifest
+                    artifactExists = Test-Path -LiteralPath (Get-BranchSeedPaths).artifactPath
+                }
+            }
+            $result.failure | Should -Match "BRANCH_SEED_CONFIGURATION_MISMATCH"
+            $result.manifest.status | Should -Be "failed"
+            $result.artifactExists | Should -BeFalse
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "retries a full seed export when the incremental cursor is incompatible" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-fallback-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $sourceRoot = Join-Path $tempRoot "исходная база"
+            $seedRoot = Join-Path $tempRoot "общий seed"
+            New-Item -ItemType Directory -Force -Path $sourceRoot | Out-Null
+            [IO.File]::WriteAllBytes((Join-Path $sourceRoot "1Cv8.1CD"), [byte[]](1, 2, 3))
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:dumpModes = [System.Collections.Generic.List[string]]::new()
+                function Get-BranchSeedRoot { return $seedRoot }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceInfoBasePath { return $sourceRoot }
+                function Get-SourceUsesRepository { return $false }
+                function Get-MainWorktreePath { return $RepoRoot }
+                function Get-SourceEventLogSeedBaseline {
+                    return [ordered]@{ signatures = @(); errorCount = 0; reader = "fixture"; failureEvidence = "" }
+                }
+                function Dump-ConfigToFilesFromInfoBase {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [switch]$IncrementalFromCurrentExport)
+                    if ($IncrementalFromCurrentExport) {
+                        $script:dumpModes.Add("incremental") | Out-Null
+                        throw "ConfigDumpInfo format mismatch"
+                    }
+                    $script:dumpModes.Add("full") | Out-Null
+                    return [pscustomobject]@{ exportPath = "src/cf" }
+                }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "new"; fileCount = 2 } }
+                $manifest = New-BranchSeed -ConfigurationFingerprint "" -DumpConfigurationFromSeed -IncrementalFromCurrentExport 3>$null
+                [pscustomobject]@{ modes=@($script:dumpModes); manifest=$manifest }
+            }
+            $result.modes | Should -Be @("incremental", "full")
+            $result.manifest.status | Should -Be "ready"
+            $result.manifest.configurationFingerprint | Should -Be "new"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "uses the source generation ID to skip both export and seed copy on an unchanged full refresh" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-refresh-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:seedBuilds = 0
+                $script:sourceDumps = 0
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("a" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; sourceGenerationId = ("a" * 40); configurationFingerprint = "same"
+                    artifactPath = "seed"; syncId = "existing"; artifactKind = "file-1cd"; baselineCount = 0
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Ensure-BranchSeed { $script:seedBuilds++; throw "unexpected seed rebuild" }
+                function Dump-ConfigToFiles { $script:sourceDumps++; throw "unexpected source dump" }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("b" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                [pscustomobject]@{ seedBuilds = $script:seedBuilds; sourceDumps = $script:sourceDumps }
+            }
+            $result.seedBuilds | Should -Be 0
+            $result.sourceDumps | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rebuilds a changed seed with an incremental export based on the previous tree" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-incremental-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                $script:seedArguments = $null
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("b" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; sourceGenerationId = ("a" * 40); configurationFingerprint = "old"
+                    artifactPath = "seed"; syncId = "existing"; artifactKind = "file-1cd"; baselineCount = 0
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Ensure-BranchSeed {
+                    param($Policy, $ConfigurationFingerprint, $SourceGenerationId, [switch]$IncrementalFromCurrentExport)
+                    $script:seedArguments = [pscustomobject]@{
+                        policy = $Policy; sourceGenerationId = $SourceGenerationId
+                        incremental = $IncrementalFromCurrentExport.IsPresent
+                    }
+                    return [pscustomobject]@{
+                        status="ready"; artifactPath="seed"; artifactKind="file-1cd"
+                        configurationFingerprint="new"; syncId="rebuilt"; baselineCount=0
+                    }
+                }
+                function Dump-ConfigToFiles { throw "source Designer dump must not run" }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("c" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                $script:seedArguments
+            }
+            $result.policy | Should -Be "Rebuild"
+            $result.sourceGenerationId | Should -Be ("b" * 40)
+            $result.incremental | Should -BeTrue
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
