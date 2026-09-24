@@ -1,20 +1,24 @@
 """Behavioral regressions for portable local/remote jobs. No live 1C or paid AI."""
 import base64
 import hashlib
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[3]
 RUNTIME = REPO / ".agents/skills/itl-remote-runner/scripts"
 sys.path.insert(0, str(RUNTIME))
-from itl_remote import agents, bootstrap, common, execution, host_commands, jobs, profiling, pull, transport, updates
+from itl_remote import agents, bootstrap, common, controller, execution, host_commands, jobs, profiling, pull, transport, updates
 from itl_remote.common import (FileLock, OwnedProcess, WorkError, digest, read_json,
                                resolve_resource_limits, resource_violation, write_json)
 
@@ -436,6 +440,163 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_user_local_controller_reuses_worker_across_project_tasks(self):
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        controller_file = self.root / "пара контроллера.json"
+        worker_file = self.root / "пара воркера.json"
+        other_controller = self.root / "вторая пара контроллера.json"
+        other_worker = self.root / "вторая пара воркера.json"
+        bootstrap.pair("http://127.0.0.1:" + str(port), controller_file, worker_file,
+                       worker_id="ufa-user")
+        bootstrap.pair("http://127.0.0.1:" + str(port), other_controller, other_worker,
+                       worker_id="ufa-other-user")
+        home = self.root / "профили пользователя"
+        project_one, project_two = self.root / "проект один", self.root / "проект два"
+        project_one.mkdir()
+        project_two.mkdir()
+        runtime = RUNTIME / "remote_work.py"
+        with patch.dict(os.environ, {"ITL_REMOTE_CONTROLLER_HOME": str(home)}):
+            registered = controller.register("ufa-user", controller_file, port=port)
+            self.assertEqual("registered", registered["status"])
+            self.assertEqual("already-registered", controller.register("ufa-user", controller_file,
+                                                                         port=port)["status"])
+            self.assertEqual(["ufa-user"],
+                             [item["name"] for item in controller.list_connections()["connections"]])
+            worker_process = subprocess.Popen(
+                [sys.executable, "-X", "utf8", str(runtime), "worker", "--spool", str(self.spool),
+                 "--connection", str(worker_file), "--persistent", "--max-lifetime-seconds", "30"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            broker = None
+            def stop_broker(value):
+                os.kill(value["pid"], signal.SIGTERM)
+                owned = controller._started_processes.pop(value["pid"], None)
+                if owned is not None:
+                    owned.wait(timeout=10)
+                else:
+                    deadline = time.monotonic() + 10
+                    while common.process_is_alive(value["pid"]) and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    self.assertFalse(common.process_is_alive(value["pid"]))
+            try:
+                environment = dict(os.environ)
+                started = subprocess.run(
+                    [sys.executable, "-X", "utf8", str(runtime), "controller", "--action", "ensure",
+                     "--name", "ufa-user"], cwd=project_one, env=environment,
+                    capture_output=True, text=True, timeout=20)
+                self.assertEqual(0, started.returncode, started.stdout + started.stderr)
+                broker = json.loads(started.stdout)
+                self.assertEqual("broker-started", broker["status"])
+                controller.register("ufa-other-user", other_controller, port=port)
+                self.assertEqual("broker-reused", controller.ensure("ufa-other-user")["status"])
+                command = [sys.executable, "-X", "utf8", str(runtime), "remote", "--host", "ufa-user",
+                           "--action", "probe"]
+                first = subprocess.run(command, cwd=project_one, env=environment,
+                                       capture_output=True, text=True, timeout=20)
+                self.assertEqual(0, first.returncode, first.stdout + first.stderr)
+                self.assertEqual("process-identity-and-heartbeat-verified",
+                                 json.loads(first.stdout)["worker"]["liveness"])
+                second = subprocess.run(command, cwd=project_two, env=environment,
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(0, second.returncode, second.stdout + second.stderr)
+                self.assertEqual(broker["brokerId"], controller.ensure("ufa-user")["brokerId"])
+                stop_broker(broker)
+                broker = None
+                restarted = controller.ensure("ufa-user")
+                broker = restarted
+                self.assertEqual("broker-started", restarted["status"])
+                self.assertEqual("process-identity-and-heartbeat-verified",
+                                 transport.Connection(read_json(registered["connection"])).call(
+                                     {"operation": "probe"})["worker"]["liveness"])
+            finally:
+                if worker_process.poll() is None:
+                    worker_process.terminate()
+                    worker_process.wait(timeout=10)
+                if broker and broker.get("pid"):
+                    stop_broker(broker)
+
+    def test_controller_never_replaces_unknown_listener(self):
+        seen_headers = []
+        response = {"status": "broker-ready", "brokerId": "foreign", "proof": "invalid"}
+        class ForeignHandler(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                return
+
+            def do_POST(self):
+                seen_headers.append(dict(self.headers))
+                self.rfile.read(int(self.headers["Content-Length"]))
+                body = json.dumps(response).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        listener = ThreadingHTTPServer(("127.0.0.1", 0), ForeignHandler)
+        thread = threading.Thread(target=listener.serve_forever, daemon=True)
+        thread.start()
+        try:
+            port = listener.server_address[1]
+            controller_file = self.root / "unknown-controller.json"
+            worker_file = self.root / "unknown-worker.json"
+            bootstrap.pair("http://127.0.0.1:" + str(port), controller_file, worker_file)
+            with patch.dict(os.environ, {"ITL_REMOTE_CONTROLLER_HOME": str(self.root / "private")}):
+                controller.register("unknown", controller_file, port=port)
+                with self.assertRaisesRegex(WorkError, "BROKER_PORT_OCCUPIED_OR_PAIR_NOT_LOADED"):
+                    controller.ensure("unknown")
+                response.clear()
+                response.update({"error": "PULL_ROUTE_UNKNOWN"})
+                with self.assertRaisesRegex(WorkError, "BROKER_PORT_OCCUPIED_OR_PAIR_NOT_LOADED"):
+                    controller.ensure("unknown")
+            self.assertEqual(2, len(seen_headers))
+            self.assertTrue(all("Authorization" not in headers for headers in seen_headers))
+            self.assertEqual(port, listener.server_address[1])
+        finally:
+            listener.shutdown()
+            listener.server_close()
+            thread.join(timeout=5)
+
+    def test_controller_checks_local_broker_when_public_url_is_not_locally_routable(self):
+        with socket.socket() as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        controller_file = self.root / "controller-proxy.json"
+        worker_file = self.root / "worker-proxy.json"
+        bootstrap.pair("https://controller.invalid:" + str(port), controller_file, worker_file)
+        broker = None
+        with patch.dict(os.environ, {"ITL_REMOTE_CONTROLLER_HOME": str(self.root / "private-proxy")}):
+            controller.register("proxy", controller_file, port=port)
+            try:
+                broker = controller.ensure("proxy")
+                self.assertEqual("broker-started", broker["status"])
+                self.assertEqual("broker-reused", controller.ensure("proxy")["status"])
+            finally:
+                if broker and broker.get("pid"):
+                    os.kill(broker["pid"], signal.SIGTERM)
+                    controller._started_processes.pop(broker["pid"]).wait(timeout=10)
+
+    def test_idle_worker_status_writes_only_on_change_or_bounded_refresh(self):
+        from remote_work import WorkerHeartbeat
+        heartbeat = WorkerHeartbeat(self.spool, "persistent", common.stamp())
+        with patch.object(heartbeat, "_publish") as publish:
+            heartbeat.update(status="ready")
+            publish.assert_not_called()
+            heartbeat.update(status="running")
+            publish.assert_called_once()
+        config = {"transport": "pull", "pull": {"url": "http://127.0.0.1:8765",
+                  "workerId": "idle-worker", "token": "x" * 32}}
+        worker = pull.PullWorker(config, self.spool, threading.Event())
+        with patch.object(pull, "write_json") as published:
+            worker._publish_connection({"status": "connected", "updatedAt": "first", "workerId": "idle-worker"})
+            worker._publish_connection({"status": "connected", "updatedAt": "second", "workerId": "idle-worker"})
+            self.assertEqual(1, published.call_count)
+            worker.last_connection_at -= 11
+            worker._publish_connection({"status": "connected", "updatedAt": "third", "workerId": "idle-worker"})
+            self.assertEqual(2, published.call_count)
+            worker._publish_connection({"status": "disconnected", "updatedAt": "fourth",
+                                        "workerId": "idle-worker", "error": "PULL_CONNECTION_FAILED"})
+            self.assertEqual(3, published.call_count)
 
     def test_paired_pull_worker_executes_host_command_without_remote_input(self):
         self.profile["hostCommands"] = {"enabled": True}
@@ -1023,7 +1184,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
             values = {info.filename: source.read(info.filename) for info in source.infolist()}
             version_name = ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py"
-            values[version_name] = values[version_name].replace(b'VERSION = "1.2.0"', b'VERSION = "1.3.0"')
+            values[version_name] = values[version_name].replace(b'VERSION = "1.2.1"', b'VERSION = "1.3.0"')
             manifest = json.loads(values["bundle-manifest.json"])
             manifest["version"] = "1.3.0"
             manifest["files"][version_name] = {"sha256": hashlib.sha256(values[version_name]).hexdigest(),

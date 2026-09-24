@@ -47,6 +47,8 @@ class WorkerHeartbeat:
 
     def update(self, **values):
         with self.lock:
+            if all(self.state.get(key) == value for key, value in values.items()):
+                return
             self.state.update(values)
         self._publish()
 
@@ -106,6 +108,14 @@ def main():
     command.add_argument("--controller-folder")
     command.add_argument("--worker-folder")
     command.add_argument("--threshold-bytes", type=int, default=64 * 1024 * 1024)
+    command = commands.add_parser("controller")
+    command.add_argument("--action", choices=["register", "list", "ensure"], required=True)
+    command.add_argument("--name")
+    command.add_argument("--connection", help="Existing controller pairing for registration")
+    command.add_argument("--listen", default="127.0.0.1")
+    command.add_argument("--port", type=int, default=8765)
+    command.add_argument("--certificate")
+    command.add_argument("--private-key")
     command = commands.add_parser("onboard")
     command.add_argument("--bundle", required=True, help="Portable export with pinned Python archive")
     command.add_argument("--worker-connection", required=True)
@@ -120,13 +130,18 @@ def main():
     command.add_argument("--port", type=int, default=8765)
     command.add_argument("--certificate")
     command.add_argument("--private-key")
-    command.add_argument("--connection", action="append", required=True,
+    command.add_argument("--connection", action="append",
                          help="Paired controller connection authorized by this broker; repeat as needed")
+    command.add_argument("--connection-directory", help="Private user-local controller catalog")
     command = commands.add_parser("stage-update")
-    command.add_argument("--connection", required=True)
+    selected = command.add_mutually_exclusive_group(required=True)
+    selected.add_argument("--connection")
+    selected.add_argument("--host", help="Registered user-local controller name")
     command.add_argument("--bundle", required=True)
     command = commands.add_parser("sync-worker")
-    command.add_argument("--connection", required=True)
+    selected = command.add_mutually_exclusive_group(required=True)
+    selected.add_argument("--connection")
+    selected.add_argument("--host", help="Registered user-local controller name")
     command.add_argument("--repository", required=True)
     command = commands.add_parser("pack")
     command.add_argument("--scenario", required=True)
@@ -151,9 +166,16 @@ def main():
     for name in ("submit", "send"):
         command = commands.add_parser(name)
         command.add_argument("--package", required=True)
-        command.add_argument("--spool" if name == "submit" else "--connection", required=True)
+        if name == "submit":
+            command.add_argument("--spool", required=True)
+        else:
+            selected = command.add_mutually_exclusive_group(required=True)
+            selected.add_argument("--connection")
+            selected.add_argument("--host", help="Registered user-local controller name")
     command = commands.add_parser("remote")
-    command.add_argument("--connection", required=True)
+    selected = command.add_mutually_exclusive_group(required=True)
+    selected.add_argument("--connection")
+    selected.add_argument("--host", help="Registered user-local controller name")
     command.add_argument("--action", choices=["probe", "status", "cancel", "collect", "agent-request"], required=True)
     command.add_argument("--agent-action", choices=["read", "followup", "interrupt", "respond"])
     command.add_argument("--payload")
@@ -185,6 +207,10 @@ def main():
         from itl_remote import VERSION
         return {"version": VERSION}
     from itl_remote import bootstrap, execution, jobs, profiling, transport
+    from itl_remote import controller
+
+    def selected_connection():
+        return read_json(controller.ensure(args.host)["connection"] if args.host else args.connection)
     if args.command == "scaffold":
         from itl_remote.scenarios import scaffold
         return scaffold(args.project, args.name)
@@ -208,6 +234,17 @@ def main():
         return bootstrap.pair(args.url, args.controller_output, args.worker_output,
                               worker_id=args.worker_id, controller_folder=args.controller_folder,
                               worker_folder=args.worker_folder, threshold_bytes=args.threshold_bytes)
+    if args.command == "controller":
+        if args.action == "list":
+            return controller.list_connections()
+        if not args.name:
+            raise WorkError("CONTROLLER_NAME_REQUIRED")
+        if args.action == "ensure":
+            return controller.ensure(args.name)
+        if not args.connection:
+            raise WorkError("CONTROLLER_CONNECTION_REQUIRED")
+        return controller.register(args.name, args.connection, listen=args.listen, port=args.port,
+                                   certificate=args.certificate, private_key=args.private_key)
     if args.command == "onboard":
         return bootstrap.onboard(args.bundle, args.worker_connection, args.profile, args.destination,
                                  args.name, ca_certificate=args.ca_certificate,
@@ -215,13 +252,13 @@ def main():
     if args.command == "pull-serve":
         from itl_remote.pull import serve
         return serve(args.listen, args.port, certificate=args.certificate, private_key=args.private_key,
-                     connections=args.connection)
+                     connections=args.connection, connection_directory=args.connection_directory)
     if args.command == "stage-update":
-        return transport.Connection(read_json(args.connection)).stage_update(args.bundle)
+        return transport.Connection(selected_connection()).stage_update(args.bundle)
     if args.command == "sync-worker":
         import tempfile
         from itl_remote import VERSION
-        connection = transport.Connection(read_json(args.connection))
+        connection = transport.Connection(selected_connection())
         observed = connection.call({"operation": "probe"})
         if observed.get("version") == VERSION:
             return {"status": "worker-current", "version": VERSION}
@@ -247,9 +284,9 @@ def main():
     if args.command == "submit":
         return jobs.submit(args.package, args.spool)
     if args.command == "send":
-        return transport.Connection(read_json(args.connection)).send(args.package)
+        return transport.Connection(selected_connection()).send(args.package)
     if args.command == "remote":
-        connection = transport.Connection(read_json(args.connection))
+        connection = transport.Connection(selected_connection())
         if args.action == "collect":
             return connection.collect(args.id, args.output, allow_partial=args.allow_partial)
         if args.action == "agent-request":
