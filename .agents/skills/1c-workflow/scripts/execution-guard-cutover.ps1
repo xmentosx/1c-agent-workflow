@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$PackageRoot = '',
@@ -147,22 +147,13 @@ function Invoke-CutoverGit([string]$Root, [string[]]$Arguments, [switch]$Capture
 }
 
 function Get-CutoverManagedDirectoryPaths {
-    return @(
-        '.agents\skills\1c-workflow',
-        '.agents\skills\1c-workflow-fast',
-        '.agents\skills\product-docs',
-        '.agents\skills\itl-roctup-1c-data',
-        '.agents\skills\itl-vanessa-ui-mcp',
-        '.agents\skills\itl-remote-runner',
-        '.agents\skills\itl-remote-agent',
-        '.agents\skills\itl-performance',
-        'docs\itl-workflow',
-        'templates'
-    )
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'execution-guard-cutover-paths.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($manifest.directories)
 }
 
 function Get-CutoverManagedFilePaths {
-    return @('install-agent-1c-workflow.ps1', 'AGENT-INSTALL.md')
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'execution-guard-cutover-paths.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    return @($manifest.files)
 }
 
 function Assert-CutoverPackageReady([string]$PackageRoot) {
