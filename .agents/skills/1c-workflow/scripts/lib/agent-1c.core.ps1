@@ -1956,6 +1956,66 @@ function Write-Agent1cProjectTransactionState {
     Write-Utf8Text -Path $Paths.state -Value (($record | ConvertTo-Json -Depth 4) + [Environment]::NewLine)
 }
 
+function Remove-Agent1cProjectTree {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $absolutePath = [IO.Path]::GetFullPath($Path)
+    $allowed = @(
+        foreach ($kind in @("c", "e", "v")) {
+            $paths = Get-Agent1cProjectTransactionPaths -Kind $kind
+            $paths.slot; $paths.stage; $paths.backup
+        }
+    )
+    if (-not @($allowed | Where-Object { [string]::Equals($_, $absolutePath, [StringComparison]::OrdinalIgnoreCase) }).Count) {
+        throw "Refusing to remove a path outside a project transaction slot: $absolutePath"
+    }
+    $transactionRoot = (Get-Agent1cProjectTransactionPaths -Kind "c").root
+    if ((Test-Path -LiteralPath $transactionRoot -ErrorAction SilentlyContinue) -and
+        (([IO.File]::GetAttributes($transactionRoot) -band [IO.FileAttributes]::ReparsePoint) -ne 0)) {
+        throw "Refusing to traverse a linked project transaction root: $transactionRoot"
+    }
+
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        if (-not (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue)) { return }
+        try {
+            $files = [System.Collections.Generic.List[string]]::new()
+            $directories = [System.Collections.Generic.List[string]]::new()
+            $pending = [System.Collections.Generic.Stack[string]]::new()
+            $pending.Push($absolutePath)
+            while ($pending.Count -gt 0) {
+                $directory = $pending.Pop()
+                $directories.Add($directory)
+                $attributes = [IO.File]::GetAttributes($directory)
+                if (($attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+                foreach ($child in [IO.Directory]::EnumerateFileSystemEntries($directory)) {
+                    $childAttributes = [IO.File]::GetAttributes($child)
+                    if (($childAttributes -band [IO.FileAttributes]::Directory) -ne 0) {
+                        $pending.Push($child)
+                    } else {
+                        $files.Add($child)
+                    }
+                }
+            }
+            foreach ($file in $files) {
+                Remove-Item -LiteralPath $file -Force -ErrorAction Stop
+            }
+            foreach ($directory in @($directories | Sort-Object Length -Descending)) {
+                Remove-Item -LiteralPath $directory -Force -ErrorAction Stop
+            }
+            if (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue) {
+                throw "Directory still exists after cleanup: $absolutePath"
+            }
+            return
+        } catch {
+            if (-not (Test-Path -LiteralPath $absolutePath -ErrorAction SilentlyContinue)) { return }
+            if ($attempt -eq 5) {
+                throw "PROJECT_TRANSACTION_CLEANUP_FAILED path='$absolutePath' attempts=$attempt error='$($_.Exception.Message)'"
+            }
+            Start-Sleep -Milliseconds (100 * $attempt)
+        }
+    }
+}
+
 function Initialize-Agent1cProjectTransactionSlot {
     param(
         [Parameter(Mandatory = $true)]
@@ -1965,19 +2025,36 @@ function Initialize-Agent1cProjectTransactionSlot {
     )
 
     $paths = Get-Agent1cProjectTransactionPaths -Kind $Kind
-    if (Test-Path -LiteralPath $paths.backup -PathType Container -ErrorAction SilentlyContinue) {
-        if (Test-Path -LiteralPath $Target -ErrorAction SilentlyContinue) {
-            Remove-Item -LiteralPath $paths.backup -Recurse -Force -ErrorAction Stop
-        } else {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
-            Move-Item -LiteralPath $paths.backup -Destination $Target -ErrorAction Stop
+    $state = $null
+    if (Test-Path -LiteralPath $paths.state -PathType Leaf -ErrorAction SilentlyContinue) {
+        try { $state = Read-Utf8Text -Path $paths.state | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "Project transaction state cannot be read: $($paths.state). $($_.Exception.Message)" }
+        if ([int]$state.schemaVersion -ne 1 -or [string]$state.kind -cne $Kind -or
+            -not [string]::Equals([IO.Path]::GetFullPath([string]$state.target), [IO.Path]::GetFullPath($Target), [StringComparison]::OrdinalIgnoreCase) -or
+            [string]$state.phase -notin @("staging", "target-backed-up", "installed")) {
+            throw "Project transaction state does not match the requested target: $($paths.state)"
         }
     }
+    $targetExists = Test-Path -LiteralPath $Target -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $paths.backup -PathType Container -ErrorAction SilentlyContinue) {
+        if ($state -and $state.phase -eq "installed" -and $targetExists) {
+            Remove-Agent1cProjectTree -Path $paths.backup
+        } elseif ($state -and $state.phase -in @("staging", "target-backed-up") -and -not $targetExists) {
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Target) | Out-Null
+            Move-Item -LiteralPath $paths.backup -Destination $Target -ErrorAction Stop
+        } else {
+            throw "Project transaction has an ambiguous backup; preserving it for diagnosis: $($paths.backup)"
+        }
+    } elseif ($state -and $state.phase -eq "installed" -and -not $targetExists) {
+        throw "Installed project transaction target is missing: $Target"
+    } elseif ($state -and $state.phase -eq "target-backed-up" -and -not $targetExists) {
+        throw "Project transaction backup and target are both missing: $($paths.slot)"
+    }
     if (Test-Path -LiteralPath $paths.stage -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $paths.stage -Recurse -Force -ErrorAction Stop
+        Remove-Agent1cProjectTree -Path $paths.stage
     }
     if (Test-Path -LiteralPath $paths.slot -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $paths.slot -Recurse -Force -ErrorAction Stop
+        Remove-Agent1cProjectTree -Path $paths.slot
     }
 
     New-Item -ItemType Directory -Force -Path $paths.stage | Out-Null
@@ -1988,11 +2065,17 @@ function Initialize-Agent1cProjectTransactionSlot {
 function Complete-Agent1cProjectTransactionSlot {
     param([Parameter(Mandatory = $true)][object]$Paths)
 
-    if (Test-Path -LiteralPath $Paths.slot -ErrorAction SilentlyContinue) {
-        Remove-Item -LiteralPath $Paths.slot -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $Paths.backup -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.backup
+    }
+    if (Test-Path -LiteralPath $Paths.stage -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.stage
     }
     if (Test-Path -LiteralPath $Paths.state -PathType Leaf -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $Paths.state -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Paths.slot -ErrorAction SilentlyContinue) {
+        Remove-Agent1cProjectTree -Path $Paths.slot
     }
     if (Test-Path -LiteralPath $Paths.root -PathType Container -ErrorAction SilentlyContinue) {
         $children = @(Get-ChildItem -LiteralPath $Paths.root -Force -ErrorAction Stop)

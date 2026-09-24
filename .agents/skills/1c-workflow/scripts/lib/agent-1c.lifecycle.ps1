@@ -2359,7 +2359,13 @@ function Dump-ConfigToFilesFromInfoBase {
         $stageInstalled = $true
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "installed" -Target $absoluteExportPath
 
-        Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        $cleanupWarning = ""
+        try {
+            Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        } catch {
+            $cleanupWarning = $_.Exception.Message
+            Write-Warning "Installed 1C configuration dump was kept, but transaction cleanup is incomplete at '$transactionRoot': $cleanupWarning" -WarningAction Continue
+        }
         Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
@@ -2367,6 +2373,7 @@ function Dump-ConfigToFilesFromInfoBase {
             absoluteExportPath = $absoluteExportPath
             incremental = $false
             transactional = $true
+            cleanupWarning = $cleanupWarning
             logPath = $script:LastLogPath
         }
     } catch {
