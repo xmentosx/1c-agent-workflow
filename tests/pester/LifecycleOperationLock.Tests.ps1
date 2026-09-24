@@ -205,7 +205,8 @@ try {
     }
 
     It "runs reset through <Scenario> with real worktree archives and seed leases" -ForEach @(
-        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }, @{ Scenario = "updated helper handoff" }
+        @{ Scenario = "parallel branches" }, @{ Scenario = "interruption and resume" }, @{ Scenario = "updated helper handoff" },
+        @{ Scenario = "pending refresh" }
     ) {
         $tempRoot = Join-Path $TestDrive ("сброс " + $Scenario)
         $mainRoot = Join-Path $tempRoot "main база"
@@ -235,13 +236,40 @@ try {
             & git -C $entry.root add .
             & git -C $entry.root commit --quiet -m 'branch work'
         }
+        if ($Scenario -eq 'pending refresh') {
+            $branchCommit = (& git -C $branchOne rev-parse HEAD).Trim()
+            Set-Content -LiteralPath (Join-Path $mainRoot 'later master.txt') -Encoding UTF8 -Value 'master'
+            & git -C $mainRoot add .
+            & git -C $mainRoot commit --quiet -m 'later master'
+            $masterCommit = (& git -C $mainRoot rev-parse HEAD).Trim()
+            & git -C $branchOne merge --no-ff -m 'merge master' master *> $null
+            $mergeCommit = (& git -C $branchOne rev-parse HEAD).Trim()
+            Set-Content -LiteralPath (Join-Path $branchOne 'repair.txt') -Encoding UTF8 -Value 'repair'
+            & git -C $branchOne add .
+            & git -C $branchOne commit --quiet -m 'repair after merge'
+            New-Item -ItemType Directory -Force -Path (Join-Path $branchOne 'handoffs') | Out-Null
+            Set-Content -LiteralPath (Join-Path $branchOne 'handoffs/заметка.txt') -Encoding UTF8 -Value 'preserve'
+            Set-Content -LiteralPath (Join-Path $branchOne 'изменение ветки.txt') -Encoding UTF8 -Value 'unstaged repair'
+            $pendingState = [ordered]@{
+                devBranchName = 'one'; safeDevBranchName = 'one'; devBranch = 'itldev/one'
+                devBranchKind = 'configuration'; initializationStatus = 'ready'; infoBaseKind = 'file'
+                devBranchInfoBasePath = Join-Path $branchOne '.agent-1c/тестовая база'
+                pendingMergeOperation = 'refresh-dev-branch'; pendingMergeBranch = 'itldev/one'
+                pendingMergeBranchCommit = $branchCommit; pendingMergeTargetCommit = $masterCommit
+                pendingMergeStage = 'merged'; pendingMergeCommit = $mergeCommit
+                pendingMergePostMergeHead = $mergeCommit; pendingMergeResult = 'merge-commit'
+                pendingRefreshOperation = 'refresh-dev-branch'; pendingRefreshMasterCommit = $masterCommit
+            }
+            New-Item -ItemType Directory -Force -Path (Join-Path $branchOne '.agent-1c') | Out-Null
+            $pendingState | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Encoding UTF8
+        }
         New-Item -ItemType Directory -Path $sourceRoot -Force | Out-Null
         [IO.File]::WriteAllBytes((Join-Path $sourceRoot '1Cv8.1CD'), [byte[]](1, 2, 3, 4))
         New-TestBranchSeedFixture -ProjectRoot $mainRoot -SourceInfoBasePath $sourceRoot
         $worker = Join-Path $tempRoot 'reset worker.ps1'
         Set-Content -LiteralPath $worker -Encoding UTF8 -Value @'
 param([string]$HelperPath, [string]$SupportPath, [string]$Root, [string]$SourceRoot,
-    [string]$OtherRoot = "", [string]$InterruptPhase = "")
+    [string]$OtherRoot = "", [string]$InterruptPhase = "", [switch]$PendingRefresh)
 Import-Module Microsoft.PowerShell.Utility
 . $SupportPath
 . $HelperPath -ProjectRoot $Root -Action help *> $null
@@ -266,8 +294,11 @@ function Get-InfoBaseKind { "file" }
 function Get-SourceUsesRepository { $false }
 function Assert-DevelopmentBranchWorktreeContext {}
 function Assert-MasterWorktreeContext {}
-function Resume-DevBranchLifecycleMergeIfPresent { $false }
-function Save-DevBranchCheckpoint { Assert-CleanGit }
+function Save-DevBranchCheckpoint {
+    param($Operation, $Message)
+    if ($PendingRefresh) { Commit-IfChanged -Message $Message -PathSpec @('.') | Out-Null }
+    Assert-CleanGit
+}
 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "test-fixture"; treeObjectId = "config-tree" } }
 function Stop-DevBranchRuntimeBeforeInfobaseMutation {}
 function Invoke-Designer {
@@ -341,6 +372,7 @@ try {
 '@
         $arguments = @('-HelperPath', $HelperPath, '-SupportPath', (Join-Path $PSScriptRoot 'TestSupport.ps1'),
             '-Root', $branchOne, '-SourceRoot', $sourceRoot)
+        if ($Scenario -eq 'pending refresh') { $arguments += '-PendingRefresh' }
         if ($Scenario -eq 'parallel branches') {
             $run = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-OtherRoot', $branchTwo))
             $run.exitCode | Should -Be 0 -Because $run.combinedText
@@ -358,6 +390,16 @@ try {
             $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
             $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
             (Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json).resetArchivePath | Should -Be $boundary.archivePath
+        } elseif ($Scenario -eq 'pending refresh') {
+            $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
+            $failed.exitCode | Should -Be 1
+            $failed.combinedText | Should -Match 'RESET_INTERRUPTED'
+            $saved = Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/reset-fixture.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $saved.pendingMergeOperation | Should -Be 'refresh-dev-branch'
+            $saved.resetDiscardedRefreshOperation | Should -Be 'refresh-dev-branch'
+            $saved.resetPhase | Should -Be 'git-reset-complete'
+            $resumed = Invoke-TestPowerShellFile -FilePath $worker -Arguments $arguments
+            $resumed.exitCode | Should -Be 0 -Because $resumed.combinedText
         } else {
             $failed = Invoke-TestPowerShellFile -FilePath $worker -Arguments ($arguments + @('-InterruptPhase', 'reset.infobase'))
             $failed.exitCode | Should -Be 1
@@ -452,6 +494,15 @@ try {
         @(Get-Content -LiteralPath (Join-Path $branchOne '.agent-1c/dumps.txt')).Count | Should -Be 1
         [IO.File]::ReadAllBytes((Join-Path $state.devBranchInfoBasePath '1Cv8.1CD')) | Should -Be @([byte]1, [byte]2, [byte]3, [byte]4)
         Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/изменение ветки.txt') | Should -BeTrue
+        if ($Scenario -eq 'pending refresh') {
+            $state.pendingMergeOperation | Should -BeNullOrEmpty
+            $state.pendingMergeStage | Should -BeNullOrEmpty
+            $state.pendingMergePostMergeHead | Should -BeNullOrEmpty
+            $state.pendingRefreshOperation | Should -BeNullOrEmpty
+            $state.pendingRefreshMasterCommit | Should -BeNullOrEmpty
+            $state.resetDiscardedRefreshOperation | Should -Be 'refresh-dev-branch'
+            Test-Path -LiteralPath (Join-Path $state.resetArchivePath 'files/handoffs/заметка.txt') | Should -BeTrue
+        }
         if ($Scenario -eq 'interruption and resume') { $state.resetArchivePath | Should -Be $saved.resetArchivePath }
     }
 

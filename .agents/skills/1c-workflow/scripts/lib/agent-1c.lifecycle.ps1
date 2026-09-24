@@ -8655,6 +8655,17 @@ function Test-DevBranchLifecycleHelperOwnedPostMergeHead {
         @($paths | Where-Object { $allowedPaths -cnotcontains $_ }).Count -eq 0)
 }
 
+function Test-DevBranchLifecycleLinearDescendant {
+    param([string]$Ancestor, [string]$Descendant)
+
+    if (-not (Test-GitCommitIsAncestor -Ancestor $Ancestor -Descendant $Descendant)) { return $false }
+    $commits = @(Get-GitOutput @('rev-list', '--first-parent', '--parents', "$Ancestor..$Descendant"))
+    foreach ($record in $commits) {
+        if (@([string]$record -split '\s+' | Where-Object { $_ }).Count -ne 2) { return $false }
+    }
+    return $true
+}
+
 function Resolve-DevBranchLifecyclePostMergeHead {
     param(
         [object]$State,
@@ -8672,17 +8683,15 @@ function Resolve-DevBranchLifecyclePostMergeHead {
             throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$Operation' mergeCommit='$($Transaction.mergeCommit)' recordedPostMergeHead='$recordedPostMergeHead'."
         }
         if ($head -cne $recordedPostMergeHead) {
-            $recoveryHint = ''
             $expectedBranch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
             if ($Operation -in @('refresh-dev-branch', 'refresh-dev-branch-lite') -and
                 $Transaction.operation -ceq $Operation -and $Transaction.stage -ceq 'merged' -and
                 $expectedBranch -and $Transaction.branch -ceq $expectedBranch -and
                 (Get-CurrentBranch) -ceq $expectedBranch -and
-                (Test-GitCommitIsAncestor -Ancestor $recordedPostMergeHead -Descendant $head)) {
-                Set-RunFailureContext -Category 'runner' -RequiredAction '/itl-check'
-                $recoveryHint = ' A descendant commit is present in the same branch. Run a full /itl-check here after correcting the reported source defect; only fresh full verification after configuration loading and Enterprise normalization can complete this pending refresh. See references/branch-lifecycle.md. Do not edit lifecycle state or repeat ordinary merge resume at this changed HEAD.'
+                (Test-DevBranchLifecycleLinearDescendant -Ancestor $recordedPostMergeHead -Descendant $head)) {
+                return $head
             }
-            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'.$recoveryHint"
+            throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$Operation' expected='$recordedPostMergeHead' actual='$head'. Only linear commits after the recorded merge may resume this refresh."
         }
         return $head
     }
@@ -13498,6 +13507,42 @@ function Assert-DevBranchResetResumeInputs {
     }
 }
 
+function Assert-DevBranchResetPendingRefresh {
+    param([object]$State)
+
+    $transaction = Get-PendingDevBranchMergeTransaction -State $State
+    if ($null -eq $transaction) { return '' }
+    if ($transaction.operation -notin @('refresh-dev-branch', 'refresh-dev-branch-lite')) {
+        throw "LIFECYCLE_MERGE_OPERATION_MISMATCH pending='$($transaction.operation)' requested='reset-dev-branch'."
+    }
+    Assert-DevBranchLifecycleMergeIdentity -State $State -Transaction $transaction -Operation $transaction.operation
+    if (Test-GitMergeInProgress) {
+        $mergeHead = Get-GitMergeHeadCommit
+        throw "RESET_DEV_BRANCH_GIT_MERGE_IN_PROGRESS: pending='$($transaction.operation)' stage='$($transaction.stage)' mergeHead='$mergeHead'. Conflict resolutions cannot be archived by reset; continue the owning merge."
+    }
+    if ($transaction.stage -cne 'merged') {
+        throw "RESET_DEV_BRANCH_REFRESH_NOT_MERGED: pending='$($transaction.operation)' stage='$($transaction.stage)'. Continue the owning refresh before reset."
+    }
+    Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $transaction.operation
+    $postMergeHead = [string]$transaction.postMergeHead
+    if ($postMergeHead -and $postMergeHead -cne $transaction.mergeCommit -and
+        -not (Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $postMergeHead)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_INVALID operation='$($transaction.operation)' mergeCommit='$($transaction.mergeCommit)' recordedPostMergeHead='$postMergeHead'."
+    }
+    $recordedHead = if ($postMergeHead) { $postMergeHead } else { [string]$transaction.mergeCommit }
+    $head = Get-CurrentCommit
+    if (-not (Test-GitCommitIsAncestor -Ancestor $recordedHead -Descendant $head)) {
+        throw "LIFECYCLE_MERGE_POST_HEAD_MISMATCH operation='$($transaction.operation)' expectedAncestor='$recordedHead' actual='$head'."
+    }
+    $legacyOperation = [string](Get-StateValue -State $State -Name 'pendingRefreshOperation' -Default '')
+    $legacyTarget = [string](Get-StateValue -State $State -Name 'pendingRefreshMasterCommit' -Default '')
+    if (($legacyOperation -and $legacyOperation -cne $transaction.operation) -or
+        ($legacyTarget -and $legacyTarget -cne $transaction.targetCommit)) {
+        throw "RESET_DEV_BRANCH_REFRESH_STATE_MISMATCH: pending refresh fields disagree with the recorded merge."
+    }
+    return [string]$transaction.operation
+}
+
 function Reset-DevBranch {
     $state = Read-DevBranchState -Name $DevBranchName
     Assert-DevelopmentBranchWorktreeContext -State $state -Operation "reset-dev-branch"
@@ -13510,7 +13555,7 @@ function Reset-DevBranch {
         if ((Get-DevBranchInitializationStatus -State $state) -ne "ready") {
             throw "RESET_DEV_BRANCH_NOT_READY: the branch must be ready before reset."
         }
-        if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation "reset-dev-branch" -ConflictStage "reset.merge-conflicts") { return }
+        $discardedRefresh = Assert-DevBranchResetPendingRefresh -State $state
         Save-DevBranchCheckpoint -Operation "reset-dev-branch" -Message "chore: checkpoint before branch reset" | Out-Null
     }
 
@@ -13541,6 +13586,7 @@ function Reset-DevBranch {
                 resetSeedIdentity = $inputs.seedIdentity
                 resetMasterConfigTreeObjectId = [string]$masterSource.configTreeObjectId
                 resetArchivePath = (Assert-PathUnderDevBranchArchiveRoot -Path $archivePath); resetArchiveDtPath = ""; resetNewHead = ""
+                resetDiscardedRefreshOperation = $discardedRefresh
             }
             $state = Read-DevBranchState -Name $DevBranchName
         } else {
@@ -13601,7 +13647,7 @@ function Reset-DevBranch {
                 lastVerifiedAt = ""; lastVerifiedCommit = ""; lastVerifiedReportPath = ""; lastVerificationLogPath = ""
                 lastResultPath = ""; lastResultKind = ""; lastResultManifestPath = ""; lastResultAt = ""
                 lastUnverifiedOverrideAt = ""; lastUnverifiedOverrideOperation = ""; lastUnverifiedResultPath = ""
-                pendingMergeOperation = ""; pendingMergeTargetCommit = ""; pendingMergePhase = ""; pendingMergeStartedAt = ""
+                pendingMergePhase = ""; pendingMergeStartedAt = ""
                 branchSeedSourceKey = [string]$seed.sourceKey; branchSeedSyncId = [string]$seed.syncId
                 branchSeedArtifactKind = [string]$seed.artifactKind; branchSeedConfigurationFingerprint = [string]$seed.configurationFingerprint
                 branchSeedBaselinePath = [string]$seed.baselinePath; branchSeedBaselineHash = [string]$seed.baselineHash; branchSeedBaselineCount = [int]$seed.baselineCount
@@ -13627,7 +13673,9 @@ function Reset-DevBranch {
             Sync-DevBranchContextToDotEnv -State $state
             $repairStatePath = Join-Path $script:ProjectRoot ".agent-1c\verification-repair\current.json"
             Remove-Item -LiteralPath $repairStatePath -Force -ErrorAction SilentlyContinue
-            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            $completion = @{ resetStatus = "complete"; resetPhase = "complete"; resetCompletedAt = (Get-Date).ToString("o") }
+            Add-PendingDevBranchMergeClearUpdates -Updates $completion
+            Update-DevBranchState -State (Read-DevBranchState -Name $DevBranchName) -Updates $completion
         }
 
         $completed = Read-DevBranchState -Name $DevBranchName
@@ -13639,6 +13687,9 @@ function Reset-DevBranch {
         Add-RunUserReportLine -Lines $report -Label "Новый HEAD" -Value ([string]$completed.resetNewHead)
         Add-RunUserReportLine -Lines $report -Label "Коммит master" -Value ([string]$completed.resetMasterCommit)
         Add-RunUserReportLine -Lines $report -Label "База ветки" -Value ([string]$completed.devBranchInfoBasePath)
+        if ($completed.resetDiscardedRefreshOperation) {
+            Add-RunUserReportLine -Lines $report -Label "Отброшен сбросом refresh" -Value ([string]$completed.resetDiscardedRefreshOperation)
+        }
         $report.Add("")
         $report.Add("Архив не отслеживается Git. Если он больше не нужен, освободите место вручную по указанному полному пути.")
         Write-AndSetRunUserReport -Lines $report

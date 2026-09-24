@@ -2486,6 +2486,44 @@ exit 0
         $result.checkpointCalled | Should -BeFalse
     }
 
+    It 'rejects reset before checkpoint when the pending refresh is not a proven completed merge (<Case>)' -TestCases @(
+        @{ Case = 'active-merge'; Expected = 'RESET_DEV_BRANCH_GIT_MERGE_IN_PROGRESS' },
+        @{ Case = 'conflicts'; Expected = 'RESET_DEV_BRANCH_REFRESH_NOT_MERGED' },
+        @{ Case = 'other-operation'; Expected = 'LIFECYCLE_MERGE_OPERATION_MISMATCH' },
+        @{ Case = 'unrelated-head'; Expected = 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+    ) {
+        param($Case, $Expected)
+        $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+        try {
+            if ($Case -eq 'active-merge') {
+                $mergeHeadPath = (& git -C $fixture.root rev-parse --git-path MERGE_HEAD).Trim()
+                if (-not [IO.Path]::IsPathRooted($mergeHeadPath)) { $mergeHeadPath = Join-Path $fixture.root $mergeHeadPath }
+                Set-Content -LiteralPath $mergeHeadPath -Encoding ASCII -Value $fixture.targetCommit
+            } elseif ($Case -eq 'unrelated-head') {
+                & git -C $fixture.root reset --hard $fixture.branchCommit *> $null
+            }
+            $message = & {
+                param($Fixture, $Case)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $state = [pscustomobject]@{
+                    devBranch = 'itldev/test'; pendingMergeOperation = 'refresh-dev-branch'
+                    pendingMergeBranch = 'itldev/test'; pendingMergeBranchCommit = $Fixture.branchCommit
+                    pendingMergeTargetCommit = $Fixture.targetCommit; pendingMergeStage = 'merged'
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit
+                    pendingMergeResult = 'merge-commit'; pendingRefreshOperation = 'refresh-dev-branch'
+                    pendingRefreshMasterCommit = $Fixture.targetCommit
+                }
+                if ($Case -eq 'conflicts') { $state.pendingMergeStage = 'conflicts' }
+                if ($Case -eq 'other-operation') { $state.pendingMergeOperation = 'close-dev-branch' }
+                try { Assert-DevBranchResetPendingRefresh -State $state | Out-Null; '' }
+                catch { $_.Exception.Message }
+            } $fixture $Case
+            $message | Should -Match "^$Expected"
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "validates the reset seed only after acquiring its reader lease for <Kind>" -ForEach @(
         @{ Kind = 'file' }, @{ Kind = 'server' }
     ) {
@@ -7802,15 +7840,17 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It 'does not offer corrective verification for an unrelated HEAD, branch, operation or checkpoint' {
-        foreach ($case in @('unrelated-head', 'other-branch', 'other-operation', 'invalid-checkpoint', 'missing-checkpoint')) {
-            $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+    It 'rejects an unrelated HEAD, branch, operation, merge, dirty tree or invalid checkpoint' {
+        foreach ($case in @('unrelated-head', 'other-branch', 'other-operation', 'invalid-checkpoint', 'missing-checkpoint', 'new-merge', 'dirty-tree', 'tampered-merge')) {
+            $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead $(if ($case -eq 'new-merge') { 'merge' } else { 'extra' })
             try {
                 if ($case -eq 'unrelated-head') {
                     # This freshly created fixture owns the whole temporary repository.
                     & git -C $fixture.root reset --hard $fixture.branchCommit *> $null
                 } elseif ($case -eq 'other-branch') {
                     & git -C $fixture.root checkout --quiet -b itldev/other
+                } elseif ($case -eq 'dirty-tree') {
+                    Set-Content -LiteralPath (Join-Path $fixture.root 'branch.txt') -Encoding UTF8 -Value 'uncommitted repair'
                 }
                 $result = & {
                     param($Fixture, $Case)
@@ -7825,6 +7865,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     }
                     if ($Case -eq 'invalid-checkpoint') { $script:MergeState.pendingMergePostMergeHead = $Fixture.branchCommit }
                     if ($Case -eq 'missing-checkpoint') { $script:MergeState.pendingMergePostMergeHead = '' }
+                    if ($Case -eq 'tampered-merge') { $script:MergeState.pendingMergeCommit = $Fixture.branchCommit }
                     function Read-DevBranchState { return $script:MergeState }
                     function Update-DevBranchState { throw 'UNEXPECTED_STATE_CHANGE' }
                     function Restart-Agent1cAfterDevBranchMerge { throw 'UNEXPECTED_RESTART' }
@@ -7847,6 +7888,9 @@ if (`$?) { exit 0 } else { exit 1 }
                     'other-operation' { 'LIFECYCLE_MERGE_OPERATION_MISMATCH' }
                     'invalid-checkpoint' { 'LIFECYCLE_MERGE_POST_HEAD_INVALID' }
                     'missing-checkpoint' { 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+                    'new-merge' { 'LIFECYCLE_MERGE_POST_HEAD_MISMATCH' }
+                    'dirty-tree' { 'Git worktree is not clean' }
+                    'tampered-merge' { 'LIFECYCLE_MERGE_RESULT_MISMATCH' }
                 }
                 $result.message | Should -Match "^$expectedCode" -Because $case
                 $result.requiredAction | Should -BeNullOrEmpty -Because $case
@@ -7858,21 +7902,23 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It 'completes a pending refresh on a corrective descendant only after fresh full verification (<Checkpoint>)' -TestCases @(
-        @{ Checkpoint = 'merge' }, @{ Checkpoint = 'cursor' }
+    It 'resumes the original refresh on a corrective descendant without changing failed verification (<Operation>, <Checkpoint>)' -TestCases @(
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite' }
     ) {
-        param($Checkpoint)
+        param($Checkpoint, $Operation)
         $fixture = if ($Checkpoint -eq 'merge') {
             New-LifecyclePostMergeCursorFixture -Subject 'fix: warn on unbound form commands in local validation' -ChangedPath foreign
         } else { New-LifecyclePostMergeCursorFixture -AdditionalHead extra }
         try {
             $result = & {
-                param($Fixture, $Checkpoint)
+                param($Fixture, $Checkpoint, $Operation)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
                     safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
-                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeOperation = $Operation; pendingMergeBranch = "itldev/test"
                     pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
                     pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
                     pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
@@ -7894,21 +7940,25 @@ if (`$?) { exit 0 } else { exit 1 }
                 }
 
                 function Read-DevBranchState { return $script:MergeState }
-                function Restart-Agent1cAfterDevBranchMerge { throw 'UNEXPECTED_RESTART' }
+                function Restart-Agent1cAfterDevBranchMerge { throw 'RESTART_AFTER_MERGE' }
                 $before = $script:MergeState | ConvertTo-Json -Depth 5 -Compress
                 $resumeMessage = ''
                 try {
-                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation 'refresh-dev-branch' -ConflictStage 'refresh.merge-conflicts' | Out-Null
+                    Resume-DevBranchLifecycleMergeIfPresent -State $script:MergeState -Operation $Operation -ConflictStage 'refresh.merge-conflicts' | Out-Null
                 } catch { $resumeMessage = $_.Exception.Message }
+                $postMerge = Assert-DevBranchLifecycleMergePostMerge -State $script:MergeState -Operation $Operation
                 $RunStatusPath = Join-Path $Fixture.root '.agent-1c/corrective-resume.json'
                 Write-RunStatus -Status failed -ExitCode 1 -ErrorMessage $resumeMessage
                 $failureStatus = Get-Content -LiteralPath $RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
                 $premature = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation 'check-dev-branch'
                 $unchangedBeforeProof = ($before -ceq ($script:MergeState | ConvertTo-Json -Depth 5 -Compress))
+                $failedVerification = $script:MergeState.lastVerificationStatus
                 $script:MergeState.lastVerificationStatus = 'passed'
                 $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
                 [pscustomobject]@{
                     failureStatus = $failureStatus
+                    postMergeTarget = $postMerge.targetCommit
+                    failedVerification = $failedVerification
                     premature = $premature
                     unchangedBeforeProof = $unchangedBeforeProof
                     completed = $completed
@@ -7919,19 +7969,20 @@ if (`$?) { exit 0 } else { exit 1 }
                     recoveredHead = $script:MergeState.lastRefreshRecoveredHead
                     currentHead = Get-CurrentCommit
                 }
-            } $fixture $Checkpoint
+            } $fixture $Checkpoint $Operation
 
             $result.failureStatus.status | Should -Be 'failed'
             $result.failureStatus.exitCode | Should -Be 1
-            $result.failureStatus.requiredAction | Should -Be '/itl-check'
-            $result.failureStatus.errorMessage | Should -Match '^LIFECYCLE_MERGE_POST_HEAD_MISMATCH'
-            $result.failureStatus.errorMessage | Should -Match 'fresh full verification'
+            $result.failureStatus.requiredAction | Should -BeNullOrEmpty
+            $result.failureStatus.errorMessage | Should -Be 'RESTART_AFTER_MERGE'
+            $result.postMergeTarget | Should -Be $fixture.targetCommit
+            $result.failedVerification | Should -Be 'failed'
             $result.premature | Should -BeFalse
             $result.unchangedBeforeProof | Should -BeTrue
             $result.completed | Should -BeTrue
             $result.pendingOperation | Should -BeNullOrEmpty
             $result.refreshCommit | Should -Be $fixture.targetCommit
-            $result.refreshMode | Should -Be "full"
+            $result.refreshMode | Should -Be $(if ($Operation -eq 'refresh-dev-branch') { 'full' } else { 'lite' })
             $result.recoveryOperation | Should -Be "check-dev-branch"
             $result.recoveredHead | Should -Be $fixture.head
             $result.currentHead | Should -Be $fixture.head
@@ -8520,6 +8571,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $LifecyclePhase = "post-merge"
             $script:PostconditionCalls = 0
             $state = [pscustomobject]@{
+                pendingMergeOperation = 'refresh-dev-branch'
                 pendingRefreshMasterCommit = ("a" * 40)
                 devBranchInfoBasePath = "D:\fixture\base"
                 infoBaseKind = "file"
@@ -8548,10 +8600,71 @@ if (`$?) { exit 0 } else { exit 1 }
             function Complete-RefreshConfigDumpInfoPostcondition { $script:PostconditionCalls++ }
             $message = ""
             try { Invoke-RefreshDevBranchCore -OperationName "refresh-dev-branch" } catch { $message = $_.Exception.Message }
-            [pscustomobject]@{ message = $message; postconditionCalls = $script:PostconditionCalls }
+            [pscustomobject]@{ message = $message; postconditionCalls = $script:PostconditionCalls; pendingOperation = $state.pendingMergeOperation }
         }
         $result.message | Should -Be "simulated load failure after ConfigDumpInfo rollback"
         $result.postconditionCalls | Should -Be 0
+        $result.pendingOperation | Should -Be 'refresh-dev-branch'
+    }
+
+    It 'clears the original refresh only after its successful post-merge load and preserves failed verification' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $LifecyclePhase = 'post-merge'
+            $DevBranchName = 'test'
+            $state = [pscustomobject]@{
+                devBranch = 'itldev/test'; devBranchKind = 'configuration'
+                devBranchInfoBasePath = 'D:\fixture\base'; infoBaseKind = 'file'
+                yaxunitApplicabilityBaseline = @{ schemaVersion = 1 }
+                pendingMergeOperation = 'refresh-dev-branch'; pendingMergeTargetCommit = ('a' * 40)
+                pendingRefreshOperation = 'refresh-dev-branch'; pendingRefreshMasterCommit = ('a' * 40)
+                lastVerificationStatus = 'failed'
+            }
+            function Read-DevBranchState { $state }
+            function Update-DevBranchState {
+                param($State, [hashtable]$Updates)
+                foreach ($key in $Updates.Keys) { $State | Add-Member -NotePropertyName $key -NotePropertyValue $Updates[$key] -Force }
+            }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchExtensionInitialized {}
+            function Assert-DevBranchLifecycleMergePostMerge { [pscustomobject]@{ targetCommit = ('a' * 40); branchCommit = ('b' * 40); repairPaths = @() } }
+            function Sync-DevBranchContextToDotEnv {}
+            function Sync-AiRules1cManagedIgnoredFilesFromMain {}
+            function Sync-WorkflowManagedDependencyLockEntries {}
+            function Update-VerificationSuiteInventory { [pscustomobject]@{ yaxunit = @{ legacyBaseline = $false }; classificationComplete = $true; classificationIssues = @() } }
+            function Install-VanessaAutomation {}
+            function Get-RoctupMcpEnabled { $false }
+            function Install-VanessaMcpArtifacts {}
+            function Install-ItlOnDemandMcp {}
+            function Set-RunStage {}
+            function New-RefreshTrackedKiloConfigSnapshot { $null }
+            function Restore-RefreshTrackedKiloConfigSnapshot {}
+            function Invoke-DevBranchDefaultMcpSetup { param($State) $State }
+            function Load-ConfigFromFiles { [pscustomobject]@{ currentCommit = ('c' * 40) } }
+            function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {}
+            function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param($State) $State }
+            function Sync-KiloItlCommandSurface {}
+            function Invoke-AiRules1cManagedMcpConfigReconcile {}
+            function Complete-RefreshConfigDumpInfoPostcondition {}
+            function Set-ItlOnDemandMcpSemanticReloadRequiredAction {}
+            function Set-VerificationClassificationRequiredAction {}
+            function New-LoadStateUpdates { @{} }
+            function Get-VerificationClassificationInventoryPath { 'fixture-inventory.json' }
+            function Get-VerificationState { [pscustomobject]@{ status = 'failed'; currentFingerprint = 'fixture' } }
+            function Write-BaseUpdateResult {}
+            function Write-DevBranchRunUserReport {}
+            Invoke-RefreshDevBranchCore -OperationName 'refresh-dev-branch'
+            [pscustomobject]@{
+                pendingOperation = $state.pendingMergeOperation
+                pendingRefresh = $state.pendingRefreshOperation
+                refreshTarget = $state.lastRefreshMasterCommit
+                verification = $state.lastVerificationStatus
+            }
+        }
+        $result.pendingOperation | Should -BeNullOrEmpty
+        $result.pendingRefresh | Should -BeNullOrEmpty
+        $result.refreshTarget | Should -Be ('a' * 40)
+        $result.verification | Should -Be 'failed'
     }
 
     It "limits a new worktree path to 50 characters and reports the available branch name length" {
