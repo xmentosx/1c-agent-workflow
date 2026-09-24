@@ -408,7 +408,7 @@ function Set-RunResultArtifacts {
 
 function Set-RunFailureContext {
     param(
-        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "runner", "event-log", "session-capacity", "infobase-readiness", "execution-conflict", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
+        [ValidateSet("", "missing-suite", "test-fixture", "unsupported-step", "scenario-context", "product-assertion", "product-update", "runner", "event-log", "session-capacity", "infobase-readiness", "execution-conflict", "ai-rules-migration-blocked", "merge-conflict", "source-integrity", "config-load-failed", "refresh-target", "branch-aggregate")]
         [string]$Category = "",
         [string]$RequiredAction = ""
     )
@@ -436,6 +436,27 @@ function Set-RunFailureContextFromMessage {
     }
     if ($Message -match '^(?i:ITL_INFOBASE_APPLICATION_NOT_READY)\b') {
         Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
+        return
+    }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_AUTO_UPDATE_FAILED)\b') {
+        $recovery = if ($RequestedAction -like "*auxiliary-contour*") {
+            "fix-update-handler-then-run-update-auxiliary-contour"
+        } else {
+            "fix-update-handler-then-run-update-dev-branch-base"
+        }
+        Set-RunFailureContext -Category "product-update" -RequiredAction $recovery
+        return
+    }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_AUTO_UPDATE_(?:PROOF_MISSING|NATIVE_FAILED))\b') {
+        Set-RunFailureContext -Category "runner" -RequiredAction "inspect-auto-update-result"
+        return
+    }
+    if ($Message -match '^(?i:ITL_ENTERPRISE_NORMALIZATION_(?:PROOF_UNVERIFIED|RETRY_REQUIRED))\b') {
+        Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-dev-branch-base"
+        return
+    }
+    if ($Message -match '^(?i:ITL_AUXILIARY_(?:NORMALIZATION_(?:PROOF_UNVERIFIED|RETRY_REQUIRED)|INFOBASE_NOT_READY))\b') {
+        Set-RunFailureContext -Category "infobase-readiness" -RequiredAction "update-auxiliary-contour"
         return
     }
     if ($Message -match '^(?i:EXECUTION_GUARD_(?:EXTERNAL_CONFLICT|WAIT_TIMEOUT))\b') {

@@ -166,7 +166,7 @@
                 $contour = Get-AuxiliaryContour -Name exchange
                 $connection = Get-AuxiliaryContourConnection -Contour $contour
                 $source = Get-AuxiliaryContourFingerprint -Contour $contour
-                Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined } | Out-Null
+                Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined; enterpriseNormalizationStatus = "passed"; enterpriseNormalizationProofVersion = 1 } | Out-Null
                 $profile = [pscustomobject]@{ name = "Receiver"; contour = "exchange"; user = ""; password = "" }
                 Get-VanessaTestClientProfileConnection -Profile $profile -DefaultState ([pscustomobject]@{ infoBaseKind = "file"; devBranchInfoBasePath = (Join-Path $root "primary") })
             }
@@ -187,7 +187,7 @@
                 $contour = Get-AuxiliaryContour -Name exchange
                 $connection = Get-AuxiliaryContourConnection -Contour $contour
                 $source = Get-AuxiliaryContourFingerprint -Contour $contour
-                Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined } | Out-Null
+                Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined; enterpriseNormalizationStatus = "passed"; enterpriseNormalizationProofVersion = 1 } | Out-Null
                 $primary = [pscustomobject]@{
                     devBranchName = "auxiliary-fixture"
                     safeDevBranchName = "auxiliary-fixture"
@@ -267,8 +267,42 @@
             $auxiliary = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.auxiliary.ps1") -Raw -Encoding UTF8
             $update = [regex]::Match($auxiliary, '(?s)function Update-AuxiliaryContour \{(?<body>.*?)(?=\nfunction Invoke-AuxiliaryConfigurationDump)').Groups['body'].Value
             $update.IndexOf('Ensure-AuxiliaryContourUnsafeActionProtection') | Should -BeGreaterThan -1
-            $update.IndexOf('Ensure-AuxiliaryContourUnsafeActionProtection') | Should -BeLessThan $update.IndexOf('Invoke-Enterprise')
+            $update.IndexOf('Ensure-AuxiliaryContourUnsafeActionProtection') | Should -BeLessThan $update.IndexOf('Invoke-DevBranchEnterpriseAutoUpdate')
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "does not accept or silently replay a legacy ready auxiliary contour without update proof" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Saved = 0
+            $script:Contour = [pscustomobject]@{ name = "aux"; baseMode = "managed-file"; sourceMode = "load-only" }
+            $script:Connection = [pscustomobject]@{ kind = "file"; path = "C:\bases\aux"; identityHash = "same"; user = ""; password = "" }
+            $script:State = [pscustomobject]@{ readinessStatus = "ready"; connectionIdentityHash = "same"; sourceFingerprint = "same"; enterpriseNormalizationStatus = "passed" }
+            function Get-AuxiliaryContour { $script:Contour }
+            function Get-AuxiliaryContourConnection { $script:Connection }
+            function Get-AuxiliaryContourFingerprint { [pscustomobject]@{ combined = "same" } }
+            function Read-AuxiliaryContourState { $script:State }
+            function Ensure-AuxiliaryManagedInfoBase {}
+            function Ensure-AuxiliaryContourUnsafeActionProtection {}
+            function Assert-AuxiliaryContourMutationAllowed {}
+            function Save-AuxiliaryContourState { $script:Saved++ }
+            $Action = "check-auxiliary-contour"
+            $readiness = try { Assert-AuxiliaryContourReady -Contour $script:Contour -Operation "check" | Out-Null; "" } catch { $_.Exception.Message }
+            $update = try { Update-AuxiliaryContour; "" } catch { $_.Exception.Message }
+            $script:State.readinessStatus = "failed"
+            $script:State.enterpriseNormalizationStatus = "failed"
+            $failedRetry = try { Update-AuxiliaryContour; "" } catch { $_.Exception.Message }
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message $failedRetry -RequestedAction "check-auxiliary-contour"
+            [pscustomobject]@{ readiness = $readiness; update = $update; failedRetry = $failedRetry; saved = $script:Saved; category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+        }
+        $result.readiness | Should -Match "ITL_AUXILIARY_INFOBASE_NOT_READY"
+        $result.update | Should -Match "ITL_AUXILIARY_NORMALIZATION_PROOF_UNVERIFIED"
+        $result.failedRetry | Should -Match "ITL_AUXILIARY_NORMALIZATION_RETRY_REQUIRED"
+        $result.saved | Should -Be 0
+        $result.category | Should -Be "infobase-readiness"
+        $result.requiredAction | Should -Be "update-auxiliary-contour"
     }
 
     It "passes explicit auxiliary credentials through the shared unsafe-action prompt" {

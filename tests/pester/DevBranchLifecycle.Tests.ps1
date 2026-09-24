@@ -421,8 +421,32 @@ exit 0
             $fakePlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8.cmd"
             $fakeThinPlatform = Join-Path $TargetRoot "source-base\test-platform\1cv8c.cmd"
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fakePlatform) | Out-Null
-            Set-Content -LiteralPath $fakePlatform -Encoding ASCII -Value "@exit /b 0"
-            Set-Content -LiteralPath $fakeThinPlatform -Encoding ASCII -Value "@exit /b 0"
+            $writeProof = @'
+$paramsPath = $env:ITL_PROOF_PARAMS
+if (-not $paramsPath -or -not (Test-Path -LiteralPath $paramsPath -PathType Leaf)) { exit 0 }
+try {
+    $request = Get-Content -LiteralPath $paramsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($request.runId -and $request.outputPath) {
+        @{ schemaVersion = 1; runId = $request.runId; status = 'passed'; updateResult = 'Успешно'; errorMessage = ''; errorDetails = '' } |
+            ConvertTo-Json -Compress | Set-Content -LiteralPath $request.outputPath -Encoding UTF8
+    }
+} catch { exit 1 }
+'@
+            $encodedProof = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($writeProof))
+            $fakeScript = @"
+@echo off
+:nextArg
+if "%~1"=="" exit /b 0
+if /I "%~1"=="/C" (
+  set "ITL_PROOF_PARAMS=%~2"
+  powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand $encodedProof
+  exit /b %ERRORLEVEL%
+)
+shift
+goto nextArg
+"@
+            [IO.File]::WriteAllText($fakePlatform, $fakeScript, [Text.Encoding]::ASCII)
+            [IO.File]::WriteAllText($fakeThinPlatform, $fakeScript, [Text.Encoding]::ASCII)
             return $fakePlatform
         }
 
@@ -625,11 +649,17 @@ exit 0
                     param(
                         [string]$InfoBasePath,
                         [string]$InfoBaseKind,
+                        [string]$User,
+                        [string]$Password,
                         [string[]]$EnterpriseArgs,
                         [switch]$RequireOwnedProcessRelease,
                         [int]$TimeoutSeconds
                     )
                     $script:LastLogPath = "C:\logs\enterprise-auto-update.log"
+                    $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
+                    $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                    @{ schemaVersion = 1; runId = $runParams.runId; status = "passed"; updateResult = "Успешно"; errorMessage = ""; errorDetails = "" } |
+                        ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
                     $script:EnterpriseCalls += [pscustomobject]@{
                         infoBasePath = $InfoBasePath
                         infoBaseKind = $InfoBaseKind
@@ -666,13 +696,24 @@ exit 0
             $enterpriseCalls.calls[0].infoBasePath | Should -Be "C:\bases\branch"
             $enterpriseCalls.calls[0].infoBaseKind | Should -Be "file"
             $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/Execute"
+            $enterpriseCalls.calls[0].enterpriseArgs | Should -Contain "/C"
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf)
             $enterpriseCalls.calls[0].enterpriseArgs[1] | Should -Not -Be (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf)
             $enterpriseCalls.calls[0].timeoutSeconds | Should -Be 900
             $enterpriseCalls.calls[0].requireOwnedProcessRelease | Should -BeTrue
             $enterpriseCalls.updates["lastEnterpriseAutoUpdateLogPath"] | Should -Be "C:\logs\enterprise-auto-update.log"
+            $enterpriseCalls.updates["enterpriseNormalizationProofVersion"] | Should -Be 1
+            $enterpriseCalls.updates["lastEnterpriseAutoUpdateResultPath"] | Should -Match '\.result\.json$'
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf) -PathType Leaf | Should -Be $true
             Test-Path -LiteralPath (Join-Path $enterpriseCalls.installRoot $enterpriseCalls.deferredEpf) -PathType Leaf | Should -Be $true
+            $installedMain = Join-Path $enterpriseCalls.installRoot $enterpriseCalls.mainEpf
+            $sourceMain = Join-Path $sourceRoot $enterpriseCalls.mainEpf
+            $staleBytes = [IO.File]::ReadAllBytes($installedMain)
+            $staleBytes[0] = $staleBytes[0] -bxor 1
+            [IO.File]::WriteAllBytes($installedMain, $staleBytes)
+            (Get-Item -LiteralPath $installedMain).LastWriteTime = (Get-Item -LiteralPath $sourceMain).LastWriteTime
+            & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Ensure-DevBranchAutoUpdateEpfs | Out-Null }
+            (Get-FileHash -LiteralPath $installedMain -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath $sourceMain -Algorithm SHA256).Hash
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -706,6 +747,110 @@ exit 0
 
         $enterpriseCalls.callCount | Should -Be 0
         $enterpriseCalls.updateCount | Should -Be 0
+    }
+
+    It "rejects a zero-exit Enterprise run when the EPF reports a product update error" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-auto-update-Ошибка с пробелом-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $toolRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
+            New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+            $names = & { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; Get-DevBranchAutoUpdateMainEpfName; Get-DevBranchAutoUpdateDeferredHandlersEpfName }
+            foreach ($name in $names) { Set-Content -LiteralPath (Join-Path $toolRoot $name) -Value "epf" -Encoding UTF8 }
+            $result = & {
+                param($Root)
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                function Get-SourceInfoBasePath { return "C:\bases\source" }
+                function Invoke-Enterprise {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password, [string[]]$EnterpriseArgs, [switch]$RequireOwnedProcessRelease, [int]$TimeoutSeconds)
+                    $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
+                    $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                    $script:LastLogPath = Join-Path $Root "auto-update.log"
+                    @{ schemaVersion = 1; runId = $runParams.runId; status = "failed"; updateResult = ""; errorMessage = "Тип не является подмножеством типа значений ПВХ"; errorDetails = "упо_ОбновлениеИнформационнойБазы.ПерейтиНаВерсию_5_0_3_55()" } |
+                        ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
+                }
+                $updates = @{}
+                $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+                $message = try { Ensure-DevBranchEnterpriseNormalized -State $state -Reason config-load -Updates $updates 6>$null | Out-Null; "" } catch { $_.Exception.Message }
+                [pscustomobject]@{ message = $message; updates = $updates }
+            } $tempRoot
+            $result.message | Should -Match "ITL_ENTERPRISE_AUTO_UPDATE_FAILED"
+            $result.message | Should -Match "Тип не является подмножеством"
+            $result.message | Should -Match "\.result\.json"
+            $result.updates.enterpriseNormalizationStatus | Should -Be "failed"
+            $result.updates.enterpriseNormalizationProofVersion | Should -Be 0
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "rejects missing and mismatched EPF results despite a zero native exit" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-auto-update-proof-" + [guid]::NewGuid().ToString("N"))
+        try {
+            $toolRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\tools\auto-update"
+            New-Item -ItemType Directory -Force -Path $toolRoot | Out-Null
+            $names = & { . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null; Get-DevBranchAutoUpdateMainEpfName; Get-DevBranchAutoUpdateDeferredHandlersEpfName }
+            foreach ($name in $names) { Set-Content -LiteralPath (Join-Path $toolRoot $name) -Value "epf" -Encoding UTF8 }
+            $messages = & {
+                param($Root)
+                . $HelperPath -ProjectRoot $Root -Action help *> $null
+                $script:ProofMode = "missing"
+                function Invoke-Enterprise {
+                    param([string]$InfoBasePath, [string]$InfoBaseKind, [string]$User, [string]$Password, [string[]]$EnterpriseArgs, [switch]$RequireOwnedProcessRelease, [int]$TimeoutSeconds)
+                    $script:LastLogPath = Join-Path $Root "auto-update.log"
+                    if ($script:ProofMode -eq "mismatched") {
+                        $paramsIndex = [Array]::IndexOf($EnterpriseArgs, "/C")
+                        $runParams = Get-Content -LiteralPath $EnterpriseArgs[$paramsIndex + 1] -Raw -Encoding UTF8 | ConvertFrom-Json
+                        @{ schemaVersion = 1; runId = "different-run"; status = "passed"; updateResult = "Успешно" } |
+                            ConvertTo-Json -Compress | Set-Content -LiteralPath $runParams.outputPath -Encoding UTF8
+                    }
+                }
+                $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
+                $missing = try { Invoke-DevBranchEnterpriseAutoUpdate -State $state 6>$null | Out-Null; "" } catch { $_.Exception.Message }
+                $script:ProofMode = "mismatched"
+                $mismatched = try { Invoke-DevBranchEnterpriseAutoUpdate -State $state 6>$null | Out-Null; "" } catch { $_.Exception.Message }
+                [pscustomobject]@{ missing = $missing; mismatched = $mismatched }
+            } $tempRoot
+            $messages.missing | Should -Match "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING"
+            $messages.mismatched | Should -Match "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING"
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "blocks implicit replay of a legacy passed state until the explicit base update" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = 0
+            function Ensure-DevBranchEnterpriseNormalized { $script:Calls++ }
+            $state = [pscustomobject]@{ enterpriseNormalizationStatus = "passed" }
+            $load = [pscustomobject]@{ loaded = $false; normalizationRequired = $true }
+            $Action = "check-dev-branch"
+            $message = try { Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $load -Updates @{}; "" } catch { $_.Exception.Message }
+            $before = $script:Calls
+            $Action = "update-dev-branch-base"
+            Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $load -Updates @{}
+            [pscustomobject]@{ message = $message; before = $before; after = $script:Calls }
+        }
+        $result.message | Should -Match "ITL_ENTERPRISE_NORMALIZATION_PROOF_UNVERIFIED"
+        $result.before | Should -Be 0
+        $result.after | Should -Be 1
+    }
+
+    It "blocks an implicit retry after a failed Enterprise normalization" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:Calls = 0
+            function Invoke-DevBranchEnterpriseAutoUpdate { $script:Calls++ }
+            $state = [pscustomobject]@{ enterpriseNormalizationStatus = "failed" }
+            $load = [pscustomobject]@{ loaded = $false; normalizationRequired = $true }
+            $Action = "check-dev-branch"
+            $checkError = try { Invoke-DevBranchEnterpriseAutoUpdateIfLoaded -State $state -LoadResult $load -Updates @{}; "" } catch { $_.Exception.Message }
+            $publicationError = try { Ensure-DevBranchEnterpriseNormalized -State $state -Reason legacy-preflight | Out-Null; "" } catch { $_.Exception.Message }
+            [pscustomobject]@{ checkError = $checkError; publicationError = $publicationError; calls = $script:Calls }
+        }
+        $result.checkError | Should -Match "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED"
+        $result.publicationError | Should -Match "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED"
+        $result.calls | Should -Be 0
     }
 
     It "propagates dev branch Enterprise auto-update failures" {
@@ -745,7 +890,7 @@ exit 0
             function Invoke-DevBranchEnterpriseAutoUpdate {
                 param([object]$State)
                 $script:Calls++
-                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; updatedAt = "2026-07-13T12:00:00+03:00" }
+                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; resultPath = "C:\logs\enterprise.result.json"; updatedAt = "2026-07-13T12:00:00+03:00" }
             }
             $updates = @{}
             $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
@@ -779,7 +924,7 @@ exit 0
                 $script:PersistedStatuses = [System.Collections.Generic.List[string]]::new()
                 function Get-SourceInfoBasePath { return "C:\bases\source" }
                 function Invoke-DevBranchEnterpriseAutoUpdate {
-                    [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\current-enterprise.log"; updatedAt = "2026-08-31T18:00:48+03:00" }
+                    [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\current-enterprise.log"; resultPath = "C:\logs\current-enterprise.result.json"; updatedAt = "2026-08-31T18:00:48+03:00" }
                 }
                 function Update-DevBranchState {
                     param([object]$State, [hashtable]$Updates)
@@ -823,7 +968,7 @@ exit 0
             function Get-SourceInfoBasePath { return "C:\bases\source" }
             function Invoke-DevBranchEnterpriseAutoUpdate {
                 param([object]$State)
-                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; updatedAt = "2026-08-25T12:00:00+03:00" }
+                [pscustomobject]@{ epfPath = "C:\tools\auto.epf"; logPath = "C:\logs\enterprise.log"; resultPath = "C:\logs\enterprise.result.json"; updatedAt = "2026-08-25T12:00:00+03:00" }
             }
             $updates = @{}
             $state = [pscustomobject]@{ devBranchInfoBasePath = "C:\bases\branch"; infoBaseKind = "file" }
@@ -849,6 +994,7 @@ exit 0
                 lastConfigDesignerTreeObjectId = ("a" * 40)
                 configLoadStatus = "passed"
                 enterpriseNormalizationStatus = "passed"
+                enterpriseNormalizationProofVersion = 1
             }
             try { Assert-DevBranchApplicationReady -State $state -Operation "ROCTUP" | Out-Null; "" } catch { $_.Exception.Message }
         }
@@ -871,6 +1017,31 @@ exit 0
 
         $result.category | Should -Be "infobase-readiness"
         $result.requiredAction | Should -Be "update-dev-branch-base"
+    }
+
+    It "classifies Enterprise update errors and missing proof with distinct recovery actions" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "ITL_ENTERPRISE_AUTO_UPDATE_FAILED: product handler failed" -RequestedAction "check-dev-branch"
+            $product = [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: no result" -RequestedAction "check-dev-branch"
+            $proof = [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+            $script:RunErrorCategory = ""
+            $script:RunRequiredAction = ""
+            Set-RunFailureContextFromMessage -Message "ITL_ENTERPRISE_AUTO_UPDATE_FAILED: product handler failed" -RequestedAction "check-auxiliary-contour"
+            $auxiliary = [pscustomobject]@{ category = $script:RunErrorCategory; requiredAction = $script:RunRequiredAction }
+            [pscustomobject]@{ product = $product; proof = $proof; auxiliary = $auxiliary }
+        }
+        $result.product.category | Should -Be "product-update"
+        $result.product.requiredAction | Should -Be "fix-update-handler-then-run-update-dev-branch-base"
+        $result.proof.category | Should -Be "runner"
+        $result.proof.requiredAction | Should -Be "inspect-auto-update-result"
+        $result.auxiliary.category | Should -Be "product-update"
+        $result.auxiliary.requiredAction | Should -Be "fix-update-handler-then-run-update-auxiliary-contour"
     }
 
     It "routes failed check config loads to verification repair without suggesting refresh recovery" {
@@ -905,6 +1076,7 @@ exit 0
                 lastConfigDesignerTreeObjectId = ("a" * 40)
                 configLoadStatus = "passed"
                 enterpriseNormalizationStatus = "passed"
+                enterpriseNormalizationProofVersion = 1
             }
             Assert-DevBranchApplicationReady -State $state -Operation "ROCTUP"
         }
@@ -929,6 +1101,7 @@ exit 0
                     lastConfigDesignerTreeObjectId = $State.lastConfigDesignerTreeObjectId
                     configLoadStatus = "passed"
                     enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizationProofVersion = 1
                 }
             }
             $state = [pscustomobject]@{
@@ -1822,6 +1995,7 @@ exit 0
                 $passed = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
                     lastConfigDesignerFingerprint = $fingerprint
                     enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizationProofVersion = 1
                 }) -ExportPath "src/cf" 6>$null
                 $pending = Load-ConfigFromFiles -InfoBasePath "C:\base" -InfoBaseKind file -State ([pscustomobject]@{
                     lastConfigDesignerFingerprint = $fingerprint
@@ -7880,6 +8054,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     lastVerifiedCommit = $Fixture.head; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
                     configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
                     enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizationProofVersion = 1
                 }
                 if ($Checkpoint -eq 'merge') { $script:MergeState.pendingMergePostMergeHead = $Fixture.mergeCommit }
                 function Update-DevBranchState {

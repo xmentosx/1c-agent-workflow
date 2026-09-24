@@ -224,6 +224,7 @@ Describe "1C Designer load proof invalidation" {
                     lastConfigDesignerFingerprint = "fingerprint-a"
                     configLoadStatus = "passed"
                     enterpriseNormalizationStatus = "passed"
+                    enterpriseNormalizationProofVersion = 1
                 }
                 function Get-ConfigSourceFingerprint { [pscustomobject]@{ fingerprint = "fingerprint-a"; fileCount = 1; absoluteExportPath = "C:\src" } }
                 function Get-CurrentCommit { "head" }

@@ -1983,7 +1983,8 @@ function Ensure-DevBranchAutoUpdateEpfs {
         if (-not $needsCopy) {
             $sourceFile = Get-Item -LiteralPath $sourcePath
             $targetFile = Get-Item -LiteralPath $targetPath
-            if ($sourceFile.LastWriteTime -gt $targetFile.LastWriteTime -or $sourceFile.Length -ne $targetFile.Length) {
+            if ($sourceFile.LastWriteTime -gt $targetFile.LastWriteTime -or $sourceFile.Length -ne $targetFile.Length -or
+                (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash) {
                 $needsCopy = $true
             }
         }
@@ -2011,24 +2012,80 @@ function Get-DevBranchAutoUpdateTimeoutSeconds {
 }
 
 function Invoke-DevBranchEnterpriseAutoUpdate {
-    param([object]$State)
+    param(
+        [object]$State,
+        [string]$User = (Get-EnvValue -Name "IB_USER"),
+        [string]$Password = (Get-EnvValue -Name "IB_PASSWORD"),
+        [ValidateSet("update-dev-branch-base", "update-auxiliary-contour")]
+        [string]$RecoveryAction = "update-dev-branch-base"
+    )
 
     $epfPath = Ensure-DevBranchAutoUpdateEpfs
     $timeoutSeconds = Get-DevBranchAutoUpdateTimeoutSeconds
+    $runId = [guid]::NewGuid().ToString("N")
+    $proofRoot = Resolve-ProjectPath ".agent-1c/runs/auto-update"
+    New-Item -ItemType Directory -Force -Path $proofRoot | Out-Null
+    $paramsPath = Join-Path $proofRoot "$runId.params.json"
+    $resultPath = Join-Path $proofRoot "$runId.result.json"
+    Write-Utf8TextAtomic -Path $paramsPath -Value ((@{ runId = $runId; outputPath = $resultPath } | ConvertTo-Json -Compress) + [Environment]::NewLine)
+    $script:LastEnterpriseAutoUpdateResultPath = $resultPath
     Write-Host "Running development branch Enterprise auto-update: $epfPath"
     Write-Host "Development branch Enterprise auto-update timeout: $timeoutSeconds seconds"
-    Invoke-Enterprise `
-        -InfoBasePath $State.devBranchInfoBasePath `
-        -InfoBaseKind $State.infoBaseKind `
-        -EnterpriseArgs @("/Execute", $epfPath) `
-        -RequireOwnedProcessRelease `
-        -TimeoutSeconds $timeoutSeconds | Out-Null
+    $nativeError = $null
+    try {
+        Invoke-Enterprise `
+            -InfoBasePath $State.devBranchInfoBasePath `
+            -InfoBaseKind $State.infoBaseKind `
+            -User $User `
+            -Password $Password `
+            -EnterpriseArgs @("/Execute", $epfPath, "/C", $paramsPath) `
+            -RequireOwnedProcessRelease `
+            -TimeoutSeconds $timeoutSeconds | Out-Null
+    } catch {
+        $nativeError = $_.Exception.Message
+    }
+
+    $proof = $null
+    try {
+        if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+            throw "result file was not created"
+        }
+        $proof = Read-Utf8Text -Path $resultPath | ConvertFrom-Json -ErrorAction Stop
+        if ([int](Get-StateValue -State $proof -Name "schemaVersion" -Default 0) -ne 1 -or
+            [string](Get-StateValue -State $proof -Name "runId" -Default "") -cne $runId) {
+            throw "result schema or run ID does not match this launch"
+        }
+        $status = [string](Get-StateValue -State $proof -Name "status" -Default "")
+        $updateResult = [string](Get-StateValue -State $proof -Name "updateResult" -Default "")
+        if ($status -notin @("passed", "failed") -or ($status -eq "passed" -and $updateResult -notin @("Успешно", "НеТребуется"))) {
+            throw "result status or update outcome is invalid"
+        }
+    } catch {
+        $nativeDetail = if ($nativeError) { " nativeError='$nativeError'" } else { "" }
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: $($_.Exception.Message); result='$resultPath' log='$script:LastLogPath'.$nativeDetail requiredAction=inspect-auto-update-result."
+    }
+    if ($proof.status -ne "passed") {
+        $detail = [string](Get-StateValue -State $proof -Name "errorMessage" -Default "")
+        $detail = ($detail -replace '[\r\n]+', ' ').Replace("'", "")
+        if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_FAILED: updateResult='$($proof.updateResult)' error='$detail' result='$resultPath' log='$script:LastLogPath' requiredAction=fix-update-handler-then-run-${RecoveryAction}."
+    }
+    if ($nativeError) {
+        throw "ITL_ENTERPRISE_AUTO_UPDATE_NATIVE_FAILED: $nativeError result='$resultPath' log='$script:LastLogPath' requiredAction=inspect-auto-update-result."
+    }
 
     return [pscustomobject]@{
         epfPath = $epfPath
         logPath = $script:LastLogPath
+        resultPath = $resultPath
         updatedAt = (Get-Date).ToString("o")
     }
+}
+
+function Test-DevBranchEnterpriseNormalizationProved {
+    param([object]$State)
+    return ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "passed" -and
+        [int](Get-StateValue -State $State -Name "enterpriseNormalizationProofVersion" -Default 0) -eq 1)
 }
 
 function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
@@ -2041,6 +2098,15 @@ function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {
     $normalizationRequired = $LoadResult.PSObject.Properties.Match("normalizationRequired").Count -gt 0 -and [bool]$LoadResult.normalizationRequired
     if (-not $LoadResult.loaded -and -not $normalizationRequired) {
         return
+    }
+    if (-not $LoadResult.loaded -and
+        [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "passed" -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State) -and $Action -ne "update-dev-branch-base") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_PROOF_UNVERIFIED: prior passed state has no run result; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if (-not $LoadResult.loaded -and
+        [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -eq "failed" -and $Action -ne "update-dev-branch-base") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED: prior Enterprise normalization failed; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
     }
 
     Ensure-DevBranchEnterpriseNormalized -State $State -Reason "config-load" -Updates $Updates | Out-Null
@@ -2079,7 +2145,14 @@ function Ensure-DevBranchEnterpriseNormalized {
     )
 
     $currentStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
-    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "passed") {
+    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "passed" -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        throw "ITL_ENTERPRISE_NORMALIZATION_PROOF_UNVERIFIED: prior passed state has no run result; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if ($Reason -eq "legacy-preflight" -and $currentStatus -eq "failed") {
+        throw "ITL_ENTERPRISE_NORMALIZATION_RETRY_REQUIRED: prior Enterprise normalization failed; requiredAction=update-dev-branch-base. No automatic Enterprise replay was started."
+    }
+    if ($Reason -eq "legacy-preflight" -and (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $State
     }
 
@@ -2090,8 +2163,10 @@ function Ensure-DevBranchEnterpriseNormalized {
     $canPersistImmediately = $statePath -and (Test-Path -LiteralPath $statePath -PathType Leaf -ErrorAction SilentlyContinue)
     $pending = @{
         enterpriseNormalizationStatus = "pending"
+        enterpriseNormalizationProofVersion = 0
         enterpriseNormalizationReason = $Reason
         enterpriseNormalizationError = ""
+        enterpriseNormalizedAt = ""
     }
     if ($canPersistImmediately) {
         Update-DevBranchState -State $State -Updates $pending
@@ -2099,14 +2174,19 @@ function Ensure-DevBranchEnterpriseNormalized {
 
     try {
         $autoUpdateResult = Invoke-DevBranchEnterpriseAutoUpdate -State $State
+        if (-not [string](Get-StateValue -State $autoUpdateResult -Name "resultPath" -Default "")) {
+            throw "ITL_ENTERPRISE_AUTO_UPDATE_PROOF_MISSING: Enterprise normalization returned no run result path."
+        }
         $passed = @{
             enterpriseNormalizationStatus = "passed"
+            enterpriseNormalizationProofVersion = 1
             enterpriseNormalizationReason = $Reason
             enterpriseNormalizationError = ""
             enterpriseNormalizedAt = $autoUpdateResult.updatedAt
             lastEnterpriseAutoUpdateAt = $autoUpdateResult.updatedAt
             lastEnterpriseAutoUpdateLogPath = $autoUpdateResult.logPath
             lastEnterpriseAutoUpdateEpfPath = $autoUpdateResult.epfPath
+            lastEnterpriseAutoUpdateResultPath = $autoUpdateResult.resultPath
         }
         if ($autoUpdateResult.logPath) {
             $passed["lastLogPath"] = $autoUpdateResult.logPath
@@ -2118,12 +2198,19 @@ function Ensure-DevBranchEnterpriseNormalized {
             Update-DevBranchState -State $State -Updates $passed
         }
     } catch {
+        $failed = @{
+            enterpriseNormalizationStatus = "failed"
+            enterpriseNormalizationProofVersion = 0
+            enterpriseNormalizationReason = $Reason
+            enterpriseNormalizationError = $_.Exception.Message
+            lastEnterpriseAutoUpdateResultPath = [string]$script:LastEnterpriseAutoUpdateResultPath
+            lastEnterpriseAutoUpdateLogPath = [string]$script:LastLogPath
+        }
+        if ($null -ne $Updates) {
+            foreach ($key in $failed.Keys) { $Updates[$key] = $failed[$key] }
+        }
         if ($canPersistImmediately) {
-            Update-DevBranchState -State $State -Updates @{
-                enterpriseNormalizationStatus = "failed"
-                enterpriseNormalizationReason = $Reason
-                enterpriseNormalizationError = $_.Exception.Message
-            }
+            Update-DevBranchState -State $State -Updates $failed
         }
         throw
     }
@@ -2166,8 +2253,8 @@ function Assert-DevBranchApplicationReady {
     if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
         $State = Ensure-DevBranchEnterpriseNormalized -State $State -Reason "legacy-preflight"
     }
-    if ([string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "") -ne "passed") {
-        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='enterprise-normalization-not-passed' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
+    if (-not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        throw "ITL_INFOBASE_APPLICATION_NOT_READY: operation='$Operation' reasons='enterprise-normalization-proof-unverified' requiredAction=update-dev-branch-base retryAction=repeat-original-operation-once."
     }
     return $State
 }
@@ -2760,7 +2847,7 @@ function Load-ConfigFromFiles {
     $loadProofInvalidated = (-not $previousFingerprint -and $configLoadStatus -and $configLoadStatus -notin @("passed", "fallback-succeeded"))
 
     if ($Mode -ne "Full" -and $previousFingerprint -and $previousFingerprint -eq $source.fingerprint) {
-        $normalizationRequired = $normalizationStatus -ne "passed"
+        $normalizationRequired = -not (Test-DevBranchEnterpriseNormalizationProved -State $State)
         $reason = if ($normalizationRequired) { "source-fingerprint-match-normalization-required" } else { "source-fingerprint-match" }
         Write-Host "Config source fingerprint unchanged for $ContentKind. Designer skipped."
         Set-RunStage -Stage "config-load.skipped" -Detail "The $ContentKind fingerprint is unchanged; Designer was skipped."
@@ -5879,7 +5966,11 @@ function Write-DevBranchInitializationStatusLines {
         }
     }
     $normalizationStatus = Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "legacy-pending"
-    Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
+    if ($normalizationStatus -eq "passed" -and -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
+        Write-Host "${Indent}Enterprise normalization: unverified (legacy passed state without run result)"
+    } else {
+        Write-Host "${Indent}Enterprise normalization: $normalizationStatus"
+    }
     $normalizationReason = Get-StateValue -State $State -Name "enterpriseNormalizationReason" -Default ""
     if ($normalizationReason) {
         Write-Host "${Indent}Enterprise normalization reason: $normalizationReason"
@@ -5887,6 +5978,10 @@ function Write-DevBranchInitializationStatusLines {
     $normalizationError = Get-StateValue -State $State -Name "enterpriseNormalizationError" -Default ""
     if ($normalizationError) {
         Write-Host "${Indent}Enterprise normalization error: $normalizationError"
+    }
+    $normalizationResultPath = Get-StateValue -State $State -Name "lastEnterpriseAutoUpdateResultPath" -Default ""
+    if ($normalizationResultPath) {
+        Write-Host "${Indent}Last Enterprise auto-update result: $normalizationResultPath"
     }
     $configLoadStatus = Get-StateValue -State $State -Name "configLoadStatus" -Default ""
     if ($configLoadStatus) {
@@ -8869,11 +8964,10 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
     $verification = Get-VerificationState -State $State
     $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
-    $normalizationStatus = [string](Get-StateValue -State $State -Name "enterpriseNormalizationStatus" -Default "")
     if (-not $verification.isFreshPassed -or
         $evidenceKind -cne "full" -or
         $configLoadStatus -notin @("passed", "fallback-succeeded") -or
-        $normalizationStatus -cne "passed") {
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $false
     }
 
@@ -9267,6 +9361,7 @@ function Initialize-DevBranchRuntime {
         @{ name = "createdAt"; value = $now },
         @{ name = "lastLogPath"; value = "" },
         @{ name = "enterpriseNormalizationStatus"; value = "pending" },
+        @{ name = "enterpriseNormalizationProofVersion"; value = 0 },
         @{ name = "enterpriseNormalizationReason"; value = "branch-copy" },
         @{ name = "enterpriseNormalizationError"; value = "" },
         @{ name = "enterpriseNormalizedAt"; value = "" },
@@ -14702,6 +14797,10 @@ function Show-WorkflowStatus {
     if ($autoUpdateLog) {
         Write-Host "Last Enterprise auto-update log: $autoUpdateLog"
     }
+    $autoUpdateResultPath = Get-StateValue -State $state -Name "lastEnterpriseAutoUpdateResultPath" -Default ""
+    if ($autoUpdateResultPath) {
+        Write-Host "Last Enterprise auto-update result: $autoUpdateResultPath"
+    }
     Write-Host "Last refresh: $(Get-StateValue -State $state -Name 'lastRefreshAt' -Default '<never>')"
     Write-Host "Verification status: $($verification.effectiveStatus)"
     Write-Host "Verification fresh passed: $($verification.isFreshPassed)"
@@ -14838,9 +14937,11 @@ function Restore-ReleaseE2EInfobaseSnapshot {
             "configLoadStatus",
             "loadReason",
             "enterpriseNormalizationStatus",
+            "enterpriseNormalizationProofVersion",
             "enterpriseNormalizedAt",
             "enterpriseNormalizationReason",
-            "enterpriseNormalizationError"
+            "enterpriseNormalizationError",
+            "lastEnterpriseAutoUpdateResultPath"
         )) {
             $restoreUpdates[$field] = Get-StateValue -State $state -Name $field -Default ""
         }

@@ -477,7 +477,8 @@ function Assert-AuxiliaryContourReady {
     $source = Get-AuxiliaryContourFingerprint -Contour $Contour
     if (-not $state -or [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -ne "ready" -or
         [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -cne $connection.identityHash -or
-        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -cne $source.combined) {
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -cne $source.combined -or
+        ($Contour.baseMode -ne "attached-readonly" -and -not (Test-DevBranchEnterpriseNormalizationProved -State $state))) {
         throw "ITL_AUXILIARY_INFOBASE_NOT_READY: contour='$($Contour.name)' operation='$Operation' requiredAction=update-auxiliary-contour."
     }
     return [pscustomobject]@{ contour = $Contour; connection = $connection; state = $state; source = $source }
@@ -498,9 +499,20 @@ function Update-AuxiliaryContour {
     Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
     $source = Get-AuxiliaryContourFingerprint -Contour $contour
     $state = Read-AuxiliaryContourState -Contour $contour
+    if ($state -and [string](Get-StateValue -State $state -Name "enterpriseNormalizationStatus" -Default "") -eq "failed" -and
+        $Action -ne "update-auxiliary-contour") {
+        throw "ITL_AUXILIARY_NORMALIZATION_RETRY_REQUIRED: contour='$($contour.name)' has a failed Enterprise normalization; requiredAction=update-auxiliary-contour. No automatic Enterprise replay was started."
+    }
     if ($state -and [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -eq "ready" -and
         [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -ceq $connection.identityHash -and
-        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined) {
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined -and
+        -not (Test-DevBranchEnterpriseNormalizationProved -State $state) -and $Action -ne "update-auxiliary-contour") {
+        throw "ITL_AUXILIARY_NORMALIZATION_PROOF_UNVERIFIED: contour='$($contour.name)' has no run result; requiredAction=update-auxiliary-contour. No automatic Enterprise replay was started."
+    }
+    if ($state -and [string](Get-StateValue -State $state -Name "readinessStatus" -Default "") -eq "ready" -and
+        [string](Get-StateValue -State $state -Name "connectionIdentityHash" -Default "") -ceq $connection.identityHash -and
+        [string](Get-StateValue -State $state -Name "sourceFingerprint" -Default "") -ceq $source.combined -and
+        (Test-DevBranchEnterpriseNormalizationProved -State $state)) {
         Sync-AuxiliaryContourMcpClientConfig -Contour $contour
         Write-Host "Auxiliary contour '$($contour.name)' is already current."
         return
@@ -517,17 +529,16 @@ function Update-AuxiliaryContour {
             $extensionSource = Get-ConfigSourceFingerprint -ExportPath $extension.path
             Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -ExtensionName $extension.name -Mode "Full" -User $connection.user -Password $connection.password | Out-Null
         }
-        $epfPath = Ensure-DevBranchAutoUpdateEpfs
-        $normalization = Invoke-Enterprise -InfoBasePath $connection.path -InfoBaseKind $connection.kind -User $connection.user -Password $connection.password -EnterpriseArgs @("/Execute", $epfPath) -TimeoutSeconds (Get-DevBranchAutoUpdateTimeoutSeconds)
+        $normalization = Invoke-DevBranchEnterpriseAutoUpdate -State ([pscustomobject]@{ devBranchInfoBasePath = $connection.path; infoBaseKind = $connection.kind }) -User $connection.user -Password $connection.password -RecoveryAction update-auxiliary-contour
         Save-AuxiliaryContourState -Contour $contour -Updates @{
             readinessStatus = "ready"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = $source.combined
             configurationFingerprint = $source.configuration.fingerprint; extensionFingerprints = @($source.extensions)
             lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
-            enterpriseNormalizationStatus = "passed"; enterpriseNormalizedAt = (Get-Date).ToString("o")
-            lastLogPath = $normalization; lastUpdatedAt = (Get-Date).ToString("o"); lastError = ""
+            enterpriseNormalizationStatus = "passed"; enterpriseNormalizationProofVersion = 1; enterpriseNormalizedAt = $normalization.updatedAt
+            lastEnterpriseAutoUpdateResultPath = $normalization.resultPath; lastLogPath = $normalization.logPath; lastUpdatedAt = (Get-Date).ToString("o"); lastError = ""
         } | Out-Null
     } catch {
-        Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "failed"; enterpriseNormalizationStatus = "failed"; lastError = $_.Exception.Message; lastLogPath = $script:LastLogPath } | Out-Null
+        Save-AuxiliaryContourState -Contour $contour -Updates @{ readinessStatus = "failed"; enterpriseNormalizationStatus = "failed"; enterpriseNormalizationProofVersion = 0; lastEnterpriseAutoUpdateResultPath = [string]$script:LastEnterpriseAutoUpdateResultPath; lastError = $_.Exception.Message; lastLogPath = $script:LastLogPath } | Out-Null
         throw
     }
     Sync-AuxiliaryContourMcpClientConfig -Contour $contour
@@ -665,6 +676,10 @@ function Show-AuxiliaryContoursStatus {
     foreach ($contour in $definitions) {
         $state = Read-AuxiliaryContourState -Contour $contour
         $status = [string](Get-StateValue -State $state -Name "readinessStatus" -Default "not-updated")
+        if ($status -eq "ready" -and $contour.baseMode -ne "attached-readonly" -and
+            -not (Test-DevBranchEnterpriseNormalizationProved -State $state)) {
+            $status = "unverified"
+        }
         $verification = [string](Get-StateValue -State $state -Name "lastVerificationStatus" -Default "not-run")
         $connectionText = "unresolved"
         try { $connection = Get-AuxiliaryContourConnection -Contour $contour; $connectionText = "$($connection.kind):$($connection.path)" }
