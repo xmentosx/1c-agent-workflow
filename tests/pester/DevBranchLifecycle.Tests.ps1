@@ -60,7 +60,7 @@
         function New-LifecyclePostMergeCursorFixture {
             param(
                 [string]$Subject = "chore: persist branch configuration synchronization cursor",
-                [ValidateSet("cursor", "dependency-lock", "foreign")][string]$ChangedPath = "cursor",
+                [ValidateSet("cursor", "dependency-lock", "managed", "foreign")][string]$ChangedPath = "cursor",
                 [ValidateSet("none", "extra", "merge")][string]$AdditionalHead = "none",
                 [switch]$SkipCursor
             )
@@ -80,6 +80,9 @@
                 } elseif ($ChangedPath -eq "dependency-lock") {
                     New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root ".agent-1c") | Out-Null
                     Set-Content -LiteralPath (Join-Path $fixture.root ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value '{"schemaVersion":1,"mode":"fresh","dependencies":{}}'
+                } elseif ($ChangedPath -eq "managed") {
+                    New-Item -ItemType Directory -Force -Path (Join-Path $fixture.root ".agents\skills\1c-workflow") | Out-Null
+                    Set-Content -LiteralPath (Join-Path $fixture.root ".agents\skills\1c-workflow\helper.ps1") -Encoding UTF8 -Value 'managed cutover'
                 } else {
                     Set-Content -LiteralPath (Join-Path $fixture.root "unrelated.txt") -Encoding UTF8 -Value "post-merge-foreign"
                 }
@@ -7918,6 +7921,26 @@ if (`$?) { exit 0 } else { exit 1 }
             $accepted | Should -BeTrue
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "accepts an execution guard cutover only for its managed paths" {
+        foreach ($changedPath in @('managed', 'foreign')) {
+            $fixture = New-LifecyclePostMergeCursorFixture -Subject 'chore: activate execution guards v2' -ChangedPath $changedPath
+            try {
+                $accepted = & {
+                    param($Fixture)
+                    . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                    $transaction = [pscustomobject]@{
+                        operation = 'refresh-dev-branch'
+                        mergeCommit = $Fixture.mergeCommit
+                    }
+                    Test-DevBranchLifecycleHelperOwnedPostMergeHead -Transaction $transaction -CandidateHead $Fixture.cursorCommit
+                } $fixture
+                $accepted | Should -Be ($changedPath -eq 'managed')
+            } finally {
+                Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 

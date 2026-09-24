@@ -8741,6 +8741,21 @@ function Test-DevBranchLifecycleHelperOwnedPostMergeHead {
     if ($subject -ceq "chore: persist branch configuration synchronization cursor") {
         return ($paths.Count -eq 1 -and $paths[0] -ceq $cursorPath)
     }
+    if (-not $LegacyCursorOnly -and $subject -ceq "chore: activate execution guards v2") {
+        $manifestPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'execution-guard-cutover-paths.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $directories = @($manifest.directories | ForEach-Object { ([string]$_).Replace('\', '/').Trim('/') })
+        $files = @($manifest.files | ForEach-Object { ([string]$_).Replace('\', '/') })
+        $unexpectedPaths = @($paths | Where-Object {
+            $path = $_
+            $files -cnotcontains $path -and
+            $path -cne '.agent-1c/execution-guard-generation.json' -and
+            $path -cnotmatch '^\.agent-1c/execution-guard-generation\.json\.[^/]+$' -and
+            $path -cnotlike '.agent-1c/execution-checkpoints/*' -and
+            @($directories | Where-Object { $path.StartsWith("$_/", [StringComparison]::Ordinal) }).Count -eq 0
+        })
+        return ($paths.Count -ge 1 -and $unexpectedPaths.Count -eq 0)
+    }
     if ($LegacyCursorOnly -or $subject -cne "chore: persist branch refresh state") { return $false }
 
     $managedStatePaths = @(".kilo/kilo.json", ".agent-1c/dependency-lock.json")
