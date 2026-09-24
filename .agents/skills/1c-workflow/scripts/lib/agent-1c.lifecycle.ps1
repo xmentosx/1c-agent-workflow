@@ -2336,6 +2336,11 @@ function Dump-ConfigToFilesFromInfoBase {
             -InfoBaseKind $InfoBaseKind `
             -DesignerArgs $designerArgs | Out-Null
 
+        if ($script:RunStage -in @("init.dump-config", "sync-master.dump-config")) {
+            $dumpStagePrefix = if ($script:RunStage -eq "init.dump-config") { "init" } else { "sync-master" }
+            Set-RunStage -Stage "$dumpStagePrefix.dump-finalize" -Detail "Designer dump and stability probe completed; validating and publishing the staged dump"
+        }
+
         $dumpState = Get-DesignerDumpArtifactState -Path $stagedPath
         if (-not $dumpState.ready) {
             throw "1C configuration dump did not create complete Configuration.xml and ConfigDumpInfo.xml artifacts. Check the 1C log: $script:LastLogPath"
@@ -2746,7 +2751,8 @@ function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard {
     }
     $foreign = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
     if ($foreign.Count -gt 0) {
-        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: exact base has $($foreign.Count) unidentified live session(s); no foreign process was stopped."
+        $targetDisplay = Format-OneCExecutionGuardTarget -Kind $infoBaseKind -Path $infoBasePath
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: operation='$reason' target='$targetDisplay' has $($foreign.Count) unidentified live session(s); wait for them to exit or cancel the managed operation; no foreign process was stopped."
     }
     Write-Host "Workflow-owned sessions stopped before $reason; unidentified processes were not terminated."
 }
@@ -7790,6 +7796,8 @@ function Commit-AuthoritativeExportPathIfChanged {
 
     $attributesChanged = Ensure-OneCSourceGitAttributes
     Invoke-Git @("add", "--", ".gitattributes")
+    $timingPrefix = if ($Action -eq "init-project") { "init" } else { "sync-master" }
+    Set-RunStage -Stage "$timingPrefix.git-index" -Detail "Rebuilding the authoritative 1C source Git index"
     $rebuildPaths = @($repoExportPath, (Get-ExtensionsPath))
     if ($attributesChanged) {
         $rebuildPaths += "src/configs"
@@ -7798,6 +7806,7 @@ function Commit-AuthoritativeExportPathIfChanged {
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
     $commitPaths = @(".gitattributes") + $sourcePaths
+    Set-RunStage -Stage "$timingPrefix.git-commit" -Detail "Committing the authoritative 1C source result"
     if (Test-GitHasStagedChanges -PathSpec $commitPaths) {
         # A commit pathspec re-reads case-insensitive worktree aliases instead of committing this rebuilt index.
         Invoke-Git @("commit", "--quiet", "-m", $Message)
@@ -8010,11 +8019,12 @@ function Initialize-Project {
     $sourceRepositoryUpdated = $false
     if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.repository-update" -Detail "Applying the source repository update policy"
-        $sourceRepositoryUpdated = Update-BaseFromRepository
+        $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
         Set-RunStage -Stage "init.dump-config" -Detail "Dumping 1C configuration files"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+        Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
         Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
         Ensure-BranchSeed `
             -Policy "Rebuild" `
@@ -8036,7 +8046,8 @@ function Initialize-Project {
         $existingSeed = Read-BranchSeedManifest -AllowMissing
         if ($null -eq $existingSeed -or -not (Test-BranchSeedArtifactReady -Manifest $existingSeed)) {
             Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+            Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
             Ensure-BranchSeed `
                 -Policy "Rebuild" `
@@ -8046,7 +8057,7 @@ function Initialize-Project {
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: export 1C configuration from repository" } else { "sync: export current 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
@@ -8113,7 +8124,7 @@ function Sync-Master {
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
-    $sourceRepositoryUpdated = Update-BaseFromRepository
+    $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
     if ($SeedPolicy -eq "Rebuild" -and (Get-InfoBaseKind) -eq "file") {
         Set-RunStage -Stage "sync-master.seed" -Detail "Rebuilding the branch seed from the source infobase"
         $seed = Ensure-BranchSeed -Policy "Rebuild" -ConfigurationFingerprint "" -ConfigurationFileCount 0
@@ -8127,7 +8138,8 @@ function Sync-Master {
         Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+        Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
         Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
@@ -8137,7 +8149,7 @@ function Sync-Master {
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Sync-KiloItlCommandSurface
     Write-Host "Branch seed: $($seed.artifactPath)"
     Write-Host "Branch seed sync ID: $($seed.syncId)"
@@ -14769,7 +14781,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
 function Show-WorkflowStatus {
     Write-Section "ITL status"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 for ordinary long actions and >= 14700000 for init-project/sync-master by default, and exceed the configured action timeout."
     Write-DesignerMemoryLimitStatusLine
     Write-Agent1cLifecycleOperationStatusLines
 
@@ -15530,7 +15542,7 @@ function Show-Help {
     }
     Write-Host "Контекст: $surface"
     Write-Host "Ветка Git: $(if ($currentBranch) { $currentBranch } else { '<нет>' })"
-    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 и превышать настроенный тайм-аут Designer."
+    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 для обычных долгих действий и 14700000 для init-project/sync-master по умолчанию, а также превышать настроенный срок операции."
 
     if ($surface -eq "master") {
         Write-Host ""

@@ -19,6 +19,10 @@ def read_request():
     line = sys.stdin.readline()
     if not line:
         raise WorkError("EXECUTION_GUARD_REQUEST_REQUIRED")
+    # Windows PowerShell 5.1's redirected StandardInput prepends a UTF-8 BOM
+    # to its first write. Accept it only at the start of the initial record.
+    if line.startswith("\ufeff"):
+        line = line[1:]
     try:
         request = json.loads(line)
     except json.JSONDecodeError as error:

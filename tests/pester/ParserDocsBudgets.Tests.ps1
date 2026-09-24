@@ -203,17 +203,20 @@
     }
 
     It "keeps workflow-owned client context growth visible and attributable" {
+        # Generated sync-master timeout guidance adds a measured 46 UTF-8 bytes
+        # to each master client surface (for example, codex 32973 -> 33019); dev
+        # surfaces remain under their existing limits.
         $expectedRendered = @{
-            "master/codex" = @{ files = 24; maxBytes = 32973 }
-            "master/kilocode" = @{ files = 12; maxBytes = 31819 }
-            "master/claude-code" = @{ files = 12; maxBytes = 31663 }
-            "master/cursor" = @{ files = 12; maxBytes = 31663 }
-            "master/opencode" = @{ files = 13; maxBytes = 42692 }
-            "master/kimi" = @{ files = 12; maxBytes = 31916 }
-            "master/qwen" = @{ files = 12; maxBytes = 31663 }
-            "master/command-code" = @{ files = 12; maxBytes = 31663 }
-            "master/cline" = @{ files = 12; maxBytes = 31916 }
-            "master/pi" = @{ files = 12; maxBytes = 31663 }
+            "master/codex" = @{ files = 24; maxBytes = 33019 }
+            "master/kilocode" = @{ files = 12; maxBytes = 31865 }
+            "master/claude-code" = @{ files = 12; maxBytes = 31709 }
+            "master/cursor" = @{ files = 12; maxBytes = 31709 }
+            "master/opencode" = @{ files = 13; maxBytes = 42738 }
+            "master/kimi" = @{ files = 12; maxBytes = 31962 }
+            "master/qwen" = @{ files = 12; maxBytes = 31709 }
+            "master/command-code" = @{ files = 12; maxBytes = 31709 }
+            "master/cline" = @{ files = 12; maxBytes = 31962 }
+            "master/pi" = @{ files = 12; maxBytes = 31709 }
             "dev/codex" = @{ files = 30; maxBytes = 50842 }
             "dev/kilocode" = @{ files = 15; maxBytes = 49468 }
             "dev/claude-code" = @{ files = 15; maxBytes = 49273 }

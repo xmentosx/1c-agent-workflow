@@ -5,12 +5,13 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+. (Join-Path $PSScriptRoot "lib\itl-runner-timeout.ps1")
 
 $ProjectRoot = (Get-Location).Path
 $HelperPath = ""
 $PollIntervalMilliseconds = 1000
 $StatusStartTimeoutSeconds = 30
-$MaxWaitSeconds = 3600
+$MaxWaitSeconds = $null
 $KeepWindowOnFailure = $false
 $AgentArgs = @()
 $GitIndexLockPath = ""
@@ -604,6 +605,9 @@ function Write-LauncherRunStatus {
         launcherPid = $PID
         startedAt = $startedAtText
         updatedAt = $now.ToString("o")
+        operationTimeoutSeconds = $MaxWaitSeconds
+        operationTimeoutSource = "$($operationPolicy.source):$($operationPolicy.setting)"
+        operationDeadlineUtc = $(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString("o") } else { "" })
         finishedAt = $now.ToString("o")
         exitCode = $ExitCode
         lastLogPath = $lastLogPath
@@ -622,20 +626,22 @@ function Write-LauncherRunStatus {
     [System.IO.File]::WriteAllText($statusPath, (($payload | ConvertTo-Json -Depth 6) + [Environment]::NewLine), $utf8)
 }
 
-function Stop-ProcessIfRunning {
-    param([int]$ProcessId)
+function Stop-LauncherOwnedProcessTree {
+    param([Parameter(Mandatory = $true)][Diagnostics.Process]$Process)
 
-    if ($ProcessId -le 0) {
-        return
+    if ($Process.HasExited) { return $true }
+    try { $expectedStartUtc = $Process.StartTime.ToUniversalTime() }
+    catch { return [bool]$Process.HasExited }
+    $current = Get-Process -Id $Process.Id -ErrorAction SilentlyContinue
+    if ($null -eq $current) { return [bool]$Process.HasExited }
+    try { $currentStartUtc = $current.StartTime.ToUniversalTime() }
+    catch { return [bool]$Process.HasExited }
+    if ($currentStartUtc -ne $expectedStartUtc) {
+        return $false
     }
-
-    try {
-        $target = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-        if ($null -ne $target -and -not $target.HasExited) {
-            Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
-        }
-    } catch {
-    }
+    & taskkill.exe /PID ([string]$Process.Id) /T /F *> $null
+    $Process.WaitForExit(10000) | Out-Null
+    return [bool]$Process.HasExited
 }
 
 function Fail-Launcher {
@@ -656,6 +662,7 @@ function Fail-Launcher {
     }
 
     $effectiveExitCode = if ($ExitCode -ne 0) { $ExitCode } else { 1 }
+    Remove-Item -LiteralPath ($statusPath + ".heartbeat") -Force -ErrorAction SilentlyContinue
     Write-LauncherRunStatus `
         -Status "failed" `
         -ExitCode $effectiveExitCode `
@@ -677,9 +684,8 @@ if ($AgentArgs.Count -gt 0 -and $AgentArgs[0] -eq "--") {
 }
 
 $projectRootFull = Resolve-Agent1cFullPath -Path $ProjectRoot
-if ($MaxWaitSeconds -lt 0) {
-    throw "MaxWaitSeconds must be 0 or greater."
-}
+$operationPolicy = Resolve-ItlRunnerTimeout -ProjectRoot $projectRootFull -Action (Get-AgentAction) -ExplicitSeconds $MaxWaitSeconds
+$MaxWaitSeconds = [int]$operationPolicy.seconds
 if (-not $HelperPath) {
     $HelperPath = Join-Path $PSScriptRoot "agent-1c.ps1"
 }
@@ -749,18 +755,32 @@ Write-Host "Run directory: $runDir"
 Write-Host "Status file: $statusPath"
 Write-Host "Console log: $logPath"
 
-$process = Start-Process `
-    -FilePath $powershell `
-    -ArgumentList $argumentLine `
-    -WorkingDirectory $projectRootFull `
-    -WindowStyle Normal `
-    -PassThru
+$startedAt = Get-Date
+$operationDeadlineUtc = if ($MaxWaitSeconds -gt 0) { $startedAt.ToUniversalTime().AddSeconds($MaxWaitSeconds) } else { $null }
+Write-Host "ITL timeout: action=$(Get-AgentAction); seconds=$MaxWaitSeconds; source=$($operationPolicy.source); setting=$($operationPolicy.setting); deadlineUtc=$(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString('o') } else { 'explicitly-disabled' })"
+$timeoutEnvironmentNames = @("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "ITL_RUNNER_TIMEOUT_SOURCE", "ITL_RUNNER_DEADLINE_UTC")
+$previousTimeoutEnvironment = @{}
+foreach ($name in $timeoutEnvironmentNames) { $previousTimeoutEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
+try {
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", [string]$MaxWaitSeconds, "Process")
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "$($operationPolicy.source):$($operationPolicy.setting)", "Process")
+    [Environment]::SetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", $(if ($null -ne $operationDeadlineUtc) { $operationDeadlineUtc.ToString("o") } else { "" }), "Process")
+    $process = Start-Process `
+        -FilePath $powershell `
+        -ArgumentList $argumentLine `
+        -WorkingDirectory $projectRootFull `
+        -WindowStyle Normal `
+        -PassThru
+} finally {
+    foreach ($name in $timeoutEnvironmentNames) {
+        [Environment]::SetEnvironmentVariable($name, $previousTimeoutEnvironment[$name], "Process")
+    }
+}
 
 if ($null -eq $process) {
     throw "Failed to start external PowerShell window."
 }
 
-$startedAt = Get-Date
 $reportedMissingStatus = $false
 while ($true) {
     $status = Read-RunStatus -Path $statusPath
@@ -795,11 +815,9 @@ while ($true) {
     }
 
     $elapsedSeconds = ((Get-Date) - $startedAt).TotalSeconds
-    if ($MaxWaitSeconds -gt 0 -and $elapsedSeconds -ge $MaxWaitSeconds) {
-        $lastProcessId = ConvertTo-IntOrDefault -Value (Get-RunStatusProperty -Status $status -Name "lastProcessId" -Default 0) -Default 0
-        Stop-ProcessIfRunning -ProcessId $lastProcessId
-        Stop-ProcessIfRunning -ProcessId $process.Id
-        $message = "External ITL helper timed out after $MaxWaitSeconds seconds before writing a terminal status. Log: $logPath"
+    if ($null -ne $operationDeadlineUtc -and [DateTime]::UtcNow -ge $operationDeadlineUtc) {
+        $stopped = Stop-LauncherOwnedProcessTree -Process $process
+        $message = "External ITL helper timed out after $MaxWaitSeconds seconds before writing a terminal status. Owned helper tree stop confirmed=$stopped. Log: $logPath"
         Fail-Launcher `
             -ExitCode 124 `
             -Message $message `

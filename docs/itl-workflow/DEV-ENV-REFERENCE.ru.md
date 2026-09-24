@@ -26,6 +26,9 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `ONEC_MAX_CONCURRENT_SESSIONS` | Максимум одновременно запущенных процессов 1С на одну точную информационную базу; учитываются также внешние процессы, а TestManager заранее резервирует заявленные TestClient | целое `0..1024`, default `3`; `0` отключает ограничение | user |
 | `DESIGNER_MAX_WORKING_SET_MB` | Лимит памяти автоматического Designer | default `10240`; `0` отключает guard | user |
 | `DESIGNER_OPERATION_TIMEOUT_SECONDS` | Максимальное ожидание подтвержденного завершения автоматической операции Designer | default `3600`; `1..86400` | user |
+| `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` | Общий предельный срок monitored lifecycle action; не заменяет проверку живости или результат helper | default `3600`; `1..86400` | user |
+| `ITL_RUNNER_INIT_PROJECT_TIMEOUT_SECONDS` | Предельный срок `init-project` в compact/windowed launcher | default `14400`; `1..86400` | user |
+| `ITL_RUNNER_SYNC_MASTER_TIMEOUT_SECONDS` | Предельный срок `sync-master` в compact launcher | default `14400`; `1..86400` | user |
 | `DESIGNER_COMPLETION_PROBE_TIMEOUT_SECONDS` | Максимальная длительность одной внутренней пробы завершения Designer; рекурсивное сканирование dump выполняется в отдельном процессе и при превышении останавливается | default `30`; `5..300` | user |
 | `DESIGNER_STALL_WARNING_SECONDS` | Порог предупреждения без роста CPU/log и изменений owned-процессов; не останавливает Designer и не заменяет hard timeout | default `300`; `30..86400` | user |
 | `DESIGNER_STALL_TIMEOUT_SECONDS` | Fail-closed порог без роста CPU/log и изменений owned-процессов; helper останавливает только exact owned Designer | default `600`; `60..86400`, больше warning | user |
@@ -47,6 +50,9 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `REPOSITORY_PATH` | Путь к хранилищу 1С | путь/URL | user |
 | `REPOSITORY_USER` | Пользователь хранилища | строка | user/secret |
 | `REPOSITORY_PASSWORD` | Пароль хранилища | строка | user/secret |
+
+Для срока action сначала проверяется его ключ (`.dev.env`, затем переменная процесса), затем общий ключ в том же порядке, затем default по action. В `status.json` записываются выбранные при старте секунды, источник и deadline; ограниченное продление по фазе отмечается в диагностике runner и в итоговой ошибке. Внешний timeout вызывающего агента должен превышать выбранный срок минимум на 300 секунд; штатный четырёхчасовой `init-project` требует `timeout_ms >= 14700000`.
+Срок action не заменяет отдельный лимит одной операции Designer (`DESIGNER_OPERATION_TIMEOUT_SECONDS`, default 3600). Увеличивайте его отдельно только при подтверждении, что именно Designer штатно работает дольше часа; диагностика застоя Designer при этом сохраняется.
 
 ## Активный контекст ветки
 

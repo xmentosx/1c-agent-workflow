@@ -438,7 +438,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 20
+            @($masterFiles.Keys).Count | Should -Be 24
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
@@ -453,7 +453,7 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 28
+            @($devFiles.Keys).Count | Should -Be 30
             foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")

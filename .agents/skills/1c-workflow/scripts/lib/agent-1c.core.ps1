@@ -1,5 +1,13 @@
 ﻿$script:Agent1cCoreRoot = $PSScriptRoot
 
+$script:RunStatusHeartbeatDepth = 0
+$script:RunTimingRecords = @()
+$script:RunTimingStage = ""
+$script:RunTimingStartedAtUtc = [DateTime]::MinValue
+$script:RunTimingCounters = [ordered]@{}
+$script:RunTimingWriteFailed = $false
+$script:RunTimingImplementationSha256 = ""
+
 function Write-Section {
     param([string]$Text)
     Write-Host ""
@@ -261,6 +269,77 @@ function Resolve-RunFilePath {
     return (Resolve-Agent1cFullPath -Path (Join-Path $script:ProjectRoot $Path))
 }
 
+function Write-RunPhaseTimings {
+    if ($script:RunTimingWriteFailed -or [string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    try {
+        $statusPath = Resolve-RunFilePath -Path $RunStatusPath
+        $path = Join-Path (Split-Path -Parent $statusPath) "phase-timings.json"
+        if (-not $script:RunTimingImplementationSha256) {
+            $implementationParts = @(
+                foreach ($leaf in @('agent-1c.core.ps1', 'agent-1c.lifecycle.ps1', 'agent-1c.seed.ps1', 'agent-1c.sessions.ps1')) {
+                    $modulePath = Join-Path $script:Agent1cCoreRoot $leaf
+                    "$leaf=$((Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash.ToLowerInvariant())"
+                }
+            )
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try {
+                $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes(($implementationParts -join "`n")))
+                $script:RunTimingImplementationSha256 = ([BitConverter]::ToString($digest)).Replace('-', '').ToLowerInvariant()
+            } finally {
+                $sha.Dispose()
+            }
+        }
+        $payload = [ordered]@{
+            schemaVersion = 1
+            runId = Split-Path -Leaf (Split-Path -Parent $statusPath)
+            action = [string]$Action
+            implementationSha256 = $script:RunTimingImplementationSha256
+            completedPhases = @($script:RunTimingRecords)
+            truncated = ($script:RunTimingRecords.Count -ge 200)
+        }
+        Write-Utf8TextAtomic -Path $path -Value (($payload | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    } catch {
+        $script:RunTimingWriteFailed = $true
+        Write-Warning "ITL_PHASE_TIMING_WRITE_FAILED: $($_.Exception.Message)"
+    }
+}
+
+function Complete-RunPhaseTiming {
+    param([string]$Outcome = "completed")
+    if (-not $script:RunTimingStage -or $script:RunTimingRecords.Count -ge 200) { return }
+    $endedAtUtc = [DateTime]::UtcNow
+    $script:RunTimingRecords += [ordered]@{
+        phaseId = ($script:RunTimingRecords.Count + 1)
+        phase = $script:RunTimingStage
+        startedAtUtc = $script:RunTimingStartedAtUtc.ToString("o")
+        endedAtUtc = $endedAtUtc.ToString("o")
+        durationMilliseconds = [int64][Math]::Max(0, ($endedAtUtc - $script:RunTimingStartedAtUtc).TotalMilliseconds)
+        outcome = $Outcome
+        counters = $script:RunTimingCounters
+    }
+    $script:RunTimingStage = ""
+    $script:RunTimingCounters = [ordered]@{}
+    Write-RunPhaseTimings
+}
+
+function Set-RunTimingCounter {
+    param([string]$Name, [long]$Value)
+    if ($script:RunTimingStage -and $Name -match '^[a-zA-Z][a-zA-Z0-9]*$' -and $Value -ge 0) {
+        $script:RunTimingCounters[$Name] = $Value
+    }
+}
+
+function Start-RunPhaseTiming {
+    param([string]$Stage)
+    if ($Action -notin @("init-project", "sync-master") -or [string]::IsNullOrWhiteSpace($RunStatusPath)) { return }
+    if ($Stage -eq $script:RunTimingStage) { return }
+    Complete-RunPhaseTiming
+    if ($script:RunTimingRecords.Count -ge 200) { return }
+    $script:RunTimingStage = $Stage
+    $script:RunTimingStartedAtUtc = [DateTime]::UtcNow
+    $script:RunTimingCounters = [ordered]@{}
+}
+
 function Write-RunStatus {
     param(
         [ValidateSet("running", "succeeded", "failed", "cancelled")]
@@ -277,6 +356,7 @@ function Write-RunStatus {
             throw "init-project success status requires stage init.complete and exitCode 0."
         }
     }
+    if ($Status -ne "running") { Complete-RunPhaseTiming -Outcome $Status }
 
     $script:ResolvedRunStatusPath = Resolve-RunFilePath -Path $RunStatusPath
     if ($RunLogPath) {
@@ -298,6 +378,9 @@ function Write-RunStatus {
         launcherPid = $script:LauncherPid
         startedAt = $script:RunStartedAt.ToString("o")
         updatedAt = $now.ToString("o")
+        operationTimeoutSeconds = [int]([Environment]::GetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "Process"))
+        operationTimeoutSource = [string]([Environment]::GetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "Process"))
+        operationDeadlineUtc = [string]([Environment]::GetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", "Process"))
         finishedAt = $finishedAt
         exitCode = $ExitCode
         lastLogPath = $(if ($script:LastLogPath) { [string]$script:LastLogPath } else { "" })
@@ -349,44 +432,49 @@ function Write-RunStatus {
 function Invoke-WithRunStatusHeartbeat {
     param(
         [Parameter(Mandatory = $true)]
-        [scriptblock]$Action
+        [Alias('Action')][scriptblock]$Body,
+        [ValidateRange(1, 60)][int]$IntervalSeconds = 15
     )
 
-    if ([string]::IsNullOrWhiteSpace($RunStatusPath)) {
-        return & $Action
+    $runStatusVariable = Get-Variable -Name RunStatusPath -Scope Script -ErrorAction SilentlyContinue
+    if ($null -eq $runStatusVariable -or [string]::IsNullOrWhiteSpace([string]$runStatusVariable.Value)) {
+        return & $Body
+    }
+    if ([int]$script:RunStatusHeartbeatDepth -gt 0) {
+        $script:RunStatusHeartbeatDepth++
+        try { return & $Body }
+        finally { $script:RunStatusHeartbeatDepth-- }
     }
 
     $stopPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-run-status-hb-" + [guid]::NewGuid().ToString("N"))
-    $statusPath = [string]$RunStatusPath
-    $job = Start-Job -ScriptBlock {
-        param($StatusPath, $StopPath)
-        $utf8 = New-Object Text.UTF8Encoding $false
+    $heartbeatPath = (Resolve-RunFilePath -Path $RunStatusPath) + ".heartbeat"
+    [IO.File]::WriteAllText($heartbeatPath, [string]$PID, [Text.Encoding]::ASCII)
+    $job = $null
+    try {
+        $job = Start-Job -ScriptBlock {
+        param($HeartbeatPath, $StopPath, $IntervalSeconds)
         while (-not (Test-Path -LiteralPath $StopPath)) {
-            Start-Sleep -Seconds 15
+            Start-Sleep -Seconds $IntervalSeconds
             if (Test-Path -LiteralPath $StopPath) { break }
-            if (-not (Test-Path -LiteralPath $StatusPath)) { continue }
             try {
-                $raw = [IO.File]::ReadAllText($StatusPath, $utf8)
-                if ($raw -notmatch '"status"\s*:\s*"running"') { break }
-                $updated = [datetime]::Now.ToString("o")
-                $rewritten = [regex]::Replace($raw, '"updatedAt"\s*:\s*"[^"]*"', ('"updatedAt": "' + $updated + '"'), 1)
-                $tmp = $StatusPath + ".hb-tmp"
-                [IO.File]::WriteAllText($tmp, $rewritten, $utf8)
-                [IO.File]::Copy($tmp, $StatusPath, $true)
-                Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+                [IO.File]::SetLastWriteTimeUtc($HeartbeatPath, [DateTime]::UtcNow)
             } catch {
+                break
             }
         }
-    } -ArgumentList $statusPath, $stopPath
-    try {
-        return & $Action
+        } -ArgumentList $heartbeatPath, $stopPath, $IntervalSeconds
+        $script:RunStatusHeartbeatDepth = 1
+        return & $Body
     } finally {
-        New-Item -ItemType File -Path $stopPath -Force | Out-Null
-        Wait-Job -Job $job -Timeout 8 | Out-Null
-        Stop-Job -Job $job -ErrorAction SilentlyContinue
-        Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        $script:RunStatusHeartbeatDepth = 0
+        if ($null -ne $job) {
+            New-Item -ItemType File -Path $stopPath -Force | Out-Null
+            Wait-Job -Job $job -Timeout 1 | Out-Null
+            Stop-Job -Job $job -ErrorAction SilentlyContinue
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
         Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath ($statusPath + ".hb-tmp") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $heartbeatPath -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -528,6 +616,7 @@ function Set-RunStage {
         $script:RunWorkingSetMb = 0
         $script:RunLogGrowthBytes = 0
     }
+    Start-RunPhaseTiming -Stage $Stage
     $script:RunStage = $Stage
     $script:RunStageDetail = $Detail
     if (-not [string]::IsNullOrWhiteSpace($RunStatusPath)) {
