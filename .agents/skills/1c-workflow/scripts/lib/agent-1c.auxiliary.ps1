@@ -87,8 +87,8 @@ function Configure-AuxiliaryContour {
     if ($baseMode -eq "attached-readonly" -and ([bool]$AuxiliaryIncludePrimaryTests -or $AuxiliaryTestsPath -or $AuxiliaryExtension.Count -gt 0)) {
         throw "ITL_AUXILIARY_SETUP_READONLY_AUTOMATION_INVALID: attached-readonly accepts no automated tests or extension loads."
     }
-    if ($baseMode -eq "managed-file" -and ($AuxiliaryInfoBaseKind -or $AuxiliaryInfoBasePath -or $AuxiliaryInfoBaseUser -or $AuxiliaryPasswordMode -ne "keep")) {
-        throw "ITL_AUXILIARY_SETUP_MANAGED_CONNECTION_INVALID: managed-file creates its own connection and accepts no external connection settings."
+    if ($baseMode -eq "managed-file" -and ($AuxiliaryInfoBaseKind -or $AuxiliaryInfoBasePath)) {
+        throw "ITL_AUXILIARY_SETUP_MANAGED_CONNECTION_INVALID: managed-file creates its own connection and accepts no external infobase kind or path."
     }
     if ($baseMode -ne "managed-file" -and ($AuxiliaryInfoBaseKind -notin @("file", "server") -or [string]::IsNullOrWhiteSpace($AuxiliaryInfoBasePath))) {
         throw "ITL_AUXILIARY_SETUP_CONNECTION_INCOMPLETE: an attached contour requires infobase kind and path."
@@ -126,12 +126,12 @@ function Configure-AuxiliaryContour {
     $dotEnvExisted = Test-Path -LiteralPath $dotEnvPath -PathType Leaf
     $originalDotEnv = if ($dotEnvExisted) { Read-Utf8Text -Path $dotEnvPath } else { "" }
     try {
-        if ($baseMode -ne "managed-file") {
+        if ($baseMode -ne "managed-file" -or $AuxiliaryInfoBaseUser -or $AuxiliaryPasswordMode -ne "keep") {
             $prefix = "ITL_AUX_${connectionRef}_"
-            $envValues = @{
-                ($prefix + "INFOBASE_KIND") = $AuxiliaryInfoBaseKind
-                ($prefix + "INFOBASE_PATH") = $AuxiliaryInfoBasePath
-                ($prefix + "USER") = $AuxiliaryInfoBaseUser
+            $envValues = @{ ($prefix + "USER") = $AuxiliaryInfoBaseUser }
+            if ($baseMode -ne "managed-file") {
+                $envValues[$prefix + "INFOBASE_KIND"] = $AuxiliaryInfoBaseKind
+                $envValues[$prefix + "INFOBASE_PATH"] = $AuxiliaryInfoBasePath
             }
             if ($AuxiliaryPasswordMode -eq "empty") {
                 $envValues[$prefix + "PASSWORD"] = ""
@@ -301,8 +301,9 @@ function Get-AuxiliaryContourConnection {
         $branchKey = Get-AuxiliaryContourBranchKey
         $kind = "file"
         $path = Join-Path $script:ProjectRoot ".agent-1c\infobases\auxiliary\$branchKey\$($Contour.name)"
-        $user = ""
-        $password = ""
+        $prefix = "ITL_AUX_$($Contour.connectionRef)_"
+        $user = [string](Get-EnvValue -Name ($prefix + "USER") -Default "")
+        $password = [string](Get-EnvValue -Name ($prefix + "PASSWORD") -Default "")
     } else {
         $prefix = "ITL_AUX_$($Contour.connectionRef)_"
         $kind = ([string](Get-EnvValue -Name ($prefix + "INFOBASE_KIND") -Default "")).Trim().ToLowerInvariant()
@@ -335,6 +336,9 @@ function Ensure-AuxiliaryContourUnsafeActionProtection {
     )
     if ($Contour.baseMode -ne "managed-file") { return }
     Assert-AuxiliaryContourMutationAllowed -Contour $Contour -Operation "unsafe-action protection confirmation"
+    if ([string]::IsNullOrWhiteSpace([string]$Connection.user)) {
+        Throw-AuxiliaryContourBootstrapUserRequired -Contour $Contour -Connection $Connection
+    }
 
     $userIdentityHash = Get-AuxiliaryContourUserIdentityHash -User ([string]$Connection.user)
     $state = Read-AuxiliaryContourState -Contour $Contour
@@ -370,6 +374,14 @@ function Ensure-AuxiliaryContourUnsafeActionProtection {
             confirmedAt = [string](Get-StateValue -State $confirmation -Name "confirmedAt" -Default (Get-Date).ToString("o"))
         }
     } | Out-Null
+}
+
+function Throw-AuxiliaryContourBootstrapUserRequired {
+    param(
+        [Parameter(Mandatory = $true)][object]$Contour,
+        [Parameter(Mandatory = $true)][object]$Connection
+    )
+    throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: contour='$($Contour.name)' infoBase='$($Connection.path)' infoBaseKey='$($Connection.identityHash)' requiredAction=create-user-in-auxiliary-configurator-then-configure-auxiliary-contour-user-and-rerun-update-auxiliary-contour-interactively. The user list is separate from the loaded configuration; create a dedicated user with the required administrative role in this infobase, disable unsafe-action protection for that user, then configure its credentials through the contour setup action before confirming. If this base still has no configuration after an earlier blocked update, run reset-auxiliary-contour and repeat update to load the configuration first."
 }
 
 function Assert-AuxiliaryContourMutationAllowed {
@@ -497,6 +509,8 @@ function Update-AuxiliaryContour {
     $contour = Get-AuxiliaryContour
     Assert-AuxiliaryContourMutationAllowed -Contour $contour -Operation "update"
     $connection = Get-AuxiliaryContourConnection -Contour $contour
+    $newManagedInfoBase = $contour.baseMode -eq "managed-file" -and
+        -not (Test-Path -LiteralPath (Join-Path $connection.path "1Cv8.1CD") -PathType Leaf -ErrorAction SilentlyContinue)
     Ensure-AuxiliaryManagedInfoBase -Contour $contour -Connection $connection
     $source = Get-AuxiliaryContourFingerprint -Contour $contour
     $state = Read-AuxiliaryContourState -Contour $contour
@@ -519,20 +533,31 @@ function Update-AuxiliaryContour {
         Write-Host "Auxiliary contour '$($contour.name)' is already current."
         return
     }
-    Save-AuxiliaryContourState -Contour $contour -Updates @{
-        readinessStatus = "pending"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = ""
-        lastVerificationStatus = "stale"; lastVerificationFingerprint = ""; lastError = ""
-        lastLoadStatus = ""; lastLoadMode = ""; enterpriseNormalizationStatus = "not-run"
-        enterpriseNormalizationProofVersion = 0; lastEnterpriseAutoUpdateResultPath = ""
-    } | Out-Null
-    Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
     $normalizationStarted = $false
     try {
-        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -Mode "Full" -User $connection.user -Password $connection.password
+        if ($contour.baseMode -eq "managed-file" -and -not $newManagedInfoBase) {
+            Ensure-AuxiliaryContourUnsafeActionProtection -Contour $contour -Connection $connection
+        }
+        Save-AuxiliaryContourState -Contour $contour -Updates @{
+            readinessStatus = "pending"; connectionIdentityHash = $connection.identityHash; sourceFingerprint = ""
+            lastVerificationStatus = "stale"; lastVerificationFingerprint = ""; lastError = ""
+            lastLoadStatus = ""; lastLoadMode = ""; enterpriseNormalizationStatus = "not-run"
+            enterpriseNormalizationProofVersion = 0; lastEnterpriseAutoUpdateResultPath = ""
+        } | Out-Null
+        Stop-AuxiliaryContourRuntimeBeforeMutation -Contour $contour -Connection $connection -Reason "auxiliary configuration load"
+        $loadUser = if ($newManagedInfoBase) { "" } else { $connection.user }
+        $loadPassword = if ($newManagedInfoBase) { "" } else { $connection.password }
+        $configLoad = Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $contour.absoluteConfigurationPath -ListFilePath "" -FileCount $source.configuration.fileCount -Mode "Full" -User $loadUser -Password $loadPassword
+        if ($newManagedInfoBase) {
+            Save-AuxiliaryContourState -Contour $contour -Updates @{
+                lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed
+            } | Out-Null
+            Throw-AuxiliaryContourBootstrapUserRequired -Contour $contour -Connection $connection
+        }
         foreach ($extension in @($contour.extensions)) {
             $absoluteExtensionPath = Assert-ExportPathInsideProject -ExportPath $extension.path
             $extensionSource = Get-ConfigSourceFingerprint -ExportPath $extension.path
-            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -ExtensionName $extension.name -Mode "Full" -User $connection.user -Password $connection.password | Out-Null
+            Invoke-ConfigLoadWithFallback -InfoBasePath $connection.path -InfoBaseKind $connection.kind -State $null -AbsoluteExportPath $absoluteExtensionPath -ListFilePath "" -FileCount $extensionSource.fileCount -ExtensionName $extension.name -Mode "Full" -User $loadUser -Password $loadPassword | Out-Null
         }
         Save-AuxiliaryContourState -Contour $contour -Updates @{
             lastLoadStatus = $configLoad.configLoadStatus; lastLoadMode = $configLoad.loadModeUsed

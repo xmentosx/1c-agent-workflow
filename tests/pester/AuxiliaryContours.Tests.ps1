@@ -238,6 +238,7 @@
                 . $HelperPath -ProjectRoot $root -Action help *> $null
                 $contour = Get-AuxiliaryContour -Name exchange
                 $connection = Get-AuxiliaryContourConnection -Contour $contour
+                $connection.user = "AuxiliaryAdmin"
                 $script:proofState = $null
                 $script:interactive = $false
                 $script:confirmations = 0
@@ -271,7 +272,7 @@
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
-    It "loads an empty managed base before confirmation and never starts EPF while confirmation is required" {
+    It "loads a newly created managed base without credentials, then requires a real user before EPF" {
         $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{
             exchange = [ordered]@{
                 baseMode = "managed-file"
@@ -284,10 +285,18 @@
                 . $HelperPath -ProjectRoot $root -Action help *> $null
                 $script:auxState = $null
                 $script:events = [Collections.Generic.List[string]]::new()
+                $script:loadUsers = [Collections.Generic.List[string]]::new()
                 $script:allowConfirmation = $false
+                $script:connection = Get-AuxiliaryContourConnection -Contour (Get-AuxiliaryContour -Name exchange)
+                $script:connection.user = "PreconfiguredUser"
                 $Action = "update-auxiliary-contour"
                 $AuxiliaryContourName = "exchange"
-                function Ensure-AuxiliaryManagedInfoBase { $script:events.Add("create") }
+                function Get-AuxiliaryContourConnection { $script:connection }
+                function Ensure-AuxiliaryManagedInfoBase {
+                    $script:events.Add("create")
+                    New-Item -ItemType Directory -Force -Path $script:connection.path | Out-Null
+                    New-Item -ItemType File -Force -Path (Join-Path $script:connection.path "1Cv8.1CD") | Out-Null
+                }
                 function Get-AuxiliaryContourFingerprint {
                     [pscustomobject]@{ combined = "source-a"; configuration = [pscustomobject]@{ fingerprint = "config-a"; fileCount = 1 }; extensions = @() }
                 }
@@ -305,6 +314,7 @@
                 function Invoke-ConfigLoadWithFallback {
                     param($InfoBasePath, $InfoBaseKind, $State, $AbsoluteExportPath, $ListFilePath, $FileCount, $ExtensionName, $Mode, $User, $Password)
                     $script:events.Add($(if ($ExtensionName) { "extension" } else { "configuration" }))
+                    $script:loadUsers.Add([string]$User)
                     [pscustomobject]@{ configLoadStatus = "passed"; loadModeUsed = "full" }
                 }
                 function Ensure-AuxiliaryContourUnsafeActionProtection {
@@ -321,20 +331,31 @@
                 $blocked = try { Update-AuxiliaryContour; "not-blocked" } catch { $_.Exception.Message }
                 $blockedState = $script:auxState | ConvertTo-Json -Depth 8 | ConvertFrom-Json
                 $blockedEvents = @($script:events)
+                $blockedLoadUsers = @($script:loadUsers)
+                $script:connection.user = "AuxiliaryAdmin"
+                $script:events.Clear()
+                $preflightBlocked = try { Update-AuxiliaryContour; "not-blocked" } catch { $_.Exception.Message }
+                $preflightEvents = @($script:events)
                 $script:allowConfirmation = $true
                 $script:events.Clear()
+                $script:loadUsers.Clear()
                 Update-AuxiliaryContour
-                [pscustomobject]@{ blocked = $blocked; blockedState = $blockedState; blockedEvents = $blockedEvents; readyState = $script:auxState; readyEvents = @($script:events) }
+                [pscustomobject]@{ blocked = $blocked; blockedState = $blockedState; blockedEvents = $blockedEvents; blockedLoadUsers = $blockedLoadUsers; preflightBlocked = $preflightBlocked; preflightEvents = $preflightEvents; readyState = $script:auxState; readyEvents = @($script:events); readyLoadUsers = @($script:loadUsers) }
             }
 
             $result.blocked | Should -Match '^ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED:'
-            $result.blockedEvents | Should -Be @("create", "drain", "configuration", "extension", "confirm")
+            $result.blocked | Should -Match 'requiredAction=create-user-in-auxiliary-configurator'
+            $result.blockedEvents | Should -Be @("create", "drain", "configuration")
+            $result.blockedLoadUsers | Should -Be @("")
             $result.blockedState.readinessStatus | Should -Be "confirmation-required"
             $result.blockedState.lastLoadStatus | Should -Be "passed"
             $result.blockedState.enterpriseNormalizationStatus | Should -Be "not-run"
             $result.blockedState.enterpriseNormalizationProofVersion | Should -Be 0
             $result.blockedState.sourceFingerprint | Should -Be ""
-            $result.readyEvents | Should -Be @("create", "drain", "configuration", "extension", "confirm", "epf")
+            $result.preflightBlocked | Should -Match '^ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED:'
+            $result.preflightEvents | Should -Be @("create", "confirm")
+            $result.readyEvents | Should -Be @("create", "confirm", "drain", "configuration", "extension", "confirm", "epf")
+            $result.readyLoadUsers | Should -Be @("AuxiliaryAdmin", "AuxiliaryAdmin")
             $result.readyState.readinessStatus | Should -Be "ready"
             $result.readyState.enterpriseNormalizationStatus | Should -Be "passed"
             $result.readyState.enterpriseNormalizationProofVersion | Should -Be 1
@@ -541,6 +562,25 @@
             $config.auxiliaryContours.exchange.tests.path | Should -Be "tests/auxiliary/exchange"
             $config.auxiliaryContours.exchange.extensions[0].name | Should -Be "ExchangeSupport"
             Test-Path -LiteralPath (Join-Path $root ".dev.env") | Should -BeFalse
+
+            & $HelperPath -ProjectRoot $root -Action configure-auxiliary-contour `
+                -AuxiliaryContourName exchange `
+                -AuxiliaryDisplayName "Приёмник обмена" `
+                -AuxiliaryBaseMode managed-file `
+                -AuxiliarySourceMode read-write `
+                -AuxiliaryConfigurationPath "src/configs/exchange/cf" `
+                -AuxiliaryIncludePrimaryTests `
+                -AuxiliaryTestsPath "tests/auxiliary/exchange" `
+                -AuxiliaryExtension @("ExchangeSupport=src/configs/exchange/cfe/ExchangeSupport") `
+                -AuxiliaryInfoBaseUser "AuxiliaryAdmin" `
+                -AuxiliaryPasswordMode empty *> $null
+            $LASTEXITCODE | Should -Be 0
+            $envText = Get-Content -LiteralPath (Join-Path $root ".dev.env") -Raw -Encoding UTF8
+            $envText | Should -Match 'ITL_AUX_EXCHANGE_USER=AuxiliaryAdmin'
+            $envText | Should -Match 'ITL_AUX_EXCHANGE_PASSWORD='
+            $connection = & { . $HelperPath -ProjectRoot $root -Action help *> $null; Get-AuxiliaryContourConnection -Contour (Get-AuxiliaryContour -Name exchange) }
+            $connection.user | Should -BeExactly "AuxiliaryAdmin"
+            $connection.password | Should -BeExactly ""
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
