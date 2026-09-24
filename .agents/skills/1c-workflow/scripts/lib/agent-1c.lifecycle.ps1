@@ -12875,7 +12875,7 @@ function Get-ConfigRepositoryLockOutcome {
             # partial per-object observation exists.
             $entry.status = 'already-owned'
             $owners = @($CurrentOwner)
-            $entry.observations = @([pscustomobject]@{ status = 'already-owned'; owner = $CurrentOwner })
+            $entry.observations = @([pscustomobject]@{ status = 'already-owned'; owner = $CurrentOwner; reportedName = '' })
         }
         $entry.owner = $owners -join ', '
     }
@@ -12937,7 +12937,9 @@ function Write-ConfigRepositoryLockOutcomeReport {
             $Lines.Add('Результат отдельной операции с корнем отсутствует.')
         } else {
             $rootEntry = @($Outcome.rootOperation.items | Where-Object name -eq 'Конфигурация')[0]
-            $reportedRootName = @($rootEntry.observations | ForEach-Object { $_.reportedName } | Where-Object { $_ } | Select-Object -First 1)
+            $reportedRootName = @($rootEntry.observations | ForEach-Object {
+                if ($null -ne $_.PSObject.Properties['reportedName']) { $_.reportedName }
+            } | Where-Object { $_ } | Select-Object -First 1)
             $rootNameDetail = if ($reportedRootName.Count -gt 0 -and $reportedRootName[0] -notin @('Configuration', 'Конфигурация')) { " (в журнале 1С: $($reportedRootName[0]))" } else { '' }
             switch ([string]$rootEntry.status) {
                 'captured' { $Lines.Add("Корень конфигурации$rootNameDetail захвачен этой командой.") }

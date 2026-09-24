@@ -69,6 +69,10 @@ Describe 'Repository lock partial outcome report' {
             # Exact log of a second root-only lock by the same native repository user.
             [IO.File]::WriteAllText($log, "Захват объектов в хранилище успешно завершен`r`n", [Text.UTF8Encoding]::new($false))
             $outcome = Get-ConfigRepositoryLockOutcome -Plan $plan -LogPath $log -Succeeded $true -CurrentOwner 'TestOwner'
+            $outcome.rootLockRequiredBy = @('Константа.Новая')
+            $outcome.rootOperation = [pscustomobject]@{ items = @($outcome.items[0]); logPath = $log }
+            # Older saved outcomes can lack the optional name reported by Designer.
+            $outcome.items[0].observations[0].PSObject.Properties.Remove('reportedName')
             function Write-AndSetRunUserReport { param($Lines) }
             $lines = [Collections.Generic.List[string]]::new()
             Write-ConfigRepositoryLockOutcomeReport -Lines $lines -Outcome $outcome -RunRoot $root -ObjectListPath 'root.xml'
@@ -81,6 +85,7 @@ Describe 'Repository lock partial outcome report' {
         $result.outcome.items[0].owner | Should -Be 'TestOwner'
         $result.report | Should -Match 'Уже захвачены текущим пользователем'
         $result.report | Should -Match 'TestOwner'
+        $result.report | Should -Match 'Корень конфигурации уже был захвачен текущим пользователем TestOwner'
         $result.report | Should -Match 'Всего под контролем текущего пользователя.*1'
     }
 

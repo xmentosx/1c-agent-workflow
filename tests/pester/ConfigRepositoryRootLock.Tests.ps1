@@ -124,11 +124,14 @@ Describe 'Configuration root lock dependencies' {
     }
 
     It 'orders a root-only request before the remaining objects and preserves both phase outcomes' -TestCases @(
-        @{ failurePhase = 0; silentRoot = $false }, @{ failurePhase = 1; silentRoot = $false },
-        @{ failurePhase = 2; silentRoot = $false }, @{ failurePhase = 0; silentRoot = $true }
+        @{ failurePhase = 0; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 1; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 2; silentRoot = $false; rootSuccessMarker = $false },
+        @{ failurePhase = 0; silentRoot = $true; rootSuccessMarker = $false },
+        @{ failurePhase = 0; silentRoot = $true; rootSuccessMarker = $true }
     ) {
-        param($failurePhase, $silentRoot)
-        $root = Join-Path $TestDrive ("Порядок с пробелом $failurePhase $silentRoot")
+        param($failurePhase, $silentRoot, $rootSuccessMarker)
+        $root = Join-Path $TestDrive ("Порядок с пробелом $failurePhase $silentRoot $rootSuccessMarker")
         New-RootLockFixture $root
         Write-RootLockMetadata $root 'Constants' 'Constant' 'Новая'
         Write-RootLockConfiguration $root '<Constant>Новая</Constant>'
@@ -162,6 +165,9 @@ Describe 'Configuration root lock dependencies' {
                     $lines += if ($failurePhase -eq 2) { 'Объект захвачен для редактирования другим пользователем: Справочник.Существующий (ЧужойВладелец)' } else { 'Объект захвачен для редактирования: Справочник.Существующий' }
                 }
                 $lines += '---- Операция с хранилищем конфигурации завершена ----'
+                if ($rootSuccessMarker -and $script:Requests.Count -eq 1) {
+                    $lines += 'Захват объектов в хранилище успешно завершен'
+                }
                 Write-Utf8Text -Path $script:LastLogPath -Value ($lines -join "`r`n")
                 if ($failurePhase -eq $script:Requests.Count) { throw 'native lock failed' }
             }
@@ -193,9 +199,20 @@ Describe 'Configuration root lock dependencies' {
             @($result.requests).Count | Should -Be 2
             @($result.requests[1].SelectNodes('//*[local-name()="Configuration"]')).Count | Should -Be 0
             @($result.requests[1].Objects.Object).Count | Should -Be 2
-            $expectedRootStatus = if ($silentRoot) { 'unconfirmed' } else { 'captured' }
+            $expectedRootStatus = if ($rootSuccessMarker) { 'already-owned' } elseif ($silentRoot) { 'unconfirmed' } else { 'captured' }
             @($result.outcome.items | Where-Object name -eq 'Конфигурация')[0].status | Should -Be $expectedRootStatus
+            if ($rootSuccessMarker) {
+                $result.report | Should -Match 'Корень конфигурации уже был захвачен текущим пользователем TestOwner'
+                @($result.outcome.rootOperation.items[0].observations).Count | Should -Be 1
+                @($result.outcome.rootOperation.items[0].observations[0].PSObject.Properties.Name) | Should -Contain 'reportedName'
+            } elseif (-not $silentRoot) {
+                $result.report | Should -Match 'Корень конфигурации.*захвачен этой командой'
+            }
             @($result.outcome.items | Where-Object name -eq 'Константа.Новая')[0].status | Should -Be 'absent'
+            if ($failurePhase -eq 2) {
+                @($result.outcome.items | Where-Object name -eq 'Справочник.Существующий')[0].status | Should -Be 'conflict'
+                $result.report | Should -Match 'Не захвачены: заняты другими пользователями'
+            }
             Test-Path -LiteralPath $result.outcome.rootOperation.logPath | Should -BeTrue
         }
     }
