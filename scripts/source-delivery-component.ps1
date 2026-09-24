@@ -109,8 +109,15 @@ function Get-DeliveryOwnedAssetContracts {
 }
 
 function Assert-DeliveryOwnedAssetsPublished {
-    param([Parameter(Mandatory = $true)][string]$CandidateRoot)
-    $lock = Get-Content -LiteralPath (Join-Path $CandidateRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    param([Parameter(Mandatory = $true)][string]$CandidateRoot, [string]$CandidateCommit = '')
+    if ($CandidateCommit) {
+        if ($CandidateCommit -notmatch '^[a-f0-9]{40}$') { throw "Owned asset verification requires an exact candidate commit." }
+        $lockResult = Invoke-WorktreeGit -Root $CandidateRoot -Arguments @('show', "${CandidateCommit}:templates/dependency-lock.json") -AllowFailure
+        if ($lockResult.exitCode -ne 0) { throw "Owned asset verification cannot read the dependency lock at candidate '$CandidateCommit'." }
+        $lock = $lockResult.stdout | ConvertFrom-Json
+    } else {
+        $lock = Get-Content -LiteralPath (Join-Path $CandidateRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
     $repository = Get-DeliveryGitHubRepository -CandidateRoot $CandidateRoot
     $contracts = @(Get-DeliveryOwnedAssetContracts -Lock $lock -RepositorySlug ([string]$repository.slug))
     foreach ($contract in $contracts) {

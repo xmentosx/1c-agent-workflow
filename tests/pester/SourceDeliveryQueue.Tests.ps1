@@ -14,6 +14,35 @@ It "checks the Release stand before Develop and all owned URLs before push, incl
         $remote | Should -BeLessThan $push
         $body | Should -Match 'Get-DevelopPublicationPhaseRank.*-ge 3'
     }
+It "keeps the queue after remote push when interrupted recovery finds a missing owned asset" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Complete-InterruptedDevelopPublication')) { Invoke-Expression $definition.Extent.Text }
+            $remoteCommit = 'a' * 40
+            $remoteTree = 'b' * 40
+            $script:Root = $TestDrive
+            $script:ComponentFinalizerScript = ''
+            $script:queueCleared = $false
+            $script:checkedCommit = ''
+            function Read-DevelopPublicationAttempt {
+                return [pscustomobject]@{ phase='component-finalized'; candidate=$remoteCommit; tree=$remoteTree; startedAt='2026-09-24T00:00:00Z'; requireRelease=$true; componentPublication=$null }
+            }
+            function Get-DevelopPublicationPhaseRank { return 3 }
+            function Invoke-DeliveryGit { return [pscustomobject]@{ exitCode=0 } }
+            function Get-GitValue { return $remoteTree }
+            function Get-DevelopCommitInstallability { return [pscustomobject]@{ installable=$true; aiRulesStatus='passed' } }
+            function Assert-DeliveryOwnedAssetsPublished {
+                param([string]$CandidateRoot, [string]$CandidateCommit)
+                $script:checkedCommit = $CandidateCommit
+                throw "Required owned asset 'dependencies.vanessaMcp.vaExtension' is not published."
+            }
+            function Clear-PublishedQueueEntries { $script:queueCleared = $true }
+            $entry = [pscustomobject]@{ head=$remoteCommit }
+
+            { Complete-InterruptedDevelopPublication -RemoteBefore $remoteCommit -Entries @($entry) } | Should -Throw '*vanessaMcp.vaExtension*'
+            $script:checkedCommit | Should -Be $remoteCommit
+            $script:queueCleared | Should -BeFalse
+        }
+    }
 It "rejects a historical supervisor that cannot publish the paired CFE" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DeliveryBootstrapPairedAssetSupport')) { Invoke-Expression $definition.Extent.Text }
@@ -29,6 +58,50 @@ It "rejects a historical supervisor that cannot publish the paired CFE" {
             { Assert-DeliveryBootstrapPairedAssetSupport -SupervisorCommit ('b' * 40) } |
                 Should -Not -Throw
         }
+    }
+It "blocks a ZIP-only published supervisor before gates and preserves the queued CFE candidate on resume" {
+        $fixture = $null
+        try {
+            $fixture = New-DeliveryFixture
+            $supervisorDirectory = Join-Path $fixture.root 'scripts'
+            New-Item -ItemType Directory -Force -Path $supervisorDirectory | Out-Null
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-supervisor.ps1'), "throw 'historical supervisor must not execute'`n", [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $supervisorDirectory 'source-delivery-component.ps1'), "# historical ZIP-only component finalizer`n", [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add scripts/source-delivery-supervisor.ps1 scripts/source-delivery-component.ps1
+            & git -C $fixture.root commit --quiet -m 'test: published ZIP-only supervisor'
+            $published = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root push --quiet origin HEAD:develop
+
+            $templateRoot = Join-Path $fixture.root 'templates'
+            New-Item -ItemType Directory -Force -Path $templateRoot | Out-Null
+            [IO.File]::WriteAllText((Join-Path $templateRoot 'dependency-lock.json'),
+                '{"dependencies":{"vanessaMcp":{"vaExtension":{"url":"https://github.com/owner/repo/releases/download/tag/paired.cfe"}}}}',
+                [Text.UTF8Encoding]::new($false))
+            & git -C $fixture.root add templates/dependency-lock.json
+            & git -C $fixture.root commit --quiet -m 'test: candidate requires paired CFE'
+            $candidate = (& git -C $fixture.root rev-parse HEAD).Trim()
+            & git -C $fixture.root update-ref refs/itl/develop-queue/develop/base $published
+            & git -C $fixture.root update-ref refs/itl/develop-queue/develop/head $candidate
+
+            $planId = 'c' * 64
+            $planRoot = Join-Path $fixture.root '.git\itl\plans\v1'
+            New-Item -ItemType Directory -Force -Path $planRoot | Out-Null
+            $plan = [ordered]@{ schemaVersion=1; kind='itl-delivery-plan'; planId=$planId; supervisor=[ordered]@{ commit=$published; channel='develop' } }
+            [IO.File]::WriteAllText((Join-Path $planRoot "$planId.json"), ($plan | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
+
+            foreach ($arguments in @(
+                @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"')),
+                @('-Action','PublishDevelop','-RepositoryRoot',('"' + $fixture.root + '"'),'-ResumePlan',$planId)
+            )) {
+                $result = Invoke-DeliveryTestPowerShell -Arguments $arguments -AllowFailure
+                $result.exitCode | Should -Not -Be 0
+                $result.stderr | Should -Match 'DELIVERY_SUPERVISOR_ASSET_UNSUPPORTED'
+                (& git --git-dir=$($fixture.remote) rev-parse refs/heads/develop).Trim() | Should -Be $published
+                (& git -C $fixture.root rev-parse refs/itl/develop-queue/develop/base).Trim() | Should -Be $published
+                (& git -C $fixture.root rev-parse refs/itl/develop-queue/develop/head).Trim() | Should -Be $candidate
+                Test-Path -LiteralPath $fixture.modeLog | Should -BeFalse
+            }
+        } finally { Remove-DeliveryFixture -Fixture $fixture }
     }
 It "parses the orchestrator and exposes the bounded delivery actions" {
         $tokens = $null

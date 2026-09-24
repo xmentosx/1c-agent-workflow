@@ -656,8 +656,13 @@ if ($Mode -in @("Develop", "Release")) {
             if ($standBranch -cne "itldev/$devBranchName") {
                 Add-ReadinessIssue -Code "RELEASE_STAND_BRANCH_MISMATCH" -Category "STAND_STALE" -Message "Configured E2E worktree branch is '$standBranch'; expected='itldev/$devBranchName'." -Recovery "Point release-e2e.json at the exact disposable Release branch."
             }
-            if (@(& git -C $standWorktree status --porcelain --untracked-files=no).Count -gt 0) {
-                Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked changes." -Recovery "Use a clean disposable Release branch."
+            if (-not $ownedWorktree) {
+                Add-ReadinessIssue -Code "RELEASE_STAND_WORKTREE_FOREIGN" -Category "STAND_STALE" `
+                    -Message "Configured E2E worktree is not registered in the configured E2E project's Git repository: $standWorktree" `
+                    -Recovery "Point release-e2e.json at an owned disposable Release worktree."
+            }
+            if (-not $standClean) {
+                Add-ReadinessIssue -Code "RELEASE_STAND_DIRTY" -Category "STAND_STALE" -Message "Configured E2E worktree has tracked or untracked changes." -Recovery "Use a clean disposable Release branch."
             }
             foreach ($lockRoot in @($E2EProjectRoot, $standWorktree)) {
                 $lockPath = Join-Path $lockRoot ".agent-1c\dependency-lock.json"

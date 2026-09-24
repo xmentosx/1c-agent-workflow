@@ -287,6 +287,7 @@ Describe "Deterministic Release readiness" {
             $codes | Should -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
             $codes | Should -Contain "RELEASE_STAND_UNSAFE_ACTION_PROTECTION_UNCONFIRMED"
+            $codes | Should -Contain "RELEASE_STAND_WORKTREE_FOREIGN"
             $codes | Should -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
             $codes | Should -Contain "RELEASE_CHECKPOINT_FIXTURE_INVALID"
             $codes | Should -Contain "RELEASE_CHECKPOINT_SNAPSHOT_INVALID"
@@ -384,6 +385,13 @@ Describe "Deterministic Release readiness" {
             $dirty = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
             @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_DIRTY'
             @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_MARKER_MISSING'
+
+            & git -C $worktreeRoot restore -- AGENT-INSTALL.md
+            [IO.File]::WriteAllText((Join-Path $worktreeRoot 'untracked-note.txt'), "unexpected`n", [Text.UTF8Encoding]::new($false))
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $untracked = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($untracked.issues.code) | Should -Contain 'RELEASE_STAND_DIRTY'
+            @($untracked.issues.code) | Should -Contain 'RELEASE_STAND_MARKER_MISSING'
         } finally {
             if (Test-Path -LiteralPath $e2eRoot) { & git -C $e2eRoot worktree remove --force $worktreeRoot 2>$null | Out-Null }
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }

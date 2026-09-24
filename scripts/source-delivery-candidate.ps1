@@ -518,6 +518,9 @@ function Complete-InterruptedDevelopPublication {
     if ($remoteTree -ne [string]$attempt.tree) { return $null }
     $installability = Get-DevelopCommitInstallability -Commit $RemoteBefore
     if (-not [bool]$installability.installable) { throw "Published develop is not installable; recovery will not report success." }
+    if (-not $script:ComponentFinalizerScript) {
+        [void](Assert-DeliveryOwnedAssetsPublished -CandidateRoot $script:Root -CandidateCommit $RemoteBefore)
+    }
     Clear-PublishedQueueEntries -PublishedCommit $RemoteBefore
     Sync-LocalDevelopAfterPublish
     $retainAttempt = (Get-Variable -Name RetainDevelopPublicationAttempt -Scope Script -ErrorAction SilentlyContinue) -and $script:RetainDevelopPublicationAttempt

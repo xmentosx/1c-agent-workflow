@@ -142,6 +142,33 @@ Describe "Source develop queue and delivery" {
         }
     }
 
+    It "checks the exact remote commit lock during interrupted publication recovery" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts', 'Assert-DeliveryOwnedAssetsPublished')) { Invoke-Expression $definition.Extent.Text }
+            $candidateCommit = 'a' * 40
+            $asset = { param($name) [pscustomobject]@{ assetName=$name; releaseTag='tag'; url="https://github.com/owner/repo/releases/download/tag/$name"; sha256=('b' * 64) } }
+            $lock = [pscustomobject]@{ dependencies = [pscustomobject]@{
+                vanessaAutomation = & $asset 'vanessa.zip'
+                vanessaMcp = [pscustomobject]@{ vaExtension = & $asset 'paired.cfe' }
+                itlOndemandMcp = & $asset 'facade.exe'
+            } }
+            $script:committedLock = $lock | ConvertTo-Json -Depth 8
+            $script:readGitArguments = @()
+            function Invoke-WorktreeGit {
+                param([string]$Root, [string[]]$Arguments, [switch]$AllowFailure)
+                $script:readGitArguments = $Arguments
+                return [pscustomobject]@{ exitCode=0; stdout=$script:committedLock }
+            }
+            function Get-DeliveryGitHubRepository { return [pscustomobject]@{ slug='owner/repo' } }
+            function Get-DeliveryRemoteAssetState {
+                param([string]$Url, [string]$ExpectedSha256, [int]$AvailabilityAttempts)
+                return [pscustomobject]@{ status=$(if ($Url -like '*.cfe') { 'missing' } else { 'matched' }); sha256=$(if ($Url -like '*.cfe') { '' } else { $ExpectedSha256 }) }
+            }
+            { Assert-DeliveryOwnedAssetsPublished -CandidateRoot $TestDrive -CandidateCommit $candidateCommit } | Should -Throw '*dependencies.vanessaMcp.vaExtension*'
+            $script:readGitArguments | Should -Be @('show', "${candidateCommit}:templates/dependency-lock.json")
+        }
+    }
+
     It "rejects a component capability aggregate that omits an owned requirement" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-ComponentPublicationFinalizerPreflight')) { Invoke-Expression $definition.Extent.Text }
