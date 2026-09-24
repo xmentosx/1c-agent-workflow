@@ -18,11 +18,12 @@ authorized. Then run `onboard --bundle <bundle.zip> --worker-connection
 --name <host-user alias> --trusted-transfer`, adding `--ca-certificate <PEM>` for
 a private TLS CA. The transfer folder must be restricted to the intended
 controller and worker user because it temporarily contains the pairing token.
-Start `pull-serve` with the controller half. The remote user starts only the
+Register the controller half by a stable host-user name and ensure its broker.
+The remote user starts only the
 generated `Start-Worker.cmd` in their interactive Windows session. Do not ask
 them to copy a token, choose a 1C path, run a network check, or report console
 text. Observe the launcher's `bootstrap-status.json` in the transfer folder
-and then `remote --action probe --connection <controller.json>`. The launcher
+and then `remote --action probe --host <name>`. The launcher
 copies inputs to `%LOCALAPPDATA%/ITL/remote-work/<name>`, verifies hashes,
 prepares pinned Python without elevation, and starts the persistent worker.
 It reports startup and pull connection errors to the status file. This first
@@ -41,7 +42,18 @@ Choose the pull broker's stable URL and create private controller and worker hal
   --worker-output C:\ITL\transfer\worker.json
 ```
 
-Start the broker with every controller pairing it may serve. A random bearer token is not accepted merely because it has the right shape. Non-loopback listeners require a TLS certificate and key; an organization-managed endpoint may instead terminate TLS before a loopback broker.
+Store the controller half once in the private user-local catalog. `controller --action list` discovers its name from another project without reading or copying the token into that project. `--host` on `remote`, `send`, `sync-worker`, and `stage-update` checks the paired broker and starts it on demand if absent. After a local reboot, the remote worker reconnects to the same URL when the broker is ensured again; no new remote launch is needed while its interactive session remains alive. The catalog is `%LOCALAPPDATA%/ITL/remote-work/controllers/<name>` on Windows. Keep it private, outside Git and synchronized folders. Pairing and target authorization remain separate.
+
+```powershell
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 controller `
+  --action register --name ufa-user --connection "$env:LOCALAPPDATA\ITL\remote-work\host\controller.json" `
+  --listen 0.0.0.0 --port 8765 --certificate C:\ITL\tls\server.pem `
+  --private-key C:\ITL\tls\server.key
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 controller --action ensure --name ufa-user
+& .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 remote --host ufa-user --action probe
+```
+
+The broker must keep the same reachable URL, port and TLS identity. `ensure` never kills an existing listener. A listener that does not authenticate the registered pair reports a conflict; inspect the existing broker rather than replacing it during an uncertain job. A broker started from the catalog accepts another pairing for that same URL when it is registered, without restarting active jobs. `pull-serve` with repeated `--connection` remains the lower-level foreground route. A random bearer token is not accepted merely because it has the right shape. Non-loopback listeners require a TLS certificate and key; an organization-managed endpoint may instead terminate TLS before a loopback broker.
 
 ```powershell
 & .\.agents\skills\itl-remote-runner\scripts\Invoke-RemoteWork.ps1 pull-serve `
@@ -60,7 +72,7 @@ Pull is the normal control channel and also transfers files in verified chunks. 
 
 When connecting through already authorized SSH, set `transport: ssh` and the concrete `ssh.host` alias; existing SSH config supplies user/key and optional port. SSH carries the same structured spool RPC through stdin. It is not the execution engine and must not be installed automatically.
 
-Use `probe --spool ...` locally or `remote --connection ... --action probe` remotely. Unsupported optional capabilities do not install or start anything during probe.
+Use `probe --spool ...` locally or `remote --host <name> --action probe` remotely. `--connection` remains available for a pairing outside the catalog. Unsupported optional capabilities do not install or start anything during probe.
 
 ## Package and execute
 

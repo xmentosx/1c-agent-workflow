@@ -7,6 +7,7 @@ folders carry immutable blobs only; mutable job state always stays on pull.
 from __future__ import annotations
 
 import hashlib
+import hmac
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -95,11 +96,14 @@ def _http_json(config, route, value, *, timeout):
 class BrokerState:
     """In-memory rendezvous. RPCs are idempotent spool operations by contract."""
 
-    def __init__(self, allowed_identities=None):
+    def __init__(self, allowed_identities=None, health_tokens=None, dynamic_identities=None):
         self.condition = threading.Condition()
         self.queues = {}
         self.responses = {}
         self.allowed_identities = None if allowed_identities is None else frozenset(allowed_identities)
+        self.health_tokens = health_tokens or {}
+        self.dynamic_identities = dynamic_identities
+        self.broker_id = uuid.uuid4().hex
 
     @staticmethod
     def identity(worker, token):
@@ -107,9 +111,18 @@ class BrokerState:
 
     def _identity(self, worker, token):
         identity = self.identity(worker, token)
-        if self.allowed_identities is not None and identity not in self.allowed_identities:
+        allowed = self.dynamic_identities()[0] if self.dynamic_identities is not None else self.allowed_identities
+        if allowed is not None and identity not in allowed:
             raise WorkError("PULL_AUTH_INVALID")
         return identity
+
+    def health_proof(self, worker, nonce):
+        tokens = self.dynamic_identities()[1] if self.dynamic_identities is not None else self.health_tokens
+        token = tokens.get(worker)
+        if not token:
+            raise WorkError("PULL_AUTH_INVALID")
+        return hmac.new(token.encode("utf-8"),
+                        (nonce + "\0" + self.broker_id).encode("utf-8"), hashlib.sha256).hexdigest()
 
     def call(self, worker, token, request_id, message, timeout):
         identity = self._identity(worker, token)
@@ -197,12 +210,20 @@ def _handler(state):
 
         def do_POST(self):
             try:
-                token = self._token()
                 value = self._json()
                 worker = value.get("workerId")
                 if (not isinstance(worker, str) or not worker or len(worker) > 128 or
                         any(character in worker for character in "\r\n\0/")):
                     raise WorkError("PULL_WORKER_ID_INVALID")
+                if self.path == "/v1/health":
+                    nonce = value.get("nonce")
+                    if not isinstance(nonce, str) or len(nonce) != 32 or any(c not in "0123456789abcdef" for c in nonce):
+                        raise WorkError("PULL_HEALTH_NONCE_INVALID")
+                    proof = state.health_proof(worker, nonce)
+                    self._send(HTTPStatus.OK, {"status": "broker-ready", "brokerId": state.broker_id,
+                                               "proof": proof})
+                    return
+                token = self._token()
                 if self.path == "/v1/call":
                     request_id = value.get("requestId")
                     if not isinstance(request_id, str) or not request_id:
@@ -237,20 +258,60 @@ def _handler(state):
     return Handler
 
 
-def start_broker(listen="127.0.0.1", port=0, *, certificate=None, private_key=None, connections=None):
+def start_broker(listen="127.0.0.1", port=0, *, certificate=None, private_key=None,
+                 connections=None, connection_directory=None):
     if bool(certificate) != bool(private_key):
         raise WorkError("PULL_TLS_CERTIFICATE_AND_KEY_REQUIRED")
     if listen not in ("127.0.0.1", "localhost", "::1") and not (certificate and private_key):
         raise WorkError("PULL_TLS_REQUIRED_FOR_NON_LOOPBACK_LISTENER")
     allowed = None
+    health_tokens = {}
     if connections is not None:
         allowed = set()
         for connection in connections:
             value = _pull(read_json(connection))
             allowed.add(BrokerState.identity(value["workerId"], value["token"]))
+            if value["workerId"] in health_tokens and health_tokens[value["workerId"]] != value["token"]:
+                health_tokens[value["workerId"]] = None
+            elif value["workerId"] not in health_tokens:
+                health_tokens[value["workerId"]] = value["token"]
         if not allowed:
             raise WorkError("PULL_BROKER_PAIRING_REQUIRED")
-    state = BrokerState(allowed)
+    dynamic = None
+    if connection_directory is not None:
+        directory = Path(connection_directory).resolve()
+        cache_lock = threading.Lock()
+        cache_mtime = None
+        cache_allowed = set()
+        cache_tokens = {}
+        def dynamic():
+            nonlocal cache_mtime, cache_allowed, cache_tokens
+            with cache_lock:
+                mtime = directory.stat().st_mtime_ns
+                if mtime == cache_mtime:
+                    return cache_allowed, cache_tokens
+                current = set(allowed or ())
+                tokens = dict(health_tokens)
+                for path in directory.glob("*/controller.json"):
+                    try:
+                        settings = read_json(path.parent / "broker.json")
+                        if (settings.get("listen") != listen or settings.get("port") != int(port) or
+                                settings.get("certificate") != certificate or
+                                settings.get("privateKey") != private_key):
+                            continue
+                        value = _pull(read_json(path))
+                        current.add(BrokerState.identity(value["workerId"], value["token"]))
+                        if value["workerId"] in tokens and tokens[value["workerId"]] != value["token"]:
+                            tokens[value["workerId"]] = None
+                        elif value["workerId"] not in tokens:
+                            tokens[value["workerId"]] = value["token"]
+                    except (OSError, ValueError, WorkError):
+                        continue
+                cache_mtime, cache_allowed, cache_tokens = mtime, current, tokens
+                return current, tokens
+        if not dynamic()[0]:
+            raise WorkError("PULL_BROKER_PAIRING_REQUIRED")
+    state = BrokerState(allowed, health_tokens=health_tokens, dynamic_identities=dynamic)
     server = PullHttpServer((listen, int(port)), _handler(state))
     scheme = "http"
     if certificate and private_key:
@@ -265,11 +326,12 @@ def start_broker(listen="127.0.0.1", port=0, *, certificate=None, private_key=No
     return server, thread, "%s://%s:%s" % (scheme, url_host, selected_port)
 
 
-def serve(listen, port, *, certificate=None, private_key=None, connections=None):
-    if not connections:
+def serve(listen, port, *, certificate=None, private_key=None,
+          connections=None, connection_directory=None):
+    if not connections and not connection_directory:
         raise WorkError("PULL_BROKER_PAIRING_REQUIRED")
     server, thread, url = start_broker(listen, port, certificate=certificate, private_key=private_key,
-                                       connections=connections)
+                                       connections=connections, connection_directory=connection_directory)
     print(json.dumps({"status": "pull-broker-ready", "url": url}, ensure_ascii=True), flush=True)
     try:
         thread.join()
@@ -323,13 +385,21 @@ class PullWorker:
         self.folders = _bulk_folders(config)
         self.spool = Path(spool).resolve()
         self.stop_event = stop_event
+        self.last_connection = None
+        self.last_connection_at = 0.0
         self.thread = threading.Thread(target=self._run, name="itl-pull-worker", daemon=True)
 
     def start(self):
         self.thread.start()
 
     def _publish_connection(self, value):
+        state = (value["status"], value.get("error", ""))
+        now = time.monotonic()
+        if state == self.last_connection and now - self.last_connection_at < 10:
+            return
         write_json(self.spool / "pull-connection.json", value)
+        self.last_connection = state
+        self.last_connection_at = now
         try:
             profile = read_json(self.spool / "profile.json")
             path = profile.get("bootstrapStatusPath")
