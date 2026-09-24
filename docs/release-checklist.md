@@ -29,6 +29,28 @@ database from the in-stand source snapshot whenever state may have leaked
 between runs. Replace that snapshot explicitly when a new baseline is intended;
 do not repoint the stand at the original external infobase.
 
+Keep one clean, registered fixture worktree with the committed
+`tests/features/workflow-release-e2e.feature` and no Release checkpoint. If a
+configured disposable Release worktree loses a checkpoint snapshot, preserve
+that worktree and run the source-owned recovery wrapper with an explicit new
+branch name:
+
+```powershell
+.\scripts\rebuild-release-e2e-stand.ps1 `
+  -E2EProjectRoot <dedicated-stand-root> `
+  -FixtureWorktree <clean-fixture-worktree> `
+  -NewDevBranchName <unused-release-branch-name>
+```
+
+The wrapper delegates database and branch creation to the installed
+`fork-dev-branch` helper. It verifies the new branch, fixture marker, clean
+worktree and unsafe-action protection, then atomically switches only the ignored
+`release-e2e.json` Release pointer. The old worktree, checkpoint and a backup
+of the old config remain for diagnosis. If the fork is interrupted, repeat the
+same command and branch name; the config remains on the old branch until the
+fork finishes and validates. A worktree that already ran Release is not a safe
+fixture merely because its Git tree is clean.
+
 ## Each fork/workflow release
 
 First publish and qualify the exact accumulated development candidate:

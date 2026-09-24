@@ -32,6 +32,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 if (-not $RepositoryRoot) { $RepositoryRoot = Split-Path -Parent $PSScriptRoot }
 $candidateRoot = [IO.Path]::GetFullPath($RepositoryRoot)
+. (Join-Path $PSScriptRoot 'git-path-list.ps1')
 $localSupervisor = Join-Path $PSScriptRoot "source-delivery-supervisor.ps1"
 if (-not (Test-Path -LiteralPath $localSupervisor -PathType Leaf)) { throw "Delivery supervisor is missing: $localSupervisor" }
 
@@ -113,6 +114,20 @@ function Test-DeliveryBootstrapAncestor {
     return $isAncestor
 }
 
+function Assert-DeliveryBootstrapPairedAssetSupport {
+    param([Parameter(Mandatory = $true)][string]$SupervisorCommit)
+    $lockPath = Join-Path $candidateRoot 'templates\dependency-lock.json'
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { return }
+    $lock = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $mcp = if ($lock.dependencies -and $lock.dependencies.PSObject.Properties['vanessaMcp']) { $lock.dependencies.vanessaMcp } else { $null }
+    $paired = if ($mcp -and $mcp.PSObject.Properties['vaExtension']) { $mcp.vaExtension } else { $null }
+    if (-not $paired -or -not $paired.PSObject.Properties['url'] -or -not [string]$paired.url) { return }
+    $component = Invoke-RepositoryGit -RepositoryRoot $candidateRoot -Arguments @('show', "${SupervisorCommit}:scripts/source-delivery-component.ps1") -AllowFailure
+    if ($component.exitCode -ne 0 -or $component.stdout -notmatch 'function Copy-DeliveryVanessaPairedExtensionFromArchive') {
+        throw "DELIVERY_SUPERVISOR_ASSET_UNSUPPORTED: supervisor '$SupervisorCommit' cannot publish the locked Vanessa ZIP and paired CFE. Create a new plan with a published develop supervisor that supports both assets."
+    }
+}
+
 $supervisorRoot = ""
 $supervisorPath = $localSupervisor
 $supervisorCommit = ""
@@ -182,6 +197,9 @@ try {
     }
     if ($ResumePlan -and $bootstrapSupervisor) {
         throw "DELIVERY_RESUME_SUPERVISOR_UNTRUSTED: the recorded supervisor is unavailable from origin/$selectedChannel."
+    }
+    if ($requestedChannel -eq 'develop' -and -not $customGateFixture -and $supervisorCommit) {
+        Assert-DeliveryBootstrapPairedAssetSupport -SupervisorCommit $supervisorCommit
     }
     if (-not $supervisorCommit) {
         $previousErrorActionPreference = $ErrorActionPreference

@@ -19,7 +19,7 @@ Describe "Source develop queue and delivery" {
         $DeliverySourceText | Should -Match 'Get-DeliveryComponentFinalizerIdentity'
         $DeliverySourceText | Should -Match 'compatibilityStatus = \[string\]\$lock\.compatibilityStatus; installable = \$true'
         $DeliverySourceText | Should -Match 'Copy-DeliveryVanessaPairedExtensionFromArchive'
-        $DeliverySourceText | Should -Match '\$lock\.vanessaMcp\.vaExtension\.url'
+        $DeliverySourceText | Should -Match 'dependencies\.vanessaMcp\.vaExtension'
     }
 
     It "extracts the exact paired VAExtension from the qualified Vanessa archive" {
@@ -49,13 +49,13 @@ Describe "Source develop queue and delivery" {
 
     It "requires only the Vanessa Release capability when the paired extension is unpublished" {
         & {
-            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts', 'Get-OwnedComponentPublicationPlan')) { Invoke-Expression $definition.Extent.Text }
             $candidateRoot = Join-Path $TestDrive 'paired plan candidate'
             New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
             $lock = [ordered]@{ dependencies = [ordered]@{
-                vanessaAutomation = [ordered]@{ url = 'https://example.invalid/vanessa.zip'; sha256 = ('1' * 64); assetName = 'vanessa.zip' }
-                vanessaMcp = [ordered]@{ vaExtension = [ordered]@{ url = 'https://example.invalid/paired.cfe'; sha256 = ('2' * 64); assetName = 'paired.cfe' } }
-                itlOndemandMcp = [ordered]@{ url = 'https://example.invalid/facade.exe'; sha256 = ('3' * 64) }
+                vanessaAutomation = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/vanessa.zip'; releaseTag='tag'; sha256 = ('1' * 64); assetName = 'vanessa.zip' }
+                vanessaMcp = [ordered]@{ vaExtension = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/paired.cfe'; releaseTag='tag'; sha256 = ('2' * 64); assetName = 'paired.cfe' } }
+                itlOndemandMcp = [ordered]@{ url = 'https://github.com/owner/repo/releases/download/tag/facade.exe'; releaseTag='tag'; sha256 = ('3' * 64); assetName='facade.exe' }
                 aiRules1c = [ordered]@{ compatibilityStatus = 'passed' }
             } }
             [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), (($lock | ConvertTo-Json -Depth 10) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
@@ -66,6 +66,9 @@ Describe "Source develop queue and delivery" {
             }
             function Get-DeliveryLocalAiRulesSource { return [pscustomobject]@{ root = $candidateRoot } }
             function Get-DeliveryAiRulesRemoteState { return [pscustomobject]@{ status = 'matched' } }
+            function Get-DeliveryGitHubRepository { return [pscustomobject]@{ slug = 'owner/repo' } }
+            function Get-DeliveryRemoteAnnotatedTagCommit { return '' }
+            function Assert-DeliveryComponentTagLockAgreement {}
             $script:ComponentFinalizerScript = ''
 
             $plan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
@@ -79,6 +82,63 @@ Describe "Source develop queue and delivery" {
             $onDemandPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('b' * 40)
             @($onDemandPlan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
             @($onDemandPlan.components | Where-Object { $_.name -eq 'itlOndemandMcp' })[0].requiredReleaseCapabilities | Should -Be @('ondemand-mcp')
+        }
+    }
+
+    It "blocks a new owned asset before qualification until the published supervisor supports it" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts')) { Invoke-Expression $definition.Extent.Text }
+            $asset = { param($name) [pscustomobject]@{
+                assetName=$name; releaseTag='tag'; url="https://github.com/owner/repo/releases/download/tag/$name"; sha256=('a' * 64)
+            } }
+            $lock = [pscustomobject]@{ dependencies = [pscustomobject]@{
+                vanessaAutomation = & $asset 'vanessa.zip'
+                vanessaMcp = [pscustomobject]@{ vaExtension = & $asset 'paired.cfe' }
+                itlOndemandMcp = & $asset 'facade.exe'
+                nextComponent = & $asset 'new.bin'
+            } }
+            { Get-DeliveryOwnedAssetContracts -Lock $lock -RepositorySlug 'owner/repo' } |
+                Should -Throw '*cannot finalize*'
+        }
+    }
+
+    It "accepts a previous tag only when both locked Vanessa assets have the same identity" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DeliveryComponentTagLockAgreement')) { Invoke-Expression $definition.Extent.Text }
+            $candidate = [pscustomobject]@{ dependencies = [pscustomobject]@{
+                vanessaAutomation = [pscustomobject]@{ assetName='vanessa.zip'; releaseTag='tag'; url='https://github.com/owner/repo/releases/download/tag/vanessa.zip'; sha256=('a' * 64); compatibilityVersion='1.2'; downstreamRevision='itl-r1' }
+                vanessaMcp = [pscustomobject]@{ vaExtension = [pscustomobject]@{ assetName='paired.cfe'; releaseTag='tag'; url='https://github.com/owner/repo/releases/download/tag/paired.cfe'; sha256=('a' * 64); protocol='itl-file-code-v1' } }
+            } }
+            $script:tagLock = $candidate | ConvertTo-Json -Depth 8
+            function Invoke-WorktreeGit { return [pscustomobject]@{ exitCode=0; stdout=$script:tagLock } }
+            { Assert-DeliveryComponentTagLockAgreement -CandidateRoot $TestDrive -TagCommit ('b' * 40) -CandidateLock $candidate -AssetPaths @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension') } |
+                Should -Not -Throw
+            $different = $candidate | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+            $different.dependencies.vanessaMcp.vaExtension.sha256 = ('0' * 64)
+            $script:tagLock = $different | ConvertTo-Json -Depth 8
+            { Assert-DeliveryComponentTagLockAgreement -CandidateRoot $TestDrive -TagCommit ('b' * 40) -CandidateLock $candidate -AssetPaths @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension') } |
+                Should -Throw '*different locked*'
+        }
+    }
+
+    It "refuses develop publication when a required direct asset URL is still missing" {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts', 'Assert-DeliveryOwnedAssetsPublished')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive 'incomplete candidate'
+            New-Item -ItemType Directory -Force -Path (Join-Path $candidateRoot 'templates') | Out-Null
+            $asset = { param($name) [pscustomobject]@{ assetName=$name; releaseTag='tag'; url="https://github.com/owner/repo/releases/download/tag/$name"; sha256=('a' * 64) } }
+            $lock = [pscustomobject]@{ dependencies = [pscustomobject]@{
+                vanessaAutomation = & $asset 'vanessa.zip'
+                vanessaMcp = [pscustomobject]@{ vaExtension = & $asset 'paired.cfe' }
+                itlOndemandMcp = & $asset 'facade.exe'
+            } }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates\dependency-lock.json'), ($lock | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+            function Get-DeliveryGitHubRepository { return [pscustomobject]@{ slug='owner/repo' } }
+            function Get-DeliveryRemoteAssetState {
+                param([string]$Url, [string]$ExpectedSha256, [int]$AvailabilityAttempts)
+                return [pscustomobject]@{ status=$(if ($Url -like '*.cfe') { 'missing' } else { 'matched' }); sha256=$(if ($Url -like '*.cfe') { '' } else { $ExpectedSha256 }) }
+            }
+            { Assert-DeliveryOwnedAssetsPublished -CandidateRoot $candidateRoot } | Should -Throw '*dependencies.vanessaMcp.vaExtension*'
         }
     }
 
@@ -101,7 +161,7 @@ Describe "Source develop queue and delivery" {
         }
     }
 
-    It "uploads and verifies the Vanessa archive and its paired extension together" {
+    It "completes a previous tag by extracting only the missing CFE from the published ZIP" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Copy-DeliveryVanessaPairedExtensionFromArchive','Invoke-VanessaComponentPublicationFinalize')) { Invoke-Expression $definition.Extent.Text }
             $candidateRoot = Join-Path $TestDrive 'paired finalize candidate'
@@ -132,26 +192,32 @@ Describe "Source develop queue and delivery" {
             $script:uploads = [Collections.Generic.List[string]]::new()
             function Get-DeliveryGitHubRepository { return [pscustomobject]@{ owner = 'xmentosx'; repo = '1c-agent-workflow'; slug = 'xmentosx/1c-agent-workflow' } }
             function Get-DeliveryRemoteAssetState {
-                param([string]$Url, [string]$ExpectedSha256)
+                param([string]$Url, [string]$ExpectedSha256, [int]$AvailabilityAttempts)
                 $count = 1 + [int]$script:remoteChecks[$Url]
                 $script:remoteChecks[$Url] = $count
-                return [pscustomobject]@{ status = $(if ($count -eq 1) { 'missing' } else { 'matched' }); sha256 = $(if ($count -eq 1) { '' } else { $ExpectedSha256 }) }
+                $missing = $Url -like '*.cfe' -and $count -eq 1
+                return [pscustomobject]@{ status = $(if ($missing) { 'missing' } else { 'matched' }); sha256 = $(if ($missing) { '' } else { $ExpectedSha256 }) }
             }
-            function Get-DeliveryExactVanessaCandidate { return $archivePath }
-            function Get-DeliveryRemoteAnnotatedTagCommit { return ('a' * 40) }
+            function Get-DeliveryExactVanessaCandidate { throw 'The published ZIP must be used' }
+            function Get-DeliveryRemoteAnnotatedTagCommit { return ('b' * 40) }
+            function Assert-DeliveryComponentTagLockAgreement {}
+            function Invoke-ItlImmutableFileDownload {
+                param([string]$Uri, [string]$DestinationPath, [string]$ExpectedSha256, [string]$Label, [int]$MaxAttempts, [int]$TimeoutSeconds)
+                Copy-Item -LiteralPath $archivePath -Destination $DestinationPath
+            }
             function Invoke-DeliveryGitHubCli {
                 param([string[]]$Arguments, [switch]$AllowFailure)
                 if (@($Arguments)[0] -eq 'release' -and @($Arguments)[1] -eq 'upload') { [void]$script:uploads.Add([IO.Path]::GetFileName([string]@($Arguments)[3])) }
-                return [pscustomobject]@{ exitCode = 0; text = '{"assets":[]}' }
+                return [pscustomobject]@{ exitCode = 0; text = '{"assets":[{"name":"vanessa-itl-r13.zip"}]}' }
             }
             function Save-DeliveryComponentPublicationEvidence {}
             $RequireRelease = $true
 
             $evidence = Invoke-VanessaComponentPublicationFinalize -CandidateRoot $candidateRoot -CandidateCommit ('a' * 40)
-            @($script:uploads) | Should -Contain 'vanessa-itl-r13.zip'
+            @($script:uploads) | Should -Not -Contain 'vanessa-itl-r13.zip'
             @($script:uploads) | Should -Contain $assetName
             $evidence.pairedExtension.sha256 | Should -Be $pairedSha
-            @($script:remoteChecks.Values | Where-Object { $_ -eq 2 }).Count | Should -Be 2
+            $script:remoteChecks[$lock.dependencies.vanessaMcp.vaExtension.url] | Should -Be 2
         }
     }
 

@@ -416,7 +416,35 @@ function Test-ReleaseCheckpointPreflight {
         }
     }
 
+    $snapshotsProperty = $checkpoint.PSObject.Properties['snapshots']
+    if ($null -ne $snapshotsProperty -and $snapshotsProperty.Value -is [pscustomobject]) {
+        foreach ($snapshotProperty in @($snapshotsProperty.Value.PSObject.Properties)) {
+            $snapshot = $snapshotProperty.Value
+            $snapshotPath = if ($snapshot -and $snapshot.PSObject.Properties['path']) { [string]$snapshot.path } else { '' }
+            $snapshotSha = if ($snapshot -and $snapshot.PSObject.Properties['sha256']) { ([string]$snapshot.sha256).ToLowerInvariant() } else { '' }
+            if (-not $snapshotPath -or -not (Test-PathInsideRoot -Path $snapshotPath -Root $StandWorktree) -or
+                -not (Test-Path -LiteralPath $snapshotPath -PathType Leaf) -or
+                $snapshotSha -notmatch '^[a-f0-9]{64}$' -or (Get-FileSha256 -Path $snapshotPath) -cne $snapshotSha) {
+                Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+                    -Message "Release checkpoint $($snapshotProperty.Name) snapshot is missing, outside its stand, or differs from its recorded SHA256: $snapshotPath" `
+                    -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+            }
+        }
+    } elseif ($null -ne $snapshotsProperty) {
+        Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+            -Message "Release checkpoint snapshots inventory is malformed: $checkpointPath" `
+            -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+    }
+
     $stagesProperty = $checkpoint.PSObject.Properties["stages"]
+    if ($null -ne $stagesProperty -and $stagesProperty.Value -is [pscustomobject] -and
+        @($stagesProperty.Value.PSObject.Properties).Count -gt 0 -and
+        ($null -eq $snapshotsProperty -or $snapshotsProperty.Value -isnot [pscustomobject] -or
+            $null -eq $snapshotsProperty.Value.PSObject.Properties['baseline'])) {
+        Add-ReadinessIssue -Code 'RELEASE_CHECKPOINT_SNAPSHOT_INVALID' -Category 'STAND_STALE' `
+            -Message "Release checkpoint has executed stages but no baseline snapshot record: $checkpointPath" `
+            -Recovery 'Preserve the damaged checkpoint for diagnosis and rebuild the owned disposable Release stand from its fixture.'
+    }
     $refreshStage = if ($null -eq $stagesProperty -or $null -eq $stagesProperty.Value) { $null } else { $stagesProperty.Value.PSObject.Properties["verification-refresh"] }
     if ($ResumeMode -eq "Auto" -and $exactIdentity -and $null -ne $refreshStage -and [string]$refreshStage.Value.status -eq "passed") {
         $fresh = $false
@@ -595,13 +623,36 @@ if ($Mode -in @("Develop", "Release")) {
             $devBranchName = [string]$standConfig.devBranchName
             $standWorktree = [System.IO.Path]::GetFullPath([string]$standConfig.worktreePath)
             $standRecord = [ordered]@{ projectRoot = $E2EProjectRoot; devBranchName = $devBranchName; worktreePath = $standWorktree; commit = ""; managedPackageSha256 = ""; unsafeActionProtectionConfirmed = $false; checkpoint = $null }
+            $standBranch = Get-GitValue -Root $standWorktree -Arguments @('branch', '--show-current')
+            $safeRunName = ($devBranchName -replace '[^A-Za-z0-9_.-]', '_')
+            $checkpointExists = (Test-Path -LiteralPath (Join-Path $standWorktree ".agent-1c\runs\release-e2e\$safeRunName\checkpoint.json") -PathType Leaf) -or
+                (Test-Path -LiteralPath (Join-Path $standWorktree ".agent-1c\release-e2e-runs\$safeRunName\checkpoint.json") -PathType Leaf)
+            $masterBranch = 'master'
+            $projectConfig = Get-JsonFile -Path (Join-Path $standWorktree '.agent-1c\project.json') -Code 'RELEASE_STAND_PROJECT_INVALID' -Label 'Release stand project config'
+            if ($projectConfig -and $projectConfig.PSObject.Properties['masterBranch'] -and [string]$projectConfig.masterBranch) {
+                $masterBranch = [string]$projectConfig.masterBranch
+            }
+            $masterIsAncestor = $false
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                & git -C $standWorktree merge-base --is-ancestor $masterBranch HEAD 2>$null
+                if ($LASTEXITCODE -eq 0) { $masterIsAncestor = $true }
+            } finally { $ErrorActionPreference = $previousErrorActionPreference }
+            $standClean = @(& git -C $standWorktree status --porcelain --untracked-files=all).Count -eq 0
+            $ownedWorktree = $false
+            try {
+                $ownedWorktree = [string]::Equals((Get-RepositoryCommonGitDirectory -RepositoryRoot $E2EProjectRoot),
+                    (Get-RepositoryCommonGitDirectory -RepositoryRoot $standWorktree), [StringComparison]::OrdinalIgnoreCase)
+            } catch {}
+            $canRefreshStand = -not $checkpointExists -and -not $masterIsAncestor -and $standClean -and $ownedWorktree -and
+                $standBranch -ceq "itldev/$devBranchName" -and $ResumeMode -eq 'Auto'
             Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $E2EProjectRoot -Label "E2E master"
-            if ($ResumeMode -eq "Auto") {
+            if ($ResumeMode -eq "Auto" -and -not $canRefreshStand) {
                 Test-ManagedPackageAgreement -ExpectedInventory $managedInventory -TargetRoot $standWorktree -Label "E2E branch"
             }
             $standRecord.managedPackageSha256 = $managedInventorySha
             $standRecord.commit = Get-GitValue -Root $standWorktree -Arguments @("rev-parse", "HEAD")
-            $standBranch = Get-GitValue -Root $standWorktree -Arguments @("branch", "--show-current")
             if ($standBranch -cne "itldev/$devBranchName") {
                 Add-ReadinessIssue -Code "RELEASE_STAND_BRANCH_MISMATCH" -Category "STAND_STALE" -Message "Configured E2E worktree branch is '$standBranch'; expected='itldev/$devBranchName'." -Recovery "Point release-e2e.json at the exact disposable Release branch."
             }
@@ -615,7 +666,7 @@ if ($Mode -in @("Develop", "Release")) {
                     [System.IO.Path]::GetFullPath($lockRoot).TrimEnd('\', '/'),
                     $standWorktree.TrimEnd('\', '/'),
                     [StringComparison]::OrdinalIgnoreCase)
-                if ($null -ne $installedLock -and -not $restartWillRefreshBranch) {
+                if ($null -ne $installedLock -and -not $restartWillRefreshBranch -and -not ($canRefreshStand -and $lockRoot -eq $standWorktree)) {
                     Test-LockAgreement -Expected $vanessaLock -Actual $installedLock.dependencies.vanessaAutomation -Label $lockRoot
                     $installedWorkflowCommit = [string]$installedLock.dependencies.workflowPackage.commit
                     if ($installedWorkflowCommit -cne $commit) {
@@ -642,6 +693,14 @@ if ($Mode -in @("Develop", "Release")) {
             }
             $actualAiRulesCommit = if ($AiRulesSource -and (Test-Path -LiteralPath $AiRulesSource -PathType Container)) { Get-GitValue -Root $AiRulesSource -Arguments @("rev-parse", "HEAD") } else { "" }
             $standRecord.checkpoint = Test-ReleaseCheckpointPreflight -StandProjectRoot $E2EProjectRoot -StandWorktree $standWorktree -DevBranchName $devBranchName -CandidateCommit $commit -CandidateTree $tree -AiRulesCommit $actualAiRulesCommit
+            $markerPath = Join-Path $standWorktree 'tests\features\workflow-release-e2e.feature'
+            $masterMarkerPath = Join-Path $E2EProjectRoot 'tests\features\workflow-release-e2e.feature'
+            if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf) -and
+                -not ($canRefreshStand -and (Test-Path -LiteralPath $masterMarkerPath -PathType Leaf))) {
+                Add-ReadinessIssue -Code 'RELEASE_STAND_MARKER_MISSING' -Category 'STAND_STALE' `
+                    -Message "Release fixture marker is missing from the branch and cannot be supplied by a safe refresh: $markerPath" `
+                    -Recovery 'Rebuild the owned disposable Release branch from a fixture containing workflow-release-e2e.feature.'
+            }
             }
         }
     }

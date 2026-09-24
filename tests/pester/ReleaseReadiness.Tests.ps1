@@ -275,6 +275,7 @@ Describe "Deterministic Release readiness" {
                     projectConfigSha256 = (Get-FileHash -LiteralPath (Join-Path $worktreeRoot ".agent-1c\project.json") -Algorithm SHA256).Hash.ToLowerInvariant()
                 }
                 configEvidence = [ordered]@{ featurePath = $outsideFixturePath }
+                snapshots = [ordered]@{ baseline = [ordered]@{ path = (Join-Path $checkpointRoot 'snapshots\baseline.dt'); sha256 = ('a' * 64) } }
                 stages = [ordered]@{ "verification-refresh" = [ordered]@{ status = "passed" } }
                 stateFiles = [ordered]@{ postConfig = [ordered]@{ stateCopyPath = $savedStatePath } }
             })
@@ -288,7 +289,9 @@ Describe "Deterministic Release readiness" {
             $codes | Should -Contain "RELEASE_STAND_UNSAFE_ACTION_PROTECTION_UNCONFIRMED"
             $codes | Should -Contain "RELEASE_CHECKPOINT_HEAD_MISMATCH"
             $codes | Should -Contain "RELEASE_CHECKPOINT_FIXTURE_INVALID"
+            $codes | Should -Contain "RELEASE_CHECKPOINT_SNAPSHOT_INVALID"
             $codes | Should -Contain "RELEASE_CHECKPOINT_VERIFICATION_STALE"
+            $codes | Should -Contain "RELEASE_STAND_MARKER_MISSING"
             $codes | Should -Not -Contain "RELEASE_STAND_MANAGED_PACKAGE_DRIFT"
             (Get-Content -LiteralPath (Join-Path $checkpointRoot "checkpoint.json") -Raw -Encoding UTF8 | ConvertFrom-Json).expectedHead | Should -Be ("f" * 40)
 
@@ -331,6 +334,58 @@ Describe "Deterministic Release readiness" {
             @($context.issues.code) | Should -Not -Contain "RELEASE_DEPENDENCY_LOCK_DRIFT"
             @($context.issues.code) | Should -Not -Contain "RELEASE_STAND_WORKFLOW_COMMIT_DRIFT"
         } finally {
+            if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+        }
+    }
+
+    It "allows the runner to refresh a clean owned Release branch before creating a checkpoint" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-release-refresh-" + [guid]::NewGuid().ToString('N'))
+        try {
+            $fixture = New-ReadinessFixture -Root (Join-Path $tempRoot 'workflow')
+            $e2eRoot = Join-Path $tempRoot 'e2e'
+            $worktreeRoot = Join-Path $tempRoot 'e2e-release'
+            New-Item -ItemType Directory -Force -Path $e2eRoot | Out-Null
+            & git -C $e2eRoot init -b master | Out-Null
+            & git -C $e2eRoot config user.email 'tests@example.invalid'
+            & git -C $e2eRoot config user.name 'Release Tests'
+            foreach ($name in @('.agents', 'templates', 'scripts', 'AGENT-INSTALL.md', 'install-agent-1c-workflow.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $fixture.root $name) -Destination $e2eRoot -Recurse
+            }
+            $lock = $fixture.lock | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+            $lock.dependencies.workflowPackage.commit = (& git -C $fixture.root rev-parse HEAD).Trim()
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\dependency-lock.json') -Value $lock
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\project.json') -Value ([ordered]@{ masterBranch='master' })
+            [IO.File]::WriteAllText((Join-Path $e2eRoot '.gitignore'), ".agent-1c/dev-branches/`n.agent-1c/runs/`n.agent-1c/release-e2e.json`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- .
+            & git -C $e2eRoot commit -m 'stand baseline' | Out-Null
+            & git -C $e2eRoot worktree add --quiet -b 'itldev/release-refresh' $worktreeRoot master
+            Write-Utf8Json -Path (Join-Path $e2eRoot '.agent-1c\release-e2e.json') -Value ([ordered]@{
+                schemaVersion=1; devBranchName='release-refresh'; worktreePath=$worktreeRoot
+            })
+            Write-Utf8Json -Path (Join-Path $worktreeRoot '.agent-1c\dev-branches\release-refresh.json') -Value ([ordered]@{
+                unsafeActionProtectionConfirmed=$true
+            })
+            $markerPath = Join-Path $e2eRoot 'tests\features\workflow-release-e2e.feature'
+            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $markerPath) | Out-Null
+            [IO.File]::WriteAllText($markerPath, "# release marker`n", [Text.UTF8Encoding]::new($false))
+            & git -C $e2eRoot add -- tests/features/workflow-release-e2e.feature
+            & git -C $e2eRoot commit -m 'fixture marker' | Out-Null
+            $outputPath = Join-Path $tempRoot 'release-context.json'
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $context = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $codes = @($context.issues.code)
+            $codes | Should -Not -Contain 'RELEASE_STAND_MANAGED_PACKAGE_DRIFT'
+            $codes | Should -Not -Contain 'RELEASE_STAND_WORKFLOW_COMMIT_DRIFT'
+            $codes | Should -Not -Contain 'RELEASE_STAND_MARKER_MISSING'
+            $context.stand.checkpoint.status | Should -Be 'absent'
+
+            [IO.File]::AppendAllText((Join-Path $worktreeRoot 'AGENT-INSTALL.md'), "dirty`n", [Text.Encoding]::UTF8)
+            Invoke-ReadinessFixture -Root $fixture.root -OutputPath $outputPath -Mode Release -E2EProjectRoot $e2eRoot | Out-Null
+            $dirty = Get-Content -LiteralPath $outputPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_DIRTY'
+            @($dirty.issues.code) | Should -Contain 'RELEASE_STAND_MARKER_MISSING'
+        } finally {
+            if (Test-Path -LiteralPath $e2eRoot) { & git -C $e2eRoot worktree remove --force $worktreeRoot 2>$null | Out-Null }
             if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
         }
     }

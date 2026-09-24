@@ -147,6 +147,9 @@ tip того же authority-канала. Старые планы без пол�
 authority, если их supervisor предок `origin/master`; иначе для
 `PublishDevelop` принимается только предок `origin/develop`. Новый plan без
 `-ResumePlan` использует текущий опубликованный tip выбранного канала.
+Старый supervisor, умеющий публиковать только Vanessa ZIP без парного CFE,
+блокируется entrypoint до запуска сохранённого плана; очередь остаётся на месте,
+и требуется новый plan от опубликованного develop-supervisor.
 Если сумма выполняемых стадий больше 60 минут, нужно явно
 передать `-ApproveLongPlan <planId>`. `Plan` выполняет тот же read-only preflight
 owned components, что и публикация, поэтому автоматическое повышение до Release
@@ -218,6 +221,12 @@ gate восстанавливает их и не повторяет preliminary 
 выбранных Release-стадиях оркестратор выполняет `Develop` и `Release` на одном
 временном commit и делает единственный push лишь после двух успехов. Ошибка
 любой стадии не двигает remote и не очищает очередь.
+До долгого `Develop` тот же кандидат проходит read-only Release readiness, если
+план выбрал Release capabilities. Она проверяет точный стенд, fixture и SHA
+checkpoint snapshots; непосредственно перед Release штатный gate проверяет их
+повторно. Чистая принадлежащая Release-ветка без checkpoint может быть обновлена
+runner-ом из master, если master ещё не входит в её историю. Повреждённый
+checkpoint, чужая или грязная ветка блокируют gate до запуска 1С.
 При повторе того же exact-tree кандидата прошедший `Develop` берётся из
 qualification cache, поэтому после ошибки `Release` он не запускается заново.
 Успешный `Develop` уже включает exact-tree Full/static proof: отдельный `Full`
@@ -242,15 +251,25 @@ plane, покрытый собственными source-delivery regression-те
 
 Перед gate команда строит exact-candidate plan для всех owned release surfaces:
 controlled `ai_rules_1c`, patched Vanessa Automation и `itl-ondemand-mcp`.
+Supervisor перечисляет собственные прямые assets из lock кандидата; незнакомый
+asset в том же GitHub repository блокирует публикацию до внедрения его
+финализатора в опубликованный supervisor. Для нового способа поставки сначала
+публикуется совместимый supervisor, затем lock с новым требованием. Перед push,
+в том числе при продолжении после `component-finalized`, каждый обязательный
+URL перечитывается и сверяется с SHA lock: локальный архив или старое evidence
+не подтверждают удалённую устанавливаемость.
 Совпавшие remote identities проверяются без мутации; отсутствующий rules branch/tag
 публикуется после Develop из явного clean `-AiRulesSource`, а отсутствующий Vanessa
 или on-demand asset автоматически добавляет в тот же запуск только требуемые
 Release capabilities. Для Vanessa это `extension-smoke` с `config-cadence`, для
 `itl-ondemand-mcp` — `ondemand-mcp`; явный `-RequireRelease` по-прежнему означает
-полную Release-проверку. Partial или
-несовпадающие immutable refs/assets закрыто блокируют публикацию. Внешние npm,
-PyPI, ROCTUP, `client_mcp` и `VAExtension` остаются только lock-проверяемыми
-upstream-зависимостями; `PublishDevelop` их никогда не публикует.
+полную Release-проверку. Частичный релиз Vanessa можно завершить под прежним
+аннотированным тегом без смены версии, если lock commit тега совпадает с lock
+кандидата для ZIP и отдельного `VAExtension` по URL, имени и SHA. Отсутствующий
+CFE извлекается из проверенного опубликованного ZIP, затем оба прямых URL
+проверяются повторно. Конфликтующие refs или байты закрыто блокируют
+публикацию. Внешние npm, PyPI, ROCTUP и `client_mcp` остаются только
+lock-проверяемыми upstream-зависимостями; `PublishDevelop` их не публикует.
 
 Develop состоит из двух независимо квалифицируемых journey через публичные
 поверхности workflow:
