@@ -103,7 +103,9 @@ if (-not [Collections.StructuralComparisons]::StructuralEqualityComparer.Equals(
 $config.devBranchName = $NewDevBranchName
 $config.worktreePath = $newRoot
 $temporaryPath = Join-Path (Split-Path -Parent $configPath) ("release-e2e." + [guid]::NewGuid().ToString('N') + '.tmp')
-$backupPath = Join-Path (Split-Path -Parent $configPath) ("release-e2e." + [guid]::NewGuid().ToString('N') + '.backup.json')
+$backupRoot = Join-Path $projectRoot '.agent-1c\runs\release-e2e-stand-recovery'
+New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+$backupPath = Join-Path $backupRoot ("release-e2e." + [guid]::NewGuid().ToString('N') + '.backup.json')
 try {
     [IO.File]::WriteAllText($temporaryPath, (($config | ConvertTo-Json -Depth 16) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
     [IO.File]::Replace($temporaryPath, $configPath, $backupPath)

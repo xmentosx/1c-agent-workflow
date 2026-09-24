@@ -15,7 +15,7 @@
         $marker = Join-Path $project 'tests\features\workflow-release-e2e.feature'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $marker) | Out-Null
         [IO.File]::WriteAllText($marker, "# fixture`n", [Text.UTF8Encoding]::new($false))
-        [IO.File]::WriteAllText((Join-Path $project '.gitignore'), ".agent-1c/`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $project '.gitignore'), ".agent-1c/runs/`n.agent-1c/dev-branches/`n.agent-1c/release-e2e.json`n", [Text.UTF8Encoding]::new($false))
         $helper = Join-Path $project '.agents\skills\1c-workflow\scripts\run-itl-command.ps1'
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $helper) | Out-Null
         $fakeHelper = @'
@@ -56,6 +56,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path -Parent $state) | Out-Null
             $newConfig.worktreePath | Should -Be $target
             $newConfig.developWorktreePath | Should -Be 'preserved'
             (Get-Content -LiteralPath $result.configBackup -Raw -Encoding UTF8 | ConvertFrom-Json).worktreePath | Should -Be $old
+            $result.configBackup | Should -Match '[\\/]\.agent-1c[\\/]runs[\\/]release-e2e-stand-recovery[\\/]'
+            @(& git -C $project status --porcelain --untracked-files=all).Count | Should -Be 0
             Test-Path -LiteralPath $checkpoint -PathType Leaf | Should -BeTrue
             (Get-Content -LiteralPath $checkpoint -Raw -Encoding UTF8) | Should -Be '{"damaged":true}'
         } finally {
