@@ -271,6 +271,76 @@
         } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "loads an empty managed base before confirmation and never starts EPF while confirmation is required" {
+        $root = New-AuxiliaryFixture -AuxiliaryContours ([ordered]@{
+            exchange = [ordered]@{
+                baseMode = "managed-file"
+                configurationPath = "src/cf"
+                extensions = @([ordered]@{ name = "Support"; path = "src/configs/exchange/cfe/Support" })
+            }
+        })
+        try {
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $script:auxState = $null
+                $script:events = [Collections.Generic.List[string]]::new()
+                $script:allowConfirmation = $false
+                $Action = "update-auxiliary-contour"
+                $AuxiliaryContourName = "exchange"
+                function Ensure-AuxiliaryManagedInfoBase { $script:events.Add("create") }
+                function Get-AuxiliaryContourFingerprint {
+                    [pscustomobject]@{ combined = "source-a"; configuration = [pscustomobject]@{ fingerprint = "config-a"; fileCount = 1 }; extensions = @() }
+                }
+                function Get-ConfigSourceFingerprint { [pscustomobject]@{ fileCount = 1 } }
+                function Read-AuxiliaryContourState { $script:auxState }
+                function Save-AuxiliaryContourState {
+                    param($Contour, $Updates)
+                    $merged = [ordered]@{}
+                    if ($script:auxState) { foreach ($property in $script:auxState.PSObject.Properties) { $merged[$property.Name] = $property.Value } }
+                    foreach ($key in $Updates.Keys) { $merged[$key] = $Updates[$key] }
+                    $script:auxState = [pscustomobject]$merged
+                    $script:auxState
+                }
+                function Stop-AuxiliaryContourRuntimeBeforeMutation { $script:events.Add("drain") }
+                function Invoke-ConfigLoadWithFallback {
+                    param($InfoBasePath, $InfoBaseKind, $State, $AbsoluteExportPath, $ListFilePath, $FileCount, $ExtensionName, $Mode, $User, $Password)
+                    $script:events.Add($(if ($ExtensionName) { "extension" } else { "configuration" }))
+                    [pscustomobject]@{ configLoadStatus = "passed"; loadModeUsed = "full" }
+                }
+                function Ensure-AuxiliaryContourUnsafeActionProtection {
+                    $script:events.Add("confirm")
+                    if (-not $script:allowConfirmation) { throw "ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED: fixture" }
+                }
+                function Invoke-DevBranchEnterpriseAutoUpdate {
+                    param($State, $User, $Password, $RecoveryAction)
+                    $script:events.Add("epf")
+                    [pscustomobject]@{ updatedAt = "2026-09-24T00:00:00Z"; resultPath = "result.json"; logPath = "auto-update.log" }
+                }
+                function Sync-AuxiliaryContourMcpClientConfig {}
+
+                $blocked = try { Update-AuxiliaryContour; "not-blocked" } catch { $_.Exception.Message }
+                $blockedState = $script:auxState | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+                $blockedEvents = @($script:events)
+                $script:allowConfirmation = $true
+                $script:events.Clear()
+                Update-AuxiliaryContour
+                [pscustomobject]@{ blocked = $blocked; blockedState = $blockedState; blockedEvents = $blockedEvents; readyState = $script:auxState; readyEvents = @($script:events) }
+            }
+
+            $result.blocked | Should -Match '^ITL_AUXILIARY_UNSAFE_ACTION_PROTECTION_CONFIRMATION_REQUIRED:'
+            $result.blockedEvents | Should -Be @("create", "drain", "configuration", "extension", "confirm")
+            $result.blockedState.readinessStatus | Should -Be "confirmation-required"
+            $result.blockedState.lastLoadStatus | Should -Be "passed"
+            $result.blockedState.enterpriseNormalizationStatus | Should -Be "not-run"
+            $result.blockedState.enterpriseNormalizationProofVersion | Should -Be 0
+            $result.blockedState.sourceFingerprint | Should -Be ""
+            $result.readyEvents | Should -Be @("create", "drain", "configuration", "extension", "confirm", "epf")
+            $result.readyState.readinessStatus | Should -Be "ready"
+            $result.readyState.enterpriseNormalizationStatus | Should -Be "passed"
+            $result.readyState.enterpriseNormalizationProofVersion | Should -Be 1
+        } finally { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "does not accept or silently replay a legacy ready auxiliary contour without update proof" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
