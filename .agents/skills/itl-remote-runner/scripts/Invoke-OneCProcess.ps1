@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$SpecPath)
+param([Parameter(Mandatory=$true)][string]$SpecPath, [switch]$Wait)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $utf8 = [Text.UTF8Encoding]::new($false)
@@ -43,4 +43,23 @@ $process = Start-OneCProcessBackground -FilePath ([string]$spec.executable) -Arg
 $record = [ordered]@{ jobId=$context.jobId; pid=$process.Id; startedAt=$process.StartTime.ToUniversalTime().ToString('o'); infoBase=$targetBase }
 $recordPath = Join-Path (Split-Path -Parent $env:ITL_RUN_CONTEXT) ('onec-process-' + $process.Id + '.json')
 Write-Utf8TextAtomic -Path $recordPath -Value ($record | ConvertTo-Json -Depth 8)
+if ($Wait) {
+    # Keep the original Process handle until exit. Reattaching via Get-Process
+    # can lose ExitCode when the manager finishes before the observer attaches.
+    $process.WaitForExit()
+    $process.Refresh()
+    $record.exitedAt = [DateTime]::UtcNow.ToString('o')
+    $record.exitCode = $null
+    $record.exitCodeState = 'unavailable'
+    try {
+        $observedExitCode = $process.ExitCode
+        if ($null -ne $observedExitCode) {
+            $record.exitCode = [int]$observedExitCode
+            $record.exitCodeState = 'available'
+        }
+    } catch {
+        $record.exitCodeError = $_.Exception.Message
+    }
+    Write-Utf8TextAtomic -Path $recordPath -Value ($record | ConvertTo-Json -Depth 8)
+}
 $record | ConvertTo-Json -Depth 8 -Compress

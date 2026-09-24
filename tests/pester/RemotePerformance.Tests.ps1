@@ -91,3 +91,92 @@ Describe 'Read-only target source capture boundary' {
         { Get-ItlSourceCaptureStep -Context $context -RunRoot $run -Spec ([pscustomobject]@{snapshotId=$snapshotId;operation='create-scratch'}) } | Should -Throw '*SOURCE_CAPTURE_SCRATCH_OVERLAPS_TARGET*'
     }
 }
+
+Describe 'Remote Vanessa manager completion' {
+    BeforeAll {
+        $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+        . (Join-Path $repo '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $repo '.agents/skills/itl-remote-runner/scripts/VanessaFeatureResult.ps1')
+    }
+    BeforeEach {
+        $iteration = Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + ' Сценарий')
+        New-Item -ItemType Directory -Path $iteration | Out-Null
+        $feature = Join-Path $iteration 'Проверка.feature'
+        [IO.File]::WriteAllText($feature, 'Feature: test', [Text.UTF8Encoding]::new($false))
+        $launch = [pscustomobject]@{
+            jobId = 'fixture-job'
+            pid = 1234
+            startedAt = [DateTime]::UtcNow.AddSeconds(-10).ToString('o')
+            exitedAt = [DateTime]::UtcNow.ToString('o')
+            exitCodeState = 'unavailable'
+            exitCode = $null
+            infoBase = [pscustomobject]@{ kind='file'; path=(Join-Path $iteration 'служебная база') }
+        }
+        $statusPath = Join-Path $iteration 'vanessa-status.txt'
+        $junitPath = Join-Path $iteration 'junit.xml'
+        [IO.File]::WriteAllText($statusPath, "0`n", [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($junitPath, '<testsuite tests="1" failures="0" errors="0"><testcase name="Selected"/></testsuite>', [Text.UTF8Encoding]::new($false))
+    }
+
+    It 'accepts a missing exit code only with fresh successful Vanessa and JUnit evidence' {
+        [IO.File]::WriteAllText($junitPath, '<testsuites><testsuite name="Feature" tests="1" failures="0" errors="0"><testcase name="Selected"/></testsuite></testsuites>', [Text.UTF8Encoding]::new($false))
+        $result = Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature
+        $result.outcome | Should -Be 'passed'
+        $result.exitCodeState | Should -Be 'unavailable'
+        $result.junit.passedCases | Should -Be 1
+        $saved = Read-Utf8Text -Path (Join-Path $iteration 'manager-result.json') | ConvertFrom-Json
+        $saved.completionBasis | Should -Be 'owned-process-exit+fresh-vanessa-status+fresh-junit'
+    }
+
+    It 'rejects a nonzero exit despite successful Vanessa files' {
+        $launch.exitCodeState = 'available'
+        $launch.exitCode = 7
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_MANAGER_FAILED: 7*'
+        (Read-Utf8Text -Path (Join-Path $iteration 'manager-result.json') | ConvertFrom-Json).exitCode | Should -Be 7
+    }
+
+    It 'rejects a missing and stale status' {
+        Remove-Item -LiteralPath $statusPath
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_STATUS_MISSING*'
+        [IO.File]::WriteAllText($statusPath, "0`n", [Text.UTF8Encoding]::new($false))
+        (Get-Item -LiteralPath $statusPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-1)
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_STATUS_STALE*'
+    }
+
+    It 'rejects a missing and stale JUnit report' {
+        Remove-Item -LiteralPath $junitPath
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_JUNIT_MISSING*'
+        [IO.File]::WriteAllText($junitPath, '<testsuite tests="1" failures="0" errors="0"><testcase name="Selected"/></testsuite>', [Text.UTF8Encoding]::new($false))
+        (Get-Item -LiteralPath $junitPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-1)
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_JUNIT_STALE*'
+    }
+
+    It 'rejects an empty or failed JUnit even when the status is zero' {
+        foreach ($xml in @(
+            '<testsuite tests="0" failures="0" errors="0"/>',
+            '<testsuite tests="1" failures="1" errors="0"><testcase name="Selected"><failure/></testcase></testsuite>'
+        )) {
+            [IO.File]::WriteAllText($junitPath, $xml, [Text.UTF8Encoding]::new($false))
+            { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_JUNIT_FAILED*'
+        }
+    }
+
+    It 'requires confirmation that the owned manager exited' {
+        $launch.exitedAt = $null
+        { Assert-VanessaFeatureResult -Launch $launch -Iteration $iteration -FeaturePath $feature } | Should -Throw '*VANESSA_MANAGER_EXIT_UNCONFIRMED*'
+    }
+
+    It 'reports the effective TestClient range and configured profile port without claiming OS occupation' {
+        $settings = [pscustomobject]@{
+            ДиапазонПортовTestclient = '34189-34200'
+            КлиентТестирования = [pscustomobject]@{
+                ДанныеКлиентовТестирования = @([pscustomobject]@{ Имя='ufa_ui'; ПортЗапускаТестКлиента=34189 })
+            }
+        }
+        $preflight = Get-VanessaFeaturePortPreflight -Settings $settings
+        $preflight.range.kind | Should -Be 'range'
+        $preflight.profiles[0].rangeRelation | Should -Be 'inside'
+        $settings.ДиапазонПортовTestclient = '34189-34189'
+        (Get-VanessaFeaturePortPreflight -Settings $settings).diagnosis | Should -Be 'single-port-range-configured'
+    }
+}

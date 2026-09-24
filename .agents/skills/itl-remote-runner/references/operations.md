@@ -109,6 +109,8 @@ use exact-target ITL jobs and guarded launchers for 1C activity.
 
 `--parameters` takes a JSON file. `--operation measure --operation write-data --operation update` expresses only operations already authorized by the user; omit unneeded permissions. Job requests never enlarge the target's allowed operations.
 
+For a remote Vanessa feature with TestManager in a service base and TestClient in the product base, use the [two-base recipe](vanessa-two-base.md) and verify the actual TestClient connection before product steps.
+
 For an explicit remote agent use `--runner worker --agent-policy requested`; no second measurement implementation exists. The remote agent calls `execute --via-agent` for that job. After worker failure, configured diagnosis-on-failure only diagnoses. A subsequent measurement needs a new linked job (`--parent`) and must preserve the old evidence; the interrupted job is not replayed and does not create a generic recovery gate.
 
 ## Observe and collect

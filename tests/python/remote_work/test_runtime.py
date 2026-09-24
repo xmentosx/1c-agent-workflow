@@ -3,6 +3,7 @@ import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import multiprocessing
 import os
 from pathlib import Path
 import signal
@@ -21,6 +22,12 @@ sys.path.insert(0, str(RUNTIME))
 from itl_remote import agents, bootstrap, common, controller, execution, host_commands, jobs, profiling, pull, transport, updates
 from itl_remote.common import (FileLock, OwnedProcess, WorkError, digest, read_json,
                                resolve_resource_limits, resource_violation, write_json)
+
+
+def _hold_guard_for_admission(root, resources, ready, release):
+    with execution.ExecutionGuard(root, resources, "fixture-owner", timeout=10):
+        ready.set()
+        release.wait(10)
 
 
 WORKLOAD = '''import sys, time, os
@@ -284,6 +291,72 @@ class RuntimeTests(unittest.TestCase):
                      (self.spool / "runs/one/resource-telemetry.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertTrue(any(sample["processes"] and sample["processes"][0]["pid"] > 0 for sample in telemetry))
         self.assertEqual({"status": "notRequested"}, result["operationEvidence"])
+
+    def test_public_status_and_partial_collect_leave_admission_after_guard_acquisition(self):
+        target = self.profile["targets"]["fixture"]
+        guarded = execution.target_execution(target)
+        ready, release = multiprocessing.Event(), multiprocessing.Event()
+        owner = multiprocessing.Process(target=_hold_guard_for_admission,
+                                        args=(guarded["root"], guarded["resources"], ready, release))
+        owner.start()
+        self.assertTrue(ready.wait(5))
+        _, package = self.package("admission", values={"delay": 3.0})
+        jobs.submit(package, self.spool)
+        connection = transport.Connection({"transport": "exchange", "spool": str(self.spool)})
+        connection_path = self.root / "remote connection.json"
+        write_json(connection_path, connection.profile)
+        self.assertEqual("queued", connection.call({"operation": "status", "id": "admission"})["status"])
+        outcome = {}
+        worker = threading.Thread(target=lambda: outcome.setdefault(
+            "state", execution.execute_job(self.spool, "admission", self.profile)))
+        worker.start()
+        try:
+            deadline = time.monotonic() + 8
+            observed = None
+            while time.monotonic() < deadline:
+                observed = connection.call({"operation": "status", "id": "admission"})
+                if observed["status"] == "waiting-for-base":
+                    break
+                time.sleep(0.05)
+            self.assertEqual("waiting-for-base", observed["status"], observed)
+            self.assertEqual("waiting", observed["execution"]["state"])
+            waiting_collection = connection.collect("admission", self.root / "waiting evidence", allow_partial=True)
+            self.assertEqual("waiting-for-base", waiting_collection["observedJob"]["status"])
+
+            release.set()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                observed = connection.call({"operation": "status", "id": "admission"})
+                if observed["status"] == "running" and observed["phase"] != "admission":
+                    break
+                time.sleep(0.05)
+            self.assertEqual("running", observed["status"], observed)
+            self.assertEqual("running", observed["execution"]["state"])
+            time.sleep(1.2)  # At least one guard heartbeat during the live workload.
+            observed = connection.call({"operation": "status", "id": "admission"})
+            self.assertEqual("running", observed["status"], observed)
+            self.assertEqual("running", observed["execution"]["state"])
+            self.assertNotEqual("admission", observed["phase"])
+            cli = subprocess.run([sys.executable, "-X", "utf8", str(RUNTIME / "remote_work.py"),
+                                  "remote", "--connection", str(connection_path), "--action", "status",
+                                  "--id", "admission"], capture_output=True, text=True,
+                                 encoding="utf-8", timeout=15)
+            self.assertEqual(0, cli.returncode, cli.stdout + cli.stderr)
+            self.assertEqual("running", json.loads(cli.stdout)["status"])
+            running_collection = connection.collect("admission", self.root / "running evidence", allow_partial=True)
+            self.assertEqual("running", running_collection["observedJob"]["status"])
+            self.assertNotEqual("admission", running_collection["observedJob"]["phase"])
+            worker.join(15)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual("completed", outcome["state"]["status"])
+            self.assertEqual("completed", connection.call({"operation": "status", "id": "admission"})["status"])
+        finally:
+            release.set()
+            owner.join(5)
+            if owner.is_alive():
+                owner.terminate()
+                owner.join(5)
+            worker.join(15)
 
     def test_v2_collects_public_operation_evidence_and_keeps_raw_private(self):
         (self.source / "workload.py").write_text(EVIDENCE_WORKLOAD, encoding="utf-8")

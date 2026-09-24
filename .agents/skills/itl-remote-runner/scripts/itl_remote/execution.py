@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import statistics
 import sys
+import threading
 import time
 
 from .common import (FileLock, OwnedProcess, WorkError, beneath, digest, host_memory_snapshot,
@@ -547,17 +548,26 @@ def execute_job(spool, identifier, profile, *, via_agent=False, expected_runner=
         profile_path = spool / "profile.json"
         profile_fingerprint = digest(profile_path) if profile_path.is_file() else None
         executor_identity = process_identity(os.getpid())
+        state_lock = threading.Lock()
         def waiting(record):
-            state.update(status="waiting-for-base", phase="admission",
-                         execution={key: record.get(key) for key in
-                                    ("protocol", "executionId", "operation", "resources", "state", "waitSeconds")},
-                         ownerPid=os.getpid(),
-                         ownerIdentity=executor_identity, updatedAt=stamp())
-            write_json(spool / "state" / (identifier + ".json"), state)
+            with state_lock:
+                guard_state = record.get("state")
+                if guard_state not in ("waiting", "running"):
+                    return
+                state.update(status="waiting-for-base" if guard_state == "waiting" else "running",
+                             execution={key: record.get(key) for key in
+                                        ("protocol", "executionId", "operation", "resources", "state", "waitSeconds")},
+                             ownerPid=os.getpid(), ownerIdentity=executor_identity, updatedAt=stamp())
+                if guard_state == "waiting":
+                    state["phase"] = "admission"
+                elif state.get("phase") in (None, "admission"):
+                    state["phase"] = "preparing"
+                write_json(spool / "state" / (identifier + ".json"), state)
         def progress(phase):
-            state.update(status="running", phase=phase, ownerPid=os.getpid(),
-                         ownerIdentity=executor_identity, updatedAt=stamp())
-            write_json(spool / "state" / (identifier + ".json"), state)
+            with state_lock:
+                state.update(status="running", phase=phase, ownerPid=os.getpid(),
+                             ownerIdentity=executor_identity, updatedAt=stamp())
+                write_json(spool / "state" / (identifier + ".json"), state)
         result = None
         try:
             inherited = os.environ.get("ITL_EXECUTION_CONTEXT")
@@ -586,7 +596,8 @@ def execute_job(spool, identifier, profile, *, via_agent=False, expected_runner=
                     # an ordinary preflight failure must not create native debt.
                     raise
                 state["execution"] = {"protocol": "execution-guards-v2", "executionId": guard.execution_id,
-                                      "operation": guard.operation, "resources": guard.resources}
+                                      "operation": guard.operation, "resources": guard.resources,
+                                      "state": "running", "waitSeconds": guard.record.get("waitSeconds")}
                 progress("preparing")
                 result = run_measurement(package, current_target, spool / "runs" / identifier, request, scenario, cancelled,
                                          progress, execution_guard=guard,
