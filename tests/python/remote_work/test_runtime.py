@@ -1343,7 +1343,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
             values = {info.filename: source.read(info.filename) for info in source.infolist()}
             version_name = ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py"
-            values[version_name] = values[version_name].replace(b'VERSION = "1.2.2"', b'VERSION = "1.3.0"')
+            values[version_name] = values[version_name].replace(b'VERSION = "1.2.3"', b'VERSION = "1.3.0"')
             manifest = json.loads(values["bundle-manifest.json"])
             manifest["version"] = "1.3.0"
             manifest["files"][version_name] = {"sha256": hashlib.sha256(values[version_name]).hexdigest(),
@@ -1437,6 +1437,38 @@ counter.write_text(str(count))
                                     "--persistent"], capture_output=True, timeout=20)
         self.assertEqual(0, completed.returncode, completed.stderr)
         self.assertEqual("2", (self.spool / "starts.txt").read_text())
+
+    def test_trial_worker_stays_alive_until_its_own_update_is_acknowledged(self):
+        self.profile["workerLimits"] = {"allowPersistent": True, "maxJobs": 10, "maxLifetimeSeconds": 20}
+        write_json(self.spool / "profile.json", self.profile)
+        pending = self.spool / "runtime/pending.json"
+        generation = "a" * 64
+        write_json(pending, {"archiveSha256": generation})
+        confirmation = self.spool / "runtime/confirmed-trial.json"
+        process = subprocess.Popen([sys.executable, "-B", "-X", "utf8", str(RUNTIME / "remote_work.py"),
+                                    "worker", "--spool", str(self.spool), "--persistent",
+                                    "--generation", generation, "--confirm-path", str(confirmation)],
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        try:
+            deadline = time.monotonic() + 10
+            while not confirmation.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(confirmation.exists())
+            self.assertEqual(generation, read_json(confirmation)["archiveSha256"])
+            # The supervisor may still be publishing current.json. The actual
+            # worker must not interpret its own pending marker as another update.
+            with self.assertRaises(subprocess.TimeoutExpired):
+                process.wait(timeout=1.5)
+            self.assertEqual("ready", read_json(self.spool / "worker.json")["status"])
+            pending.unlink()
+            write_json(pending, {"archiveSha256": "b" * 64})
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertEqual(0, process.returncode, stdout + stderr)
+            self.assertEqual("update-staged", read_json(self.spool / "worker.json")["reason"])
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            process.communicate(timeout=10)
 
     def test_worker_supervisor_applies_update_staged_by_running_worker_without_user_restart(self):
         current_runtime = self.root / "current worker.py"
