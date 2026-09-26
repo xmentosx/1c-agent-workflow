@@ -4,6 +4,15 @@
         $context = Initialize-WorkflowPesterContext
         $RepoRoot = $context.RepoRoot
         $RunnerSource = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
+        $TimeoutPolicySource = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\itl-runner-timeout.ps1"
+        function Copy-RunnerFixture {
+            param([string]$Destination)
+            $scriptRoot = Split-Path -Parent $Destination
+            $libRoot = Join-Path $scriptRoot "lib"
+            New-Item -ItemType Directory -Force -Path $libRoot | Out-Null
+            Copy-Item -LiteralPath $RunnerSource -Destination $Destination
+            Copy-Item -LiteralPath $TimeoutPolicySource -Destination (Join-Path $libRoot "itl-runner-timeout.ps1")
+        }
     }
 
     It "removes only the PowerShell Core module root while launching the Windows PowerShell helper" {
@@ -17,7 +26,7 @@
         $runnerText | Should -Match 'CREATE_NEW_PROCESS_GROUP'
         $runnerText | Should -Match 'SetConsoleCtrlHandler'
         $runnerText | Should -Not -Match 'AssignProcessToJobObject'
-        $runnerText | Should -Match 'ITL_RUNNER_OPERATION_TIMEOUT_SECONDS'
+        (Get-Content -LiteralPath $TimeoutPolicySource -Raw -Encoding UTF8) | Should -Match 'ITL_RUNNER_OPERATION_TIMEOUT_SECONDS'
         $runnerText | Should -Match 'finally \{[\s\S]*?\$env:PSModulePath = \$originalPowerShellModulePath'
         $tokens = $null
         $errors = $null
@@ -31,7 +40,7 @@
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
             $runnerPath = Join-Path $scriptRoot "run-itl-command.ps1"
-            Copy-Item -LiteralPath $RunnerSource -Destination $runnerPath
+            Copy-RunnerFixture -Destination $runnerPath
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -60,7 +69,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Результат`n- Browser: включён`n- Рекомендация: выполните /reload" }
@@ -95,7 +104,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $reportPath = Join-Path $ProjectRoot 'source integrity отчёт.json'
@@ -127,7 +136,7 @@ exit 1
         try {
             $scriptRoot = Join-Path $tempRoot '.agents/skills/1c-workflow/scripts'
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot 'run-itl-command.ps1')
             Set-Content -LiteralPath (Join-Path $scriptRoot 'agent-1c.ps1') -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $lines = @('## Захват объектов в хранилище', '- Результат: операция завершилась с ошибкой', '### Захваченные объекты')
@@ -169,7 +178,7 @@ exit 1
             try {
                 $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
                 New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-                Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+                Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
                 Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $reportLines = [System.Collections.Generic.List[string]]::new()
@@ -232,7 +241,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $runRoot = Split-Path -Parent $RunStatusPath
@@ -272,7 +281,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 & cmd.exe /d /c exit 1
@@ -297,7 +306,7 @@ $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stag
         try {
             $scriptRoot = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $branch = (& git -C $ProjectRoot branch --show-current).Trim()
@@ -347,7 +356,7 @@ exit 0
         try {
             $mainScripts = Join-Path $mainRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $mainScripts | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $mainScripts "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $mainScripts "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $mainScripts "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; projectRoot=$ProjectRoot; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="main-runtime:$Action" }
@@ -408,7 +417,7 @@ exit 0
             [Environment]::SetEnvironmentVariable("CAVEMAN_LEVEL", $null, "Process")
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='unchanged report' }
@@ -459,7 +468,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='succeeded'; action=$Action; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport='Repair session: abc123. Repair attempts: 0/3.' }
@@ -541,7 +550,7 @@ exit 0
             New-Item -ItemType Directory -Force -Path $scriptRoot, $resultRoot | Out-Null
             Set-Content -LiteralPath $resultPath -Encoding UTF8 -Value "artifact"
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value "{}"
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             $fixture = @"
 param([string]`$ProjectRoot,[string]`$RunStatusPath,[string]`$RunLogPath,[string]`$Action)
 `$report = "## Результат ветки``n- Файл: $resultPath``n- Манифест: $manifestPath"
@@ -567,7 +576,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
@@ -600,7 +609,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
@@ -650,7 +659,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
@@ -690,7 +699,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 while ($true) {
@@ -723,6 +732,109 @@ while ($true) {
         }
     }
 
+    It "accepts an owned heartbeat during a long silent helper phase" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl runner heartbeat путь " + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousStale = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now = Get-Date
+$payload = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; startedAt=$now.ToString('o'); updatedAt=$now.ToString('o'); stage='long-copy'; stageDetail='copying'; liveness=''; noProgressSeconds=0; stallTimeoutRemainingSeconds=0; timeoutRemainingSeconds=0; exitCode=$null; errorMessage='' }
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+$heartbeatPath = $RunStatusPath + '.heartbeat'
+[IO.File]::WriteAllText($heartbeatPath,[string]$PID,[Text.Encoding]::ASCII)
+for($i=0;$i -lt 5;$i++){ Start-Sleep -Milliseconds 650; [IO.File]::SetLastWriteTimeUtc($heartbeatPath,[DateTime]::UtcNow) }
+$payload.status='succeeded'; $payload.stage='complete'; $payload.updatedAt=(Get-Date).ToString('o'); $payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "8", "Process")
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $result.exitCode | Should -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be 'succeeded'
+            ($result.stderr -join "`n") | Should -Match 'liveness=helper-heartbeat'
+            (Test-Path -LiteralPath ($summary.statusPath + '.heartbeat')) | Should -BeFalse
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousStale, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not slide the action deadline when a phase repeats its remaining budget" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl deadline путь " + [guid]::NewGuid().ToString("N"))
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+for($i=0;$i -lt 20;$i++){
+    $now=Get-Date
+    $payload=[ordered]@{schemaVersion=1;status='running';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='designer-wait';stageDetail='waiting';liveness='running';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=3;exitCode=$null;errorMessage=''}
+    [IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+    Start-Sleep -Milliseconds 400
+}
+$payload.status='succeeded';$payload.exitCode=0
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "2", "Process")
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $watch.Stop()
+            $result.exitCode | Should -Not -Be 0
+            $watch.Elapsed.TotalSeconds | Should -BeLessThan 7
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.stage | Should -Be 'runner.operation-timeout'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "does not replace terminal success while the helper is finishing cleanup" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl terminal status путь " + [guid]::NewGuid().ToString("N"))
+        $previousWarning = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "Process")
+        $previousStale = [Environment]::GetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "Process")
+        $previousTimeout = [Environment]::GetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "Process")
+        try {
+            $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
+            New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
+param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
+$now=Get-Date
+$payload=[ordered]@{schemaVersion=1;status='succeeded';action=$Action;projectRoot=$ProjectRoot;pid=$PID;startedAt=$now.ToString('o');updatedAt=$now.ToString('o');stage='complete';stageDetail='cleanup';liveness='';noProgressSeconds=0;stallTimeoutRemainingSeconds=0;timeoutRemainingSeconds=0;exitCode=0;errorMessage=''}
+[IO.File]::WriteAllText($RunStatusPath,(($payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding $false))
+Start-Sleep -Seconds 3
+exit 0
+'@
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", "1", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", "2", "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", "8", "Process")
+            $result = Invoke-TestPowerShellFile -FilePath (Join-Path $scriptRoot "run-itl-command.ps1") -Arguments @("--", "-Action", "check-dev-branch")
+            $result.exitCode | Should -Be 0
+            $summary = ($result.stdout -join "`n") | ConvertFrom-Json
+            $summary.status | Should -Be 'succeeded'
+        } finally {
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_WARNING_SECONDS", $previousWarning, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS", $previousStale, "Process")
+            [Environment]::SetEnvironmentVariable("ITL_RUNNER_OPERATION_TIMEOUT_SECONDS", $previousTimeout, "Process")
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "kills the helper process tree when the compact runner is aborted" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl compact job abort путь " + [guid]::NewGuid().ToString("N"))
         $runnerProcess = $null
@@ -731,7 +843,7 @@ while ($true) {
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $utf8 = New-Object Text.UTF8Encoding $false
@@ -806,7 +918,7 @@ while ($true) { Start-Sleep -Seconds 1 }
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
@@ -838,7 +950,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $running = [ordered]@{ schemaVersion=1; status='running'; action=$Action; projectRoot=$ProjectRoot; pid=$PID; stage='designer-wait'; stageDetail='atomic replacement window'; liveness='probe-running'; noProgressSeconds=0; stallTimeoutRemainingSeconds=10; timeoutRemainingSeconds=60; exitCode=$null; errorMessage='' }
@@ -866,7 +978,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $now = Get-Date
@@ -899,7 +1011,7 @@ exit 7
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param(
     [string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,
@@ -962,7 +1074,7 @@ exit 0
             $runnerStderr = Join-Path $tempRoot "runner.stderr.log"
             $signalResultPath = Join-Path $tempRoot "signal-result.json"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination $runnerPath
+            Copy-RunnerFixture -Destination $runnerPath
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 param(
     [string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action,
@@ -1079,7 +1191,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $utf8 = New-Object Text.UTF8Encoding $false
@@ -1116,7 +1228,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $utf8 = New-Object Text.UTF8Encoding $false
@@ -1148,7 +1260,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $report = "## Обновление ветки разработки`n- Результат: успешно`n- Ветка: itldev/perf1`n- Enterprise-автообновление: выполнено`n`n## MCP`n- Kilo Browser Automation: включена`n`n## Инструкции и рекомендации`n- Выполните /reload.`n- Выполните /itl-check."
@@ -1175,7 +1287,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='verification'; stageDetail='missing'; errorMessage='Fresh verification is missing. Rerun with -AllowUnverifiedResult.'; exitCode=1; lastLogPath='' }
@@ -1196,7 +1308,7 @@ exit 0
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             $runRoot = Join-Path $tempRoot ".agent-1c\runs\fixture"
             New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
 `$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-dev-branch'; stage='complete'; stageDetail='done'; errorMessage=''; exitCode=0; lastLogPath=''; userReport="## Ветка разработки`n- Ветка: itldev/demo`n- Kilo Browser Automation: отключена`n- Рекомендация: откройте worktree" }
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
@@ -1220,7 +1332,7 @@ exit 0
             $runRoot = Join-Path $tempRoot ".agent-1c\runs\fixture"
             $worktree = Join-Path $tempRoot "worktrees\demo"
             New-Item -ItemType Directory -Force -Path $scriptRoot, $runRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "run-agent-1c-window.ps1") -Encoding UTF8 -Value @"
 `$payload = [ordered]@{ schemaVersion=1; status='succeeded'; action='new-extension-dev-branch'; stage='extension-init.pending'; stageDetail='waiting'; errorMessage=''; exitCode=0; lastLogPath=''; requiredAction='Уточните режим расширения в чате; не показывайте PowerShell.'; devBranch='itldev/demo'; worktreePath='$($worktree.Replace("'", "''"))'; extensionInitializationStatus='pending'; userReport="## Ветка разработки`n- Тип: расширение`n- Инициализация расширения: ожидает настройки`n`n## Инструкции и рекомендации`n- Уточните режим расширения в чате." }
 [IO.File]::WriteAllText('$($runRoot.Replace("'", "''"))\status.json',((`$payload | ConvertTo-Json -Depth 5)+[Environment]::NewLine),(New-Object Text.UTF8Encoding `$false))
@@ -1245,7 +1357,7 @@ exit 0
         try {
             $scriptRoot = Join-Path $tempRoot ".agents\skills\1c-workflow\scripts"
             New-Item -ItemType Directory -Force -Path $scriptRoot | Out-Null
-            Copy-Item -LiteralPath $RunnerSource -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
+            Copy-RunnerFixture -Destination (Join-Path $scriptRoot "run-itl-command.ps1")
             Set-Content -LiteralPath (Join-Path $scriptRoot "agent-1c.ps1") -Encoding UTF8 -Value @'
 param([string]$ProjectRoot,[string]$RunStatusPath,[string]$RunLogPath,[string]$Action)
 $payload = [ordered]@{ schemaVersion=1; status='failed'; action=$Action; stage='vanessa.failed'; stageDetail='undefined step'; errorMessage='undefined step'; exitCode=1; lastLogPath=''; errorCategory='unsupported-step'; requiredAction='fix-and-repeat-original-check' }

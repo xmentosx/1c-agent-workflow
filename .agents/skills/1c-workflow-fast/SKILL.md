@@ -34,7 +34,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 
 ## Command Template
 
-From the project root, run mutations and long checks with `timeout_ms >= 3900000` (or above the configured Designer timeout). Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+From project root, run mutations/long checks with `timeout_ms >= 3900000`; default `init-project`/`sync-master` need `>= 14700000`. Exceed overrides. Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <action>

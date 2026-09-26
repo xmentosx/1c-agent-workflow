@@ -924,6 +924,17 @@ function ConvertTo-OneCExecutionGuardBases {
     })
 }
 
+function Format-OneCExecutionGuardTarget {
+    param([string]$Kind, [string]$Path)
+
+    if ($Kind -eq 'file') { return "file:$Path" }
+    $match = [regex]::Match($Path, '^\s*Srvr\s*=\s*(?:"(?<server>[^"]+)"|(?<server>[^;]+))\s*;\s*Ref\s*=\s*(?:"(?<ref>[^"]+)"|(?<ref>[^;]+))\s*;?\s*$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($match.Success) {
+        return "server:$($match.Groups['server'].Value.Trim())/$($match.Groups['ref'].Value.Trim())"
+    }
+    return 'server:<connection details omitted>'
+}
+
 function Invoke-WithOneCExecutionGuard {
     param(
         [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][object[]]$Admissions,
@@ -958,7 +969,31 @@ function Invoke-WithOneCExecutionGuard {
         $request['inheritedContextKey'] = $previousExecutionContextKey
     }
     try {
-        $guardOwner = Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+        $runStatusVariable = Get-Variable -Name RunStatusPath -Scope Script -ErrorAction SilentlyContinue
+        $publishAdmissionStatus = $null -ne $runStatusVariable -and -not [string]::IsNullOrWhiteSpace([string]$runStatusVariable.Value)
+        if ($publishAdmissionStatus) {
+            $previousRunDetail = $script:RunStageDetail
+            $previousRunLiveness = $script:RunLiveness
+            $previousRunTimeoutRemaining = $script:RunTimeoutRemainingSeconds
+            $targetText = @($bases | ForEach-Object { Format-OneCExecutionGuardTarget -Kind $_.kind -Path $_.path }) -join ', '
+            $script:RunStageDetail = "operation='$Purpose'; target='$targetText'; waiting for exact infobase admission; waitBudgetSeconds=$effectiveGuardTimeout; cancelPath='$CancelPath'; foreign sessions will not be stopped."
+            $script:RunLiveness = 'waiting-for-base'
+            $script:RunTimeoutRemainingSeconds = [int][Math]::Ceiling($effectiveGuardTimeout)
+            Write-RunStatus -Status running
+        }
+        if ($publishAdmissionStatus) {
+            $guardOwner = Invoke-WithRunStatusHeartbeat {
+                Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+            }
+        } else {
+            $guardOwner = Start-ItlExecutionGuardHost -Python $guardSettings.python -Request $request
+        }
+        if ($publishAdmissionStatus) {
+            $script:RunStageDetail = $previousRunDetail
+            $script:RunLiveness = $previousRunLiveness
+            $script:RunTimeoutRemainingSeconds = $previousRunTimeoutRemaining
+            Write-RunStatus -Status running
+        }
         Resume-Agent1cLifecycleOperationAfterExecutionWait -Checkpoint $phaseCheckpoint -Admissions $Admissions
         [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT', [string]$guardOwner.proof.encoded, 'Process')
         [Environment]::SetEnvironmentVariable('ITL_EXECUTION_CONTEXT_KEY', [string]$guardOwner.proof.key, 'Process')

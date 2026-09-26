@@ -11,7 +11,7 @@ param(
     [string]$AgentTarget = "",
     [ValidateSet("", "opus5", "sonnet5", "fable5", "gpt56")]
     [string]$AgentModel = "",
-    [int]$InitMaxWaitSeconds = 3600,
+    [Nullable[int]]$InitMaxWaitSeconds = $null,
     [switch]$KeepWindowOnFailure,
     [switch]$SkipWorkflowSourceFreshnessCheck
 )
@@ -29,8 +29,8 @@ function Get-BootstrapUtf8Text {
     return [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64))
 }
 
-if ($InitMaxWaitSeconds -lt 0) {
-    throw "InitMaxWaitSeconds must be 0 or greater."
+if ($null -ne $InitMaxWaitSeconds -and ($InitMaxWaitSeconds -lt 1 -or $InitMaxWaitSeconds -gt 86400)) {
+    throw "InitMaxWaitSeconds must be between 1 and 86400."
 }
 
 function Normalize-Agent1cFullPathText {
@@ -608,7 +608,9 @@ try {
     if ($KeepWindowOnFailure) {
         $launcherArgs += "-KeepWindowOnFailure"
     }
-    $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
+    if ($null -ne $InitMaxWaitSeconds) {
+        $launcherArgs += @("-MaxWaitSeconds", [string]$InitMaxWaitSeconds)
+    }
     $launcherArgs += @("--") + $initArgs
 
     Write-Host "Starting monitored ITL initialization."

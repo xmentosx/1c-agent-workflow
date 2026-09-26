@@ -1724,21 +1724,22 @@ exit 0
             $text | Should -Match "CLIXML"
             $text | Should -Match "positive long timeout"
             $text | Should -Match "timeout: 0"
-            $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            $text | Should -Match "timeout_ms\s*>=\s*14700000"
             $text | Should -Match "repeat the same"
         }
 
         $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
         $combinedText | Should -Match "launcher validates the helper path"
-        $combinedText | Should -Match "MaxWaitSeconds 3600"
-        $combinedText | Should -Match "InitMaxWaitSeconds 3600"
+        $combinedText | Should -Match "MaxWaitSeconds"
+        $combinedText | Should -Match "InitMaxWaitSeconds"
+        $combinedText | Should -Match "14400"
         $combinedText | Should -Match "launcher\.orphaned|orphaned"
         $combinedText | Should -Match "Do not delete.*lock|Never delete.*lock"
         $combinedText | Should -Match "edit.*status"
         $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
 
         $sourceAgentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENTS.md")
-        $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*3900000"
+        $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*14700000"
         $sourceAgentsText | Should -Match "repeat the same bootstrap command"
     }
 
@@ -1915,7 +1916,11 @@ exit 0
         foreach ($path in $longTemplatePaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
             $text | Should -Match "agent shell tool supports"
-            $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            if ($path -like "*itl-sync-master.md.template") {
+                $text | Should -Match "timeout_ms\s*>=\s*14700000"
+            } else {
+                $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            }
             $text | Should -Match 'do not use\s+`?120000 ms'
         }
 
@@ -1953,8 +1958,8 @@ exit 0
     It "keeps helper path validation inside the monitored launcher" {
         $LauncherText | Should -Match "Helper script was not found"
         $LauncherText | Should -Match ([regex]::Escape('Test-Path -LiteralPath $helperFull'))
-        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*3600'
-        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*3600'
+        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*\$null'
+        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*\$null'
     }
 
     It "warns clearly when source repository sync is disabled" {
