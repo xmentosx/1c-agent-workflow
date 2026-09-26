@@ -21,6 +21,60 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "parses the beta cutover coordinator" -Tag BetaCutover {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
+        @($errors).Count | Should -Be 0
+    }
+
+    It "keeps the logical MCP identity while beta uses a different container and rejects breaking tool changes" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-contract-кириллица " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $old = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code" }
+                $beta = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code-beta" }
+                (Get-HostServerStateKey -ServerState $old) | Should -Be (Get-HostServerStateKey -ServerState $beta)
+                $oldTools = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" } } } })
+                $compatible = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible } | Should -Not -Throw
+                $breaking = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query", "limit"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $breaking } | Should -Throw
+                { Assert-BetaPathUnderStateRoot -Config ([pscustomobject]@{ stateRoot = (Join-Path $tempRoot "state") }) -Path (Join-Path $tempRoot "other") } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "detects active Code and Graph indexing before a beta cutover" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-index-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url) return [pscustomobject]@{ url = $Url } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name)
+                    if ($Name -eq "stats") {
+                        return [pscustomobject]@{ structuredContent = [pscustomobject]@{ data = [pscustomobject]@{ indexing = [pscustomobject]@{ running = $true; phase = "code" }; collections = [pscustomobject]@{ code = 10 } } } }
+                    }
+                    return [pscustomobject]@{ structuredContent = [pscustomobject]@{ result = '{"background_tasks":{"vector_indexing":{"status":"running"}},"any_running":true}' } }
+                }
+                $code = Get-BetaConfigurationIndexActivity -ServerId code -Url "http://localhost:1/mcp"
+                $graph = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:2/mcp"
+                $code.running | Should -BeTrue
+                $code.phase | Should -Be "code"
+                $code.collections.code | Should -Be 10
+                $graph.running | Should -BeTrue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "parses the standalone MCP host config dump helper" {
         $tokens = $null
         $errors = $null
