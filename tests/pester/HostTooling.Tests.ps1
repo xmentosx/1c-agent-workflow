@@ -49,6 +49,32 @@
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "detects active Code and Graph indexing before a beta cutover" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-index-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url) return [pscustomobject]@{ url = $Url } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name)
+                    if ($Name -eq "stats") {
+                        return [pscustomobject]@{ structuredContent = [pscustomobject]@{ data = [pscustomobject]@{ indexing = [pscustomobject]@{ running = $true; phase = "code" }; collections = [pscustomobject]@{ code = 10 } } } }
+                    }
+                    return [pscustomobject]@{ structuredContent = [pscustomobject]@{ result = '{"background_tasks":{"vector_indexing":{"status":"running"}},"any_running":true}' } }
+                }
+                $code = Get-BetaConfigurationIndexActivity -ServerId code -Url "http://localhost:1/mcp"
+                $graph = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:2/mcp"
+                $code.running | Should -BeTrue
+                $code.phase | Should -Be "code"
+                $code.collections.code | Should -Be 10
+                $graph.running | Should -BeTrue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "parses the standalone MCP host config dump helper" {
         $tokens = $null
         $errors = $null

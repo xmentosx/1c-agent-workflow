@@ -104,6 +104,34 @@ function Assert-BetaToolsAcceptOldCalls {
     }
 }
 
+function Get-BetaConfigurationIndexActivity {
+    param([string]$ServerId, [string]$Url)
+    if ($ServerId -notin @("code", "graph")) { return $null }
+    $connection = Open-HostMcpConnection -Url $Url
+    $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
+    $result = Invoke-HostMcpTool -Connection $connection -Name $tool
+    $payload = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
+    if ($null -eq $payload) { throw "'$ServerId' index status has no structuredContent." }
+    $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
+    if ($nested -is [string]) { $payload = $nested | ConvertFrom-Json }
+    if ($ServerId -eq "code") {
+        $data = Get-ObjectValue -Object $payload -Name "data" -Default $null
+        $indexing = Get-ObjectValue -Object $data -Name "indexing" -Default $null
+        $collections = Get-ObjectValue -Object $data -Name "collections" -Default $null
+        if ($null -eq $indexing -or $null -eq $collections) { throw "Code stats did not expose indexing state and collection counts." }
+        return [pscustomobject]@{ running = [bool](Get-ObjectValue -Object $indexing -Name "running" -Default $false); phase = [string](Get-ObjectValue -Object $indexing -Name "phase" -Default ""); collections = $collections }
+    }
+    $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
+    if ($null -eq $tasks) { throw "Graph get_indexing_status did not expose background_tasks." }
+    $running = [bool](Get-ObjectValue -Object $payload -Name "any_running" -Default $false)
+    foreach ($task in (Convert-ToHash -Object $tasks).GetEnumerator()) {
+        $status = [string](Get-ObjectValue -Object $task.Value -Name "status" -Default "")
+        if ($status -match '^(?i:running|pending|in_progress|processing)$') { $running = $true }
+        if ($status -match '^(?i:failed|error)$') { throw "Graph background task '$($task.Key)' failed." }
+    }
+    return [pscustomobject]@{ running = $running; phase = "background_tasks"; collections = $null }
+}
+
 function New-BetaProxyContract {
     param([object]$Config, [object]$Context)
     $settings = Get-ToolsListProxySettings -Config $Config
@@ -293,8 +321,10 @@ function Invoke-BetaPreflight {
         throw "Stable Graph Neo4j is not running."
     }
     $oldTools = @(Get-HostMcpToolsList -Url $oldDirectUrl)
+    $oldIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url $oldDirectUrl
+    if ($null -ne $oldIndexActivity -and $oldIndexActivity.running) { throw "Stable '$TargetServerId' configId '$TargetConfigId' is indexing ($($oldIndexActivity.phase)); cutover would interrupt it." }
     Write-Host "Beta preflight passed: server=$TargetServerId configId=$TargetConfigId oldTools=$($oldTools.Count) publicName=$($context.old.name) publicUrl=$($context.old.url) betaImage=$($context.runtime.image)"
-    return [pscustomobject]@{ context = $context; oldTools = $oldTools }
+    return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldIndexActivity = $oldIndexActivity }
 }
 
 function Invoke-BetaCutover {
@@ -323,6 +353,17 @@ function Invoke-BetaCutover {
             Wait-BetaFreshIndexReady -Context $context
             $betaTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
             Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $betaTools
+            $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)
+            if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
+            if ($TargetServerId -eq "code") {
+                $oldCollections = Convert-ToHash -Object $preflight.oldIndexActivity.collections
+                $betaCollections = Convert-ToHash -Object $betaIndexActivity.collections
+                foreach ($key in $oldCollections.Keys) {
+                    if (-not $betaCollections.Contains($key) -or [int]$betaCollections[$key] -lt [int]$oldCollections[$key]) {
+                        throw "Beta CodeMetadata collection '$key' lost indexed records after snapshot migration."
+                    }
+                }
+            }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
             $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context
