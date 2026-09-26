@@ -46,7 +46,7 @@ try {
 
     [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildBases[0].path, 'Process')
     $buildRuntimeResult.stages += Invoke-VanessaBuildOwnedNative -FilePath $buildRequest.oscriptExe `
-        -Arguments @($buildRuntimeResult.adapters[0].executionPath, ($buildSourceRoot + '\')) `
+        -Arguments @('-encoding=utf-8', $buildRuntimeResult.adapters[0].executionPath, ($buildSourceRoot + '\')) `
         -Bases @($buildBases[0]) -Purpose 'vanessa-build-compile'
 
     $createBaseArguments = @('CREATEINFOBASE', (New-FileInfoBaseConnectionString -Path $buildBases[2].path),
@@ -58,7 +58,7 @@ try {
 
     [Environment]::SetEnvironmentVariable('ITL_VANESSA_BUILD_SCRATCH_BASE', $buildBases[1].path, 'Process')
     $buildRuntimeResult.stages += Invoke-VanessaBuildOwnedNative -FilePath $buildRequest.oscriptExe `
-        -Arguments @($buildRuntimeResult.adapters[1].executionPath, $buildSourceRoot,
+        -Arguments @('-encoding=utf-8', $buildRuntimeResult.adapters[1].executionPath, $buildSourceRoot,
             (Join-Path $buildWorkRoot 'out'), (Join-Path $buildSourceRoot 'features/Libraries'),
             [IO.Path]::GetDirectoryName([string]$buildRequest.platformExe), $buildBases[2].path) `
         -Bases @($buildBases[1], $buildBases[2]) -Purpose 'vanessa-build-single'

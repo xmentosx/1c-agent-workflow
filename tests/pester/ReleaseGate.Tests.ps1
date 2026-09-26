@@ -23,7 +23,7 @@ Describe "Release gate scripts" {
         $e2eText | Should -Match '"-VanessaFeaturePath", \$vanessaFixture\.path'
         $e2eText | Should -Match "\`$authoringOutcome -ne `"passed`""
         $e2eText | Should -Not -Match "runner-fallback-required"
-        $e2eText | Should -Match "run_scenario:cold.*get_VanessaAutomation_state:cold.*get_test_results:cold.*run_scenario:hot.*run_scenario:from-line-cold.*open_feature_file:secondary.*select_scenario:secondary.*run_scenario:selected"
+        $e2eText | Should -Match "run_scenario:cold.*get_vanessa_automation_state:cold.*get_test_results:cold.*run_scenario:hot.*run_scenario:from-line-cold.*open_feature_file:secondary.*select_scenario:secondary.*run_scenario:selected"
         $e2eText | Should -Match 'vanessa-secondary-feature'
         $e2eText | Should -Match 'publicToolCount = 2'
         $checkText | Should -Match 'onDemandRoctupPublicToolCount -ne 2'

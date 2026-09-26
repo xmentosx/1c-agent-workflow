@@ -113,7 +113,7 @@
         $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
-        $buildScriptText | Should -Match ([regex]::Escape('[ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14")]'))
+        $buildScriptText | Should -Match 'ValidateSet\("itl-r1", "itl-r4"'
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
         $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'
@@ -130,6 +130,42 @@
         $licenseText | Should -Match "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS"
         $manifest.license.spdx | Should -Be "BSD-3-Clause"
         $manifest.license.artifactNoticePath | Should -Be "ITL-NOTICE.txt"
+    }
+}
+
+Describe "Controlled Vanessa Automation patched artifact 1.2.043.42-itl-r1" {
+    BeforeAll {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\.." )).Path
+        $assetRoot = Join-Path $repoRoot "third-party\vanessa-automation\1.2.043.42-itl-r1"
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patchPath = Join-Path $assetRoot 'file-operations.patch'
+        $patchText = Get-Content -LiteralPath $patchPath -Raw -Encoding UTF8
+    }
+
+    It "pins the new tag, source archive, downstream patch, and paired extension" {
+        $manifest.upstream.ref | Should -Be 'refs/tags/1.2.043.42'
+        $manifest.upstream.commit | Should -Be 'a0ce2ee9803dd69be52f682e5cf49e0938fd33f1'
+        $manifest.upstream.sourceArchive.sha256 | Should -Be 'dbd601ab7b9868103541a4bc4216009e209a9b378127efdbc5b2bdd604681d0c'
+        (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 10
+        $manifest.pairedExtension.required | Should -BeTrue
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r1.cfe'
+    }
+
+    It "replaces every ping wait fallback with local sleep and checks MCP progress tokens" {
+        $patchText | Should -Match 'Start-Sleep -Milliseconds'
+        $patchText | Should -Match '/bin/sleep '
+        $patchText | Should -Match 'ПрогрессТокенИзЗапроса'
+        $patchText | Should -Match 'УсловиеИначе'
+        $patchText | Should -Not -Match '(?m)^\+.*ping 127\.0\.0\.1'
+    }
+
+    It "resumes only after native release and exact source verification" {
+        $buildText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/build-vanessa-automation-patched.ps1') -Raw -Encoding UTF8
+        $buildText | Should -Match 'ResumeWorkDirectory'
+        $buildText | Should -Match 'VANESSA_BUILD_RESUME_NATIVE_OWNERSHIP_UNCONFIRMED'
+        $buildText | Should -Match 'Resumed downstream patch'
+        $buildText | Should -Match 'Resumed upstream source archive SHA-256'
     }
 }
 

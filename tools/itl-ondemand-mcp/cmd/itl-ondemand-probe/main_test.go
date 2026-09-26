@@ -94,7 +94,7 @@ func TestCallWithFacadeHandoffReleasesPreviousBeforeQueuedCallContinues(t *testi
 		releaseCalls++
 		close(released)
 		return nil
-	}, "get_VanessaAutomation_state", map[string]any{}, 10*time.Millisecond)
+	}, "get_vanessa_automation_state", map[string]any{}, 10*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestCallWithFacadeHandoffKeepsPreviousWhenCallIsReady(t *testing.T) {
 	result, handedOff, err := callWithFacadeHandoff(context.Background(), session, func() error {
 		releaseCalls++
 		return nil
-	}, "get_VanessaAutomation_state", map[string]any{}, time.Second)
+	}, "get_vanessa_automation_state", map[string]any{}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing
 	if clientCount != 0 || maxClientCount != 1 {
 		t.Fatalf("unexpected TestClient concurrency observation: current=%d max=%d", clientCount, maxClientCount)
 	}
-	wantProofs := "run_scenario:cold,get_VanessaAutomation_state:cold,get_test_results:cold,run_scenario:hot,get_VanessaAutomation_state:hot,get_test_results:hot,run_scenario:from-line-cold,get_VanessaAutomation_state:from-line-cold,get_test_results:from-line-cold,open_feature_file:secondary,check_syntax:secondary,load_features:secondary,select_scenario:secondary,run_scenario:selected,get_VanessaAutomation_state:selected,get_test_results:selected"
+	wantProofs := "run_scenario:cold,get_vanessa_automation_state:cold,get_test_results:cold,run_scenario:hot,get_vanessa_automation_state:hot,get_test_results:hot,run_scenario:from-line-cold,get_vanessa_automation_state:from-line-cold,get_test_results:from-line-cold,open_feature_file:secondary,check_syntax:secondary,load_features:secondary,select_scenario:secondary,run_scenario:selected,get_vanessa_automation_state:selected,get_test_results:selected"
 	if outcome != "passed" || strings.Join(authoringCalls, ",") != wantProofs {
 		t.Fatalf("outcome=%q authoringCalls=%#v", outcome, authoringCalls)
 	}
@@ -281,20 +281,20 @@ func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing
 		value any
 	}{
 		{name: "run_scenario", key: "filePath", value: featurePath},
-		{name: "get_VanessaAutomation_state"},
+		{name: "get_vanessa_automation_state"},
 		{name: "get_test_results"},
 		{name: "run_scenario", key: "filePath", value: featurePath},
-		{name: "get_VanessaAutomation_state"},
+		{name: "get_vanessa_automation_state"},
 		{name: "get_test_results"},
 		{name: "run_scenario", key: "filePath", value: secondaryFeaturePath},
-		{name: "get_VanessaAutomation_state"},
+		{name: "get_vanessa_automation_state"},
 		{name: "get_test_results"},
 		{name: "open_feature_file", key: "filePath", value: secondaryFeaturePath},
 		{name: "check_syntax", key: "filePath", value: secondaryFeaturePath},
 		{name: "load_features", key: "path", value: secondaryFeaturePath},
 		{name: "select_scenario", key: "name", value: "MCP cold B"},
 		{name: "run_scenario", key: "mode", value: "selected"},
-		{name: "get_VanessaAutomation_state"},
+		{name: "get_vanessa_automation_state"},
 		{name: "get_test_results"},
 	}
 	for index, expected := range want {
@@ -313,7 +313,7 @@ func TestRunVanessaSmokeCoversColdHotAndSelectedScenarioPathsBeforeUI(t *testing
 		t.Fatalf("secondary feature was not first opened by cold reloadAndRunFromLine: %#v", calls[6])
 	}
 	for index := 0; index < len(want); index++ {
-		if calls[index].name == "connect_test_client" || strings.HasPrefix(calls[index].name, "get_window_") {
+		if calls[index].name == "manage_test_client" || strings.HasPrefix(calls[index].name, "get_window_") {
 			t.Fatalf("UI call ran before scenario probes completed: %#v", calls[index])
 		}
 	}

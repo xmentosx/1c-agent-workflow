@@ -68,6 +68,9 @@ Describe 'Paired Vanessa extension native build ownership' {
                 if ($DesignerArgs[0] -eq '/DumpCfg') { [IO.File]::WriteAllBytes($DesignerArgs[1], [byte[]]@(1,2,3,4)) }
             }
             [void][IO.Directory]::CreateDirectory($Root)
+            $metadataPath = Join-Path $Root 'src/lib/VAExtension/Configuration.xml'
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $metadataPath))
+            [IO.File]::WriteAllText($metadataPath, '<MetaDataObject><Configuration><Properties><Version>1.29</Version></Properties></Configuration></MetaDataObject>')
             $spec = [pscustomobject]@{sourcePath='lib/VAExtension';fileName='VAExtension.1.29-itl-r11.cfe';protocol='itl-file-code-v1'}
             $artifact = Invoke-VanessaBuildPairedExtension -SourceRoot (Join-Path $Root 'src') -WorkRoot $Root -InfoBasePath (Join-Path $Root 'base') -User 'service' -Specification $spec
             [pscustomobject]@{ artifact=$artifact; calls=$script:PairedCalls }
@@ -91,10 +94,22 @@ Describe 'Paired Vanessa extension native build ownership' {
                     if ($Failure -eq 'empty' -and $DesignerArgs[0] -eq '/DumpCfg') { [IO.File]::WriteAllBytes($DesignerArgs[1],[byte[]]@()) }
                 }
                 [void][IO.Directory]::CreateDirectory($Root)
+                $metadataPath = Join-Path $Root 'src/lib/VAExtension/Configuration.xml'
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $metadataPath))
+                [IO.File]::WriteAllText($metadataPath, '<MetaDataObject><Configuration><Properties><Version>1.29</Version></Properties></Configuration></MetaDataObject>')
                 $spec = [pscustomobject]@{sourcePath='lib/VAExtension';fileName='VAExtension.1.29-itl-r11.cfe';protocol='itl-file-code-v1'}
                 Invoke-VanessaBuildPairedExtension -SourceRoot (Join-Path $Root 'src') -WorkRoot $Root -InfoBasePath (Join-Path $Root 'base') -User 'service' -Specification $spec
             } (Join-Path $TestDrive ('Неудачная сборка ' + $failure)) $failure
         } | Should -Throw
+    }
+    It 'rejects a paired CFE filename that disagrees with the source extension version' {
+        $root = Join-Path $TestDrive 'version-mismatch'
+        $metadataPath = Join-Path $root 'src/lib/VAExtension/Configuration.xml'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $metadataPath))
+        [IO.File]::WriteAllText($metadataPath, '<MetaDataObject><Configuration><Properties><Version>1.32</Version></Properties></Configuration></MetaDataObject>')
+        $spec = [pscustomobject]@{sourcePath='lib/VAExtension';fileName='VAExtension.1.29-itl-r1.cfe';protocol='itl-file-code-v1'}
+        { Invoke-VanessaBuildPairedExtension -SourceRoot (Join-Path $root 'src') -WorkRoot $root -InfoBasePath (Join-Path $root 'base') -User 'service' -Specification $spec } |
+            Should -Throw '*VANESSA_BUILD_PAIRED_EXTENSION_VERSION_MISMATCH*'
     }
 }
 
