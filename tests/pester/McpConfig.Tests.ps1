@@ -208,8 +208,8 @@
         $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
         $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
         $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29-itl-r1.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "4145e193ede27ce9ad156fbff8de31be95e7b536e19c6101fc24370b058ff6dc"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "699be3e1845727ebbf67b368722a716e3037ce1e78316ad8ba825c350c7c8cc7"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
@@ -1405,7 +1405,7 @@ enabled = true
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
             $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
-            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.29-itl-r1.cfe"
+            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.32-itl-r1.cfe"
             Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
             Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
             Set-Content -LiteralPath (Join-Path $masterRoot ".dev.env") -Encoding UTF8 -Value @"
@@ -1420,7 +1420,7 @@ DEPENDENCY_MODE=fresh
                     $fixturePath = $(if ($isClient) { $clientSource } else { $extensionSource })
                     return [pscustomobject]@{
                         url = $fixturePath
-                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.29-itl-r1.cfe" })
+                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.32-itl-r1.cfe" })
                         version = $(if ($isClient) { "v0.6.5" } else { "1.2.043.42" })
                         expectedSha256 = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
                         source = "targeted-test"

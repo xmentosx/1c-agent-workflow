@@ -33,9 +33,18 @@
 function Invoke-VanessaBuildPairedExtension {
     param([string]$SourceRoot, [string]$WorkRoot, [string]$InfoBasePath, [string]$User, [object]$Specification)
     if ($Specification.sourcePath -cne 'lib/VAExtension' -or
-        $Specification.fileName -cnotmatch '^VAExtension\.1\.29-itl-r[0-9]+\.cfe$' -or
+        $Specification.fileName -cnotmatch '^VAExtension\.[0-9]+\.[0-9]+-itl-r[0-9]+\.cfe$' -or
         $Specification.protocol -cne 'itl-file-code-v1') { throw 'VANESSA_BUILD_PAIRED_EXTENSION_CONTRACT_INVALID' }
     $extensionSource = Join-Path $SourceRoot 'lib/VAExtension'
+    $metadataPath = Join-Path $extensionSource 'Configuration.xml'
+    if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) { throw 'VANESSA_BUILD_PAIRED_EXTENSION_METADATA_MISSING' }
+    [xml]$metadata = [IO.File]::ReadAllText($metadataPath, [Text.Encoding]::UTF8)
+    $versionNode = $metadata.SelectSingleNode("/*[local-name()='MetaDataObject']/*[local-name()='Configuration']/*[local-name()='Properties']/*[local-name()='Version']")
+    $version = if ($null -ne $versionNode) { [string]$versionNode.InnerText } else { '' }
+    if ($version -cnotmatch '^[0-9]+\.[0-9]+$' -or
+        $Specification.fileName -cnotmatch ('^VAExtension\.' + [regex]::Escape($version) + '-itl-r[0-9]+\.cfe$')) {
+        throw 'VANESSA_BUILD_PAIRED_EXTENSION_VERSION_MISMATCH'
+    }
     $outputPath = Join-Path $WorkRoot $Specification.fileName
     Invoke-Designer -InfoBaseKind file -InfoBasePath $InfoBasePath -User $User -Password '' `
         -DesignerArgs @('/LoadConfigFromFiles', $extensionSource, '-Extension', 'VAExtension', '-Format', 'Hierarchical', '/UpdateDBCfg') | Out-Null

@@ -286,7 +286,7 @@ result calls with passed evidence bound to the expected feature path and SHA-256
 `runner-fallback-required` is not release evidence.
 The 1C compiler output is qualified as exact bytes rather than assumed
 reproducible: after live qualification, publish that same EPF/distribution and
-the paired `VAExtension.1.29-itl-r1.cfe` extracted from that distribution without
+the paired `VAExtension.1.32-itl-r1.cfe` extracted from that distribution without
 rebuilding either file. Deterministic ZIP packaging may be repeated only against
 the unchanged qualified distribution and must retain the recorded EPF and paired
 extension SHA-256 values. The pre-publication candidate may use its exact local

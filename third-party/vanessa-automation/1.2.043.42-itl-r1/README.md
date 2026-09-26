@@ -1,6 +1,6 @@
 # Vanessa Automation 1.2.043.42-itl-r1
 
-This source asset pins the upstream `1.2.043.42` tag and the ITL patch used to build the single EPF plus the matching `VAExtension.1.29-itl-r1.cfe`. The old `1.2.043.28` assets remain available for already installed projects.
+This source asset pins the upstream `1.2.043.42` tag and the ITL patch used to build the single EPF plus the matching `VAExtension.1.32-itl-r1.cfe`. The old `1.2.043.28` assets remain available for already installed projects.
 
 Build with `scripts/build-vanessa-automation-patched.ps1 -UpstreamVersion 1.2.043.42 -DownstreamRevision itl-r1`. The manifest verifies the upstream commit and archive, patch paths and SHA, OneScript/1C toolchain, and bundled dependency bytes. Keep the EPF and CFE from one qualified archive together.
 

@@ -25,7 +25,7 @@ Describe "Deterministic Release readiness" {
             $epfPath = Join-Path $assetStage "vanessa-automation-single.epf"
             [System.IO.File]::WriteAllBytes($epfPath, [byte[]](1, 2, 3, 4, 5))
             $epfSha = (Get-FileHash -LiteralPath $epfPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            $pairedExtensionName = "VAExtension.1.29-itl-r1.cfe"
+            $pairedExtensionName = "VAExtension.1.32-itl-r1.cfe"
             $pairedExtensionPath = Join-Path $assetStage $pairedExtensionName
             [System.IO.File]::WriteAllBytes($pairedExtensionPath, [byte[]](6, 7, 8, 9))
             $pairedExtensionSha = (Get-FileHash -LiteralPath $pairedExtensionPath -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -18,7 +18,7 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         New-Item -ItemType Directory -Force -Path $script:FixtureContent | Out-Null
         $script:FixtureEpfPath = Join-Path $script:FixtureContent "vanessa-automation-single.epf"
         [System.IO.File]::WriteAllBytes($script:FixtureEpfPath, [System.Text.Encoding]::UTF8.GetBytes("qualified patched EPF fixture"))
-        $script:FixtureVaExtensionPath = Join-Path $script:FixtureContent "VAExtension.1.29-itl-r1.cfe"
+        $script:FixtureVaExtensionPath = Join-Path $script:FixtureContent "VAExtension.1.32-itl-r1.cfe"
         [System.IO.File]::WriteAllBytes($script:FixtureVaExtensionPath, [System.Text.Encoding]::UTF8.GetBytes("qualified paired VAExtension fixture"))
         $script:FixtureNestedPath = Join-Path $script:FixtureContent "metadata\fixture.txt"
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $script:FixtureNestedPath) | Out-Null
@@ -86,9 +86,9 @@ Describe "Workflow-pinned Vanessa Automation integration" {
         $entry.downstreamRevision | Should -Be "itl-r1"
         $entry.assetName | Should -Be "vanessa-automation-single.1.2.043.42-itl-r1.zip"
         $entry.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r1/vanessa-automation-single.1.2.043.42-itl-r1.zip"
-        $entry.sha256 | Should -Be "67d486b5b218c4810c1dbd8303a2b493b96323935cce3cc1f5ec2c51924c7c54"
-        $entry.epfSha256 | Should -Be "353d31eb05b333be9d81d2cdb0b7a11e1706dc5133694b8eb85a971b248cc376"
-        $entry.manifestSha256 | Should -Be "8de51c544af8a483885e77f4ba053cd408bf0609841895b5f996ba86635b073d"
+        $entry.sha256 | Should -Be "7aeb0fc89f98f4d13135570b45c3dd9fe3e54ff45635a6b1579b5ffb5c878238"
+        $entry.epfSha256 | Should -Be "25e4c1347d5fc00c2fa3c4f826d4e4c072a5a8b825064ec228fa6743741432f6"
+        $entry.manifestSha256 | Should -Be "9059beddc2ccf823027cf341630b1999e7019a4ce3fee1aab603ad3794924259"
         $entry.patchSha256 | Should -Be "7c6576c0695c305f0f5a7f0d1ea4be7cf2cbeec49d52670fc8a90fcae651f5e1"
         $entry.upstreamCommit | Should -Be "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1"
         $entry.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"

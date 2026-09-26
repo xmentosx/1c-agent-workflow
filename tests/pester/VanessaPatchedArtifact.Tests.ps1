@@ -149,7 +149,7 @@ Describe "Controlled Vanessa Automation patched artifact 1.2.043.42-itl-r1" {
         (Get-FileHash -LiteralPath $patchPath -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
         @($manifest.patch.expectedChangedPaths) | Should -HaveCount 10
         $manifest.pairedExtension.required | Should -BeTrue
-        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.29-itl-r1.cfe'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r1.cfe'
     }
 
     It "replaces every ping wait fallback with local sleep and checks MCP progress tokens" {

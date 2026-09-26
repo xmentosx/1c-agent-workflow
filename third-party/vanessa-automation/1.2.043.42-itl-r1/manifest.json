@@ -141,7 +141,7 @@
   "pairedExtension": {
     "required": true,
     "sourcePath": "lib/VAExtension",
-    "fileName": "VAExtension.1.29-itl-r1.cfe",
+    "fileName": "VAExtension.1.32-itl-r1.cfe",
     "protocol": "itl-file-code-v1",
     "delivery": "Build and qualify the patched VAExtension together with the EPF; an upstream VAExtension cannot execute this protocol."
   }
