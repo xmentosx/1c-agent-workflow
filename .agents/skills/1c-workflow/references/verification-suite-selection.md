@@ -202,3 +202,13 @@ referenced by any `registrationPaths` or export their own
 `ИсполняемыеСценарии`; they run only through an explicit project benchmark
 harness. Adding or renaming a module without updating this catalog blocks the
 normal check before 1C starts.
+
+The classification helper returns a complete `userReport` combining the same
+refresh's saved load/Enterprise facts with completed classification. Return it
+verbatim; retain the original refresh status/report unchanged as history. Saved
+report context lives in the existing ignored verification-selection directory,
+is bound to worktree, branch, infobase and refresh identity, and is not verification
+evidence. Missing, stale or unreadable context only warns: return the original
+refresh report verbatim followed by the standalone classification report. Never
+repeat a successful refresh to reconstruct reporting. Classification does not
+prove BSL validators or replace a fresh `/itl-check`.

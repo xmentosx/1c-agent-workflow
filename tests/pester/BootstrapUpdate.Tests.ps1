@@ -1724,21 +1724,22 @@ exit 0
             $text | Should -Match "CLIXML"
             $text | Should -Match "positive long timeout"
             $text | Should -Match "timeout: 0"
-            $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            $text | Should -Match "timeout_ms\s*>=\s*14700000"
             $text | Should -Match "repeat the same"
         }
 
         $combinedText = ($docPaths | ForEach-Object { Get-Content -Encoding UTF8 -Raw $_ }) -join [Environment]::NewLine
         $combinedText | Should -Match "launcher validates the helper path"
-        $combinedText | Should -Match "MaxWaitSeconds 3600"
-        $combinedText | Should -Match "InitMaxWaitSeconds 3600"
+        $combinedText | Should -Match "MaxWaitSeconds"
+        $combinedText | Should -Match "InitMaxWaitSeconds"
+        $combinedText | Should -Match "14400"
         $combinedText | Should -Match "launcher\.orphaned|orphaned"
         $combinedText | Should -Match "Do not delete.*lock|Never delete.*lock"
         $combinedText | Should -Match "edit.*status"
         $combinedText | Should -Not -Match "(?i)(use|set)\s+`?timeout:\s*0"
 
         $sourceAgentsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "AGENTS.md")
-        $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*3900000"
+        $sourceAgentsText | Should -Match "timeout_ms\s*>=\s*14700000"
         $sourceAgentsText | Should -Match "repeat the same bootstrap command"
     }
 
@@ -1750,14 +1751,18 @@ exit 0
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $script:copyCalls = 0
                 $script:postCalls = 0
+                $script:cleanCalls = 0
                 $script:reexecArgs = @()
                 function Assert-WorkflowPackageUpdateContext {}
+                # Cleanup of a recorded patch now precedes the same strict
+                # clean check; this phase-only fixture has no Git repository.
+                function Assert-WorkflowTrackedGitClean { $script:cleanCalls++ }
                 function Assert-WorkflowUpdateCommitIdentity {}
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Assert-WorkflowSourceAiRulesInstallable {}
-                function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
-                function Copy-WorkflowManagedFile { $script:copyCalls++ }
+                function Copy-WorkflowManagedDirectory { if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }; $script:copyCalls++ }
+                function Copy-WorkflowManagedFile { if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }; $script:copyCalls++ }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
 
@@ -1795,6 +1800,7 @@ exit 0
                     preError = $preError
                     preCopyCalls = $preCopyCalls
                     finalCopyCalls = $script:copyCalls
+                    cleanCalls = $script:cleanCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
                     dependencySyncOrder = $script:dependencySyncOrder
@@ -1809,6 +1815,7 @@ exit 0
             }
             $result.preError | Should -Be "reexec-stop"
             $result.preCopyCalls | Should -BeGreaterThan 5
+            $result.cleanCalls | Should -Be 1
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4
@@ -1909,7 +1916,11 @@ exit 0
         foreach ($path in $longTemplatePaths) {
             $text = Get-Content -Encoding UTF8 -Raw $path
             $text | Should -Match "agent shell tool supports"
-            $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            if ($path -like "*itl-sync-master.md.template") {
+                $text | Should -Match "timeout_ms\s*>=\s*14700000"
+            } else {
+                $text | Should -Match "timeout_ms\s*>=\s*3900000"
+            }
             $text | Should -Match 'do not use\s+`?120000 ms'
         }
 
@@ -1947,8 +1958,8 @@ exit 0
     It "keeps helper path validation inside the monitored launcher" {
         $LauncherText | Should -Match "Helper script was not found"
         $LauncherText | Should -Match ([regex]::Escape('Test-Path -LiteralPath $helperFull'))
-        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*3600'
-        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*3600'
+        $LauncherText | Should -Match '\$MaxWaitSeconds\s*=\s*\$null'
+        (Get-Content -Encoding UTF8 -Raw $InstallerPath) | Should -Match '\$InitMaxWaitSeconds\s*=\s*\$null'
     }
 
     It "warns clearly when source repository sync is disabled" {
@@ -2664,7 +2675,7 @@ exit 2
         $result.report | Should -Match "Исходная информационная база: C:\\fixture\\source"
         $result.report | Should -Match "Режим зависимостей: locked"
         $result.report | Should -Match "Web-публикация веток: ручная"
-        $result.report | Should -Match "Активные vibecoding1c: docs/remote"
+        $result.report | Should -Match "Настроены в клиенте vibecoding1c: docs/remote"
         $result.report | Should -Match "Пропущенные vibecoding1c: <нет>"
         $result.report | Should -Match "Kilo Browser Automation: состояние не определено"
         $result.report | Should -Match "Настройка vibecoding1c MCP отложена"

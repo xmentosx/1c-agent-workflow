@@ -15,6 +15,65 @@ Qualify each family against the current client surface independently. Unavailabl
 
 Do not paste MCP license keys into chat or tracked files. Helper-managed private keys and model state live under `%LOCALAPPDATA%\ITL\MCP\vibecoding1c`; helper-managed local ports are reserved through the ITL port registry (`ITL_PORT_REGISTRY_SCOPE`, `ITL_PORT_REGISTRY_HOME`); ignored project/worktree state lives under `.agent-1c/mcp/`, `.codex/config.toml`, and `.kilo/kilo.json*`.
 
+## Availability, recovery and return to work
+
+Observe each server separately: configured entry, explicit enablement (including
+`enabled=false`/`disabled=true`), MCP initialization, tools exposed in this task,
+and the result of the requested tool. Registry freshness or TCP reachability is
+not MCP readiness. A successful validator call is separate evidence. Status and
+refresh report configuration only; they do not probe every endpoint or gate the
+successful branch/base update on auxiliary remote services.
+
+For a concrete remote tool failure, use current client discovery/status first.
+If needed, one targeted diagnostic may perform `initialize ->
+notifications/initialized -> tools/list` with a single total budget of 20 seconds,
+recording server, checked-at time and failed stage without secrets. Prefer the
+client's authenticated transport; never export credentials into a probe. An
+external probe proves the endpoint only, not its attachment to this task.
+
+Remote outage: correct an obvious local client/config mismatch through its owner
+or perform one supported reconnect. If that gives no useful remedy, continue the
+original work without just that remote server. Do not SSH to the dedicated host,
+restart its services/containers, deploy, rotate keys, change provider or install a
+local replacement unless a separate user request authorizes that work. Do not
+disable/remove entries, mark a server permanently offline, or repeat identical
+attempts in a loop. Other remote tools and local facades stay in use. Report only
+the checks actually omitted; an unavailable validator never becomes a pass.
+
+The failure observation expires: when that tool is next needed after at least
+60 seconds, rediscover/retry it once through the current client. A ready event or
+changed connection/config evidence permits an immediate retry. Success clears
+the observation and the agent uses the recovered tool in the same task. No
+background polling or durable offline cache is required. Respect an intentional
+user-disabled server; this is not an outage to repair or re-enable.
+
+If the client cached a startup failure and still has no tools after the endpoint
+recovers, use its supported MCP reload/reconnect and rediscover in the same task.
+Codex App Server exposes `config/mcpServer/reload` on the **owning** connection;
+use it only when the host provides that capability. Starting a second App Server
+does not reconnect this task. Desktop/CLI exposure is client-specific: if the
+current host supplies no reload interface, state that limitation, continue
+independent work, and retry current discovery on new availability evidence. Do
+not claim automatic attachment or demand an application restart on every refresh.
+
+Local workflow-owned MCP: do not settle for working indefinitely without it.
+Distinguish normal stopped on-demand backends from a failed facade/tool call;
+catalog resolution alone does not start 1C. Use the family's existing recovery
+below, reconcile wrong/missing client entries with `sync-client-mcp -Client`,
+then repeat the original tool operation. Keep project/worktree/infobase scope,
+guards and owned-process cleanup. A workflow defect follows
+[workflow-incidents.md](workflow-incidents.md): prepare the smallest owner repair,
+use already authorized local repair scope, preserve failed evidence, and resume
+the original task. Do not bypass the facade or relax database guards. A remaining
+local blocker blocks only the dependent operation, with concrete recovery details;
+independent work continues.
+
+Config reload advice is emitted for semantic changes to any managed MCP owner,
+including remote URLs and local command/args/env; repeated equivalent writes do
+not request reload. Writers preserve explicit disablement and user access/tool
+policy. Reload only affects when the changed connection can be used and does not
+invalidate completed refresh work.
+
 ## ROCTUP MCP Toolkit
 
 The client sees the stable logical server `itl-roctup-data` immediately after task startup. Its local stdio facade exposes compact `resolve_tool` and `call_tool`; the verified full catalog remains internal. Resolution never starts 1C. Each inner invocation through `call_tool` acquires the exact call-scoped execution guard before starting `MCP_Toolkit.epf` inside the copied branch infobase in embedded mode:
@@ -45,7 +104,7 @@ Actions:
 - `vibecoding1c-mcp-select`: explicit remote/local provider, remote `configId`/`hostId`, or local `project|branch` scope.
 - `vibecoding1c-mcp-refresh-registry`: update remote endpoint discovery.
 - `vibecoding1c-mcp-update`: update registry/distribution/keys/images.
-- `vibecoding1c-mcp-status`: inspect active/skipped/stale/missing-configId servers.
+- `vibecoding1c-mcp-status`: inspect configured/skipped/stale/missing-configId servers.
 - `vibecoding1c-mcp-start`, `vibecoding1c-mcp-stop`, `vibecoding1c-mcp-rotate-keys`, `vibecoding1c-mcp-ensure-model`, `vibecoding1c-mcp-write-client-config`: advanced helper actions for the active client.
 - `sync-client-mcp`: required `-Client`; writes vibecoding1c, on-demand facades, and UI MCP into that client's config without changing the active client, `ai_rules_1c`, or skills. After Cursor `.cursor/mcp.json`, reload the window, enable ITL servers in `+ -> MCP Servers`, and open a new Agent chat. Do not treat an already open chat as connected, and do not dot-source internal writers as a public scenario.
 
@@ -60,7 +119,7 @@ Rules:
 7. Client config uses upstream `ai_rules_1c` canonical names such as `1c-code-metadata-mcp`, `1c-graph-metadata-mcp`, `1C-docs-mcp`, and `1c-data-mcp` when mapped.
 8. Product documentation MCP (`bookstack` / `BookStack-product-docs-mcp`) is PM5-only. When `.agent-1c/project.json` has `baseConfigurationVersion=PM4`, helper selection/start/status/client-config ignores it and removes PM5-only managed client entries while preserving External MCP.
 9. `vibecoding1c-mcp-write-client-config` removes only entries marked as vibecoding1c-managed; never delete External MCP or unrelated custom entries.
-10. `status`, `/itl-status`, and `list-dev-branches` show active names, URLs, provider, configId, health, indexed time, and freshness such as `fresh`, `stale`, `remote-shared`, `unknown`, or `indexing`.
+10. `status`, `/itl-status`, and `list-dev-branches` show configured names, URLs, provider, configId, health, indexed time, and freshness such as `fresh`, `stale`, `remote-shared`, `unknown`, or `indexing`.
 11. New `itldev/*` worktrees inherit a complete `master` `.agent-1c/mcp/vibecoding1c-selection.json` automatically. The helper does not copy raw `state.json`; it rematerializes selected `remote` and `local + project` endpoints in the new worktree context so project paths and client config belong to that worktree. Inheritance failures are non-blocking and can be repaired with `vibecoding1c-mcp-setup`.
 12. Ignore the legacy logical server `vanessa` if an older or external vibecoding1c distribution manifest or registry still publishes it. Vanessa UI MCP is owned by the separate `ondemand-facade` configuration and must not participate in vibecoding1c selection, completeness, runtime state, status, or client config.
 13. For Cursor, distinguish entries present in `.cursor/mcp.json` from the per-chat Agent MCP switches. ITL can report configured and missing managed entries, but Cursor exposes no supported workflow interface for reading those switches. Init, branch creation/refresh, and `/itl-status` therefore state that switch status is not observable and require the user to enable all ITL servers in `+ -> MCP Servers`, then open a new Agent chat. Never infer switch enablement from config presence or endpoint health.

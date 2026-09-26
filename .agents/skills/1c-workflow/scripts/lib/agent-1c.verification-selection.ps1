@@ -1005,6 +1005,7 @@ function Test-VerificationClassification {
         verificationClassificationInventoryPath = Get-VerificationClassificationInventoryPath
         verificationClassificationCheckedAt = (Get-Date).ToString("o")
     }
+    Write-VerificationClassificationRunUserReport -State $state -Inventory $inventory
     Write-Host "Test classification is complete: Vanessa=$($inventory.featureCount) feature file(s); YAxUnit=$($inventory.yaxunit.moduleCount) module(s)."
     Write-Host "Inventory: $(Get-VerificationClassificationInventoryPath)"
     return $inventory

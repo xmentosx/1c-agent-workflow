@@ -1,4 +1,4 @@
-function Get-Vibecoding1cMcpObjectValue {
+﻿function Get-Vibecoding1cMcpObjectValue {
     param(
         [AllowNull()][object]$Object,
         [string]$Name,
@@ -3452,7 +3452,7 @@ function Write-Vibecoding1cMcpSummaryLines {
         [string]$Indent = ""
     )
 
-    Write-Host "${Indent}vibecoding1c MCP active servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.active)"
+    Write-Host "${Indent}vibecoding1c MCP configured servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.active)"
     Write-Host "${Indent}vibecoding1c MCP skipped servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.skipped)"
     Write-Host "${Indent}vibecoding1c MCP stale servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.staleServers)"
     Write-Host "${Indent}vibecoding1c MCP missing-configId servers: $(Format-Vibecoding1cMcpStatusList -Items $Summary.missingConfigId)"
@@ -3908,12 +3908,12 @@ function Show-Vibecoding1cMcpStatus {
 
     $endpoints = @(Get-Vibecoding1cMcpCurrentEndpoints -IncludeGlobal)
     if ($endpoints.Count -eq 0) {
-        Write-Host "Active MCP names: none"
+        Write-Host "Selected MCP endpoints: none"
         Write-Host "Start with: powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action vibecoding1c-mcp-start"
         return
     }
 
-    Write-Host "Active MCP names:"
+    Write-Host "Selected MCP endpoints:"
     foreach ($endpoint in ($endpoints | Sort-Object @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "scope" -Default "" } }, @{ Expression = { Get-Vibecoding1cMcpObjectValue -Object $_ -Name "name" -Default "" } })) {
         $name = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "name" -Default "")
         $url = [string](Get-Vibecoding1cMcpObjectValue -Object $endpoint -Name "url" -Default "")

@@ -1,15 +1,18 @@
 import json
+import io
 import multiprocessing
 import os
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from itl_remote.common import WorkError
 from itl_remote.execution_guard import (ExecutionGuard, canonical_base, canonical_resources,
                                         decode_execution_context, resource_key, target_execution,
                                         _OsHandle)
+from itl_remote.execution_guard_host import read_request
 
 
 def _hold(root, resources, ready, release):
@@ -27,6 +30,14 @@ def _acquire_and_report(root, resources, queue, delay=0.0):
 
 
 class ExecutionGuardTests(unittest.TestCase):
+    def test_host_accepts_initial_utf8_bom_and_preserves_unicode_path(self):
+        request = {"schemaVersion": 1, "root": "C:\\Корень с пробелом",
+                   "bases": [{"kind": "file", "path": "C:\\База с пробелом"}],
+                   "operation": "test-owner", "executionId": "a" * 32, "timeout": 3600}
+        line = "\ufeff" + json.dumps(request, ensure_ascii=False) + "\n"
+        with mock.patch("sys.stdin", io.StringIO(line)):
+            self.assertEqual(read_request(), request)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / "execution-guards-v2"

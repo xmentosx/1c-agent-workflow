@@ -438,8 +438,12 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 20
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")) {
+            $masterRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")
+            # Artifact retention added clean and master-only delete; assert the
+            # complete context-specific inventory instead of its older count.
+            $masterExpected = @(@($masterRoutineNames + @('itl-clean', 'itl-delete-branch')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($masterFiles.Keys | Sort-Object) | Should -Be @($masterExpected | Sort-Object)
+            foreach ($name in $masterRoutineNames) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
                 [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
@@ -453,8 +457,10 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 28
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
+            $devRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")
+            $devExpected = @(@($devRoutineNames + @('itl-clean')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($devFiles.Keys | Sort-Object) | Should -Be @($devExpected | Sort-Object)
+            foreach ($name in $devRoutineNames) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
@@ -1083,6 +1089,87 @@
             $result.output | Should -Match "does not attach servers to an already open chat"
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "preserves disabled servers and access policy with semantic-only reload for TOML and JSON" {
+        foreach ($caseClient in @('codex','kilocode','cursor')) {
+            $root = Join-Path $TestDrive ("MCP проект " + $caseClient)
+            New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value ('{"aiRules":{"tools":["' + $caseClient + '"]}}')
+            $result = & {
+                . $HelperPath -ProjectRoot $root -Action help *> $null
+                $remote = [pscustomobject]@{ name='remote-test'; url='http://127.0.0.1:1/unavailable'; transport='remote' }
+                $local = [pscustomobject]@{ name='local-test'; command='C:\MCP проект\facade.exe'; args=@('--path','C:\Ветка проекта'); env=@{ MODE='branch' }; transport='stdio' }
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                $path = Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local)
+                $first = @(Get-ItlClientMcpSemanticChanges).Count
+                if ($caseClient -eq 'codex') {
+                    $text = Read-Utf8Text -Path $path
+                    $text = $text.Replace('enabled = true','enabled = false # intentional').Replace('[mcp_servers."remote-test"]', '[mcp_servers."remote-test"] # connection policy')
+                    $text = $text.Replace('url = "http://127.0.0.1:1/unavailable"', 'url = "http://127.0.0.1:1/unavailable"' + "`n" + 'bearer_token_env_var = "MY_TOKEN"' + "`n" + '"disabled_tools" = ["write"]')
+                    $text = $text.Replace('args = ["--path", "C:\\Ветка проекта"]', "args = [`n'--path',`n'C:\Ветка проекта',`n]")
+                    $text += "`n[mcp_servers.'user.custom']`nurl = 'https://custom.invalid'`n[mcp_servers.'user.custom'.http_headers]`nAccept = 'application/json'`n"
+                    Write-Utf8Text -Path $path -Value $text
+                } else {
+                    $adapter = Get-ItlClientAdapter -Client $caseClient
+                    $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
+                    $entries = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$adapter.mcpContainer]
+                    $entries['remote-test'] = ConvertTo-Vibecoding1cMcpHashtable -Object $entries['remote-test']
+                    $config[$adapter.mcpContainer] = $entries
+                    $entries['remote-test']['enabled'] = $false
+                    $entries['remote-test']['headers'] = @{ Authorization='fixture-only' }
+                    $entries['remote-test']['alwaysAllow'] = @('read')
+                    $entries['user.custom'] = @{ url='https://custom.invalid' }
+                    Write-Vibecoding1cMcpJsonFile -Path $path -Value $config
+                }
+                $keysBefore = @(Get-ItlClientMcpEndpointKeys -Client $caseClient)
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $second = @(Get-ItlClientMcpSemanticChanges).Count
+                $observation = Get-ItlClientMcpEnablementObservation -Client $caseClient
+                $entries = Read-ItlClientMcpEntries -Client $caseClient
+                $sentinel = [DateTime]::UtcNow.AddHours(-1)
+                [IO.File]::SetLastWriteTimeUtc($path, $sentinel)
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $sameBytes = [IO.File]::GetLastWriteTimeUtc($path) -eq $sentinel
+                $remote.url = 'http://127.0.0.1:2/changed'
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $urlChange = @(Get-ItlClientMcpSemanticChanges).Count
+                $local.args = @('--path','C:\Другая ветка')
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($remote,$local) | Out-Null
+                $commandChange = @(Get-ItlClientMcpSemanticChanges).Count
+                $script:ItlClientMcpSemanticChanges = [ordered]@{}
+                Write-ItlClientMcpEndpoints -Client $caseClient -Owner vibecoding1c -Endpoints @($local) -PreserveOwnedKeys @('remote-test') | Out-Null
+                $preserved = Read-ItlClientMcpEntries -Client $caseClient
+                $preserveChange = @(Get-ItlClientMcpSemanticChanges).Count
+                [pscustomobject]@{ first=$first; second=$second; sameBytes=$sameBytes; urlChange=$urlChange; commandChange=$commandChange
+                    keys=$keysBefore; observation=$observation; entries=$entries; preserved=$preserved; preserveChange=$preserveChange }
+            }
+            $result.first | Should -Be 1
+            $result.second | Should -Be 0 -Because "$caseClient must preserve equivalent arrays, disablement and access policy"
+            @($result.keys | Sort-Object) | Should -Be @('local-test','remote-test','user.custom')
+            $result.observation.disabledServerIds | Should -Contain 'remote-test'
+            $result.observation.connectionState | Should -Be 'not-observed'
+            $result.observation.taskToolsState | Should -Be 'not-observable'
+            $result.entries['remote-test'].enabled | Should -BeFalse
+            if ($caseClient -eq 'codex') {
+                $result.entries['remote-test'].bearer_token_env_var | Should -Be 'MY_TOKEN'
+                $result.entries['remote-test'].disabled_tools | Should -Contain 'write'
+                $result.entries['user.custom'].http_headers.Accept | Should -Be 'application/json'
+            } else {
+                $result.entries['remote-test'].headers.Authorization | Should -Be 'fixture-only'
+                $result.entries['remote-test'].alwaysAllow | Should -Contain 'read'
+            }
+            $result.sameBytes | Should -BeTrue
+            $result.urlChange | Should -Be 1
+            $result.commandChange | Should -Be 1
+            $result.preserveChange | Should -Be 0
+            $result.preserved['remote-test'].url | Should -Be 'http://127.0.0.1:2/changed'
+            $result.preserved['local-test'].command | Should -Not -BeNullOrEmpty
+            $result.preserved['user.custom'].url | Should -Be 'https://custom.invalid'
         }
     }
 }

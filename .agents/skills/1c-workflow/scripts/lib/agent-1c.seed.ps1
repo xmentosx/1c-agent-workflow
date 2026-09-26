@@ -576,6 +576,7 @@ function Invoke-NewBranchSeedCore {
         Set-RunStage -Stage "seed.hash-artifact" -Detail "Hashing the rebuilt branch seed artifact"
         $artifactSha256 = (Get-FileHash -LiteralPath $paths.artifactPath -Algorithm SHA256).Hash.ToLowerInvariant()
         $artifactBytes = (Get-Item -LiteralPath $paths.artifactPath).Length
+        Set-RunTimingCounter -Name "artifactBytes" -Value ([long]$artifactBytes)
         Set-RunStage -Stage "seed.finalize" -Detail "Publishing the rebuilt branch seed manifest"
         $completedAt = (Get-Date).ToString("o")
         Write-BranchSeedManifest -Manifest ([ordered]@{

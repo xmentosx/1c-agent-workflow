@@ -6246,10 +6246,10 @@ if (`$?) { exit 0 } else { exit 1 }
         $result.unchangedAction | Should -BeNullOrEmpty
         $result.changed | Should -BeTrue
         $result.changedAction | Should -Match ([regex]::Escape('/reload'))
-        $result.changedAction | Should -Match 'до следующего вызова ROCTUP или Vanessa UI'
+        $result.changedAction | Should -Match 'до следующего вызова изменённых MCP'
     }
 
-    It "requires a Codex application restart after a semantic on-demand MCP command change" {
+    It "requests native Codex reload after a semantic MCP change without forcing an application restart" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
             function Get-ItlActiveClient { return "codex" }
@@ -6260,9 +6260,10 @@ if (`$?) { exit 0 } else { exit 1 }
             $script:RunRequiredAction
         }
         $script:ItlClientMcpSemanticChanges = [ordered]@{}
-        $result | Should -Match 'полностью перезапустите приложение Codex'
+        $result | Should -Match 'штатным механизмом клиента в текущей задаче'
         $result | Should -Match ([regex]::Escape('.codex/config.toml'))
-        $result | Should -Match 'подключил MCP-серверы'
+        $result | Should -Match 'продолжайте независимую работу'
+        $result | Should -Not -Match 'полностью перезапустите'
     }
 
     It "builds a complete safe branch user report with MCP Browser and advice" {
@@ -9659,5 +9660,83 @@ if (`$?) { exit 0 } else { exit 1 }
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "finishes classification with the original full refresh facts without rerunning 1C" {
+        $root = Join-Path $TestDrive 'Отчёт ветки с пробелами'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            function Get-Vibecoding1cMcpStatusSummary { [pscustomobject]@{ active=@('remote/remote'); skipped=@(); staleServers=@(); missingConfigId=@() } }
+            function Get-ItlActiveClient { 'codex' }
+            function Get-KiloBrowserAutomationDisplay { $null }
+            $fixtureState = [pscustomobject]@{ devBranch='itldev/report'; worktreePath=$root; mainWorktreePath='C:\Главный проект'
+                devBranchInfoBasePath=(Join-Path $root 'База'); devBranchKind='configuration'; lastRefreshAt='2026-09-26T12:00:00'
+                lastRefreshMode='lite'; lastRefreshMasterCommit='master-sha'; lastConfigBaseUpdatedCommit='branch-sha'
+                verificationClassificationStatus='required'; roctupMcpStatus='stopped'; vanessaMcpStatus='stopped'; secret='must-not-persist' }
+            $load = [pscustomobject]@{ loaded=$true; enterpriseInvoked=$true; loadModeUsed='partial'; currentCommit='branch-sha'; password='must-not-persist' }
+            $script:RunRequiredAction = 'classify-tests-after-refresh: fixture; then also follow: MCP reload fixture'
+            $script:ResolvedRunStatusPath = Join-Path $root 'original-status.json'
+            Write-DevBranchRunUserReport -State $fixtureState -AdvisoryRoot $root -Operation refreshed -LoadResult $load
+            $originalReport = $script:RunUserReport
+            Write-Vibecoding1cMcpJsonFile -Path $script:ResolvedRunStatusPath -Value @{ status='succeeded'; action='refresh-dev-branch-lite'; projectRoot=$root; userReport=$originalReport }
+            Save-RefreshClassificationReportContext -State $fixtureState -LoadResult $load
+            $contextPath = Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json'
+            $savedContext = Read-Utf8Text -Path $contextPath
+            $sourceHash = (Get-FileHash $script:ResolvedRunStatusPath).Hash
+            $inventoryFixture = [pscustomobject]@{ featureCount=3; yaxunit=@{ moduleCount=2 } }
+            function Set-RunStage { param($Stage,$Detail) }
+            function Assert-VerificationClassificationReady { param($Reason,[switch]$RequireVanessa,[switch]$RequireYAxUnit) $inventoryFixture }
+            function Assert-VerificationScenarioMigrationPreserved { param($Inventory) }
+            function Read-DevBranchState { param($Name) $fixtureState }
+            function Update-DevBranchState { param($State,$Updates) }
+            function Invoke-Enterprise { throw 'Report must not launch 1C' }
+            function Invoke-Designer { throw 'Report must not launch 1C' }
+            Test-VerificationClassification | Out-Null
+            $completed = $script:RunUserReport
+            $completedAction = $script:RunRequiredAction
+            $unchanged = $sourceHash -eq (Get-FileHash $script:ResolvedRunStatusPath).Hash
+            $fixtureState.lastRefreshAt = 'later-refresh'
+            Test-VerificationClassification 3>$null | Out-Null
+            $stale = $script:RunUserReport
+            Write-Utf8Text -Path $contextPath -Value '{broken'
+            Test-VerificationClassification 3>$null | Out-Null
+            [pscustomobject]@{ original=$originalReport; completed=$completed; action=$completedAction; unchanged=$unchanged; context=$savedContext; stale=$stale; broken=$script:RunUserReport }
+        }
+        $result.original | Should -Match 'требуется до завершения задачи refresh'
+        $result.completed | Should -Match '## Обновление ветки разработки'
+        $result.completed | Should -Match 'Обновление конфигурации базы: выполнено'
+        $result.completed | Should -Match 'Режим загрузки: частичная загрузка'
+        $result.completed | Should -Match 'Enterprise-автообновление: выполнено'
+        $result.completed | Should -Match 'Классификация тестов: готова'
+        $result.completed | Should -Match '## MCP'
+        $result.completed | Should -Match '## Инструкции и рекомендации'
+        $result.completed | Should -Match 'MCP reload fixture'
+        $result.completed | Should -Match '/itl-check'
+        $result.completed | Should -Match 'не является проверкой BSL'
+        $result.completed | Should -Not -Match 'classify-tests-after-refresh|требуется до завершения'
+        $result.action | Should -Be 'MCP reload fixture'
+        $result.unchanged | Should -BeTrue
+        $result.context | Should -Not -Match 'must-not-persist|password|secret'
+        foreach ($fallback in @($result.stale,$result.broken)) {
+            $fallback | Should -Match 'Классификация завершена'
+            $fallback | Should -Match 'Исходный отчёт refresh недоступен'
+            $fallback | Should -Not -Match 'Обновление конфигурации базы:|Результат: успешно'
+        }
+    }
+    It "announces remote owner changes without losing an existing continuation" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Get-ItlActiveClient { 'codex' }
+            $script:RunRequiredAction = 'existing continuation'
+            $script:ItlClientMcpSemanticChanges = [ordered]@{}
+            Register-ItlClientMcpSemanticChange -Client codex -Owner vibecoding1c -Path 'fixture.toml'
+            Set-ItlOnDemandMcpSemanticReloadRequiredAction -Operation 'refresh-dev-branch' | Out-Null
+            $script:RunRequiredAction
+        }
+        $result | Should -Match '^existing continuation; '
+        $result | Should -Match 'vibecoding1c'
+        $result | Should -Match 'штатным механизмом клиента в текущей задаче'
+        $result | Should -Not -Match 'перезапустите приложение'
     }
 }

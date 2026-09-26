@@ -42,6 +42,12 @@ unit is complete; never pre-run it manually or start a broad gate merely because
 a chat is ending. After a failure, diagnose and use focused regressions before
 retrying registration. Keep the required final gates and their assertions intact.
 
+For a new barrier, include the original task's agent-usable continuation in its
+owned acceptance scenarios. Compare changed frequent paths against the same
+before/after workload using existing timings; record context deltas separately.
+Do not add a generic continuation gate or a metrics service. Reuse requirements
+and publication channels below remain authoritative.
+
 ## Уровни проверки
 
 | Режим | Когда | Цель | Hard limit |

@@ -2346,6 +2346,11 @@ function Dump-ConfigToFilesFromInfoBase {
             -InfoBaseKind $InfoBaseKind `
             -DesignerArgs $designerArgs | Out-Null
 
+        if ($script:RunStage -in @("init.dump-config", "sync-master.dump-config")) {
+            $dumpStagePrefix = if ($script:RunStage -eq "init.dump-config") { "init" } else { "sync-master" }
+            Set-RunStage -Stage "$dumpStagePrefix.dump-finalize" -Detail "Designer dump and stability probe completed; validating and publishing the staged dump"
+        }
+
         $dumpState = Get-DesignerDumpArtifactState -Path $stagedPath
         if (-not $dumpState.ready) {
             throw "1C configuration dump did not create complete Configuration.xml and ConfigDumpInfo.xml artifacts. Check the 1C log: $script:LastLogPath"
@@ -2369,7 +2374,13 @@ function Dump-ConfigToFilesFromInfoBase {
         $stageInstalled = $true
         Write-Agent1cProjectTransactionState -Paths $transaction -Kind "c" -Phase "installed" -Target $absoluteExportPath
 
-        Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        $cleanupWarning = ""
+        try {
+            Complete-Agent1cProjectTransactionSlot -Paths $transaction
+        } catch {
+            $cleanupWarning = $_.Exception.Message
+            Write-Warning "Installed 1C configuration dump was kept, but transaction cleanup is incomplete at '$transactionRoot': $cleanupWarning" -WarningAction Continue
+        }
         Save-OneCSourceExportEvidence -Evidence $sourceEvidence
 
         return [pscustomobject]@{
@@ -2377,6 +2388,7 @@ function Dump-ConfigToFilesFromInfoBase {
             absoluteExportPath = $absoluteExportPath
             incremental = [bool]$useIncremental
             transactional = $true
+            cleanupWarning = $cleanupWarning
             logPath = $script:LastLogPath
         }
     } catch {
@@ -2777,7 +2789,8 @@ function Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard {
     }
     $foreign = @(Get-OneCInfoBaseSessionProcesses -InfoBaseKind $infoBaseKind -InfoBasePath $infoBasePath)
     if ($foreign.Count -gt 0) {
-        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: exact base has $($foreign.Count) unidentified live session(s); no foreign process was stopped."
+        $targetDisplay = Format-OneCExecutionGuardTarget -Kind $infoBaseKind -Path $infoBasePath
+        throw "EXECUTION_GUARD_EXTERNAL_CONFLICT: operation='$reason' target='$targetDisplay' has $($foreign.Count) unidentified live session(s); wait for them to exit or cancel the managed operation; no foreign process was stopped."
     }
     Write-Host "Workflow-owned sessions stopped before $reason; unidentified processes were not terminated."
 }
@@ -5636,18 +5649,19 @@ function Write-WorkflowUpdateFollowUp {
 function Set-ItlOnDemandMcpSemanticReloadRequiredAction {
     param([string]$Operation)
 
-    $changes = @(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade")
+    $changes = @(Get-ItlClientMcpSemanticChanges)
     if ($changes.Count -eq 0) { return $false }
 
     $client = [string](Get-ItlActiveClient)
     if ($client -eq "kilocode") {
-        $script:RunRequiredAction = "До следующего вызова ROCTUP или Vanessa UI обязательно выполните /reload, чтобы Kilo перечитал обновлённую команду MCP."
+        $instruction = "До следующего вызова изменённых MCP выполните /reload, чтобы Kilo перечитал их настройки; остальные инструменты и независимая работа доступны."
     } else {
         $adapter = Get-ItlClientAdapter -Client $client
         $fallbackInstruction = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
         $instruction = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default $fallbackInstruction)
-        $script:RunRequiredAction = "$instruction Причина: операция '$Operation' семантически изменила команду запуска ITL on-demand MCP."
     }
+    $action = "$instruction Причина: операция '$Operation' изменила настройки управляемых MCP ($(@($changes.owner | Sort-Object -Unique) -join ', '))."
+    if ($script:RunRequiredAction) { $script:RunRequiredAction += "; $action" } else { $script:RunRequiredAction = $action }
     return $true
 }
 
@@ -5679,6 +5693,7 @@ function Write-WorkflowPackageStatusLines {
 }
 
 function Assert-WorkflowPackageUpdateContext {
+    param([switch]$DeferCleanCheck)
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
         throw "update-workflow requires an initialized Git repository."
     }
@@ -5700,7 +5715,22 @@ function Assert-WorkflowPackageUpdateContext {
         throw "update-workflow must be run from '$masterBranch'. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })."
     }
 
-    Assert-WorkflowTrackedGitClean
+    if (-not $DeferCleanCheck) { Assert-WorkflowTrackedGitClean }
+}
+
+function Invoke-WorkflowLocalPatchStep {
+    param([ValidateSet('Plan','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan,
+        [string]$TargetCommit = '', [object]$Source = $null)
+    if ($Step -eq 'Plan') {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'))) { return }
+    } elseif ($null -eq $Plan) { return }
+    . (Join-Path $PSScriptRoot 'agent-1c.local-patch.ps1')
+    switch ($Step) {
+        'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation -TargetCommit $TargetCommit -Source $Source }
+        'Retire' { Start-WorkflowPatchRetirement -Plan $Plan }
+        'Complete' { Complete-WorkflowPatchRetirement -Plan $Plan }
+        'Undo' { Undo-WorkflowPatchRetirement -Plan $Plan }
+    }
 }
 
 function Assert-WorkflowSourceAiRulesInstallable {
@@ -5735,43 +5765,58 @@ function Update-WorkflowPackage {
 
     if ($LifecyclePhase -ne "post-copy") {
         Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
-        Assert-WorkflowPackageUpdateContext
-        Assert-WorkflowUpdateCommitIdentity
-
+        Assert-WorkflowPackageUpdateContext -DeferCleanCheck
         $source = Resolve-WorkflowPackageSource
         Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
-        Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
-        Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
-
-        Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
-        $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
-        $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
-        $copySnapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@($copyDirectoryPaths) + @($copyFilePaths))
+        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow' -Source $source
+        if ($null -ne $localPatchPlan -and $localPatchPlan.preserve) {
+            Set-RunStage -Stage 'workflow-update.patch-preserved' -Detail "Package change: $($localPatchPlan.reason). Temporary patch retained; no managed files copied."
+            Write-Warning "Workflow package change: $($localPatchPlan.reason). Temporary patch retained; package copying skipped. Report: $($localPatchPlan.receipt.reportPath)"
+            return
+        }
         $copyCompleted = $false
         try {
-            foreach ($relativePath in $copyDirectoryPaths) {
-                Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
+            Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+            Assert-WorkflowTrackedGitClean
+            Assert-WorkflowUpdateCommitIdentity
+
+            Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
+            Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
+
+            Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
+            $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
+            $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
+            $copySnapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@($copyDirectoryPaths) + @($copyFilePaths))
+            $copyCompleted = $false
+            try {
+                foreach ($relativePath in $copyDirectoryPaths) {
+                    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
+                }
+                foreach ($relativePath in $copyFilePaths) {
+                    Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+                }
+                Remove-LegacyWorkflowManagedFiles
+                Update-WorkflowPackageLockEntry -Source $source | Out-Null
+                $copyCompleted = $true
+            } catch {
+                $copyError = $_.Exception.Message
+                try {
+                    Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                } catch {
+                    throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
+                }
+                throw
+            } finally {
+                try {
+                    Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                } catch {
+                    if ($copyCompleted) { throw }
+                }
             }
-            foreach ($relativePath in $copyFilePaths) {
-                Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
-            }
-            Remove-LegacyWorkflowManagedFiles
-            Update-WorkflowPackageLockEntry -Source $source | Out-Null
-            $copyCompleted = $true
+            Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
         } catch {
-            $copyError = $_.Exception.Message
-            try {
-                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
-            } catch {
-                throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
-            }
+            if (-not $copyCompleted) { Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan }
             throw
-        } finally {
-            try {
-                Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
-            } catch {
-                if ($copyCompleted) { throw }
-            }
         }
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
         Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
@@ -6418,7 +6463,7 @@ function Add-Vibecoding1cRunUserReportLines {
 
     try {
         $summary = Get-Vibecoding1cMcpStatusSummary
-        Add-RunUserReportLine -Lines $Lines -Label "Активные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "Настроены в клиенте vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Пропущенные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.skipped) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Устаревшие vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.staleServers) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c без configId" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.missingConfigId) -Default "<нет>"
@@ -6440,6 +6485,10 @@ function Add-ItlClientMcpEnablementRunUserReportLines {
         $observation = Get-ItlClientMcpEnablementObservation
     } catch {
         return
+    }
+    Add-RunUserReportLine -Lines $McpLines -Label "MCP: подключение и инструменты текущей задачи" -Value "не проверялись; конфигурация не подтверждает доступность"
+    if (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()).Count -gt 0) {
+        Add-RunUserReportLine -Lines $McpLines -Label "MCP отключены в конфигурации" -Value (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()) -join ', ')
     }
     if (-not $observation.applicable) { return }
 
@@ -6631,14 +6680,14 @@ function Write-DevBranchRunUserReport {
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
     if ($isRefresh) {
         $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
-        if (@(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade").Count -eq 0) {
+        if (@(Get-ItlClientMcpSemanticChanges).Count -eq 0) {
             if ($client -eq "kilocode") {
                 $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
             } else {
                 $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
                     Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
                 } -Default "Перезапустите активный клиент.")
-                $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+                $advice.Add("- Если клиент использует устаревшие инструкции проекта, перечитайте их штатным механизмом клиента. $reloadInstruction")
             }
         }
         $advice.Add("- Перед продолжением разработки выполните /itl-check.")
@@ -6670,6 +6719,68 @@ function Write-DevBranchRunUserReport {
         foreach ($item in $advice) { $lines.Add($item) }
     }
     Write-AndSetRunUserReport -Lines $lines
+}
+
+# Report evidence is owned by refresh and stored in the existing selection runtime.
+# It never participates in classification readiness or executable verification.
+function Save-RefreshClassificationReportContext {
+    param([object]$State, [AllowNull()][object]$LoadResult)
+    if ((Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "") -ne "required") { return }
+    try {
+        $projection = [ordered]@{}
+        foreach ($name in @('devBranchKind','devBranch','mainWorktreePath','worktreePath','devBranchInfoBasePath',
+            'lastRefreshAt','lastRefreshMode','lastRefreshMasterCommit','lastRefreshRepairPaths','lastConfigBaseUpdatedCommit',
+            'extensionInitializationStatus','roctupMcpStatus','vanessaMcpStatus','verificationClassificationInventoryPath')) {
+            $projection[$name] = Get-StateValue -State $State -Name $name -Default ''
+        }
+        $projection['publicationError'] = if (Get-StateValue -State $State -Name 'publicationError' -Default '') { 'present' } else { '' }
+        $load = [ordered]@{}
+        foreach ($name in @('currentCommit','loaded','loadModeUsed','enterpriseInvoked')) {
+            $load[$name] = Get-StateValue -State $LoadResult -Name $name -Default $null
+        }
+        $remainingAction = [string]$script:RunRequiredAction
+        if ($remainingAction -match '^classify-tests-after-refresh:') {
+            $parts = $remainingAction -split '; then also follow: ', 2
+            $remainingAction = if ($parts.Count -eq 2) { $parts[1] } else { '' }
+        }
+        $context = [ordered]@{ schemaVersion = 1; projectRoot = $script:ProjectRoot; state = $projection; load = $load
+            sourceStatusPath = $script:ResolvedRunStatusPath; remainingAction = $remainingAction }
+        Write-Vibecoding1cMcpJsonFile -Path (Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json') -Value $context
+    } catch {
+        Write-Warning "Refresh succeeded; classification report context could not be saved: $($_.Exception.Message)"
+    }
+}
+
+function Write-VerificationClassificationRunUserReport {
+    param([object]$State, [object]$Inventory)
+    $oldAction = [string]$script:RunRequiredAction
+    try {
+        $path = Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'No saved refresh report context.' }
+        $context = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ($context.schemaVersion -ne 1 -or $context.projectRoot -ne $script:ProjectRoot) { throw 'Unrelated report context.' }
+        foreach ($name in @('devBranch','worktreePath','devBranchInfoBasePath','lastRefreshAt','lastRefreshMasterCommit')) {
+            $saved = [string](Get-StateValue -State $context.state -Name $name -Default '')
+            if (-not $saved -or $saved -cne [string](Get-StateValue -State $State -Name $name -Default '')) { throw "Stale report context: $name." }
+        }
+        if ($context.sourceStatusPath) {
+            $source = Read-Utf8Text -Path $context.sourceStatusPath | ConvertFrom-Json
+            if ($source.status -ne 'succeeded' -or $source.projectRoot -ne $script:ProjectRoot -or
+                $source.action -notin @('refresh-dev-branch','refresh-dev-branch-lite')) { throw 'Refresh success is not confirmed.' }
+        }
+        $snapshot = ConvertTo-Vibecoding1cMcpHashtable -Object $context.state
+        $snapshot['verificationClassificationStatus'] = 'ready'
+        $script:RunRequiredAction = [string]$context.remainingAction
+        $script:RunRefreshMasterCommit = [string]$snapshot.lastRefreshMasterCommit
+        Write-DevBranchRunUserReport -State ([pscustomobject]$snapshot) -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $context.load
+        Set-RunUserReport -Report ($script:RunUserReport + "`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount). Загрузка базы выше относится к исходному refresh; повторно не выполнялась. Классификация не является проверкой BSL или /itl-check.")
+        return
+    } catch {
+        # Old installations and unavailable evidence do not invalidate classification.
+        Write-Warning "Classification succeeded; combined refresh report unavailable: $($_.Exception.Message)"
+        $script:RunRequiredAction = $oldAction
+        Set-RunUserReport -Report "## Классификация тестов`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount).`n`nИсходный отчёт refresh недоступен или относится к другому обновлению. Результаты загрузки базы не переоценивались; сохраняйте исходный userReport. Классификация не является проверкой BSL или /itl-check."
+    }
 }
 
 function Clear-DevBranchContext {
@@ -7821,6 +7932,8 @@ function Commit-AuthoritativeExportPathIfChanged {
 
     $attributesChanged = Ensure-OneCSourceGitAttributes
     Invoke-Git @("add", "--", ".gitattributes")
+    $timingPrefix = if ($Action -eq "init-project") { "init" } else { "sync-master" }
+    Set-RunStage -Stage "$timingPrefix.git-index" -Detail "Rebuilding the authoritative 1C source Git index"
     $rebuildPaths = @($repoExportPath, (Get-ExtensionsPath))
     if ($attributesChanged) {
         $rebuildPaths += "src/configs"
@@ -7829,6 +7942,7 @@ function Commit-AuthoritativeExportPathIfChanged {
     Assert-GitAuthoritativeExportPathHasNoCaseCollisions -ExportPath $repoExportPath
 
     $commitPaths = @(".gitattributes") + $sourcePaths
+    Set-RunStage -Stage "$timingPrefix.git-commit" -Detail "Committing the authoritative 1C source result"
     if (Test-GitHasStagedChanges -PathSpec $commitPaths) {
         # A commit pathspec re-reads case-insensitive worktree aliases instead of committing this rebuilt index.
         Invoke-Git @("commit", "--quiet", "-m", $Message)
@@ -8042,7 +8156,7 @@ function Initialize-Project {
     $sourceRepositoryUpdated = $false
     if (-not $dumpWasCompleted) {
         Set-RunStage -Stage "init.repository-update" -Detail "Applying the source repository update policy"
-        $sourceRepositoryUpdated = Update-BaseFromRepository
+        $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
         if ((Get-InfoBaseKind) -eq "file") {
             $sourceGenerationId = Get-SourceConfigurationGenerationId
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed and dumping its configuration"
@@ -8054,7 +8168,9 @@ function Initialize-Project {
         } else {
             Set-RunStage -Stage "init.dump-config" -Detail "Dumping the server source configuration"
             $dumpResult = Dump-ConfigToFiles
-            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+            $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+            Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
             Set-RunStage -Stage "init.seed" -Detail "Rebuilding the server branch seed"
             Ensure-BranchSeed `
                 -Policy "Rebuild" `
@@ -8078,7 +8194,10 @@ function Initialize-Project {
                     -ConfigurationFingerprint "" `
                     -SourceGenerationId $sourceGenerationId | Out-Null
             } else {
-                $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+                Set-RunStage -Stage "init.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
+                $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+                Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
+                Set-RunStage -Stage "init.seed" -Detail "Rebuilding the branch seed"
                 Ensure-BranchSeed `
                     -Policy "Rebuild" `
                     -ConfigurationFingerprint $configSource.fingerprint `
@@ -8088,7 +8207,7 @@ function Initialize-Project {
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: export 1C configuration from repository" } else { "sync: export current 1C configuration from source infobase" }
     Set-RunStage -Stage "init.commit-dump" -Detail "Committing baseline 1C configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Assert-BaselineDumpCommitted -ExportPath $dumpResult.exportPath
 
     Set-RunStage -Stage "init.install-ai-rules" -Detail "Installing or updating ai_rules_1c"
@@ -8155,7 +8274,7 @@ function Sync-Master {
     $sourceUsesRepository = Get-SourceUsesRepository
     $sourceRepositoryUpdateMode = Get-SourceRepositoryUpdateMode
     Set-RunStage -Stage "sync-master.repository-update" -Detail "Applying the source repository update policy"
-    $sourceRepositoryUpdated = Update-BaseFromRepository
+    $sourceRepositoryUpdated = Invoke-WithRunStatusHeartbeat { Update-BaseFromRepository }
     $kind = Get-InfoBaseKind
     $sourceGenerationId = if ($kind -eq "file") { Get-SourceConfigurationGenerationId } else { "" }
     $dumpResult = $null
@@ -8185,7 +8304,8 @@ function Sync-Master {
             Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative configuration for a legacy seed"
             $dumpResult = Dump-ConfigToFiles
             Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-            $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+            $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+            Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
             Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
             $seed = Ensure-BranchSeed `
                 -Policy "EnsureCompatible" `
@@ -8198,7 +8318,8 @@ function Sync-Master {
         Set-RunStage -Stage "sync-master.dump-config" -Detail "Dumping the authoritative 1C configuration"
         $dumpResult = Dump-ConfigToFiles
         Set-RunStage -Stage "sync-master.fingerprint" -Detail "Calculating the authoritative configuration fingerprint"
-        $configSource = Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath
+        $configSource = Invoke-WithRunStatusHeartbeat { Get-ConfigSourceFingerprint -ExportPath $dumpResult.exportPath }
+        Set-RunTimingCounter -Name "configurationFiles" -Value ([long]$configSource.fileCount)
         Set-RunStage -Stage "sync-master.seed" -Detail "Ensuring a compatible branch seed"
         $seed = Ensure-BranchSeed `
             -Policy $SeedPolicy `
@@ -8208,7 +8329,7 @@ function Sync-Master {
     }
     $dumpMessage = if ($sourceRepositoryUpdated) { "sync: refresh 1C configuration from repository" } else { "sync: capture current 1C configuration from source infobase" }
     Set-RunStage -Stage "sync-master.commit" -Detail "Committing the authoritative configuration dump"
-    Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath | Out-Null
+    Invoke-WithRunStatusHeartbeat { Commit-AuthoritativeExportPathIfChanged -Message $dumpMessage -ExportPath $dumpResult.exportPath } | Out-Null
     Sync-KiloItlCommandSurface
     Write-Host "Branch seed: $($seed.artifactPath)"
     Write-Host "Branch seed sync ID: $($seed.syncId)"
@@ -13920,21 +14041,35 @@ function Invoke-RefreshDevBranchCore {
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
-        Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
-        Assert-CleanGit
-        if ($SynchronizeMaster) {
-            Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
-            Sync-Master -SeedPolicy "EnsureCompatible"
+        $localPatchPlan = $null
+        try {
+            Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
+            Assert-CleanGit
+            if ($SynchronizeMaster) {
+                Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
+                Sync-Master -SeedPolicy "EnsureCompatible"
+            }
+            if ((Get-CurrentBranch) -ne $state.devBranch) {
+                Invoke-Git @("checkout", $state.devBranch)
+            }
+            $masterRef = "refs/heads/$(Get-MasterBranch)"
+            $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
+            if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+                throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
+            }
+            Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+            $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation $OperationName -TargetCommit $targetMasterCommit
+            if ($null -ne $localPatchPlan) {
+                Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+                Assert-CleanGit
+            }
+        } catch {
+            Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan
+            throw
         }
-        if ((Get-CurrentBranch) -ne $state.devBranch) {
-            Invoke-Git @("checkout", $state.devBranch)
-        }
-        $masterRef = "refs/heads/$(Get-MasterBranch)"
-        $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
-        if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
-            throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
-        }
-        Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+        # The existing merge transaction owns all recovery from this boundary.
+        # Never overlay an old patch onto the incoming workflow or a pending merge.
+        Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-NewDevBranchLifecycleMerge `
             -State $state `
@@ -14017,6 +14152,7 @@ function Invoke-RefreshDevBranchCore {
             Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
         }
         Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+        Save-RefreshClassificationReportContext -State $updatedState -LoadResult $loadResult
         Set-RunStage -Stage "$OperationName.complete" -Detail "Development branch refresh completed successfully."
     } catch {
         Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot
@@ -14840,7 +14976,7 @@ function Invoke-ReleaseE2EExtensionSmoke {
 
 function Show-WorkflowStatus {
     Write-Section "ITL status"
-    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 by default and exceed the configured Designer timeout."
+    Write-Host "Long lifecycle actions may run 1C Designer/Enterprise; agent shell timeout_ms must be >= 3900000 for ordinary long actions and >= 14700000 for init-project/sync-master by default, and exceed the configured action timeout."
     Write-DesignerMemoryLimitStatusLine
     Write-Agent1cLifecycleOperationStatusLines
 
@@ -15601,7 +15737,7 @@ function Show-Help {
     }
     Write-Host "Контекст: $surface"
     Write-Host "Ветка Git: $(if ($currentBranch) { $currentBranch } else { '<нет>' })"
-    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 и превышать настроенный тайм-аут Designer."
+    Write-Host "Долгие операции могут запускать Конфигуратор или Предприятие 1С; timeout_ms оболочки агента должен быть не меньше 3900000 для обычных долгих действий и 14700000 для init-project/sync-master по умолчанию, а также превышать настроенный срок операции."
 
     if ($surface -eq "master") {
         Write-Host ""

@@ -1778,6 +1778,171 @@
         $result.observed.command | Should -Be "/GetConfigGenerationID"
     }
 
+    It "keeps the installed configuration when only transaction cleanup fails" {
+        $fixtureRoot = Join-Path $TestDrive 'Очистка выгрузки после установки'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'old-configuration'
+        Set-Content -LiteralPath (Join-Path $targetPath 'ConfigDumpInfo.xml') -Value 'old-index'
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = $DesignerArgs[[Array]::IndexOf($DesignerArgs, '/DumpConfigToFiles') + 1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value 'new-configuration'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value 'new-index'
+            }
+            function Complete-Agent1cProjectTransactionSlot { throw 'simulated cleanup failure' }
+            $WarningPreference = 'Stop'
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot 'base') -InfoBaseKind file 3>$null
+            [pscustomobject]@{
+                dump = $dump
+                installed = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backup = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\b\Configuration.xml') -Raw).Trim()
+                phase = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\j') -Raw | ConvertFrom-Json).phase
+            }
+        }
+
+        $result.dump.transactional | Should -BeTrue
+        $result.dump.cleanupWarning | Should -Match 'simulated cleanup failure'
+        $result.installed | Should -Be 'new-configuration'
+        $result.backup | Should -Be 'old-configuration'
+        $result.phase | Should -Be 'installed'
+    }
+
+    It "retains the installed phase when backup removal fails after deleting some files" {
+        $fixtureRoot = Join-Path $TestDrive 'Частичная очистка резервной копии'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'old-configuration'
+        Set-Content -LiteralPath (Join-Path $targetPath 'ConfigDumpInfo.xml') -Value 'old-index'
+
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            function Get-ExportPath { return 'src/cf' }
+            function Invoke-Designer {
+                param([string]$InfoBasePath, [string]$InfoBaseKind, [string[]]$DesignerArgs)
+                $stage = $DesignerArgs[[Array]::IndexOf($DesignerArgs, '/DumpConfigToFiles') + 1]
+                Set-Content -LiteralPath (Join-Path $stage 'Configuration.xml') -Value 'new-configuration'
+                Set-Content -LiteralPath (Join-Path $stage 'ConfigDumpInfo.xml') -Value 'new-index'
+            }
+            $backupRoot = (Get-Agent1cProjectTransactionPaths -Kind c).backup
+            function Remove-Item {
+                param([string]$LiteralPath, [switch]$Force, $ErrorAction)
+                if ($LiteralPath -eq $backupRoot) { throw 'Directory not empty' }
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+            }
+            $dump = Dump-ConfigToFilesFromInfoBase -InfoBasePath (Join-Path $fixtureRoot 'base') -InfoBaseKind file 3>$null
+            [pscustomobject]@{
+                dump = $dump
+                installed = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $backupRoot
+                phase = (Get-Content -LiteralPath (Join-Path $fixtureRoot '.tx\c\j') -Raw | ConvertFrom-Json).phase
+            }
+        }
+
+        $result.dump.cleanupWarning | Should -Match 'PROJECT_TRANSACTION_CLEANUP_FAILED'
+        $result.installed | Should -Be 'new-configuration'
+        $result.backupExists | Should -BeTrue
+        $result.phase | Should -Be 'installed'
+    }
+
+    It "reuses an installed dump after partially completed backup cleanup" {
+        $fixtureRoot = Join-Path $TestDrive 'Повтор очистки выгрузки'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        New-Item -ItemType Directory -Force -Path $targetPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'new-configuration'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            $residual = Join-Path $paths.backup 'nested'
+            New-Item -ItemType Directory -Force -Path $residual | Out-Null
+            Set-Content -LiteralPath (Join-Path $residual 'old.xml') -Value 'partial-backup'
+            Write-Agent1cProjectTransactionState -Paths $paths -Kind c -Phase installed -Target $targetPath
+            $newPaths = Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath
+            [pscustomobject]@{
+                target = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $paths.backup
+                stageExists = Test-Path -LiteralPath $newPaths.stage
+                phase = (Get-Content -LiteralPath $newPaths.state -Raw | ConvertFrom-Json).phase
+            }
+        }
+        $result.target | Should -Be 'new-configuration'
+        $result.backupExists | Should -BeFalse
+        $result.stageExists | Should -BeTrue
+        $result.phase | Should -Be 'staging'
+    }
+
+    It "restores the previous dump if interruption follows its move to the backup slot" {
+        $fixtureRoot = Join-Path $TestDrive 'Прерванный перенос исходников'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            New-Item -ItemType Directory -Force -Path $paths.backup | Out-Null
+            Set-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Value 'old-configuration'
+            Write-Agent1cProjectTransactionState -Paths $paths -Kind c -Phase staging -Target $targetPath
+            $newPaths = Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath
+            [pscustomobject]@{
+                restored = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backupExists = Test-Path -LiteralPath $newPaths.backup
+                stageExists = Test-Path -LiteralPath $newPaths.stage
+            }
+        }
+        $result.restored | Should -Be 'old-configuration'
+        $result.backupExists | Should -BeFalse
+        $result.stageExists | Should -BeTrue
+    }
+
+    It "preserves an unjournaled backup instead of guessing which dump is installed" {
+        $fixtureRoot = Join-Path $TestDrive 'Неоднозначная резервная копия'
+        $targetPath = Join-Path $fixtureRoot 'src\cf'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $paths = Get-Agent1cProjectTransactionPaths -Kind c
+            New-Item -ItemType Directory -Force -Path $targetPath, $paths.backup | Out-Null
+            Set-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Value 'current'
+            Set-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Value 'backup'
+            $message = try { Initialize-Agent1cProjectTransactionSlot -Kind c -Target $targetPath | Out-Null; '' } catch { $_.Exception.Message }
+            [pscustomobject]@{
+                message = $message
+                target = (Get-Content -LiteralPath (Join-Path $targetPath 'Configuration.xml') -Raw).Trim()
+                backup = (Get-Content -LiteralPath (Join-Path $paths.backup 'Configuration.xml') -Raw).Trim()
+            }
+        }
+        $result.message | Should -Match 'ambiguous backup'
+        $result.target | Should -Be 'current'
+        $result.backup | Should -Be 'backup'
+    }
+
+    It "retries bottom-up transaction cleanup after a directory-not-empty race" {
+        $fixtureRoot = Join-Path $TestDrive 'Повтор удаления каталога'
+        $backupRoot = Join-Path $fixtureRoot '.tx\c\b'
+        $nested = Join-Path $backupRoot 'nested'
+        New-Item -ItemType Directory -Force -Path $nested | Out-Null
+        Set-Content -LiteralPath (Join-Path $nested 'old.xml') -Value 'old'
+        $result = & {
+            . $HelperPath -ProjectRoot $fixtureRoot -Action help *> $null
+            $script:RootDeleteAttempts = 0
+            function Remove-Item {
+                param([string]$LiteralPath, [switch]$Force, $ErrorAction)
+                if ($LiteralPath -eq $backupRoot -and $script:RootDeleteAttempts++ -eq 0) {
+                    throw 'Directory not empty'
+                }
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force -ErrorAction Stop
+            }
+            Remove-Agent1cProjectTree -Path $backupRoot
+            [pscustomobject]@{
+                attempts = $script:RootDeleteAttempts
+                exists = Test-Path -LiteralPath $backupRoot
+            }
+        }
+        $result.attempts | Should -Be 2
+        $result.exists | Should -BeFalse
+    }
+
     It "keeps workflow source export evidence outside Git status" {
         (Get-Content -LiteralPath (Join-Path $RepoRoot ".gitignore") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))
         (Get-Content -LiteralPath (Join-Path $RepoRoot "templates\gitignore.append") -Raw -Encoding UTF8) | Should -Match ([regex]::Escape('.agent-1c/source-exports/'))

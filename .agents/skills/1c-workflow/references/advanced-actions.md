@@ -140,9 +140,9 @@ create one catch-all suite, relabel real acceptance as explicit, delete scenario
 weaken assertions, or ask the developer to perform the migration. Then run the
 compact helper with `-Action validate-test-classification`; its post-refresh
 baseline rejects changed or lost scenario behavior and it does not start 1C. Do
-not run `/itl-check` unless separately requested. Report the successful refresh
-together with the completed classification instead of returning the original
-report alone. For refresh-all, repeat this bounded continuation in every listed
+not run `/itl-check` unless separately requested. Return the validator's complete `userReport` verbatim; retain the original refresh report as history.
+For missing historical context, return the original refresh report verbatim followed
+by the standalone classification report. Never repeat refresh to rebuild reporting. For refresh-all, repeat this bounded continuation in every listed
 branch worktree.
 `classify-tests-and-repeat-original-itl-command` follows the same repair and
 static validation, then repeats the original command; its preflight stopped

@@ -34,7 +34,7 @@ For a mapped routine, make the helper the first and only tool action after one s
 
 ## Command Template
 
-From the project root, run mutations and long checks with `timeout_ms >= 3900000` (or above the configured Designer timeout). Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
+From project root, run mutations/long checks with `timeout_ms >= 3900000`; default `init-project`/`sync-master` need `>= 14700000`. Exceed overrides. Do not use `120000 ms`; `status`/`help` do not need it. 1C Designer/Enterprise may run `/LoadConfigFromFiles ... /UpdateDBCfg`.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action <action>
@@ -66,14 +66,14 @@ For export/close, obey the helper's `verificationPolicy`.
 
 Read `status`, exit code, `errorCategory`, `requiredAction`, and `nextAction`.
 
-- If Kilo behavior disagrees with the Intent Map, run `status`, compare the reported expected skill contract/SHA, and ask for `/reload` before treating it as a source defect. ITL cannot inspect or clear Kilo's internal cache/worktrees.
+- Kilo Intent Map mismatches follow the client-cache diagnostic in `references/workflow-incidents.md` under `1c-workflow`.
 - `status=failed` means failed. Never relabel it as skipped; never call it ready, verified, or done.
 - For `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`; retry the original once.
 - Report the action, concise error, and artifact paths. Read 80 console-log tail lines only for unclassified `runner` failure.
-- Follow `requiredAction` or `nextAction` exactly; classification uses `advanced-actions.md`. Ask only for an explicitly missing value.
-- Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards.
+- Follow `requiredAction`/`nextAction`; classification uses `advanced-actions.md`. Suspected workflow defects use `references/workflow-incidents.md` in `1c-workflow`.
+- Before recovery edits, apply the installed `USER-RULES.md` runner/fixture/product ownership, unchanged-rerun, and unrelated-dirty-change guards. Ask only for missing input or permission not already given.
 - For an agent-made change with `requiredAction=/itl-verify-fix`, continue through the active client's explicit `itl-verify-fix` wrapper. If that surface is unavailable, activate full `1c-workflow` and its one matching recovery reference. Do not return completion to the user. Standalone diagnostics only report failure.
 - `fix-and-repeat-original-check`: repeat its scope without repair. `repeat-original-diagnostic-without-repair-session`: keep the filter. `stop-repair-and-resume-original-task`: resume.
-- Completion requires fresh passed evidence after the last edit; partial/skipped is insufficient.
+- Verified completion requires fresh passed evidence after the last edit; partial/skipped remains unverified.
 
 For first-time project bootstrap, follow `AGENT-INSTALL.md`.

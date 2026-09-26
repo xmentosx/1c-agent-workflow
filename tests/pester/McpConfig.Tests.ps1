@@ -1212,7 +1212,7 @@
             $probe.exitCode | Should -Be 0
             $statusText = $probe.combinedText
 
-            $statusText | Should -Match "vibecoding1c MCP active servers: .*itl-1c-docs/local/stale"
+            $statusText | Should -Match "vibecoding1c MCP configured servers: .*itl-1c-docs/local/stale"
             $statusText | Should -Match "vibecoding1c MCP skipped servers: .*templates/global/remote/missing-settings"
             $statusText | Should -Match "vibecoding1c MCP stale servers: .*itl-1c-docs/stale"
             $statusText | Should -Match "vibecoding1c MCP missing-configId servers: .*code/project"

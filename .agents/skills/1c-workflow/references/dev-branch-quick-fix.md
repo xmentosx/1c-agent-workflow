@@ -8,7 +8,7 @@
 
 Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; quick-fix исключений не даёт. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
 
-Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Соответствующий слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
+Перед тестами локального алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Соответствующий слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` экспорт продолжается с предупреждением без подтверждения; закрытие ветки требует отдельного подтверждения.
 
 ### 1. Поставить задачу
 

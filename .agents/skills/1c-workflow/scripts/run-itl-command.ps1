@@ -5,6 +5,7 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $OutputEncoding = $utf8
+. (Join-Path $PSScriptRoot "lib\itl-runner-timeout.ps1")
 
 $windowed = $false
 $helperArgs = [System.Collections.Generic.List[string]]::new()
@@ -441,6 +442,22 @@ function Get-PositiveRunnerSetting {
     return $parsed
 }
 
+function Get-RunnerHeartbeatAgeSeconds {
+    param([string]$StatusPath, [int]$HelperProcessId, [DateTime]$NotBeforeUtc)
+
+    $heartbeatPath = $StatusPath + ".heartbeat"
+    if (-not (Test-Path -LiteralPath $heartbeatPath -PathType Leaf)) { return [double]::PositiveInfinity }
+    try {
+        $identity = [IO.File]::ReadAllText($heartbeatPath, [Text.Encoding]::ASCII).Trim()
+        if ($identity -cne [string]$HelperProcessId) { return [double]::PositiveInfinity }
+        $writtenAtUtc = [IO.File]::GetLastWriteTimeUtc($heartbeatPath)
+        if ($writtenAtUtc -lt $NotBeforeUtc.AddSeconds(-5)) { return [double]::PositiveInfinity }
+        return [Math]::Max(0, ([DateTime]::UtcNow - $writtenAtUtc).TotalSeconds)
+    } catch {
+        return [double]::PositiveInfinity
+    }
+}
+
 function Get-RunStatusFreshness {
     param(
         [object]$Status,
@@ -804,9 +821,14 @@ if ($refreshMasterRunnerPath) {
 $responseStyle = Resolve-ItlResponseStyle -ProjectRoot $invocationRoot
 [Console]::Error.WriteLine("ITL response-style: mode=$($responseStyle.mode); level=$($responseStyle.level); active=$(([string]$responseStyle.active).ToLowerInvariant()); profile=$($responseStyle.profile); task=execution")
 $projectRoot = Resolve-UpdateWorkflowProjectRoot -InvocationRoot $invocationRoot -Action $action
+$operationPolicy = Resolve-ItlRunnerTimeout -ProjectRoot $projectRoot -Action $action
 $runsRoot = Join-Path $projectRoot ".agent-1c\runs"
 New-Item -ItemType Directory -Force -Path $runsRoot | Out-Null
 $startedAt = Get-Date
+$operationDeadlineUtc = $startedAt.ToUniversalTime().AddSeconds([int]$operationPolicy.seconds)
+$maximumDeadlineUtc = $startedAt.ToUniversalTime().AddSeconds(86400)
+$operationDeadlineSource = "$($operationPolicy.source):$($operationPolicy.setting)"
+[Console]::Error.WriteLine("ITL timeout: action=$action; seconds=$($operationPolicy.seconds); source=$($operationPolicy.source); setting=$($operationPolicy.setting); deadlineUtc=$($operationDeadlineUtc.ToString('o'))")
 $exitCode = 1
 $runDirectory = ""
 $statusPath = ""
@@ -869,14 +891,21 @@ try {
     $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($commandText))
     $staleWarningSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_WARNING_SECONDS" -Default 45
     $staleTimeoutSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS" -Default 120
-    $operationTimeoutSeconds = Get-PositiveRunnerSetting -Name "ITL_RUNNER_OPERATION_TIMEOUT_SECONDS" -Default 3600
     if ($staleTimeoutSeconds -le $staleWarningSeconds) {
         throw "ITL_RUNNER_STATUS_STALE_TIMEOUT_SECONDS must be greater than ITL_RUNNER_STATUS_STALE_WARNING_SECONDS."
     }
     $originalPowerShellModulePath = $env:PSModulePath
+    $timeoutEnvironmentNames = @("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", "ITL_RUNNER_TIMEOUT_SOURCE", "ITL_RUNNER_DEADLINE_UTC")
+    $previousTimeoutEnvironment = @{}
+    foreach ($name in $timeoutEnvironmentNames) {
+        $previousTimeoutEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
+    }
     $resetModulePathForWindowsPowerShell = [string]$PSVersionTable.PSEdition -eq "Core"
     $helperJobHandle = [IntPtr]::Zero
     try {
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_EFFECTIVE_TIMEOUT_SECONDS", [string]$operationPolicy.seconds, "Process")
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_TIMEOUT_SOURCE", "$($operationPolicy.source):$($operationPolicy.setting)", "Process")
+        [Environment]::SetEnvironmentVariable("ITL_RUNNER_DEADLINE_UTC", $operationDeadlineUtc.ToString("o"), "Process")
         # CreateProcess inherits this process environment. Remove only the Core
         # runtime module root before launching Windows PowerShell so its
         # built-in modules (including Get-FileHash) can autoload.
@@ -893,6 +922,9 @@ try {
         $helperProcess = $startedHelper.process
         $helperJobHandle = [IntPtr]$startedHelper.jobHandle
     } finally {
+        foreach ($name in $timeoutEnvironmentNames) {
+            [Environment]::SetEnvironmentVariable($name, $previousTimeoutEnvironment[$name], "Process")
+        }
         if ($resetModulePathForWindowsPowerShell) {
             if ($null -eq $originalPowerShellModulePath) { Remove-Item Env:PSModulePath -ErrorAction SilentlyContinue }
             else { $env:PSModulePath = $originalPowerShellModulePath }
@@ -904,13 +936,35 @@ try {
     $lastProgressStage = ""
     $lastProgressLiveness = ""
     $lastProgressAt = [DateTime]::MinValue
+    $reservedPhaseBudgets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $terminalExitDeadlineUtc = [DateTime]::MinValue
     try {
         while (-not $helperProcess.HasExited) {
             $currentStatus = Read-JsonFile -Path $statusPath
+            $terminalStatusInFlight = [string](Get-ObjectValue -Object $currentStatus -Name "status" -Default "") -in @("succeeded", "failed", "cancelled")
+            if ($terminalStatusInFlight) {
+                if ($helperProcess.HasExited) { continue }
+                if ($terminalExitDeadlineUtc -eq [DateTime]::MinValue) {
+                    $terminalExitDeadlineUtc = [DateTime]::UtcNow.AddSeconds(60)
+                }
+                if ([DateTime]::UtcNow -ge $terminalExitDeadlineUtc -or [DateTime]::UtcNow -ge $operationDeadlineUtc) {
+                    $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) wrote terminal status but did not exit within the bounded grace period."
+                    $termination = Stop-RunnerOwnedProcessTree -Process $helperProcess
+                    if (-not $termination.confirmed) { throw "$runnerFailureMessage Owned process tree termination was not confirmed: $($termination.error)" }
+                    break
+                }
+                $helperProcess.WaitForExit(500) | Out-Null
+                continue
+            }
             $currentStage = [string](Get-ObjectValue -Object $currentStatus -Name "stage" -Default "")
             $publishedLiveness = [string](Get-ObjectValue -Object $currentStatus -Name "liveness" -Default "")
             $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
             $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
+            $heartbeatAgeSeconds = [double]::PositiveInfinity
+            if ([int](Get-ObjectValue -Object $currentStatus -Name "pid" -Default 0) -eq $helperProcess.Id) {
+                $heartbeatAgeSeconds = Get-RunnerHeartbeatAgeSeconds -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
+            }
+            $livenessAgeSeconds = [Math]::Min([double]$statusAgeSeconds, $heartbeatAgeSeconds)
             $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
             $publishedTimeoutRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "timeoutRemainingSeconds" -Default 0)
             $elapsed = [int][Math]::Floor(((Get-Date) - $startedAt).TotalSeconds)
@@ -922,15 +976,21 @@ try {
             } else {
                 $staleTimeoutSeconds
             }
-            $effectiveOperationTimeoutSeconds = $operationTimeoutSeconds
-            if ($publishedTimeoutRemainingSeconds -gt 0) {
-                $effectiveOperationTimeoutSeconds = [Math]::Max($effectiveOperationTimeoutSeconds, $elapsed + $publishedTimeoutRemainingSeconds)
+            # Reserve a reported native phase budget once for this stage. Repeated
+            # remaining-time reports cannot move the deadline on every poll.
+            $phaseRemainingSeconds = [Math]::Max($publishedTimeoutRemainingSeconds, $publishedStallRemainingSeconds)
+            $phaseBudgetKey = "$currentStage|$publishedLiveness|$([string](Get-ObjectValue -Object $currentStatus -Name 'probePhase' -Default ''))"
+            if ($currentStage -and $phaseRemainingSeconds -gt 0 -and $reservedPhaseBudgets.Add($phaseBudgetKey)) {
+                $phaseDeadlineUtc = [DateTime]::UtcNow.AddSeconds($phaseRemainingSeconds)
+                if ($phaseDeadlineUtc -gt $operationDeadlineUtc) {
+                    $operationDeadlineUtc = if ($phaseDeadlineUtc -lt $maximumDeadlineUtc) { $phaseDeadlineUtc } else { $maximumDeadlineUtc }
+                    $operationDeadlineSource = "phase-budget:$phaseBudgetKey"
+                    [Console]::Error.WriteLine("ITL timeout extension: source=$operationDeadlineSource; deadlineUtc=$($operationDeadlineUtc.ToString('o')); maximumUtc=$($maximumDeadlineUtc.ToString('o'))")
+                }
             }
-            if ($publishedStallRemainingSeconds -gt 0) {
-                $effectiveOperationTimeoutSeconds = [Math]::Max($effectiveOperationTimeoutSeconds, $elapsed + $publishedStallRemainingSeconds)
-            }
-            $staleStatus = $currentStage -and $statusAgeSeconds -ge $staleWarningSeconds
-            $displayLiveness = if ($staleStatus) { "stale-status" } else { $publishedLiveness }
+            $effectiveOperationTimeoutSeconds = [int][Math]::Ceiling(($operationDeadlineUtc - $startedAt.ToUniversalTime()).TotalSeconds)
+            $staleStatus = $currentStage -and $livenessAgeSeconds -ge $staleWarningSeconds
+            $displayLiveness = if ($staleStatus) { "stale-status" } elseif ($heartbeatAgeSeconds -lt $statusAgeSeconds) { "helper-heartbeat" } else { $publishedLiveness }
             $stageChanged = $currentStage -and $currentStage -ne $lastProgressStage
             $livenessChanged = $currentStage -and $displayLiveness -ne $lastProgressLiveness
             $heartbeatDue = $currentStage -and ([DateTime]::UtcNow - $lastProgressAt).TotalSeconds -ge 30
@@ -946,7 +1006,7 @@ try {
                 $freshnessDetail = if ($staleStatus) { "statusAge=${statusAgeSeconds}s; freshnessSource=$($freshness.source); publishedLiveness=$publishedLiveness; " } else { "" }
                 [Console]::Error.WriteLine("ITL progress: stage=$currentStage; elapsed=${elapsed}s; liveness=$displayLiveness; noProgress=${noProgressSeconds}s; stallTimeoutRemaining=${stallRemainingSeconds}s; timeoutRemaining=${timeoutRemainingSeconds}s; ${freshnessDetail}detail=$detail")
             }
-            if ($elapsed -ge $effectiveOperationTimeoutSeconds) {
+            if ([DateTime]::UtcNow -ge $operationDeadlineUtc -and -not $helperProcess.HasExited) {
                 $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
                 $updatedAt = [string]$freshness.updatedAt
                 $runnerFailureMessage = "RUNNER_OPERATION_TIMEOUT helper PID $($helperProcess.Id) exceeded the ${effectiveOperationTimeoutSeconds}s operation limit after ${elapsed}s at stage '$currentStage' (liveness='$publishedLiveness'; updatedAt='$updatedAt'). The runner stopped only its helper process tree."
@@ -956,7 +1016,7 @@ try {
                 }
                 break
             }
-            if ($currentStage -and $statusAgeSeconds -ge $effectiveStaleTimeoutSeconds) {
+            if ($currentStage -and $livenessAgeSeconds -ge $effectiveStaleTimeoutSeconds -and -not $helperProcess.HasExited) {
                 $runnerFailureNoProgressSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "noProgressSeconds" -Default 0) + $statusAgeSeconds
                 $updatedAt = [string]$freshness.updatedAt
                 $runnerFailureMessage = "RUNNER_STATUS_STALE status.json was not updated for ${statusAgeSeconds}s (effective watchdog ${effectiveStaleTimeoutSeconds}s) while helper PID $($helperProcess.Id) reported liveness '$publishedLiveness' at stage '$currentStage' (updatedAt='$updatedAt'). The runner stopped only its helper process tree."
@@ -972,12 +1032,18 @@ try {
         $exitCode = [int]$helperProcess.ExitCode
     } finally {
         Close-CompactHelperProcessJob -JobHandle $helperJobHandle -Process $helperProcess
+        Remove-Item -LiteralPath ($statusPath + ".heartbeat") -Force -ErrorAction SilentlyContinue
     }
 }
 
 $status = Read-JsonFile -Path $statusPath
 $terminalStatus = [string](Get-ObjectValue -Object $status -Name "status" -Default "")
-if ($terminalStatus -notin @("succeeded", "failed", "cancelled") -and -not $windowed) {
+if ($runnerFailureMessage -and $terminalStatus -in @("succeeded", "failed", "cancelled")) {
+    # A still-live helper at the deadline has not completed its owned cleanup.
+    $terminalStatus = "running"
+    Set-ObjectValue -Object $status -Name "status" -Value "running"
+}
+if ($terminalStatus -notin @("succeeded", "failed", "cancelled") -and -not $windowed -and -not $runnerFailureMessage) {
     $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
     $terminalLifecycle = Get-RunnerTerminalLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot -NotBeforeUtc $startedAt.ToUniversalTime()
     if ($null -ne $terminalLifecycle) {
@@ -1033,6 +1099,9 @@ if ($null -eq $status -or [string](Get-ObjectValue -Object $status -Name "status
     }
     Set-ObjectValue -Object $status -Name "schemaVersion" -Value 1
     Set-ObjectValue -Object $status -Name "status" -Value "failed"
+    Set-ObjectValue -Object $status -Name "operationTimeoutSeconds" -Value ([int][Math]::Ceiling(($operationDeadlineUtc - $startedAt.ToUniversalTime()).TotalSeconds))
+    Set-ObjectValue -Object $status -Name "operationTimeoutSource" -Value $operationDeadlineSource
+    Set-ObjectValue -Object $status -Name "operationDeadlineUtc" -Value $operationDeadlineUtc.ToString("o")
     Set-ObjectValue -Object $status -Name "action" -Value $action
     Set-ObjectValue -Object $status -Name "updatedAt" -Value $now.ToString("o")
     Set-ObjectValue -Object $status -Name "finishedAt" -Value $now.ToString("o")
