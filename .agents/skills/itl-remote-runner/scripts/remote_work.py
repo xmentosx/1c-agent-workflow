@@ -352,7 +352,14 @@ def main():
                     if elapsed >= max_lifetime:
                         stop_reason = "max-lifetime"
                         break
-                    if (spool / "runtime" / "pending.json").exists():
+                    pending_path = spool / "runtime" / "pending.json"
+                    try:
+                        pending = read_json(pending_path)
+                    except FileNotFoundError:
+                        pending = None
+                    # The supervisor clears this generation's marker only after
+                    # observing our confirmation. It must not stop the trial.
+                    if pending is not None and (not args.generation or pending.get("archiveSha256") != args.generation):
                         stop_reason = "update-staged"
                         break
                     heartbeat.update(status="ready", jobsProcessed=completed_jobs, currentJob=None)
