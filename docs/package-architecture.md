@@ -175,6 +175,21 @@ verifiable safety or completion path. Do not add tests that only repeat prose.
 
 ## Runtime check blocking policy
 
+The workflow exists to complete users' project tasks. Every new barrier ships
+with a practical agent-owned continuation: satisfy the requirement, recover
+through its owner, or propose a concrete, user-authorized local exception.
+Acceptance exercises the original task through that continuation, not just the
+rejection. Block only the dependent operation; preserve completed work and let
+independent work continue. A diagnostic must not create retroactive product work
+or force valid project data to accommodate a defective validator.
+
+Keep publication incremental and resumable using existing evidence and budgets.
+For changes on frequent paths, compare representative before/after duration and
+context size; explain material increases. Use existing measurements, not a new
+always-on collector. An auxiliary cleanup failure after a proven installation
+does not roll back that installation. Cancellation and safe discard have their
+own prerequisites and must not require successful acceptance of unwanted work.
+
 A runtime check may block only when continuing can lose data, mutate the wrong target, violate an explicit safety boundary, or produce false success or verification evidence. Every other diagnostic discrepancy is `WARN`, not `FAIL`.
 
 Test classification is an executable-verification prerequisite, not a runtime
@@ -203,6 +218,32 @@ changes and invalid catalogs retain classification requirements; see
 Keep integrity checks with their owning component. ITL may duplicate one only after a reproduced cross-boundary failure proves that the owner's check cannot protect the ITL operation.
 
 Capability checks use only the minimum prerequisites needed to perform the operation. File identity, update safety, and exact-result verification are separate contracts; integrity does not participate in capability detection unless exact identity is itself required for execution.
+
+### Local workflow incident contract
+
+Architecture checkpoint: the user authorized this continuation design and its
+simplification on 2026-09-26. The existing update/refresh owner retains all
+lifecycle, Git, database and rollback authority. One worktree-local patch receipt
+records only ITL-owned files before/after a user-authorized temporary edit and a
+report location. It is not an authorization registry, coordinator, general gate
+override or evidence of a successful check. User messages supply authorization;
+the agent records its exact scope in the report. General ai_rules_1c content,
+product sources, secrets, runtime state and unrelated edits remain outside this
+mechanism. Report writing does not depend on a generator.
+
+Capture and sealing are explicit file-only actions. Only update/refresh consume
+the receipt; normal commands do not inspect patch history. The owner validates
+the actual project, branch, recorded bytes and Git state before replacing files.
+Additional edits are preserved and reported for agent reconciliation. Retirement
+of a committed patch is an ordinary corrective commit, never history rewriting.
+Reports and byte snapshots survive replacement; replacement is not proof that
+the original incident is fixed. Test the original scenario against the new code.
+
+Refresh starts in the clean main-worktree runtime and later continues in the
+branch runtime. A patch of the wrong copy is not a repair; any required change
+to the shared runtime needs authorization covering that scope. No arbitrary
+runtime-source switch or automatic patch reapplication is introduced. See the
+installed [incident procedure](../.agents/skills/1c-workflow/references/workflow-incidents.md).
 
 ## 1C source byte-preservation policy
 

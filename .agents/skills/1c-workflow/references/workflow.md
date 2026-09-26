@@ -92,7 +92,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 
 ## Failure Rules
 
-Stop immediately when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
+Stop the dependent operation when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
 
 On `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`, then retry the original MCP/test action once; never move this mutation into MCP.
 

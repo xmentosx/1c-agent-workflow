@@ -180,7 +180,7 @@
             @{ path = "templates\AGENTS.append.md"; maxWords = 80; reviewApproxTokens = 180; maxApproxTokens = 220; rationale = "small installed workflow bridge" },
             @{ path = ".agents\skills\1c-workflow\SKILL.md"; maxWords = 900; reviewApproxTokens = 1500; maxApproxTokens = 1800; rationale = "installed-project detailed router" },
             @{ path = ".agents\skills\1c-workflow-fast\SKILL.md"; maxWords = 800; reviewApproxTokens = 1350; maxApproxTokens = 1600; rationale = "routine helper router" },
-            @{ path = "templates\USER-RULES.append.md"; maxWords = 850; reviewApproxTokens = 1300; maxApproxTokens = 1850; rationale = "always-on ITL safety overlay with explicit routine routing precedence, database-owner handoff, and structured blocker continuation" },
+            @{ path = "templates\USER-RULES.append.md"; maxWords = 900; reviewApproxTokens = 1300; maxApproxTokens = 1950; rationale = "always-on ITL overlay: 818 to 887 words and 1731 to 1871 byte/4 proxy tokens for explicit scoped incident continuation; detailed procedure stays on demand" },
             @{ path = ".agents\skills\1c-workflow\references\workflow.md"; maxWords = 1000; reviewApproxTokens = 1600; maxApproxTokens = 1800; rationale = "on-demand command menu" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-tests.md"; maxWords = 1400; reviewApproxTokens = 2500; maxApproxTokens = 2800; rationale = "on-demand Vanessa authoring contract" },
             @{ path = ".agents\skills\1c-workflow\references\vanessa-recipes.md"; maxWords = 1100; reviewApproxTokens = 2100; maxApproxTokens = 2400; rationale = "selective worked Vanessa recipes and runtime discovery bounds" }

@@ -1750,14 +1750,18 @@ exit 0
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $script:copyCalls = 0
                 $script:postCalls = 0
+                $script:cleanCalls = 0
                 $script:reexecArgs = @()
                 function Assert-WorkflowPackageUpdateContext {}
+                # Cleanup of a recorded patch now precedes the same strict
+                # clean check; this phase-only fixture has no Git repository.
+                function Assert-WorkflowTrackedGitClean { $script:cleanCalls++ }
                 function Assert-WorkflowUpdateCommitIdentity {}
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Assert-WorkflowSourceAiRulesInstallable {}
-                function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
-                function Copy-WorkflowManagedFile { $script:copyCalls++ }
+                function Copy-WorkflowManagedDirectory { if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }; $script:copyCalls++ }
+                function Copy-WorkflowManagedFile { if ($script:cleanCalls -ne 1) { throw 'copy-before-clean-check' }; $script:copyCalls++ }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
 
@@ -1795,6 +1799,7 @@ exit 0
                     preError = $preError
                     preCopyCalls = $preCopyCalls
                     finalCopyCalls = $script:copyCalls
+                    cleanCalls = $script:cleanCalls
                     reexecArgs = @($script:reexecArgs)
                     postCalls = $script:postCalls
                     dependencySyncOrder = $script:dependencySyncOrder
@@ -1809,6 +1814,7 @@ exit 0
             }
             $result.preError | Should -Be "reexec-stop"
             $result.preCopyCalls | Should -BeGreaterThan 5
+            $result.cleanCalls | Should -Be 1
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
             $result.postCalls | Should -BeGreaterThan 4

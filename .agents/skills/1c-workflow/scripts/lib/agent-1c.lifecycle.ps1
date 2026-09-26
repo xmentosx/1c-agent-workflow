@@ -5648,6 +5648,7 @@ function Write-WorkflowPackageStatusLines {
 }
 
 function Assert-WorkflowPackageUpdateContext {
+    param([switch]$DeferCleanCheck)
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot ".git") -ErrorAction SilentlyContinue)) {
         throw "update-workflow requires an initialized Git repository."
     }
@@ -5669,7 +5670,21 @@ function Assert-WorkflowPackageUpdateContext {
         throw "update-workflow must be run from '$masterBranch'. Current branch: $(if ($currentBranch) { $currentBranch } else { '<none>' })."
     }
 
-    Assert-WorkflowTrackedGitClean
+    if (-not $DeferCleanCheck) { Assert-WorkflowTrackedGitClean }
+}
+
+function Invoke-WorkflowLocalPatchStep {
+    param([ValidateSet('Plan','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan)
+    if ($Step -eq 'Plan') {
+        if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'))) { return }
+    } elseif ($null -eq $Plan) { return }
+    . (Join-Path $PSScriptRoot 'agent-1c.local-patch.ps1')
+    switch ($Step) {
+        'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation }
+        'Retire' { Start-WorkflowPatchRetirement -Plan $Plan }
+        'Complete' { Complete-WorkflowPatchRetirement -Plan $Plan }
+        'Undo' { Undo-WorkflowPatchRetirement -Plan $Plan }
+    }
 }
 
 function Assert-WorkflowSourceAiRulesInstallable {
@@ -5704,43 +5719,53 @@ function Update-WorkflowPackage {
 
     if ($LifecyclePhase -ne "post-copy") {
         Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
-        Assert-WorkflowPackageUpdateContext
-        Assert-WorkflowUpdateCommitIdentity
-
-        $source = Resolve-WorkflowPackageSource
-        Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
-        Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
-        Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
-
-        Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
-        $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
-        $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
-        $copySnapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@($copyDirectoryPaths) + @($copyFilePaths))
+        Assert-WorkflowPackageUpdateContext -DeferCleanCheck
+        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow'
         $copyCompleted = $false
         try {
-            foreach ($relativePath in $copyDirectoryPaths) {
-                Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
+            Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+            Assert-WorkflowTrackedGitClean
+            Assert-WorkflowUpdateCommitIdentity
+
+            $source = Resolve-WorkflowPackageSource
+            Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+            Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
+            Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
+
+            Set-RunStage -Stage "workflow-update.copy" -Detail "Copying the managed workflow package files."
+            $copyDirectoryPaths = @(Get-WorkflowPackageCopyDirectoryPaths)
+            $copyFilePaths = @(Get-WorkflowPackageCopyFilePaths)
+            $copySnapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths (@($copyDirectoryPaths) + @($copyFilePaths))
+            $copyCompleted = $false
+            try {
+                foreach ($relativePath in $copyDirectoryPaths) {
+                    Copy-WorkflowManagedDirectory -SourceRoot $source.root -RelativePath $relativePath
+                }
+                foreach ($relativePath in $copyFilePaths) {
+                    Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
+                }
+                Remove-LegacyWorkflowManagedFiles
+                Update-WorkflowPackageLockEntry -Source $source | Out-Null
+                $copyCompleted = $true
+            } catch {
+                $copyError = $_.Exception.Message
+                try {
+                    Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                } catch {
+                    throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
+                }
+                throw
+            } finally {
+                try {
+                    Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
+                } catch {
+                    if ($copyCompleted) { throw }
+                }
             }
-            foreach ($relativePath in $copyFilePaths) {
-                Copy-WorkflowManagedFile -SourceRoot $source.root -RelativePath $relativePath
-            }
-            Remove-LegacyWorkflowManagedFiles
-            Update-WorkflowPackageLockEntry -Source $source | Out-Null
-            $copyCompleted = $true
+            Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
         } catch {
-            $copyError = $_.Exception.Message
-            try {
-                Restore-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
-            } catch {
-                throw "update-workflow copy failed and rollback did not restore the pre-copy managed paths. Copy error: $copyError Rollback error: $($_.Exception.Message)"
-            }
+            if (-not $copyCompleted) { Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan }
             throw
-        } finally {
-            try {
-                Remove-WorkflowUpdateRollbackSnapshot -Snapshot $copySnapshot
-            } catch {
-                if ($copyCompleted) { throw }
-            }
         }
         Write-Host "Workflow package files copied. Restarting the installed helper in a fresh PowerShell process for post-copy processing."
         Invoke-Agent1cFreshProcess -AdditionalArguments @("-LifecyclePhase", "post-copy")
@@ -13849,21 +13874,31 @@ function Invoke-RefreshDevBranchCore {
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
-        Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
-        Assert-CleanGit
-        if ($SynchronizeMaster) {
-            Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
-            Sync-Master -SeedPolicy "EnsureCompatible"
+        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation $OperationName
+        try {
+            Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+            Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
+            Assert-CleanGit
+            if ($SynchronizeMaster) {
+                Set-RunStage -Stage "refresh.master" -Detail "Synchronizing master and ensuring a compatible branch seed."
+                Sync-Master -SeedPolicy "EnsureCompatible"
+            }
+            if ((Get-CurrentBranch) -ne $state.devBranch) {
+                Invoke-Git @("checkout", $state.devBranch)
+            }
+            $masterRef = "refs/heads/$(Get-MasterBranch)"
+            $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
+            if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
+                throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
+            }
+            Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+        } catch {
+            Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan
+            throw
         }
-        if ((Get-CurrentBranch) -ne $state.devBranch) {
-            Invoke-Git @("checkout", $state.devBranch)
-        }
-        $masterRef = "refs/heads/$(Get-MasterBranch)"
-        $targetMasterCommit = (Get-GitOutput @("rev-parse", $masterRef)).Trim()
-        if ($targetMasterCommit -notmatch '^[a-f0-9]{40}$') {
-            throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
-        }
-        Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+        # The existing merge transaction owns all recovery from this boundary.
+        # Never overlay an old patch onto the incoming workflow or a pending merge.
+        Invoke-WorkflowLocalPatchStep -Step Complete -Plan $localPatchPlan
         Set-RunStage -Stage "refresh.merge" -Detail "Merging master into the development branch."
         Invoke-NewDevBranchLifecycleMerge `
             -State $state `

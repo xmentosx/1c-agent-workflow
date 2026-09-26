@@ -9,6 +9,8 @@ Detailed ITL workflow router for non-routine work. Explicit generated `itl-*` sk
 
 ## Routing
 
+For a suspected workflow defect or rule conflict, use `references/workflow-incidents.md` to recover or propose a scoped exception and resume the original task.
+
 Use `scripts/agent-1c.ps1` when PowerShell is available. Open only the matching topic below. Open `references/workflow.md` only for help, an unclear request, or the complete client-aware command menu:
 
 - `references/init-setup.md`: init, checks, web publication/Vanessa setup, `update-workflow`, `update-ai-rules`.
