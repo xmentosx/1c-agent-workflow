@@ -14,6 +14,7 @@ Within this Git root, `1c-workflow` and `1c-workflow-fast` are package source. D
 
 ## Change discipline
 
+- For source work, investigate facts first. If material uncertainty remains about behavior, cause, complexity, or acceptance, offer grill and/or OpenSpec; the user chooses. Keep clear bounded work direct and preserve prior choices. Before a selected planning skill or change, read `docs/source-planning.md`.
 - Fix shared package code, templates, docs, and tests rather than patching an example project.
 - Optimize for the simplest coherent architecture, not diff size or abstraction count. One invariant has one authoritative owner; converge duplicated policy. Shared stateless contracts, cross-component refactors, and existing-coordinator use are normal within authority. Before widening shared runtime authority, cross-owner state/blocking/recovery, installed migration, elevation, support reduction, or material always-on context, obtain architecture checkpoint in `docs/package-architecture.md`; file count is not a trigger. After two repair cycles without acceptance or owner-narrowing progress, stop layering; compare rollback, owner-local, and shared redesign.
 - Preserve unrelated user changes and keep the dirty-state guards strict.

@@ -103,9 +103,9 @@
         (Test-Path -LiteralPath (Join-Path $RepoRoot 'DEV-BRANCH-DEVELOPMENT.ru.md')) | Should -BeFalse
     }
 
-    It "keeps every installed ITL skill discoverable through valid frontmatter" {
+    It "keeps installed ITL and source-only planning skills discoverable through valid frontmatter" {
         $skillRoot = Join-Path $RepoRoot ".agents\skills"
-        $expectedSkillIds = @(
+        $installedSkillIds = @(
             "1c-workflow",
             "1c-workflow-fast",
             "itl-roctup-1c-data",
@@ -114,7 +114,12 @@
             "itl-remote-agent",
             "itl-performance",
             "product-docs"
-        ) | Sort-Object
+        )
+        $sourcePlanningSkillIds = @(
+            'grill-me', 'grill-with-docs', 'grilling', 'domain-modeling',
+            'openspec-explore', 'openspec-propose', 'openspec-apply-change', 'openspec-archive-change'
+        )
+        $expectedSkillIds = @($installedSkillIds + $sourcePlanningSkillIds | Sort-Object)
         $actualSkillIds = @(Get-ChildItem -LiteralPath $skillRoot -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actualSkillIds | Should -Be $expectedSkillIds
 
@@ -134,7 +139,7 @@
 
             $descriptionMatch = [regex]::Match(
                 $yaml,
-                '(?ms)^description:\s*(?:(?:>|\|)[+-]?\s*\r?\n(?<folded>(?:[ \t]+[^\r\n]*(?:\r?\n|\z))+)|["'']?(?<inline>[^\r\n"'']+)["'']?\s*$)'
+                '(?ms)^description:[ \t]*(?:(?:>|\|)[+-]?[ \t]*\r?\n(?<folded>(?:[ \t]+[^\r\n]*(?:\r?\n|\z))+)|(?<quote>["''])(?<inline>[^\r\n]+)\k<quote>[ \t]*\r?$|(?<inline>[^"''\s][^\r\n]*)[ \t]*\r?$)'
             )
             $descriptionMatch.Success | Should -BeTrue
             $description = if ($descriptionMatch.Groups['folded'].Success) {
