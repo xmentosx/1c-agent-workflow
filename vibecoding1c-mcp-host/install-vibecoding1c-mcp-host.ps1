@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -412,7 +412,20 @@ function Write-HostState {
     $hash = Convert-ToHash -Object $State
     $hash["schemaVersion"] = 1
     $hash["updatedAt"] = (Get-Date).ToString("o")
-    Write-JsonFile -Path (Get-HostStatePath -Config $Config) -Value $hash
+    $path = Get-HostStatePath -Config $Config
+    $temporary = "$path.$([guid]::NewGuid().ToString('N')).tmp"
+    $backup = "$path.$([guid]::NewGuid().ToString('N')).bak"
+    try {
+        Write-JsonFile -Path $temporary -Value $hash
+        if (Test-Path -LiteralPath $path -PathType Leaf) {
+            [System.IO.File]::Replace($temporary, $path, $backup)
+        } else {
+            [System.IO.File]::Move($temporary, $path)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $temporary -PathType Leaf) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $backup -PathType Leaf) { Remove-Item -LiteralPath $backup -Force }
+    }
 }
 
 function Invoke-DockerCommand {
@@ -886,6 +899,10 @@ function Ensure-ServerDockerImageAvailable {
         [object]$Server,
         [string]$Image
     )
+    if ((Test-CodeCheckerServer -Server $Server) -and [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        Ensure-DockerImageAvailable -Image $Image
+        return
+    }
     if (Test-CodeCheckerServer -Server $Server) {
         $sourceRoot = Get-CodeCheckerSourceRoot
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
@@ -923,12 +940,61 @@ function Ensure-Distribution {
 }
 
 function Read-DistributionManifest {
-    param([object]$Config)
-    $path = Join-Path (Get-DistributionRoot -Config $Config) "vibecoding1c-mcp.manifest.json"
+    param(
+        [object]$Config,
+        [ValidateSet("stable", "beta")][string]$Channel = "stable"
+    )
+    $relativePath = $(if ($Channel -eq "beta") { "beta/vibecoding1c-mcp.manifest.json" } else { "vibecoding1c-mcp.manifest.json" })
+    $path = Join-Path (Get-DistributionRoot -Config $Config) $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Distribution manifest was not found: $path"
     }
     return (Add-HostVirtualServersToManifest -Manifest (Read-JsonFile -Path $path))
+}
+
+function Get-TrackedHostServerForIdentity {
+    param(
+        [object]$Config,
+        [string]$ServerId,
+        [string]$Scope,
+        [string]$ConfigId = ""
+    )
+    $state = Read-HostState -Config $Config
+    $matches = @(As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $ServerId -and
+        [string](Get-ObjectValue -Object $_ -Name "scope" -Default "") -eq $Scope -and
+        [string](Get-ObjectValue -Object $_ -Name "configId" -Default "") -eq $ConfigId
+    })
+    if ($matches.Count -gt 1) {
+        throw "Host state contains duplicate '$ServerId' runtimes for configId '$ConfigId'."
+    }
+    if ($matches.Count -eq 0) { return $null }
+    return $matches[0]
+}
+
+function Get-SelectedHostServerDefinition {
+    param(
+        [object]$Config,
+        [object]$StableServer,
+        [string]$ConfigId = ""
+    )
+    $id = [string](Get-ObjectValue -Object $StableServer -Name "id" -Default "")
+    $scope = Get-ServerScope -Server $StableServer
+    $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $ConfigId
+    $channel = [string](Get-ObjectValue -Object $tracked -Name "channel" -Default "stable")
+    if ($channel -eq "stable") { return $StableServer }
+    if ($channel -ne "beta") { throw "Unknown tracked channel '$channel' for '$id'." }
+    $manifest = Read-DistributionManifest -Config $Config -Channel beta
+    $matches = @(As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @()) | Where-Object {
+        [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id -and
+        (Get-ServerScope -Server $_) -eq $scope
+    })
+    if ($matches.Count -ne 1) { throw "Beta distribution must define exactly one '$id' server for scope '$scope'." }
+    $selected = $matches[0]
+    if ([string](Get-ObjectValue -Object $selected -Name "mcpNameTemplate" -Default "") -ne [string](Get-ObjectValue -Object $StableServer -Name "mcpNameTemplate" -Default "")) {
+        throw "Beta server '$id' would change the public MCP name."
+    }
+    return $selected
 }
 
 function Get-BookStackProductDocsServerDefinition {
@@ -1714,6 +1780,12 @@ function Update-HostStateConfigurations {
 
 function Get-HostServerStateKey {
     param([object]$ServerState)
+    $scope = [string](Get-ObjectValue -Object $ServerState -Name "scope" -Default "")
+    $configId = [string](Get-ObjectValue -Object $ServerState -Name "configId" -Default "")
+    $id = [string](Get-ObjectValue -Object $ServerState -Name "id" -Default "")
+    if ($scope -and $id) {
+        return "$scope|$configId|$id"
+    }
     $containerName = [string](Get-ObjectValue -Object $ServerState -Name "containerName" -Default "")
     if ($containerName) {
         return "container:$containerName"
@@ -1726,9 +1798,6 @@ function Get-HostServerStateKey {
     if ($name) {
         return "name:$name"
     }
-    $scope = [string](Get-ObjectValue -Object $ServerState -Name "scope" -Default "")
-    $configId = [string](Get-ObjectValue -Object $ServerState -Name "configId" -Default "")
-    $id = [string](Get-ObjectValue -Object $ServerState -Name "id" -Default "")
     return "$scope|$configId|$id"
 }
 
@@ -2188,6 +2257,12 @@ function Start-DockerServer {
     $containerName = [string]$Runtime.containerName
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
+        if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+            $configuredImage = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Config.Image}}", $containerName) -TimeoutSec 60 -Description "docker inspect image for $containerName") | Select-Object -First 1
+            if ([string]$configuredImage -ne [string]$Runtime.image) {
+                throw "Beta container '$containerName' uses '$configuredImage', expected pinned image '$($Runtime.image)'. Refusing implicit replacement."
+            }
+        }
         if ($Recreate) {
             Write-Host "Removing existing container before reindex: $containerName"
             if (-not $DryRun) {
@@ -2276,12 +2351,16 @@ function Start-ComposeServer {
     }
     $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $Runtime.name
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+    $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     $targetCompose = Join-Path $runtimeDir "docker-compose.yml"
     $composeText = Read-Text -Path $sourceCompose
-    $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
-    $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
-    $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
-    $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
+    $channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
+    if ($channel -ne "beta") {
+        $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
+        $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
+        $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
+        $composeText = $composeText -replace '"8006:8006"', "`"$($Runtime.hostPort):$($Runtime.internalPort)`""
+    }
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
         $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
         $composeText = Repair-GraphComposeResourceText -ComposeText $composeText
@@ -2291,7 +2370,31 @@ function Start-ComposeServer {
     }
     Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
-    Write-DotEnv -Path $envFilePath -Values (Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase)
+    $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
+    if ($channel -eq "beta") {
+        $neo4jImage = [string](Get-ObjectValue -Object $Server -Name "neo4jImage" -Default "")
+        if (-not $neo4jImage -or -not ([string]$Runtime.image).Contains("@sha256:")) {
+            throw "Beta Graph requires pinned MCP and Neo4j images."
+        }
+        $betaDataRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "bases") (Join-Path ([string]$ConfigState.configId) "graph-beta")
+        $neo4jDataPath = Join-Path $betaDataRoot "neo4j-data"
+        $graphStatePath = Join-Path $betaDataRoot "mcp-state"
+        if (-not (Test-Path -LiteralPath $neo4jDataPath -PathType Container) -or -not (Test-Path -LiteralPath $graphStatePath -PathType Container)) {
+            throw "Beta Graph data snapshots are missing under $betaDataRoot. Refusing an empty-graph start."
+        }
+        $envValues["COMPOSE_PROJECT_NAME"] = [string]$Runtime.composeProject
+        $envValues["MCP_IMAGE"] = [string]$Runtime.image
+        $envValues["NEO4J_IMAGE"] = $neo4jImage
+        $envValues["MCP_CONTAINER_NAME"] = [string]$Runtime.containerName
+        $envValues["NEO4J_CONTAINER_NAME"] = "$($Runtime.containerName)-neo4j"
+        $envValues["MCP_HOST_PORT"] = [string]$Runtime.hostPort
+        $envValues["NEO4J_DATA_PATH"] = $neo4jDataPath
+        $envValues["GRAPH_STATE_PATH"] = $graphStatePath
+        $envValues["EMBEDDING_MODEL"] = [string]$envValues["OPENAI_EMBEDDING_MODEL"]
+        $envValues["EMBEDDING_API_BASE"] = [string]$envValues["OPENAI_EMBEDDING_API_BASE"]
+        $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
+    }
+    Write-DotEnv -Path $envFilePath -Values $envValues
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "config", "--quiet") -TimeoutSec 60 -Description "docker compose config $($Runtime.composeProject)"
@@ -2301,7 +2404,6 @@ function Start-ComposeServer {
         }
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
-    $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     Write-Host "Compose project ready: $($Runtime.composeProject) -> $($Runtime.url)"
 }
 
@@ -2499,7 +2601,9 @@ function Enable-ToolsListProxyForRuntime {
     $settings = Get-ToolsListProxySettings -Config $Config
     $directUrl = [string]$Runtime.url
     $proxyPort = [int]$Runtime.hostPort + [int]$settings.portOffset
-    $proxyContainerName = "$($Runtime.containerName)-tools-list-proxy"
+    $proxyContainerName = [string](Get-ObjectValue -Object $Runtime -Name "proxyContainerName" -Default "$($Runtime.containerName)-tools-list-proxy")
+    $contractPath = [string](Get-ObjectValue -Object $Runtime -Name "proxyContractPath" -Default $settings.contractPath)
+    if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) { throw "Tools-list proxy contract is missing: $contractPath" }
     $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
     $proxyUrl = "$baseUrl`:$proxyPort/mcp"
     $Runtime | Add-Member -NotePropertyName directUrl -NotePropertyValue $directUrl -Force
@@ -2513,8 +2617,23 @@ function Enable-ToolsListProxyForRuntime {
     }
 
     Ensure-ToolsListProxyImage -Config $Config
-    [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
-    $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
+    $isBeta = [string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable") -eq "beta"
+    $previousProxyState = "missing"
+    $backupName = ""
+    if ($isBeta) {
+        $previousProxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
+        if ($previousProxyState -in @("unknown")) { throw "Cannot determine previous proxy state for '$proxyContainerName'." }
+        if ($previousProxyState -ne "missing") {
+            $backupName = "$proxyContainerName-rollback-$([guid]::NewGuid().ToString('N'))"
+            Invoke-DockerCommandChecked -Arguments @("rename", $proxyContainerName, $backupName) -TimeoutSec 60 -Description "backup tools-list proxy $proxyContainerName"
+            if ($previousProxyState -eq "running") {
+                Invoke-DockerCommandChecked -Arguments @("stop", $backupName) -TimeoutSec 60 -Description "stop previous tools-list proxy $backupName"
+            }
+        }
+    } else {
+        [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+    }
+    $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
     $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
     try {
         Invoke-DockerCommandChecked -Arguments @(
@@ -2532,8 +2651,25 @@ function Enable-ToolsListProxyForRuntime {
         }
         $Runtime.url = $proxyUrl
         $Runtime.toolsContractStatus = "qualified"
+        if ($backupName) {
+            if ($isBeta) {
+                $Runtime | Add-Member -NotePropertyName proxyBackupName -NotePropertyValue $backupName -Force
+            } else {
+                [void](Invoke-DockerCommand -Arguments @("rm", "-f", $backupName) -Quiet -TimeoutSec 60)
+            }
+        }
         Write-Host "Qualified MCP tools-list proxy for '$id': $proxyUrl (direct fallback: $directUrl)"
     } catch {
+        if ($isBeta) {
+            [void](Invoke-DockerCommand -Arguments @("rm", "-f", $proxyContainerName) -Quiet -TimeoutSec 60)
+            if ($backupName) {
+                Invoke-DockerCommandChecked -Arguments @("rename", $backupName, $proxyContainerName) -TimeoutSec 60 -Description "restore tools-list proxy $proxyContainerName"
+                if ($previousProxyState -eq "running") {
+                    Invoke-DockerCommandChecked -Arguments @("start", $proxyContainerName) -TimeoutSec 60 -Description "restart previous tools-list proxy $proxyContainerName"
+                }
+            }
+            throw
+        }
         $Runtime.url = $directUrl
         $Runtime.toolsContractStatus = "fallback-direct"
         Write-Warning "MCP tools-list proxy for '$id' was not qualified; registry will keep the direct endpoint. $($_.Exception.Message)"
@@ -2718,7 +2854,9 @@ function Enable-TrackedToolsListProxiesAndPublish {
                 }
             }
 
-            $contractVolume = "$($settings.contractPath):/app/tools-contract.json:ro"
+            $contractPath = [string](Get-ObjectValue -Object $serverHash -Name "proxyContractPath" -Default $settings.contractPath)
+            if (-not (Test-Path -LiteralPath $contractPath -PathType Leaf)) { throw "Tools-list proxy contract is missing: $contractPath" }
+            $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
             $upstreamUrl = "http://host.docker.internal:$hostPort/mcp"
             Invoke-DockerCommandChecked -Arguments @(
                 "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
@@ -4037,8 +4175,10 @@ function New-ServerRuntime {
         $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
     }
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
+    $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId
     return [pscustomobject]@{
         id = $id
+        channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
         scope = $scope
         family = "vibecoding1c"
         provider = "remote"
@@ -4047,6 +4187,8 @@ function New-ServerRuntime {
         name = $name
         clientNames = (Get-McpClientNames -ServerId $id)
         containerName = $containerName
+        proxyContainerName = [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "")
+        proxyContractPath = [string](Get-ObjectValue -Object $tracked -Name "proxyContractPath" -Default "")
         composeProject = (Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id)
         image = $image
         internalPort = $internalPort
@@ -4095,9 +4237,10 @@ function Start-HostServers {
         $runtimeIndex = $globalIndex
         $globalIndex++
         if ($globalIds -notcontains $id) { continue }
-        $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
+        $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server
+        $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex
         Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-        Start-DockerServer -Config $Config -Server $server -Runtime $runtime
+        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime
         Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
@@ -4127,12 +4270,13 @@ function Start-HostServers {
                 $runtimeIndex = $projectIndex
                 $projectIndex++
                 if ($projectIds -notcontains $id) { continue }
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server -ConfigId $configurationId
+                $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
                 Write-Host "Project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                    Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                if ([bool](Get-ObjectValue -Object $selectedServer -Name "compose" -Default $false)) {
+                    Start-ComposeServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState
                 } else {
-                    Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState
+                    Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState
                 }
                 Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
                 $runtime.health = "running"
@@ -4334,10 +4478,11 @@ function Invoke-HostReindex {
             $runtimeIndex = $globalIndex
             $globalIndex++
             if ($globalIds -notcontains $id) { continue }
-            if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex
+            $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server
+            if (Test-HostServerSupportsDatabaseReset -Server $selectedServer) {
+                $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex
                 Write-Host "Reindexing global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                Start-DockerServer -Config $Config -Server $server -Runtime $runtime -Recreate -ForceResetDatabase
+                Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -Recreate -ForceResetDatabase
                 $runtime.health = "running"
                 $serverStates += $runtime
                 $reindexed++
@@ -4368,13 +4513,14 @@ function Invoke-HostReindex {
                 $runtimeIndex = $projectIndex
                 $projectIndex++
                 if ($projectIds -notcontains $id) { continue }
-                if (Test-HostServerSupportsDatabaseReset -Server $server) {
-                    $runtime = New-ServerRuntime -Config $Config -Server $server -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
+                $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server -ConfigId $configurationId
+                if (Test-HostServerSupportsDatabaseReset -Server $selectedServer) {
+                    $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex -ConfigState $configState -ConfigIndex $configIndex
                     Write-Host "Reindexing project server '$id' for configId $($configState.configId): container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-                    if ([bool](Get-ObjectValue -Object $server -Name "compose" -Default $false)) {
-                        Start-ComposeServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                    if ([bool](Get-ObjectValue -Object $selectedServer -Name "compose" -Default $false)) {
+                        Start-ComposeServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
                     } else {
-                        Start-DockerServer -Config $Config -Server $server -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
+                        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -ConfigState $configState -Recreate -ForceResetDatabase
                     }
                     $runtime.health = "running"
                     $serverStates += $runtime
@@ -4746,8 +4892,15 @@ function Show-HostStatus {
     }
 }
 
+. (Join-Path $PSScriptRoot "beta-cutover.ps1")
 $config = Read-HostConfig
 switch ($Action) {
+    "beta-preflight" {
+        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+    }
+    "beta-cutover" {
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+    }
     "setup" {
         Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
         Publish-Registry -Config $config
