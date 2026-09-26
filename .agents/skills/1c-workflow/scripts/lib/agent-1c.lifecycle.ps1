@@ -5674,13 +5674,14 @@ function Assert-WorkflowPackageUpdateContext {
 }
 
 function Invoke-WorkflowLocalPatchStep {
-    param([ValidateSet('Plan','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan)
+    param([ValidateSet('Plan','Retire','Complete','Undo')][string]$Step, [string]$Operation, [object]$Plan,
+        [string]$TargetCommit = '', [object]$Source = $null)
     if ($Step -eq 'Plan') {
         if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json'))) { return }
     } elseif ($null -eq $Plan) { return }
     . (Join-Path $PSScriptRoot 'agent-1c.local-patch.ps1')
     switch ($Step) {
-        'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation }
+        'Plan' { Get-WorkflowPatchRetirementPlan -Operation $Operation -TargetCommit $TargetCommit -Source $Source }
         'Retire' { Start-WorkflowPatchRetirement -Plan $Plan }
         'Complete' { Complete-WorkflowPatchRetirement -Plan $Plan }
         'Undo' { Undo-WorkflowPatchRetirement -Plan $Plan }
@@ -5720,15 +5721,20 @@ function Update-WorkflowPackage {
     if ($LifecyclePhase -ne "post-copy") {
         Set-RunStage -Stage "workflow-update.preflight" -Detail "Validating the master worktree and workflow source."
         Assert-WorkflowPackageUpdateContext -DeferCleanCheck
-        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow'
+        $source = Resolve-WorkflowPackageSource
+        Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
+        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'update-workflow' -Source $source
+        if ($null -ne $localPatchPlan -and $localPatchPlan.preserve) {
+            Set-RunStage -Stage 'workflow-update.patch-preserved' -Detail "Package change: $($localPatchPlan.reason). Temporary patch retained; no managed files copied."
+            Write-Warning "Workflow package change: $($localPatchPlan.reason). Temporary patch retained; package copying skipped. Report: $($localPatchPlan.receipt.reportPath)"
+            return
+        }
         $copyCompleted = $false
         try {
             Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
             Assert-WorkflowTrackedGitClean
             Assert-WorkflowUpdateCommitIdentity
 
-            $source = Resolve-WorkflowPackageSource
-            Assert-WorkflowSourceOutsideProject -SourceRoot $source.root
             Set-RunStage -Stage "workflow-update.ai-rules-preflight" -Detail "Validating that the target ai_rules_1c release is installable."
             Assert-WorkflowSourceAiRulesInstallable -SourceRoot $source.root
 
@@ -13874,9 +13880,8 @@ function Invoke-RefreshDevBranchCore {
         if (Resume-DevBranchLifecycleMergeIfPresent -State $state -Operation $OperationName -ConflictStage "refresh.merge-conflicts") {
             return
         }
-        $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation $OperationName
+        $localPatchPlan = $null
         try {
-            Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
             Save-DevBranchCheckpoint -Operation $OperationName | Out-Null
             Assert-CleanGit
             if ($SynchronizeMaster) {
@@ -13892,6 +13897,11 @@ function Invoke-RefreshDevBranchCore {
                 throw "REFRESH_MASTER_COMMIT_INVALID: $targetMasterCommit"
             }
             Assert-RefreshExpectedMasterCommit -TargetCommit $targetMasterCommit -Operation $OperationName
+            $localPatchPlan = Invoke-WorkflowLocalPatchStep -Step Plan -Operation $OperationName -TargetCommit $targetMasterCommit
+            if ($null -ne $localPatchPlan) {
+                Invoke-WorkflowLocalPatchStep -Step Retire -Plan $localPatchPlan
+                Assert-CleanGit
+            }
         } catch {
             Invoke-WorkflowLocalPatchStep -Step Undo -Plan $localPatchPlan
             throw

@@ -5,6 +5,7 @@
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1')
         . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.artifact-retention.ps1')
         $LifecyclePhase = ''
         $script:DevBranchName = 'test'
         $utf8 = New-Object Text.UTF8Encoding $false
@@ -22,6 +23,8 @@
         }
     }
     BeforeEach {
+        $script:archiveRoot = Join-Path $TestDrive ('Общий архив ' + [guid]::NewGuid().ToString('N'))
+        Mock Get-WorkflowFixArchiveRoot { $script:archiveRoot }
         $script:ProjectRoot = Join-Path $TestDrive ('Проект с пробелом ' + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $script:ProjectRoot | Out-Null
         $script:patchPath = '.agents/skills/1c-workflow/scripts/lib/исправление тест.ps1'
@@ -30,6 +33,7 @@
         Set-FixtureText $script:target "original: Кириллица`r`n"
         Set-FixtureText $script:report 'Original task, reproduced error, scoped user permission and proposed workaround.'
         Set-FixtureText (Join-Path $script:ProjectRoot '.agent-1c/project.json') '{}'
+        Set-FixtureText (Join-Path $script:ProjectRoot '.agent-1c/dependency-lock.json') ('{"dependencies":{"workflowPackage":{"repo":"fixture-workflow","commit":"' + ('b'*40) + '"}}}')
         Set-FixtureText (Join-Path $script:ProjectRoot '.gitignore') ".agent-1c/snapshots/`n"
         Set-FixtureText (Join-Path $script:ProjectRoot 'product.txt') 'user product'
         Invoke-Git @('init', '-q', '-b', 'itldev/test')
@@ -163,7 +167,9 @@
     It 'does no Git discovery when there is no incident receipt' {
         Mock Get-CurrentBranch { throw 'unexpected Git probe' }
         Mock Get-GitPathList { throw 'unexpected Git probe' }
+        Mock Get-WorkflowFixArchiveRoot { throw 'unexpected archive scan' }
         Get-WorkflowPatchRetirementPlan -Operation 'refresh-dev-branch' | Should -BeNullOrEmpty
+        Invoke-WorkflowLocalPatchStep -Step Plan -Operation 'refresh-dev-branch' -TargetCommit ('a'*40) | Should -BeNullOrEmpty
     }
 
     It 'extends a committed patch with another edit and file while retaining their original baselines' {
@@ -249,12 +255,13 @@
             Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
             (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
         }
-        It 'merges incoming workflow bytes after retiring the patch instead of checkpointing it' {
+        It 'merges incoming workflow after selecting the target and retiring the checkpointed patch' {
             # Change master through a separate worktree, as real refresh does.
             $main = Join-Path $TestDrive ('Основная ветка ' + [guid]::NewGuid().ToString('N'))
             Invoke-Git @('worktree', 'add', '--quiet', $main, 'master')
             Set-FixtureText (Join-Path $main $script:patchPath) 'official incoming fix'
-            Invoke-GitAt -Root $main -Arguments @('add', '--', $script:patchPath)
+            Set-FixtureText (Join-Path $main '.agent-1c/dependency-lock.json') ('{"dependencies":{"workflowPackage":{"repo":"fixture-workflow","commit":"' + ('a'*40) + '"}}}')
+            Invoke-GitAt -Root $main -Arguments @('add', '--', $script:patchPath,'.agent-1c/dependency-lock.json')
             Invoke-GitAt -Root $main -Arguments @('commit', '-qm', 'official workflow update')
             Mock Invoke-NewDevBranchLifecycleMerge {
                 param($State,$Operation,$TargetCommit,$ConflictStage)
@@ -264,9 +271,215 @@
             { Invoke-RefreshDevBranchCore -OperationName 'refresh-dev-branch-lite' } | Should -Throw '*MERGE_BOUNDARY*'
             Read-Utf8Text $script:target | Should -BeExactly 'official incoming fix'
             (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
-            (Get-GitOutput @('log', '--format=%s')) -join "`n" | Should -Not -Match 'checkpoint before branch refresh'
+            (Get-GitOutput @('log', '--format=%s')) -join "`n" | Should -Match 'retire temporary ITL workflow patch'
+            New-SealedFixturePatch | Out-Null
+            { Invoke-RefreshDevBranchCore -OperationName 'refresh-dev-branch-lite' } | Should -Throw '*MERGE_BOUNDARY*'
+            Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+        }
+
+        It 'preserves the patch through configuration-only <Operation>' -TestCases @(
+            @{Operation='refresh-dev-branch';Full=$true}, @{Operation='refresh-dev-branch-lite';Full=$false}
+        ) {
+            param($Operation,$Full)
+            $main = Join-Path $TestDrive ('Основная конфигурация ' + [guid]::NewGuid().ToString('N'))
+            Invoke-Git @('worktree','add','--quiet',$main,'master')
+            Set-FixtureText (Join-Path $main 'product.txt') 'incoming configuration'
+            Invoke-GitAt -Root $main -Arguments @('add','--','product.txt')
+            Invoke-GitAt -Root $main -Arguments @('commit','-qm','configuration only')
+            Mock Invoke-NewDevBranchLifecycleMerge {
+                param($State,$Operation,$TargetCommit,$ConflictStage)
+                Invoke-Git @('merge','--no-edit',$TargetCommit)
+                throw 'MERGE_BOUNDARY'
+            }
+            { Invoke-RefreshDevBranchCore -SynchronizeMaster:$Full -OperationName $Operation } | Should -Throw '*MERGE_BOUNDARY*'
+            Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
+            Read-Utf8Text (Join-Path $script:ProjectRoot 'product.txt') | Should -Be 'incoming configuration'
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+            @(Get-WorkflowFixArchiveRecords).Count | Should -Be 0
         }
     }
+
+
+    Context 'Shared fix archive' {
+        BeforeEach { New-SealedFixturePatch | Out-Null }
+
+        It 'deduplicates exact fixes and does not count searches as usage' {
+            $receipt = Read-WorkflowPatchReceipt
+            Save-WorkflowFixArchive $receipt
+            Save-WorkflowFixArchive $receipt
+            $entries = @(Get-WorkflowFixArchiveRecords)
+            $entries.Count | Should -Be 1
+            $past = [datetime]::UtcNow.AddDays(-10)
+            [IO.File]::SetLastWriteTimeUtc($entries[0].path,$past)
+            $found = @(Find-WorkflowFixArchive -Query 'Original task')
+            $found.Count | Should -Be 1
+            $found[0].lastUsedAt | Should -Be $past
+            $entries[0].entry.files[0].diff | Should -Match 'patched: Кириллица'
+            $entries[0].entry.workflowPackage.commit | Should -Be ('b'*40)
+        }
+
+        It 'reuses a reviewed diff in another project with new local authorization and provenance' {
+            $receipt = Read-WorkflowPatchReceipt
+            Save-WorkflowFixArchive $receipt
+            $entry = @(Get-WorkflowFixArchiveRecords)[0]
+            [IO.File]::SetLastWriteTimeUtc($entry.path,[datetime]::UtcNow.AddDays(-10))
+            $first = $script:ProjectRoot
+            $consumer = Join-Path $TestDrive 'Другой проект с пробелом'
+            Invoke-GitCommand -Root $TestDrive -Arguments @('clone','--quiet','--no-local',$first,$consumer)
+            $script:ProjectRoot = $consumer
+            Invoke-Git @('config','user.email','fixture@example.invalid')
+            Invoke-Git @('config','user.name','Patch fixture')
+            Invoke-Git @('config','core.autocrlf','false')
+            $report = Join-Path $consumer 'handoffs/new-permission.md'
+            Set-FixtureText $report 'Authorization for this second project only; candidate from the shared archive.'
+            $new = New-WorkflowPatchReceipt -Paths @($script:patchPath) -ReportPath $report -ArchiveId $entry.id
+            $new.projectRoot | Should -Be $consumer
+            Read-Utf8Text $new.reportPath | Should -Match 'second project only'
+            $patchFile = Join-Path $TestDrive 'проверенный diff.patch'
+            Set-FixtureText $patchFile $entry.entry.files[0].diff
+            Invoke-Git @('apply','--check','--',$patchFile)
+            Invoke-Git @('apply','--',$patchFile)
+            Set-WorkflowPatchSealed | Out-Null
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+            Read-Utf8Text (Join-Path $consumer $script:patchPath) | Should -Match 'patched: Кириллица'
+            @(Get-WorkflowFixArchiveRecords)[0].lastUsedAt | Should -BeGreaterThan ([datetime]::UtcNow.AddDays(-1))
+            $script:ProjectRoot = $first
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+        }
+
+        It 'does not automatically apply an incompatible archive candidate' {
+            Save-WorkflowFixArchive (Read-WorkflowPatchReceipt)
+            Set-FixtureText $script:target 'different current implementation'
+            $entries = @(Find-WorkflowFixArchive -Query 'Original')
+            $patchFile = Join-Path $TestDrive 'incompatible.patch'
+            Set-FixtureText $patchFile ((Read-Utf8Text $entries[0].path | ConvertFrom-Json).files[0].diff)
+            { Invoke-Git @('apply','--check','--',$patchFile) } | Should -Throw
+            Read-Utf8Text $script:target | Should -Be 'different current implementation'
+        }
+
+        It 'expires unused records and enforces count and byte caps without touching active data' {
+            $receipt = Read-WorkflowPatchReceipt
+            $prototype = $receipt.files[0].diff
+            foreach ($i in 1..5) {
+                $receipt.files[0].diff = $prototype + "# variant $i" + [char]10
+                Save-WorkflowFixArchive $receipt
+            }
+            $entries = @(Get-WorkflowFixArchiveRecords)
+            $entries.Count | Should -Be 5
+            for ($i=0; $i -lt 5; $i++) { [IO.File]::SetLastWriteTimeUtc($entries[$i].path,[datetime]::UtcNow.AddDays(-$i)) }
+            Invoke-WorkflowFixArchiveCleanup -MaxCount 3
+            @(Get-WorkflowFixArchiveRecords).Count | Should -Be 3
+            $latest = @(Get-WorkflowFixArchiveRecords | Sort-Object lastUsedAt -Descending)[0]
+            Invoke-WorkflowFixArchiveCleanup -MaxBytes $latest.size
+            @(Get-WorkflowFixArchiveRecords).Count | Should -Be 1
+            [IO.File]::SetLastWriteTimeUtc($latest.path,[datetime]::UtcNow.AddDays(-91))
+            @(Find-WorkflowFixArchive).Count | Should -Be 0
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+            Read-Utf8Text $script:target | Should -Match 'patched'
+            Test-Path -LiteralPath $receipt.reportPath | Should -BeTrue
+            Test-Path -LiteralPath $script:report | Should -BeTrue
+        }
+
+        It 'warns on unavailable storage while completing local retirement' {
+            Mock Get-WorkflowFixArchiveRoot { throw 'archive unavailable' }
+            $plan = Get-WorkflowPatchRetirementPlan -Operation 'refresh-dev-branch'
+            Start-WorkflowPatchRetirement $plan
+            $warnings = @(& { Complete-WorkflowPatchRetirement $plan } 3>&1)
+            ($warnings -join ' ') | Should -Match 'archive unavailable'
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
+            Test-Path -LiteralPath $plan.receipt.reportPath | Should -BeTrue
+            Read-Utf8Text $script:target | Should -Match '^original'
+            @(Find-WorkflowFixArchive).Count | Should -Be 0
+        }
+
+        It 'preserves corrupted records instead of returning them as ready solutions' {
+            Save-WorkflowFixArchive (Read-WorkflowPatchReceipt)
+            $entry = @(Get-WorkflowFixArchiveRecords)[0]
+            $changed = $entry.entry
+            $changed.files[0].diff = 'tampered'
+            Write-Utf8TextAtomic -Path $entry.path -Value ($changed | ConvertTo-Json -Depth 8)
+            @(Find-WorkflowFixArchive).Count | Should -Be 0
+            Test-Path -LiteralPath $entry.path | Should -BeTrue
+            { Resolve-WorkflowFixArchivePath '../outside' } | Should -Throw '*ID_INVALID*'
+        }
+
+        It 'writes complete deduplicated records from concurrent processes' {
+            $receiptPath = Join-Path $TestDrive 'shared-receipt.json'
+            Write-Utf8TextAtomic -Path $receiptPath -Value ((Read-WorkflowPatchReceipt) | ConvertTo-Json -Depth 12)
+            $jobs = @()
+            try {
+                foreach ($i in 1..3) {
+                    $jobs += Start-Job -ArgumentList $RepoRoot,$script:archiveRoot,$receiptPath -ScriptBlock {
+                        param($repository,$archive,$receiptFile)
+                        . (Join-Path $repository '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+                        . (Join-Path $repository '.agents/skills/1c-workflow/scripts/lib/agent-1c.local-patch.ps1')
+                        $script:fixtureArchive = $archive
+                        function Get-WorkflowFixArchiveRoot { $script:fixtureArchive }
+                        Save-WorkflowFixArchive (Read-Utf8Text $receiptFile | ConvertFrom-Json)
+                    }
+                }
+                $jobs | Wait-Job -Timeout 30 | Out-Null
+                @($jobs | Where-Object State -ne 'Completed').Count | Should -Be 0
+                $output = @($jobs | Receive-Job -ErrorAction Stop 3>&1)
+                ($output -join ' ') | Should -Not -Match 'unavailable|invalid archive'
+                @(Get-WorkflowFixArchiveRecords).Count | Should -Be 1
+            } finally { $jobs | Stop-Job; $jobs | Remove-Job -Force }
+        }
+
+        It 'archives a legacy receipt without new metadata or diff fields' {
+            $receipt = Read-WorkflowPatchReceipt
+            $receipt.PSObject.Properties.Remove('workflowPackage')
+            $receipt.files[0].PSObject.Properties.Remove('diff')
+            Write-WorkflowPatchReceipt $receipt
+            (Get-WorkflowPatchBaselineIdentity $receipt).commit | Should -Be ('b'*40)
+            Save-WorkflowFixArchive $receipt
+            $entry = @(Get-WorkflowFixArchiveRecords)[0]
+            $entry.entry.files[0].diff | Should -Match '@@ -1,1 \+1,1 @@'
+            Set-FixtureText $script:target ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($receipt.files[0].before)))
+            $patchFile = Join-Path $TestDrive 'legacy.patch'
+            Set-FixtureText $patchFile $entry.entry.files[0].diff
+            Invoke-Git @('apply','--check','--',$patchFile)
+        }
+
+        It 'uses incoming managed changes for legacy provenance: <ChangedPath>' -TestCases @(
+            @{ChangedPath='product.txt';Expected='same'},
+            @{ChangedPath='AGENT-INSTALL.md';Expected='changed'},
+            @{ChangedPath='.agents/skills/1c-workflow/new-rule.md';Expected='changed'}
+        ) {
+            param($ChangedPath,$Expected)
+            $receipt = Read-WorkflowPatchReceipt
+            $receipt.PSObject.Properties.Remove('workflowPackage')
+            Mock Get-WorkflowPatchPackageIdentity { $null }
+            Invoke-Git @('branch','master')
+            Invoke-Git @('add','--',$script:patchPath)
+            Invoke-Git @('commit','-qm','branch-local workaround')
+            $main = Join-Path $TestDrive ('Старый мастер ' + [guid]::NewGuid().ToString('N'))
+            Invoke-Git @('worktree','add','--quiet',$main,'master')
+            Set-FixtureText (Join-Path $main $ChangedPath) 'incoming change without package identity'
+            Invoke-GitAt -Root $main -Arguments @('add','--',$ChangedPath)
+            Invoke-GitAt -Root $main -Arguments @('commit','-qm','legacy master update')
+            $incoming = (Get-GitOutput @('rev-parse','master')).Trim()
+            Get-WorkflowPatchPackageChange -Receipt $receipt -TargetCommit $incoming | Should -Be $Expected
+            Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
+        }
+
+        It 'exposes only completed old local incidents to existing retention' {
+            $receipt = Read-WorkflowPatchReceipt
+            $plan = Get-WorkflowPatchRetirementPlan -Operation 'refresh-dev-branch'
+            Start-WorkflowPatchRetirement $plan
+            Complete-WorkflowPatchRetirement $plan
+            @(Get-ItlWorkflowIncidentArchiveCandidates -ProjectRoot $script:ProjectRoot).Count | Should -Be 0
+            New-SealedFixturePatch | Out-Null
+            $candidates = @(Get-ItlWorkflowIncidentArchiveCandidates -ProjectRoot $script:ProjectRoot)
+            $candidates.Count | Should -Be 1
+            $candidates[0].path | Should -Be (Split-Path -Parent $receipt.reportPath)
+            $candidates[0].path | Should -Not -Be (Split-Path -Parent $script:report)
+            Set-FixtureText (Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-incidents/active.json') '{}'
+            @(Get-ItlWorkflowIncidentArchiveCandidates -ProjectRoot $script:ProjectRoot).Count | Should -Be 0
+        }
+    }
+
 
     Context 'Package copy boundary' {
         BeforeEach {
@@ -275,7 +488,7 @@
             $script:incoming = Join-Path $TestDrive ('incoming ' + [guid]::NewGuid().ToString('N'))
             Set-FixtureText (Join-Path $script:incoming $script:patchPath) 'official replacement'
             Mock Set-RunStage {}
-            Mock Resolve-WorkflowPackageSource { [pscustomobject]@{root=$script:incoming;ref='develop';commit=('a'*40)} }
+            Mock Resolve-WorkflowPackageSource { [pscustomobject]@{root=$script:incoming;repo='fixture-workflow';ref='develop';commit=('a'*40)} }
             Mock Assert-WorkflowSourceOutsideProject {}
             Mock Assert-WorkflowSourceAiRulesInstallable {}
             Mock Get-WorkflowPackageCopyDirectoryPaths { '.agents/skills/1c-workflow' }
@@ -293,11 +506,29 @@
             Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
             (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
         }
-        It 'keeps official bytes and the incident when copy succeeded but a later phase fails' {
+        It 'keeps official bytes and the incident when archive and later processing fail' {
+            Mock Get-WorkflowFixArchiveRoot { throw 'archive unavailable' }
             Mock Copy-WorkflowManagedDirectory { Set-FixtureText $script:target 'official replacement' }
             { Update-WorkflowPackage } | Should -Throw '*REEXEC_BOUNDARY*'
             Read-Utf8Text $script:target | Should -BeExactly 'official replacement'
             (Read-WorkflowPatchReceipt).phase | Should -Be 'retired'
+        }
+        It 'preserves a same-version patch without copying or claiming a new installation' {
+            Mock Resolve-WorkflowPackageSource { [pscustomobject]@{root=$script:incoming;repo='fixture-workflow';commit=('b'*40)} }
+            Mock Copy-WorkflowManagedDirectory { throw 'unexpected copy' }
+            $warnings = @(& { Update-WorkflowPackage } 3>&1)
+            Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+            ($warnings -join ' ') | Should -Match 'copying skipped'
+            Should -Invoke Copy-WorkflowManagedDirectory -Times 0
+        }
+        It 'preserves the patch when source identity is unavailable' {
+            Mock Resolve-WorkflowPackageSource { [pscustomobject]@{root=$script:incoming;repo='';commit=''} }
+            Mock Copy-WorkflowManagedDirectory { throw 'unexpected copy' }
+            Update-WorkflowPackage
+            Read-Utf8Text $script:target | Should -BeExactly "patched: Кириллица`r`n"
+            (Read-WorkflowPatchReceipt).phase | Should -Be 'active'
+            Should -Invoke Copy-WorkflowManagedDirectory -Times 0
         }
     }
 }

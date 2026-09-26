@@ -239,6 +239,32 @@ function Get-ItlArtifactCandidateSize {
     return $total
 }
 
+function Get-ItlWorkflowIncidentArchiveCandidates {
+    param([string]$ProjectRoot)
+    $root = Join-Path $ProjectRoot '.agent-1c/snapshots/workflow-incidents'
+    if (-not (Test-Path -LiteralPath $root -PathType Container) -or
+        -not (Test-ItlArtifactPathWithoutReparse -Root $ProjectRoot -Path $root)) { return @() }
+    # Unreadable active state preserves every local incident until reconciled.
+    $active = $null
+    $activePath = Join-Path $root 'active.json'
+    if (Test-Path -LiteralPath $activePath) {
+        try {
+            $active = Read-Utf8Text $activePath | ConvertFrom-Json
+            if ($active.schemaVersion -ne 1 -or $active.id -notmatch '^[a-f0-9]{32}$' -or $active.phase -notin @('captured','active','retiring','retired')) { return @() }
+        } catch { return @() }
+    }
+    foreach ($folder in @(Get-ChildItem -LiteralPath $root -Directory)) {
+        if ($folder.Name -notmatch '^[a-f0-9]{32}$' -or
+            -not (Test-ItlArtifactPathWithoutReparse -Root $root -Path $folder.FullName -Recursive)) { continue }
+        if ($null -ne $active -and $active.id -eq $folder.Name) { continue }
+        try {
+            $receipt = Read-Utf8Text (Join-Path $folder.FullName 'patch.json') | ConvertFrom-Json
+            if ($receipt.schemaVersion -ne 1 -or $receipt.id -cne $folder.Name -or $receipt.phase -ne 'retired') { continue }
+            New-ItlArtifactRetentionCandidate -Category 'archive' -Root $root -Path $folder.FullName -Group 'workflow-incidents' -ModifiedAt $folder.LastWriteTimeUtc
+        } catch { continue }
+    }
+}
+
 function Get-ItlArtifactCleanupPlan {
     param([string]$ProjectRoot = $script:ProjectRoot, [string]$MainRoot = (Get-MainWorktreePath))
     $policy = Get-ItlArtifactRetentionPolicy
@@ -247,6 +273,7 @@ function Get-ItlArtifactCleanupPlan {
     $candidates += @(Get-ItlResultArtifactCandidates -ProjectRoot $ProjectRoot)
     $candidates += @(Get-ItlRunArtifactCandidates -ProjectRoot $ProjectRoot)
     $candidates += @(Get-ItlAuxiliaryArchiveArtifactCandidates -ProjectRoot $ProjectRoot)
+    $candidates += @(Get-ItlWorkflowIncidentArchiveCandidates -ProjectRoot $ProjectRoot)
     if ([string]::Equals([IO.Path]::GetFullPath($ProjectRoot), [IO.Path]::GetFullPath($MainRoot), [StringComparison]::OrdinalIgnoreCase)) {
         $candidates += @(Get-ItlArchiveArtifactCandidates -MainRoot $MainRoot)
     }

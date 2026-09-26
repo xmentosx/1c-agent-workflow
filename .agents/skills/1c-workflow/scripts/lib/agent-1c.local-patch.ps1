@@ -66,7 +66,7 @@ function Read-WorkflowPatchReceipt {
 }
 
 function New-WorkflowPatchReceipt {
-    param([string[]]$Paths, [string]$ReportPath)
+    param([string[]]$Paths, [string]$ReportPath, [string]$ArchiveId = '')
     if (-not (Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.agent-1c/project.json') -PathType Leaf)) {
         throw 'WORKFLOW_PATCH_INSTALLED_PROJECT_REQUIRED'
     }
@@ -109,6 +109,8 @@ function New-WorkflowPatchReceipt {
         schemaVersion=1; id=$id; projectRoot=[IO.Path]::GetFullPath($script:ProjectRoot); branch=$branch
         baseCommit=$(if ($null -ne $previous -and $previous.phase -ne 'retired') { $previous.baseCommit } else { $captureCommit })
         captureCommit=$captureCommit; phase='captured'; reportPath=$reportCopy; files=@($files)
+        workflowPackage=$(if ($null -ne $previous -and $previous.phase -ne 'retired') { Get-WorkflowPatchBaselineIdentity $previous } else { Get-WorkflowPatchPackageIdentity -Commit $captureCommit })
+        archiveId=$ArchiveId
     }
     Write-WorkflowPatchReceipt -Receipt $receipt
     return $receipt
@@ -129,16 +131,39 @@ function Set-WorkflowPatchSealed {
         $file.afterSha256 = Get-WorkflowPatchHash $bytes
         $file.afterBlob = (Get-GitOutput @('hash-object', "--path=$($file.path)", '--', $full)).Trim()
         $file.knownBlobs = @(@($file.knownBlobs) + $file.afterBlob | Select-Object -Unique)
+        # Native line-based stdout loses CR inside CRLF hunks. Git owns the
+        # exact diff bytes; the ignored temporary file preserves that transport.
+        $diffPath = Resolve-WorkflowPatchPath -RelativePath ".agent-1c/snapshots/workflow-incidents/$($receipt.id)/diff-$([guid]::NewGuid().ToString('N')).tmp" -Receipt
+        try {
+            Invoke-Git @('-c','core.quotepath=false','diff','--no-ext-diff','--no-textconv','--no-color','--src-prefix=a/','--dst-prefix=b/',"--output=$diffPath",[string]$file.beforeCommit,'--',":(literal)$($file.path)")
+            $diff = (New-Object Text.UTF8Encoding($false,$true)).GetString([IO.File]::ReadAllBytes($diffPath))
+            $file | Add-Member -NotePropertyName diff -NotePropertyValue $diff -Force
+        } catch {
+            $file.PSObject.Properties.Remove('diff')
+            Write-Warning "Reusable diff unavailable; exact local snapshots remain recorded: $($_.Exception.Message)"
+        } finally {
+            if (Test-Path -LiteralPath $diffPath) { Remove-Item -LiteralPath $diffPath -Force -ErrorAction SilentlyContinue }
+        }
     }
     $receipt.phase = 'active'
     Write-WorkflowPatchReceipt -Receipt $receipt
+    $archiveId = [string](Get-ConfigValueFromObject -Object $receipt -Path 'archiveId' -Default '')
+    if ($archiveId) { Update-WorkflowFixArchiveUsage -Id $archiveId }
     return $receipt
 }
 
 function Get-WorkflowPatchRetirementPlan {
-    param([string]$Operation)
+    param([string]$Operation, [string]$TargetCommit = '', [object]$Source = $null)
     $receipt = Read-WorkflowPatchReceipt
     if ($null -eq $receipt -or $receipt.phase -eq 'retired') { return $null }
+    if ($TargetCommit -or $null -ne $Source) {
+        $change = Get-WorkflowPatchPackageChange -Receipt $receipt -TargetCommit $TargetCommit -Source $Source
+        if ($change -ne 'changed') {
+            if ($change -eq 'unknown') { Write-Warning 'Workflow package change is unconfirmed; preserving the temporary patch. Inspect package provenance if a replacement is expected.' }
+            if ($null -ne $Source) { return [pscustomobject]@{ preserve=$true; receipt=$receipt; reason=$change } }
+            return $null
+        }
+    }
     if ($receipt.phase -eq 'captured') { throw 'WORKFLOW_PATCH_NOT_SEALED: seal the recorded edit before update/refresh; no files were replaced.' }
     Assert-DevBranchCheckpointGitState -Operation $Operation
     $base = [string]$receipt.baseCommit
@@ -175,7 +200,7 @@ function Get-WorkflowPatchRetirementPlan {
         $others = @(Get-WorkflowUpdateTrackedChangePaths | Where-Object { $paths -cnotcontains $_ })
         if ($others.Count) { throw "WORKFLOW_PATCH_UNRELATED_EDITS: update-workflow preserves other tracked changes: $($others -join ', ')" }
     }
-    return [pscustomobject]@{ receipt=$receipt; paths=$paths; indexBlobs=$indices; headBlobs=$heads; operation=$Operation }
+    return [pscustomobject]@{ preserve=$false; receipt=$receipt; paths=$paths; indexBlobs=$indices; headBlobs=$heads; operation=$Operation }
 }
 
 function Start-WorkflowPatchRetirement {
@@ -213,7 +238,8 @@ function Complete-WorkflowPatchRetirement {
     $archivePath = Resolve-WorkflowPatchPath -RelativePath ".agent-1c/snapshots/workflow-incidents/$($Plan.receipt.id)/patch.json" -Receipt
     Write-Utf8TextAtomic -Path $archivePath -Value (($Plan.receipt | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
     Write-WorkflowPatchReceipt -Receipt $Plan.receipt
-    Write-Warning "Temporary workflow patch retired; original incident still needs reproduction against the installed version. Report: $($Plan.receipt.reportPath); saved bytes: $archivePath"
+    Save-WorkflowFixArchive -Receipt $Plan.receipt
+    Write-Warning "Temporary workflow patch archived; resolution of the original incident is unconfirmed. Consult the fix archive if it recurs. Report: $($Plan.receipt.reportPath); saved bytes: $archivePath"
 }
 
 function Undo-WorkflowPatchRetirement {
@@ -237,4 +263,179 @@ function Undo-WorkflowPatchRetirement {
     }
     $Plan.receipt.phase = 'active'
     Write-WorkflowPatchReceipt -Receipt $Plan.receipt
+}
+
+function Get-WorkflowPatchPackageIdentity {
+    param([string]$Commit = '', [object]$Source = $null)
+    try {
+        if ($null -eq $Source) {
+            if ($Commit -notmatch '^[a-f0-9]{40,64}$') { return $null }
+            $paths = @(Get-GitPathList -Arguments @('ls-tree','-r','--name-only','-z',$Commit,'--','.agent-1c/dependency-lock.json'))
+            if (-not $paths.Count) { return $null }
+            $manifest = (@(Get-GitOutput @('show',('{0}:.agent-1c/dependency-lock.json' -f $Commit))) -join [char]10) | ConvertFrom-Json
+            $Source = Get-ConfigValueFromObject -Object $manifest -Path 'dependencies.workflowPackage' -Default $null
+        }
+        $repo = [string](Get-ConfigValueFromObject -Object $Source -Path 'repo' -Default '')
+        $commitId = [string](Get-ConfigValueFromObject -Object $Source -Path 'commit' -Default '')
+        if (-not $repo -or $commitId -notmatch '^[a-f0-9]{40,64}$') { return $null }
+        return [pscustomobject]@{repo=$repo;commit=$commitId}
+    } catch { return $null }
+}
+
+function Get-WorkflowPatchBaselineIdentity {
+    param([object]$Receipt)
+    $saved = Get-ConfigValueFromObject -Object $Receipt -Path 'workflowPackage' -Default $null
+    if ($null -ne $saved) { return Get-WorkflowPatchPackageIdentity -Source $saved }
+    return Get-WorkflowPatchPackageIdentity -Commit $Receipt.baseCommit
+}
+
+function Get-WorkflowPatchPackageChange {
+    param([object]$Receipt, [string]$TargetCommit, [object]$Source)
+    $baseline = Get-WorkflowPatchBaselineIdentity $Receipt
+    $incoming = Get-WorkflowPatchPackageIdentity -Commit $TargetCommit -Source $Source
+    if ($null -ne $baseline -and $null -ne $incoming) {
+        if ($baseline.repo -ceq $incoming.repo -and $baseline.commit -ceq $incoming.commit) { return 'same' }
+        return 'changed'
+    }
+    # Inspect only incoming master changes, not this branch's local patch.
+    if ($TargetCommit -match '^[a-f0-9]{40,64}$') {
+        try {
+            $common = (Get-GitOutput @('merge-base',[string]$Receipt.baseCommit,$TargetCommit)).Trim()
+            $managed = @(@(Get-WorkflowPackageCopyDirectoryPaths) + @(Get-WorkflowPackageCopyFilePaths) | ForEach-Object { $_.Replace('\','/') })
+            $changed = @(Get-GitPathList -Arguments (@('diff','--name-only','-z',$common,$TargetCommit,'--') + $managed))
+            if ($changed.Count) { return 'changed' }
+            return 'same'
+        } catch { return 'unknown' }
+    }
+    return 'unknown'
+}
+
+function Get-WorkflowFixArchiveRoot {
+    $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
+    if (-not $local) { throw 'Workflow fix archive requires the current user local application-data directory.' }
+    return Join-Path $local 'ITL/workflow-fixes'
+}
+
+function Resolve-WorkflowFixArchivePath {
+    param([string]$Id = '')
+    if ($Id -and $Id -notmatch '^[a-f0-9]{64}$') { throw 'WORKFLOW_FIX_ARCHIVE_ID_INVALID' }
+    $root = [IO.Path]::GetFullPath((Get-WorkflowFixArchiveRoot))
+    $path = if ($Id) { Join-Path $root "$Id.json" } else { $root }
+    # Never follow links during cache writes or deletion.
+    $probe = $path
+    while ($probe) {
+        if ((Test-Path -LiteralPath $probe) -and ((Get-Item -LiteralPath $probe -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "WORKFLOW_FIX_ARCHIVE_REPARSE_POINT: $probe"
+        }
+        $probe = Split-Path -Parent $probe
+    }
+    return $path
+}
+
+function Get-WorkflowFixArchiveKey {
+    param([object]$WorkflowPackage, [object[]]$Files)
+    $identity = [ordered]@{workflowPackage=$WorkflowPackage;files=@($Files)}
+    return Get-WorkflowPatchHash ([Text.Encoding]::UTF8.GetBytes(($identity | ConvertTo-Json -Depth 8 -Compress)))
+}
+
+function Get-WorkflowFixArchiveRecords {
+    $root = Resolve-WorkflowFixArchivePath
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { return }
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Filter '*.json')) {
+        if ($file.BaseName -notmatch '^[a-f0-9]{64}$') { continue }
+        try {
+            $path = Resolve-WorkflowFixArchivePath -Id $file.BaseName
+            $entry = Read-Utf8Text $path | ConvertFrom-Json
+            if ($entry.schemaVersion -ne 1 -or $entry.kind -cne 'itl-workflow-fix' -or $entry.id -cne $file.BaseName -or
+                (Get-WorkflowFixArchiveKey -WorkflowPackage $entry.workflowPackage -Files @($entry.files)) -cne $entry.id) {
+                throw 'invalid archive identity/content'
+            }
+            [pscustomobject]@{id=$entry.id;path=$path;size=$file.Length;lastUsedAt=$file.LastWriteTimeUtc;entry=$entry}
+        } catch { Write-Warning "Workflow fix archive entry preserved for inspection: $($file.Name): $($_.Exception.Message)" }
+    }
+}
+
+function Invoke-WorkflowFixArchiveCleanup {
+    param([int]$MaxCount = 100, [long]$MaxBytes = 100MB, [int]$UnusedDays = 90)
+    try {
+        $records = @(Get-WorkflowFixArchiveRecords | Sort-Object lastUsedAt -Descending)
+        $keptCount = 0
+        $keptBytes = [long]0
+        foreach ($record in $records) {
+            if ($record.lastUsedAt -lt [datetime]::UtcNow.AddDays(-$UnusedDays) -or
+                $keptCount -ge $MaxCount -or $keptBytes + $record.size -gt $MaxBytes) {
+                $path = Resolve-WorkflowFixArchivePath -Id $record.id
+                $now = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+                # A concurrent use/publication wins over stale cleanup selection.
+                if ($null -ne $now -and $now.LastWriteTimeUtc -eq $record.lastUsedAt -and $now.Length -eq $record.size) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                }
+            } else { $keptCount++; $keptBytes += $record.size }
+        }
+    } catch { Write-Warning "Workflow fix archive cleanup skipped: $($_.Exception.Message)" }
+}
+
+function Update-WorkflowFixArchiveUsage {
+    param([string]$Id)
+    try {
+        $path = Resolve-WorkflowFixArchivePath -Id $Id
+        if (Test-Path -LiteralPath $path -PathType Leaf) { [IO.File]::SetLastWriteTimeUtc($path,[datetime]::UtcNow) }
+        Invoke-WorkflowFixArchiveCleanup
+    } catch { Write-Warning "Workflow fix usage could not be recorded; local patch is preserved: $($_.Exception.Message)" }
+}
+
+function ConvertTo-WorkflowPatchUnifiedDiff {
+    param([object]$File)
+    $saved = [string](Get-ConfigValueFromObject -Object $File -Path 'diff' -Default '')
+    if ($saved) { return $saved }
+    # Legacy receipts have byte snapshots only. A full-file diff needs no replay.
+    $utf8 = New-Object Text.UTF8Encoding($false,$true)
+    $sides = @{}
+    foreach ($side in @('before','after')) {
+        $value = $utf8.GetString([Convert]::FromBase64String([string]$File.$side))
+        $lines = @($value.Split([char]10))
+        if ($value.EndsWith([string][char]10)) { $lines = @($lines | Select-Object -SkipLast 1) }
+        if (-not $value) { $lines = @() }
+        $sides[$side] = @{lines=$lines;endsWithNewline=$value.EndsWith([string][char]10)}
+    }
+    $out = @("diff --git a/$($File.path) b/$($File.path)","--- a/$($File.path)","+++ b/$($File.path)",
+        "@@ -$(if ($sides.before.lines.Count) {1} else {0}),$($sides.before.lines.Count) +$(if ($sides.after.lines.Count) {1} else {0}),$($sides.after.lines.Count) @@")
+    foreach ($side in @('before','after')) {
+        $prefix = if ($side -eq 'before') { '-' } else { '+' }
+        foreach ($line in $sides[$side].lines) { $out += $prefix + $line }
+        if ($sides[$side].lines.Count -and -not $sides[$side].endsWithNewline) { $out += '\ No newline at end of file' }
+    }
+    return ($out -join [char]10) + [char]10
+}
+
+function Save-WorkflowFixArchive {
+    param([object]$Receipt)
+    try {
+        $files = @($Receipt.files | Sort-Object path | ForEach-Object {
+            [pscustomobject][ordered]@{path=$_.path;beforeSha256=$_.beforeSha256;afterSha256=$_.afterSha256;diff=(ConvertTo-WorkflowPatchUnifiedDiff $_)}
+        })
+        $package = Get-WorkflowPatchBaselineIdentity $Receipt
+        $id = Get-WorkflowFixArchiveKey -WorkflowPackage $package -Files $files
+        $path = Resolve-WorkflowFixArchivePath -Id $id
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            $entry = [ordered]@{schemaVersion=1;kind='itl-workflow-fix';id=$id;workflowPackage=$package;files=$files
+                report=(Read-Utf8Text $Receipt.reportPath);createdAt=[datetime]::UtcNow.ToString('o')}
+            Write-Utf8TextAtomic -Path $path -Value ($entry | ConvertTo-Json -Depth 10) -RetryCount 3
+        }
+        Update-WorkflowFixArchiveUsage -Id $id
+    } catch { Write-Warning "Workflow fix archive unavailable; local report and snapshots retained: $($_.Exception.Message)" }
+}
+
+function Find-WorkflowFixArchive {
+    param([string]$Query = '', [ValidateRange(1,20)][int]$Limit = 10)
+    try {
+        Invoke-WorkflowFixArchiveCleanup
+        $records = @(Get-WorkflowFixArchiveRecords | Where-Object {
+            -not $Query -or ($_.entry.report + ' ' + (@($_.entry.files.path) -join ' ')).IndexOf($Query,[StringComparison]::OrdinalIgnoreCase) -ge 0
+        } | Sort-Object lastUsedAt -Descending | Select-Object -First $Limit)
+        foreach ($record in $records) {
+            [pscustomobject]@{id=$record.id;path=$record.path;workflowPackage=$record.entry.workflowPackage;files=@($record.entry.files.path)
+                lastUsedAt=$record.lastUsedAt;summary=([string]$record.entry.report).Substring(0,[Math]::Min(240,([string]$record.entry.report).Length))}
+        }
+    } catch { Write-Warning "Workflow fix archive search unavailable; continue local diagnosis: $($_.Exception.Message)" }
 }

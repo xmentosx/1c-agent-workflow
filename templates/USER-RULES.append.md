@@ -24,7 +24,7 @@ After a failed check, classify ownership before editing: `runner` (ITL helper/to
 
 Do not author an `off` test layer; preserve approved plans. A skipped component records `partial/skipped`, never a normal fresh pass. `verificationPolicy=block` requires fresh passed evidence. `warn` permits warned export without confirmation; advanced close retains confirmation. Report skipped verification as `implemented; executable verification skipped`, never `verified`, `ready`, or `done`.
 
-For suspected workflow defects or contradictory rules, follow `1c-workflow/references/workflow-incidents.md`: recover or propose a concrete scoped workaround, reuse the user's authorization, write a transferable report, and resume the original task. Preserve independent progress and truthful verification status. Temporary ITL patches are recorded and retired by update/refresh; do not silently carry them forward. A new barrier must include an agent-usable continuation.
+For suspected workflow defects or contradictory rules, follow `1c-workflow/references/workflow-incidents.md`: consult saved fixes, recover or propose a concrete scoped workaround, reuse the user's authorization, write a transferable report, and resume the original task. Preserve independent progress and truthful verification status. Recorded patches retire only on workflow replacement; configuration-only refresh preserves them. A new barrier must include an agent-usable continuation.
 
 Keep `USER-RULES.md` above `LLM-RULES.md` in precedence. `LLM-RULES.md` changes only through an explicit `/evolve`, one separately confirmed change at a time; `/evolve` cannot weaken branch safety, preflight, test-plan, verification-mode, result, or fresh-check gates. Rules updates preserve `LLM-RULES.md`.
 

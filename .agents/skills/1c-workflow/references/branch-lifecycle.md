@@ -163,7 +163,7 @@ Development branch changes must never be loaded directly into the source infobas
 
 Goal: refresh the current development branch from fresh `master` and source state.
 
-A recorded temporary ITL patch is retired before the normal checkpoint; reports and byte snapshots survive. See `workflow-incidents.md` for extra edits, committed patches and the executing-runtime boundary.
+A recorded temporary ITL patch survives configuration-only refresh. After the checkpoint and exact target selection, an incoming workflow replacement retires it before merge; reports and snapshots survive, and a reusable copy enters the optional shared archive. See `workflow-incidents.md` for extra edits, committed patches and the executing-runtime boundary.
 
 1. Require an active `itldev/*` worktree. The compact runners for `refresh-dev-branch` and `refresh-dev-branch-lite` first delegate to the clean tracked workflow runtime from the checked-out `master` worktree while retaining the development worktree as `ProjectRoot`; no other branch command uses this bootstrap. The master runtime completes helper-owned merge recovery first, then commits all staged, unstaged, deleted, and non-ignored untracked paths as `chore: checkpoint before branch refresh`; ignored runtime is never staged. Other merge/rebase/cherry-pick/revert state and unmerged paths block before 1C or merge activity.
 2. Refresh `master` through the main worktree and reuse a compatible seed. `SOURCE_REPOSITORY_UPDATE_MODE=workflow` first updates the source infobase from storage; `external` captures its current state without running repository or database-configuration updates against source. Explicit `sync-master` always rebuilds the seed so its data and baseline are current.

@@ -1,6 +1,6 @@
 # Initialization And Setup Reference
 
-Use this reference for first-time bootstrap, tool readiness, workflow refresh, and configured rules refresh. Routine installed-project actions should use `1c-workflow-fast` or the helper directly. For a suspected workflow defect or a temporary local patch during update, use `workflow-incidents.md`; update retires only the recorded patch and preserves its report.
+Use this reference for first-time bootstrap, tool readiness, workflow refresh, and configured rules refresh. Routine installed-project actions should use `1c-workflow-fast` or the helper directly. For a suspected workflow defect or temporary patch, use `workflow-incidents.md`; workflow replacement retires the recorded patch and preserves its report. A same-version update preserves an active patch and skips package copying.
 
 ## State Files
 

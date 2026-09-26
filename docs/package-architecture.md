@@ -237,7 +237,34 @@ the actual project, branch, recorded bytes and Git state before replacing files.
 Additional edits are preserved and reported for agent reconciliation. Retirement
 of a committed patch is an ordinary corrective commit, never history rewriting.
 Reports and byte snapshots survive replacement; replacement is not proof that
-the original incident is fixed. Test the original scenario against the new code.
+the original incident is fixed. Do not require replaying an expensive or
+unavailable original scenario to update the workflow.
+
+Second-part checkpoint: the user approved the shared-archive and conditional
+retirement plan on 2026-09-26. A user's `%LOCALAPPDATA%/ITL/workflow-fixes` stores
+reusable fix records for that user's projects; it has no runtime, permission or
+cross-project recovery authority. The existing local-patch helper owns this
+optional file cache, atomic writes and bounded cleanup. No service, global lock,
+project inventory, elevation, new client surface or always-on archive scan is
+introduced. Active receipts and rollback bytes remain worktree-local. Archive
+failures warn and retain local evidence without blocking project work.
+
+Refresh selects its exact incoming master commit before deciding retirement.
+Only a proven workflow-package change retires a patch; configuration-only and
+repeated same-version refresh retain it. Legacy receipts recover provenance from
+their saved commit where possible; uncertainty preserves the patch. A repeated
+same-version package update with an active patch skips copying instead of
+overwriting that patch. The existing merge/copy transaction still owns recovery.
+
+Archive records are candidates for agent review, never executable instructions
+or transferable authorization. Store exact diffs and a report, deduplicate exact
+records, and expire unused entries after 90 days with caps of 100 entries and
+100 MiB. Access does not count as use. Cleanup only removes cache copies; active
+patches, pending rollback and user handoffs are protected. One project's upgrade
+does not prove a fix obsolete for other versions. Acceptance covers config-only
+refresh, actual replacement, reapplication in another project, concurrent writes
+and unavailable/expired cache. Rollback can stop consulting the cache; local
+receipt schema 1 remains readable and no installed-wide migration is needed.
 
 Refresh starts in the clean main-worktree runtime and later continues in the
 branch runtime. A patch of the wrong copy is not a repair; any required change
