@@ -75,10 +75,19 @@
             New-Item -ItemType Directory -Force -Path $root | Out-Null
             $script:ProjectRoot = $root
             $script:RunStatusPath = Join-Path $root 'status.json'
+            $script:RunLogPath = ''
             $script:Action = 'update-workflow'
             $script:RunStartedAt = Get-Date
             $script:RunStage = 'workflow-update.commit'
             $script:RunStageDetail = 'Verifying the managed commit'
+            # The full helper entrypoint normally initializes these status fields.
+            $statusFields = [regex]::Matches((Get-Command Write-RunStatus).ScriptBlock.ToString(), '\$script:([A-Za-z][A-Za-z0-9_]*)') |
+                ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+            foreach ($field in $statusFields) {
+                if (-not (Get-Variable -Name $field -Scope Script -ErrorAction SilentlyContinue)) {
+                    Set-Variable -Name $field -Scope Script -Value $null
+                }
+            }
             $script:LifecycleOperationIsContinuation = $true
             $script:LifecycleOperationOwnerPid = $PID + 100000
             $script:LifecycleOperationRecord = [ordered]@{
