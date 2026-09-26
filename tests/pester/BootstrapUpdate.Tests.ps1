@@ -10,6 +10,13 @@
         $McpHostPath = $context.McpHostPath
         $McpHostDumpPath = $context.McpHostDumpPath
         $HelperText = $context.HelperText
+        $SourcePlanningPaths = @(
+            '.agents/skills/grill-me', '.agents/skills/grill-with-docs',
+            '.agents/skills/grilling', '.agents/skills/domain-modeling',
+            '.agents/skills/openspec-explore', '.agents/skills/openspec-propose',
+            '.agents/skills/openspec-apply-change', '.agents/skills/openspec-archive-change',
+            'openspec', 'docs/source-planning.md', 'docs/source-planning-notices.md'
+        )
         $LauncherText = $context.LauncherText
         $McpHostText = $context.McpHostText
         $ResumeFakeHelperText = @'
@@ -1359,6 +1366,10 @@ local after
                 (Test-Path -LiteralPath (Join-Path $tempRoot "docs\itl-workflow\$name") -PathType Leaf) | Should -BeTrue
             }
             (Test-Path -LiteralPath (Join-Path $tempRoot "docs\package-architecture.md")) | Should -BeFalse
+            foreach ($sourceOnlyPath in $SourcePlanningPaths) {
+                (Test-Path -LiteralPath (Join-Path $RepoRoot $sourceOnlyPath)) | Should -BeTrue
+                (Test-Path -LiteralPath (Join-Path $tempRoot $sourceOnlyPath)) | Should -BeFalse
+            }
             (Test-Path -LiteralPath (Join-Path $tempRoot "AGENTS.md") -PathType Leaf) | Should -Be $false
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\AGENTS.append.md")) | Should -Match "USER-RULES.md"
             (Get-Content -Encoding UTF8 -Raw (Join-Path $tempRoot "templates\USER-RULES.append.md")) | Should -Match "1C Project Lifecycle"
@@ -1749,6 +1760,7 @@ exit 0
             $result = & {
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 $script:copyCalls = 0
+                $script:copyPaths = @()
                 $script:postCalls = 0
                 $script:reexecArgs = @()
                 function Assert-WorkflowPackageUpdateContext {}
@@ -1756,8 +1768,8 @@ exit 0
                 function Resolve-WorkflowPackageSource { [pscustomobject]@{ root = "C:\source"; repo = "repo"; ref = "ref"; commit = "commit"; source = "path" } }
                 function Assert-WorkflowSourceOutsideProject {}
                 function Assert-WorkflowSourceAiRulesInstallable {}
-                function Copy-WorkflowManagedDirectory { $script:copyCalls++ }
-                function Copy-WorkflowManagedFile { $script:copyCalls++ }
+                function Copy-WorkflowManagedDirectory { param($SourceRoot, $RelativePath); $script:copyCalls++; $script:copyPaths += $RelativePath }
+                function Copy-WorkflowManagedFile { param($SourceRoot, $RelativePath); $script:copyCalls++; $script:copyPaths += $RelativePath }
                 function Update-WorkflowPackageLockEntry {}
                 function Invoke-Agent1cFreshProcess { param([string[]]$AdditionalArguments); $script:reexecArgs = $AdditionalArguments; throw "reexec-stop" }
 
@@ -1793,6 +1805,7 @@ exit 0
 
                 [pscustomobject]@{
                     preError = $preError
+                    copyPaths = @($script:copyPaths)
                     preCopyCalls = $preCopyCalls
                     finalCopyCalls = $script:copyCalls
                     reexecArgs = @($script:reexecArgs)
@@ -1808,6 +1821,12 @@ exit 0
                 }
             }
             $result.preError | Should -Be "reexec-stop"
+            foreach ($sourceOnlyPath in $SourcePlanningPaths) {
+                foreach ($managedPath in $result.copyPaths) {
+                    $normalized = ([string]$managedPath).Replace('\', '/').TrimEnd('/')
+                    ($sourceOnlyPath -eq $normalized -or $sourceOnlyPath.StartsWith($normalized + '/', [StringComparison]::OrdinalIgnoreCase)) | Should -BeFalse
+                }
+            }
             $result.preCopyCalls | Should -BeGreaterThan 5
             $result.finalCopyCalls | Should -Be $result.preCopyCalls
             $result.reexecArgs | Should -Be @("-LifecyclePhase", "post-copy")
@@ -1822,6 +1841,25 @@ exit 0
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    It "keeps source planning outside the installed update allowlist while retaining fork ownership" {
+        $projectRoot = Join-Path $TestDrive 'planning inventory путь'
+        New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null
+        & git -C $projectRoot init --quiet
+        $LASTEXITCODE | Should -Be 0
+        $result = & {
+            . $HelperPath -ProjectRoot $projectRoot -Action help *> $null
+            $workflowPaths = @(Get-WorkflowUpdateManagedPathSpecs)
+            $forkPaths = @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore @('.agents/skills/grill-me/SKILL.md'))
+            foreach ($sourceOnlyPath in $SourcePlanningPaths) {
+                $candidate = if ($sourceOnlyPath.EndsWith('.md')) { $sourceOnlyPath } else { "$sourceOnlyPath/SKILL.md" }
+                [pscustomobject]@{ path = $candidate; allowed = (Test-WorkflowUpdatePathAllowed -Path $candidate -ManagedPathSpecs $workflowPaths) }
+            }
+            [pscustomobject]@{ path = 'fork-owned'; allowed = (Test-WorkflowUpdatePathAllowed -Path '.agents/skills/grill-me/SKILL.md' -ManagedPathSpecs $forkPaths) }
+        }
+        @($result | Where-Object { $_.path -ne 'fork-owned' -and $_.allowed }).Count | Should -Be 0
+        ($result | Where-Object path -EQ 'fork-owned').allowed | Should -BeTrue
     }
 
     It "replaces a managed workflow directory without deleting it first and restores the pre-copy tree after a later copy failure" {

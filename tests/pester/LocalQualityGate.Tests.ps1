@@ -982,9 +982,15 @@ Describe "Pester worker execution guard isolation" {
         @($catalog.continuationScopes.release) | Should -Contain "scripts/test-release-readiness.ps1"
     }
 
-    It "keeps repository-only guidance out of installed packages and preserves the managed skills" {
+    It "keeps repository-only guidance alongside the managed skills without Git hooks" {
         Test-Path -LiteralPath (Join-Path $RepoRoot ".githooks") | Should -BeFalse
-        $expected = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-performance", "itl-remote-runner", "itl-remote-agent", "product-docs") | Sort-Object
+        $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-performance", "itl-remote-runner", "itl-remote-agent", "product-docs")
+        $sourcePlanningSkillIds = @(
+            'grill-me', 'grill-with-docs', 'grilling', 'domain-modeling',
+            'openspec-explore', 'openspec-propose', 'openspec-apply-change', 'openspec-archive-change'
+        )
+        # BootstrapUpdate covers actual installed output and update copy boundaries.
+        $expected = @($installedSkillIds + $sourcePlanningSkillIds | Sort-Object)
         $actual = @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot ".agents\skills") -Directory | Select-Object -ExpandProperty Name | Sort-Object)
         $actual | Should -Be $expected
         $docs = Get-Content -LiteralPath (Join-Path $RepoRoot "docs\local-quality-gate.md") -Raw -Encoding UTF8
