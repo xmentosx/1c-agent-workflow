@@ -458,38 +458,6 @@ function Get-RunnerHeartbeatAgeSeconds {
     }
 }
 
-function Get-RunnerHeartbeatProcessId {
-    param(
-        [object]$Status,
-        [int]$HelperProcessId,
-        [string]$LifecyclePath,
-        [string]$Action,
-        [string]$ProjectRoot,
-        [DateTime]$NotBeforeUtc
-    )
-
-    $statusPid = [int](Get-ObjectValue -Object $Status -Name "pid" -Default 0)
-    if ($statusPid -eq $HelperProcessId) { return $HelperProcessId }
-    if ($statusPid -le 0 -or
-        [string](Get-ObjectValue -Object $Status -Name "action" -Default "") -cne $Action -or
-        -not (Test-SamePath -First ([string](Get-ObjectValue -Object $Status -Name "projectRoot" -Default "")) -Second $ProjectRoot)) {
-        return 0
-    }
-
-    $record = Get-RunnerOwnedLifecycleRecord -Path $LifecyclePath -HelperProcessId $HelperProcessId -Action $Action -ProjectRoot $ProjectRoot
-    if ($null -eq $record -or [int](Get-ObjectValue -Object $record -Name "continuationPid" -Default 0) -ne $statusPid -or
-        [string](Get-ObjectValue -Object $record -Name "operationId" -Default "") -cnotmatch '^[a-f0-9]{32}$') {
-        return 0
-    }
-    [DateTimeOffset]$startedAt = [DateTimeOffset]::MinValue
-    $startedAtText = [string](Get-ObjectValue -Object $record -Name "startedAt" -Default "")
-    if (-not $startedAtText -or -not [DateTimeOffset]::TryParse($startedAtText, [ref]$startedAt) -or
-        $startedAt.UtcDateTime -lt $NotBeforeUtc.AddSeconds(-5)) {
-        return 0
-    }
-    return $statusPid
-}
-
 function Get-RunStatusFreshness {
     param(
         [object]$Status,
@@ -968,7 +936,6 @@ try {
     $lastProgressStage = ""
     $lastProgressLiveness = ""
     $lastProgressAt = [DateTime]::MinValue
-    $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
     $reservedPhaseBudgets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $terminalExitDeadlineUtc = [DateTime]::MinValue
     try {
@@ -994,9 +961,8 @@ try {
             $freshness = Get-RunStatusFreshness -Status $currentStatus -Path $statusPath -NotBeforeUtc ($startedAt.ToUniversalTime().AddSeconds(-5))
             $statusAgeSeconds = [int][Math]::Floor([double]$freshness.ageSeconds)
             $heartbeatAgeSeconds = [double]::PositiveInfinity
-            $heartbeatProcessId = Get-RunnerHeartbeatProcessId -Status $currentStatus -HelperProcessId $helperProcess.Id -LifecyclePath $lifecyclePath -Action $action -ProjectRoot $projectRoot -NotBeforeUtc $startedAt.ToUniversalTime()
-            if ($heartbeatProcessId -gt 0) {
-                $heartbeatAgeSeconds = Get-RunnerHeartbeatAgeSeconds -StatusPath $statusPath -HelperProcessId $heartbeatProcessId -NotBeforeUtc $startedAt.ToUniversalTime()
+            if ([int](Get-ObjectValue -Object $currentStatus -Name "pid" -Default 0) -eq $helperProcess.Id) {
+                $heartbeatAgeSeconds = Get-RunnerHeartbeatAgeSeconds -StatusPath $statusPath -HelperProcessId $helperProcess.Id -NotBeforeUtc $startedAt.ToUniversalTime()
             }
             $livenessAgeSeconds = [Math]::Min([double]$statusAgeSeconds, $heartbeatAgeSeconds)
             $publishedStallRemainingSeconds = [int](Get-ObjectValue -Object $currentStatus -Name "stallTimeoutRemainingSeconds" -Default 0)
@@ -1078,6 +1044,7 @@ if ($runnerFailureMessage -and $terminalStatus -in @("succeeded", "failed", "can
     Set-ObjectValue -Object $status -Name "status" -Value "running"
 }
 if ($terminalStatus -notin @("succeeded", "failed", "cancelled") -and -not $windowed -and -not $runnerFailureMessage) {
+    $lifecyclePath = Join-Path $projectRoot ".agent-1c\locks\lifecycle-operation.json"
     $terminalLifecycle = Get-RunnerTerminalLifecycleRecord -Path $lifecyclePath -HelperProcessId $helperProcess.Id -Action $action -ProjectRoot $projectRoot -NotBeforeUtc $startedAt.ToUniversalTime()
     if ($null -ne $terminalLifecycle) {
         $status = Restore-RunnerStatusFromTerminalLifecycle -Status $status -LifecycleRecord $terminalLifecycle -StatusPath $statusPath -LogPath $logPath -Action $action -ProjectRoot $projectRoot -StartedAt $startedAt

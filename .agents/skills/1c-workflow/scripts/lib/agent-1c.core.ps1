@@ -340,6 +340,20 @@ function Start-RunPhaseTiming {
     $script:RunTimingCounters = [ordered]@{}
 }
 
+function Get-RunStatusMonitorPid {
+    $continuation = Get-Variable -Name LifecycleOperationIsContinuation -Scope Script -ErrorAction SilentlyContinue
+    $owner = Get-Variable -Name LifecycleOperationOwnerPid -Scope Script -ErrorAction SilentlyContinue
+    $record = Get-Variable -Name LifecycleOperationRecord -Scope Script -ErrorAction SilentlyContinue
+    if ($null -ne $continuation -and [bool]$continuation.Value -and
+        $null -ne $owner -and [int]$owner.Value -gt 0 -and
+        $null -ne $record -and $record.Value -is [System.Collections.IDictionary] -and
+        [int]$record.Value['pid'] -eq [int]$owner.Value -and
+        [int]$record.Value['continuationPid'] -eq $PID) {
+        return [int]$owner.Value
+    }
+    return $PID
+}
+
 function Write-RunStatus {
     param(
         [ValidateSet("running", "succeeded", "failed", "cancelled")]
@@ -374,7 +388,7 @@ function Write-RunStatus {
         status = $Status
         action = $Action
         projectRoot = $script:ProjectRoot
-        pid = $PID
+        pid = Get-RunStatusMonitorPid
         launcherPid = $script:LauncherPid
         startedAt = $script:RunStartedAt.ToString("o")
         updatedAt = $now.ToString("o")
@@ -448,7 +462,7 @@ function Invoke-WithRunStatusHeartbeat {
 
     $stopPath = Join-Path ([IO.Path]::GetTempPath()) ("itl-run-status-hb-" + [guid]::NewGuid().ToString("N"))
     $heartbeatPath = (Resolve-RunFilePath -Path $RunStatusPath) + ".heartbeat"
-    [IO.File]::WriteAllText($heartbeatPath, [string]$PID, [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText($heartbeatPath, [string](Get-RunStatusMonitorPid), [Text.Encoding]::ASCII)
     $job = $null
     try {
         $job = Start-Job -ScriptBlock {
