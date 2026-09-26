@@ -21,6 +21,34 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "parses the beta cutover coordinator" -Tag BetaCutover {
+        $tokens = $null
+        $errors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
+        @($errors).Count | Should -Be 0
+    }
+
+    It "keeps the logical MCP identity while beta uses a different container and rejects breaking tool changes" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-contract-кириллица " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $old = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code" }
+                $beta = [pscustomobject]@{ scope = "project"; configId = "pm5corp"; id = "code"; containerName = "itl-pm5corp-code-beta" }
+                (Get-HostServerStateKey -ServerState $old) | Should -Be (Get-HostServerStateKey -ServerState $beta)
+                $oldTools = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" } } } })
+                $compatible = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible } | Should -Not -Throw
+                $breaking = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query", "limit"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $breaking } | Should -Throw
+                { Assert-BetaPathUnderStateRoot -Config ([pscustomobject]@{ stateRoot = (Join-Path $tempRoot "state") }) -Path (Join-Path $tempRoot "other") } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "parses the standalone MCP host config dump helper" {
         $tokens = $null
         $errors = $null
