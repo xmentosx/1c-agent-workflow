@@ -221,6 +221,15 @@ Capability checks use only the minimum prerequisites needed to perform the opera
 
 ### Local workflow incident contract
 
+Refresh reporting keeps its optional load/Enterprise projection in the existing
+worktree-local verification-selection runtime. Classification uses that projection
+only to render the final report; it grants no verification, lifecycle or recovery
+authority. Missing report context warns and preserves the successful operation.
+MCP observation and continuation remain per server and within existing client and
+runtime owners; no host-repair authority or persistent availability coordinator is
+added. See `.agents/skills/1c-workflow/references/mcp.md` for the on-demand recovery
+contract and client reload limitations.
+
 Architecture checkpoint: the user authorized this continuation design and its
 simplification on 2026-09-26. The existing update/refresh owner retains all
 lifecycle, Git, database and rollback authority. One worktree-local patch receipt

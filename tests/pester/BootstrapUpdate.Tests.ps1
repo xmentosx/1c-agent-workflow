@@ -2670,7 +2670,7 @@ exit 2
         $result.report | Should -Match "Исходная информационная база: C:\\fixture\\source"
         $result.report | Should -Match "Режим зависимостей: locked"
         $result.report | Should -Match "Web-публикация веток: ручная"
-        $result.report | Should -Match "Активные vibecoding1c: docs/remote"
+        $result.report | Should -Match "Настроены в клиенте vibecoding1c: docs/remote"
         $result.report | Should -Match "Пропущенные vibecoding1c: <нет>"
         $result.report | Should -Match "Kilo Browser Automation: состояние не определено"
         $result.report | Should -Match "Настройка vibecoding1c MCP отложена"

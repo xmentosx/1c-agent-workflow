@@ -5605,18 +5605,19 @@ function Write-WorkflowUpdateFollowUp {
 function Set-ItlOnDemandMcpSemanticReloadRequiredAction {
     param([string]$Operation)
 
-    $changes = @(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade")
+    $changes = @(Get-ItlClientMcpSemanticChanges)
     if ($changes.Count -eq 0) { return $false }
 
     $client = [string](Get-ItlActiveClient)
     if ($client -eq "kilocode") {
-        $script:RunRequiredAction = "До следующего вызова ROCTUP или Vanessa UI обязательно выполните /reload, чтобы Kilo перечитал обновлённую команду MCP."
+        $instruction = "До следующего вызова изменённых MCP выполните /reload, чтобы Kilo перечитал их настройки; остальные инструменты и независимая работа доступны."
     } else {
         $adapter = Get-ItlClientAdapter -Client $client
         $fallbackInstruction = [string](Get-StateValue -State $adapter -Name "reloadUserReport" -Default "Перезапустите активный AI-клиент.")
         $instruction = [string](Get-StateValue -State $adapter -Name "mcpReloadUserReport" -Default $fallbackInstruction)
-        $script:RunRequiredAction = "$instruction Причина: операция '$Operation' семантически изменила команду запуска ITL on-demand MCP."
     }
+    $action = "$instruction Причина: операция '$Operation' изменила настройки управляемых MCP ($(@($changes.owner | Sort-Object -Unique) -join ', '))."
+    if ($script:RunRequiredAction) { $script:RunRequiredAction += "; $action" } else { $script:RunRequiredAction = $action }
     return $true
 }
 
@@ -6418,7 +6419,7 @@ function Add-Vibecoding1cRunUserReportLines {
 
     try {
         $summary = Get-Vibecoding1cMcpStatusSummary
-        Add-RunUserReportLine -Lines $Lines -Label "Активные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
+        Add-RunUserReportLine -Lines $Lines -Label "Настроены в клиенте vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.active) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Пропущенные vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.skipped) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "Устаревшие vibecoding1c" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.staleServers) -Default "<нет>"
         Add-RunUserReportLine -Lines $Lines -Label "vibecoding1c без configId" -Value (Format-Vibecoding1cRunUserReportList -Items $summary.missingConfigId) -Default "<нет>"
@@ -6440,6 +6441,10 @@ function Add-ItlClientMcpEnablementRunUserReportLines {
         $observation = Get-ItlClientMcpEnablementObservation
     } catch {
         return
+    }
+    Add-RunUserReportLine -Lines $McpLines -Label "MCP: подключение и инструменты текущей задачи" -Value "не проверялись; конфигурация не подтверждает доступность"
+    if (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()).Count -gt 0) {
+        Add-RunUserReportLine -Lines $McpLines -Label "MCP отключены в конфигурации" -Value (@(Get-StateValue -State $observation -Name 'disabledServerIds' -Default @()) -join ', ')
     }
     if (-not $observation.applicable) { return }
 
@@ -6631,14 +6636,14 @@ function Write-DevBranchRunUserReport {
     $extensionStatus = Get-DevBranchExtensionInitializationStatus -State $State
     if ($isRefresh) {
         $client = [string](Get-RunUserReportObservedValue -Read { Get-ItlActiveClient } -Default "")
-        if (@(Get-ItlClientMcpSemanticChanges -Owner "ondemand-facade").Count -eq 0) {
+        if (@(Get-ItlClientMcpSemanticChanges).Count -eq 0) {
             if ($client -eq "kilocode") {
                 $advice.Add("- Если Kilo продолжает показывать старые команды или маршрутизацию, выполните /reload; при нормальном поведении дополнительный шаг не требуется.")
             } else {
                 $reloadInstruction = [string](Get-RunUserReportObservedValue -Read {
                     Get-StateValue -State (Get-ItlClientAdapter -Client $client) -Name "reloadUserReport" -Default "Перезапустите активный клиент."
                 } -Default "Перезапустите активный клиент.")
-                $advice.Add("- Заставьте текущий клиент перечитать обновлённый проект: $reloadInstruction")
+                $advice.Add("- Если клиент использует устаревшие инструкции проекта, перечитайте их штатным механизмом клиента. $reloadInstruction")
             }
         }
         $advice.Add("- Перед продолжением разработки выполните /itl-check.")
@@ -6670,6 +6675,68 @@ function Write-DevBranchRunUserReport {
         foreach ($item in $advice) { $lines.Add($item) }
     }
     Write-AndSetRunUserReport -Lines $lines
+}
+
+# Report evidence is owned by refresh and stored in the existing selection runtime.
+# It never participates in classification readiness or executable verification.
+function Save-RefreshClassificationReportContext {
+    param([object]$State, [AllowNull()][object]$LoadResult)
+    if ((Get-StateValue -State $State -Name "verificationClassificationStatus" -Default "") -ne "required") { return }
+    try {
+        $projection = [ordered]@{}
+        foreach ($name in @('devBranchKind','devBranch','mainWorktreePath','worktreePath','devBranchInfoBasePath',
+            'lastRefreshAt','lastRefreshMode','lastRefreshMasterCommit','lastRefreshRepairPaths','lastConfigBaseUpdatedCommit',
+            'extensionInitializationStatus','roctupMcpStatus','vanessaMcpStatus','verificationClassificationInventoryPath')) {
+            $projection[$name] = Get-StateValue -State $State -Name $name -Default ''
+        }
+        $projection['publicationError'] = if (Get-StateValue -State $State -Name 'publicationError' -Default '') { 'present' } else { '' }
+        $load = [ordered]@{}
+        foreach ($name in @('currentCommit','loaded','loadModeUsed','enterpriseInvoked')) {
+            $load[$name] = Get-StateValue -State $LoadResult -Name $name -Default $null
+        }
+        $remainingAction = [string]$script:RunRequiredAction
+        if ($remainingAction -match '^classify-tests-after-refresh:') {
+            $parts = $remainingAction -split '; then also follow: ', 2
+            $remainingAction = if ($parts.Count -eq 2) { $parts[1] } else { '' }
+        }
+        $context = [ordered]@{ schemaVersion = 1; projectRoot = $script:ProjectRoot; state = $projection; load = $load
+            sourceStatusPath = $script:ResolvedRunStatusPath; remainingAction = $remainingAction }
+        Write-Vibecoding1cMcpJsonFile -Path (Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json') -Value $context
+    } catch {
+        Write-Warning "Refresh succeeded; classification report context could not be saved: $($_.Exception.Message)"
+    }
+}
+
+function Write-VerificationClassificationRunUserReport {
+    param([object]$State, [object]$Inventory)
+    $oldAction = [string]$script:RunRequiredAction
+    try {
+        $path = Join-Path (Get-VerificationSelectionStateRoot) 'refresh-report-context.json'
+        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw 'No saved refresh report context.' }
+        $context = Read-Utf8Text -Path $path | ConvertFrom-Json
+        if ($context.schemaVersion -ne 1 -or $context.projectRoot -ne $script:ProjectRoot) { throw 'Unrelated report context.' }
+        foreach ($name in @('devBranch','worktreePath','devBranchInfoBasePath','lastRefreshAt','lastRefreshMasterCommit')) {
+            $saved = [string](Get-StateValue -State $context.state -Name $name -Default '')
+            if (-not $saved -or $saved -cne [string](Get-StateValue -State $State -Name $name -Default '')) { throw "Stale report context: $name." }
+        }
+        if ($context.sourceStatusPath) {
+            $source = Read-Utf8Text -Path $context.sourceStatusPath | ConvertFrom-Json
+            if ($source.status -ne 'succeeded' -or $source.projectRoot -ne $script:ProjectRoot -or
+                $source.action -notin @('refresh-dev-branch','refresh-dev-branch-lite')) { throw 'Refresh success is not confirmed.' }
+        }
+        $snapshot = ConvertTo-Vibecoding1cMcpHashtable -Object $context.state
+        $snapshot['verificationClassificationStatus'] = 'ready'
+        $script:RunRequiredAction = [string]$context.remainingAction
+        $script:RunRefreshMasterCommit = [string]$snapshot.lastRefreshMasterCommit
+        Write-DevBranchRunUserReport -State ([pscustomobject]$snapshot) -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $context.load
+        Set-RunUserReport -Report ($script:RunUserReport + "`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount). Загрузка базы выше относится к исходному refresh; повторно не выполнялась. Классификация не является проверкой BSL или /itl-check.")
+        return
+    } catch {
+        # Old installations and unavailable evidence do not invalidate classification.
+        Write-Warning "Classification succeeded; combined refresh report unavailable: $($_.Exception.Message)"
+        $script:RunRequiredAction = $oldAction
+        Set-RunUserReport -Report "## Классификация тестов`n`nКлассификация завершена: Vanessa=$($Inventory.featureCount); YAxUnit=$($Inventory.yaxunit.moduleCount).`n`nИсходный отчёт refresh недоступен или относится к другому обновлению. Результаты загрузки базы не переоценивались; сохраняйте исходный userReport. Классификация не является проверкой BSL или /itl-check."
+    }
 }
 
 function Clear-DevBranchContext {
@@ -13991,6 +14058,7 @@ function Invoke-RefreshDevBranchCore {
             Write-Host "Extension files were not loaded during refresh. Run update-dev-branch-base when you need to update the extension in the branch infobase."
         }
         Write-DevBranchRunUserReport -State $updatedState -AdvisoryRoot $script:ProjectRoot -Operation refreshed -LoadResult $loadResult
+        Save-RefreshClassificationReportContext -State $updatedState -LoadResult $loadResult
         Set-RunStage -Stage "$OperationName.complete" -Detail "Development branch refresh completed successfully."
     } catch {
         Restore-RefreshTrackedKiloConfigSnapshot -Snapshot $trackedKiloSnapshot

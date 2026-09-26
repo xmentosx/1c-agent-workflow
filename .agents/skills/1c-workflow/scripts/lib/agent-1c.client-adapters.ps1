@@ -18,7 +18,7 @@
             reload = "Start a new Codex task so project rules and skills are reread."
             reloadUserReport = "Откройте новую задачу Codex, чтобы заново прочитать правила и skills проекта."
             mcpReload = "Restart the Codex app, then start a new task so project MCP configuration is loaded."
-            mcpReloadUserReport = "Полностью перезапустите приложение Codex, затем откройте новую задачу, чтобы Codex перечитал проектный .codex/config.toml и подключил MCP-серверы."
+            mcpReloadUserReport = "Перечитайте MCP-подключения Codex из .codex/config.toml штатным механизмом клиента в текущей задаче; при отсутствии такой возможности сообщите ограничение клиента и продолжайте независимую работу. См. .agents/skills/1c-workflow/references/mcp.md."
         }
         kilocode = [ordered]@{
             id = "kilocode"
@@ -473,37 +473,77 @@ function ConvertTo-ItlClientMcpKey {
     return $Name
 }
 
-function Get-ItlClientMcpEndpointKeys {
-    param([string]$Client = "")
+function ConvertFrom-ItlMcpTomlValue {
+    param([string]$Text)
+    # Read the scalar/array syntax emitted by ITL. Unknown TOML stays opaque;
+    # observation must never reject or rewrite an otherwise valid client file.
+    $value = [regex]::Replace($Text, '(?m)("(?:\\.|[^"\\])*"|''[^'']*'')|\s*#.*$', '$1').Trim()
+    if ($value -match "^'([^']*)'$") { return $matches[1] }
+    if ($value.StartsWith('[') -and $value.EndsWith(']')) {
+        $items = @([regex]::Matches($value.Substring(1, $value.Length - 2), '"(?:\\.|[^"\\])*"|''[^'']*''|[^,\s]+') | ForEach-Object {
+            ConvertFrom-ItlMcpTomlValue -Text $_.Value
+        })
+        return ,$items
+    }
+    try { return ,($value | ConvertFrom-Json -ErrorAction Stop) } catch { return $value }
+}
 
+function Read-ItlClientMcpEntries {
+    param([string]$Client = "")
     if (-not $Client) { $Client = Get-ItlActiveClient }
     $adapter = Get-ItlClientAdapter -Client $Client
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction SilentlyContinue)) {
-        return @()
-    }
-
-    if ($adapter.mcpFormat -eq "toml") {
-        $keys = @()
-        $pattern = '(?m)^\[mcp_servers\.(?:"(?<quoted>[^"]+)"|(?<plain>[^\]]+))\]\s*$'
-        foreach ($match in [regex]::Matches((Read-Utf8Text -Path $path), $pattern)) {
-            $name = if ($match.Groups["quoted"].Success) { $match.Groups["quoted"].Value } else { $match.Groups["plain"].Value }
-            if ($name) { $keys += $name }
+    $entries = [ordered]@{}
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $entries }
+    $text = Read-Utf8Text -Path $path
+    if ($adapter.mcpFormat -ne "toml") {
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object ($text | ConvertFrom-Json)
+        if ($config.Contains([string]$adapter.mcpContainer)) {
+            $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[[string]$adapter.mcpContainer]
+            foreach ($name in @($container.Keys)) { $entries[$name] = ConvertTo-Vibecoding1cMcpHashtable -Object $container[$name] }
+            return $entries
         }
-        return @($keys | Select-Object -Unique)
+        return $entries
     }
+    $section = $null
+    # A server name is exactly one TOML key; env and tool subtables are not servers.
+    $keyPattern = '(?:"(?:\\.|[^"\\])*"|''[^'']*''|[A-Za-z0-9_-]+)'
+    $pendingKey = ''; $pendingValue = ''
+    foreach ($line in ($text -split '\r?\n')) {
+        if ($pendingKey) {
+            $pendingValue += "`n$line"
+            if ($line -match '\]\s*(?:#.*)?$') {
+                $section[$pendingKey] = ConvertFrom-ItlMcpTomlValue -Text $pendingValue
+                $pendingKey = ''; $pendingValue = ''
+            }
+            continue
+        }
+        if ($line -match ('^\s*\[mcp_servers\.(?<name>' + $keyPattern + ')(?<sub>(?:\.' + $keyPattern + ')*)\]\s*(?:#.*)?$')) {
+            $name = [string](ConvertFrom-ItlMcpTomlValue -Text $matches.name)
+            $sub = [string]$matches.sub
+            if (-not $entries.Contains($name)) { $entries[$name] = [ordered]@{} }
+            $section = $entries[$name]
+            foreach ($part in [regex]::Matches($sub, $keyPattern)) {
+                $key = [string](ConvertFrom-ItlMcpTomlValue -Text $part.Value)
+                if (-not $section.Contains($key)) { $section[$key] = [ordered]@{} }
+                $section = $section[$key]
+            }
+        } elseif ($line -match '^\s*\[') {
+            $section = $null
+        } elseif ($null -ne $section -and $line -match ('^\s*(?<key>' + $keyPattern + ')\s*=\s*(?<value>.*)$')) {
+            $key = [string](ConvertFrom-ItlMcpTomlValue -Text $matches.key)
+            $value = [string]$matches.value
+            if ($value -match '^\s*\[' -and $value -notmatch '\]\s*(?:#.*)?$') {
+                $pendingKey = $key; $pendingValue = $value
+            } else { $section[$key] = ConvertFrom-ItlMcpTomlValue -Text $value }
+        }
+    }
+    return $entries
+}
 
-    try {
-        $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $path | ConvertFrom-Json)
-    } catch {
-        throw "Client MCP config is not valid JSON: $path. $($_.Exception.Message)"
-    }
-    $containerName = [string]$adapter.mcpContainer
-    if (-not $config.Contains($containerName)) {
-        return @()
-    }
-    $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName]
-    return @($container.Keys | ForEach-Object { [string]$_ })
+function Get-ItlClientMcpEndpointKeys {
+    param([string]$Client = "")
+    return @((Read-ItlClientMcpEntries -Client $Client).Keys | ForEach-Object { [string]$_ })
 }
 
 function Get-ItlClientMcpEnablementObservation {
@@ -511,7 +551,13 @@ function Get-ItlClientMcpEnablementObservation {
 
     if (-not $Client) { $Client = Get-ItlActiveClient }
     $adapter = Get-ItlClientAdapter -Client $Client
-    $configuredServerIds = @(Get-ItlClientMcpEndpointKeys -Client $Client | Sort-Object -Unique)
+    $entries = Read-ItlClientMcpEntries -Client $Client
+    $configuredServerIds = @($entries.Keys | Sort-Object -Unique)
+    $disabledServerIds = @($configuredServerIds | Where-Object {
+        $entry = $entries[$_]
+        ($entry.Contains('enabled') -and $entry.enabled -is [bool] -and -not $entry.enabled) -or
+        ($entry.Contains('disabled') -and $entry.disabled -is [bool] -and $entry.disabled)
+    })
     $managedServerIds = @()
     $managedState = Read-ItlManagedMcpState
     if ($managedState.Contains("owners")) {
@@ -530,6 +576,9 @@ function Get-ItlClientMcpEnablementObservation {
         client = $Client
         configPath = [string]$adapter.mcpPath
         configuredServerIds = @($configuredServerIds)
+        disabledServerIds = @($disabledServerIds)
+        connectionState = "not-observed"
+        taskToolsState = "not-observable"
         configuredCount = @($configuredServerIds).Count
         managedServerIds = @($managedServerIds)
         expectedManagedCount = @($managedServerIds).Count
@@ -547,6 +596,10 @@ function Write-ItlClientMcpEnablementStatusLines {
     } catch {
         Write-Host "Client MCP enablement observation: unavailable ($($_.Exception.Message))"
         return
+    }
+    Write-Host "MCP connection and current task tools: not checked (configuration only)"
+    if (@($observation.disabledServerIds).Count -gt 0) {
+        Write-Host "MCP disabled in client config: $(@($observation.disabledServerIds) -join ', ')"
     }
     if (-not $observation.applicable) { return }
 
@@ -685,6 +738,12 @@ function Write-ItlClientMcpEndpoints {
     })
 
     if ($adapter.mcpFormat -eq "toml") {
+        $beforeEntries = Read-ItlClientMcpEntries -Client $Client
+        $state = Read-ItlManagedMcpState
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Get-Vibecoding1cMcpObjectValue -Object $state -Name "owners" -Default ([ordered]@{}))
+        $names = @(@($owners["$Client/$Owner"]) + @($normalized | ForEach-Object { $_.name }) + @($PreserveOwnedKeys) | Where-Object { $_ } | Select-Object -Unique)
+        $before = Get-ItlMcpOwnedSemanticSignature -Container $beforeEntries -Names $names
+        $existingText = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-Utf8Text -Path $path } else { "" }
         $lines = [System.Collections.Generic.List[string]]::new()
         foreach ($endpoint in @($normalized | Sort-Object name)) {
             $lines.Add("[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)]")
@@ -695,7 +754,8 @@ function Write-ItlClientMcpEndpoints {
             } else {
                 $lines.Add("url = $(ConvertTo-Vibecoding1cMcpTomlString $endpoint.url)")
             }
-            $lines.Add("enabled = true")
+            $enabled = Get-Vibecoding1cMcpObjectValue -Object $beforeEntries[$endpoint.name] -Name "enabled" -Default $true
+            $lines.Add("enabled = $(([string]$enabled).ToLowerInvariant())")
             $lines.Add("startup_timeout_sec = $($endpoint.startupTimeoutSeconds)")
             $lines.Add("tool_timeout_sec = $($endpoint.toolTimeoutSeconds)")
             $environment = ConvertTo-Vibecoding1cMcpHashtable -Object $endpoint.env
@@ -706,15 +766,43 @@ function Write-ItlClientMcpEndpoints {
                     $lines.Add("$(ConvertTo-Vibecoding1cMcpTomlString ([string]$key)) = $(ConvertTo-Vibecoding1cMcpTomlString ([string]$environment[$key]))")
                 }
             }
+            $nameToken = '(?:' + [regex]::Escape((ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)) + '|' + [regex]::Escape($endpoint.name) + '|''' + [regex]::Escape($endpoint.name) + ''')'
+            $rootMatch = [regex]::Match($existingText, '(?ms)^\s*\[mcp_servers\.' + $nameToken + '\][^\r\n]*\r?\n(?<body>.*?)(?=^\s*\[|^# >>>|^# <<<|\z)')
+            $policyLines = [Collections.Generic.List[string]]::new()
+            $keep = $false
+            foreach ($line in ($rootMatch.Groups['body'].Value -split '\r?\n')) {
+                if ($line -match '^\s*(?<key>"(?:\\.|[^"\\])*"|''[^'']*''|[A-Za-z0-9_-]+)\s*=') {
+                    $keep = (ConvertFrom-ItlMcpTomlValue -Text $matches.key) -notin @('url','command','args','enabled','startup_timeout_sec','tool_timeout_sec')
+                }
+                if ($keep) { $policyLines.Add($line) }
+            }
+            # Insert root policy before the generated env subtable.
+            $rootInsert = $lines.Count
+            for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+                if ($lines[$i] -eq "[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name).env]") { $rootInsert = $i; break }
+                if ($lines[$i] -eq "[mcp_servers.$(ConvertTo-Vibecoding1cMcpTomlString $endpoint.name)]") { break }
+            }
+            $lines.InsertRange($rootInsert, [string[]]@($policyLines))
+            foreach ($subtable in [regex]::Matches($existingText, '(?ms)^\s*\[mcp_servers\.' + $nameToken + '\.(?<sub>[^\]]+)\][^\r\n]*\r?\n.*?(?=^\s*\[|^# >>>|^# <<<|\z)')) {
+                if ((ConvertFrom-ItlMcpTomlValue -Text $subtable.Groups['sub'].Value) -ne 'env') { $lines.Add($subtable.Value.TrimEnd()) }
+            }
             $lines.Add("")
+        }
+        foreach ($name in @($PreserveOwnedKeys | Where-Object { $_ -notin @($normalized | ForEach-Object { $_.name }) })) {
+            $token = '(?:' + [regex]::Escape((ConvertTo-Vibecoding1cMcpTomlString $name)) + '|' + [regex]::Escape($name) + '|''' + [regex]::Escape($name) + ''')'
+            foreach ($section in [regex]::Matches($existingText, '(?ms)^\s*\[mcp_servers\.' + $token + '(?:\.[^\]]+)?\][^\r\n]*\r?\n.*?(?=^\s*\[|^# >>>|^# <<<|\z)')) {
+                $lines.Add($section.Value.TrimEnd())
+            }
         }
         Set-Vibecoding1cMcpManagedTextBlock -Path $path -BlockId $Owner -Body ((@($lines) -join [Environment]::NewLine).TrimEnd())
         $state = Read-ItlManagedMcpState
         if (-not $state.Contains("owners")) { $state["owners"] = [ordered]@{} }
         $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
-        $owners["$Client/$Owner"] = @($normalized | ForEach-Object { [string]$_.name })
+        $owners["$Client/$Owner"] = @(@($normalized | ForEach-Object { [string]$_.name }) + @($PreserveOwnedKeys) | Select-Object -Unique)
         $state["owners"] = $owners
         Write-ItlManagedMcpState -State $state
+        $after = Get-ItlMcpOwnedSemanticSignature -Container (Read-ItlClientMcpEntries -Client $Client) -Names $names
+        if ($before -cne $after) { Register-ItlClientMcpSemanticChange -Client $Client -Owner $Owner -Path $path }
         return $path
     }
 
@@ -725,16 +813,8 @@ function Write-ItlClientMcpEndpoints {
     $containerName = [string]$adapter.mcpContainer
     $container = [ordered]@{}
     if ($config.Contains($containerName)) { $container = ConvertTo-Vibecoding1cMcpHashtable -Object $config[$containerName] }
-    if ($Owner -eq "vibecoding1c") {
-        foreach ($key in @($container.Keys)) {
-            $entry = $container[$key]
-            $managedBy = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "managedBy" -Default "")
-            $family = [string](Get-Vibecoding1cMcpObjectValue -Object $entry -Name "family" -Default "")
-            if ($managedBy -eq "vibecoding1c-mcp" -and $family -eq "vibecoding1c") {
-                $container.Remove($key)
-            }
-        }
-    }
+    $beforeContainer = ConvertTo-Vibecoding1cMcpHashtable -Object $container
+    $legacyNames = @($container.Keys | Where-Object { $Owner -eq "vibecoding1c" -and (Get-Vibecoding1cMcpObjectValue -Object $container[$_] -Name "managedBy" -Default "") -eq "vibecoding1c-mcp" -and (Get-Vibecoding1cMcpObjectValue -Object $container[$_] -Name "family" -Default "") -eq "vibecoding1c" })
     $state = Read-ItlManagedMcpState
     if (-not $state.Contains("owners")) { $state["owners"] = [ordered]@{} }
     $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state["owners"]
@@ -743,9 +823,10 @@ function Write-ItlClientMcpEndpoints {
         @($owners[$stateKey])
         @($normalized | ForEach-Object { [string]$_.name })
         @($PreserveOwnedKeys)
+        @($legacyNames)
     ) | ForEach-Object { [string]$_ } | Where-Object { $_ } | Select-Object -Unique
     $beforeSemanticSignature = Get-ItlMcpOwnedSemanticSignature -Container $container -Names $semanticNames
-    foreach ($oldKey in @($owners[$stateKey])) {
+    foreach ($oldKey in @($owners[$stateKey]) + @($legacyNames)) {
         if ($PreserveOwnedKeys -contains [string]$oldKey) { continue }
         if ($container.Contains([string]$oldKey)) { $container.Remove([string]$oldKey) }
     }
@@ -787,6 +868,16 @@ function Write-ItlClientMcpEndpoints {
         if ($Owner -eq "vibecoding1c") {
             $entry["managedBy"] = "vibecoding1c-mcp"
             $entry["family"] = "vibecoding1c"
+        }
+        if ($beforeContainer.Contains($endpoint.name)) {
+            # Transport is helper-owned; preserve the user's policy/auth fields.
+            $previous = ConvertTo-Vibecoding1cMcpHashtable -Object $beforeContainer[$endpoint.name]
+            foreach ($key in @($previous.Keys)) {
+                if (-not $entry.Contains($key) -and $key -notin @('url','httpUrl','command','args','env','environment','transport','type','timeout','lifecycle','managedBy','family')) { $entry[$key] = $previous[$key] }
+            }
+            foreach ($key in @('enabled','disabled')) {
+                if ($previous.Contains($key)) { $entry[$key] = $previous[$key] }
+            }
         }
         $container[$endpoint.name] = $entry
         $written += $endpoint.name
