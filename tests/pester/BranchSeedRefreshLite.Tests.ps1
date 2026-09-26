@@ -375,6 +375,71 @@
         }
     }
 
+    It "accepts a legacy seed manifest without source generation ID during full refresh" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl legacy seed путь с пробелом " + [guid]::NewGuid().ToString("N"))
+        try {
+            $exportRoot = Join-Path $tempRoot "src\cf"
+            New-Item -ItemType Directory -Force -Path $exportRoot | Out-Null
+            Set-Content -LiteralPath (Join-Path $exportRoot "Configuration.xml") -Value "<Configuration/>" -Encoding UTF8
+            Set-Content -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -Value "<ConfigDumpInfo/>" -Encoding UTF8
+            $result = & {
+                . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+                function Assert-CleanGit {}
+                function Checkout-Master {}
+                function Clear-DevBranchContext {}
+                function Get-SourceUsesRepository { return $false }
+                function Get-SourceRepositoryUpdateMode { return "external" }
+                function Update-BaseFromRepository { return $false }
+                function Get-InfoBaseKind { return "file" }
+                function Get-SourceConfigurationGenerationId { return ("b" * 40) }
+                function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                    status = "ready"; configurationFingerprint = "old"; artifactPath = "seed"; syncId = "legacy"
+                } }
+                function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+                function Get-ExportPath { return "src/cf" }
+                function Assert-ExportPathInsideProject { param($ExportPath) return $exportRoot }
+                function Dump-ConfigToFiles { return [pscustomobject]@{ exportPath = $exportRoot } }
+                function Get-ConfigSourceFingerprint { return [pscustomobject]@{ fingerprint = "current"; fileCount = 2 } }
+                function Ensure-BranchSeed {
+                    param($Policy, $ConfigurationFingerprint, $ConfigurationFileCount, $SourceGenerationId)
+                    $script:seedPolicy = $Policy
+                    $script:seedGenerationId = $SourceGenerationId
+                    return [pscustomobject]@{
+                        artifactPath = "seed"; syncId = "updated"; artifactKind = "file-1cd"
+                        configurationFingerprint = "current"; baselineCount = 0; status = "ready"
+                    }
+                }
+                function Commit-AuthoritativeExportPathIfChanged { return $false }
+                function Sync-KiloItlCommandSurface {}
+                function Get-CurrentCommit { return ("c" * 40) }
+                function Write-AndSetRunUserReport { param($Lines) }
+                Sync-Master -NoDelegate -SeedPolicy EnsureCompatible 6>$null
+                [pscustomobject]@{ policy = $script:seedPolicy; generationId = $script:seedGenerationId }
+            }
+            $result.policy | Should -Be "EnsureCompatible"
+            $result.generationId | Should -Be ("b" * 40)
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "records source generation ID on a compatible legacy seed" {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            function Read-BranchSeedManifest { param([switch]$AllowMissing) return [pscustomobject]@{
+                status = "ready"; configurationFingerprint = "current"; artifactPath = "seed"; syncId = "legacy"
+            } }
+            function Test-BranchSeedArtifactReady { param($Manifest) return $true }
+            function Set-BranchSeedSourceGenerationId {
+                param($Manifest, $SourceGenerationId)
+                return [pscustomobject]@{ syncId = $Manifest.syncId; sourceGenerationId = $SourceGenerationId }
+            }
+            Ensure-BranchSeed -Policy EnsureCompatible -ConfigurationFingerprint "current" -SourceGenerationId ("b" * 40)
+        }
+        $result.syncId | Should -Be "legacy"
+        $result.sourceGenerationId | Should -Be ("b" * 40)
+    }
+
     It "rebuilds a changed seed with an incremental export based on the previous tree" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-seed-incremental-" + [guid]::NewGuid().ToString("N"))
         try {

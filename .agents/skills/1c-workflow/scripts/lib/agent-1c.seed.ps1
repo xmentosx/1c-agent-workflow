@@ -675,7 +675,7 @@ function Ensure-BranchSeed {
         }
         if ((Test-BranchSeedArtifactReady -Manifest $existing) -and [string]$existing.configurationFingerprint -ceq $ConfigurationFingerprint) {
             Write-Host "Compatible branch seed reused: $($existing.artifactPath)"
-            if ($SourceGenerationId -and [string]$existing.sourceGenerationId -cne $SourceGenerationId) {
+            if ($SourceGenerationId -and [string](Get-StateValue -State $existing -Name "sourceGenerationId" -Default "") -cne $SourceGenerationId) {
                 return (Set-BranchSeedSourceGenerationId -Manifest $existing -SourceGenerationId $SourceGenerationId)
             }
             return $existing

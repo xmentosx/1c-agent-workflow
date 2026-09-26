@@ -8306,16 +8306,17 @@ function Sync-Master {
         $dumpResult = Get-ExistingAuthoritativeExportResult
     } elseif ($SeedPolicy -eq "EnsureCompatible" -and $kind -eq "file" -and $sourceGenerationId) {
         $existingSeed = Read-BranchSeedManifest -AllowMissing
+        $existingSourceGenerationId = [string](Get-StateValue -State $existingSeed -Name "sourceGenerationId" -Default "")
         $exportRoot = Assert-ExportPathInsideProject (Get-ExportPath)
         $exportReady = (Test-Path -LiteralPath (Join-Path $exportRoot "Configuration.xml") -PathType Leaf) -and
             (Test-Path -LiteralPath (Join-Path $exportRoot "ConfigDumpInfo.xml") -PathType Leaf)
         if ($exportReady -and (Test-BranchSeedArtifactReady -Manifest $existingSeed) -and
-            [string]$existingSeed.sourceGenerationId -ceq $sourceGenerationId) {
+            $existingSourceGenerationId -ceq $sourceGenerationId) {
             Set-RunStage -Stage "sync-master.seed" -Detail "Reusing the compatible branch seed and configuration export"
             $seed = $existingSeed
         } elseif ($null -ne $existingSeed -and [string]$existingSeed.status -eq "failed") {
             throw "BRANCH_SEED_FAILED: explicit /itl-sync-master is required to recover the seed. Error: $($existingSeed.failureEvidence)"
-        } elseif ($null -eq $existingSeed -or [string]$existingSeed.sourceGenerationId) {
+        } elseif ($null -eq $existingSeed -or $existingSourceGenerationId) {
             Set-RunStage -Stage "sync-master.seed" -Detail "Refreshing the branch seed and configuration export"
             $seed = Ensure-BranchSeed `
                 -Policy "Rebuild" `
