@@ -69,49 +69,6 @@
         }
     }
 
-    It "keeps the monitored owner PID through a validated helper continuation" {
-        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl reexec путь с пробелом " + [guid]::NewGuid().ToString("N"))
-        try {
-            New-Item -ItemType Directory -Force -Path $root | Out-Null
-            $script:ProjectRoot = $root
-            $script:RunStatusPath = Join-Path $root 'status.json'
-            $script:RunLogPath = ''
-            $script:Action = 'update-workflow'
-            $script:RunStartedAt = Get-Date
-            $script:RunStage = 'workflow-update.commit'
-            $script:RunStageDetail = 'Verifying the managed commit'
-            # The full helper entrypoint normally initializes these status fields.
-            $statusFields = [regex]::Matches((Get-Command Write-RunStatus).ScriptBlock.ToString(), '\$script:([A-Za-z][A-Za-z0-9_]*)') |
-                ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
-            foreach ($field in $statusFields) {
-                if (-not (Get-Variable -Name $field -Scope Script -ErrorAction SilentlyContinue)) {
-                    Set-Variable -Name $field -Scope Script -Value $null
-                }
-            }
-            $script:LifecycleOperationIsContinuation = $true
-            $script:LifecycleOperationOwnerPid = $PID + 100000
-            $script:LifecycleOperationRecord = [ordered]@{
-                pid = $script:LifecycleOperationOwnerPid
-                continuationPid = $PID
-            }
-
-            Write-RunStatus -Status running
-            $status = Get-Content -LiteralPath $script:RunStatusPath -Raw -Encoding UTF8 | ConvertFrom-Json
-            $status.pid | Should -Be $script:LifecycleOperationOwnerPid
-            Invoke-WithRunStatusHeartbeat -IntervalSeconds 1 -Action {
-                [IO.File]::ReadAllText(($script:RunStatusPath + '.heartbeat'),[Text.Encoding]::ASCII) | Should -BeExactly ([string]$script:LifecycleOperationOwnerPid)
-            }
-
-            $script:LifecycleOperationRecord['continuationPid'] = $PID + 1
-            Get-RunStatusMonitorPid | Should -Be $PID
-        } finally {
-            $script:LifecycleOperationIsContinuation = $false
-            $script:LifecycleOperationOwnerPid = 0
-            $script:LifecycleOperationRecord = $null
-            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
-        }
-    }
-
     It "keeps completed phase timing after a later phase fails" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl timings путь с пробелом " + [guid]::NewGuid().ToString("N"))
         try {

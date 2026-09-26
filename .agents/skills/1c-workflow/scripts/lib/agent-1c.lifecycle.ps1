@@ -4955,19 +4955,40 @@ function Get-WorkflowUpdateDeletedLegacyPaths {
     return @($deleted)
 }
 
+function New-WorkflowUpdatePathMatcher {
+    param([string[]]$ManagedPathSpecs)
+
+    $exact = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $directory = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($spec in @($ManagedPathSpecs)) {
+        $normalizedSpec = ConvertTo-WorkflowUpdateRepoPath -Path $spec
+        [void]$exact.Add($normalizedSpec)
+        [void]$directory.Add($normalizedSpec.TrimEnd("/"))
+    }
+    return [pscustomobject]@{ Exact = $exact; Directory = $directory }
+}
+
 function Test-WorkflowUpdatePathAllowed {
     param(
         [string]$Path,
-        [string[]]$ManagedPathSpecs
+        [string[]]$ManagedPathSpecs,
+        [object]$Matcher
     )
 
     $normalizedPath = ConvertTo-WorkflowUpdateRepoPath -Path $Path
-    foreach ($spec in @($ManagedPathSpecs)) {
-        $normalizedSpec = ConvertTo-WorkflowUpdateRepoPath -Path $spec
-        if ($normalizedPath.Equals($normalizedSpec, [System.StringComparison]::OrdinalIgnoreCase) -or
-            $normalizedPath.StartsWith(($normalizedSpec.TrimEnd("/") + "/"), [System.StringComparison]::OrdinalIgnoreCase)) {
+    if ($null -eq $Matcher) {
+        $Matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ManagedPathSpecs
+    }
+    if ($Matcher.Exact.Contains($normalizedPath)) {
+        return $true
+    }
+    $slash = $normalizedPath.LastIndexOf("/")
+    while ($slash -ge 0) {
+        if ($Matcher.Directory.Contains($normalizedPath.Substring(0, $slash))) {
             return $true
         }
+        if ($slash -eq 0) { break }
+        $slash = $normalizedPath.LastIndexOf("/", $slash - 1)
     }
     return $false
 }
@@ -4987,8 +5008,9 @@ function Refresh-WorkflowUpdateManagedIndexStat {
         return
     }
 
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $pathSpecs
     $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
-        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -ManagedPathSpecs $pathSpecs })
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
     if ($trackedManagedPaths.Count -gt 0) {
         $pathspecPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "itl-workflow-index-refresh-" -Extension ".paths"
         try {

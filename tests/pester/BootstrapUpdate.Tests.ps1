@@ -1133,6 +1133,27 @@ local after
         }
     }
 
+    It "matches exact managed paths and descendants with a reusable path matcher" {
+        $matches = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $specs = @("docs/Путь с пробелом", "single.txt", "nested/only/", "./CASE/File.ps1")
+            $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $specs
+            foreach ($path in @(
+                "docs/Путь с пробелом", "docs/Путь с пробелом/child.txt",
+                "docs/Путь с пробелом-extra/child.txt", "single.txt", "single.txt/child",
+                "nested/only", "nested/only/child", "case/file.PS1", "other/file.ps1"
+            )) {
+                [pscustomobject]@{
+                    Path = $path
+                    Cached = Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher
+                    Standalone = Test-WorkflowUpdatePathAllowed -Path $path -ManagedPathSpecs $specs
+                }
+            }
+        }
+        @($matches | ForEach-Object { $_.Cached }) | Should -Be @($true, $true, $false, $true, $true, $false, $true, $true, $false)
+        @($matches | Where-Object { $_.Cached -ne $_.Standalone }) | Should -BeNullOrEmpty
+    }
+
     It "refreshes equivalent managed index stat entries without changing the committed tree" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ИТЛ update с пробелом " + [guid]::NewGuid().ToString("N"))
         try {
