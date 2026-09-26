@@ -387,6 +387,8 @@ class PullWorker:
         self.stop_event = stop_event
         self.last_connection = None
         self.last_connection_at = 0.0
+        self.last_bootstrap_connection = None
+        self.last_bootstrap_attempt_at = None
         self.thread = threading.Thread(target=self._run, name="itl-pull-worker", daemon=True)
 
     def start(self):
@@ -395,18 +397,36 @@ class PullWorker:
     def _publish_connection(self, value):
         state = (value["status"], value.get("error", ""))
         now = time.monotonic()
-        if state == self.last_connection and now - self.last_connection_at < 10:
+        if state != self.last_connection or now - self.last_connection_at >= 10:
+            write_json(self.spool / "pull-connection.json", value)
+            self.last_connection = state
+            self.last_connection_at = now
+        self._publish_bootstrap_connection(value, now)
+
+    def _publish_bootstrap_connection(self, value, now):
+        # The transfer-folder snapshot is not a heartbeat. Keep frequent liveness
+        # updates local, and coalesce flapping/error retries for cloud sync.
+        state = (value["status"], value.get("error", ""), value["workerId"])
+        if state == self.last_bootstrap_connection:
             return
-        write_json(self.spool / "pull-connection.json", value)
-        self.last_connection = state
-        self.last_connection_at = now
+        if self.last_bootstrap_attempt_at is not None and now - self.last_bootstrap_attempt_at < 60:
+            return
+        self.last_bootstrap_attempt_at = now
         try:
             profile = read_json(self.spool / "profile.json")
             path = profile.get("bootstrapStatusPath")
             if isinstance(path, str) and Path(path).is_absolute():
-                write_json(path, {"schemaVersion": 1, "phase": value["status"],
-                                  "detail": value.get("error", ""), "workerId": value["workerId"],
-                                  "updatedAt": value["updatedAt"]})
+                try:
+                    previous = read_json(path)
+                except (FileNotFoundError, ValueError):
+                    previous = None
+                # A renewed worker generation must not rewrite the same snapshot.
+                if not (isinstance(previous, dict) and previous.get("schemaVersion") == 1 and
+                        (previous.get("phase"), previous.get("detail", ""), previous.get("workerId")) == state):
+                    write_json(path, {"schemaVersion": 1, "phase": value["status"],
+                                      "detail": value.get("error", ""), "workerId": value["workerId"],
+                                      "updatedAt": value["updatedAt"]})
+                self.last_bootstrap_connection = state
         except (OSError, ValueError, WorkError):
             # Diagnostics on an optional transfer folder never stop pull.
             pass

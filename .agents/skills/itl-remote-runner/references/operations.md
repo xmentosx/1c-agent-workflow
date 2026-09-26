@@ -26,8 +26,13 @@ text. Observe the launcher's `bootstrap-status.json` in the transfer folder
 and then `remote --action probe --host <name>`. The launcher
 copies inputs to `%LOCALAPPDATA%/ITL/remote-work/<name>`, verifies hashes,
 prepares pinned Python without elevation, and starts the persistent worker.
-It reports startup and pull connection errors to the status file. This first
-host connection needs no 1C target; define exact base/profile details after
+It reports startup and pull connection errors to the status file. This
+file is a diagnostic snapshot, not a liveness heartbeat: repeated identical
+connection states do not rewrite it, and connection changes are coalesced to
+at most one write per minute. Frequent connection timestamps remain in the
+private spool; use the pull probe for current liveness. Startup/stop phases
+are still reported by the launcher.
+This first host connection needs no 1C target; define exact base/profile details after
 the worker is reachable. A missing trusted initial transfer channel is a real
 pairing prerequisite; do not publish the token in a broadly writable folder.
 

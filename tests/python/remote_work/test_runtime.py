@@ -671,6 +671,92 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
                                         "workerId": "idle-worker", "error": "PULL_CONNECTION_FAILED"})
             self.assertEqual(3, published.call_count)
 
+    def bootstrap_status_worker(self):
+        path = self.root / "Обмен Яндекс" / "bootstrap-status.json"
+        self.profile["bootstrapStatusPath"] = str(path)
+        write_json(self.spool / "profile.json", self.profile)
+        config = {"transport": "pull", "pull": {"url": "http://127.0.0.1:8765",
+                  "workerId": "sync-worker", "token": "x" * 32}}
+        return pull.PullWorker(config, self.spool, threading.Event()), path
+
+    def test_bootstrap_snapshot_stays_unchanged_while_local_heartbeat_advances(self):
+        for status, error in (("connected", ""), ("disconnected", "PULL_CONNECTION_FAILED: timed out")):
+            with self.subTest(status=status):
+                worker, path = self.bootstrap_status_worker()
+                with patch.object(pull.time, "monotonic") as clock, patch.object(pull, "write_json", wraps=write_json) as writes:
+                    for second in range(0, 601, 2):
+                        clock.return_value = second
+                        worker._publish_connection({"status": status, "error": error,
+                                                    "workerId": "sync-worker", "updatedAt": str(second)})
+                snapshots = [call for call in writes.call_args_list if Path(call.args[0]) == path]
+                self.assertEqual(1, len(snapshots))
+                self.assertEqual("0", read_json(path)["updatedAt"])
+                self.assertEqual(status, read_json(path)["phase"])
+                self.assertEqual("600", read_json(self.spool / "pull-connection.json")["updatedAt"])
+                self.assertEqual([path], list(path.parent.iterdir()))
+
+    def test_bootstrap_flapping_coalesces_latest_state_without_delaying_local_state(self):
+        worker, path = self.bootstrap_status_worker()
+        with patch.object(pull.time, "monotonic") as clock, patch.object(pull, "write_json", wraps=write_json) as writes:
+            for second, status, error in ((0, "connected", ""), (1, "disconnected", "timeout"),
+                                          (20, "connected", ""), (40, "disconnected", "refused"),
+                                          (59, "disconnected", "latest failure"),
+                                          (60, "disconnected", "latest failure"),
+                                          (61, "connected", ""), (120, "connected", "")):
+                clock.return_value = second
+                worker._publish_connection({"status": status, "error": error,
+                                            "workerId": "sync-worker", "updatedAt": str(second)})
+                self.assertEqual(status, read_json(self.spool / "pull-connection.json")["status"])
+                expected = "connected" if second < 60 or second == 120 else "disconnected"
+                self.assertEqual(expected, read_json(path)["phase"])
+            snapshots = [call.args[1] for call in writes.call_args_list if Path(call.args[0]) == path]
+            self.assertEqual(["0", "60", "120"], [value["updatedAt"] for value in snapshots])
+            self.assertEqual("latest failure", snapshots[1]["detail"])
+
+    def test_bootstrap_transient_change_returning_to_saved_state_does_not_rewrite(self):
+        worker, path = self.bootstrap_status_worker()
+        with patch.object(pull.time, "monotonic") as clock, patch.object(pull, "write_json", wraps=write_json) as writes:
+            for second, status in ((0, "connected"), (1, "disconnected"), (2, "connected"), (120, "connected")):
+                clock.return_value = second
+                worker._publish_connection({"status": status, "workerId": "sync-worker", "updatedAt": str(second)})
+            self.assertEqual(1, sum(Path(call.args[0]) == path for call in writes.call_args_list))
+            self.assertEqual("0", read_json(path)["updatedAt"])
+
+    def test_bootstrap_renewed_generation_reuses_existing_snapshot(self):
+        worker, path = self.bootstrap_status_worker()
+        worker._publish_connection({"status": "connected", "workerId": "sync-worker", "updatedAt": "original"})
+        renewed, _ = self.bootstrap_status_worker()
+        with patch.object(pull, "write_json", wraps=write_json) as writes:
+            renewed._publish_connection({"status": "connected", "workerId": "sync-worker", "updatedAt": "renewed"})
+            self.assertFalse(any(Path(call.args[0]) == path for call in writes.call_args_list))
+        self.assertEqual("original", read_json(path)["updatedAt"])
+
+    def test_bootstrap_sync_lock_is_nonfatal_and_retries_are_bounded(self):
+        worker, path = self.bootstrap_status_worker()
+        attempts = []
+
+        def sync_locked(destination, value):
+            if Path(destination) == path:
+                attempts.append(value["updatedAt"])
+                if len(attempts) == 1:
+                    raise PermissionError("sync client holds the snapshot")
+            write_json(destination, value)
+
+        with patch.object(pull.time, "monotonic") as clock, patch.object(pull, "write_json", side_effect=sync_locked):
+            for second in range(61):
+                clock.return_value = second
+                worker._publish_connection({"status": "connected", "workerId": "sync-worker", "updatedAt": str(second)})
+        self.assertEqual(["0", "60"], attempts)
+        self.assertEqual("60", read_json(path)["updatedAt"])
+        self.assertEqual("60", read_json(self.spool / "pull-connection.json")["updatedAt"])
+
+    def test_bootstrap_invalid_snapshot_is_replaced(self):
+        worker, path = self.bootstrap_status_worker()
+        path.parent.mkdir()
+        path.write_text("interrupted JSON", encoding="utf-8")
+        worker._publish_connection({"status": "connected", "workerId": "sync-worker", "updatedAt": "recovered"})
+        self.assertEqual("recovered", read_json(path)["updatedAt"])
+
     def test_paired_pull_worker_executes_host_command_without_remote_input(self):
         self.profile["hostCommands"] = {"enabled": True}
         write_json(self.spool / "profile.json", self.profile)
@@ -1257,7 +1343,7 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
         with zipfile.ZipFile(original) as source, zipfile.ZipFile(candidate, "x", zipfile.ZIP_DEFLATED) as output:
             values = {info.filename: source.read(info.filename) for info in source.infolist()}
             version_name = ".agents/skills/itl-remote-runner/scripts/itl_remote/__init__.py"
-            values[version_name] = values[version_name].replace(b'VERSION = "1.2.1"', b'VERSION = "1.3.0"')
+            values[version_name] = values[version_name].replace(b'VERSION = "1.2.2"', b'VERSION = "1.3.0"')
             manifest = json.loads(values["bundle-manifest.json"])
             manifest["version"] = "1.3.0"
             manifest["files"][version_name] = {"sha256": hashlib.sha256(values[version_name]).hexdigest(),
