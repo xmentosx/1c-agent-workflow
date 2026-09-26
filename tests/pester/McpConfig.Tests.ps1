@@ -209,7 +209,7 @@
         $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
         $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "699be3e1845727ebbf67b368722a716e3037ce1e78316ad8ba825c350c7c8cc7"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
