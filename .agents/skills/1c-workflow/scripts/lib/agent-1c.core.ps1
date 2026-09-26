@@ -6867,8 +6867,21 @@ function Invoke-NativeProcessAndWaitResult {
         [ValidateRange(0, 300)][int]$CompletionGraceSeconds = 10,
         [ValidateRange(0, 86400)][int]$PostExitProbeSeconds = 0,
         [switch]$RequirePostExitProbeOnFailure,
-        [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0
+        [ValidateRange(0, 1048576)][int]$MaxWorkingSetMb = 0,
+        [string]$StdoutPath = '',
+        [string]$StderrPath = ''
     )
+
+    if ([bool]$StdoutPath -ne [bool]$StderrPath) { throw 'NATIVE_PROCESS_OUTPUT_PATH_PAIR_REQUIRED' }
+    if ($StdoutPath) {
+        $StdoutPath = [IO.Path]::GetFullPath($StdoutPath)
+        $StderrPath = [IO.Path]::GetFullPath($StderrPath)
+        if ([string]::Equals($StdoutPath, $StderrPath, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'NATIVE_PROCESS_OUTPUT_PATHS_COLLIDE'
+        }
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($StdoutPath))
+        [void][IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($StderrPath))
+    }
 
     $script:LastNativeProcessStarted = $false
     Add-OneCNativeInvocationScope -FilePath $FilePath -Arguments $Arguments
@@ -6881,12 +6894,18 @@ function Invoke-NativeProcessAndWaitResult {
         Get-StateValue -State $script:OneCSessionLaunchContext -Name 'nativeOperationRecord' -Default $null
     } else { $null }
     $process = Invoke-OneCSessionProcessStart -StartProcess {
-        Start-Process `
-            -FilePath $FilePath `
-            -ArgumentList $argumentLine `
-            -WorkingDirectory $script:ProjectRoot `
-            -WindowStyle Hidden `
-            -PassThru
+        $startParameters = @{
+            FilePath = $FilePath
+            ArgumentList = $argumentLine
+            WorkingDirectory = $script:ProjectRoot
+            WindowStyle = 'Hidden'
+            PassThru = $true
+        }
+        if ($StdoutPath) {
+            $startParameters.RedirectStandardOutput = $StdoutPath
+            $startParameters.RedirectStandardError = $StderrPath
+        }
+        Start-Process @startParameters
     }
 
     if ($null -eq $process) {

@@ -251,7 +251,7 @@ tool, and call an OS-window/screenshot tool. Two simultaneous facade clients
 must have distinct manager and TestClient ports; closing one must leave the
 other usable. EOF and a shortened idle-timeout probe must both remove the owned
 manager/TestClient processes and release both leases. Do not qualify a release
-from `connect_test_client` text alone.
+from `manage_test_client(action=connect)` text alone.
 
 The execution-ownership acceptance must also prove exact canonical base keys,
 all-or-none ordered acquisition, visible wait/cancel, call-scoped on-demand
@@ -271,7 +271,7 @@ release failure.
 For the patched Vanessa Automation artifact, pre-publication qualification must
 set `ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE` to the exact local candidate.
 The release smoke must record the canonical archive and EPF SHA-256, compatibility
-version `1.2.043.28`, downstream revision `itl-r13`, a matching live `tools/list`
+version `1.2.043.42`, downstream revision `itl-r1`, a matching live `tools/list`
 catalog, successful ordinary file and directory calls on a Windows path containing
 spaces and Cyrillic text, and `client_mcp` plus `VAExtension` with safe mode
 explicitly proven disabled. The live catalog must additionally expose
@@ -286,7 +286,7 @@ result calls with passed evidence bound to the expected feature path and SHA-256
 `runner-fallback-required` is not release evidence.
 The 1C compiler output is qualified as exact bytes rather than assumed
 reproducible: after live qualification, publish that same EPF/distribution and
-the paired `VAExtension.1.29-itl-r13.cfe` extracted from that distribution without
+the paired `VAExtension.1.29-itl-r1.cfe` extracted from that distribution without
 rebuilding either file. Deterministic ZIP packaging may be repeated only against
 the unchanged qualified distribution and must retain the recorded EPF and paired
 extension SHA-256 values. The pre-publication candidate may use its exact local

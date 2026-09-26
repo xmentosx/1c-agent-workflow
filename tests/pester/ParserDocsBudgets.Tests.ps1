@@ -254,7 +254,7 @@
 
         $catalogs = @(
             @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\roctup-v1.7.1.json"; tools = 13; maxBytes = 90805 },
-            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.28.json"; tools = 38; maxBytes = 110132 }
+            @{ path = ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.42.json"; tools = 38; maxBytes = 110132 }
         )
         foreach ($catalog in $catalogs) {
             $path = Join-Path $RepoRoot $catalog.path

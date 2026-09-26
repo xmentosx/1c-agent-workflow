@@ -4103,7 +4103,7 @@ function New-VanessaParamsFile {
 
     $normalizedFilterTags = @(ConvertTo-VanessaTagFilterList -Value $FilterTags)
     if ($normalizedFilterTags.Count -gt 0) {
-        # VA 1.2.043.28 JsonParams declares filtertags as the launch-setting array.
+        # VA 1.2.043.42 JsonParams declares filtertags as the launch-setting array.
         # Gherkin stores tag names without the feature-file @ prefix; tags is metadata, not a launch alias.
         $params["filtertags"] = @($normalizedFilterTags)
     }

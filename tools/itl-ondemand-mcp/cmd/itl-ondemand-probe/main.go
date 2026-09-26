@@ -557,20 +557,20 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		proof     string
 	}{
 		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:cold"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:cold"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:cold"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:cold"},
 		{name: "run_scenario", arguments: map[string]any{"filePath": featurePath, "mode": "reloadAndRun"}, proof: "run_scenario:hot"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:hot"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:hot"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:hot"},
 		{name: "run_scenario", arguments: map[string]any{"filePath": secondaryFeaturePath, "mode": "reloadAndRunFromLine", "lineNumber": 5}, proof: "run_scenario:from-line-cold"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:from-line-cold"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:from-line-cold"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:from-line-cold"},
 		{name: "open_feature_file", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "open_feature_file:secondary"},
 		{name: "check_syntax", arguments: map[string]any{"filePath": secondaryFeaturePath}, proof: "check_syntax:secondary"},
 		{name: "load_features", arguments: map[string]any{"path": secondaryFeaturePath}, proof: "load_features:secondary"},
 		{name: "select_scenario", arguments: map[string]any{"name": "MCP cold B"}, proof: "select_scenario:secondary"},
 		{name: "run_scenario", arguments: map[string]any{"mode": "selected"}, proof: "run_scenario:selected"},
-		{name: "get_VanessaAutomation_state", arguments: map[string]any{}, proof: "get_VanessaAutomation_state:selected"},
+		{name: "get_vanessa_automation_state", arguments: map[string]any{}, proof: "get_vanessa_automation_state:selected"},
 		{name: "get_test_results", arguments: map[string]any{}, proof: "get_test_results:selected"},
 	} {
 		result, err := callInnerTool(ctx, session, call.name, call.arguments)
@@ -588,7 +588,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		arguments any
 	}{
 		{name: "get_environment_data", arguments: map[string]any{}},
-		{name: "connect_test_client", arguments: map[string]any{"profileName": "itl-ondemand"}},
+		{name: "manage_test_client", arguments: map[string]any{"action": "connect", "profileName": "itl-ondemand"}},
 		{name: "get_window_list_testclient", arguments: map[string]any{}},
 		{name: "get_window_list_os", arguments: map[string]any{}},
 	} {
@@ -602,7 +602,7 @@ func runVanessaSmoke(ctx context.Context, session *mcp.ClientSession, testClient
 		if call.name == "get_window_list_os" {
 			osWindows = result
 		}
-		if call.name == "connect_test_client" && observeTestClient != nil {
+		if call.name == "manage_test_client" && observeTestClient != nil {
 			observeTestClient(1)
 		}
 	}

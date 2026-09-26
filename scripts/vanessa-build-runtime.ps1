@@ -76,6 +76,9 @@ function Invoke-VanessaBuildOwnedNative {
     $additional = @($Bases | Select-Object -Skip 1 | ForEach-Object {
         [pscustomobject]@{ infoBaseKind = 'file'; infoBasePath = $_.path; requiredSessions = 1; expectedChildRole = ''; purpose = $Purpose }
     })
+    $outputRoot = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath([string]$Bases[0].path))
+    $stdoutPath = Join-Path $outputRoot ($Purpose + '.stdout.log')
+    $stderrPath = Join-Path $outputRoot ($Purpose + '.stderr.log')
     try {
         $result = Invoke-WithOneCSessionAdmissionContext -InfoBaseKind file -InfoBasePath $Bases[0].path `
             -RequiredSessions 1 -Purpose $Purpose -AdditionalAdmissions $additional `
@@ -84,6 +87,7 @@ function Invoke-VanessaBuildOwnedNative {
                 if ($null -ne $evidence.record) { $evidence.record.ownedProcessScopes = $scopes }
                 Invoke-NativeProcessAndWaitResult -FilePath $FilePath -Arguments $Arguments `
                     -OneCCreateInfoBaseSyntax:$CreateInfoBase -TimeoutSeconds $TimeoutSeconds `
+                    -StdoutPath $stdoutPath -StderrPath $stderrPath `
                     -CompletionGraceSeconds 0 -PostExitProbeSeconds $PostExitProbeSeconds -RequirePostExitProbeOnFailure `
                     -CompletionProbe {
                         param($context)
@@ -105,7 +109,7 @@ function Invoke-VanessaBuildOwnedNative {
     }
     if (-not $released -or $null -eq $result -or $result.timedOut -or $result.completionProbeFailed -or
         $result.postExitProbeTimedOut -or $result.launcherExitCode -ne 0) {
-        throw "VANESSA_BUILD_NATIVE_STAGE_FAILED: purpose='$Purpose'; ownedReleased=$released; result=$($result | ConvertTo-Json -Depth 3 -Compress)"
+        throw "VANESSA_BUILD_NATIVE_STAGE_FAILED: purpose='$Purpose'; ownedReleased=$released; stdout='$stdoutPath'; stderr='$stderrPath'; result=$($result | ConvertTo-Json -Depth 3 -Compress)"
     }
     return [pscustomobject]@{ purpose = $Purpose; ownedReleased = $released; exitCode = $result.launcherExitCode }
 }

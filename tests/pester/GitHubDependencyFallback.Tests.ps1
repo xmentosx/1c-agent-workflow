@@ -63,8 +63,8 @@ Describe "GitHub dependency rate-limit fallback" {
         }
         $roctup.name | Should -Be "MCP_Toolkit.epf"
         $client.name | Should -Be "client_mcp.cfe"
-        $extension.name | Should -Be "VAExtension.1.29-itl-r13.cfe"
-        $extension.expectedSha256 | Should -Be "16170f5be0529d0653cfe544e202c925a229de7a27458670b106d1bf2c3cba9f"
+        $extension.name | Should -Be "VAExtension.1.29-itl-r1.cfe"
+        $extension.expectedSha256 | Should -Be "4145e193ede27ce9ad156fbff8de31be95e7b536e19c6101fc24370b058ff6dc"
     }
 
     It "uses the immutable workflow-pinned Vanessa asset without a mutable publication flag or releases-latest query" {
@@ -76,8 +76,8 @@ Describe "GitHub dependency rate-limit fallback" {
         $lock.dependencies.vanessaAutomation.PSObject.Properties.Name | Should -Not -Contain "publicationStatus"
         $download = Get-VanessaAutomationDownloadInfo
         $download.source | Should -Be "workflow-pinned"
-        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.28-itl-r13/vanessa-automation-single.1.2.043.28-itl-r13.zip"
-        $download.expectedSha256 | Should -Be "a96234b5a939734f2345f1e1b010b637c6c94350b8a4debfcae99945dcaf14f5"
+        $download.url | Should -Be "https://github.com/xmentosx/1c-agent-workflow/releases/download/vanessa-automation-v1.2.043.42-itl-r1/vanessa-automation-single.1.2.043.42-itl-r1.zip"
+        $download.expectedSha256 | Should -Be "67d486b5b218c4810c1dbd8303a2b493b96323935cce3cc1f5ec2c51924c7c54"
         Assert-MockCalled Invoke-RestMethod -Times 0
     }
 

@@ -21,7 +21,7 @@ Describe "Interactive Vanessa profiling lifecycle" {
         $coreText | Should -Match '"start-vanessa-profile"'
         $coreText | Should -Match '"status-vanessa-profile"'
         $vanessaText | Should -Match 'function Stop-DevBranchVanessaInteractiveProfile[\s\S]*Invoke-DevBranchVanessaRuntimeRelease'
-        $facadeText | Should -Match '"connect_test_client"'
+        $facadeText | Should -Match 'managedTestClientConnectParams\("itl-ondemand"\)'
         $facadeText | Should -Match '"open_feature_file"'
         $facadeText | Should -Not -Match '"run_scenario"'
         $facadeText | Should -Match 'suppressEvidence:\s*true'

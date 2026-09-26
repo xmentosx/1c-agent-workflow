@@ -3,7 +3,9 @@ param(
     [string]$OutputDirectory = "",
     [string]$PlatformBin = "C:\Program Files\1cv8\8.3.27.2130\bin",
     [string]$WorkRoot = "C:\itlvabld",
-    [ValidateSet("itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14")][string]$DownstreamRevision = "itl-r8",
+    [ValidateSet("1.2.043.28", "1.2.043.42")][string]$UpstreamVersion = "1.2.043.28",
+    [ValidateSet("itl-r1", "itl-r4", "itl-r5", "itl-r6", "itl-r7", "itl-r8", "itl-r9", "itl-r10", "itl-r11", "itl-r12", "itl-r13", "itl-r14")][string]$DownstreamRevision = "itl-r8",
+    [string]$ResumeWorkDirectory = "",
     [switch]$KeepWork,
     [switch]$Force
 )
@@ -116,7 +118,7 @@ function Test-PathInside {
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$assetVersion = "1.2.043.28-$DownstreamRevision"
+$assetVersion = "$UpstreamVersion-$DownstreamRevision"
 $assetRoot = Join-Path $repoRoot ("third-party\vanessa-automation\" + $assetVersion)
 $manifestPath = Join-Path $assetRoot "manifest.json"
 $patchPath = Join-Path $assetRoot "file-operations.patch"
@@ -137,6 +139,7 @@ foreach ($requiredPath in @($manifestPath, $patchPath, $noticePath, $licenseNoti
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 Assert-Equal ([string]$manifest.downstreamRevision) $DownstreamRevision "Manifest downstream revision"
+Assert-Equal ([string]$manifest.compatibilityVersion) $UpstreamVersion "Manifest upstream compatibility version"
 $artifactPath = Join-Path $OutputDirectory ([string]$manifest.artifact.fileName)
 $provenancePath = Join-Path $OutputDirectory "candidate.provenance.json"
 if ((Test-Path -LiteralPath $artifactPath) -and -not $Force) {
@@ -153,16 +156,25 @@ $oscriptCommand = Get-Command oscript.exe -ErrorAction Stop
 $opmCommand = Get-Command opm.bat -ErrorAction Stop
 $oscriptVersion = (& $oscriptCommand.Source -version).Trim()
 if ($LASTEXITCODE -ne 0) { throw "oscript -version failed." }
-$opmVersion = (& $opmCommand.Source --version).Trim()
-if ($LASTEXITCODE -ne 0) { throw "opm --version failed." }
+$oneScriptLibrary = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $opmCommand.Source) '..\lib'))
+$opmVersionSource = Join-Path $oneScriptLibrary 'opm\src\core\Модули\КонстантыOpm.os'
+if (-not (Test-Path -LiteralPath $opmVersionSource -PathType Leaf)) { throw "Installed opm version source is missing: $opmVersionSource" }
+$opmVersionMatches = [regex]::Matches((Get-Content -LiteralPath $opmVersionSource -Raw -Encoding UTF8), '(?m)^ВерсияПродукта\s*=\s*"([^"]+)";')
+if ($opmVersionMatches.Count -ne 1) { throw "Installed opm version is ambiguous: $opmVersionSource" }
+$opmVersion = $opmVersionMatches[0].Groups[1].Value
 Assert-Equal $oscriptVersion ([string]$manifest.build.oneScript.version) "OneScript version"
 Assert-Equal $opmVersion ([string]$manifest.build.oneScript.opmVersion) "OPM version"
 
-$opmPackages = (& $opmCommand.Source list) -join "`n"
-if ($LASTEXITCODE -ne 0) { throw "opm list failed." }
 foreach ($property in $manifest.build.oneScript.packages.PSObject.Properties) {
-    $packagePattern = "(?m)^\s*" + [regex]::Escape($property.Name) + "\s*\|\s*" + [regex]::Escape([string]$property.Value) + "\s*\|"
-    if ($opmPackages -notmatch $packagePattern) {
+    # opm list queries the remote package hub even for local packages. Read the
+    # installed package metadata used by this OneScript runtime instead.
+    $packageMetadataPath = Join-Path (Join-Path $oneScriptLibrary $property.Name) 'opm-metadata.xml'
+    if (-not (Test-Path -LiteralPath $packageMetadataPath -PathType Leaf)) {
+        throw "Required OneScript package is absent or has the wrong version: $($property.Name) $($property.Value)."
+    }
+    [xml]$packageMetadata = Get-Content -LiteralPath $packageMetadataPath -Raw -Encoding UTF8
+    if ([string]$packageMetadata.'opm-metadata'.name -cne [string]$property.Name -or
+        [string]$packageMetadata.'opm-metadata'.version -cne [string]$property.Value) {
         throw "Required OneScript package is absent or has the wrong version: $($property.Name) $($property.Value)."
     }
 }
@@ -177,8 +189,11 @@ Assert-Equal $platformVersion ([string]$manifest.build.platform.version) "1C:Ent
 # Both execution copies explicitly select this manifest-validated executable.
 # Other installed platform versions do not determine the build toolchain.
 
-$workId = [Guid]::NewGuid().ToString("N").Substring(0, 8)
-$workDirectory = Join-Path $WorkRoot $workId
+$workDirectory = $(if ($ResumeWorkDirectory) {
+    [System.IO.Path]::GetFullPath($ResumeWorkDirectory)
+} else {
+    Join-Path $WorkRoot ([Guid]::NewGuid().ToString("N").Substring(0, 8))
+})
 if (-not (Test-PathInside -Candidate $workDirectory -Parent $WorkRoot)) {
     throw "Unsafe work directory: $workDirectory"
 }
@@ -193,8 +208,25 @@ $sourceArchivePath = Join-Path $workDirectory "source.tar"
 $nativeRuntimeInvoked = $false
 $nativeRuntimeResultPath = Join-Path $workDirectory 'native-runtime-result.json'
 
-New-Item -ItemType Directory -Path $workDirectory -Force | Out-Null
+if ($ResumeWorkDirectory) {
+    if (-not (Test-Path -LiteralPath $workDirectory -PathType Container)) {
+        throw "VANESSA_BUILD_RESUME_WORK_DIRECTORY_MISSING: $workDirectory"
+    }
+    if (Test-Path -LiteralPath $stageDirectory) {
+        throw "VANESSA_BUILD_RESUME_STAGE_ALREADY_EXISTS: $stageDirectory"
+    }
+    if (-not (Test-Path -LiteralPath $nativeRuntimeResultPath -PathType Leaf)) {
+        throw "VANESSA_BUILD_RESUME_RESULT_MISSING: $nativeRuntimeResultPath"
+    }
+    $previousNativeResult = Get-Content -LiteralPath $nativeRuntimeResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (-not [bool]$previousNativeResult.released) {
+        throw "VANESSA_BUILD_RESUME_NATIVE_OWNERSHIP_UNCONFIRMED: $nativeRuntimeResultPath"
+    }
+} else {
+    New-Item -ItemType Directory -Path $workDirectory | Out-Null
+}
 try {
+    if (-not $ResumeWorkDirectory) {
     Invoke-Native -FilePath "git" -Arguments @(
         "clone", "--filter=blob:none", "--no-checkout",
         [string]$manifest.upstream.repository, $sourceDirectory
@@ -230,25 +262,60 @@ try {
     Invoke-Native -FilePath "git" -Arguments @(
         "-C", $sourceDirectory, "apply", "--whitespace=error-all", $patchPath
     ) -Description "Apply downstream patch"
+    } else {
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceDirectory '.git') -PathType Container)) {
+            throw "VANESSA_BUILD_RESUME_SOURCE_MISSING: $sourceDirectory"
+        }
+        $tagCommit = (& git -C $sourceDirectory rev-parse "$($manifest.upstream.ref)^{commit}").Trim()
+        if ($LASTEXITCODE -ne 0) { throw "Could not resolve the pinned upstream tag in resumed source." }
+        Assert-Equal $tagCommit ([string]$manifest.upstream.commit) "Resumed upstream tag commit"
+        $headCommit = (& git -C $sourceDirectory rev-parse HEAD).Trim()
+        $headTree = (& git -C $sourceDirectory rev-parse "HEAD^{tree}").Trim()
+        Assert-Equal $headCommit ([string]$manifest.upstream.commit) "Resumed upstream HEAD"
+        Assert-Equal $headTree ([string]$manifest.upstream.tree) "Resumed upstream tree"
+        Assert-Equal (Get-Sha256 -Path $sourceArchivePath) ([string]$manifest.upstream.sourceArchive.sha256) "Resumed upstream source archive SHA-256"
+        foreach ($flowFile in $manifest.build.upstreamFlow) {
+            $flowPath = Join-Path $sourceDirectory ([string]$flowFile.path).Replace("/", "\")
+            Assert-Equal (Get-Sha256 -Path $flowPath) ([string]$flowFile.sha256) "Resumed upstream build file $($flowFile.path)"
+        }
+        $resumeDiffPath = Join-Path $workDirectory 'resume-diff.patch'
+        try {
+            Invoke-Native -FilePath "git" -Arguments @(
+                "-C", $sourceDirectory, "-c", "core.quotepath=false", "diff", "--binary", "HEAD", "--output=$resumeDiffPath"
+            ) -Description "Compare resumed source with pinned patch"
+            Assert-Equal (Get-Sha256 -Path $resumeDiffPath) ([string]$manifest.patch.sha256) "Resumed downstream patch"
+        } finally {
+            Remove-Item -LiteralPath $resumeDiffPath -Force -ErrorAction SilentlyContinue
+        }
+    }
     Invoke-Native -FilePath "git" -Arguments @(
         "-C", $sourceDirectory, "diff", "--check"
     ) -Description "Check patched source whitespace"
 
-    $changedPaths = @(& {
+    $sourcePathLists = & {
         param($SourceRoot, $HelperPath)
         . $HelperPath -ProjectRoot $SourceRoot -Action help *> $null
-        Get-GitPathList -Arguments @('diff', '--name-only', '-z')
-    } $sourceDirectory (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'))
+        [pscustomobject]@{
+            changed = @(Get-GitPathList -Arguments @('diff', '--name-only', '-z'))
+            untracked = @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z'))
+        }
+    } $sourceDirectory (Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1')
+    $changedPaths = @($sourcePathLists.changed)
     $expectedChangedPaths = @($manifest.patch.expectedChangedPaths)
     if (($changedPaths -join "`n") -ne ($expectedChangedPaths -join "`n")) {
         throw "Patch changed an unexpected path set. Expected '$($expectedChangedPaths -join ", ")'; actual '$($changedPaths -join ", ")'."
     }
+    if ($ResumeWorkDirectory -and @($sourcePathLists.untracked).Count -gt 0) {
+        throw "VANESSA_BUILD_RESUME_UNTRACKED_SOURCE: $($sourcePathLists.untracked -join ', ')"
+    }
 
     Push-Location $sourceDirectory
     try {
-        Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
-            (Join-Path $sourceDirectory "lib\packages.os"), "download"
-        ) -Description "Download upstream pinned packages"
+        if (-not $ResumeWorkDirectory) {
+            Invoke-Native -FilePath $oscriptCommand.Source -Arguments @(
+                (Join-Path $sourceDirectory "lib\packages.os"), "download"
+            ) -Description "Download upstream pinned packages"
+        }
 
         foreach ($dependency in $manifest.build.upstreamBundledDependencies) {
             $dependencyPath = Join-Path $sourceDirectory ([string]$dependency.path).Replace("/", "\")

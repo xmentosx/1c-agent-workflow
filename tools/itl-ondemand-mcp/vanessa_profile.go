@@ -146,9 +146,8 @@ func newProfileOwnerRuntime(config profileOwnerConfig, _ bool) (*runtime, error)
 
 func startInteractiveVanessaProfile(ctx context.Context, rt *runtime, featurePath string) (*vanessaProfileResult, error) {
 	request := &mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}}
-	connectResult, err := rt.callNamed(ctx, request, "connect_test_client", map[string]any{
-		"profileName": "itl-ondemand",
-	})
+	connect := rt.managedTestClientConnectParams("itl-ondemand")
+	connectResult, err := rt.callNamed(ctx, request, connect.Name, connect.Arguments)
 	if err != nil {
 		return nil, fmt.Errorf("connect managed TestClient: %w", err)
 	}
