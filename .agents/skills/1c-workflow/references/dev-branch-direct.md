@@ -6,7 +6,7 @@
 
 Здесь `itldev/*` означает текущее имя Git-ветки (`git branch --show-current`), а не каталог или файловый glob. В такой ветке любая доработка агентом под настроенными `exportPath`/`extensionsPath` считается готовой только после релевантных сценариев под `testsPath` и fresh passed `/itl-check`; direct full-cycle исключений не даёт. Явно выбранный ITL lite допускает только partial evidence с формулировкой `implemented; executable verification skipped`. На `master` правка исходников остаётся branch-safety blocker.
 
-Перед тестами алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` требует явного подтверждения partial result.
+Перед тестами алгоритма агент читает `references/yaxunit-tests.md`; перед Vanessa-тестами — `references/vanessa-tests.md`. Слой с режимом `off` автоматически не создаётся. Пропуск никогда не называется `готово/verified/done`; при `verificationPolicy=block` он блокирует result/close, при `warn` экспорт продолжается с предупреждением без подтверждения; закрытие ветки требует отдельного подтверждения.
 
 ## Процесс
 
@@ -26,4 +26,4 @@ Reason: <promotion trigger или причина выхода за quick-fix>; s
 
 Если проверка упала, проанализируйте отчёт Vanessa, лог 1С, event-log evidence и изменённый код; исправьте причину и повторите полный helper-owned цикл. Лимит recovery — три полных неуспешных запуска одной repair session, после чего нужно вернуть blocker diagnostics и не заявлять completion.
 
-Только после fresh passed `/itl-check` можно переходить к `/itl-result` или заявлять готовность. При partial/skipped evidence применяйте `verificationPolicy`; такой результат никогда не становится normal fresh pass.
+Заявлять проверенную готовность можно только после fresh passed `/itl-check`. Для `/itl-result` при partial/skipped evidence применяйте `verificationPolicy`; такой результат никогда не становится normal fresh pass.

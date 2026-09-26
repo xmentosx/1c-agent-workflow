@@ -263,19 +263,31 @@ Describe "Branch-safe Vanessa runtime cleanup" {
                 $plannedRequest = $script:OneCExecutionDrainRequest
                 $callsBeforeGuard = $script:VanessaCalls
                 Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $plannedRequest 6>$null
+                $callsAfterFirst = $script:VanessaCalls
+                function Get-OneCInfoBaseSessionProcesses { [pscustomobject]@{ pid = 91234 } }
+                $foreignError = ""
+                try { Invoke-OneCOwnedRuntimeDrainUnderExecutionGuard -Request $plannedRequest 6>$null }
+                catch { $foreignError = $_.Exception.Message }
                 [pscustomobject]@{
                     planned = ($null -ne $plannedRequest)
                     callsBeforeGuard = $callsBeforeGuard
+                    callsAfterFirst = $callsAfterFirst
                     vanessaCalls = $script:VanessaCalls
                     reason = $script:VanessaReason
                     family = $script:DrainedFamily
                     infoBasePath = $script:DrainedBase
+                    foreignError = $foreignError
                 }
             }
 
             $result.planned | Should -BeTrue
+            $result.foreignError | Should -Match 'EXECUTION_GUARD_EXTERNAL_CONFLICT'
+            $result.foreignError | Should -Match 'operation=.fixture mutation.'
+            $result.foreignError | Should -Match 'target=.file:'
+            $result.foreignError | Should -Match 'no foreign process was stopped'
             $result.callsBeforeGuard | Should -Be 0
-            $result.vanessaCalls | Should -Be 1
+            $result.callsAfterFirst | Should -Be 1
+            $result.vanessaCalls | Should -Be 2
             $result.reason | Should -Be "fixture mutation"
             $result.family | Should -Be "roctup"
             $result.infoBasePath | Should -Be (Join-Path $tempRoot "base")

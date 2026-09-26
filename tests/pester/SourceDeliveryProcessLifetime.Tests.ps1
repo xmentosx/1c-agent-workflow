@@ -36,9 +36,12 @@ It "does not shorten an authoritative Develop or Release gate to a reused plan e
         foreach ($definition in @(Get-DeliveryFunctionDefinitions -Names @('Get-SourceGateHardBudgetSeconds', 'Get-SourceGateSupervisionBudgetSeconds'))) {
             Invoke-Expression $definition.Extent.Text
         }
-        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be 5700
-        (Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be 7500
-        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 6000) | Should -Be 6000
+        $developAllowance = Get-SourceGateHardBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot
+        $releaseAllowance = Get-SourceGateHardBudgetSeconds -Mode Release -WorkingRoot $RepoRoot
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be $developAllowance
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Release -WorkingRoot $RepoRoot -PlanBudgetSeconds 900) | Should -Be $releaseAllowance
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 6000) | Should -Be ([Math]::Max($developAllowance, 6000))
+        (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds ($developAllowance + 600)) | Should -Be ($developAllowance + 600)
         (Get-SourceGateSupervisionBudgetSeconds -Mode Develop -WorkingRoot $RepoRoot -PlanBudgetSeconds 900 -InjectedGate) | Should -Be 900
     }
 

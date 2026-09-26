@@ -58,7 +58,7 @@ Use `scripts/agent-1c.ps1` when PowerShell is available; it owns Git, 1C, worktr
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\agent-1c.ps1 -Action <action>
 ```
 
-Long actions default to `timeout_ms >= 3900000`, above Designer's 3600-second limit; raise it with a higher configured limit. `status` and `help` stay short.
+Use `timeout_ms >= 14700000` for default `init-project`/`sync-master` (four hours plus 300 seconds), or configured action limit plus 300 seconds. Other long actions use `>= 3900000`; `status`/`help` stay short.
 
 Fresh target bootstrap:
 
@@ -74,7 +74,7 @@ Installed project launcher:
 powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-agent-1c-window.ps1 -- -Action init-project -InitMode wizard
 ```
 
-Do not call the wizard helper directly, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; probes may emit CLIXML. If terminal input is unavailable, do not collect the questionnaire in chat. Launcher owns `.agent-1c/runs/<run>/status.json`, `-MaxWaitSeconds 3600`, positive long timeout, and debug-only `-KeepWindowOnFailure`. Use `timeout_ms >= 3900000`; after interruption repeat the same command. It rejects live duplicates; do not continue the lifecycle manually or edit Git/status during orphan resume.
+Do not call the wizard helper directly, run `Test-Path` preflight, use background PowerShell, or set `timeout: 0`; probes may emit CLIXML. If terminal input is unavailable, do not collect the questionnaire in chat. Launcher owns `.agent-1c/runs/<run>/status.json`, a positive long timeout, and debug-only `-KeepWindowOnFailure`. After interruption repeat the same command; it rejects live duplicates. Do not continue the lifecycle manually or edit Git/status during orphan resume.
 
 ## Always-On Safety Notes
 
@@ -92,7 +92,7 @@ Do not call the wizard helper directly, run `Test-Path` preflight, use backgroun
 
 ## Failure Rules
 
-Stop immediately when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
+Stop the dependent operation when required parameters are missing, Git state is unexpectedly dirty, branch targets already exist, the source infobase cannot be opened, repository credentials are missing for required storage sync, 1C Designer returns non-zero, CF/CFE export fails, or `verificationPolicy=block` forbids an unverified result.
 
 On `ITL_INFOBASE_APPLICATION_NOT_READY`, run `update-dev-branch-base`, then retry the original MCP/test action once; never move this mutation into MCP.
 
