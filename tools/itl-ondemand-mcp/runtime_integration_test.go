@@ -296,11 +296,15 @@ func newVanessaBackendSequence(t *testing.T, environmentText string, connectText
 }
 
 func newVanessaBackendObserved(t *testing.T, environmentText string, connectTexts []string, postText string, connectCalls *int, calls map[string]int) *httptest.Server {
+	return newVanessaBackendObservedWithTools(t, vanessaIntegrationTools(), environmentText, connectTexts, postText, connectCalls, calls)
+}
+
+func newVanessaBackendObservedWithTools(t *testing.T, definitions []*mcp.Tool, environmentText string, connectTexts []string, postText string, connectCalls *int, calls map[string]int) *httptest.Server {
 	t.Helper()
 	server := mcp.NewServer(&mcp.Implementation{Name: "fake-vanessa", Version: "1"}, nil)
-	for _, definition := range vanessaIntegrationTools() {
+	for _, definition := range definitions {
 		tool := definition
-		server.AddTool(tool, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		server.AddTool(tool, func(_ context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			if calls != nil {
 				calls[tool.Name]++
 			}
@@ -308,6 +312,16 @@ func newVanessaBackendObserved(t *testing.T, environmentText string, connectText
 			switch tool.Name {
 			case "get_environment_data":
 				text = environmentText
+			case "manage_test_client":
+				arguments := map[string]any{}
+				if err := json.Unmarshal(req.Params.Arguments, &arguments); err != nil {
+					return nil, err
+				}
+				if arguments["action"] == "disconnect" {
+					text = "TestClient отключен"
+					break
+				}
+				fallthrough
 			case "connect_test_client":
 				*connectCalls++
 				index := *connectCalls - 1
@@ -1039,6 +1053,11 @@ func TestVanessaToolClassificationKeepsEditorToolsProcessFree(t *testing.T) {
 		classifyVanessaTool("future_unknown_tool") != vanessaToolUnknown {
 		t.Fatal("connection-control or unknown Vanessa classification is not fail-closed")
 	}
+	for _, name := range []string{"get_vanessa_automation_state"} {
+		if classifyVanessaTool(name) != vanessaToolEditorManager {
+			t.Fatalf("new Vanessa read-only tool %q has class %q", name, classifyVanessaTool(name))
+		}
+	}
 }
 
 func TestRuntimeVanessaEditorOnlyCallDoesNotStartTestClient(t *testing.T) {
@@ -1235,6 +1254,70 @@ func TestRuntimeVanessaRejectsUnmanagedProfileBeforeUpstreamCall(t *testing.T) {
 	assertToolErrorCode(t, result, "ITL_VANESSA_MANAGED_PROFILE_REQUIRED")
 	if connectCalls != 0 {
 		t.Fatalf("unmanaged profile reached upstream: %d", connectCalls)
+	}
+}
+
+func TestRuntimeVanessaManageTestClientActionsPreserveManagedOwnership(t *testing.T) {
+	tool := &mcp.Tool{Name: "manage_test_client", InputSchema: map[string]any{
+		"type": "object", "properties": map[string]any{
+			"action":      map[string]any{"type": "string"},
+			"profileName": map[string]any{"type": "string"},
+		}, "required": []string{"action"},
+	}}
+	rt := &runtime{
+		family:  "vanessa-ui",
+		backend: &backendInfo{TestClientProfile: "itl-ondemand", TestClientPort: 48151},
+		catalog: &loadedCatalog{Data: catalogFile{Tools: []*mcp.Tool{tool}}},
+	}
+	connect := rt.managedTestClientConnectParams("itl-ondemand")
+	if connect.Name != "manage_test_client" || classifyVanessaTool(connect.Name, connect.Arguments) != vanessaToolConnect {
+		t.Fatalf("managed connect request %#v is not classified as a connection", connect)
+	}
+	if got := rt.validateManagedVanessaRequest(map[string]any{"action": "connect", "profileName": "custom"}, "manage_test_client"); got == nil || toolResultCode(got) != "ITL_VANESSA_MANAGED_PROFILE_REQUIRED" {
+		t.Fatalf("unmanaged profile was admitted: %#v", got)
+	}
+	if got := rt.validateManagedVanessaRequest(connect.Arguments, connect.Name); got != nil {
+		t.Fatalf("managed profile was rejected: %#v", got)
+	}
+	if classifyVanessaTool("manage_test_client", map[string]any{"action": "disconnect"}) != vanessaToolDisconnect ||
+		classifyVanessaTool("manage_test_client", map[string]any{"action": "unknown"}) != vanessaToolUnknown {
+		t.Fatal("manage_test_client action was not classified fail closed")
+	}
+}
+
+func TestRuntimeVanessa42ManageTestClientConnectDisconnectAndAutomaticReconnect(t *testing.T) {
+	definitions := make([]*mcp.Tool, 0, len(vanessaIntegrationTools()))
+	for _, tool := range vanessaIntegrationTools() {
+		if tool.Name != "connect_test_client" {
+			definitions = append(definitions, tool)
+		}
+	}
+	definitions = append(definitions, &mcp.Tool{Name: "manage_test_client", InputSchema: map[string]any{
+		"type": "object", "properties": map[string]any{
+			"action": map[string]any{"type": "string"}, "profileName": map[string]any{"type": "string"},
+		}, "required": []string{"action"},
+	}})
+	connectCalls := 0
+	calls := map[string]int{}
+	backend := newVanessaBackendObservedWithTools(t, definitions, "VanessaExt: Истина",
+		[]string{"TestClient подключен", "TestClient подключен"},
+		"В клиенте тестирования найдено 1 окон:\n-Начальная страница", &connectCalls, calls)
+	broker := &fakeBroker{info: &backendInfo{URL: backend.URL, TestClientProfile: "itl-ondemand", TestClientPort: 48151}}
+	_, session := newFacadeSessionForFamily(t, "vanessa-ui", definitions, broker, time.Minute, nil)
+
+	connect, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "manage_test_client", Arguments: map[string]any{
+		"action": "connect", "profileName": "itl-ondemand",
+	}})
+	if err != nil || connect == nil || connect.IsError || connectCalls != 1 {
+		t.Fatalf("managed connection failed: result=%#v err=%v calls=%d", connect, err, connectCalls)
+	}
+	disconnect, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "manage_test_client", Arguments: map[string]any{"action": "disconnect"}})
+	if err != nil || disconnect == nil || disconnect.IsError || broker.testClientEnsureCount() != 1 {
+		t.Fatalf("disconnect started TestClient or failed: result=%#v err=%v ensures=%d", disconnect, err, broker.testClientEnsureCount())
+	}
+	run, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "run_scenario", Arguments: map[string]any{}})
+	if err != nil || run == nil || run.IsError || connectCalls != 2 || calls["run_scenario"] != 1 {
+		t.Fatalf("automatic reconnect failed: result=%#v err=%v connectCalls=%d calls=%#v", run, err, connectCalls, calls)
 	}
 }
 

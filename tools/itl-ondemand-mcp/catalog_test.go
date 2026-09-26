@@ -64,7 +64,7 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 		count  int
 	}{
 		{family: "roctup", file: "roctup-v1.7.1.json", count: 13},
-		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.28.json", count: 38},
+		{family: "vanessa-ui", file: "vanessa-ui-v0.6.5-va-1.2.043.42.json", count: 38},
 	} {
 		t.Run(test.family, func(t *testing.T) {
 			catalog, err := loadCatalog(filepath.Join(root, test.file), test.family)
@@ -84,7 +84,7 @@ func TestReleaseCatalogSchemasResolveAndIndex(t *testing.T) {
 }
 
 func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
-	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.28.json")
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
 	catalog, err := loadCatalog(path, "vanessa-ui")
 	if err != nil {
 		t.Fatal(err)
@@ -103,6 +103,29 @@ func TestVanessaReleaseCatalogKeepsDistinctFileArgumentNames(t *testing.T) {
 	}
 	if err := catalog.validate("load_features", map[string]any{"filePath": featurePath}); err == nil {
 		t.Fatal("load_features accepted renamed filePath argument")
+	}
+}
+
+func TestVanessaReleaseCatalogUsesActionAwareTestClientTool(t *testing.T) {
+	path := filepath.Join("..", "..", ".agents", "skills", "1c-workflow", "assets", "ondemand-mcp", "catalogs", "vanessa-ui-v0.6.5-va-1.2.043.42.json")
+	catalog, err := loadCatalog(path, "vanessa-ui")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if catalog.tool("connect_test_client") != nil || catalog.tool("get_VanessaAutomation_state") != nil {
+		t.Fatal("old Vanessa tool names remain in the live catalog")
+	}
+	if catalog.tool("close_test_client") == nil || catalog.tool("get_vanessa_automation_state") == nil {
+		t.Fatal("current Vanessa lifecycle tools are missing")
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{"action": "connect", "profileName": "itl-ondemand"}); err != nil {
+		t.Fatalf("managed connect rejected: %v", err)
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{"action": "disconnect"}); err != nil {
+		t.Fatalf("managed disconnect rejected: %v", err)
+	}
+	if err := catalog.validate("manage_test_client", map[string]any{}); err == nil {
+		t.Fatal("manage_test_client accepted a missing action")
 	}
 }
 

@@ -842,7 +842,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousArtifactCacheRoot = $env:ITL_ARTIFACT_CACHE_ROOT
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
-            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.28-itl-r13\vanessa-automation-single.1.2.043.28-itl-r13.zip"
+            Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r1\vanessa-automation-single.1.2.043.42-itl-r1.zip"
         } else {
             [System.IO.Path]::GetFullPath($previousVanessaSourceBuild)
         }
@@ -883,6 +883,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
                 -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
                 -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
                 -Force
+            $compatibility = Get-Content -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+            $catalogRelativePath = Join-Path ".agents\skills\1c-workflow\assets\ondemand-mcp" ([string]$compatibility.families.'vanessa-ui'.catalog)
+            Copy-Item -LiteralPath (Join-Path $RepoRoot $catalogRelativePath) -Destination (Join-Path $sourceRoot $catalogRelativePath) -Force
             $sourceLock = Get-Content -LiteralPath $sourceLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $sourceLock.dependencies.vanessaMcp.clientMcp.url = $clientMcpFixture
             $sourceLock.dependencies.vanessaMcp.clientMcp.sha256 = (Get-FileHash -LiteralPath $clientMcpFixture -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -890,7 +893,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $sourceLock.dependencies.yaxunit.url = $yaxunitFixture
             $sourceLock.dependencies.yaxunit.sha256 = (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
-            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json
+            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json $catalogRelativePath
             & git -C $sourceRoot commit --quiet -m "test: use current local dependency candidates"
             $LASTEXITCODE | Should -Be 0
             $sourceCommit = ((& git -C $sourceRoot rev-parse HEAD).Trim())

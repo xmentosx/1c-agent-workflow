@@ -1,4 +1,4 @@
-Describe "1C Designer memory guard" {
+﻿Describe "1C Designer memory guard" {
     BeforeAll {
         . (Join-Path $PSScriptRoot 'TestSupport.ps1')
         $context = Initialize-WorkflowPesterContext
@@ -122,6 +122,31 @@ while ($true) {
         $results.disabled.memoryLimitExceeded | Should -BeFalse
         $results.disabled.workingSetLimitMb | Should -Be 0
         $results.disabled.peakWorkingSetMb | Should -Be 0
+    }
+
+    It "captures exact UTF-8 child output through a whitespace and Cyrillic path" {
+        $fixtureRoot = Join-Path $TestDrive 'вывод с пробелом и кириллицей'
+        New-Item -ItemType Directory -Path $fixtureRoot -Force | Out-Null
+        $childPath = Join-Path $fixtureRoot 'проверка вывода.ps1'
+        $stdoutPath = Join-Path $fixtureRoot 'результат вывода.txt'
+        $stderrPath = Join-Path $fixtureRoot 'результат ошибки.txt'
+        @'
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::WriteLine('Путь с пробелом и кириллицей: Ёжик')
+'@ | Set-Content -LiteralPath $childPath -Encoding UTF8
+
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            Invoke-NativeProcessAndWaitResult -FilePath $PowerShellPath `
+                -Arguments @('-NoProfile', '-File', $childPath) `
+                -StdoutPath $stdoutPath -StderrPath $stderrPath -TimeoutSeconds 20
+        }
+
+        $result.launcherExitCode | Should -Be 0
+        [IO.File]::ReadAllText($stdoutPath, [Text.UTF8Encoding]::new($false, $true)).Trim() |
+            Should -Be 'Путь с пробелом и кириллицей: Ёжик'
+        [IO.File]::ReadAllText($stderrPath, [Text.UTF8Encoding]::new($false, $true)) |
+            Should -BeNullOrEmpty
     }
 
     It "fails closed when a live process working set cannot be sampled" {

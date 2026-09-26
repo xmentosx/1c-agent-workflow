@@ -175,7 +175,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		r.mu.Unlock()
 		return guarded, nil
 	}
-	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+	if preflight := r.preflightVanessaTestClientLocked(ctx, toolName, arguments); preflight != nil {
 		r.attachVanessaTestClientMetaLocked(preflight)
 		r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, 0)
 		r.completeCallLocked()
@@ -204,7 +204,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 	forwardedProtocolError, forwardedProtocolCode := backendProtocolToolError(err)
 	r.mu.Lock()
 	r.active--
-	r.applyVanessaTestClientResultLocked(toolName, result)
+	r.applyVanessaTestClientResultLocked(toolName, arguments, result)
 	r.attachVanessaTestClientMetaLocked(result)
 	outcome, resultCode := callOutcome(result, err)
 	if forwardedProtocolCode != "" {
@@ -224,7 +224,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 			r.mu.Unlock()
 			return recoveryAction(toolName, recovery.PreviousInstanceID, recovery.InstanceID, true, nil), nil
 		}
-		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName); preflight != nil {
+		if preflight := r.preflightVanessaTestClientLocked(ctx, toolName, arguments); preflight != nil {
 			r.attachVanessaTestClientMetaLocked(preflight)
 			r.writeEvidenceLocked(toolName, arguments, "failed", toolResultCode(preflight), resultEvidenceMessage(preflight, nil), r.instanceID, r.backend, progressTokenProvided, progressForwardedCount(route))
 			r.completeCallLocked()
@@ -240,7 +240,7 @@ func (r *runtime) callNamed(ctx context.Context, req *mcp.CallToolRequest, toolN
 		retryResult, retryErr := r.callUpstream(ctx, retrySession, params)
 		r.mu.Lock()
 		r.active--
-		r.applyVanessaTestClientResultLocked(toolName, retryResult)
+		r.applyVanessaTestClientResultLocked(toolName, arguments, retryResult)
 		r.attachVanessaTestClientMetaLocked(retryResult)
 		retryOutcome, retryCode := callOutcome(retryResult, retryErr)
 		r.writeEvidenceLocked(toolName, arguments, retryOutcome, retryCode, resultEvidenceMessageForOutcome(retryOutcome, retryResult, retryErr), retryInstanceID, retryBackend, progressTokenProvided, progressForwardedCount(route))
@@ -348,6 +348,7 @@ func isIdempotentTool(family string, tool *mcp.Tool) bool {
 		"get_table_data",
 		"get_test_results",
 		"get_VanessaAutomation_state",
+		"get_vanessa_automation_state",
 		"get_window_list_os",
 		"get_window_list_testclient",
 		"get_window_screenshot_os",
@@ -459,10 +460,10 @@ func (r *runtime) callUpstream(ctx context.Context, session *mcp.ClientSession, 
 		if err != nil || result == nil || result.IsError {
 			return result, err
 		}
-		result = r.validateVanessaResult(ctx, params.Name, result, session)
+		result = r.validateVanessaResult(ctx, params.Name, params.Arguments, result, session)
 		code := toolResultCode(result)
 		retryConnect := code == "ITL_VANESSA_TESTCLIENT_CONNECT_FAILED" || code == "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED"
-		if r.family != "vanessa-ui" || params.Name != "connect_test_client" || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
+		if r.family != "vanessa-ui" || classifyVanessaTool(params.Name, params.Arguments) != vanessaToolConnect || r.vanessaConnectWait <= 0 || !retryConnect || !time.Now().Before(deadline) {
 			return result, nil
 		}
 		wait := 500 * time.Millisecond
@@ -846,10 +847,10 @@ func (r *runtime) validateManagedVanessaRequest(arguments any, toolName string) 
 		return nil
 	}
 	args, _ := arguments.(map[string]any)
-	if toolName == "connect_test_client" {
+	if classifyVanessaTool(toolName, arguments) == vanessaToolConnect {
 		profile, _ := args["profileName"].(string)
 		if profile != r.backend.TestClientProfile {
-			return toolError("ITL_VANESSA_MANAGED_PROFILE_REQUIRED", "connect_test_client must use profileName=\""+r.backend.TestClientProfile+"\"", map[string]any{"profileName": r.backend.TestClientProfile, "testClientPort": r.backend.TestClientPort})
+			return toolError("ITL_VANESSA_MANAGED_PROFILE_REQUIRED", toolName+" must use profileName=\""+r.backend.TestClientProfile+"\"", map[string]any{"profileName": r.backend.TestClientProfile, "testClientPort": r.backend.TestClientPort})
 		}
 	}
 	if toolName == "manage_test_client_profiles" {
@@ -870,7 +871,22 @@ const (
 	vanessaToolDisconnect    = "testclient-disconnect"
 )
 
-func classifyVanessaTool(name string) string {
+func classifyVanessaTool(name string, arguments ...any) string {
+	if name == "manage_test_client" {
+		if len(arguments) == 0 {
+			return vanessaToolUnknown
+		}
+		args, _ := arguments[0].(map[string]any)
+		action, _ := args["action"].(string)
+		switch action {
+		case "connect":
+			return vanessaToolConnect
+		case "disconnect":
+			return vanessaToolDisconnect
+		default:
+			return vanessaToolUnknown
+		}
+	}
 	switch name {
 	case "execute_feature_step",
 		"execute_form_actions",
@@ -900,6 +916,7 @@ func classifyVanessaTool(name string) string {
 		"get_table_data",
 		"get_test_results",
 		"get_VanessaAutomation_state",
+		"get_vanessa_automation_state",
 		"get_window_list_os",
 		"get_window_screenshot_os",
 		"infobase_info",
@@ -923,11 +940,20 @@ func vanessaToolRequiresTestClient(name string) bool {
 	return classifyVanessaTool(name) == vanessaToolRuntime
 }
 
-func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName string) *mcp.CallToolResult {
+func (r *runtime) managedTestClientConnectParams(profile string) *mcp.CallToolParams {
+	arguments := map[string]any{"profileName": profile}
+	if r.catalog.tool("manage_test_client") != nil {
+		arguments["action"] = "connect"
+		return &mcp.CallToolParams{Name: "manage_test_client", Arguments: arguments}
+	}
+	return &mcp.CallToolParams{Name: "connect_test_client", Arguments: arguments}
+}
+
+func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName string, arguments any) *mcp.CallToolResult {
 	if r.family != "vanessa-ui" || r.backend == nil {
 		return nil
 	}
-	class := classifyVanessaTool(toolName)
+	class := classifyVanessaTool(toolName, arguments)
 	if class == vanessaToolUnknown {
 		return toolError("ITL_VANESSA_TOOL_CLASSIFICATION_MISSING", "Vanessa tool has no reviewed TestClient lifecycle classification", map[string]any{
 			"tool": toolName, "action": "classify-tool-before-forwarding",
@@ -971,10 +997,7 @@ func (r *runtime) preflightVanessaTestClientLocked(ctx context.Context, toolName
 		}
 	}
 
-	connectResult, connectErr := r.callUpstream(ctx, r.session, &mcp.CallToolParams{
-		Name:      "connect_test_client",
-		Arguments: map[string]any{"profileName": r.backend.TestClientProfile},
-	})
+	connectResult, connectErr := r.callUpstream(ctx, r.session, r.managedTestClientConnectParams(r.backend.TestClientProfile))
 	if connectErr != nil {
 		r.setTestClientStateLocked(testClientConnectionFailed, toolName, "ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", connectErr.Error())
 		return toolError("ITL_VANESSA_TESTCLIENT_NOT_CONNECTED", "automatic TestClient connection failed", map[string]any{
@@ -1017,19 +1040,19 @@ func (r *runtime) applyTestClientBackendInfoLocked(info *backendInfo, toolName s
 	}
 }
 
-func (r *runtime) applyVanessaTestClientResultLocked(toolName string, result *mcp.CallToolResult) {
+func (r *runtime) applyVanessaTestClientResultLocked(toolName string, arguments any, result *mcp.CallToolResult) {
 	if r.family != "vanessa-ui" || result == nil {
 		return
 	}
 	code := toolResultCode(result)
-	switch toolName {
-	case "connect_test_client":
+	switch classifyVanessaTool(toolName, arguments) {
+	case vanessaToolConnect:
 		if code == "" {
 			r.setTestClientStateLocked(testClientManagerConnected, toolName, "ITL_OK", "connection postcondition proved")
 		} else {
 			r.setTestClientStateLocked(testClientConnectionFailed, toolName, code, resultText(result))
 		}
-	case "close_test_client":
+	case vanessaToolDisconnect:
 		if code == "" {
 			r.setTestClientStateLocked(testClientDisconnected, toolName, "ITL_OK", "manager disconnected from TestClient")
 		}
@@ -1108,7 +1131,7 @@ func confirmsVanessaExt(text string) bool {
 	return false
 }
 
-func (r *runtime) validateVanessaResult(ctx context.Context, name string, result *mcp.CallToolResult, session *mcp.ClientSession) *mcp.CallToolResult {
+func (r *runtime) validateVanessaResult(ctx context.Context, name string, arguments any, result *mcp.CallToolResult, session *mcp.ClientSession) *mcp.CallToolResult {
 	if r.family != "vanessa-ui" {
 		return result
 	}
@@ -1118,7 +1141,7 @@ func (r *runtime) validateVanessaResult(ctx context.Context, name string, result
 	if marker := vanessaSemanticFailureMarker(name, resultText(result)); marker != "" {
 		return toolError("ITL_VANESSA_TOOL_RESULT_FAILED", "Vanessa returned a runtime/editor failure", map[string]any{"tool": name, "marker": marker})
 	}
-	if name != "connect_test_client" {
+	if classifyVanessaTool(name, arguments) != vanessaToolConnect {
 		return result
 	}
 	text := strings.ToLower(resultText(result))

@@ -208,8 +208,8 @@
         $dependencyLock.dependencies.itlOndemandMcp.sha256 | Should -Match '^[a-f0-9]{64}$'
         $dependencyLock.dependencies.vanessaMcp.clientMcp.assetName | Should -Be "client_mcp.cfe"
         $dependencyLock.dependencies.vanessaMcp.clientMcp.sha256 | Should -Be "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.29-itl-r13.cfe"
-        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "16170f5be0529d0653cfe544e202c925a229de7a27458670b106d1bf2c3cba9f"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.assetName | Should -Be "VAExtension.1.32-itl-r1.cfe"
+        $dependencyLock.dependencies.vanessaMcp.vaExtension.sha256 | Should -Be "0019ecbca5dd5dccba27f652e789a391e2113b4ee085813760d1dc2ac2fe1ae5"
         $dependencyLock.dependencies.vanessaMcp.vaExtension.protocol | Should -Be "itl-file-code-v1"
 
         $compatibility = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") | ConvertFrom-Json
@@ -1405,7 +1405,7 @@ enabled = true
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $masterRoot ".agent-1c\project.json")
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $branchRoot ".agent-1c\project.json")
             $clientSource = Join-Path $tempRoot "fixtures\client_mcp.cfe"
-            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.29-itl-r13.cfe"
+            $extensionSource = Join-Path $tempRoot "fixtures\VAExtension.1.32-itl-r1.cfe"
             Set-Content -LiteralPath $clientSource -Encoding UTF8 -Value "client fixture"
             Set-Content -LiteralPath $extensionSource -Encoding UTF8 -Value "extension fixture"
             Set-Content -LiteralPath (Join-Path $masterRoot ".dev.env") -Encoding UTF8 -Value @"
@@ -1420,8 +1420,8 @@ DEPENDENCY_MODE=fresh
                     $fixturePath = $(if ($isClient) { $clientSource } else { $extensionSource })
                     return [pscustomobject]@{
                         url = $fixturePath
-                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.29-itl-r13.cfe" })
-                        version = $(if ($isClient) { "v0.6.5" } else { "1.2.043.28" })
+                        name = $(if ($isClient) { "client_mcp.cfe" } else { "VAExtension.1.32-itl-r1.cfe" })
+                        version = $(if ($isClient) { "v0.6.5" } else { "1.2.043.42" })
                         expectedSha256 = (Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
                         source = "targeted-test"
                     }
@@ -1457,7 +1457,7 @@ DEPENDENCY_MODE=fresh
 
             $lockedManifest = Get-Content -Encoding UTF8 -Raw (Join-Path $branchRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
             $lockedManifest.dependencies.vanessaMcp.clientMcp.version = "v0.6.5"
-            $lockedManifest.dependencies.vanessaMcp.vaExtension.version = "1.2.043.28"
+            $lockedManifest.dependencies.vanessaMcp.vaExtension.version = "1.2.043.42"
             Set-Content -LiteralPath (Join-Path $branchRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value (($lockedManifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine)
             Add-Content -LiteralPath (Join-Path $branchRoot ".dev.env") -Encoding UTF8 -Value "DEPENDENCY_MODE=locked"
             Set-Content -LiteralPath $masterClient.path -Encoding UTF8 -Value "corrupted fixture"
@@ -1585,7 +1585,7 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
         $HelperText | Should -Match "Vanessa Automation verification"
         $HelperText | Should -Match "StartFeaturePlayer"
 
-        $catalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.28.json") | ConvertFrom-Json
+        $catalog = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\catalogs\vanessa-ui-v0.6.5-va-1.2.043.42.json") | ConvertFrom-Json
         @($catalog.tools).Count | Should -Be 38
         @($catalog.tools.name) | Should -Contain "search_for_steps_by_keywords"
         @($catalog.tools.name) | Should -Contain "run_scenario"
