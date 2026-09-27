@@ -644,6 +644,31 @@ Get-PesterShardFileSha256 -Path `$Path
             $bytes = [IO.File]::ReadAllBytes($launcher); @($bytes[0], $bytes[1], $bytes[2]) | Should -Be @(0xEF, 0xBB, 0xBF)
         } finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force } }
     }
+    It "removes the owned Cyrillic-path branch left after Git unregisters it but fails to delete its directory" {
+        $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-e2e-cleanup-p Проект-" + [guid]::NewGuid().ToString('N'))
+        $main = Join-Path $root 'd-1234abcd'; $branch = "$main-develop-golden"; $launcher = Join-Path $root 'appdata\1C\1CEStart\ibases.v8i'; $sibling = "$root-keep"
+        try {
+            New-Item -ItemType Directory -Force -Path $main, $sibling | Out-Null
+            & git -C $main init *> $null; & git -C $main config user.name 'ITL Test'; & git -C $main config user.email 'itl-test@example.invalid'
+            Set-Content -LiteralPath (Join-Path $main 'value.txt') -Value 'one' -Encoding ASCII
+            & git -C $main add value.txt; & git -C $main commit -m init *> $null
+            & git -C $main worktree add --quiet -b itldev/develop-golden $branch *> $null
+            $gitPointer = Get-Content -LiteralPath (Join-Path $branch '.git') -Raw -Encoding UTF8
+            & git -C $main worktree remove --force -- $branch *> $null
+            $LASTEXITCODE | Should -Be 0
+            New-Item -ItemType Directory -Force -Path (Join-Path $branch 'ignored') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $branch '.git'), $gitPointer, [Text.UTF8Encoding]::new($false))
+            Set-Content -LiteralPath (Join-Path $branch 'ignored\residue.txt') -Value 'left by Git' -Encoding UTF8
+            . (Join-Path $RepoRoot 'scripts\develop-e2e-cleanup.ps1')
+            Remove-DevelopE2EFreshProject -FreshProjectsRoot $root -Path $main -BranchPath $branch -LauncherListPath $launcher
+            Test-Path -LiteralPath $main | Should -BeFalse
+            Test-Path -LiteralPath $branch | Should -BeFalse
+            Test-Path -LiteralPath $sibling | Should -BeTrue
+        } finally {
+            if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force }
+            if (Test-Path -LiteralPath $sibling) { Remove-Item -LiteralPath $sibling -Recurse -Force }
+        }
+    }
     It "bulk-removes only missing Develop E2E launcher registrations" {
         $root = Join-Path ([IO.Path]::GetTempPath()) ("itl-e2e-launcher-cleanup-" + [guid]::NewGuid().ToString("N")); $launcher = Join-Path $root "appdata\1C\1CEStart\ibases.v8i"; $existing = Join-Path $root "d-22222222-develop-golden\.agent-1c\infobases\dev-branches\develop-golden"
         try { New-Item -ItemType Directory -Force -Path (Split-Path -Parent $launcher), $existing | Out-Null; . (Join-Path $RepoRoot "scripts\develop-e2e-cleanup.ps1")

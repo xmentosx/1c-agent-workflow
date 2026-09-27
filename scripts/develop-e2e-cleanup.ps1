@@ -298,11 +298,53 @@ function Remove-DevelopE2EFreshProject {
         if (-not $branchResolved.StartsWith($allowed, [StringComparison]::OrdinalIgnoreCase) -or (Split-Path -Leaf $branchResolved) -notlike $expectedBranchLeaf) { throw "Refusing to remove unexpected fresh journey branch path: $branchResolved" }
         [void](Remove-DevelopE2ELauncherRegistration -FreshProjectsRoot $FreshProjectsRoot -Path $resolved -BranchPath $branchResolved -LauncherListPath $LauncherListPath)
         if ((Test-Path -LiteralPath $resolved -PathType Container) -and (Test-Path -LiteralPath $branchResolved -PathType Container)) {
-            & git -C $resolved worktree remove --force $branchResolved
-            if ($LASTEXITCODE -ne 0) { throw "Unable to remove fresh journey branch worktree: $branchResolved" }
+            $remove = Invoke-RepositoryGit -RepositoryRoot $resolved -Arguments @('worktree', 'remove', '--force', '--', $branchResolved) -AllowFailure
+            if (Test-Path -LiteralPath $branchResolved -PathType Container) {
+                Remove-DevelopE2EOrphanedBranchDirectory -ProjectRoot $resolved -BranchPath $branchResolved -GitError ([string]$remove.stderr)
+            } elseif ($remove.exitCode -ne 0) {
+                $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $resolved | Where-Object { [string]::Equals([string]$_.path, $branchResolved, [StringComparison]::OrdinalIgnoreCase) })
+                if ($registered.Count -gt 0) { throw "Unable to remove fresh journey branch worktree '$branchResolved': $($remove.stderr.Trim())" }
+            }
         }
     }
     if (Test-Path -LiteralPath $resolved -PathType Container) { Remove-Item -LiteralPath $resolved -Recurse -Force }
+}
+
+function Remove-DevelopE2EOrphanedBranchDirectory {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [Parameter(Mandatory = $true)][string]$BranchPath, [string]$GitError = '')
+
+    $project = [IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\', '/')
+    $branch = [IO.Path]::GetFullPath($BranchPath).TrimEnd('\', '/')
+    $leaf = Split-Path -Leaf $project
+    if ($leaf -notmatch '^d-[0-9a-f]{8}$' -or -not [string]::Equals($branch, "$project-develop-golden", [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unexpected fresh journey branch directory: $branch"
+    }
+    $registered = @(Get-DevelopE2ERegisteredWorktrees -ProjectRoot $project | Where-Object { [string]::Equals([string]$_.path, $branch, [StringComparison]::OrdinalIgnoreCase) })
+    if ($registered.Count -gt 0) { throw "Unable to remove registered fresh journey branch worktree '$branch': $GitError" }
+    $gitFile = Join-Path $branch '.git'
+    if (-not (Test-Path -LiteralPath $gitFile -PathType Leaf)) { throw "Refusing to remove fresh journey branch without its Git pointer: $branch" }
+    $pointer = [IO.File]::ReadAllText($gitFile, [Text.Encoding]::UTF8).Trim()
+    if (-not $pointer.StartsWith('gitdir: ', [StringComparison]::Ordinal)) { throw "Refusing to remove fresh journey branch with an invalid Git pointer: $branch" }
+    $actualGitDir = [IO.Path]::GetFullPath($pointer.Substring(8)).TrimEnd('\', '/')
+    $expectedGitDir = [IO.Path]::GetFullPath((Join-Path $project ".git\worktrees\$(Split-Path -Leaf $branch)")).TrimEnd('\', '/')
+    if (-not [string]::Equals($actualGitDir, $expectedGitDir, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove fresh journey branch with a foreign Git pointer: $branch"
+    }
+    if (([IO.File]::GetAttributes($branch) -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        @(Get-ChildItem -LiteralPath $branch -Recurse -Force -Attributes ReparsePoint -ErrorAction Stop).Count -gt 0) {
+        throw "Refusing to traverse a linked fresh journey branch directory: $branch"
+    }
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $branch -Recurse -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $branch) { throw "Directory still exists: $branch" }
+            return
+        } catch {
+            if (-not (Test-Path -LiteralPath $branch)) { return }
+            if ($attempt -eq 5) { throw "Unable to remove orphaned fresh journey branch directory '$branch' after $attempt attempts: $($_.Exception.Message)" }
+            Start-Sleep -Milliseconds (100 * $attempt)
+        }
+    }
 }
 
 function Remove-DevelopE2EExportArtifacts {
