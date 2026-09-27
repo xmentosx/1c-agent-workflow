@@ -27,6 +27,24 @@
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
         @($errors).Count | Should -Be 0
     }
+    It "selects the Code index mount from Docker inspect JSON" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-mount-кириллица " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Invoke-DockerCommandCapture {
+                    param([string[]]$Arguments)
+                    $Arguments[0] | Should -Be "inspect"
+                    return '[{"Destination":"/app/model_cache","Source":"E:\\cache"},{"Destination":"/app/chroma_db","Source":"E:\\MCP data\\индекс"},{"Destination":"/app/code","Source":"E:\\code"}]'
+                }
+                Get-BetaContainerMountSource -ContainerName "itl-pm4corp-code" -Destination "/app/chroma_db" | Should -Be 'E:\MCP data\индекс'
+                { Get-BetaContainerMountSource -ContainerName "itl-pm4corp-code" -Destination "/app/missing" } | Should -Throw "*found 0*"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     It "requires a usable legacy Docs result before finalizing beta cutover" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl beta docs справка " + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

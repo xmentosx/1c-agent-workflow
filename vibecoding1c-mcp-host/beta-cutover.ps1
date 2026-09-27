@@ -200,7 +200,7 @@ function New-BetaProxyContract {
 function Get-BetaContainerMountSource {
     param([string]$ContainerName, [string]$Destination)
     $json = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{json .Mounts}}", $ContainerName) -TimeoutSec 60 -Description "inspect mounts for $ContainerName") -join ""
-    $mounts = @($json | ConvertFrom-Json)
+    $mounts = ConvertFrom-Json -InputObject $json
     $matches = @($mounts | Where-Object { [string]$_.Destination -eq $Destination })
     if ($matches.Count -ne 1) { throw "Expected one '$Destination' mount on '$ContainerName', found $($matches.Count)." }
     return [string]$matches[0].Source
