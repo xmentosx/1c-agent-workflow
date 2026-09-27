@@ -60,6 +60,32 @@ const changedBody = Buffer.from(JSON.stringify(changed), 'utf8');
 const changedResult = JSON.parse(proxy.transformToolsListResponse(changedBody, 'application/json', originalContract).toString('utf8'));
 assert.strictEqual(changedResult.result.tools[0].description, changed.result.tools[0].description);
 
+const betaTools = JSON.parse(JSON.stringify(tools));
+betaTools[0].outputSchema = { type: 'object', properties: { answer: { type: 'string' }, sources: { type: 'array' } } };
+betaTools[1].outputSchema = { type: 'object', properties: { result: { type: 'string' } }, required: ['result'] };
+const betaContract = { ...proxy.describeContract(betaTools), legacyCodeCheckerResult: true };
+const betaList = { jsonrpc: '2.0', id: 3, result: { tools: betaTools } };
+const publicBetaList = JSON.parse(proxy.transformToolsListResponse(Buffer.from(JSON.stringify(betaList)), 'application/json', betaContract));
+assert.strictEqual(publicBetaList.result.tools[0].outputSchema.properties.result.type, 'string');
+assert.ok(publicBetaList.result.tools[0].outputSchema.required.includes('result'));
+assert.deepStrictEqual(publicBetaList.result.tools[0].outputSchema.properties.sources, { type: 'array' });
+assert.deepStrictEqual(publicBetaList.result.tools[1].outputSchema, betaTools[1].outputSchema);
+assert.deepStrictEqual(betaTools[0].outputSchema.properties, { answer: { type: 'string' }, sources: { type: 'array' } });
+
+const betaCall = { jsonrpc: '2.0', id: 4, result: { content: [{ type: 'text', text: '{"answer":"Готово"}' }], structuredContent: { answer: 'Готово', sources: ['source'] }, isError: false } };
+const publicBetaCall = JSON.parse(proxy.transformCodeCheckerCallResponse(Buffer.from(JSON.stringify(betaCall)), 'application/json'));
+assert.strictEqual(publicBetaCall.result.content[0].text, 'Готово');
+assert.strictEqual(publicBetaCall.result.structuredContent.result, 'Готово');
+assert.deepStrictEqual(publicBetaCall.result.structuredContent.sources, ['source']);
+assert.strictEqual(betaCall.result.structuredContent.result, undefined);
+const errorCall = { jsonrpc: '2.0', id: 5, result: { isError: true, content: [{ type: 'text', text: 'capacity' }], structuredContent: { retryable: true } } };
+const publicError = JSON.parse(proxy.transformCodeCheckerCallResponse(Buffer.from(JSON.stringify(errorCall)), 'application/json'));
+assert.deepStrictEqual(publicError, errorCall);
+assert.throws(() => proxy.transformCodeCheckerCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 6, result: { structuredContent: { other: 'text' } } })), 'application/json'), /no answer string/);
+const betaSse = Buffer.from(`event: message\ndata: ${JSON.stringify(betaCall)}\n\n`);
+const publicBetaSse = proxy.transformCodeCheckerCallResponse(betaSse, 'text/event-stream').toString('utf8');
+assert.strictEqual(JSON.parse(publicBetaSse.split('\n').find(line => line.startsWith('data:')).slice(5).trim()).result.structuredContent.result, 'Готово');
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -398,7 +424,65 @@ async function runIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(() => {
+async function runBetaCodeCheckerIntegration() {
+  const typedTool = {
+    name: 'ask_1c_ai',
+    inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] },
+    outputSchema: { type: 'object', properties: { answer: { type: 'string' }, sources: { type: 'array' } } },
+  };
+  const contract = { ...proxy.describeContract([typedTool]), legacyCodeCheckerResult: true };
+  let nextSession = 0;
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'DELETE') { response.end('{}'); return; }
+      if (body.method === 'initialize') {
+        response.setHeader('mcp-session-id', `beta-session-${++nextSession}`);
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} } } }));
+        return;
+      }
+      if (body.method === 'notifications/initialized') { response.statusCode = 202; response.end(); return; }
+      if (body.method === 'tools/list') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [typedTool] } })); return; }
+      if (body.method === 'tools/call') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: {
+          content: [{ type: 'text', text: '{"answer":"Ответ beta"}' }],
+          structuredContent: { answer: 'Ответ beta', sources: ['new-field'] }, isError: false,
+        } }));
+        return;
+      }
+      response.statusCode = 400; response.end('{}');
+    });
+  });
+  const upstreamPort = await listen(upstream);
+  const proxyServer = await proxy.startProxy({
+    'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+    'listen-port': '0', 'server-id': 'codechecker',
+  }, contract);
+  const url = `http://127.0.0.1:${proxyServer.address().port}/mcp`;
+  const headers = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
+  try {
+    const init = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'old-client', version: '1' } } }) });
+    assert.strictEqual(init.status, 200);
+    headers['mcp-session-id'] = init.headers.get('mcp-session-id');
+    const list = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+    const publicTool = (await list.json()).result.tools[0];
+    assert.strictEqual(publicTool.outputSchema.properties.result.type, 'string');
+    assert.ok(publicTool.outputSchema.required.includes('result'));
+    const call = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ask_1c_ai', arguments: { question: 'Тест' } } }) });
+    const answer = (await call.json()).result;
+    assert.strictEqual(answer.content[0].text, 'Ответ beta');
+    assert.strictEqual(answer.structuredContent.result, 'Ответ beta');
+    assert.deepStrictEqual(answer.structuredContent.sources, ['new-field']);
+  } finally {
+    await close(proxyServer);
+    await close(upstream);
+  }
+}
+
+runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);

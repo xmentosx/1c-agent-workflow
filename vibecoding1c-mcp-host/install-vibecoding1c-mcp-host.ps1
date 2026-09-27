@@ -886,6 +886,10 @@ function Get-CodeCheckerSourceRoot {
     return (Join-Path $PSScriptRoot "codechecker-overlay")
 }
 
+function Get-CodeCheckerBetaSourceRoot {
+    return (Join-Path $PSScriptRoot "codechecker-beta-overlay")
+}
+
 function Get-BookStackProductDocsSourceRoot {
     return (Join-Path $PSScriptRoot "bookstack-product-docs-mcp")
 }
@@ -900,7 +904,15 @@ function Ensure-ServerDockerImageAvailable {
         [string]$Image
     )
     if ((Test-CodeCheckerServer -Server $Server) -and [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
-        Ensure-DockerImageAvailable -Image $Image
+        $baseImage = [string](Get-ObjectValue -Object $Server -Name "upstreamImage" -Default "")
+        if ($baseImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$') { throw "Beta CodeChecker requires a pinned upstream image." }
+        $sourceRoot = Get-CodeCheckerBetaSourceRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
+            throw "Beta CodeChecker overlay Dockerfile was not found: $sourceRoot"
+        }
+        Ensure-DockerImageAvailable -Image $baseImage
+        Write-Host "Building beta CodeChecker compatibility image: $Image"
+        Invoke-DockerCommandChecked -Arguments @("build", "--build-arg", "BASE_IMAGE=$baseImage", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build beta CodeChecker compatibility image"
         return
     }
     if (Test-CodeCheckerServer -Server $Server) {
@@ -2252,7 +2264,8 @@ function Start-DockerServer {
         [object]$Runtime,
         [object]$ConfigState = $null,
         [switch]$Recreate,
-        [switch]$ForceResetDatabase
+        [switch]$ForceResetDatabase,
+        [switch]$PreparedBetaImage
     )
     $containerName = [string]$Runtime.containerName
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
@@ -2290,7 +2303,13 @@ function Start-DockerServer {
     $args += $Runtime.image
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
-        Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
+        if ($PreparedBetaImage) {
+            if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta" -or -not (Test-DockerImageAvailable -Image ([string]$Runtime.image))) {
+                throw "Prepared beta image '$($Runtime.image)' is not available for '$containerName'."
+            }
+        } else {
+            Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
+        }
         Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
     }
     Write-Host "Container ready: $containerName -> $($Runtime.url)"

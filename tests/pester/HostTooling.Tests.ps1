@@ -44,6 +44,11 @@
                 { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible } | Should -Not -Throw
                 $breaking = @([pscustomobject]@{ name = "search"; inputSchema = [pscustomobject]@{ required = @("query", "limit"); properties = [pscustomobject]@{ query = [pscustomobject]@{ type = "string" }; limit = [pscustomobject]@{ type = "integer" } } } })
                 { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $breaking } | Should -Throw
+                $oldTools[0] | Add-Member -NotePropertyName outputSchema -NotePropertyValue ([pscustomobject]@{ required = @("result"); properties = [pscustomobject]@{ result = [pscustomobject]@{ type = "string" } } })
+                $compatible[0] | Add-Member -NotePropertyName outputSchema -NotePropertyValue ([pscustomobject]@{ required = @("result"); properties = [pscustomobject]@{ result = [pscustomobject]@{ type = "string" }; answer = [pscustomobject]@{ type = "string" } } })
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible -CheckOutputs } | Should -Not -Throw
+                $compatible[0].outputSchema.required = @("answer")
+                { Assert-BetaToolsAcceptOldCalls -OldTools $oldTools -BetaTools $compatible -CheckOutputs } | Should -Throw
                 { Assert-BetaPathUnderStateRoot -Config ([pscustomobject]@{ stateRoot = (Join-Path $tempRoot "state") }) -Path (Join-Path $tempRoot "other") } | Should -Throw
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
@@ -73,6 +78,13 @@
                 $graph.running | Should -BeTrue
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "restores the stable CodeChecker logic tool in the beta image" -Tag BetaCutover {
+        $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-beta-overlay\test_patch_mcp_server.py"
+        $output = & python $testPath 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 3 tests"
     }
 
     It "parses the standalone MCP host config dump helper" {

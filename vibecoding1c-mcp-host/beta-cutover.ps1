@@ -37,7 +37,14 @@ function Get-BetaCutoverContext {
     if ($runtime.name -ne [string]$old.name -or $runtime.containerName -eq [string]$old.containerName) {
         throw "Beta '$ServerId' must keep the public name and use a distinct container."
     }
-    if (-not ([string]$runtime.image).Contains("@sha256:")) { throw "Beta '$ServerId' image is not pinned by digest." }
+    if ($ServerId -eq "codechecker") {
+        $upstreamImage = [string](Get-ObjectValue -Object $betaServer -Name "upstreamImage" -Default "")
+        if ($upstreamImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$' -or [string]$runtime.image -notmatch '^itl/1c-codechecker-beta:[a-z0-9.-]+$') {
+            throw "Beta CodeChecker requires the pinned upstream image and a local compatibility image."
+        }
+    } elseif (-not ([string]$runtime.image).Contains("@sha256:")) {
+        throw "Beta '$ServerId' image is not pinned by digest."
+    }
     $envValues = Resolve-ServerEnv -Config $Config -Server $betaServer -ConfigState $configState
     if ($ServerId -in @("templates", "code", "graph") -and [string](Get-ObjectValue -Object $envValues -Name "RESET_DATABASE" -Default "false") -notmatch '^(?i:false|0|no|off)$') {
         throw "Beta '$ServerId' would reset a retained database."
@@ -75,7 +82,7 @@ function Get-HostMcpToolsList {
 }
 
 function Assert-BetaToolsAcceptOldCalls {
-    param([object[]]$OldTools, [object[]]$BetaTools)
+    param([object[]]$OldTools, [object[]]$BetaTools, [switch]$CheckOutputs)
     $byName = @{}
     foreach ($tool in $BetaTools) {
         $name = [string](Get-ObjectValue -Object $tool -Name "name" -Default "")
@@ -100,6 +107,25 @@ function Assert-BetaToolsAcceptOldCalls {
             $oldType = [string](Get-ObjectValue -Object $property.Value -Name "type" -Default "")
             $newType = [string](Get-ObjectValue -Object $newProperty -Name "type" -Default "")
             if ($oldType -and $newType -and $oldType -ne $newType) { throw "Beta tool '$name' changed type of '$($property.Key)' from '$oldType' to '$newType'." }
+        }
+        if ($CheckOutputs) {
+            $oldOutput = Get-ObjectValue -Object $old -Name "outputSchema" -Default $null
+            if ($null -eq $oldOutput) { continue }
+            $newOutput = Get-ObjectValue -Object $new -Name "outputSchema" -Default $null
+            if ($null -eq $newOutput) { throw "Beta tool '$name' removed its output schema." }
+            $oldOutputRequired = @((As-Array (Get-ObjectValue -Object $oldOutput -Name "required" -Default @())) | ForEach-Object { [string]$_ })
+            $newOutputRequired = @((As-Array (Get-ObjectValue -Object $newOutput -Name "required" -Default @())) | ForEach-Object { [string]$_ })
+            $removedRequired = @($oldOutputRequired | Where-Object { $_ -notin $newOutputRequired })
+            if ($removedRequired.Count -gt 0) { throw "Beta tool '$name' no longer guarantees output fields: $($removedRequired -join ', ')." }
+            $oldOutputProperties = Get-ObjectValue -Object $oldOutput -Name "properties" -Default $null
+            $newOutputProperties = Get-ObjectValue -Object $newOutput -Name "properties" -Default $null
+            foreach ($property in @((Convert-ToHash -Object $oldOutputProperties).GetEnumerator())) {
+                $newProperty = Get-ObjectValue -Object $newOutputProperties -Name $property.Key -Default $null
+                if ($null -eq $newProperty) { throw "Beta tool '$name' removed output field '$($property.Key)'." }
+                $oldType = [string](Get-ObjectValue -Object $property.Value -Name "type" -Default "")
+                $newType = [string](Get-ObjectValue -Object $newProperty -Name "type" -Default "")
+                if ($oldType -and $newType -and $oldType -ne $newType) { throw "Beta tool '$name' changed output type of '$($property.Key)' from '$oldType' to '$newType'." }
+            }
         }
     }
 }
@@ -149,6 +175,7 @@ function New-BetaProxyContract {
         noArgumentTools = @($probe.noArgumentTools)
         toolDescriptions = [ordered]@{}
     }
+    if ($Context.serverId -eq "codechecker") { $serverContract["legacyCodeCheckerResult"] = $true }
     $servers = [ordered]@{}
     $servers[[string]$Context.serverId] = $serverContract
     $contract = [ordered]@{ schemaVersion = 2; approvedAt = (Get-Date).ToString("o"); descriptionPolicy = (Get-ObjectValue -Object $sourceContract -Name "descriptionPolicy" -Default $null); servers = $servers }
@@ -337,7 +364,13 @@ function Invoke-BetaCutover {
         $context = $preflight.context
         Assert-RegistryPushPreflight -Config $Config
         Ensure-ServerDockerImageAvailable -Server $context.betaServer -Image ([string]$context.runtime.image)
+        Ensure-ToolsListProxyImage -Config $Config
         if ($TargetServerId -eq "graph") { Ensure-DockerImageAvailable -Image ([string]$context.betaServer.neo4jImage) }
+        $latestIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.old.directUrl)
+        if ($null -ne $latestIndexActivity) {
+            if ($latestIndexActivity.running) { throw "Stable '$TargetServerId' began indexing after preflight; cutover would interrupt it." }
+            $preflight.oldIndexActivity = $latestIndexActivity
+        }
         $oldStopped = $false
         $stateChanged = $false
         try {
@@ -347,7 +380,7 @@ function Invoke-BetaCutover {
             if ($TargetServerId -eq "graph") {
                 Start-ComposeServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState
             } else {
-                Start-DockerServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState
+                Start-DockerServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState -PreparedBetaImage
             }
             [void](Wait-HostMcpReadyConnection -Url ([string]$context.runtime.url) -ServerId $TargetServerId -ConfigId $TargetConfigId -TimeoutSeconds 7200 -RetrySeconds 10)
             Wait-BetaFreshIndexReady -Context $context
@@ -368,6 +401,8 @@ function Invoke-BetaCutover {
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
             $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
+            $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
+            Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force
             $publishedRuntime = Convert-ToHash -Object $context.runtime

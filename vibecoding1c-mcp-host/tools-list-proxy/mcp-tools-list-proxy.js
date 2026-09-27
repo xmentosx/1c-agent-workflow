@@ -211,6 +211,26 @@ function compactTool(tool, expected = {}) {
   return result;
 }
 
+function preserveCodeCheckerOutputSchema(tool, expected) {
+  if (!expected.legacyCodeCheckerResult) return tool;
+  const schema = tool.outputSchema;
+  if (!schema || schema.type !== 'object' || !schema.properties) {
+    throw new Error(`Beta CodeChecker tool '${tool.name}' has no object output schema.`);
+  }
+  if (schema.properties.result) return tool;
+  if (!schema.properties.answer || schema.properties.answer.type !== 'string') {
+    throw new Error(`Beta CodeChecker tool '${tool.name}' has no answer string to preserve as result.`);
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
 function transformPayload(payload, expected) {
   if (Array.isArray(payload)) return payload.map(item => transformPayload(item, expected));
   if (!payload || typeof payload !== 'object' || !payload.result || !Array.isArray(payload.result.tools)) return payload;
@@ -218,26 +238,52 @@ function transformPayload(payload, expected) {
   if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
     throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
-  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => compactTool(tool, expected)) } };
+  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected)) } };
 }
 
-function transformToolsListResponse(body, contentType, expected) {
+function transformJsonRpcResponse(body, contentType, transform) {
   const text = body.toString('utf8');
   if (String(contentType || '').toLowerCase().includes('text/event-stream')) {
     return Buffer.from(text.split(/(\r?\n)/).map(line => {
       if (!line.startsWith('data:')) return line;
       const data = line.slice(5).trim();
       if (!data || data === '[DONE]') return line;
-      return `data: ${JSON.stringify(transformPayload(JSON.parse(data), expected))}`;
+      return `data: ${JSON.stringify(transform(JSON.parse(data)))}`;
     }).join(''), 'utf8');
   }
-  return Buffer.from(JSON.stringify(transformPayload(JSON.parse(text), expected)), 'utf8');
+  return Buffer.from(JSON.stringify(transform(JSON.parse(text))), 'utf8');
+}
+
+function transformToolsListResponse(body, contentType, expected) {
+  return transformJsonRpcResponse(body, contentType, payload => transformPayload(payload, expected));
+}
+
+function preserveCodeCheckerCallResult(payload) {
+  if (Array.isArray(payload)) return payload.map(preserveCodeCheckerCallResult);
+  if (!payload || !payload.result || payload.result.isError) return payload;
+  const result = payload.result;
+  const structured = result.structuredContent;
+  if (!structured || typeof structured !== 'object') throw new Error('Beta CodeChecker tool returned no structured content.');
+  if (typeof structured.result === 'string') return payload;
+  if (typeof structured.answer !== 'string') throw new Error('Beta CodeChecker tool returned no answer string.');
+  const content = Array.isArray(result.content) ? [...result.content] : [];
+  const textIndex = content.findIndex(item => item && item.type === 'text');
+  if (textIndex < 0) content.unshift({ type: 'text', text: structured.answer });
+  else content[textIndex] = { ...content[textIndex], text: structured.answer };
+  return { ...payload, result: { ...result, content, structuredContent: { ...structured, result: structured.answer } } };
+}
+
+function transformCodeCheckerCallResponse(body, contentType) {
+  return transformJsonRpcResponse(body, contentType, preserveCodeCheckerCallResult);
 }
 
 function requestMethod(body) {
   try {
     const payload = JSON.parse(body.toString('utf8'));
-    if (Array.isArray(payload)) return payload.some(item => item && item.method === 'tools/list') ? 'tools/list' : '';
+    if (Array.isArray(payload)) {
+      if (payload.some(item => item && item.method === 'tools/call')) return 'tools/call';
+      return payload.some(item => item && item.method === 'tools/list') ? 'tools/list' : '';
+    }
     return payload && payload.method ? payload.method : '';
   } catch (_) { return ''; }
 }
@@ -321,7 +367,7 @@ async function startProxy(args, expected) {
       }
 
       const responseHeaders = filteredHeaders(upstreamResponse.headers);
-      if (method !== 'tools/list') {
+      if (method !== 'tools/list' && !(method === 'tools/call' && expected.legacyCodeCheckerResult)) {
         outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(outgoing);
         return;
@@ -330,7 +376,9 @@ async function startProxy(args, expected) {
       upstreamResponse.on('data', chunk => responseChunks.push(chunk));
       upstreamResponse.on('end', () => {
         try {
-          const transformed = transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected);
+          const transformed = method === 'tools/list'
+            ? transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected)
+            : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
           if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
             responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
           }
@@ -338,7 +386,7 @@ async function startProxy(args, expected) {
           outgoing.writeHead(upstreamResponse.statusCode || 200, responseHeaders);
           outgoing.end(transformed);
         } catch (error) {
-          writeProxyError(outgoing, 502, 'MCP_TOOLS_CONTRACT_DRIFT', error);
+          writeProxyError(outgoing, 502, method === 'tools/list' ? 'MCP_TOOLS_CONTRACT_DRIFT' : 'MCP_TOOL_RESULT_DRIFT', error);
         }
       });
     });
@@ -437,5 +485,6 @@ module.exports = {
   shortenDescription,
   startProxy,
   transformToolsListResponse,
+  transformCodeCheckerCallResponse,
   withoutDescriptions,
 };
