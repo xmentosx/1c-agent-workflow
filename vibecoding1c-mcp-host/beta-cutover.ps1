@@ -215,6 +215,18 @@ function Wait-BetaFreshIndexReady {
     throw "Fresh beta '$($Context.serverId)' index was not ready within $TimeoutSeconds seconds: $lastError"
 }
 
+function Wait-BetaCandidateReady {
+    param([object]$Context)
+    # At the observed rate (~3 docs/s), the 25,536-document Help corpus needs over two hours.
+    $budgetSeconds = if ($Context.serverId -eq "docs") { 10800 } else { 7200 }
+    $deadline = (Get-Date).AddSeconds($budgetSeconds)
+    [void](Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10)
+    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs") {
+        [int][Math]::Max(1, [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
+    } else { 7200 }
+    Wait-BetaFreshIndexReady -Context $Context -TimeoutSeconds $freshIndexBudgetSeconds
+}
+
 function Assert-BetaPathUnderStateRoot {
     param([object]$Config, [string]$Path)
     $root = [IO.Path]::GetFullPath((Get-StateRoot -Config $Config)).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
@@ -383,10 +395,7 @@ function Invoke-BetaCutover {
             } else {
                 Start-DockerServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState -PreparedBetaImage
             }
-            # At the observed rate (~3 docs/s), the 25,536-document Help corpus needs over two hours.
-            $mcpReadyTimeoutSeconds = if ($TargetServerId -eq "docs") { 10800 } else { 7200 }
-            [void](Wait-HostMcpReadyConnection -Url ([string]$context.runtime.url) -ServerId $TargetServerId -ConfigId $TargetConfigId -TimeoutSeconds $mcpReadyTimeoutSeconds -RetrySeconds 10)
-            Wait-BetaFreshIndexReady -Context $context
+            Wait-BetaCandidateReady -Context $context
             $betaTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
             Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $betaTools
             $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)

@@ -27,6 +27,40 @@
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
         @($errors).Count | Should -Be 0
     }
+    It "gives Docs MCP and fresh index one three-hour readiness budget" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-docs-budget-" + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = (Join-Path $tempRoot "state") } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:BetaReadyClockCalls = 0
+                $script:BetaReadyEpoch = [datetime]"2026-09-27T12:00:00Z"
+                $script:BetaReadyWaits = @()
+                function Get-Date {
+                    $script:BetaReadyClockCalls++
+                    if ($script:BetaReadyClockCalls -eq 1) { return $script:BetaReadyEpoch }
+                    return $script:BetaReadyEpoch.AddSeconds(120)
+                }
+                function Wait-HostMcpReadyConnection {
+                    param([string]$Url, [string]$ServerId, [string]$ConfigId, [int]$TimeoutSeconds, [int]$RetrySeconds)
+                    $script:BetaReadyWaits += [pscustomobject]@{ stage = "mcp"; seconds = $TimeoutSeconds }
+                }
+                function Wait-BetaFreshIndexReady {
+                    param([object]$Context, [int]$TimeoutSeconds)
+                    $script:BetaReadyWaits += [pscustomobject]@{ stage = "index"; seconds = $TimeoutSeconds }
+                }
+                $context = [pscustomobject]@{ serverId = "docs"; configId = ""; runtime = [pscustomobject]@{ url = "http://localhost:18000/mcp" } }
+                Wait-BetaCandidateReady -Context $context
+                @($script:BetaReadyWaits).Count | Should -Be 2
+                $script:BetaReadyWaits[0].seconds | Should -Be 10800
+                $script:BetaReadyWaits[1].seconds | Should -Be 10680
+                $script:BetaReadyWaits[0].stage | Should -Be "mcp"
+                $script:BetaReadyWaits[1].stage | Should -Be "index"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     It "enables beta Templates mutations only with a local token and keeps it out of Docker arguments" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl templates токен " + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
