@@ -438,8 +438,10 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($masterFiles.Keys).Count | Should -Be 20
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")) {
+            $masterRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-new-config-branch", "itl-new-extension-branch", "itl-refresh-all", "itl-update-workflow", "itl-repository-mode", "itl-switch-client")
+            $masterExpected = @(@($masterRoutineNames + @('itl-clean', 'itl-delete-branch')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($masterFiles.Keys | Sort-Object) | Should -Be @($masterExpected | Sort-Object)
+            foreach ($name in $masterRoutineNames) {
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 @($masterFiles.Keys) | Should -Contain ".agents/skills/$name/agents/openai.yaml"
                 [string]$masterFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
@@ -453,8 +455,10 @@
                 . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
                 Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $RepoRoot
             }
-            @($devFiles.Keys).Count | Should -Be 28
-            foreach ($name in @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")) {
+            $devRoutineNames = @("itl", "itl-status", "itl-litemode", "itl-sync-master", "itl-check", "itl-verify-fix", "itl-refresh", "itl-refresh-lite", "itl-fork-branch", "itl-sync-branches", "itl-reset-branch", "itl-lock-objects", "itl-result", "itl-update-workflow")
+            $devExpected = @(@($devRoutineNames + @('itl-clean')) | ForEach-Object { ".agents/skills/$_/SKILL.md"; ".agents/skills/$_/agents/openai.yaml" })
+            @($devFiles.Keys | Sort-Object) | Should -Be @($devExpected | Sort-Object)
+            foreach ($name in $devRoutineNames) {
                 @($devFiles.Keys) | Should -Contain ".agents/skills/$name/SKILL.md"
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match ("(?m)^  display_name: `"" + [regex]::Escape($name) + "`"$")
                 [string]$devFiles[".agents/skills/$name/agents/openai.yaml"] | Should -Match 'allow_implicit_invocation:\s*false'
