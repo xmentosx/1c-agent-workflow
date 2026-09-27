@@ -27,6 +27,47 @@
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
         @($errors).Count | Should -Be 0
     }
+    It "enables beta Templates mutations only with a local token and keeps it out of Docker arguments" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl templates токен " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $fixtureToken = "TemplatesOperatorToken0123456789ABCDEF"
+                function Get-HostSecretValues { param([object]$Config); return @{ MCP_OPERATOR_TOKEN = $fixtureToken } }
+                function Test-HostServerNeedsEmbedding { param([object]$Server); return $false }
+                function Get-HostLocalValues { param([object]$Config, [object]$ConfigState, [switch]$ForceResetDatabase); return @{} }
+                function Set-GraphOpenAiFallbackEnv { param([object]$Config, [object]$Server, [object]$Values) }
+                $server = [pscustomobject]@{ id = "templates"; channel = "beta"; env = @() }
+                $off = [pscustomobject]@{ templatesSearchServer = [pscustomobject]@{ enableWriteTools = $false } }
+                (Resolve-ServerEnv -Config $off -Server $server).Contains("MCP_OPERATOR_TOKEN") | Should -BeFalse
+                $on = [pscustomobject]@{ templatesSearchServer = [pscustomobject]@{ enableWriteTools = $true } }
+                $resolved = Resolve-ServerEnv -Config $on -Server $server
+                $resolved["MCP_ENABLE_WRITE_TOOLS"] | Should -Be "true"
+                $resolved["MCP_OPERATOR_TOKEN"] | Should -Be $fixtureToken
+                $fixtureToken = "weak"
+                { Resolve-ServerEnv -Config $on -Server $server } | Should -Throw "*at least 32 characters*"
+                $fixtureToken = "TemplatesOperatorToken0123456789ABCDEF"
+                function Resolve-ServerVolumes { param([object]$Config, [object]$Server, [object]$ConfigState); return @() }
+                function Invoke-DockerCommandCapture { param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description); return @() }
+                function Test-DockerImageAvailable { param([string]$Image); return $true }
+                function Invoke-DockerCommandChecked {
+                    param([string[]]$Arguments, [int]$TimeoutSec, [string]$Description)
+                    $script:CapturedTemplateDockerArgs = @($Arguments)
+                    $script:CapturedTemplateProcessToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
+                }
+                $runtime = [pscustomobject]@{ containerName = "itl-templates-beta"; hostPort = 18001; internalPort = 8004; image = "fixture-image"; url = "http://localhost:18001/mcp" }
+                $previousToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
+                Start-DockerServer -Config $on -Server $server -Runtime $runtime -PreparedBetaImage
+                ($script:CapturedTemplateDockerArgs -join " ") | Should -Not -Match ([regex]::Escape($fixtureToken))
+                ($script:CapturedTemplateDockerArgs -join " ") | Should -Match "-e MCP_OPERATOR_TOKEN"
+                $script:CapturedTemplateProcessToken | Should -Be $fixtureToken
+                [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process") | Should -Be $previousToken
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 
     It "keeps the logical MCP identity while beta uses a different container and rejects breaking tool changes" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-contract-кириллица " + [guid]::NewGuid().ToString("N"))

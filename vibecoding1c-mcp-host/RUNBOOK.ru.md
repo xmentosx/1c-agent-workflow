@@ -320,6 +320,16 @@ BookStack и Mantis MCP работают в stateless HTTP mode. После пе
 Публичный proxy CodeChecker сохраняет прежние текстовые ответы и поле
 `structuredContent.result`, оставляя доступными новые типизированные поля beta.
 
+Для beta Templates инструменты `add_template` и `plugin_reload` выключены по
+умолчанию. Если оператор разрешил прежние пишущие вызовы, задайте
+`templatesSearchServer.enableWriteTools: true` и локальный
+`secrets.MCP_OPERATOR_TOKEN` (не менее 32 символов и 8 разных) в игнорируемом
+`host.config.json`. Host передаёт beta `MCP_ENABLE_WRITE_TOOLS=true`, а proxy
+читает производный файл токена из `stateRoot/beta-proxy-secrets` только для
+этих двух вызовов. Явный `Authorization` клиента проходит без замены; при его
+отсутствии proxy добавляет сохранённый токен. Неверный явный токен не заменяется
+и отклоняется beta. Токен не попадает в клиентский конфиг и registry.
+
 Для каждого сервера сначала выполните чтение текущего состояния и MCP-контракта:
 
 ```powershell

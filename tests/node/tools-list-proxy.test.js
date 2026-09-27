@@ -582,7 +582,86 @@ async function runBetaSyntaxIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaSyntaxIntegration).then(() => {
+async function runTemplatesOperatorTokenIntegration() {
+  const token = 'TemplatesOperatorToken0123456789ABCDEF';
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'itl templates токен '));
+  const tokenPath = path.join(root, 'operator-token');
+  fs.writeFileSync(tokenPath, token, 'utf8');
+  const templateTools = ['templatesearch', 'add_template', 'plugin_reload'].map(name => ({
+    name, inputSchema: { type: 'object', properties: {} },
+  }));
+  const calls = [];
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'DELETE') { response.end('{}'); return; }
+      if (body.method === 'initialize') {
+        response.setHeader('mcp-session-id', 'templates-session');
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} } } }));
+        return;
+      }
+      if (body.method === 'notifications/initialized') { response.statusCode = 202; response.end(); return; }
+      if (body.method === 'tools/list') {
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: templateTools } }));
+        return;
+      }
+      if (body.method === 'tools/call') {
+        calls.push({ name: body.params.name, authorization: request.headers.authorization });
+        if (['add_template', 'plugin_reload'].includes(body.params.name) && request.headers.authorization !== `Bearer ${token}`) {
+          response.statusCode = 401;
+          response.end(JSON.stringify({ error: 'mutation_auth_required' }));
+          return;
+        }
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'ok' }] } }));
+        return;
+      }
+      response.statusCode = 400;
+      response.end('{}');
+    });
+  });
+  let proxyServer;
+  try {
+    const upstreamPort = await listen(upstream);
+    proxyServer = await proxy.startProxy({
+      'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+      'listen-port': '0', 'server-id': 'templates',
+      'operator-token-file': tokenPath,
+    }, proxy.describeContract(templateTools));
+    const url = `http://127.0.0.1:${proxyServer.address().port}/mcp`;
+    const common = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
+    const call = (id, name, authorization) => fetch(url, {
+      method: 'POST', headers: authorization === undefined ? common : { ...common, authorization },
+      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: {} } }),
+    });
+    assert.strictEqual((await call(1, 'templatesearch')).status, 200);
+    assert.strictEqual((await call(2, 'add_template')).status, 200);
+    assert.strictEqual((await call(3, 'plugin_reload')).status, 200);
+    assert.strictEqual((await call(4, 'add_template', `Bearer ${token}`)).status, 200);
+    assert.strictEqual((await call(5, 'add_template', 'Bearer invalid')).status, 401);
+    assert.deepStrictEqual(calls, [
+      { name: 'templatesearch', authorization: undefined },
+      { name: 'add_template', authorization: `Bearer ${token}` },
+      { name: 'plugin_reload', authorization: `Bearer ${token}` },
+      { name: 'add_template', authorization: `Bearer ${token}` },
+      { name: 'add_template', authorization: 'Bearer invalid' },
+    ]);
+    const health = await (await fetch(`http://127.0.0.1:${proxyServer.address().port}/health`)).text();
+    assert.ok(!health.includes(token));
+    await assert.rejects(proxy.startProxy({
+      'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+      'listen-port': '0', 'server-id': 'other', 'operator-token-file': tokenPath,
+    }, proxy.describeContract(templateTools)), /Only the Templates proxy/);
+  } finally {
+    if (proxyServer) await close(proxyServer);
+    await close(upstream);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaSyntaxIntegration).then(runTemplatesOperatorTokenIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);

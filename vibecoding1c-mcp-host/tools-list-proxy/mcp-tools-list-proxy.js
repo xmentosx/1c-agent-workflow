@@ -342,6 +342,15 @@ function syntaxCallIds(body) {
   } catch (_) { return new Set(); }
 }
 
+function isProtectedTemplateCall(body) {
+  try {
+    const payload = JSON.parse(body.toString('utf8'));
+    const requests = Array.isArray(payload) ? payload : [payload];
+    return requests.some(item => item && item.method === 'tools/call' && item.params &&
+      ['add_template', 'plugin_reload'].includes(item.params.name));
+  } catch (_) { return false; }
+}
+
 function isSafeControlMethod(method) {
   return method === 'initialize' || method === 'tools/list';
 }
@@ -367,6 +376,13 @@ function safeErrorMessage(error) {
 }
 
 async function startProxy(args, expected) {
+  if (args['operator-token-file'] && args['server-id'] !== 'templates') {
+    throw new Error('Only the Templates proxy may use an operator token file.');
+  }
+  const operatorToken = args['operator-token-file']
+    ? fs.readFileSync(args['operator-token-file'], 'utf8').trim()
+    : '';
+  if (args['operator-token-file'] && !operatorToken) throw new Error('Templates operator token file is empty.');
   let upstream = new URL(args['upstream-url']);
   let qualified = false;
   let readinessInFlight = null;
@@ -400,6 +416,9 @@ async function startProxy(args, expected) {
     const syntaxIds = method === 'tools/call' && expected.legacySyntaxJsonl ? syntaxCallIds(body) : null;
     const transport = upstream.protocol === 'https:' ? https : http;
     const headers = filteredHeaders(incoming.headers);
+    if (operatorToken && !Object.prototype.hasOwnProperty.call(headers, 'authorization') && isProtectedTemplateCall(body)) {
+      headers.authorization = `Bearer ${operatorToken}`;
+    }
     headers.host = upstream.host;
     headers['x-itl-mcp-proxy'] = 'tools-list-proxy';
     if (body.length) headers['content-length'] = body.length;

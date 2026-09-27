@@ -1925,6 +1925,21 @@ function Get-HostSecretValues {
     return $values
 }
 
+function Get-TemplatesBetaOperatorToken {
+    param([object]$Config, [string]$ServerId, [string]$Channel)
+    if ($ServerId -ne "templates" -or $Channel -ne "beta") { return "" }
+    $settings = Get-ObjectValue -Object $Config -Name "templatesSearchServer" -Default $null
+    $enabled = Get-ObjectValue -Object $settings -Name "enableWriteTools" -Default $false
+    if ($enabled -isnot [bool]) { throw "templatesSearchServer.enableWriteTools must be a JSON boolean." }
+    if (-not $enabled) { return "" }
+    $secrets = Get-HostSecretValues -Config $Config
+    $token = [string]$secrets["MCP_OPERATOR_TOKEN"]
+    if ($token.Length -lt 32 -or @($token.ToCharArray() | Select-Object -Unique).Count -lt 8 -or $token -match '[\r\n]') {
+        throw "Beta Templates write tools require a local MCP_OPERATOR_TOKEN with at least 32 characters and 8 distinct characters."
+    }
+    return $token
+}
+
 function Get-HostLocalValues {
     param(
         [object]$Config,
@@ -2200,6 +2215,16 @@ function Resolve-ServerEnv {
         $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
+        [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        [void]$values.Remove("MCP_ENABLE_WRITE_TOOLS")
+        [void]$values.Remove("MCP_OPERATOR_TOKEN")
+        $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId "templates" -Channel "beta"
+        if ($operatorToken) {
+            $values["MCP_ENABLE_WRITE_TOOLS"] = "true"
+            $values["MCP_OPERATOR_TOKEN"] = $operatorToken
+        }
+    }
     if ($ForceResetDatabase) {
         if ($values.Contains("RESET_CACHE")) {
             $values["RESET_CACHE"] = "false"
@@ -2306,8 +2331,15 @@ function Start-DockerServer {
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $volumes = Resolve-ServerVolumes -Config $Config -Server $Server -ConfigState $ConfigState
     $args = @("run", "-d", "--restart", "unless-stopped", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
+    $operatorToken = ""
     foreach ($key in @($envValues.Keys | Sort-Object)) {
-        $args += @("-e", "$key=$($envValues[$key])")
+        if ($key -eq "MCP_OPERATOR_TOKEN" -and [string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
+            [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+            $operatorToken = [string]$envValues[$key]
+            $args += @("-e", "MCP_OPERATOR_TOKEN")
+        } else {
+            $args += @("-e", "$key=$($envValues[$key])")
+        }
     }
     foreach ($volume in $volumes) {
         $args += @("-v", "$($volume.host):$($volume.container)")
@@ -2322,7 +2354,17 @@ function Start-DockerServer {
         } else {
             Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
         }
-        Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+        if ($operatorToken) {
+            $previousToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
+            try {
+                [Environment]::SetEnvironmentVariable("MCP_OPERATOR_TOKEN", $operatorToken, "Process")
+                Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+            } finally {
+                [Environment]::SetEnvironmentVariable("MCP_OPERATOR_TOKEN", $previousToken, "Process")
+            }
+        } else {
+            Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+        }
     }
     Write-Host "Container ready: $containerName -> $($Runtime.url)"
 }
@@ -2642,6 +2684,12 @@ function Enable-ToolsListProxyForRuntime {
     $Runtime | Add-Member -NotePropertyName proxyPort -NotePropertyValue $proxyPort -Force
     $Runtime | Add-Member -NotePropertyName proxyContainerName -NotePropertyValue $proxyContainerName -Force
     $Runtime | Add-Member -NotePropertyName toolsContractStatus -NotePropertyValue "fallback-direct" -Force
+    $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId $id -Channel ([string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable"))
+    $operatorTokenPath = ""
+    if ($operatorToken) {
+        $operatorTokenPath = Join-Path (Join-Path (Get-StateRoot -Config $Config) "beta-proxy-secrets") "templates.operator-token"
+        if (-not $DryRun) { Write-Text -Path $operatorTokenPath -Value $operatorToken }
+    }
     if ($DryRun) {
         Write-Host "Would qualify MCP tools-list proxy for '$id': $proxyUrl -> $directUrl"
         return
@@ -2667,14 +2715,19 @@ function Enable-ToolsListProxyForRuntime {
     $contractVolume = "$contractPath`:/app/tools-contract.json:ro"
     $upstreamUrl = "http://host.docker.internal:$($Runtime.hostPort)/mcp"
     try {
-        Invoke-DockerCommandChecked -Arguments @(
+        $dockerArgs = @(
             "run", "-d", "--restart", "unless-stopped", "--name", $proxyContainerName,
             "--add-host", "host.docker.internal:host-gateway",
-            "-p", "$proxyPort`:8080", "-v", $contractVolume,
+            "-p", "$proxyPort`:8080", "-v", $contractVolume
+        )
+        if ($operatorTokenPath) { $dockerArgs += @("-v", "$operatorTokenPath`:/app/operator-token:ro") }
+        $dockerArgs += @(
             $settings.image,
             "--listen-port", "8080", "--upstream-url", $upstreamUrl,
             "--server-id", $id, "--contract-path", "/app/tools-contract.json"
-        ) -TimeoutSec 180 -Description "docker run $proxyContainerName"
+        )
+        if ($operatorTokenPath) { $dockerArgs += @("--operator-token-file", "/app/operator-token") }
+        Invoke-DockerCommandChecked -Arguments $dockerArgs -TimeoutSec 180 -Description "docker run $proxyContainerName"
         $ready = Wait-ToolsListProxyReady -Port $proxyPort -ExpectedServerId $id -ExpectedUpstreamUrl $upstreamUrl
         if (-not $ready) {
             $logs = @(Invoke-DockerCommandCapture -Arguments @("logs", "--tail", "40", $proxyContainerName) -TimeoutSec 60 -Description "docker logs $proxyContainerName")

@@ -10,10 +10,14 @@
     "ONEC_AI_TOKEN": "<local-1c-assistant-token>",
     "BOOKSTACK_TOKEN_ID": "<bookstack-readonly-token-id>",
     "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>",
-    "MANTIS_API_TOKEN": "<mantis-readonly-api-token>"
+    "MANTIS_API_TOKEN": "<mantis-readonly-api-token>",
+    "MCP_OPERATOR_TOKEN": ""
   },
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
+  },
+  "templatesSearchServer": {
+    "enableWriteTools": false
   },
   "codeMetadataSearchServer": {
     "resetDatabase": false,
