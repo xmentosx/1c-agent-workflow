@@ -70,6 +70,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "quality-contracts.ps1")
 . (Join-Path $PSScriptRoot "develop-static-qualification.ps1")
 . (Join-Path $PSScriptRoot "develop-e2e-qualification.ps1")
+. (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $qualityCatalog = Get-QualityContractCatalog -RepositoryRoot $repoRoot
 $effectivePesterWorkers = Resolve-PesterWorkerCount -Mode $effectiveMode -RequestedWorkerCount $PesterWorkers -Explicit $pesterWorkersExplicit -Catalog $qualityCatalog
 $budgetPrefix = $effectiveMode.Substring(0, 1).ToLowerInvariant() + $effectiveMode.Substring(1)
@@ -726,7 +727,7 @@ function Get-DevelopE2EIdentitySha256 {
         projectRoot = $root.ToLowerInvariant()
         projectConfigSha256 = $(if (Test-Path -LiteralPath $projectConfig -PathType Leaf) { (Get-FileHash -LiteralPath $projectConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
         standConfigSha256 = $(if (Test-Path -LiteralPath $standConfig -PathType Leaf) { (Get-FileHash -LiteralPath $standConfig -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
-        devEnvSha256 = $(if (Test-Path -LiteralPath $devEnv -PathType Leaf) { (Get-FileHash -LiteralPath $devEnv -Algorithm SHA256).Hash.ToLowerInvariant() } else { "" })
+        devEnvSha256 = $(if (Test-Path -LiteralPath $devEnv -PathType Leaf) { Get-DeliveryStableDotEnvSha256 -Path $devEnv } else { "" })
         powershellVersion = [string]$PSVersionTable.PSVersion
         powershellEdition = [string]$PSVersionTable.PSEdition
     }

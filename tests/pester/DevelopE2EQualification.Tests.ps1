@@ -262,6 +262,31 @@ Describe "Develop E2E journey qualification router" {
         $routeValidation | Should -BeGreaterThan $postStageIdentity
     }
 
+    It "keeps Develop proof identity across helper-owned env changes and invalidates semantic changes" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-DevelopE2EIdentitySha256' }, $true)
+        $definition | Should -Not -BeNullOrEmpty
+        . ([scriptblock]::Create($definition.Extent.Text))
+
+        $stand = Join-Path $TestDrive ("proof $(Get-NonAsciiFixtureSegment) with spaces")
+        $configRoot = Join-Path $stand '.agent-1c'
+        New-Item -ItemType Directory -Force -Path $configRoot | Out-Null
+        [IO.File]::WriteAllText((Join-Path $configRoot 'project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $configRoot 'release-e2e.json'), '{}', [Text.UTF8Encoding]::new($false))
+        $envPath = Join-Path $stand '.dev.env'
+        $context = [pscustomobject]@{ artifacts=[pscustomobject]@{ vanessaAutomation=[pscustomobject]@{ sha256='a' * 64 } }; managedPackage=[pscustomobject]@{ sha256='b' * 64 } }
+        $fork = [pscustomobject]@{ commit='c' * 40; tree='d' * 40; tag='test-tag' }
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
+        $before = Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nEXPORT_PATH=src/cf`n", [Text.UTF8Encoding]::new($false))
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand) | Should -Be $before
+        [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\new-1cv8`nITL_ACTIVE_CONTEXT_UPDATED_AT=third`n", [Text.UTF8Encoding]::new($false))
+        (Get-DevelopE2EIdentitySha256 -ReleaseContext $context -ForkIdentity $fork -ProjectRoot $stand) | Should -Not -Be $before
+    }
+
     It "accepts writer-produced documentation qualification with continued routes while rejecting invalid evidence" {
         $tokens = $null
         $errors = $null
