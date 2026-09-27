@@ -1242,8 +1242,15 @@ function Test-HostServerNeedsEmbedding {
 }
 
 function Get-HostEmbeddingSettings {
-    param([object]$Config)
+    param([object]$Config, [object]$Server = $null)
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $betaIndex = Get-BetaProjectIndexSettings -Config $Config -Server $Server
+    if ($null -ne $betaIndex) {
+        $embedding = Get-ObjectValue -Object $betaIndex -Name "embedding" -Default $null
+        if ($null -eq $embedding) { throw "betaProjectIndex.embedding is required for fresh beta indexes." }
+        $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
+        if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
+    }
     $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
     $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
     $mode = $(if ([string]::IsNullOrWhiteSpace($apiKey)) { "cpu" } else { "openai" })
@@ -1254,6 +1261,7 @@ function Get-HostEmbeddingSettings {
     if ($mode -eq "openai" -and [string]::IsNullOrWhiteSpace($apiBase)) {
         throw "Standalone vibecoding1c MCP host embedding.apiBase is required when embedding.apiKey is set."
     }
+    if ($null -ne $betaIndex -and $mode -ne "openai") { throw "Fresh beta project indexes require explicit remote embedding credentials." }
     return [pscustomobject]@{
         mode = $mode
         apiBase = $apiBase.TrimEnd("/")
@@ -1282,7 +1290,9 @@ function Get-HostEmbeddingProbeBase {
 
 function Get-HostEmbeddingModelsUri {
     param([string]$ApiBase)
-    return "$(Get-HostEmbeddingProbeBase -ApiBase $ApiBase)/models"
+    $probeBase = Get-HostEmbeddingProbeBase -ApiBase $ApiBase
+    if (([uri]$probeBase).Host -eq "openrouter.ai") { return "$probeBase/embeddings/models" }
+    return "$probeBase/models"
 }
 
 function Get-HostEmbeddingModelIds {
@@ -1316,10 +1326,13 @@ function Test-HostEmbeddingModelPresent {
 function Test-HostEmbeddingEndpointReady {
     param(
         [string]$ApiBase,
-        [string]$Model
+        [string]$Model,
+        [string]$ApiKey = ""
     )
     try {
-        $response = Invoke-RestMethod -Uri (Get-HostEmbeddingModelsUri -ApiBase $ApiBase) -TimeoutSec 5
+        $headers = @{}
+        if ($ApiKey) { $headers.Authorization = "Bearer $ApiKey" }
+        $response = Invoke-RestMethod -Uri (Get-HostEmbeddingModelsUri -ApiBase $ApiBase) -Headers $headers -TimeoutSec 5
         return (Test-HostEmbeddingModelPresent -Response $response -Model $Model)
     } catch {
         return $false
@@ -1377,13 +1390,14 @@ function Ensure-HostEmbeddingModel {
         [object]$Config,
         [object]$Manifest,
         [string[]]$GlobalServerIds,
-        [string[]]$ProjectServerIds
+        [string[]]$ProjectServerIds,
+        [object]$Server = $null
     )
-    if (-not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
+    if ($null -eq $Server -and -not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
         return
     }
 
-    $settings = Get-HostEmbeddingSettings -Config $Config
+    $settings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     Write-Host "Standalone embedding mode: $($settings.mode)"
     Write-Host "Standalone embedding model: $($settings.model)"
     if ($settings.mode -eq "cpu") {
@@ -1395,13 +1409,13 @@ function Ensure-HostEmbeddingModel {
     $modelsUri = Get-HostEmbeddingModelsUri -ApiBase $settings.apiBase
     Write-Host "Standalone embedding probe: $modelsUri"
 
-    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model -ApiKey $settings.apiKey) {
         Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
         return
     }
 
     if (-not (Test-HostEmbeddingApiBaseIsLocal -ApiBase $settings.apiBase)) {
-        throw "Standalone vibecoding1c MCP host embedding endpoint '$($settings.apiBase)' is reachable only when /v1/models includes configured model '$($settings.model)'. Fix host.config.json embedding.model or start the model before starting containers."
+        throw "Standalone embedding catalog '$modelsUri' did not confirm model '$($settings.model)'. Check endpoint credentials/model and retry before starting containers."
     }
 
     $lms = Get-HostLmsCommand
@@ -1419,7 +1433,7 @@ function Ensure-HostEmbeddingModel {
     Invoke-HostLmsRequiredCommand -Arguments @("load", $settings.model) -Description "load embedding model '$($settings.model)'"
     $serverStart = Invoke-HostLmsCommand -Arguments @("server", "start", "--port", ([string]$port))
 
-    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model) {
+    if (Test-HostEmbeddingEndpointReady -ApiBase $settings.apiBase -Model $settings.model -ApiKey $settings.apiKey) {
         Write-Host "Standalone embedding endpoint is ready for model: $($settings.model)"
         return
     }
@@ -2041,7 +2055,7 @@ function Set-GraphOpenAiFallbackEnv {
     if (-not (Test-HostServerNeedsEmbedding -Server $Server)) {
         return
     }
-    $settings = Get-HostEmbeddingSettings -Config $Config
+    $settings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     if ($settings.mode -eq "cpu") {
         $cpuLocalApiBase = "http://127.0.0.1:65535/v1"
         $placeholderKey = "standalone-cpu-embedding-placeholder"
@@ -2065,7 +2079,9 @@ function Set-GraphOpenAiFallbackEnv {
     if ($settings.mode -ne "openai") {
         return
     }
-    $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    # Dedicated beta embeddings must never become a chat-model credential.
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) { return }
+    $embedding = $settings
     $fallbacks = @(
         [pscustomobject]@{ name = "OPENAI_API_KEY"; embeddingName = "apiKey"; default = "" },
         [pscustomobject]@{ name = "OPENAI_API_BASE"; embeddingName = "apiBase"; default = "" },
@@ -2166,7 +2182,7 @@ function Resolve-ServerEnv {
     $serverNeedsEmbedding = Test-HostServerNeedsEmbedding -Server $Server
     $embeddingSettings = $null
     if ($serverNeedsEmbedding) {
-        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     }
     $values = [ordered]@{}
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
@@ -2179,7 +2195,7 @@ function Resolve-ServerEnv {
         $embeddingKind = [string](Get-ObjectValue -Object $entry -Name "embedding" -Default "")
         if ($embeddingKind) {
             if ($null -eq $embeddingSettings) {
-                $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+                $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
             }
             if ($embeddingSettings.mode -eq "openai") {
                 switch ($embeddingKind) {
@@ -2215,6 +2231,16 @@ function Resolve-ServerEnv {
         $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
+        $values["EMBEDDING_PROVIDER"] = "remote"
+        $values["EMBEDDING_API_BASE"] = [string]$embeddingSettings.apiBase
+        $values["EMBEDDING_API_KEY"] = [string]$embeddingSettings.apiKey
+        $values["EMBEDDING_MODEL"] = [string]$embeddingSettings.model
+        $values["EMBEDDING_ALLOW_OFFLINE_FALLBACK"] = "false"
+        $values["RESET_CACHE"] = "false"
+        $values["RESET_DATABASE"] = "false"
+        if ([string]$Server.id -eq "graph") { $values["ENABLE_ROUTINE_EMBEDDINGS"] = "true" }
+    }
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
         [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
         [void]$values.Remove("MCP_ENABLE_WRITE_TOOLS")
@@ -2247,13 +2273,18 @@ function Resolve-ServerVolumes {
     $volumes = @()
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $volumeEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) + @(Get-HostDefaultVolumeEntries -Server $Server)
-    if ((Test-HostServerNeedsEmbedding -Server $Server) -and (Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+    if ((Test-HostServerNeedsEmbedding -Server $Server) -and (Get-HostEmbeddingSettings -Config $Config -Server $Server).mode -eq "cpu") {
         $volumeEntries += [ordered]@{ from = "PATH_MODEL_CACHE"; to = "/app/model_cache"; required = $false }
     }
     foreach ($entry in $volumeEntries) {
         $from = [string](Get-ObjectValue -Object $entry -Name "from" -Default "")
         $to = [string](Get-ObjectValue -Object $entry -Name "to" -Default "")
         if (-not $from -or -not $to) { continue }
+        $betaVolume = @(Get-BetaProjectVolumes -Config $Config -Server $Server -ConfigState $ConfigState | Where-Object container -eq $to)
+        if ($betaVolume.Count -eq 1) {
+            $volumes += [pscustomobject]@{ host = $betaVolume[0].name; container = $to }
+            continue
+        }
         $hostPath = ""
         if ($localValues.Contains($from)) {
             $hostPath = [string]$localValues[$from]
@@ -2305,8 +2336,10 @@ function Start-DockerServer {
         [switch]$PreparedBetaImage
     )
     $containerName = [string]$Runtime.containerName
+    Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
+        Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime
         if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
             $configuredImage = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Config.Image}}", $containerName) -TimeoutSec 60 -Description "docker inspect image for $containerName") | Select-Object -First 1
             if ([string]$configuredImage -ne [string]$Runtime.image) {
@@ -2331,12 +2364,11 @@ function Start-DockerServer {
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     $volumes = Resolve-ServerVolumes -Config $Config -Server $Server -ConfigState $ConfigState
     $args = @("run", "-d", "--restart", "unless-stopped", "--name", $containerName, "-p", "$($Runtime.hostPort):$($Runtime.internalPort)")
-    $operatorToken = ""
+    $processSecrets = @{}
     foreach ($key in @($envValues.Keys | Sort-Object)) {
-        if ($key -eq "MCP_OPERATOR_TOKEN" -and [string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
-            [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
-            $operatorToken = [string]$envValues[$key]
-            $args += @("-e", "MCP_OPERATOR_TOKEN")
+        if ($key -match '(?i)(KEY|TOKEN|SECRET|PASSWORD)$') {
+            $processSecrets[$key] = [string]$envValues[$key]
+            $args += @("-e", $key)
         } else {
             $args += @("-e", "$key=$($envValues[$key])")
         }
@@ -2354,18 +2386,18 @@ function Start-DockerServer {
         } else {
             Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
         }
-        if ($operatorToken) {
-            $previousToken = [Environment]::GetEnvironmentVariable("MCP_OPERATOR_TOKEN", "Process")
-            try {
-                [Environment]::SetEnvironmentVariable("MCP_OPERATOR_TOKEN", $operatorToken, "Process")
-                Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
-            } finally {
-                [Environment]::SetEnvironmentVariable("MCP_OPERATOR_TOKEN", $previousToken, "Process")
+        $previousSecrets = @{}
+        try {
+            foreach ($key in $processSecrets.Keys) {
+                $previousSecrets[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+                [Environment]::SetEnvironmentVariable($key, $processSecrets[$key], "Process")
             }
-        } else {
             Invoke-DockerCommandChecked -Arguments $args -TimeoutSec 180 -Description "docker run $containerName"
+        } finally {
+            foreach ($key in $previousSecrets.Keys) { [Environment]::SetEnvironmentVariable($key, $previousSecrets[$key], "Process") }
         }
     }
+    if (-not $DryRun) { Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime }
     Write-Host "Container ready: $containerName -> $($Runtime.url)"
 }
 
@@ -2418,6 +2450,7 @@ function Start-ComposeServer {
         [switch]$ForceResetDatabase
     )
     $distributionRoot = Get-DistributionRoot -Config $Config
+    Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $sourceCompose = Join-Path $distributionRoot ([string](Get-ObjectValue -Object $Server -Name "composePath" -Default ""))
     if (-not (Test-Path -LiteralPath $sourceCompose -PathType Leaf)) {
         throw "Compose file was not found: $sourceCompose"
@@ -2437,11 +2470,10 @@ function Start-ComposeServer {
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "graph") {
         $composeText = Repair-GraphComposeHealthcheckText -ComposeText $composeText
         $composeText = Repair-GraphComposeResourceText -ComposeText $composeText
-        if ((Get-HostEmbeddingSettings -Config $Config).mode -eq "cpu") {
+        if ((Get-HostEmbeddingSettings -Config $Config -Server $Server).mode -eq "cpu") {
             $composeText = Add-GraphCpuEmbeddingBootstrapToComposeText -ComposeText $composeText
         }
     }
-    Write-Text -Path $targetCompose -Value $composeText
     $envFilePath = Join-Path $runtimeDir ".env"
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
     if ($channel -eq "beta") {
@@ -2452,7 +2484,12 @@ function Start-ComposeServer {
         $betaDataRoot = Join-Path (Join-Path (Get-StateRoot -Config $Config) "bases") (Join-Path ([string]$ConfigState.configId) "graph-beta")
         $neo4jDataPath = Join-Path $betaDataRoot "neo4j-data"
         $graphStatePath = Join-Path $betaDataRoot "mcp-state"
-        if (-not (Test-Path -LiteralPath $neo4jDataPath -PathType Container) -or -not (Test-Path -LiteralPath $graphStatePath -PathType Container)) {
+        $betaVolumes = @(Get-BetaProjectVolumes -Config $Config -Server $Server -ConfigState $ConfigState)
+        if ($betaVolumes.Count -gt 0) {
+            $neo4jVolume = @($betaVolumes | Where-Object role -eq "neo4j")[0].name
+            $stateVolume = @($betaVolumes | Where-Object role -eq "state")[0].name
+            $composeText = Set-BetaGraphVolumeComposeText -ComposeText $composeText -Neo4jVolume $neo4jVolume -StateVolume $stateVolume
+        } elseif (-not (Test-Path -LiteralPath $neo4jDataPath -PathType Container) -or -not (Test-Path -LiteralPath $graphStatePath -PathType Container)) {
             throw "Beta Graph data snapshots are missing under $betaDataRoot. Refusing an empty-graph start."
         }
         $envValues["COMPOSE_PROJECT_NAME"] = [string]$Runtime.composeProject
@@ -2467,7 +2504,16 @@ function Start-ComposeServer {
         $envValues["EMBEDDING_API_BASE"] = [string]$envValues["OPENAI_EMBEDDING_API_BASE"]
         $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
     }
+    Write-Text -Path $targetCompose -Value $composeText
     Write-DotEnv -Path $envFilePath -Values $envValues
+    if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
+        $acl = [Security.AccessControl.FileSecurity]::new()
+        $acl.SetAccessRuleProtection($true, $false)
+        foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
+            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, "FullControl", "Allow"))
+        }
+        Set-Acl -LiteralPath $envFilePath -AclObject $acl
+    }
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "config", "--quiet") -TimeoutSec 60 -Description "docker compose config $($Runtime.composeProject)"
@@ -2477,6 +2523,7 @@ function Start-ComposeServer {
         }
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "up", "-d") -TimeoutSec 240 -Description "docker compose up $($Runtime.composeProject)"
     }
+    if (-not $DryRun) { Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime }
     Write-Host "Compose project ready: $($Runtime.composeProject) -> $($Runtime.url)"
 }
 
@@ -4256,7 +4303,7 @@ function New-ServerRuntime {
     $composeProjectTemplate = [string](Get-ObjectValue -Object $Server -Name "composeProjectTemplate" -Default $name)
     $embeddingSettings = $null
     if (Test-HostServerNeedsEmbedding -Server $Server) {
-        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config
+        $embeddingSettings = Get-HostEmbeddingSettings -Config $Config -Server $Server
     }
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId

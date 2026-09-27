@@ -1,3 +1,126 @@
+function Get-BetaProjectIndexSettings {
+    param([object]$Config, [object]$Server)
+    # This opt-in belongs exclusively to new beta Code/Graph generations.
+    if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta" -or
+        [string](Get-ObjectValue -Object $Server -Name "id" -Default "") -notin @("code", "graph")) { return $null }
+    $settings = Get-ObjectValue -Object $Config -Name "betaProjectIndex" -Default $null
+    if ($null -eq $settings) { return $null }
+    $generation = [string](Get-ObjectValue -Object $settings -Name "generation" -Default "")
+    if ($generation -notmatch '^[a-z0-9][a-z0-9-]{0,47}$') {
+        throw "betaProjectIndex.generation must be a distinct lowercase generation name (1-48 letters, digits or hyphens). Keep the old generation for rollback."
+    }
+    return $settings
+}
+
+function Get-BetaProjectVolumes {
+    param([object]$Config, [object]$Server, [object]$ConfigState)
+    $settings = Get-BetaProjectIndexSettings -Config $Config -Server $Server
+    if ($null -eq $settings) { return @() }
+    $configId = [string](Get-ObjectValue -Object $ConfigState -Name "configId" -Default "")
+    $serverId = [string]$Server.id
+    $container = Expand-Template -Template ([string]$Server.containerNameTemplate) -ConfigId $configId -ServerId $serverId
+    if (-not $configId -or $container -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]+$') { throw "Fresh beta volumes require an exact project/container identity." }
+    $prefix = "$container-$($settings.generation)"
+    if ($serverId -eq "code") { return @([pscustomobject]@{ name = "$prefix-index"; container = "/app/chroma_db"; role = "index" }) }
+    return @(
+        [pscustomobject]@{ name = "$prefix-neo4j"; container = "/data"; role = "neo4j" },
+        [pscustomobject]@{ name = "$prefix-state"; container = "/app/data"; role = "state" }
+    )
+}
+
+function Initialize-BetaProjectVolumes {
+    param([object]$Config, [object]$Context, [switch]$InspectOnly, [switch]$RequireExisting)
+    $settings = Get-BetaProjectIndexSettings -Config $Config -Server $Context.betaServer
+    $embedding = Get-HostEmbeddingSettings -Config $Config -Server $Context.betaServer
+    foreach ($volume in @(Get-BetaProjectVolumes -Config $Config -Server $Context.betaServer -ConfigState $Context.configState)) {
+        $labels = [ordered]@{
+            "itl.beta.host" = [string](Get-ObjectValue -Object $Config -Name "hostId" -Default "vibecoding1c-mcp-host")
+            "itl.beta.config" = [string]$Context.configId
+            "itl.beta.server" = [string]$Context.serverId
+            "itl.beta.generation" = [string]$settings.generation
+            "itl.beta.model" = [string]$embedding.model
+        }
+        $names = @(Invoke-DockerCommandCapture -Arguments @("volume", "ls", "--format", "{{.Name}}", "--filter", "name=^$([regex]::Escape($volume.name))$") -TimeoutSec 60 -Description "locate beta volume $($volume.name)")
+        if ($names -notcontains $volume.name) {
+            if ($RequireExisting) { throw "Beta volume '$($volume.name)' is missing. Restore this generation or run an explicitly planned beta cutover; refusing an implicit empty index." }
+            if ($InspectOnly) { continue }
+            $arguments = @("volume", "create", "--driver", "local")
+            foreach ($label in $labels.Keys) { $arguments += @("--label", "$label=$($labels[$label])") }
+            Invoke-DockerCommandChecked -Arguments ($arguments + $volume.name) -TimeoutSec 60 -Description "create beta volume $($volume.name)"
+        }
+        $json = @(Invoke-DockerCommandCapture -Arguments @("volume", "inspect", $volume.name) -TimeoutSec 60 -Description "inspect beta volume $($volume.name)") -join ""
+        $decoded = ConvertFrom-Json -InputObject $json
+        $items = @($decoded)
+        if ($items.Count -ne 1 -or $items[0].Driver -ne "local" -or
+            @((Convert-ToHash -Object $items[0].Options).Keys).Count -gt 0) {
+            throw "Beta volume '$($volume.name)' must be an ordinary local Linux Docker volume, without bind/driver options. Use a new generation; existing data is retained."
+        }
+        foreach ($label in $labels.Keys) {
+            if ([string](Get-ObjectValue -Object $items[0].Labels -Name $label -Default "") -ne $labels[$label]) {
+                throw "Beta volume '$($volume.name)' ownership/model differs ($label). Use a new generation; existing data is retained."
+            }
+        }
+    }
+}
+
+function Set-BetaGraphVolumeComposeText {
+    param([string]$ComposeText, [string]$Neo4jVolume, [string]$StateVolume)
+    $neo4jMount = '"${NEO4J_DATA_PATH:-./data/neo4j_data}:/data"'
+    $stateMount = '"${GRAPH_STATE_PATH:-./data/mcp_state}:/app/data"'
+    if ($ComposeText -match '(?m)^volumes:' -or
+        ([regex]::Matches($ComposeText, [regex]::Escape($neo4jMount))).Count -ne 1 -or
+        ([regex]::Matches($ComposeText, [regex]::Escape($stateMount))).Count -ne 1) {
+        throw "Beta Graph compose storage contract changed. Reconcile its data mounts before cutover; stable data is retained."
+    }
+    $result = $ComposeText.Replace($neo4jMount, '"itl_beta_neo4j:/data"').Replace($stateMount, '"itl_beta_state:/app/data"')
+    $anchor = '      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}'
+    if (-not $result.Contains($anchor)) { throw "Beta Graph compose embedding contract changed." }
+    $result = $result.Replace($anchor, "$anchor`n      EMBEDDING_PROVIDER: remote`n      EMBEDDING_ALLOW_OFFLINE_FALLBACK: `"false`"")
+    return "$($result.TrimEnd())`n`nvolumes:`n  itl_beta_neo4j:`n    external: true`n    name: $Neo4jVolume`n  itl_beta_state:`n    external: true`n    name: $StateVolume`n"
+}
+
+function Assert-BetaProjectVolumesReady {
+    param([object]$Config, [object]$Server, [object]$ConfigState)
+    if ($null -eq (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) { return }
+    $context = [pscustomobject]@{ betaServer = $Server; configState = $ConfigState; configId = $ConfigState.configId; serverId = $Server.id }
+    Initialize-BetaProjectVolumes -Config $Config -Context $context -InspectOnly -RequireExisting
+}
+
+function Assert-BetaProjectContainerMounts {
+    param([object]$Config, [object]$Server, [object]$ConfigState, [object]$Runtime)
+    foreach ($volume in @(Get-BetaProjectVolumes -Config $Config -Server $Server -ConfigState $ConfigState)) {
+        $container = if ($volume.role -eq "neo4j") { "$($Runtime.containerName)-neo4j" } else { [string]$Runtime.containerName }
+        $json = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{json .Mounts}}", $container) -TimeoutSec 60 -Description "verify beta Linux volume for $container") -join ""
+        $mounts = ConvertFrom-Json -InputObject $json
+        $matches = @($mounts | Where-Object { [string]$_.Destination -eq $volume.container })
+        if ($matches.Count -ne 1 -or $matches[0].Type -ne "volume" -or $matches[0].Name -ne $volume.name) {
+            throw "Beta container '$container' must mount owned Linux volume '$($volume.name)' at '$($volume.container)'. Refusing a different generation or Windows bind."
+        }
+    }
+}
+
+function Assert-BetaCodeIndexCoverage {
+    param([object]$OldActivity, [object]$NewActivity, [switch]$Fresh)
+    if ($Fresh) {
+        # Different model token budgets change chunk counts, but must retain source coverage.
+        foreach ($field in @("modules", "objects", "forms")) {
+            $oldCount = Get-ObjectValue -Object $OldActivity.coverage -Name $field -Default $null
+            $newCount = Get-ObjectValue -Object $NewActivity.coverage -Name $field -Default $null
+            if ($null -eq $oldCount -or $null -eq $newCount -or [long]$newCount -lt [long]$oldCount) {
+                throw "Fresh beta Code source coverage '$field' is missing or below the stable baseline. Stable data is retained for rollback."
+            }
+        }
+    }
+    $oldCollections = Convert-ToHash -Object $OldActivity.collections
+    $newCollections = Convert-ToHash -Object $NewActivity.collections
+    foreach ($key in $oldCollections.Keys) {
+        $minimum = if ($Fresh) { [Math]::Min(1, [int]$oldCollections[$key]) } else { [int]$oldCollections[$key] }
+        if (-not $newCollections.Contains($key) -or [int]$newCollections[$key] -lt $minimum) {
+            throw "Beta CodeMetadata collection '$key' lost indexed records after migration."
+        }
+    }
+}
+
 function Get-BetaCutoverContext {
     param([object]$Config, [string]$ServerId, [string]$ConfigId)
     if (-not $ServerId) { throw "Beta cutover requires -ServerId." }
@@ -52,11 +175,12 @@ function Get-BetaCutoverContext {
     if ($ServerId -eq "syntax" -and [string](Get-ObjectValue -Object $envValues -Name "FULLINDEX" -Default "") -notmatch '^(?i:false|0|no|off)$') {
         throw "Beta Syntax must start with FULLINDEX=false."
     }
-    if ($ServerId -in @("templates", "code", "graph")) {
+    $freshProjectIndex = $null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $betaServer)
+    if ($ServerId -in @("templates", "code", "graph") -and -not $freshProjectIndex) {
         $oldModel = [string](Get-ObjectValue -Object $old -Name "embeddingModel" -Default "")
         if ($oldModel -and $oldModel -ne [string]$runtime.embeddingModel) { throw "Beta '$ServerId' would change embedding model from '$oldModel' to '$($runtime.embeddingModel)'." }
     }
-    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime }
+    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex }
 }
 
 function Get-HostMcpToolsList {
@@ -156,7 +280,18 @@ function Get-BetaConfigurationIndexActivity {
         $indexing = Get-ObjectValue -Object $data -Name "indexing" -Default $null
         $collections = Get-ObjectValue -Object $data -Name "collections" -Default $null
         if ($null -eq $indexing -or $null -eq $collections) { throw "Code stats did not expose indexing state and collection counts." }
-        return [pscustomobject]@{ running = [bool](Get-ObjectValue -Object $indexing -Name "running" -Default $false); phase = [string](Get-ObjectValue -Object $indexing -Name "phase" -Default ""); collections = $collections }
+        $indexError = [string](Get-ObjectValue -Object $indexing -Name "error" -Default "")
+        if ($indexError) { throw "Code indexing failed: $indexError" }
+        return [pscustomobject]@{
+            running = [bool](Get-ObjectValue -Object $indexing -Name "running" -Default $false)
+            phase = [string](Get-ObjectValue -Object $indexing -Name "phase" -Default "")
+            collections = $collections
+            coverage = [pscustomobject]@{
+                modules = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "structural_index" -Default $null) -Name "modules" -Default $null
+                objects = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "metadata_details" -Default $null) -Name "objects" -Default $null
+                forms = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "form_index" -Default $null) -Name "forms" -Default $null
+            }
+        }
     }
     $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
     if ($null -eq $tasks) { throw "Graph get_indexing_status did not expose background_tasks." }
@@ -208,7 +343,8 @@ function Get-BetaContainerMountSource {
 
 function Wait-BetaFreshIndexReady {
     param([object]$Context, [int]$TimeoutSeconds = 7200)
-    if ($Context.serverId -notin @("docs", "ssl")) { return }
+    $freshProjectIndex = [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)
+    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex) { return }
     $url = "http://localhost:$($Context.runtime.hostPort)/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $lastError = ""
@@ -216,11 +352,18 @@ function Wait-BetaFreshIndexReady {
         try {
             $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
             if ([int]$response.StatusCode -eq 200) {
+                if ($freshProjectIndex) {
+                    $activity = Get-BetaConfigurationIndexActivity -ServerId $Context.serverId -Url ([string]$Context.runtime.url)
+                    if ($activity.running) { throw "Beta index is still running ($($activity.phase))." }
+                }
                 Write-Host "Fresh beta index ready: server=$($Context.serverId) configId=$($Context.configId)"
                 return
             }
             $lastError = "HTTP $($response.StatusCode)"
-        } catch { $lastError = $_.Exception.Message }
+        } catch {
+            if ($_.Exception.Message -match 'Code indexing failed:|Graph background task .* failed') { throw }
+            $lastError = $_.Exception.Message
+        }
         if ((Get-Date) -ge $deadline) { break }
         Start-Sleep -Seconds 10
     } while ($true)
@@ -233,7 +376,7 @@ function Wait-BetaCandidateReady {
     $budgetSeconds = if ($Context.serverId -eq "docs") { 10800 } else { 7200 }
     $deadline = (Get-Date).AddSeconds($budgetSeconds)
     [void](Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10)
-    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs") {
+    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)) {
         [int][Math]::Max(1, [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
     } else { 7200 }
     Wait-BetaFreshIndexReady -Context $Context -TimeoutSeconds $freshIndexBudgetSeconds
@@ -300,6 +443,10 @@ function Stop-StableForBetaCutover {
 
 function Copy-BetaDataSnapshot {
     param([object]$Config, [object]$Context)
+    if ([bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)) {
+        Initialize-BetaProjectVolumes -Config $Config -Context $Context
+        return
+    }
     $oldName = [string]$Context.old.containerName
     switch ($Context.serverId) {
         "code" {
@@ -360,6 +507,10 @@ function Invoke-BetaPreflight {
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
     $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId
+    if ($context.freshProjectIndex) {
+        Ensure-HostEmbeddingModel -Config $Config -Server $context.betaServer
+        Initialize-BetaProjectVolumes -Config $Config -Context $context -InspectOnly
+    }
     if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $TargetServerId)) { throw "Beta cutover requires the existing public tools-list proxy for '$TargetServerId'." }
     $oldDirectUrl = [string](Get-ObjectValue -Object $context.old -Name "directUrl" -Default "")
     if (-not $oldDirectUrl) { throw "Stable '$TargetServerId' has no tracked direct URL." }
@@ -413,13 +564,7 @@ function Invoke-BetaCutover {
             $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)
             if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
             if ($TargetServerId -eq "code") {
-                $oldCollections = Convert-ToHash -Object $preflight.oldIndexActivity.collections
-                $betaCollections = Convert-ToHash -Object $betaIndexActivity.collections
-                foreach ($key in $oldCollections.Keys) {
-                    if (-not $betaCollections.Contains($key) -or [int]$betaCollections[$key] -lt [int]$oldCollections[$key]) {
-                        throw "Beta CodeMetadata collection '$key' lost indexed records after snapshot migration."
-                    }
-                }
+                Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }

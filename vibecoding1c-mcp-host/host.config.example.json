@@ -16,6 +16,7 @@
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
   },
+  "betaProjectIndex": null,
   "templatesSearchServer": {
     "enableWriteTools": false
   },

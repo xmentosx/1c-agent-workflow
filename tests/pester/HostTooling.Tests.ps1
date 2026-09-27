@@ -21,6 +21,189 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "keeps OpenRouter credentials and Linux volumes exclusive to beta Code and Graph" -Tag BetaCutover {
+        $tempRoot = Join-Path $TestDrive "beta ключ с пробелом"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ model = "qwen/qwen3-embedding-8b"; apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-private-key" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{
+                stateRoot = $tempRoot
+                embedding = @{ model = "intfloat/multilingual-e5-base" }
+                betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ credentialFile = $credentialPath } }
+            }
+            function Get-HostSecretValues { return @{} }
+            function Get-HostLocalValues { return @{ PATH_BASES = $tempRoot } }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            foreach ($id in @("code", "graph", "docs", "templates", "ssl")) {
+                foreach ($channel in @("stable", "beta")) {
+                    $server = [pscustomobject]@{ id = $id; channel = $channel; embedding = $true; containerNameTemplate = 'itl-{projectSlug}-{serverId}-beta'; env = @(); volumes = @() }
+                    $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                    $env = Resolve-ServerEnv -Config $config -Server $server -ConfigState $state
+                    if ($channel -eq "beta" -and $id -in @("code", "graph")) {
+                        $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                        $env.EMBEDDING_API_KEY | Should -Be "fixture-private-key"
+                        $env.EMBEDDING_ALLOW_OFFLINE_FALLBACK | Should -Be "false"
+                        @((Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state)).Count | Should -BeGreaterThan 0
+                        if ($id -eq "graph") {
+                            $env.Contains("OPENAI_API_KEY") | Should -BeFalse
+                            $env.ENABLE_ROUTINE_EMBEDDINGS | Should -Be "true"
+                        } else {
+                            $server.volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; required = $true })
+                            (Resolve-ServerVolumes -Config $config -Server $server -ConfigState $state)[0].host | Should -Be "itl-pm4corp-code-beta-qwen3-v1-index"
+                        }
+                    } else {
+                        $settings.mode | Should -Be "cpu"
+                        $settings.apiKey | Should -BeNullOrEmpty
+                        $env.Contains("EMBEDDING_API_KEY") | Should -BeFalse
+                        @(Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state).Count | Should -Be 0
+                    }
+                }
+            }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta" }
+            $config.betaProjectIndex.generation = "../unsafe"
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Throw "*generation*"
+            $server.channel = "stable"
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Not -Throw
+        }
+    }
+
+    It "probes the authenticated embedding catalog without treating OpenRouter chat models as embeddings" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "catalog-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            (Get-HostEmbeddingModelsUri -ApiBase "https://openrouter.ai/api/v1/") | Should -Be "https://openrouter.ai/api/v1/embeddings/models"
+            (Get-HostEmbeddingModelsUri -ApiBase "http://host.docker.internal:1234/v1") | Should -Be "http://127.0.0.1:1234/v1/models"
+            function Invoke-RestMethod {
+                param($Uri, $Headers, $TimeoutSec)
+                $Uri | Should -Be "https://openrouter.ai/api/v1/embeddings/models"
+                $Headers.Authorization | Should -Be "Bearer fixture-private-key"
+                return @{ data = @(@{ id = "qwen/qwen3-embedding-8b" }) }
+            }
+            Test-HostEmbeddingEndpointReady -ApiBase "https://openrouter.ai/api/v1" -Model "qwen/qwen3-embedding-8b" -ApiKey "fixture-private-key" | Should -BeTrue
+            Test-HostEmbeddingEndpointReady -ApiBase "https://openrouter.ai/api/v1" -Model "missing" -ApiKey "fixture-private-key" | Should -BeFalse
+        }
+    }
+
+    It "retains owned beta volumes and rejects foreign or missing storage without clearing data" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "volume-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ hostId = "fixture-host"; betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ model = "fixture-model"; apiBase = "https://example.test/v1"; apiKey = "fixture-key" } } }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta"; containerNameTemplate = 'itl-{projectSlug}-code-beta' }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = $state; betaServer = $server }
+            $script:VolumeExists = $false
+            $script:VolumeCommands = @()
+            $script:VolumeInfo = @{ Driver = "local"; Options = $null; Labels = @{ 'itl.beta.host' = 'fixture-host'; 'itl.beta.config' = 'pm4corp'; 'itl.beta.server' = 'code'; 'itl.beta.generation' = 'qwen3-v1'; 'itl.beta.model' = 'fixture-model' } }
+            function Invoke-DockerCommandCapture {
+                param([string[]]$Arguments)
+                if ($Arguments[1] -eq "ls") { if ($script:VolumeExists) { return 'itl-pm4corp-code-beta-qwen3-v1-index' }; return @() }
+                return (ConvertTo-Json -InputObject @($script:VolumeInfo) -Depth 5 -Compress)
+            }
+            function Invoke-DockerCommandChecked {
+                param([string[]]$Arguments)
+                $Arguments[0] | Should -Be "volume"
+                $Arguments[1] | Should -Be "create"
+                $script:VolumeCommands += ,$Arguments
+                $script:VolumeExists = $true
+            }
+            Initialize-BetaProjectVolumes -Config $config -Context $context -InspectOnly
+            $script:VolumeCommands.Count | Should -Be 0
+            { Assert-BetaProjectVolumesReady -Config $config -Server $server -ConfigState $state } | Should -Throw "*refusing an implicit empty index*"
+            Initialize-BetaProjectVolumes -Config $config -Context $context
+            Initialize-BetaProjectVolumes -Config $config -Context $context
+            $script:VolumeCommands.Count | Should -Be 1
+            $script:VolumeInfo.Labels['itl.beta.model'] = "different-model"
+            { Initialize-BetaProjectVolumes -Config $config -Context $context } | Should -Throw "*ownership/model differs*"
+            $script:VolumeInfo.Labels['itl.beta.model'] = "fixture-model"
+            $script:VolumeInfo.Options = @{ device = "E:\foreign"; type = "none"; o = "bind" }
+            { Initialize-BetaProjectVolumes -Config $config -Context $context } | Should -Throw "*ordinary local Linux Docker volume*"
+        }
+    }
+
+    It "uses external Linux volumes for beta Graph and keeps embedding failures visible" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "compose-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $compose = 'services:' + "`n" + '      - "${NEO4J_DATA_PATH:-./data/neo4j_data}:/data"' + "`n" + '      - "${GRAPH_STATE_PATH:-./data/mcp_state}:/app/data"' + "`n" + '      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}'
+            $result = Set-BetaGraphVolumeComposeText -ComposeText $compose -Neo4jVolume "itl-pm4-graph-beta-g1-neo4j" -StateVolume "itl-pm4-graph-beta-g1-state"
+            $result | Should -Match '"itl_beta_neo4j:/data"'
+            $result | Should -Match '"itl_beta_state:/app/data"'
+            $result | Should -Match 'external: true'
+            $result | Should -Match 'EMBEDDING_ALLOW_OFFLINE_FALLBACK: "false"'
+            $result | Should -Not -Match 'NEO4J_DATA_PATH|GRAPH_STATE_PATH'
+            { Set-BetaGraphVolumeComposeText -ComposeText $result -Neo4jVolume "x" -StateVolume "y" } | Should -Throw "*storage contract changed*"
+        }
+    }
+
+    It "checks source completeness when a fresh beta model changes vector chunk counts" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "coverage-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = [pscustomobject]@{ collections = @{ code = 100; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
+            $new = [pscustomobject]@{ collections = @{ code = 40; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new } | Should -Throw "*lost indexed records*"
+            $new.coverage.modules = 9
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw "*source coverage 'modules'*"
+            $new.coverage.modules = 10
+            $new.collections.code = 0
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw "*lost indexed records*"
+        }
+    }
+
+    It "checks actual beta mounts among multiple Docker mount entries" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "actual-mount-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ betaProjectIndex = @{ generation = "qwen3-v1" } }
+            $server = [pscustomobject]@{ id = "code"; channel = "beta"; containerNameTemplate = 'itl-{projectSlug}-code-beta' }
+            $state = [pscustomobject]@{ configId = "pm4corp" }
+            $runtime = [pscustomobject]@{ containerName = "itl-pm4corp-code-beta" }
+            $script:ActualBetaMountType = "volume"
+            function Invoke-DockerCommandCapture {
+                return '[{"Destination":"/app/code","Type":"bind","Source":"E:\\source"},{"Destination":"/app/chroma_db","Type":"' + $script:ActualBetaMountType + '","Name":"itl-pm4corp-code-beta-qwen3-v1-index"}]'
+            }
+            { Assert-BetaProjectContainerMounts -Config $config -Server $server -ConfigState $state -Runtime $runtime } | Should -Not -Throw
+            $script:ActualBetaMountType = "bind"
+            { Assert-BetaProjectContainerMounts -Config $config -Server $server -ConfigState $state -Runtime $runtime } | Should -Throw "*must mount owned Linux volume*"
+        }
+    }
+
+    It "rolls back a failed fresh beta cutover after stopping old main and retains the new generation" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "fresh-rollback-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:FreshSequence = @()
+            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = @{ configId = "pm4corp" }; freshProjectIndex = $true; old = @{ directUrl = "http://old/mcp" }; betaServer = @{ id = "code" }; runtime = @{ image = "fixture@sha256:abc" } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:FreshSequence += "unlock" }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = @{ running = $false } } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return @{ running = $false } }
+            function Stop-StableForBetaCutover { $script:FreshSequence += "stop-stable" }
+            function Initialize-BetaProjectVolumes { $script:FreshSequence += "prepare-fresh-volumes" }
+            function Copy-BetaHostDirectory { throw "must not copy layout 2 into a fresh index" }
+            function Start-DockerServer { $script:FreshSequence += "start-beta" }
+            function Wait-BetaCandidateReady { throw "fixture-index-failure" }
+            function Restore-StableAfterBetaFailure { $script:FreshSequence += "restore-stable" }
+            { Invoke-BetaCutover -Config @{} -TargetServerId code -TargetConfigId pm4corp } | Should -Throw "*fixture-index-failure*"
+            ($script:FreshSequence -join ",") | Should -Be "stop-stable,prepare-fresh-volumes,start-beta,restore-stable,unlock"
+        }
+    }
+
     It "parses the beta cutover coordinator" -Tag BetaCutover {
         $tokens = $null
         $errors = $null
