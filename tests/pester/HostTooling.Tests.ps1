@@ -636,6 +636,28 @@ Start-Sleep -Seconds 120
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "keeps the native exit code and UTF-8 output from a Cyrillic path with spaces" -Tag BetaCutover {
+        $tempRoot = Join-Path $TestDrive "вывод с пробелом и кириллицей"
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $fixturePath = Join-Path $tempRoot "native-output.ps1"
+        New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+        Set-Content -LiteralPath $fixturePath -Encoding UTF8 -Value @'
+param([string]$Value)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::WriteLine("stdout:$Value")
+[Console]::Error.WriteLine("stderr:$Value")
+exit 17
+'@
+        $result = & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            Invoke-ProcessWithTimeout -FilePath "powershell.exe" -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $fixturePath, $tempRoot) -TimeoutSec 15 -Description "Unicode native fixture"
+        }
+        $result.exitCode | Should -Be 17
+        $result.lines | Should -Contain "stdout:$tempRoot"
+        $result.lines | Should -Contain "stderr:$tempRoot"
+    }
+
     It "normalizes malformed Graph compose memory keys and validates before down" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-compose-preflight-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"

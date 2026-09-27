@@ -741,30 +741,42 @@ function Invoke-ProcessWithTimeout {
         [int]$TimeoutSec = 300,
         [string]$Description = ""
     )
-    $stdoutPath = [System.IO.Path]::GetTempFileName()
-    $stderrPath = [System.IO.Path]::GetTempFileName()
-    $process = $null
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $FilePath
+    $startInfo.Arguments = Join-HostProcessArguments -Arguments $Arguments
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.StandardOutputEncoding = $script:Utf8NoBom
+    $startInfo.StandardErrorEncoding = $script:Utf8NoBom
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
     try {
-        $process = Start-Process -FilePath $FilePath `
-            -ArgumentList (Join-HostProcessArguments -Arguments $Arguments) `
-            -NoNewWindow `
-            -PassThru `
-            -RedirectStandardOutput $stdoutPath `
-            -RedirectStandardError $stderrPath
+        if (-not $process.Start()) { throw "Could not start process: $FilePath" }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($TimeoutSec * 1000)) {
             Stop-HostProcessTree -Process $process
             $commandText = "$FilePath $($Arguments -join ' ')"
             $descriptionText = $(if ($Description) { "$Description. " } else { "" })
             throw "${descriptionText}Command timed out after $TimeoutSec seconds: $commandText"
         }
-        $stdout = @(Get-Content -LiteralPath $stdoutPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
-        $stderr = @(Get-Content -LiteralPath $stderrPath -ErrorAction SilentlyContinue | ForEach-Object { [string]$_ })
+        $lines = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($output in @($stdoutTask.GetAwaiter().GetResult(), $stderrTask.GetAwaiter().GetResult())) {
+            $reader = [System.IO.StringReader]::new([string]$output)
+            try {
+                while ($null -ne ($line = $reader.ReadLine())) { $lines.Add($line) }
+            } finally {
+                $reader.Dispose()
+            }
+        }
         return [pscustomobject]@{
             exitCode = [int]$process.ExitCode
-            lines = @($stdout + $stderr)
+            lines = @($lines.ToArray())
         }
     } finally {
-        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+        $process.Dispose()
     }
 }
 
