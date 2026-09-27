@@ -176,6 +176,7 @@ function New-BetaProxyContract {
         toolDescriptions = [ordered]@{}
     }
     if ($Context.serverId -eq "codechecker") { $serverContract["legacyCodeCheckerResult"] = $true }
+    if ($Context.serverId -eq "syntax") { $serverContract["legacySyntaxJsonl"] = $true }
     $servers = [ordered]@{}
     $servers[[string]$Context.serverId] = $serverContract
     $contract = [ordered]@{ schemaVersion = 2; approvedAt = (Get-Date).ToString("o"); descriptionPolicy = (Get-ObjectValue -Object $sourceContract -Name "descriptionPolicy" -Default $null); servers = $servers }

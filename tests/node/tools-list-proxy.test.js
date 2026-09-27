@@ -482,7 +482,92 @@ async function runBetaCodeCheckerIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(() => {
+async function runBetaSyntaxIntegration() {
+  const syntaxTool = {
+    name: 'syntaxcheck',
+    inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] },
+    outputSchema: {
+      type: 'object',
+      properties: { diagnostics: { type: 'array' }, summary: { type: 'object' } },
+      required: ['diagnostics', 'summary'],
+      additionalProperties: false,
+    },
+  };
+  const contract = { ...proxy.describeContract([syntaxTool]), legacySyntaxJsonl: true };
+  const toon = [
+    'events[3]:',
+    '  - type: start',
+    '    total_files: 1',
+    '    line_base: 1',
+    '  - type: file',
+    '    path: module.bsl',
+    '    diagnostics[1]{code,message,severity,start_line,start_column,end_line,end_column}:',
+    '      CodeOutOfRegion,Процедура вне области,Hint,1,10,1,14',
+    '    metrics:',
+    '      functions: 1',
+    '    diagnostic_asides[1]{diagnostic,field,value}:',
+    '      0,tags,Unnecessary',
+    '  - type: done',
+    '    total_diagnostics: 1',
+    '    failed_files: 0',
+  ].join('\n');
+  const typed = { diagnostics: [{ code: 'CodeOutOfRegion' }], summary: { total: 1 } };
+  const betaResult = { content: [{ type: 'text', text: toon }], structuredContent: typed, isError: false };
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'DELETE') { response.end('{}'); return; }
+      if (body.method === 'initialize') {
+        response.setHeader('mcp-session-id', 'syntax-session');
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} } } }));
+        return;
+      }
+      if (body.method === 'notifications/initialized') { response.statusCode = 202; response.end(); return; }
+      if (body.method === 'tools/list') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [syntaxTool] } })); return; }
+      if (body.method === 'tools/call') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: betaResult })); return; }
+      response.statusCode = 400; response.end('{}');
+    });
+  });
+  const upstreamPort = await listen(upstream);
+  const proxyServer = await proxy.startProxy({
+    'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+    'listen-port': '0', 'server-id': 'syntax',
+  }, contract);
+  const url = `http://127.0.0.1:${proxyServer.address().port}/mcp`;
+  const headers = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
+  try {
+    const init = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'old-client', version: '1' } } }) });
+    assert.strictEqual(init.status, 200);
+    headers['mcp-session-id'] = init.headers.get('mcp-session-id');
+    const list = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+    const publicTool = (await list.json()).result.tools[0];
+    assert.strictEqual(publicTool.outputSchema.properties.result.type, 'string');
+    assert.ok(publicTool.outputSchema.required.includes('result'));
+    assert.deepStrictEqual(publicTool.outputSchema.properties.diagnostics, syntaxTool.outputSchema.properties.diagnostics);
+    assert.strictEqual(publicTool.outputSchema.additionalProperties, false);
+    const call = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'syntaxcheck', arguments: { code: 'Процедура Тест()' } } }) });
+    assert.strictEqual(call.status, 200);
+    const answer = (await call.json()).result;
+    assert.strictEqual(answer.content[0].text, answer.structuredContent.result);
+    assert.deepStrictEqual(answer.content[0].text.trim().split('\n').map(JSON.parse), [
+      { type: 'start', total_files: 1, line_base: 1 },
+      { type: 'file', path: 'module.bsl', diagnostics: [{ code: 'CodeOutOfRegion', message: 'Процедура вне области', severity: 'Hint', start_line: 1, start_column: 10, end_line: 1, end_column: 14 }], metrics: { functions: 1 }, diagnostic_asides: [{ diagnostic: 0, field: 'tags', value: 'Unnecessary' }] },
+      { type: 'done', total_diagnostics: 1, failed_files: 0 },
+    ]);
+    assert.deepStrictEqual(answer.structuredContent.diagnostics, typed.diagnostics);
+    const error = await proxy.transformSyntaxCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 4, result: { isError: true, content: [{ type: 'text', text: 'analyzer failed' }] } })), 'application/json');
+    assert.strictEqual(JSON.parse(error).result.isError, true);
+    await assert.rejects(proxy.transformSyntaxCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 5, result: { ...betaResult, content: [{ type: 'text', text: 'events: malformed' }] } })), 'application/json'), /valid events/);
+  } finally {
+    await close(proxyServer);
+    await close(upstream);
+  }
+}
+
+runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaSyntaxIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);

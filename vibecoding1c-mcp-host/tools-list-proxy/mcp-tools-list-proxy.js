@@ -231,6 +231,23 @@ function preserveCodeCheckerOutputSchema(tool, expected) {
   };
 }
 
+function preserveSyntaxOutputSchema(tool, expected) {
+  if (!expected.legacySyntaxJsonl) return tool;
+  if (tool.name !== 'syntaxcheck') throw new Error(`Unexpected beta Syntax tool '${tool.name}'.`);
+  const schema = tool.outputSchema;
+  if (!schema || schema.type !== 'object' || !schema.properties || !schema.properties.diagnostics) {
+    throw new Error('Beta Syntax tool has no typed diagnostic output schema.');
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
 function transformPayload(payload, expected) {
   if (Array.isArray(payload)) return payload.map(item => transformPayload(item, expected));
   if (!payload || typeof payload !== 'object' || !payload.result || !Array.isArray(payload.result.tools)) return payload;
@@ -238,7 +255,7 @@ function transformPayload(payload, expected) {
   if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
     throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
-  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected)) } };
+  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveSyntaxOutputSchema(preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected), expected)) } };
 }
 
 function transformJsonRpcResponse(body, contentType, transform) {
@@ -275,6 +292,34 @@ function preserveCodeCheckerCallResult(payload) {
 
 function transformCodeCheckerCallResponse(body, contentType) {
   return transformJsonRpcResponse(body, contentType, preserveCodeCheckerCallResult);
+}
+
+let syntaxDecoderPromise;
+async function transformSyntaxCallResponse(body, contentType) {
+  if (!syntaxDecoderPromise) syntaxDecoderPromise = import('./vendor/toon-4.1.1/index.mjs');
+  const { decode } = await syntaxDecoderPromise;
+  const preserveSyntaxCallResult = payload => {
+    if (Array.isArray(payload)) return payload.map(preserveSyntaxCallResult);
+    if (!payload || !payload.result || payload.result.isError) return payload;
+    const result = payload.result;
+    const structured = result.structuredContent;
+    if (!structured || typeof structured !== 'object' || !Array.isArray(structured.diagnostics)) {
+      throw new Error('Beta Syntax tool returned no typed diagnostics.');
+    }
+    if (typeof structured.result === 'string') return payload;
+    const content = Array.isArray(result.content) ? [...result.content] : [];
+    const textIndex = content.findIndex(item => item && item.type === 'text' && typeof item.text === 'string');
+    if (textIndex < 0) throw new Error('Beta Syntax tool returned no TOON report.');
+    const report = decode(content[textIndex].text);
+    if (!report || !Array.isArray(report.events) || report.events.length === 0 ||
+        report.events.some(event => !event || typeof event !== 'object' || typeof event.type !== 'string')) {
+      throw new Error('Beta Syntax TOON report contains no valid events.');
+    }
+    const jsonl = `${report.events.map(event => JSON.stringify(event)).join('\n')}\n`;
+    content[textIndex] = { ...content[textIndex], text: jsonl };
+    return { ...payload, result: { ...result, content, structuredContent: { ...structured, result: jsonl } } };
+  };
+  return transformJsonRpcResponse(body, contentType, preserveSyntaxCallResult);
 }
 
 function requestMethod(body) {
@@ -367,18 +412,20 @@ async function startProxy(args, expected) {
       }
 
       const responseHeaders = filteredHeaders(upstreamResponse.headers);
-      if (method !== 'tools/list' && !(method === 'tools/call' && expected.legacyCodeCheckerResult)) {
+      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || expected.legacySyntaxJsonl))) {
         outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(outgoing);
         return;
       }
       const responseChunks = [];
       upstreamResponse.on('data', chunk => responseChunks.push(chunk));
-      upstreamResponse.on('end', () => {
+      upstreamResponse.on('end', async () => {
         try {
           const transformed = method === 'tools/list'
             ? transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected)
-            : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
+            : expected.legacySyntaxJsonl
+              ? await transformSyntaxCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'])
+              : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
           if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
             responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
           }
@@ -486,5 +533,6 @@ module.exports = {
   startProxy,
   transformToolsListResponse,
   transformCodeCheckerCallResponse,
+  transformSyntaxCallResponse,
   withoutDescriptions,
 };
