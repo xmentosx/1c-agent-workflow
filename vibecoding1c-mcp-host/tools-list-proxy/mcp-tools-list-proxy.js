@@ -233,7 +233,7 @@ function preserveCodeCheckerOutputSchema(tool, expected) {
 
 function preserveSyntaxOutputSchema(tool, expected) {
   if (!expected.legacySyntaxJsonl) return tool;
-  if (tool.name !== 'syntaxcheck') throw new Error(`Unexpected beta Syntax tool '${tool.name}'.`);
+  if (tool.name !== 'syntaxcheck') return tool;
   const schema = tool.outputSchema;
   if (!schema || schema.type !== 'object' || !schema.properties || !schema.properties.diagnostics) {
     throw new Error('Beta Syntax tool has no typed diagnostic output schema.');
@@ -295,11 +295,12 @@ function transformCodeCheckerCallResponse(body, contentType) {
 }
 
 let syntaxDecoderPromise;
-async function transformSyntaxCallResponse(body, contentType) {
+async function transformSyntaxCallResponse(body, contentType, syntaxCallIds = null) {
   if (!syntaxDecoderPromise) syntaxDecoderPromise = import('./vendor/toon-4.1.1/index.mjs');
   const { decode } = await syntaxDecoderPromise;
   const preserveSyntaxCallResult = payload => {
     if (Array.isArray(payload)) return payload.map(preserveSyntaxCallResult);
+    if (syntaxCallIds && !syntaxCallIds.has(payload && payload.id)) return payload;
     if (!payload || !payload.result || payload.result.isError) return payload;
     const result = payload.result;
     const structured = result.structuredContent;
@@ -331,6 +332,14 @@ function requestMethod(body) {
     }
     return payload && payload.method ? payload.method : '';
   } catch (_) { return ''; }
+}
+
+function syntaxCallIds(body) {
+  try {
+    const payload = JSON.parse(body.toString('utf8'));
+    const requests = Array.isArray(payload) ? payload : [payload];
+    return new Set(requests.filter(item => item && item.method === 'tools/call' && item.params && item.params.name === 'syntaxcheck').map(item => item.id));
+  } catch (_) { return new Set(); }
 }
 
 function isSafeControlMethod(method) {
@@ -388,6 +397,7 @@ async function startProxy(args, expected) {
 
   const forwardRequest = (incoming, outgoing, body, attempt = 0) => {
     const method = requestMethod(body);
+    const syntaxIds = method === 'tools/call' && expected.legacySyntaxJsonl ? syntaxCallIds(body) : null;
     const transport = upstream.protocol === 'https:' ? https : http;
     const headers = filteredHeaders(incoming.headers);
     headers.host = upstream.host;
@@ -412,7 +422,7 @@ async function startProxy(args, expected) {
       }
 
       const responseHeaders = filteredHeaders(upstreamResponse.headers);
-      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || expected.legacySyntaxJsonl))) {
+      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || (syntaxIds && syntaxIds.size > 0)))) {
         outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(outgoing);
         return;
@@ -424,7 +434,7 @@ async function startProxy(args, expected) {
           const transformed = method === 'tools/list'
             ? transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected)
             : expected.legacySyntaxJsonl
-              ? await transformSyntaxCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'])
+              ? await transformSyntaxCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], syntaxIds)
               : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
           if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
             responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;

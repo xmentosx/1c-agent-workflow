@@ -483,6 +483,11 @@ async function runBetaCodeCheckerIntegration() {
 }
 
 async function runBetaSyntaxIntegration() {
+  const pluginTool = {
+    name: 'plugin_state',
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: { type: 'object', properties: { status: { type: 'string' } }, required: ['status'] },
+  };
   const syntaxTool = {
     name: 'syntaxcheck',
     inputSchema: { type: 'object', properties: { code: { type: 'string' } }, required: ['code'] },
@@ -493,7 +498,7 @@ async function runBetaSyntaxIntegration() {
       additionalProperties: false,
     },
   };
-  const contract = { ...proxy.describeContract([syntaxTool]), legacySyntaxJsonl: true };
+  const contract = { ...proxy.describeContract([pluginTool, syntaxTool]), legacySyntaxJsonl: true };
   const toon = [
     'events[3]:',
     '  - type: start',
@@ -526,8 +531,13 @@ async function runBetaSyntaxIntegration() {
         return;
       }
       if (body.method === 'notifications/initialized') { response.statusCode = 202; response.end(); return; }
-      if (body.method === 'tools/list') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [syntaxTool] } })); return; }
-      if (body.method === 'tools/call') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: betaResult })); return; }
+      if (body.method === 'tools/list') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: [pluginTool, syntaxTool] } })); return; }
+      if (body.method === 'tools/call') {
+        const result = body.params.name === 'plugin_state'
+          ? { content: [{ type: 'text', text: '{"status":"ok"}' }], structuredContent: { status: 'ok' }, isError: false }
+          : betaResult;
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })); return;
+      }
       response.statusCode = 400; response.end('{}');
     });
   });
@@ -543,7 +553,9 @@ async function runBetaSyntaxIntegration() {
     assert.strictEqual(init.status, 200);
     headers['mcp-session-id'] = init.headers.get('mcp-session-id');
     const list = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
-    const publicTool = (await list.json()).result.tools[0];
+    const publicTools = (await list.json()).result.tools;
+    const publicTool = publicTools.find(tool => tool.name === 'syntaxcheck');
+    assert.deepStrictEqual(publicTools.find(tool => tool.name === 'plugin_state').outputSchema, pluginTool.outputSchema);
     assert.strictEqual(publicTool.outputSchema.properties.result.type, 'string');
     assert.ok(publicTool.outputSchema.required.includes('result'));
     assert.deepStrictEqual(publicTool.outputSchema.properties.diagnostics, syntaxTool.outputSchema.properties.diagnostics);
@@ -558,6 +570,9 @@ async function runBetaSyntaxIntegration() {
       { type: 'done', total_diagnostics: 1, failed_files: 0 },
     ]);
     assert.deepStrictEqual(answer.structuredContent.diagnostics, typed.diagnostics);
+    const pluginCall = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'plugin_state', arguments: {} } }) });
+    assert.strictEqual(pluginCall.status, 200);
+    assert.deepStrictEqual((await pluginCall.json()).result.structuredContent, { status: 'ok' });
     const error = await proxy.transformSyntaxCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 4, result: { isError: true, content: [{ type: 'text', text: 'analyzer failed' }] } })), 'application/json');
     assert.strictEqual(JSON.parse(error).result.isError, true);
     await assert.rejects(proxy.transformSyntaxCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 5, result: { ...betaResult, content: [{ type: 'text', text: 'events: malformed' }] } })), 'application/json'), /valid events/);
