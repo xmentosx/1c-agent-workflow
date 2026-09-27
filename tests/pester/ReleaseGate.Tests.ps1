@@ -5,6 +5,64 @@
 }
 
 Describe "Release gate scripts" {
+    It "replays one generated commit once when two capability records share its SHA" {
+        & {
+            $source = Join-Path $TestDrive "replay источник"
+            $target = Join-Path $TestDrive "replay приёмник"
+            New-Item -ItemType Directory -Force -Path $source | Out-Null
+            & git -C $source init --quiet
+            & git -C $source config user.email 'tests@example.invalid'
+            & git -C $source config user.name 'ITL Tests'
+            [IO.File]::WriteAllText((Join-Path $source 'fixture.txt'), "base`n", [Text.UTF8Encoding]::new($false))
+            & git -C $source add -- fixture.txt
+            & git -C $source commit --quiet -m base
+            $base = (& git -C $source rev-parse HEAD).Trim()
+            [IO.File]::WriteAllText((Join-Path $source 'fixture.txt'), "generated`n", [Text.UTF8Encoding]::new($false))
+            & git -C $source commit --quiet -am generated
+            $oldCommit = (& git -C $source rev-parse HEAD).Trim()
+            & git clone --quiet --no-local $source $target
+            & git -C $target config user.email 'tests@example.invalid'
+            & git -C $target config user.name 'ITL Tests'
+            & git -C $target reset --quiet --hard $base
+
+            $manifest = Join-Path $TestDrive 'capability-cache.json'
+            [IO.File]::WriteAllText($manifest, '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
+            $script:replayCache = [ordered]@{
+                schemaVersion = 1
+                identity = [ordered]@{ initialHead = $base; runnerSha256 = ('a' * 64) }
+                generatedCommits = @(
+                    [ordered]@{ kind = 'configuration-comment'; commit = $oldCommit },
+                    [ordered]@{ kind = 'vanessa-fixture'; commit = $oldCommit }
+                )
+                stages = [ordered]@{}
+                snapshots = [ordered]@{}
+                stateFiles = [ordered]@{}
+                configEvidence = [ordered]@{}
+            }
+            $checkpoint = [ordered]@{ generatedCommits = @(); expectedHead = $base; stages = [ordered]@{} }
+            $worktreePath = $target
+            function ConvertTo-E2EHashtable { param($Value) return $script:replayCache }
+            function Get-E2EGeneratedCommitRecords { param($Value) return $Value }
+            function Write-E2ECheckpoint {}
+            $tokens = $null; $errors = $null
+            $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts\invoke-release-e2e.ps1'), [ref]$tokens, [ref]$errors)
+            $definition = @($ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Import-E2ECapabilityCache' }, $true))[0]
+            Invoke-Expression $definition.Extent.Text
+            try {
+                Import-E2ECapabilityCache -ManifestPath $manifest
+                $newCommit = (& git -C $target rev-parse HEAD).Trim()
+                $newCommit | Should -Not -Be $base
+                @(& git -C $target rev-list "$base..HEAD").Count | Should -Be 1
+                @($checkpoint.generatedCommits).Count | Should -Be 2
+                @($checkpoint.generatedCommits | ForEach-Object { $_.commit } | Select-Object -Unique) | Should -Be @($newCommit)
+                @($checkpoint.generatedCommits | ForEach-Object { $_.kind }) | Should -Be @('configuration-comment', 'vanessa-fixture')
+                (& git -C $target status --porcelain) | Should -BeNullOrEmpty
+            } finally {
+                Remove-Variable -Name replayCache -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It "parses the local gate and E2E runner" {
         foreach ($relativePath in @("scripts\check.ps1", "scripts\invoke-develop-e2e.ps1", "scripts\invoke-release-e2e.ps1")) {
             $tokens = $null

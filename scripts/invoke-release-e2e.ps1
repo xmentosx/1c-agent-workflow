@@ -2056,6 +2056,11 @@ function Import-E2ECapabilityCache {
             throw "RELEASE_E2E_CACHE_CORRUPT: generated commit record has no commit SHA."
         }
         $oldCommit = [string]$record["commit"]
+        if ($commitMap.ContainsKey($oldCommit)) {
+            # Different proofs may record the same HEAD without creating another commit.
+            $record["commit"] = $commitMap[$oldCommit]
+            continue
+        }
         & git -C $worktreePath cherry-pick $oldCommit *> $null
         if ($LASTEXITCODE -ne 0) {
             & git -C $worktreePath cherry-pick --abort *> $null
