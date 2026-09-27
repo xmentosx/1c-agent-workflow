@@ -39,6 +39,16 @@ Describe "Source develop queue and delivery" {
             Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $archive -Lock $lock -DestinationPath $destination | Should -Be $destination
             (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $sha
 
+            $nextAssetName = 'VAExtension.1.33-itl-r2.cfe'
+            $nextSource = Join-Path $stage $nextAssetName
+            Copy-Item -LiteralPath $source -Destination $nextSource
+            $nextArchive = Join-Path $TestDrive 'vanessa next version.zip'
+            Compress-Archive -LiteralPath $nextSource -DestinationPath $nextArchive
+            $nextDestination = Join-Path $TestDrive "upload путь\$nextAssetName"
+            $nextLock = [pscustomobject]@{ assetName = $nextAssetName; sha256 = $sha }
+            Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $nextArchive -Lock $nextLock -DestinationPath $nextDestination | Should -Be $nextDestination
+            (Get-FileHash -LiteralPath $nextDestination -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $sha
+
             Remove-Item -LiteralPath $destination -Force
             $lock.sha256 = ('0' * 64)
             { Copy-DeliveryVanessaPairedExtensionFromArchive -ArchivePath $archive -Lock $lock -DestinationPath $destination } |
