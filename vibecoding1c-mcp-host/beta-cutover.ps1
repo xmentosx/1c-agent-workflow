@@ -383,7 +383,9 @@ function Invoke-BetaCutover {
             } else {
                 Start-DockerServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState -PreparedBetaImage
             }
-            [void](Wait-HostMcpReadyConnection -Url ([string]$context.runtime.url) -ServerId $TargetServerId -ConfigId $TargetConfigId -TimeoutSeconds 7200 -RetrySeconds 10)
+            # At the observed rate (~3 docs/s), the 25,536-document Help corpus needs over two hours.
+            $mcpReadyTimeoutSeconds = if ($TargetServerId -eq "docs") { 10800 } else { 7200 }
+            [void](Wait-HostMcpReadyConnection -Url ([string]$context.runtime.url) -ServerId $TargetServerId -ConfigId $TargetConfigId -TimeoutSeconds $mcpReadyTimeoutSeconds -RetrySeconds 10)
             Wait-BetaFreshIndexReady -Context $context
             $betaTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
             Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $betaTools
