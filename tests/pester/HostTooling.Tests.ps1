@@ -52,6 +52,7 @@
                             $env.Contains("OPENAI_API_KEY") | Should -BeFalse
                             $env.ENABLE_ROUTINE_EMBEDDINGS | Should -Be "true"
                         } else {
+                            $env.MCP_STRUCTURED_CONTENT | Should -Be "true"
                             $server.volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; required = $true })
                             (Resolve-ServerVolumes -Config $config -Server $server -ConfigState $state)[0].host | Should -Be "itl-pm4corp-code-beta-qwen3-v1-index"
                         }
@@ -59,10 +60,15 @@
                         $settings.mode | Should -Be "cpu"
                         $settings.apiKey | Should -BeNullOrEmpty
                         $env.Contains("EMBEDDING_API_KEY") | Should -BeFalse
+                        $env.Contains("MCP_STRUCTURED_CONTENT") | Should -BeFalse
                         @(Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state).Count | Should -Be 0
                     }
                 }
             }
+            $config.betaProjectIndex = $null
+            $compatibilityServer = [pscustomobject]@{ id = "code"; channel = "beta"; embedding = $true; env = @(); volumes = @() }
+            (Resolve-ServerEnv -Config $config -Server $compatibilityServer -ConfigState $state).MCP_STRUCTURED_CONTENT | Should -Be "true"
+            $config.betaProjectIndex = @{ generation = "qwen3-v1"; embedding = @{ credentialFile = $credentialPath } }
             $server = [pscustomobject]@{ id = "code"; channel = "beta" }
             $config.betaProjectIndex.generation = "../unsafe"
             { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Throw "*generation*"

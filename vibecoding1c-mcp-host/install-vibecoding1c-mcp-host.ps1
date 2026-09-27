@@ -2231,6 +2231,11 @@ function Resolve-ServerEnv {
         $values["RESET_CACHE"] = "false"
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "code" -and
+        [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        # Beta defaults to text-only replies; keep the stable dict/list transport contract.
+        $values["MCP_STRUCTURED_CONTENT"] = "true"
+    }
     if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
         $values["EMBEDDING_PROVIDER"] = "remote"
         $values["EMBEDDING_API_BASE"] = [string]$embeddingSettings.apiBase
