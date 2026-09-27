@@ -482,6 +482,68 @@ async function runBetaCodeCheckerIntegration() {
   }
 }
 
+async function runBetaDocsIntegration() {
+  const docsTools = ['docsearch', 'docinfo'].map(name => ({
+    name, inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+  }));
+  const contract = { ...proxy.describeContract(docsTools), legacyDocsResult: true };
+  const upstream = http.createServer((request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : null;
+      response.setHeader('content-type', 'application/json');
+      if (request.method === 'DELETE') { response.end('{}'); return; }
+      if (body.method === 'initialize') {
+        response.setHeader('mcp-session-id', 'docs-session');
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-03-26', capabilities: { tools: {} } } }));
+        return;
+      }
+      if (body.method === 'notifications/initialized') { response.statusCode = 202; response.end(); return; }
+      if (body.method === 'tools/list') { response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { tools: docsTools } })); return; }
+      if (body.method === 'tools/call') {
+        const result = body.params.name === 'docsearch'
+          ? { content: [{ type: 'text', text: 'Найден раздел справки' }], isError: false }
+          : { content: [{ type: 'text', text: 'Сведения об объекте' }], structuredContent: { sources: ['help'] }, isError: false };
+        response.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result })); return;
+      }
+      response.statusCode = 400; response.end('{}');
+    });
+  });
+  const upstreamPort = await listen(upstream);
+  const proxyServer = await proxy.startProxy({
+    'upstream-url': `http://127.0.0.1:${upstreamPort}/mcp`,
+    'listen-port': '0', 'server-id': 'docs',
+  }, contract);
+  const url = `http://127.0.0.1:${proxyServer.address().port}/mcp`;
+  const headers = { accept: 'application/json, text/event-stream', 'content-type': 'application/json' };
+  try {
+    const init = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'old-client', version: '1' } } }) });
+    assert.strictEqual(init.status, 200);
+    headers['mcp-session-id'] = init.headers.get('mcp-session-id');
+    const list = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+    for (const tool of (await list.json()).result.tools) {
+      assert.deepStrictEqual(tool.outputSchema.required, ['result']);
+      assert.deepStrictEqual(tool.outputSchema.properties.result, { type: 'string' });
+      assert.strictEqual(tool.outputSchema['x-fastmcp-wrap-result'], true);
+    }
+    for (const [id, name, expected] of [[3, 'docsearch', 'Найден раздел справки'], [4, 'docinfo', 'Сведения об объекте']]) {
+      const call = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: { query: 'String' } } }) });
+      assert.strictEqual(call.status, 200);
+      const result = (await call.json()).result;
+      assert.strictEqual(result.structuredContent.result, expected);
+      assert.strictEqual(result.content[0].text, expected);
+      if (name === 'docinfo') assert.deepStrictEqual(result.structuredContent.sources, ['help']);
+    }
+    const error = { jsonrpc: '2.0', id: 5, result: { isError: true, content: [{ type: 'text', text: 'unavailable' }] } };
+    assert.deepStrictEqual(JSON.parse(proxy.transformDocsCallResponse(Buffer.from(JSON.stringify(error)), 'application/json', new Set([5]))), error);
+    assert.throws(() => proxy.transformDocsCallResponse(Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: 6, result: { content: [] } })), 'application/json', new Set([6])), /no text result/);
+  } finally {
+    await close(proxyServer);
+    await close(upstream);
+  }
+}
+
 async function runBetaSyntaxIntegration() {
   const pluginTool = {
     name: 'plugin_state',
@@ -661,7 +723,7 @@ async function runTemplatesOperatorTokenIntegration() {
   }
 }
 
-runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaSyntaxIntegration).then(runTemplatesOperatorTokenIntegration).then(() => {
+runCliStartupIntegration().then(runSingleFlightIntegration).then(runIntegration).then(runBetaCodeCheckerIntegration).then(runBetaDocsIntegration).then(runBetaSyntaxIntegration).then(runTemplatesOperatorTokenIntegration).then(() => {
   process.stdout.write('tools-list proxy unit contract passed\n');
 }, error => {
   process.stderr.write(`${error.stack || error.message}\n`);

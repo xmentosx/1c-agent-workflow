@@ -248,6 +248,22 @@ function preserveSyntaxOutputSchema(tool, expected) {
   };
 }
 
+function preserveDocsOutputSchema(tool, expected) {
+  if (!expected.legacyDocsResult || !['docsearch', 'docinfo'].includes(tool.name)) return tool;
+  const schema = tool.outputSchema || { type: 'object', properties: {}, required: [], 'x-fastmcp-wrap-result': true };
+  if (schema.type !== 'object' || !schema.properties) {
+    throw new Error(`Beta Docs tool '${tool.name}' has an incompatible output schema.`);
+  }
+  return {
+    ...tool,
+    outputSchema: {
+      ...schema,
+      properties: { ...schema.properties, result: { type: 'string' } },
+      required: [...new Set([...(schema.required || []), 'result'])],
+    },
+  };
+}
+
 function transformPayload(payload, expected) {
   if (Array.isArray(payload)) return payload.map(item => transformPayload(item, expected));
   if (!payload || typeof payload !== 'object' || !payload.result || !Array.isArray(payload.result.tools)) return payload;
@@ -255,7 +271,7 @@ function transformPayload(payload, expected) {
   if (actual.toolCount !== expected.toolCount || actual.structuralSha256 !== expected.structuralSha256) {
     throw new Error(`MCP tools contract drift: expected ${expected.toolCount}/${expected.structuralSha256}, got ${actual.toolCount}/${actual.structuralSha256}`);
   }
-  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveSyntaxOutputSchema(preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected), expected)) } };
+  return { ...payload, result: { ...payload.result, tools: payload.result.tools.map(tool => preserveDocsOutputSchema(preserveSyntaxOutputSchema(preserveCodeCheckerOutputSchema(compactTool(tool, expected), expected), expected), expected)) } };
 }
 
 function transformJsonRpcResponse(body, contentType, transform) {
@@ -292,6 +308,25 @@ function preserveCodeCheckerCallResult(payload) {
 
 function transformCodeCheckerCallResponse(body, contentType) {
   return transformJsonRpcResponse(body, contentType, preserveCodeCheckerCallResult);
+}
+
+function transformDocsCallResponse(body, contentType, docsCallIds) {
+  const preserveDocsCallResult = payload => {
+    if (Array.isArray(payload)) return payload.map(preserveDocsCallResult);
+    if (!docsCallIds.has(payload && payload.id) || !payload || !payload.result || payload.result.isError) return payload;
+    const result = payload.result;
+    const structured = result.structuredContent;
+    if (structured && typeof structured === 'object' && typeof structured.result === 'string') return payload;
+    const text = Array.isArray(result.content)
+      ? result.content.find(item => item && item.type === 'text' && typeof item.text === 'string')
+      : null;
+    if (!text) throw new Error('Beta Docs tool returned no text result.');
+    if (structured != null && (typeof structured !== 'object' || Array.isArray(structured))) {
+      throw new Error('Beta Docs tool returned invalid structured content.');
+    }
+    return { ...payload, result: { ...result, structuredContent: { ...(structured || {}), result: text.text } } };
+  };
+  return transformJsonRpcResponse(body, contentType, preserveDocsCallResult);
 }
 
 let syntaxDecoderPromise;
@@ -334,11 +369,11 @@ function requestMethod(body) {
   } catch (_) { return ''; }
 }
 
-function syntaxCallIds(body) {
+function toolCallIds(body, names) {
   try {
     const payload = JSON.parse(body.toString('utf8'));
     const requests = Array.isArray(payload) ? payload : [payload];
-    return new Set(requests.filter(item => item && item.method === 'tools/call' && item.params && item.params.name === 'syntaxcheck').map(item => item.id));
+    return new Set(requests.filter(item => item && item.method === 'tools/call' && item.params && names.includes(item.params.name)).map(item => item.id));
   } catch (_) { return new Set(); }
 }
 
@@ -413,7 +448,8 @@ async function startProxy(args, expected) {
 
   const forwardRequest = (incoming, outgoing, body, attempt = 0) => {
     const method = requestMethod(body);
-    const syntaxIds = method === 'tools/call' && expected.legacySyntaxJsonl ? syntaxCallIds(body) : null;
+    const syntaxIds = method === 'tools/call' && expected.legacySyntaxJsonl ? toolCallIds(body, ['syntaxcheck']) : null;
+    const docsIds = method === 'tools/call' && expected.legacyDocsResult ? toolCallIds(body, ['docsearch', 'docinfo']) : null;
     const transport = upstream.protocol === 'https:' ? https : http;
     const headers = filteredHeaders(incoming.headers);
     if (operatorToken && !Object.prototype.hasOwnProperty.call(headers, 'authorization') && isProtectedTemplateCall(body)) {
@@ -441,7 +477,7 @@ async function startProxy(args, expected) {
       }
 
       const responseHeaders = filteredHeaders(upstreamResponse.headers);
-      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || (syntaxIds && syntaxIds.size > 0)))) {
+      if (method !== 'tools/list' && !(method === 'tools/call' && (expected.legacyCodeCheckerResult || (syntaxIds && syntaxIds.size > 0) || (docsIds && docsIds.size > 0)))) {
         outgoing.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
         upstreamResponse.pipe(outgoing);
         return;
@@ -454,6 +490,8 @@ async function startProxy(args, expected) {
             ? transformToolsListResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], expected)
             : expected.legacySyntaxJsonl
               ? await transformSyntaxCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], syntaxIds)
+              : expected.legacyDocsResult
+                ? transformDocsCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type'], docsIds)
               : transformCodeCheckerCallResponse(Buffer.concat(responseChunks), upstreamResponse.headers['content-type']);
           if (responseHeaders['content-type'] && !String(responseHeaders['content-type']).toLowerCase().includes('charset=')) {
             responseHeaders['content-type'] = `${responseHeaders['content-type']}; charset=utf-8`;
@@ -562,6 +600,7 @@ module.exports = {
   startProxy,
   transformToolsListResponse,
   transformCodeCheckerCallResponse,
+  transformDocsCallResponse,
   transformSyntaxCallResponse,
   withoutDescriptions,
 };

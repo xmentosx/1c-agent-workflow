@@ -319,6 +319,10 @@ BookStack и Mantis MCP работают в stateless HTTP mode. После пе
 поставщика: он сохраняет инструмент `check_1c_logic`, отсутствующий в новом образе.
 Публичный proxy CodeChecker сохраняет прежние текстовые ответы и поле
 `structuredContent.result`, оставляя доступными новые типизированные поля beta.
+Публичный proxy Docs сохраняет прежнюю `outputSchema` с обязательным строковым
+`result` для `docsearch` и `docinfo` и заполняет `structuredContent.result` из
+текстового ответа beta. Перед публикацией registry cutover проверяет реальный
+вызов `docsearch`; несовместимый ответ запускает автоматический откат.
 
 Для beta Templates инструменты `add_template` и `plugin_reload` выключены по
 умолчанию. Если оператор разрешил прежние пишущие вызовы, задайте

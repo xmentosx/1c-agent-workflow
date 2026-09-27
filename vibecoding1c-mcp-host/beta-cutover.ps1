@@ -130,6 +130,17 @@ function Assert-BetaToolsAcceptOldCalls {
     }
 }
 
+function Assert-BetaDocsFunctionalCall {
+    param([string]$Url)
+    $connection = Open-HostMcpConnection -Url $Url
+    $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments ([ordered]@{ query = "String" })
+    $structured = Get-ObjectValue -Object $response -Name "structuredContent" -Default $null
+    $legacyResult = Get-ObjectValue -Object $structured -Name "result" -Default $null
+    if ($legacyResult -isnot [string] -or [string]::IsNullOrWhiteSpace($legacyResult)) {
+        throw "Beta Docs docsearch did not preserve a nonempty structuredContent.result string."
+    }
+}
+
 function Get-BetaConfigurationIndexActivity {
     param([string]$ServerId, [string]$Url)
     if ($ServerId -notin @("code", "graph")) { return $null }
@@ -177,6 +188,7 @@ function New-BetaProxyContract {
     }
     if ($Context.serverId -eq "codechecker") { $serverContract["legacyCodeCheckerResult"] = $true }
     if ($Context.serverId -eq "syntax") { $serverContract["legacySyntaxJsonl"] = $true }
+    if ($Context.serverId -eq "docs") { $serverContract["legacyDocsResult"] = $true }
     $servers = [ordered]@{}
     $servers[[string]$Context.serverId] = $serverContract
     $contract = [ordered]@{ schemaVersion = 2; approvedAt = (Get-Date).ToString("o"); descriptionPolicy = (Get-ObjectValue -Object $sourceContract -Name "descriptionPolicy" -Default $null); servers = $servers }
@@ -415,6 +427,9 @@ function Invoke-BetaCutover {
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
             $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
             Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
+            if ($TargetServerId -eq "docs") {
+                Assert-BetaDocsFunctionalCall -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
+            }
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force
             $publishedRuntime = Convert-ToHash -Object $context.runtime

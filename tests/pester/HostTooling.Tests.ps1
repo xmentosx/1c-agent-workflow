@@ -27,6 +27,31 @@
         [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot "vibecoding1c-mcp-host\beta-cutover.ps1"), [ref]$tokens, [ref]$errors) | Out-Null
         @($errors).Count | Should -Be 0
     }
+    It "requires a usable legacy Docs result before finalizing beta cutover" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl beta docs справка " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (([ordered]@{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json) + [Environment]::NewLine)
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param([string]$Url); return [pscustomobject]@{ url = $Url } }
+                function Invoke-HostMcpTool {
+                    param([object]$Connection, [string]$Name, [object]$Arguments)
+                    $Name | Should -Be "docsearch"
+                    $Arguments.query | Should -Be "String"
+                    return [pscustomobject]@{ structuredContent = [pscustomobject]@{ result = $script:DocsFixtureResult } }
+                }
+                $script:DocsFixtureResult = "Documentation found"
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Not -Throw
+                $script:DocsFixtureResult = ""
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Throw "*nonempty structuredContent.result string*"
+                $script:DocsFixtureResult = [pscustomobject]@{ answer = "typed only" }
+                { Assert-BetaDocsFunctionalCall -Url "http://localhost:22000/mcp" } | Should -Throw "*nonempty structuredContent.result string*"
+                Remove-Variable -Scope Script -Name DocsFixtureResult -ErrorAction SilentlyContinue
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
     It "gives Docs MCP and fresh index one three-hour readiness budget" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-docs-budget-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
