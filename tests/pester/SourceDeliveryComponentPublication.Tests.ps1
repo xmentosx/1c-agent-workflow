@@ -27,7 +27,7 @@ Describe "Source develop queue and delivery" {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Copy-DeliveryVanessaPairedExtensionFromArchive')) { Invoke-Expression $definition.Extent.Text }
             $stage = Join-Path $TestDrive "paired archive содержимое"
             New-Item -ItemType Directory -Force -Path $stage | Out-Null
-            $assetName = 'VAExtension.1.29-itl-r13.cfe'
+            $assetName = 'VAExtension.1.32-itl-r1.cfe'
             $source = Join-Path $stage $assetName
             [IO.File]::WriteAllBytes($source, [byte[]](1, 3, 5, 7, 9))
             $sha = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()

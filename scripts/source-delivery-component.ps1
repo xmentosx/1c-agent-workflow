@@ -166,7 +166,7 @@ function Copy-DeliveryVanessaPairedExtensionFromArchive {
     }
     $assetName = [string]$Lock.assetName
     $expectedSha = ([string]$Lock.sha256).ToLowerInvariant()
-    if ([IO.Path]::GetFileName($assetName) -cne $assetName -or $assetName -cnotmatch '^VAExtension\.1\.29-itl-r[0-9]+\.cfe$') {
+    if ([IO.Path]::GetFileName($assetName) -cne $assetName -or $assetName -cnotmatch '^VAExtension\.[0-9]+\.[0-9]+-itl-r[0-9]+\.cfe$') {
         throw "Vanessa paired extension assetName is invalid: $assetName"
     }
     if ($expectedSha -notmatch '^[a-f0-9]{64}$') { throw "Vanessa paired extension lock has an invalid SHA256: $expectedSha" }
