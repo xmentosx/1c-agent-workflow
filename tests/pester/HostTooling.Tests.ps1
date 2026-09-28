@@ -599,6 +599,110 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
 
+    It "decodes Graph legacy and v2 status consistently for cutover and health" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-статус " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                function Open-HostMcpConnection { param($Url, $TimeoutSec); return @{ url = $Url } }
+                function Invoke-HostMcpTool { param($Connection, $Name, $Arguments, $TimeoutSec); return $script:GraphStatusFixture }
+                $server = @{ id = "graph"; url = "http://fixture/mcp" }
+                $data = @{ background_tasks = @{ vector_indexing = @{ status = "completed" }; business = @{ status = "skipped"; error = "disabled" } }; any_running = $false }
+                $legacy = $data | ConvertTo-Json -Depth 10 -Compress
+                $v2 = @{ contract_version = "2.0"; context = @{ tool = "get_indexing_status" }; data = $data }
+                foreach ($fixture in @(
+                    @{ structuredContent = @{ result = $legacy } },
+                    @{ structuredContent = $data },
+                    @{ content = @(@{ type = "text"; text = $legacy }) },
+                    @{ content = @(@{ type = "text"; text = ($v2 | ConvertTo-Json -Depth 10 -Compress) }) },
+                    @{ structuredContent = $v2 }
+                )) {
+                    $script:GraphStatusFixture = $fixture
+                    (Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url).running | Should -BeFalse
+                    (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "qualified"
+                }
+                $data.background_tasks.vector_indexing.status = "pending"
+                $script:GraphStatusFixture = @{ content = @(@{ type = "text"; text = ($v2 | ConvertTo-Json -Depth 10 -Compress) }) }
+                (Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url).running | Should -BeTrue
+                (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "qualified"
+                $data.background_tasks.vector_indexing.status = "failed"
+                $failed = $v2 | ConvertTo-Json -Depth 10 -Compress
+                $data.background_tasks.vector_indexing.status = "completed"
+                $data.background_tasks.vector_indexing.error = "Ошибка чтения C:\исходники проекта\Модуль.bsl"
+                $errorOnComplete = $v2 | ConvertTo-Json -Depth 10 -Compress
+                foreach ($bad in @(
+                    $failed, $errorOnComplete, '{', '{}',
+                    '{"contract_version":"2.0","context":{"tool":"get_indexing_status"},"error":{"code":"timeout","details":{"seconds":25}}}',
+                    '{"contract_version":"2.0","context":{"tool":"another_tool"},"data":{"background_tasks":{"lane":{"status":"completed"}}}}',
+                    '{"contract_version":"3.0","context":{"tool":"get_indexing_status"}}',
+                    '{"background_tasks":{"lane":{"status":"unknown"}}}',
+                    '{"background_tasks":{"lane":{"status":"completed"}},"any_running":"false"}',
+                    '{"background_tasks":{}}'
+                )) {
+                    $script:GraphStatusFixture = @{ isError = $false; content = @(@{ type = "text"; text = $bad }) }
+                    { Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url } | Should -Throw
+                    (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "degraded"
+                }
+                $script:GraphStatusFixture = @{ isError = $true; structuredContent = ($legacy | ConvertFrom-Json) }
+                { Get-BetaConfigurationIndexActivity -ServerId graph -Url $server.url } | Should -Throw
+                (Get-HostServerFunctionalHealth -Server $server).status | Should -Be "degraded"
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "permits exactly the approved Graph v2 tool migration while retaining other compatibility checks" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-contract " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $search = @{ name = "search_code"; inputSchema = @{ required = @("query"); properties = @{ query = @{ type = "string" } } } }
+                $template = @{ name = "run_graph_cypher_template"; inputSchema = @{ required = @("template_id"); properties = @{ template_id = @{ type = "string" } } } }
+                $old = @($search, @{ name = "execute_metadata_cypher" }, @{ name = "business_search" })
+                $beta = @($search, $template)
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools $beta -CheckOutputs } | Should -Not -Throw
+                { Assert-BetaToolsContract -ServerId code -OldTools $old -BetaTools $beta } | Should -Throw
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($template) } | Should -Throw
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($search) } | Should -Throw
+                $badSearch = @{ name = "search_code"; inputSchema = @{ required = @("query", "new_required"); properties = @{ query = @{ type = "string" }; new_required = @{ type = "integer" } } } }
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($badSearch, $template) } | Should -Throw
+                $template.inputSchema.required = @()
+                { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools $beta } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
+    It "preserves MCP request and response Unicode through raw UTF8 despite an absent charset" -Tag BetaCutover {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-mcp-транспорт " + [guid]::NewGuid().ToString("N"))
+        $configPath = Join-Path $tempRoot "host.config.json"
+        try {
+            New-Item -ItemType Directory -Force -Path $tempRoot | Out-Null
+            Set-Content -LiteralPath $configPath -Encoding UTF8 -Value '{"schemaVersion":1,"stateRoot":"fixture"}'
+            & {
+                . $McpHostPath -Action status -ConfigPath $configPath *> $null
+                $script:UnicodeSourcePath = Join-Path $tempRoot "Общий модуль.bsl"
+                function Invoke-WebRequest {
+                    param($Uri, $Method, $ContentType, $Headers, $Body, $TimeoutSec, [switch]$UseBasicParsing)
+                    $request = [Text.UTF8Encoding]::new($false, $true).GetString($Body) | ConvertFrom-Json
+                    $request.params.arguments.path | Should -BeExactly $script:UnicodeSourcePath
+                    $ContentType | Should -Be "application/json; charset=utf-8"
+                    $json = @{ jsonrpc = "2.0"; id = 2; result = @{ structuredContent = @{ path = $script:UnicodeSourcePath } } } | ConvertTo-Json -Depth 10 -Compress
+                    $bytes = [Text.Encoding]::UTF8.GetBytes("data: $json`n`n")
+                    return @{ Content = "incorrect automatic decoding"; RawContentStream = [IO.MemoryStream]::new($bytes) }
+                }
+                $connection = [pscustomobject]@{ url = "http://fixture/mcp"; nextId = 2; headers = @{} }
+                $result = Invoke-HostMcpTool -Connection $connection -Name "probe" -Arguments @{ path = $script:UnicodeSourcePath }
+                $result.structuredContent.path | Should -BeExactly $script:UnicodeSourcePath
+                { Get-HostMcpResponseUtf8Text -Response @{ RawContentStream = [IO.MemoryStream]::new([byte[]]@(0xC3, 0x28)) } } | Should -Throw
+            }
+        } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+
     It "restores the stable CodeChecker logic tool in the beta image" -Tag BetaCutover {
         $testPath = Join-Path $RepoRoot "vibecoding1c-mcp-host\codechecker-beta-overlay\test_patch_mcp_server.py"
         $output = & python $testPath 2>&1
@@ -1904,7 +2008,7 @@ services:
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item Function:\global:git -ErrorAction SilentlyContinue }
     }
 
-    It "marks Graph functionally degraded when vector tasks are blocked by an embedding mismatch" {
+    It "marks Graph functionally degraded when vector tasks are blocked by an embedding mismatch" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-graph-functional-health-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
         try {

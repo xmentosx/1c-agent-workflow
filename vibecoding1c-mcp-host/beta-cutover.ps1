@@ -431,7 +431,7 @@ function Get-HostMcpToolsList {
         $payload = [ordered]@{ jsonrpc = "2.0"; id = [int]$connection.nextId; method = "tools/list"; params = $params }
         $connection.nextId = [int]$connection.nextId + 1
         $response = Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $connection.headers -Body ($payload | ConvertTo-Json -Depth 12 -Compress) -TimeoutSec 60
-        $body = ConvertFrom-HostMcpResponse -Text $response.Content
+        $body = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
         if ($null -ne $body.PSObject.Properties["error"]) { throw "MCP tools/list failed: $($body.error | ConvertTo-Json -Depth 10 -Compress)" }
         $result = Get-ObjectValue -Object $body -Name "result" -Default $null
         if ($null -eq $result) { throw "MCP tools/list returned no result." }
@@ -502,12 +502,33 @@ function Assert-BetaDocsFunctionalCall {
     }
 }
 
+function Assert-BetaToolsContract {
+    param([string]$ServerId, [object[]]$OldTools, [object[]]$BetaTools, [switch]$CheckOutputs)
+    if ($ServerId -eq "graph") {
+        # Approved Graph v2 migration: arbitrary Cypher is replaced by named
+        # templates; business_search is unavailable without business generation.
+        # All other old calls still go through the unchanged compatibility gate.
+        $OldTools = @($OldTools | Where-Object { $_.name -notin @("execute_metadata_cypher", "business_search") })
+        $template = @($BetaTools | Where-Object { $_.name -eq "run_graph_cypher_template" })
+        if ($template.Count -ne 1) { throw "Beta Graph v2 requires run_graph_cypher_template." }
+        $inputSchema = Get-ObjectValue -Object $template[0] -Name "inputSchema" -Default $null
+        $properties = Get-ObjectValue -Object $inputSchema -Name "properties" -Default $null
+        $templateId = Get-ObjectValue -Object $properties -Name "template_id" -Default $null
+        if ([string](Get-ObjectValue -Object $templateId -Name "type" -Default "") -ne "string" -or
+            "template_id" -notin @(As-Array (Get-ObjectValue -Object $inputSchema -Name "required" -Default @()))) {
+            throw "Beta Graph v2 template tool must require a string template_id."
+        }
+    }
+    Assert-BetaToolsAcceptOldCalls -OldTools $OldTools -BetaTools $BetaTools -CheckOutputs:$CheckOutputs
+}
+
 function Get-BetaConfigurationIndexActivity {
     param([string]$ServerId, [string]$Url)
     if ($ServerId -notin @("code", "graph")) { return $null }
     $connection = Open-HostMcpConnection -Url $Url
     $tool = $(if ($ServerId -eq "code") { "stats" } else { "get_indexing_status" })
     $result = Invoke-HostMcpTool -Connection $connection -Name $tool
+    if ($ServerId -eq "graph") { return (ConvertFrom-GraphIndexStatus -Result $result) }
     $payload = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
     if ($null -eq $payload) { throw "'$ServerId' index status has no structuredContent." }
     $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
@@ -532,15 +553,6 @@ function Get-BetaConfigurationIndexActivity {
             metadataGenerationId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "published" -Default $null) -Name "generation_id" -Default "")
         }
     }
-    $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
-    if ($null -eq $tasks) { throw "Graph get_indexing_status did not expose background_tasks." }
-    $running = [bool](Get-ObjectValue -Object $payload -Name "any_running" -Default $false)
-    foreach ($task in (Convert-ToHash -Object $tasks).GetEnumerator()) {
-        $status = [string](Get-ObjectValue -Object $task.Value -Name "status" -Default "")
-        if ($status -match '^(?i:running|pending|in_progress|processing)$') { $running = $true }
-        if ($status -match '^(?i:failed|error)$') { throw "Graph background task '$($task.Key)' failed." }
-    }
-    return [pscustomobject]@{ running = $running; phase = "background_tasks"; collections = $null }
 }
 
 function New-BetaProxyContract {
@@ -805,7 +817,7 @@ function Invoke-BetaCutover {
             }
             Wait-BetaCandidateReady -Context $context
             $betaTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
-            Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $betaTools
+            Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $preflight.oldTools -BetaTools $betaTools
             $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)
             if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
             if ($TargetServerId -eq "code") {
@@ -824,7 +836,7 @@ function Invoke-BetaCutover {
             $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
             $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
-            Assert-BetaToolsAcceptOldCalls -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
+            Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
             if ($TargetServerId -eq "docs") {
                 Assert-BetaDocsFunctionalCall -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
             }

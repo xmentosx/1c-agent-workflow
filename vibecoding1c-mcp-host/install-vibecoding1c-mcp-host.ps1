@@ -3598,6 +3598,15 @@ function ConvertFrom-HostMcpResponse {
     return ($Text | ConvertFrom-Json)
 }
 
+function Get-HostMcpResponseUtf8Text {
+    param([object]$Response)
+    # MCP JSON/SSE is UTF-8 even when the server omits a charset. PS 5.1's
+    # Content property may already have decoded the bytes with another encoding.
+    $stream = Get-ObjectValue -Object $Response -Name "RawContentStream" -Default $null
+    if ($null -eq $stream) { throw "MCP HTTP response has no raw UTF-8 stream." }
+    return ([Text.UTF8Encoding]::new($false, $true).GetString($stream.ToArray()))
+}
+
 function Open-HostMcpConnection {
     param(
         [string]$Url,
@@ -3660,8 +3669,8 @@ function Invoke-HostMcpTool {
         params = [ordered]@{ name = $Name; arguments = $Arguments }
     }
     $Connection.nextId = [int]$Connection.nextId + 1
-    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json" -Headers $Connection.headers -Body ($payload | ConvertTo-Json -Depth 20 -Compress) -TimeoutSec $TimeoutSec
-    $result = ConvertFrom-HostMcpResponse -Text $response.Content
+    $response = Invoke-WebRequest -UseBasicParsing -Uri $Connection.url -Method Post -ContentType "application/json; charset=utf-8" -Headers $Connection.headers -Body ([Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec $TimeoutSec
+    $result = ConvertFrom-HostMcpResponse -Text (Get-HostMcpResponseUtf8Text -Response $response)
     if ($null -ne $result.PSObject.Properties["error"]) {
         throw "MCP tool '$Name' returned a JSON-RPC error: $($result.error | ConvertTo-Json -Depth 10 -Compress)"
     }
@@ -4125,6 +4134,54 @@ function Get-HostServerSafeHealthArguments {
     return $null
 }
 
+function ConvertFrom-GraphIndexStatus {
+    param([AllowNull()][object]$Result)
+    # One stateless decoder owns legacy and v2 status semantics for health and
+    # cutover. TextContent contains JSON, not a human status string to match.
+    if ($null -eq $Result) { throw "Graph get_indexing_status returned no result." }
+    if (Get-ObjectValue -Object $Result -Name "isError" -Default $false) { throw "Graph get_indexing_status reported an MCP tool error." }
+    $payload = Get-ObjectValue -Object $Result -Name "structuredContent" -Default $null
+    if ($null -eq $payload) {
+        $content = Get-ObjectValue -Object $Result -Name "content" -Default $null
+        if ($null -ne $content) {
+            $parts = @(As-Array $content | Where-Object { [string](Get-ObjectValue -Object $_ -Name "type" -Default "") -eq "text" })
+            if ($parts.Count -ne 1) { throw "Graph status requires exactly one JSON TextContent block." }
+            $payload = [string](Get-ObjectValue -Object $parts[0] -Name "text" -Default "")
+        } else { $payload = $Result }
+    }
+    if ($payload -is [string]) { $payload = ConvertFrom-Json -InputObject $payload -ErrorAction Stop }
+    $nested = Get-ObjectValue -Object $payload -Name "result" -Default $null
+    if ($nested -is [string]) { $payload = ConvertFrom-Json -InputObject $nested -ErrorAction Stop }
+    $envelopeError = Get-ObjectValue -Object $payload -Name "error" -Default $null
+    if ($null -ne $envelopeError) {
+        $code = [string](Get-ObjectValue -Object $envelopeError -Name "code" -Default "unknown")
+        throw "Graph get_indexing_status returned a typed error ($code)."
+    }
+    $version = Get-ObjectValue -Object $payload -Name "contract_version" -Default $null
+    if ($null -ne $version) {
+        $context = Get-ObjectValue -Object $payload -Name "context" -Default $null
+        if ([string]$version -ne "2.0" -or [string](Get-ObjectValue -Object $context -Name "tool" -Default "") -ne "get_indexing_status") {
+            throw "Graph status has an unsupported version or a different tool context."
+        }
+        $payload = Get-ObjectValue -Object $payload -Name "data" -Default $null
+    }
+    $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
+    if ($null -eq $tasks -or $tasks -is [string] -or $tasks -is [array]) { throw "Graph get_indexing_status did not expose a background_tasks object." }
+    $entries = @((Convert-ToHash -Object $tasks).GetEnumerator())
+    if ($entries.Count -eq 0) { throw "Graph get_indexing_status exposed no background tasks." }
+    $anyRunning = Get-ObjectValue -Object $payload -Name "any_running" -Default $null
+    if ($null -ne $anyRunning -and $anyRunning -isnot [bool]) { throw "Graph any_running must be a boolean." }
+    $running = $anyRunning -eq $true
+    foreach ($task in $entries) {
+        $status = [string](Get-ObjectValue -Object $task.Value -Name "status" -Default "")
+        $errorText = [string](Get-ObjectValue -Object $task.Value -Name "error" -Default "")
+        if ($status -match '^(?i:failed|error)$' -or ($errorText -and $status -ne "skipped")) { throw "Graph background task '$($task.Key)' failed: $errorText" }
+        if ($status -match '^(?i:running|pending|in_progress|processing)$') { $running = $true }
+        elseif ($status -notmatch '^(?i:completed|complete|succeeded|idle|skipped)$') { throw "Graph background task '$($task.Key)' has unknown status '$status'." }
+    }
+    return [pscustomobject]@{ running = $running; phase = "background_tasks"; collections = $null; backgroundTasks = $tasks }
+}
+
 function Get-GraphFunctionalHealth {
     param(
         [object]$Server,
@@ -4132,20 +4189,8 @@ function Get-GraphFunctionalHealth {
     )
 
     try {
-        $status = $(if ($StatusValue -is [string]) { $StatusValue | ConvertFrom-Json } else { $StatusValue })
-        if ($null -eq $status) { throw "get_indexing_status returned no functional status." }
-        $backgroundTasks = Get-ObjectValue -Object $status -Name "background_tasks" -Default $null
-        $tasks = $(if ($null -eq $backgroundTasks) { @() } else { @($backgroundTasks.PSObject.Properties) })
-        $failedTasks = @($tasks | Where-Object {
-            $taskStatus = [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "")
-            $taskError = [string](Get-ObjectValue -Object $_.Value -Name "error" -Default "")
-            $taskStatus -match '^(?i:failed|error)$' -or ($taskError -and $taskStatus -notmatch '^(?i:skipped)$')
-        })
-        if ($failedTasks.Count -gt 0) {
-            $details = @($failedTasks | ForEach-Object { "$($_.Name): $([string](Get-ObjectValue -Object $_.Value -Name 'error' -Default (Get-ObjectValue -Object $_.Value -Name 'status' -Default 'failed')))" })
-            return [pscustomobject]@{ status = "degraded"; message = "Graph background task failure: $($details -join '; ')" }
-        }
-
+        $activity = ConvertFrom-GraphIndexStatus -Result $StatusValue
+        $tasks = @((Convert-ToHash -Object $activity.backgroundTasks).GetEnumerator())
         $runningVectorTasks = @($tasks | Where-Object {
             $_.Name -in @("vector_indexing", "routine_embedding_indexing") -and
             [string](Get-ObjectValue -Object $_.Value -Name "status" -Default "") -match '^(?i:running|pending|in_progress)$'
@@ -4182,11 +4227,8 @@ function Get-HostServerFunctionalHealth {
         $connection = Open-HostMcpConnection -Url $url -TimeoutSec 10
         $arguments = Get-HostServerSafeHealthArguments -ServerId $id
         $result = Invoke-HostMcpTool -Connection $connection -Name $toolName -Arguments $arguments -TimeoutSec 15
-        $text = Get-HostMcpToolResultText -Result $result
         if ($id -eq "graph") {
-            $structured = Get-ObjectValue -Object $result -Name "structuredContent" -Default $null
-            $statusValue = $(if ($null -ne $structured) { $structured } else { $text })
-            return (Get-GraphFunctionalHealth -Server $Server -StatusValue $statusValue)
+            return (Get-GraphFunctionalHealth -Server $Server -StatusValue $result)
         }
         return [pscustomobject]@{ status = "qualified"; message = "MCP safe health tool '$toolName' passed." }
     } catch {
