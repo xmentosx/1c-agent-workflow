@@ -1,0 +1,87 @@
+## 1. Закрепить входы и границы реализации
+
+- [ ] 1.1 Перед зависимой реализацией проверить architecture checkpoint из design.md: владельцы, write-set, отмена, recovery, поддержка и canary; сохранить принятое решение без повторного открытия Q1–Q20. Критерий: D1–D12 и новый store write owner имеют проверяемые границы, apply разрешён отдельно (SM2, OS3, RQ4).
+- [ ] 1.2 Создать upgrade branch controlled fork непосредственно от закреплённого 20a083e5, сверить old/fork/new identities и 459 входных путей с path-inventory.json; при новом intake выполнить incremental audit до переноса. Критерий: нет merge старой ветки целиком, каждый прежний ledger path и дополнительный semantic ID учтён (SM1).
+- [ ] 1.3 Распределить migration-map по итоговым requirement owners и потребителям; подготовить схему нового release ledger без фиктивных result hashes. Критерий: все 22 группы, скрытые подинварианты и новые upstream entrypoints имеют preserve/adapt/retire и поведенческую приёмку (SM1, RQ1).
+
+## 2. Перенести правила и orchestration в controlled fork
+
+- [ ] 2.1 Перевести сборку установленного root на новый upstream AGENTS.md и компактный обязательный ITL ownership contract; снять старую полную подстановку и перенести ссылки к владельцам. Критерий: новые upstream инструкции достижимы, source AGENTS.md не устанавливается, обязательные ITL границы загружаются (SM2).
+- [ ] 2.2 Перенести USER-RULES priority, managed block и явный /evolve; добавить точный report-only разбор конфликтующих overrides с остановкой только зависимого действия. Критерий: пользовательский текст сохраняется, устаревшие test-plan/persist требования видны с причиной конфликта (SM2, IM5).
+- [ ] 2.3 Адаптировать mcp-policy/mcp-first и operation skills: delegated MCP, branch delta, typed provider errors, стандарты через квалифицированный MCP и локальные ITL дополнения. Критерий: committed/staged/unstaged/untracked delta не теряется; required/off не обходятся alias/HTTP/CLI (SM7, EV5).
+- [ ] 2.4 Сохранить memory isolation и templatesearch, ограничить новые auto-write/recall/setup маршруты принятой архитектурой; восстановить grill family, formats и attribution у владельца fork. Критерий: новые Cognee/OpenViking не включаются автоматически, project memory сохраняется, planning не начинается без выбора (SM3, SM7, OS5).
+- [ ] 2.5 Перенести upstream verification depth в 1c-validate, verification rules, subagent-core, /sdlc и прямые команды; сохранить standalone syntax, logic preference/fallback, closing snapshot, raw evidence и bounded adjudication. Критерий: quick/full и lite/standard/full дают одну согласованную матрицу без старого always-three (EV1).
+- [ ] 2.6 Принять coding tier для error-fixer, bounded defect-class и единственного writer; согласовать parent review, отдельный reviewer и фактический client-specific model selection. Критерий: full-cycle получает parent review при отсутствии reviewer, quick-fix не расширяется автоматически, model ID не считается применённым по одной конфигурации (SM3, CL4).
+
+## 3. Сохранить инструментальные исправления и lifecycle boundary
+
+- [ ] 3.1 Распространить managed-scope guards/bridges на новые DB/web/repo-ops, Python, EDT, deploy и repair входы. Критерий: detached branch не получает source binding, source locks/sync и per-infobase guard остаются у ITL, unsupported mutation имеет рабочее продолжение (SM4).
+- [ ] 3.2 Связать first dump, installtools и agent-repair с существующим bootstrap/provisioning/recovery; сохранить standalone rules-only путь. Критерий: нет второго dump/installer и ручного восстановления manifest при ITL bootstrap; отказ от optional dump сохраняется (IM4).
+- [ ] 3.3 Перенести UUID/GeneratedType, IncludePathList и descriptor validation fixes в новые реализованные runtimes; сохранить host aggregate ownership/path/payload checks. Критерий: explicit delta не становится рекурсивным fallback, Form/Template/IntegrationService проверяются корректно (SM5).
+- [ ] 3.4 Сохранить достройку совместимых form/template descriptors, UUID и существующего payload; отдельно сохранить absent/false/true row flags и advisory empty Action. Критерий: исходные воспроизводители исправлений проходят, новые structural/module/version/DynamicList проверки не ослаблены (SM5).
+- [ ] 3.5 Перенести managed-form context правило в локальный authoritative owner и все forms/debug consumers; ограничить preview его реальным write-set и scoped recovery. Критерий: syntax не подменяет runtime boundary proof, dirty/concurrent файлы сохраняются, unavailable preview не превращается в apply (SM5, SM6).
+
+## 4. Расширить существующего владельца verification
+
+- [ ] 4.1 Добавить в versioned catalogs/selection независимые obligation, retention decision и cadence; мигрировать прежние fast suites без автоматического удаления регрессий. Критерий: нет обязательного отдельного test-plan и фиктивной suite для one-off доказательства; старые approved планы читаются (EV2).
+- [ ] 4.2 Расширить evidence schema и freshness key точными source/loaded-base/tool/requirements/policy inputs; сохранить наблюдаемые actual/expected и ограничения. Критерий: изменение применимого external requirement инвалидирует proof, посторонняя правка и commit тех же bytes — нет (EV3).
+- [ ] 4.3 Добавить приём настоящего one-off evidence в единый assessment готовности и всех его потребителей. Критерий: достаточное proof даёт block-ready без сохранённой suite, fragment-only остаётся partial, zero-tests/invalid-JUnit/failure выбранного runner остаются ошибкой (EV2, EV3, EV7).
+- [ ] 4.4 Реализовать effective invocation policy D4 поверх существующих switches: authoring, saved Vanessa, interactive UI, YAxUnit, data и named one-off. Критерий: named запуск не меняет persistent off, общий «проверь» его не снимает, широкий no-UI соблюдается (EV4, EV5).
+- [ ] 4.5 Квалифицировать bounded read-only query/pure BSL и ROCTUP equivalence для TOOL_DATA. Критерий: unknown side effects не выполняются, NOT_READY не даёт нового разрешения на load, target и provider identity входят в evidence (EV5).
+- [ ] 4.6 Расширить persisted repair session видами canonical-repair/scenario-loop и подключить /test-fix-loop. Критерий: один outer budget, interruption/resume сохраняет attempts, deploy recovery не умножает цикл, исправления инвалидируют зависимые passed scenarios; изменение согласованного business expectation требует evidence и подтверждения (EV6).
+- [ ] 4.7 Провести конечную приёмку canonical check → export/close с one-off, retained affected/handoff proof и честным warn/block. Критерий: после последней правки один unfiltered assessment сохраняет event-log, loaded state, snapshot и artifact SHA гарантии (EV3, EV7).
+
+## 5. Закрепить CLI и обновить OpenSpec bundles
+
+- [ ] 5.1 Добавить официальный OpenSpec 1.13.1 как versioned component с integrity, transitive lock и квалифицированной парой absolute Node + JS entrypoint; реализовать явное provisioning и resolver по pin текущего checkout. Критерий: resolve не скачивает, PATH не меняет выбранную пару, Node version/hash проверяются, global npm/prompts не меняются, missing CLI имеет точное продолжение (OS4).
+- [ ] 5.2 Проверить CLI capability contract: context/list/status/instructions JSON, local/project/global/explicit store, invalid binding и sync/archive. Критерий: возможности проверены из среды клиента, совместимость не выведена из одного semver или planningHome (OS1, OS4).
+- [ ] 5.3 Адаптировать все шесть installed phases explore/propose/apply/archive/update/sync и natural routes: context sources, approved decisions, evidence, Caveman, CLI resolver и resolved paths. Критерий: native intact/unavailable/natural различаются, старые aliases не скрывают новые фазы, broken bundle не становится natural (OS4, OS5).
+- [ ] 5.4 Обновить source-only pilot из закреплённых источников и его launcher, routing, invocation metadata/attribution; явно определить доступность новых фаз в source skill catalog. Критерий: он выполняет propose/status/apply-context через новый resolver, не входит в installed managed-copy и не вызывает произвольный openspec update (OS5).
+- [ ] 5.5 Проверить сосуществование старого и нового checkout/CLI и обратный переход pin. Критерий: обновление/rollback одного проекта не меняет executable другого, shared cache не удаляется (OS4, IM1).
+
+## 6. Реализовать независимое OpenSpec storage
+
+- [ ] 6.1 Подключить CLI-only store resolution и устойчивую связь task/change/root/checkout; сохранить local default для старых и новых проектов и явную смену выбора без переноса документов. Критерий: broken pointer и изменённый alias не создают незаметную локальную замену (OS1, OS3).
+- [ ] 6.2 Реализовать scoped store write batch D7: canonical physical paths, readSet/writeSet, expected hashes и tree membership, sorted shared-read/exclusive-write handles и bounded wait без lock на время рассуждений. Критерий: read/write drift и main-spec writes разных changes конфликтуют до замены, общие read-only inputs не блокируют независимые writes (OS3).
+- [ ] 6.3 Добавить operation journal и cancellation/crash recovery только собственных записей; защитить junction/symlink scope и проверить transport lock capability. Критерий: crash освобождает lease без ручного удаления lock, чужое содержимое не откатывается, timeout не удаляет живой lock, unsupported transport получает точный безопасный continuation (OS3).
+- [ ] 6.4 Провести sync → validation → archive через одного write owner и подключить все изменяющие artifacts routes. Критерий: сбой между фазами не оставляет архивированный change без принятых main specs; изменившаяся delta/revision остаётся активной, candidate contribution сохраняется при конфликте (OS3, OS5).
+- [ ] 6.5 Исключить external documents из project refresh/reset/close/update rollback и проверить concurrent resume. Критерий: откатываются только project binding/instructions, чужая новая редакция store остаётся, требования повторно согласуются с кодом и evidence (OS2, EV3).
+
+## 7. Перейти на несколько клиентов
+
+- [ ] 7.1 Расширить aiRules.tools и существующего client-operation owner до attach/detach/reconcile; отделить session client от desired set и убрать legacy codex/kilocode normalization. Критерий: single-client сохраняется, explicit/verified/sole client выбирается детерминированно; identified absent client не подключается неявно, последний detach сохраняет проект (CL1, CL3).
+- [ ] 7.2 Добавить multi-owner accounting в существующие surface/MCP manifests и единый pre-write plan конечного набора. Критерий: одинаковые вклады объединяют owners, разные конфликтуют до записи, чужой MCP/user content не удаляется (CL3, IM1).
+- [ ] 7.3 Обновить fork renderer/install/remove для конечного canonical layout и общего вычисления installed hashes. Критерий: удаление Cursor из Cursor+Codex чинит оставшиеся ссылки, shared Claude/OpenCode skills и Claude/CommandCode MCP сохраняются, повторный update byte-idempotent (CL3, IM5).
+- [ ] 7.4 Мигрировать model defaults к прежнему клиенту и поддержать per-client overrides, economy/routine rerender и invocation syntax. Критерий: attach второго клиента не стирает модель первого и не копирует чужой model ID (SM3, CL1, CL4).
+- [ ] 7.5 Сохранить Codex project skills, Kilo native layout/collision guards, OpenCode workspace integration и Pi extension pin/runtime; обновить десять текущих adapter contracts. Критерий: legacy user-global файлы сохранены, командные aliases не возвращают второй lifecycle owner (CL2, CL4).
+- [ ] 7.6 Добавить ZCode/MiMo адаптеры и capability rows; разделить Cline CLI/editor и прочие runtime variants. Критерий: discovery/MCP/roles/model/OpenSpec/native-command механизмы названы явно, other не выдаётся за поддержанный ITL-клиент (CL2).
+- [ ] 7.7 Обновить read-only doctor и capability report на set/session, actual provider callability, CLI/bundle/store и plugin/project versions. Критерий: конфигурационный файл не считается live proof, диагностика не запускает repair/install (CL2, CL4, OS4, PL3).
+
+## 8. Подключить необязательный plugin
+
+- [ ] 8.1 Заменить managed plugin installer/cache путь на dispatcher существующего project-local ITL helper с проверкой протокола и точного rules pin. Критерий: ни origin HEAD cache, ни upstream init/add/update не обходят lifecycle и delegated MCP (PL1, PL2).
+- [ ] 8.2 Сделать session/workspace ensure read-only; explicit install/add/update направить в существующие bootstrap/client operations. Критерий: открытие папки не подключает клиента и не инициализирует проект; несовместимый helper имеет точный upgrade route (PL1, PL2).
+- [ ] 8.3 Квалифицировать package/marketplace и поддержанные host hooks, exit status, disable/uninstall и сосуществование с OpenCode integration. Критерий: project version независима, disable сохраняет проект, detach не отменяется ensure, неподтверждённый Codex hook не рекламируется (PL3, RQ2).
+
+## 9. Подготовить установленный переход и откат
+
+- [ ] 9.1 Расширить snapshot/restore полным write-set: desired/actual clients, manifest, env, generated files, client-surface.json, mcp/client-managed.json, новые roots и исходное отсутствие файлов. Критерий: failure после второго клиента восстанавливает bytes и ownership; expected post-state защищает позднейшие user env/MCP changes, external store/plugin/CLI cache не меняются (IM1).
+- [ ] 9.2 Перенести Caveman на auto/full и session-only level во всех templates, wrappers, runtime profiles и OpenSpec phases; реализовать atomic per-root receipt on→auto с provenance/version eligibility. Критерий: on/On/ON преобразуются однажды, off/auto и позднейший сознательный on сохраняются, новая ветка наследует completed policy без повторного сброса, rollback согласован с receipt, userReport точен (IM3).
+- [ ] 9.3 Добавить finite rollout inventory известных project roots и registered worktrees с completed/deferred/blocked outcomes и штатными продолжениями. Критерий: dirty/busy/unreachable scopes не теряются, source-less проекты допустимы, глобальный скан диска не нужен (IM2).
+- [ ] 9.4 Проверить isolated r36→new upgrade, repeat update, отказ на userModified/custom-source и failure injection с возвратом совместимого snapshot. Критерий: user text/memory/LLM/settings сохранены; старый installer не пишет поверх нового multi-client state (IM1, IM5).
+- [ ] 9.5 Проверить master→active worktree refresh с branch-specific env/MCP/receipt. Критерий: master upgrade не объявляет ветки обновлёнными; deferred ветка после штатного refresh получает ровно одну миграцию (IM2, IM3).
+
+## 10. Квалифицировать кандидат и подготовить доставку
+
+- [ ] 10.1 Расширить единый fork check inventory применимыми upstream tools/tests/PS/Python/plugin/adapter checks, зафиксировать runtime и corpus inputs для reuse. Критерий: старый Full не квалифицирует пропущенные новые проверки, отменённые assertions связаны с принятым изменением поведения (RQ1).
+- [ ] 10.2 Выполнить приёмку metadata/validator/guard и upstream rule scenarios с исходными воспроизводителями; отдельно обозначить rendered и executed agent evals. Критерий: не ослаблены сохранённые исправления и новые upstream обязанности (SM4–SM7, EV1, RQ1, RQ2).
+- [ ] 10.3 Квалифицировать discovery, MCP, native tools/restrictions/model selection и OpenSpec в свежем контексте конкретных runtime variants двенадцати клиентов; записать минимальные подтверждённые версии. Критерий: каждая заявленная capability имеет passed/failed/unverified и происхождение evidence, fixture не выдаётся за live (CL2, CL4, RQ2).
+- [ ] 10.4 Выполнить canary сценарии D12: single-client rollback, multi-client shared owners, concurrent main-spec sync и one-off proof→block export; измерить context bytes, init/update и unchanged-operation costs. Критерий: standard-user Windows/terminal support сохранена, материальный рост объяснён без ослабления контрактов (RQ1–RQ3).
+- [ ] 10.5 Сформировать итоговый schema-3 ledger с реальными upstream/baseline/result hashes, exact fork commit/tree и pending compatibility; обновить migration/user docs по фактической реализации. Критерий: все пути и смысловые решения map сверены, planning JSON не выдан за release proof (SM1, RQ3).
+- [ ] 10.6 По отдельному поручению на публикацию провести existing PublishDevelop с точным owned stand, reuse identity и immutable component finalization. Критерий: candidate installable и опубликованный SHA подтверждён; fork origin/main и immutable refs продвигаются атомарно; workflow master/release не подразумеваются, missing evidence обработано действующей политикой (RQ3).
+
+## 11. Применить согласованный rollout и подтвердить результат
+
+- [ ] 11.1 Перед установкой в реальные проекты получить конечный inventory roots/worktrees текущего rollout и точный installable candidate; сохранить eligibility и исходные значения Caveman по каждой области. Критерий: границы «всех существующих проектов» перечислены, unknown roots не считаются мигрированными (IM2, IM3).
+- [ ] 11.2 В рамках отдельного поручения на установку обновить проекты и ветки штатным ITL lifecycle; подключать plugin только там, где он выбран. Критерий: для каждого scope есть completed/deferred/blocked и continuation, чужие dirty изменения не затронуты (IM1–IM4, PL1).
+- [ ] 11.3 Собрать конечное installed acceptance по клиентам, rules discovery, Caveman, OpenSpec paths и verification; сверить tasks с действительными доказательствами. Критерий: spec не архивируется по одному isComplete; открытые failures/deferred scopes остаются явными (RQ2, RQ4).
