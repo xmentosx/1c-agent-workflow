@@ -77,9 +77,9 @@
         }
     }
 
-    It "isolates beta Graph runtime and protects credentials before writing (ACL denied: <DenyAcl>)" -Tag BetaCutover -TestCases @(@{ DenyAcl = $false }, @{ DenyAcl = $true }) {
-        param($DenyAcl)
-        $tempRoot = Join-Path $TestDrive ("Graph путь с пробелом " + $DenyAcl)
+    It "isolates modern Graph runtime and protects credentials (stable: <StableRelease>, ACL denied: <DenyAcl>)" -Tag BetaCutover, StableCutover -TestCases @(@{ DenyAcl = $false; StableRelease = $false }, @{ DenyAcl = $true; StableRelease = $false }, @{ DenyAcl = $false; StableRelease = $true }, @{ DenyAcl = $true; StableRelease = $true }) {
+        param($DenyAcl, $StableRelease)
+        $tempRoot = Join-Path $TestDrive ("Graph путь с пробелом " + $DenyAcl + $StableRelease)
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
         $configPath = Join-Path $tempRoot "host.config.json"
         @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
@@ -130,6 +130,12 @@ services:
                 $script:GraphIsolationDockerCalls += ,$Arguments
             }
             $server = [pscustomobject]@{ id = "graph"; channel = "beta"; composePath = "graph.yml"; containerNameTemplate = 'itl-{projectSlug}-graph-beta'; neo4jImage = "neo4j@sha256:fixture" }
+            if ($StableRelease) {
+                $server.channel = "stable"
+                $server | Add-Member -NotePropertyName manifestPath -NotePropertyValue "releases/fixture/vibecoding1c-mcp.manifest.json"
+                $server | Add-Member -NotePropertyName indexProfile -NotePropertyValue "retained"
+                $config | Add-Member -NotePropertyName projectIndexProfiles -NotePropertyValue @{ retained = @{ generation = "fixture"; volumes = @{ fixture = @{ graph = @{ neo4j = "accepted-fixture-neo4j"; state = "accepted-fixture-state" } } } } }
+            }
             $runtime = [pscustomobject]@{ name = "itl-fixture-graph"; containerName = "itl-fixture-graph-beta"; composeProject = "itl-fixture-graph-beta"; image = "graph@sha256:fixture"; hostPort = 18201; url = "http://localhost:18201/mcp" }
             if ($DenyAcl) {
                 { Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState } | Should -Throw "*fixture access denied*"
@@ -3582,6 +3588,191 @@ services:
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
             }
+        }
+    }
+
+    It "retains explicit stable storage and Qwen while legacy stable keeps its local model" -Tag StableCutover {
+        $tempRoot = Join-Path $TestDrive 'stable профиль с пробелом'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        $credentialPath = Join-Path $tempRoot 'credential.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        @{ model = 'qwen/qwen3-embedding-8b'; apiBase = 'https://example.test/v1'; apiKey = 'fixture-only' } | ConvertTo-Json | Set-Content $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostSecretValues { return @{} }
+            function Get-HostLocalValues { return @{ PATH_BASES = $tempRoot } }
+            $profile = @{ generation = 'qwen3-v1'; embedding = @{ credentialFile = $credentialPath }; volumes = @{ pm4 = @{ code = @{ index = 'accepted-beta-index' }; graph = @{ neo4j = 'accepted-beta-neo4j'; state = 'accepted-beta-state' } } } }
+            $config = @{ stateRoot = $tempRoot; embedding = @{ model = 'intfloat/multilingual-e5-base' }; projectIndexProfiles = @{ retained = $profile } }
+            $server = [pscustomobject]@{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; indexProfile = 'retained'; embedding = $true; containerNameTemplate = 'itl-{projectSlug}-code-stable'; env = @(); volumes = @(@{ from = 'PATH_BASES'; to = '/app/chroma_db'; required = $true }) }
+            $state = @{ configId = 'pm4' }
+            (Get-HostEmbeddingSettings -Config $config -Server $server).model | Should -Be 'qwen/qwen3-embedding-8b'
+            (Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state)[0].name | Should -Be 'accepted-beta-index'
+            (Resolve-ServerVolumes -Config $config -Server $server -ConfigState $state)[0].host | Should -Be 'accepted-beta-index'
+            (Resolve-ServerEnv -Config $config -Server $server -ConfigState $state).MCP_STRUCTURED_CONTENT | Should -Be 'true'
+            $server.id = 'graph'
+            @((Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state).name) | Should -Contain 'accepted-beta-neo4j'
+            $profile.volumes.pm4.graph.state = 'accepted-beta-neo4j'
+            { Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state } | Should -Throw '*distinct volumes*'
+            $server.indexProfile = 'missing'
+            { Get-HostEmbeddingSettings -Config $config -Server $server } | Should -Throw '*profile*missing*'
+            $server.indexProfile = ''
+            (Get-HostEmbeddingSettings -Config $config -Server $server).model | Should -Be 'intfloat/multilingual-e5-base'
+            $profile.volumes.pm4.code.index = ''
+            $server.id = 'code'; $server.indexProfile = 'retained'
+            { Get-BetaProjectVolumes -Config $config -Server $server -ConfigState $state } | Should -Throw '*implicit empty index*'
+        }
+    }
+
+    It "selects versioned stable definitions on restart and refuses traversal or channel drift" -Tag StableCutover {
+        $tempRoot = Join-Path $TestDrive 'stable manifest кириллица'
+        $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'releases/fixture') -Force | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-DistributionRoot { return $tempRoot }
+            function Add-HostVirtualServersToManifest { param($Manifest) return $Manifest }
+            $selected = @{ id = 'code'; scope = 'project'; channel = 'stable'; mcpNameTemplate = 'itl-{projectSlug}-code'; image = 'new@sha256:fixture' }
+            @{ servers = @($selected) } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $tempRoot $release) -Encoding UTF8
+            $tracked = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release }
+            function Get-TrackedHostServerForIdentity { return $tracked }
+            $legacy = @{ id = 'code'; scope = 'project'; mcpNameTemplate = 'itl-{projectSlug}-code'; image = 'old' }
+            (Get-SelectedHostServerDefinition -Config @{} -StableServer $legacy -ConfigId pm4).image | Should -Be 'new@sha256:fixture'
+            (Read-DistributionManifest -Config @{} -ManifestPath $release).servers[0].manifestPath | Should -Be $release
+            { Read-DistributionManifest -Config @{} -ManifestPath 'releases/../vibecoding1c-mcp.manifest.json' } | Should -Throw '*versioned manifest*'
+            $selected.channel = 'beta'
+            @{ servers = @($selected) } | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $tempRoot $release) -Encoding UTF8
+            { Read-DistributionManifest -Config @{} -ManifestPath $release } | Should -Throw '*non-stable*'
+        }
+    }
+
+    It "requires exact retained mounts and a cold snapshot before restore" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'retained-mount.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $context = @{ serverId = 'code'; configState = @{}; betaServer = @{}; old = @{ containerName = 'old' }; runtime = @{ containerName = 'new' }; candidateStarted = $true; snapshotReady = $true; snapshots = @() }
+            function Get-BetaProjectVolumes { return @(@{ name = 'accepted'; container = '/app/chroma_db'; role = 'index' }) }
+            function Initialize-BetaProjectVolumes { param([switch]$RequireExisting) $RequireExisting | Should -BeTrue }
+            $script:RetainedMountName = 'accepted'
+            function Invoke-DockerCommandCapture { return '[{"Destination":"/app/code","Type":"bind","RW":true},{"Destination":"/app/chroma_db","Type":"volume","Name":"' + $script:RetainedMountName + '","RW":true}]' }
+            (Get-RetainedIndexMounts -Config @{} -Context $context)[0].source | Should -Be 'accepted'
+            $script:RetainedMountName = 'empty-new-volume'
+            { Get-RetainedIndexMounts -Config @{} -Context $context } | Should -Throw '*differs from the running accepted index*'
+            function Get-HostContainerPublishState { return 'running' }
+            { Assert-RetainedIndexStopped -Context $context } | Should -Throw '*stopped containers*'
+            $context.snapshotReady = $false
+            { Restore-RetainedIndexSnapshot -Config @{} -Context $context } | Should -Throw '*without a complete snapshot*'
+        }
+    }
+
+    It "restores retained data before restarting the accepted service on <FailureStage> failure" -Tag StableCutover -TestCases @(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }) {
+        param($FailureStage)
+        $configPath = Join-Path $TestDrive ('retained-rollback-' + $FailureStage + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:RetainedSequence = @()
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://old/mcp'; containerName = 'old' }; betaServer = @{ id = 'ssl' }; runtime = @{ image = 'image@sha256:fixture'; containerName = 'new'; url = 'http://new/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:RetainedSequence += 'unlock' }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = $null; oldTools = @() } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Stop-StableForBetaCutover { $script:RetainedSequence += 'stop-old' }
+            function Save-RetainedIndexSnapshot { $script:RetainedSequence += 'snapshot'; $context | Add-Member -NotePropertyName snapshotReady -NotePropertyValue $true }
+            function Start-DockerServer { $context.snapshotReady | Should -BeTrue; $script:RetainedSequence += 'start-new'; if ($FailureStage -eq 'start') { throw 'fixture-start' } }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return @(@{ name = 'search' }) }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs) if ($FailureStage -eq 'contract' -or ($CheckOutputs -and $FailureStage -eq 'public')) { throw ('fixture-' + $FailureStage) } }
+            function Get-HostServerFunctionalHealth { return @{ status = 'ready' } }
+            function New-BetaProxyContract { return 'fixture-contract' }
+            function Enable-ToolsListProxyForRuntime { $context.runtime.proxyBackupName = 'old-proxy' }
+            function Get-HostContainerPublishState { return 'exited' }
+            function Invoke-DockerCommand { param($Arguments) $script:RetainedSequence += ($Arguments -join ' ') }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:RetainedSequence += ($Arguments -join ' ') }
+            function Restore-RetainedIndexSnapshot { $context.candidateStarted | Should -BeTrue; $script:RetainedSequence += 'restore-data' }
+            function Wait-HostMcpReadyConnection { $script:RetainedSequence += 'old-ready' }
+            { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' } | Should -Throw ('*fixture-' + $FailureStage + '*')
+            $sequence = $script:RetainedSequence -join ','
+            $sequence | Should -Match 'stop-old,snapshot,start-new'
+            $sequence | Should -Match 'rm -f new,restore-data,update --restart unless-stopped old,start old,old-ready'
+            $sequence | Should -Match 'unlock$'
+            if ($FailureStage -eq 'public') { $sequence | Should -Match 'rename old-proxy proxy,start proxy' }
+        }
+    }
+
+    It "round-trips a real retained SQLite/vector snapshot and rejects invalid archives before modifying data" -Tag StableCutover {
+        $tempRoot = Join-Path $TestDrive 'snapshot данные с пробелом'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $python = Resolve-PythonExecutable -Config @{}
+            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X', 'utf8', '-B', (Join-Path $RepoRoot 'tests/python/test_host_index_snapshot.py'), (Join-Path $RepoRoot 'vibecoding1c-mcp-host/index-snapshot.py'), $tempRoot) -TimeoutSec 30 -Description 'SQLite snapshot round trip'
+            $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
+            ($result.lines -join [Environment]::NewLine) | Should -Match ([regex]::Escape('Снимок: ' + $tempRoot))
+        }
+    }
+
+    It "stops the owned snapshot container if its Docker client times out" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'snapshot-timeout.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Assert-RetainedIndexStopped {}
+            $script:SnapshotCleanup = @()
+            $script:SnapshotHelperName = ''
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $script:SnapshotHelperName = $Arguments[([array]::IndexOf($Arguments, '--name') + 1)]
+                $script:SnapshotHelperName | Should -Match '^itl-index-snapshot-[a-f0-9]{32}$'
+                ($Arguments -join ' ') | Should -Match 'target=/index,readonly'
+                throw 'fixture Docker client timeout'
+            }
+            function Get-HostContainerPublishState { return 'running' }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:SnapshotCleanup = $Arguments }
+            $record = @{ type = 'volume'; source = 'fixture-owned'; folder = (Join-Path $TestDrive 'snapshot') }
+            { Invoke-RetainedIndexSnapshot -Config @{ stateRoot = $TestDrive } -Context @{ runtime = @{ image = 'pinned@sha256:fixture' } } -Record $record -Operation save } | Should -Throw '*fixture Docker client timeout*'
+            ($script:SnapshotCleanup -join ' ') | Should -Be ('rm -f ' + $script:SnapshotHelperName)
+        }
+    }
+
+    It "prepares stable from an accepted beta without selecting a fresh generation or changing model" -Tag StableCutover {
+        $configPath = Join-Path $TestDrive 'stable-context.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            $legacy = @{ id = 'code'; scope = 'project'; mcpNameTemplate = 'itl-{projectSlug}-code' }
+            $candidate = @{ id = 'code'; scope = 'project'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'itl-{projectSlug}-code' }
+            function Read-DistributionManifest { param($ManifestPath) if ($ManifestPath) { return @{ servers = @($candidate) } }; return @{ servers = @($legacy) } }
+            $old = @{ channel = 'beta'; containerName = 'old-code'; name = 'itl-pm4-code'; directUrl = 'http://host:1/mcp'; hostPort = 1; proxyContainerName = 'proxy'; embeddingModel = 'qwen' }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Read-HostState { return @{ configurations = @(@{ configId = 'pm4' }) } }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'old-code') { return 'running' }; return 'missing' }
+            function New-ServerRuntime { return [pscustomobject]@{ name = 'itl-pm4-code'; containerName = 'new-code'; hostPort = 2; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)); embeddingModel = 'qwen' } }
+            $script:StableFixtureEnv = @{ RESET_DATABASE = 'false'; RESET_CACHE = 'false' }
+            function Resolve-ServerEnv { return $script:StableFixtureEnv }
+            function Get-BetaProjectIndexSettings { return @{ generation = 'accepted' } }
+            function Test-HostServerNeedsEmbedding { return $true }
+            $context = Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release
+            $context.retainedIndex | Should -BeTrue
+            $context.freshProjectIndex | Should -BeFalse
+            $context.runtime.hostPort | Should -Be 1
+            $context.runtime.url | Should -Be 'http://host:1/mcp'
+            $script:StableFixtureEnv.RESET_CACHE = 'true'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would reset retained data*'
+            $script:StableFixtureEnv.RESET_CACHE = 'false'
+            $old.embeddingModel = 'different'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would change embedding model*'
+            $old.channel = 'stable'
+            { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*legacy layout*'
         }
     }
 }
