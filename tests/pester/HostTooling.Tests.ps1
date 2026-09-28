@@ -77,6 +77,84 @@
         }
     }
 
+    It "isolates beta Graph runtime and protects credentials before writing (ACL denied: <DenyAcl>)" -Tag BetaCutover -TestCases @(@{ DenyAcl = $false }, @{ DenyAcl = $true }) {
+        param($DenyAcl)
+        $tempRoot = Join-Path $TestDrive ("Graph путь с пробелом " + $DenyAcl)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; betaProjectIndex = @{ generation = "fixture" } }
+            $configState = [pscustomobject]@{ configId = "fixture" }
+            $stableDir = Join-Path (Get-ConfigWorkRoot -Config $config -ConfigId fixture) "runtime\itl-fixture-graph"
+            New-Item -ItemType Directory -Path $stableDir -Force | Out-Null
+            $stableEnv = Join-Path $stableDir ".env"
+            $stableCompose = Join-Path $stableDir "docker-compose.yml"
+            Write-Text -Path $stableEnv -Value "STABLE_MODEL=retained"
+            Write-Text -Path $stableCompose -Value "stable compose retained"
+            $stableAcl = (Get-Acl -LiteralPath $stableEnv).Sddl
+            Write-Text -Path (Join-Path $tempRoot "graph.yml") -Value @'
+services:
+  mcp-app:
+    volumes:
+      - "${GRAPH_STATE_PATH:-./data/mcp_state}:/app/data"
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
+  neo4j:
+    volumes:
+      - "${NEO4J_DATA_PATH:-./data/neo4j_data}:/data"
+'@
+            function Get-DistributionRoot { return $tempRoot }
+            function Assert-BetaProjectVolumesReady {}
+            function Assert-BetaProjectContainerMounts {}
+            function Get-HostEmbeddingSettings { return @{ mode = "openai" } }
+            function Resolve-ServerEnv {
+                return [ordered]@{ OPENAI_EMBEDDING_MODEL = "fixture-model"; OPENAI_EMBEDDING_API_BASE = "https://example.test/v1"; OPENAI_EMBEDDING_API_KEY = "fixture-private-key" }
+            }
+            $script:GraphCredentialAclSeen = $false
+            $script:GraphIsolationDockerCalls = @()
+            function Set-Acl {
+                param($LiteralPath, $AclObject)
+                $LiteralPath | Should -Not -Be $stableEnv
+                (Read-Text -Path $LiteralPath) | Should -BeNullOrEmpty
+                $script:GraphCredentialAclSeen = $true
+                if ($DenyAcl) { throw "fixture access denied" }
+                Microsoft.PowerShell.Security\Set-Acl -LiteralPath $LiteralPath -AclObject $AclObject
+            }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                $script:GraphIsolationDockerCalls += ,$Arguments
+            }
+            $server = [pscustomobject]@{ id = "graph"; channel = "beta"; composePath = "graph.yml"; containerNameTemplate = 'itl-{projectSlug}-graph-beta'; neo4jImage = "neo4j@sha256:fixture" }
+            $runtime = [pscustomobject]@{ name = "itl-fixture-graph"; containerName = "itl-fixture-graph-beta"; composeProject = "itl-fixture-graph-beta"; image = "graph@sha256:fixture"; hostPort = 18201; url = "http://localhost:18201/mcp" }
+            if ($DenyAcl) {
+                { Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState } | Should -Throw "*fixture access denied*"
+            } else {
+                Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState
+            }
+            $script:GraphCredentialAclSeen | Should -BeTrue
+            (Read-Text -Path $stableEnv) | Should -BeExactly "STABLE_MODEL=retained"
+            (Read-Text -Path $stableCompose) | Should -BeExactly "stable compose retained"
+            (Get-Acl -LiteralPath $stableEnv).Sddl | Should -BeExactly $stableAcl
+            $runtime.runtimePath | Should -Be (Join-Path (Split-Path $stableDir -Parent) "itl-fixture-graph-beta")
+            $betaEnv = Join-Path $runtime.runtimePath ".env"
+            if ($DenyAcl) {
+                (Read-Text -Path $betaEnv) | Should -BeNullOrEmpty
+                $script:GraphIsolationDockerCalls.Count | Should -Be 0
+            } else {
+                (Read-DotEnv -Path $betaEnv).EMBEDDING_API_KEY | Should -BeExactly "fixture-private-key"
+                $acl = Get-Acl -LiteralPath $betaEnv
+                $acl.AreAccessRulesProtected | Should -BeTrue
+                $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+                $rules.Count | Should -Be 2
+                @($rules.IdentityReference.Value) | Should -Contain ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+                @($rules.IdentityReference.Value) | Should -Contain "S-1-5-18"
+                $script:GraphIsolationDockerCalls.Count | Should -Be 2
+            }
+            Remove-Variable -Scope Script -Name GraphCredentialAclSeen, GraphIsolationDockerCalls
+        }
+    }
     It "probes the authenticated embedding catalog without treating OpenRouter chat models as embeddings" -Tag BetaCutover {
         $configPath = Join-Path $TestDrive "catalog-config.json"
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8

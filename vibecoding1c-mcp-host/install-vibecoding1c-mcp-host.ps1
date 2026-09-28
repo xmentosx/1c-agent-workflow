@@ -2460,12 +2460,13 @@ function Start-ComposeServer {
     if (-not (Test-Path -LiteralPath $sourceCompose -PathType Leaf)) {
         throw "Compose file was not found: $sourceCompose"
     }
-    $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $Runtime.name
+    $channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
+    $runtimeIdentity = if ($channel -eq "beta") { [string]$Runtime.containerName } else { [string]$Runtime.name }
+    $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $runtimeIdentity
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
     $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     $targetCompose = Join-Path $runtimeDir "docker-compose.yml"
     $composeText = Read-Text -Path $sourceCompose
-    $channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
     if ($channel -ne "beta") {
         $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
         $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
@@ -2510,8 +2511,9 @@ function Start-ComposeServer {
         $envValues["EMBEDDING_API_KEY"] = [string]$envValues["OPENAI_EMBEDDING_API_KEY"]
     }
     Write-Text -Path $targetCompose -Value $composeText
-    Write-DotEnv -Path $envFilePath -Values $envValues
     if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
+        # Protect a new empty file before it receives credentials; an ACL failure must not expose them.
+        if (-not (Test-Path -LiteralPath $envFilePath)) { Write-Text -Path $envFilePath -Value "" }
         $acl = [Security.AccessControl.FileSecurity]::new()
         $acl.SetAccessRuleProtection($true, $false)
         foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
@@ -2519,6 +2521,7 @@ function Start-ComposeServer {
         }
         Set-Acl -LiteralPath $envFilePath -AclObject $acl
     }
+    Write-DotEnv -Path $envFilePath -Values $envValues
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
     if (-not $DryRun) {
         Invoke-DockerCommandChecked -Arguments @("compose", "-p", $Runtime.composeProject, "-f", $targetCompose, "--env-file", $envFilePath, "config", "--quiet") -TimeoutSec 60 -Description "docker compose config $($Runtime.composeProject)"
