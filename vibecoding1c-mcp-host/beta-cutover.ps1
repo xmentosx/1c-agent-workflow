@@ -1,9 +1,19 @@
-﻿function Get-BetaProjectIndexSettings {
+﻿. (Join-Path $PSScriptRoot "index-snapshot.ps1")
+
+function Get-BetaProjectIndexSettings {
     param([object]$Config, [object]$Server)
-    # This opt-in belongs exclusively to new beta Code/Graph generations.
-    if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta" -or
-        [string](Get-ObjectValue -Object $Server -Name "id" -Default "") -notin @("code", "graph")) { return $null }
-    $settings = Get-ObjectValue -Object $Config -Name "betaProjectIndex" -Default $null
+    # Explicit retained profiles are independent of the release channel. The old
+    # beta opt-in remains scoped to beta for existing installed configurations.
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -notin @("code", "graph")) { return $null }
+    $profile = [string](Get-ObjectValue -Object $Server -Name "indexProfile" -Default "")
+    if ($profile) {
+        $profiles = Get-ObjectValue -Object $Config -Name "projectIndexProfiles" -Default $null
+        $settings = Get-ObjectValue -Object $profiles -Name $profile -Default $null
+        if ($null -eq $settings) { throw "Retained project index profile '$profile' is missing. Bind its existing model and volumes before cutover." }
+    } else {
+        if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta") { return $null }
+        $settings = Get-ObjectValue -Object $Config -Name "betaProjectIndex" -Default $null
+    }
     if ($null -eq $settings) { return $null }
     $generation = [string](Get-ObjectValue -Object $settings -Name "generation" -Default "")
     if ($generation -notmatch '^[a-z0-9][a-z0-9-]{0,47}$') {
@@ -20,6 +30,19 @@ function Get-BetaProjectVolumes {
     $serverId = [string]$Server.id
     $container = Expand-Template -Template ([string]$Server.containerNameTemplate) -ConfigId $configId -ServerId $serverId
     if (-not $configId -or $container -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]+$') { throw "Fresh beta volumes require an exact project/container identity." }
+    if ([string](Get-ObjectValue -Object $Server -Name "indexProfile" -Default "")) {
+        $bindings = Get-ObjectValue -Object (Get-ObjectValue -Object $settings -Name "volumes" -Default $null) -Name $configId -Default $null
+        $bindings = Get-ObjectValue -Object $bindings -Name $serverId -Default $null
+        $roles = if ($serverId -eq "code") { [ordered]@{ index = "/app/chroma_db" } } else { [ordered]@{ neo4j = "/data"; state = "/app/data" } }
+        $result = @()
+        foreach ($role in $roles.Keys) {
+            $name = [string](Get-ObjectValue -Object $bindings -Name $role -Default "")
+            if ($name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]+$') { throw "Retained volume binding '$configId/$serverId/$role' is missing or invalid. Refusing an implicit empty index." }
+            $result += [pscustomobject]@{ name = $name; container = $roles[$role]; role = $role }
+        }
+        if (@($result.name | Select-Object -Unique).Count -ne $result.Count) { throw "Retained index roles must use distinct volumes." }
+        return $result
+    }
     $prefix = "$container-$($settings.generation)"
     if ($serverId -eq "code") { return @([pscustomobject]@{ name = "$prefix-index"; container = "/app/chroma_db"; role = "index" }) }
     return @(
@@ -93,7 +116,7 @@ function Assert-BetaProjectContainerMounts {
         $json = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{json .Mounts}}", $container) -TimeoutSec 60 -Description "verify beta Linux volume for $container") -join ""
         $mounts = ConvertFrom-Json -InputObject $json
         $matches = @($mounts | Where-Object { [string]$_.Destination -eq $volume.container })
-        if ($matches.Count -ne 1 -or $matches[0].Type -ne "volume" -or $matches[0].Name -ne $volume.name) {
+        if ($matches.Count -ne 1 -or $matches[0].Type -ne "volume" -or $matches[0].Name -cne $volume.name) {
             throw "Beta container '$container' must mount owned Linux volume '$($volume.name)' at '$($volume.container)'. Refusing a different generation or Windows bind."
         }
     }
@@ -358,11 +381,28 @@ function Assert-BetaCodeIndexCoverage {
     }
 }
 
+function Assert-RetainedCodeIdentity {
+    param([object]$OldActivity, [object]$NewActivity)
+    foreach ($field in @("metadataProjectId", "metadataGenerationId")) {
+        $before = [string](Get-ObjectValue -Object $OldActivity -Name $field -Default "")
+        if (-not $before -or $before -cne [string](Get-ObjectValue -Object $NewActivity -Name $field -Default "")) { throw "Retained Code generation changed. Inspect fingerprints and restore the accepted snapshot; no rebuild is authorized." }
+    }
+    foreach ($field in @("modules", "forms", "objects")) {
+        if ([long]$OldActivity.coverage.$field -ne [long]$NewActivity.coverage.$field) { throw "Retained Code coverage changed ($field); inspect source drift before retrying." }
+    }
+    foreach ($field in @("metadataInventory", "formInventory")) {
+        $before = Get-ObjectValue -Object $OldActivity -Name $field -Default $null
+        $after = Get-ObjectValue -Object $NewActivity -Name $field -Default $null
+        if ($null -eq $before -or $null -eq $after -or (ConvertTo-Json -InputObject $before -Depth 12 -Compress) -cne (ConvertTo-Json -InputObject $after -Depth 12 -Compress)) { throw "Retained Code source identities changed ($field); restore the snapshot and inspect source drift." }
+    }
+}
+
 function Get-BetaCutoverContext {
-    param([object]$Config, [string]$ServerId, [string]$ConfigId)
+    param([object]$Config, [string]$ServerId, [string]$ConfigId, [string]$ReleaseManifest = "")
+    $retainedIndex = -not [string]::IsNullOrWhiteSpace($ReleaseManifest)
     if (-not $ServerId) { throw "Beta cutover requires -ServerId." }
     $stableManifest = Read-DistributionManifest -Config $Config
-    $betaManifest = Read-DistributionManifest -Config $Config -Channel beta
+    $betaManifest = if ($retainedIndex) { Read-DistributionManifest -Config $Config -Channel stable -ManifestPath $ReleaseManifest } else { Read-DistributionManifest -Config $Config -Channel beta }
     $stable = @(As-Array (Get-ObjectValue -Object $stableManifest -Name "servers" -Default @()) | Where-Object { [string]$_.id -eq $ServerId })
     $beta = @(As-Array (Get-ObjectValue -Object $betaManifest -Name "servers" -Default @()) | Where-Object { [string]$_.id -eq $ServerId })
     if ($stable.Count -ne 1 -or $beta.Count -ne 1) { throw "Both distribution manifests must define exactly one '$ServerId' server." }
@@ -372,13 +412,18 @@ function Get-BetaCutoverContext {
     if ($scope -ne (Get-ServerScope -Server $betaServer)) { throw "Beta '$ServerId' changes server scope." }
     if ($scope -eq "project" -and -not $ConfigId) { throw "Project MCP '$ServerId' requires -ConfigId." }
     if ($scope -eq "global" -and $ConfigId) { throw "Global MCP '$ServerId' does not accept -ConfigId." }
-    if ([string](Get-ObjectValue -Object $betaServer -Name "channel" -Default "") -ne "beta") { throw "Beta '$ServerId' is not marked as beta." }
+    $targetChannel = if ($retainedIndex) { "stable" } else { "beta" }
+    if ([string](Get-ObjectValue -Object $betaServer -Name "channel" -Default "") -ne $targetChannel) { throw "Candidate '$ServerId' is not marked as $targetChannel." }
     if ([string](Get-ObjectValue -Object $betaServer -Name "mcpNameTemplate" -Default "") -ne [string](Get-ObjectValue -Object $stableServer -Name "mcpNameTemplate" -Default "")) {
         throw "Beta '$ServerId' changes the public MCP name."
     }
     $old = Get-TrackedHostServerForIdentity -Config $Config -ServerId $ServerId -Scope $scope -ConfigId $ConfigId
     if ($null -eq $old) { throw "Stable '$ServerId' is not tracked for configId '$ConfigId'." }
-    if ([string](Get-ObjectValue -Object $old -Name "channel" -Default "stable") -ne "stable") { throw "'$ServerId' is already selected for beta or has an unknown channel." }
+    $oldChannel = [string](Get-ObjectValue -Object $old -Name "channel" -Default "stable")
+    if ($retainedIndex) {
+        if ($oldChannel -ne "beta" -and -not [string](Get-ObjectValue -Object $old -Name "manifestPath" -Default "")) { throw "Stable retained cutover requires an accepted modern index. Migrate the legacy layout first; no automatic reindex is permitted." }
+        if ($oldChannel -notin @("beta", "stable")) { throw "Unknown accepted server channel." }
+    } elseif ($oldChannel -ne "stable") { throw "'$ServerId' is already selected for beta or has an unknown channel." }
     if ((Get-HostContainerPublishState -ContainerName ([string]$old.containerName)) -ne "running") { throw "Stable container '$($old.containerName)' is not running." }
     $configState = $null
     if ($scope -eq "project") {
@@ -399,25 +444,27 @@ function Get-BetaCutoverContext {
     }
     if ($ServerId -eq "codechecker") {
         $upstreamImage = [string](Get-ObjectValue -Object $betaServer -Name "upstreamImage" -Default "")
-        if ($upstreamImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$' -or [string]$runtime.image -notmatch '^itl/1c-codechecker-beta:[a-z0-9.-]+$') {
+        if ($upstreamImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$' -or [string]$runtime.image -notmatch '^itl/1c-codechecker-(beta|stable):[a-z0-9.-]+$') {
             throw "Beta CodeChecker requires the pinned upstream image and a local compatibility image."
         }
     } elseif (-not ([string]$runtime.image).Contains("@sha256:")) {
         throw "Beta '$ServerId' image is not pinned by digest."
     }
     $envValues = Resolve-ServerEnv -Config $Config -Server $betaServer -ConfigState $configState
-    if ($ServerId -in @("templates", "code", "graph") -and [string](Get-ObjectValue -Object $envValues -Name "RESET_DATABASE" -Default "false") -notmatch '^(?i:false|0|no|off)$') {
-        throw "Beta '$ServerId' would reset a retained database."
+    foreach ($flag in @("RESET_DATABASE", "RESET_CACHE")) {
+        if ([string](Get-ObjectValue -Object $envValues -Name $flag -Default "false") -notmatch '^(?i:false|0|no|off)$') { throw "Candidate '$ServerId' would reset retained data ($flag)." }
     }
     if ($ServerId -eq "syntax" -and [string](Get-ObjectValue -Object $envValues -Name "FULLINDEX" -Default "") -notmatch '^(?i:false|0|no|off)$') {
         throw "Beta Syntax must start with FULLINDEX=false."
     }
-    $freshProjectIndex = $null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $betaServer)
-    if ($ServerId -in @("templates", "code", "graph") -and -not $freshProjectIndex) {
+    $freshProjectIndex = -not $retainedIndex -and $null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $betaServer)
+    if ((Test-HostServerNeedsEmbedding -Server $betaServer) -and -not $freshProjectIndex) {
         $oldModel = [string](Get-ObjectValue -Object $old -Name "embeddingModel" -Default "")
+        if ($retainedIndex -and -not $oldModel) { throw "Accepted embedding model is not recorded. Verify and record its actual settings before stable-preflight." }
         if ($oldModel -and $oldModel -ne [string]$runtime.embeddingModel) { throw "Beta '$ServerId' would change embedding model from '$oldModel' to '$($runtime.embeddingModel)'." }
     }
-    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex }
+    if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
+    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; retainedIndex = $retainedIndex }
 }
 
 function Get-HostMcpToolsList {
@@ -714,6 +761,7 @@ function Stop-StableForBetaCutover {
 
 function Copy-BetaDataSnapshot {
     param([object]$Config, [object]$Context)
+    if ([bool](Get-ObjectValue -Object $Context -Name "retainedIndex" -Default $false)) { Save-RetainedIndexSnapshot -Config $Config -Context $Context; return }
     if ([bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)) {
         Initialize-BetaProjectVolumes -Config $Config -Context $Context
         return
@@ -754,6 +802,7 @@ function Restore-StableAfterBetaFailure {
     } elseif ((Get-HostContainerPublishState -ContainerName $betaName) -ne "missing") {
         Invoke-DockerCommandChecked -Arguments @("rm", "-f", $betaName) -TimeoutSec 180 -Description "stop beta $betaName"
     }
+    if ([bool](Get-ObjectValue -Object $Context -Name "retainedIndex" -Default $false)) { Restore-RetainedIndexSnapshot -Config $Config -Context $Context }
     $oldName = [string]$Context.old.containerName
     if ($Context.serverId -eq "graph") {
         Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", "$oldName-neo4j") -TimeoutSec 60 -Description "restore stable Neo4j restart policy"
@@ -773,11 +822,12 @@ function Restore-StableAfterBetaFailure {
 }
 
 function Invoke-BetaPreflight {
-    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId)
+    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "")
     if (-not $TargetServerId) { throw "beta-preflight requires -ServerId." }
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
-    $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId
+    $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest
+    if ($context.retainedIndex) { [void](Get-RetainedIndexMounts -Config $Config -Context $context) }
     if ($context.freshProjectIndex) {
         Ensure-HostEmbeddingModel -Config $Config -Server $context.betaServer
         Initialize-BetaProjectVolumes -Config $Config -Context $context -InspectOnly
@@ -795,20 +845,22 @@ function Invoke-BetaPreflight {
         throw "Stable Graph Neo4j is not running."
     }
     $oldTools = @(Get-HostMcpToolsList -Url $oldDirectUrl)
+    $oldPublicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.old.proxyPort)/mcp")
     $oldIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url $oldDirectUrl
     if ($null -ne $oldIndexActivity -and $oldIndexActivity.running) { throw "Stable '$TargetServerId' configId '$TargetConfigId' is indexing ($($oldIndexActivity.phase)); cutover would interrupt it." }
     Write-Host "Beta preflight passed: server=$TargetServerId configId=$TargetConfigId oldTools=$($oldTools.Count) publicName=$($context.old.name) publicUrl=$($context.old.url) betaImage=$($context.runtime.image)"
-    return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldIndexActivity = $oldIndexActivity }
+    return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldPublicTools = $oldPublicTools; oldIndexActivity = $oldIndexActivity }
 }
 
 function Invoke-BetaCutover {
-    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId)
+    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "")
     if ($DryRun) { throw "Use -Action beta-preflight for read-only qualification; beta-cutover does not support -DryRun." }
     $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "beta-cutover:${TargetServerId}:$TargetConfigId" -WaitSeconds 0
     if (-not $lease.acquired) { throw "MCP host maintenance is active: $($lease.path)" }
     try {
-        $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId
+        $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest
         $context = $preflight.context
+        $retainedIndex = [bool](Get-ObjectValue -Object $context -Name "retainedIndex" -Default $false)
         Assert-RegistryPushPreflight -Config $Config
         Ensure-ServerDockerImageAvailable -Server $context.betaServer -Image ([string]$context.runtime.image)
         Ensure-ToolsListProxyImage -Config $Config
@@ -818,7 +870,7 @@ function Invoke-BetaCutover {
             if ($latestIndexActivity.running) { throw "Stable '$TargetServerId' began indexing after preflight; cutover would interrupt it." }
             $preflight.oldIndexActivity = $latestIndexActivity
         }
-        if ($TargetServerId -eq "code" -and $context.freshProjectIndex) {
+        if ($TargetServerId -eq "code" -and ($context.freshProjectIndex -or $retainedIndex)) {
             $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.old.containerName -Activity $preflight.oldIndexActivity
             $preflight.oldIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
             $forms = Get-BetaCodeFormInventory -ContainerName $context.old.containerName -Activity $preflight.oldIndexActivity
@@ -830,6 +882,7 @@ function Invoke-BetaCutover {
             $oldStopped = $true
             Stop-StableForBetaCutover -Context $context
             Copy-BetaDataSnapshot -Config $Config -Context $context
+            $context | Add-Member -NotePropertyName candidateStarted -NotePropertyValue $true -Force
             if ($TargetServerId -eq "graph") {
                 Start-ComposeServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState
             } else {
@@ -842,7 +895,7 @@ function Invoke-BetaCutover {
             if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
             if ($TargetServerId -eq "code") {
                 $source = $null
-                if ($context.freshProjectIndex) {
+                if ($context.freshProjectIndex -or $retainedIndex) {
                     $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.runtime.containerName -Activity $betaIndexActivity
                     $betaIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
                     $forms = Get-BetaCodeFormInventory -ContainerName $context.runtime.containerName -Activity $betaIndexActivity
@@ -850,13 +903,15 @@ function Invoke-BetaCutover {
                     $source = New-BetaCodeSourceContext -ContainerName $context.runtime.containerName
                 }
                 Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex -Source $source
+                if ($retainedIndex) { Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity }
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
             $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
             $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
-            Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
+            $oldPublicTools = @(As-Array (Get-ObjectValue -Object $preflight -Name "oldPublicTools" -Default $preflight.oldTools))
+            Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $oldPublicTools -BetaTools $publicTools -CheckOutputs
             if ($TargetServerId -eq "graph") {
                 $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
                 if ($publicActivity.running) { throw "Beta Graph public status reports unfinished indexing." }

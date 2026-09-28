@@ -567,6 +567,81 @@ Installer не перезаписывает одноимённую чужую з
 `watchdog-run` ничего не восстанавливает; после этого задачу можно удалить через
 `watchdog-uninstall`.
 
+### Stable release поверх принятого beta-индекса
+
+Этот путь использует тот же cutover/maintenance lock/host state/registry.
+Он сохраняет текущий публичный proxy и принимает только versioned manifest
+`releases/<release>/vibecoding1c-mcp.manifest.json`. Корневой legacy manifest
+не заменяется: его выбор по-прежнему не переносит старый layout в новый.
+После перехода `manifestPath` хранится в runtime; обычный start/restart выбирает
+ту же stable definition, а не прежний корневой manifest.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stable-preflight -ConfigPath .\host.config.json -ServerId code -ConfigId pm4corp -ReleaseManifest releases/2026-09-28-stable/vibecoding1c-mcp.manifest.json
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action stable-cutover -ConfigPath .\host.config.json -ServerId code -ConfigId pm4corp -ReleaseManifest releases/2026-09-28-stable/vibecoding1c-mcp.manifest.json
+```
+
+Для глобального сервера `ConfigId` не передаётся. Stable image закрепляется
+по digest; CodeChecker сохраняет проверяемый ITL logic overlay от pinned
+upstream. Разные main/Compose/env используют разные container identities,
+публичное имя и URL остаются прежними. Graph сохраняет отдельный Neo4j pin.
+
+Code/Graph в новом manifest явно задают `indexProfile`. Соответствующая запись
+в игнорируемом `host.config.json` независима от channel:
+
+```json
+"projectIndexProfiles": {
+  "qwen3-4096-v1": {
+    "generation": "qwen3-4096-v1",
+    "embedding": { "credentialFile": "E:/mcp/secrets/openrouter/credential.json" },
+    "volumes": {
+      "pm4corp": {
+        "code": { "index": "itl-pm4corp-code-beta-qwen3-4096-v1-index" },
+        "graph": {
+          "neo4j": "itl-pm4corp-graph-beta-qwen3-4096-v1-neo4j",
+          "state": "itl-pm4corp-graph-beta-qwen3-4096-v1-state"
+        }
+      }
+    }
+  }
+}
+```
+
+Пути и имена в примере замените фактическими принятыми значениями. Для каждого
+проекта нужны собственные bindings. Existing volume labels/model/generation
+и actual mounts проверяются до остановки. Отсутствующий профиль/том или иной
+binding не создаёт пустой индекс: восстановите точную привязку и повторите
+preflight. Без `indexProfile` прежний stable сохраняет общий embedding;
+старый `betaProjectIndex` остаётся opt-in только для beta. Новые лицензии
+задаются отдельными local secret keys из versioned manifest, без изменения
+ключей прежних серверов и без вывода значений в журнал.
+
+Перед каждой операцией оператор подтверждает idle, неизменный source scope,
+совместимость layout/fingerprint и достаточные RAM/диск для образа, полного
+несжатого snapshot, временных данных запуска и резерва. Само наличие
+readiness-бюджета не разрешает новую полную индексацию. Reset flags запрещены;
+Code дополнительно требует прежнее опубликованное поколение, полные metadata/
+form identities и source coverage. Проверка Graph vectors/identities и
+functional/restart acceptance остаётся частью приёмки конкретного проекта.
+
+После остановки прежнего main (и Neo4j для Graph) согласованный снимок Docs,
+Templates, SSL, Code либо Graph создаётся под `stateRoot/snapshots/cutover-*`.
+ACL каталога устанавливается до записи: только оператор и SYSTEM. Копирующий
+Python процесс запускается в изолированном контейнере без сети, читает один
+проверенный mount и сохраняет tar с Linux ownership/modes и SHA256. Исходный
+том сохраняет своё имя. `snapshot.json` содержит bindings и контрольные суммы;
+снимок не удаляется после успешного переключения или отката.
+
+При ошибке start/contract/publication кандидат сначала останавливается,
+снимок проверяется и данные возвращаются, затем стартуют принятый main,
+Neo4j и proxy; прежний host state/registry восстанавливаются при необходимости.
+Частично созданный снимок не используется, кандидат до полного снимка не
+запускается. При ошибке восстановления данные и proof сохраняются, старый main
+не запускается поверх непроверенного store: проверьте конкретную ошибку,
+mount bindings и SHA256, завершите восстановление через тот же host owner
+под maintenance lease. После отката обязательны public tools/functional/idle
+и проверка mount identities. Не очищайте данные и не обходите lease ради retry.
+
 ## Ночная инкрементальная индексация конфигураций
 
 Ночная задача поддерживается только для локальных `sourcePath` с заполненным блоком `dump`:

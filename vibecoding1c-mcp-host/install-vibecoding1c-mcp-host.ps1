@@ -1,11 +1,12 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
     [string]$ConfigId = "",
     [string]$ServerId = "",
+    [string]$ReleaseManifest = "",
     [switch]$DryRun,
     [switch]$RecreateBookStack
 )
@@ -914,12 +915,18 @@ function Get-MantisTicketSourceRoot {
     return (Join-Path $PSScriptRoot "mantis-ticket-mcp")
 }
 
+function Test-ModernHostServer {
+    param([object]$Server)
+    return ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta" -or
+        -not [string]::IsNullOrWhiteSpace([string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default "")))
+}
+
 function Ensure-ServerDockerImageAvailable {
     param(
         [object]$Server,
         [string]$Image
     )
-    if ((Test-CodeCheckerServer -Server $Server) -and [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+    if ((Test-CodeCheckerServer -Server $Server) -and (Test-ModernHostServer -Server $Server)) {
         $baseImage = [string](Get-ObjectValue -Object $Server -Name "upstreamImage" -Default "")
         if ($baseImage -notmatch '^comol/1c-code-checker@sha256:[a-f0-9]{64}$') { throw "Beta CodeChecker requires a pinned upstream image." }
         $sourceRoot = Get-CodeCheckerBetaSourceRoot
@@ -970,14 +977,28 @@ function Ensure-Distribution {
 function Read-DistributionManifest {
     param(
         [object]$Config,
-        [ValidateSet("stable", "beta")][string]$Channel = "stable"
+        [ValidateSet("stable", "beta")][string]$Channel = "stable",
+        [string]$ManifestPath = ""
     )
     $relativePath = $(if ($Channel -eq "beta") { "beta/vibecoding1c-mcp.manifest.json" } else { "vibecoding1c-mcp.manifest.json" })
+    if ($ManifestPath) {
+        if ($Channel -ne "stable" -or $ManifestPath -notmatch '^releases/[a-z0-9][a-z0-9-]*/vibecoding1c-mcp\.manifest\.json$') {
+            throw "A stable release requires a versioned manifest under releases/<release>/vibecoding1c-mcp.manifest.json."
+        }
+        $relativePath = $ManifestPath
+    }
     $path = Join-Path (Get-DistributionRoot -Config $Config) $relativePath
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Distribution manifest was not found: $path"
     }
-    return (Add-HostVirtualServersToManifest -Manifest (Read-JsonFile -Path $path))
+    $manifest = Read-JsonFile -Path $path
+    if ($ManifestPath) {
+        foreach ($server in As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @())) {
+            if ([string](Get-ObjectValue -Object $server -Name "channel" -Default "") -ne "stable") { throw "Versioned release contains a non-stable server." }
+            $server | Add-Member -NotePropertyName manifestPath -NotePropertyValue $ManifestPath -Force
+        }
+    }
+    return (Add-HostVirtualServersToManifest -Manifest $manifest)
 }
 
 function Get-TrackedHostServerForIdentity {
@@ -1010,9 +1031,10 @@ function Get-SelectedHostServerDefinition {
     $scope = Get-ServerScope -Server $StableServer
     $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $ConfigId
     $channel = [string](Get-ObjectValue -Object $tracked -Name "channel" -Default "stable")
-    if ($channel -eq "stable") { return $StableServer }
-    if ($channel -ne "beta") { throw "Unknown tracked channel '$channel' for '$id'." }
-    $manifest = Read-DistributionManifest -Config $Config -Channel beta
+    $manifestPath = [string](Get-ObjectValue -Object $tracked -Name "manifestPath" -Default "")
+    if ($channel -eq "stable" -and -not $manifestPath) { return $StableServer }
+    if ($channel -notin @("stable", "beta")) { throw "Unknown tracked channel '$channel' for '$id'." }
+    $manifest = Read-DistributionManifest -Config $Config -Channel $channel -ManifestPath $manifestPath
     $matches = @(As-Array (Get-ObjectValue -Object $manifest -Name "servers" -Default @()) | Where-Object {
         [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id -and
         (Get-ServerScope -Server $_) -eq $scope
@@ -1962,8 +1984,8 @@ function Get-HostSecretValues {
 }
 
 function Get-TemplatesBetaOperatorToken {
-    param([object]$Config, [string]$ServerId, [string]$Channel)
-    if ($ServerId -ne "templates" -or $Channel -ne "beta") { return "" }
+    param([object]$Config, [string]$ServerId, [string]$Channel, [switch]$Modern)
+    if ($ServerId -ne "templates" -or ($Channel -ne "beta" -and -not $Modern)) { return "" }
     $settings = Get-ObjectValue -Object $Config -Name "templatesSearchServer" -Default $null
     $enabled = Get-ObjectValue -Object $settings -Name "enableWriteTools" -Default $false
     if ($enabled -isnot [bool]) { throw "templatesSearchServer.enableWriteTools must be a JSON boolean." }
@@ -2256,7 +2278,7 @@ function Resolve-ServerEnv {
     }
     Set-GraphOpenAiFallbackEnv -Config $Config -Server $Server -Values $values
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "code" -and
-        [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        (Test-ModernHostServer -Server $Server)) {
         # Beta defaults to text-only replies; keep the stable dict/list transport contract.
         $values["MCP_STRUCTURED_CONTENT"] = "true"
     }
@@ -2271,10 +2293,10 @@ function Resolve-ServerEnv {
         if ([string]$Server.id -eq "graph") { $values["ENABLE_ROUTINE_EMBEDDINGS"] = "true" }
     }
     if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "templates" -and
-        [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        (Test-ModernHostServer -Server $Server)) {
         [void]$values.Remove("MCP_ENABLE_WRITE_TOOLS")
         [void]$values.Remove("MCP_OPERATOR_TOKEN")
-        $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId "templates" -Channel "beta"
+        $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId "templates" -Channel ([string]$Server.channel) -Modern:(Test-ModernHostServer -Server $Server)
         if ($operatorToken) {
             $values["MCP_ENABLE_WRITE_TOOLS"] = "true"
             $values["MCP_OPERATOR_TOKEN"] = $operatorToken
@@ -2379,7 +2401,7 @@ function Start-DockerServer {
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
         Assert-BetaProjectContainerMounts -Config $Config -Server $Server -ConfigState $ConfigState -Runtime $Runtime
-        if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "beta") {
+        if (Test-ModernHostServer -Server $Server) {
             $configuredImage = @(Invoke-DockerCommandCapture -Arguments @("inspect", "-f", "{{.Config.Image}}", $containerName) -TimeoutSec 60 -Description "docker inspect image for $containerName") | Select-Object -First 1
             if ([string]$configuredImage -ne [string]$Runtime.image) {
                 throw "Beta container '$containerName' uses '$configuredImage', expected pinned image '$($Runtime.image)'. Refusing implicit replacement."
@@ -2419,7 +2441,7 @@ function Start-DockerServer {
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
     if (-not $DryRun) {
         if ($PreparedBetaImage) {
-            if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta" -or -not (Test-DockerImageAvailable -Image ([string]$Runtime.image))) {
+            if (-not (Test-ModernHostServer -Server $Server) -or -not (Test-DockerImageAvailable -Image ([string]$Runtime.image))) {
                 throw "Prepared beta image '$($Runtime.image)' is not available for '$containerName'."
             }
         } elseif (-not $bookStackPrepared) {
@@ -2504,13 +2526,14 @@ function Start-ComposeServer {
         throw "Compose file was not found: $sourceCompose"
     }
     $channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
-    $runtimeIdentity = if ($channel -eq "beta") { [string]$Runtime.containerName } else { [string]$Runtime.name }
+    $modern = Test-ModernHostServer -Server $Server
+    $runtimeIdentity = if ($modern) { [string]$Runtime.containerName } else { [string]$Runtime.name }
     $runtimeDir = Join-Path (Join-Path (Get-ConfigWorkRoot -Config $Config -ConfigId $ConfigState.configId) "runtime") $runtimeIdentity
     New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
     $Runtime | Add-Member -NotePropertyName runtimePath -NotePropertyValue $runtimeDir -Force
     $targetCompose = Join-Path $runtimeDir "docker-compose.yml"
     $composeText = Read-Text -Path $sourceCompose
-    if ($channel -ne "beta") {
+    if (-not $modern) {
         $composeText = $composeText -replace '(?m)^\s*container_name:\s*neo4j\s*$', "    container_name: $($Runtime.containerName)-neo4j"
         $composeText = $composeText -replace '(?m)^\s*container_name:\s*1c_graph_metadata\s*$', "    container_name: $($Runtime.containerName)"
         $composeText = [regex]::Replace($composeText, '(?ms)^    ports:\r?\n      - "7474:7474"\r?\n      - "7687:7687"\r?\n', '')
@@ -2525,7 +2548,7 @@ function Start-ComposeServer {
     }
     $envFilePath = Join-Path $runtimeDir ".env"
     $envValues = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState -ForceResetDatabase:$ForceResetDatabase
-    if ($channel -eq "beta") {
+    if ($modern) {
         $neo4jImage = [string](Get-ObjectValue -Object $Server -Name "neo4jImage" -Default "")
         if (-not $neo4jImage -or -not ([string]$Runtime.image).Contains("@sha256:")) {
             throw "Beta Graph requires pinned MCP and Neo4j images."
@@ -2782,7 +2805,7 @@ function Enable-ToolsListProxyForRuntime {
     $Runtime | Add-Member -NotePropertyName proxyPort -NotePropertyValue $proxyPort -Force
     $Runtime | Add-Member -NotePropertyName proxyContainerName -NotePropertyValue $proxyContainerName -Force
     $Runtime | Add-Member -NotePropertyName toolsContractStatus -NotePropertyValue "fallback-direct" -Force
-    $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId $id -Channel ([string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable"))
+    $operatorToken = Get-TemplatesBetaOperatorToken -Config $Config -ServerId $id -Channel ([string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable")) -Modern:(Test-ModernHostServer -Server $Runtime)
     $operatorTokenPath = ""
     if ($operatorToken) {
         $operatorTokenPath = Join-Path (Join-Path (Get-StateRoot -Config $Config) "beta-proxy-secrets") "templates.operator-token"
@@ -2794,7 +2817,7 @@ function Enable-ToolsListProxyForRuntime {
     }
 
     Ensure-ToolsListProxyImage -Config $Config
-    $isBeta = [string](Get-ObjectValue -Object $Runtime -Name "channel" -Default "stable") -eq "beta"
+    $isBeta = Test-ModernHostServer -Server $Runtime
     $previousProxyState = "missing"
     $backupName = ""
     if ($isBeta) {
@@ -4403,6 +4426,7 @@ function New-ServerRuntime {
     return [pscustomobject]@{
         id = $id
         channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
+        manifestPath = [string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default "")
         scope = $scope
         family = "vibecoding1c"
         provider = "remote"
@@ -5136,6 +5160,14 @@ function Show-HostStatus {
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 $config = Read-HostConfig
 switch ($Action) {
+    "stable-preflight" {
+        if (-not $ReleaseManifest) { throw "stable-preflight requires -ReleaseManifest." }
+        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest
+    }
+    "stable-cutover" {
+        if (-not $ReleaseManifest) { throw "stable-cutover requires -ReleaseManifest." }
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest
+    }
     "beta-preflight" {
         Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
     }

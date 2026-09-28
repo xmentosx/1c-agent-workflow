@@ -353,7 +353,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/HostTooling.Tests.ps1",
-      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/*", "tests/node/*"],
+      "paths": ["mcp-host/*", "vibecoding1c-mcp-host/*", "tests/node/*", "tests/python/test_host_index_snapshot.py"],
       "tests": ["tests/pester/HostTooling.Tests.ps1"]
     },
     {
