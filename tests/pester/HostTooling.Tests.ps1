@@ -3882,6 +3882,113 @@ services:
         }
     }
 
+    It "keeps forward upgrades on the new tracked runtime and resumes through reconcile after <FailureStage>" -Tag ForwardCutover -TestCases @(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }, @{ FailureStage = 'none' }) {
+        param($FailureStage)
+        $configPath = Join-Path $TestDrive ('forward переход ' + $FailureStage + '.json')
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:ForwardCommands = @()
+            $script:ForwardTracked = $null
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; configState = $null; freshProjectIndex = $false; retainedIndex = $true; old = @{ directUrl = 'http://direct/mcp'; url = 'http://public/mcp'; containerName = 'old'; proxyUrl = 'http://public/mcp'; proxyPort = 1234; proxyContractPath = 'old-contract' }; betaServer = @{ id = 'ssl' }; runtime = @{ id = 'ssl'; name = 'public'; scope = 'global'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; image = 'new@sha256:fixture'; containerName = 'new'; hostPort = 234; url = 'http://direct/mcp'; proxyContainerName = 'proxy'; proxyPort = 1234 } }
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:ForwardCommands += 'unlock' }
+            function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = $null; oldTools = @() } }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage {}
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Stop-StableForBetaCutover { $script:ForwardCommands += 'stop-old' }
+            function Save-RetainedIndexSnapshot { throw 'must not copy retained store' }
+            function Restore-StableAfterBetaFailure { throw 'must not roll back a forward upgrade' }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'proxy') { return 'running' }; return 'exited' }
+            function Update-HostStateServers { param($ServerStates) $script:ForwardTracked = $ServerStates[0]; $script:ForwardCommands += ('track-' + $ServerStates[0].containerName) }
+            function Start-DockerServer {
+                $script:ForwardTracked.containerName | Should -Be 'new'
+                $script:ForwardTracked.image | Should -Be 'new@sha256:fixture'
+                $script:ForwardTracked.url | Should -Be 'http://public/mcp'
+                $script:ForwardTracked.directUrl | Should -Be 'http://direct/mcp'
+                $script:ForwardCommands += 'start-new'
+                if ($FailureStage -eq 'start') { throw 'fixture-start' }
+            }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return @(@{ name = 'search' }) }
+            function Assert-BetaToolsContract { param([switch]$CheckOutputs) if ($FailureStage -eq 'contract' -or ($CheckOutputs -and $FailureStage -eq 'public')) { throw ('fixture-' + $FailureStage) } }
+            function Get-HostServerFunctionalHealth { return @{ status = 'qualified' } }
+            function New-BetaProxyContract { return 'new-contract' }
+            function Enable-ToolsListProxyForRuntime { $context.runtime.proxyBackupName = 'old-proxy'; $context.runtime.url = 'http://public/mcp' }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:ForwardCommands += ($Arguments -join ' ') }
+            function Publish-Registry { $script:ForwardCommands += 'publish' }
+            if ($FailureStage -eq 'none') {
+                { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' -ForwardOnly } | Should -Not -Throw
+            } else {
+                { Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest 'releases/fixture/vibecoding1c-mcp.manifest.json' -ForwardOnly } | Should -Throw ('*fixture-' + $FailureStage + '*')
+                $script:ForwardTracked.health | Should -Be 'degraded'
+            }
+            ($script:ForwardCommands -join ',') | Should -Match '^stop-old,track-new,start-new'
+            $script:ForwardTracked.containerName | Should -Be 'new'
+            $script:ForwardTracked.manifestPath | Should -Be 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            # Exercise the existing continuation owner, not a duplicate recovery loop.
+            function Get-ToolsListProxySettings { return @{ enabled = $true; serverIds = @('ssl'); portOffset = 1000 } }
+            function Get-HostStatePath { return $configPath }
+            function Read-HostState { return @{ servers = @($script:ForwardTracked) } }
+            function Invoke-DockerCommand { return 0 }
+            function Wait-HostTcpPortOpen { return $true }
+            function Test-ToolsListProxyReady { return $true }
+            Repair-TrackedMcpHostAndPublish -Config @{} -TargetServerId ssl
+            $script:ForwardCommands | Should -Contain 'start new'
+            $script:ForwardCommands | Should -Not -Contain 'start old'
+            $script:ForwardCommands | Should -Not -Contain 'rm -f new'
+        }
+    }
+
+    It "waits through Docs HTTP 200 indexing and qualifies only the completed native corpus" -Tag ForwardCutover {
+        $configPath = Join-Path $TestDrive 'docs readiness.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:DocsReadyCalls = 0
+            function Invoke-WebRequest {
+                $script:DocsReadyCalls++
+                $status = if ($script:DocsReadyCalls -eq 1) { 'indexing' } else { 'ready' }
+                return @{ StatusCode = 200; Content = ('{"status":"' + $status + '","generation":"kept-or-rebuilt","documents":25536}') }
+            }
+            function Start-Sleep {}
+            Wait-BetaFreshIndexReady -Context @{ serverId = 'docs'; configId = ''; runtime = @{ hostPort = 18000 } } -TimeoutSeconds 20
+            $script:DocsReadyCalls | Should -Be 2
+            { ConvertFrom-DocsReadyState -Value @{ status = 'ready'; documents = 0; generation = 'empty' } } | Should -Throw '*no published corpus*'
+            { ConvertFrom-DocsReadyState -Value @{ status = 'failed' } } | Should -Throw '*failed*'
+            { ConvertFrom-DocsReadyState -Value @{} } | Should -Throw '*invalid*'
+            $script:DocsFunctionalLookups = 0
+            $script:DocsHealthStatus = 'indexing'
+            function Invoke-RestMethod { return @{ status = $script:DocsHealthStatus; documents = 25536; generation = 'new' } }
+            function Assert-BetaDocsFunctionalCall { $script:DocsFunctionalLookups++ }
+            $server = @{ id = 'docs'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; directUrl = 'http://direct/mcp'; url = 'http://proxy/mcp' }
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'indexing'
+            $script:DocsFunctionalLookups | Should -Be 0
+            $script:DocsHealthStatus = 'ready'
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'qualified'
+            $script:DocsFunctionalLookups | Should -Be 1
+        }
+    }
+
+    It "allows a rebuilt Code generation only in forward mode and retains project and source identity checks" -Tag ForwardCutover {
+        $configPath = Join-Path $TestDrive 'code forward.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ metadataProjectId = 'same-project'; metadataGenerationId = 'old'; coverage = @{ modules = 1; forms = 1; objects = 1 }; metadataInventory = @{ keys = @('Справочники.Клиенты') }; formInventory = @{ rows = @('Форма') } }
+            $new = Convert-ToHash -Object $old
+            $new.metadataGenerationId = 'new'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new } | Should -Throw '*generation changed*'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Not -Throw
+            $new.metadataProjectId = 'other'
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Throw '*generation changed*'
+            $new.metadataProjectId = 'same-project'; $new.formInventory = @{ rows = @('ПотерянаФорма') }
+            { Assert-RetainedCodeIdentity -OldActivity $old -NewActivity $new -AllowNewGeneration } | Should -Throw '*source identities changed*'
+        }
+    }
+
     It "restores retained data before restarting the accepted service on <FailureStage> failure" -Tag StableCutover -TestCases @(@{ FailureStage = 'start' }, @{ FailureStage = 'contract' }, @{ FailureStage = 'public' }) {
         param($FailureStage)
         $configPath = Join-Path $TestDrive ('retained-rollback-' + $FailureStage + '.json')
