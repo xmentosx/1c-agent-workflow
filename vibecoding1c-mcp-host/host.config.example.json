@@ -11,7 +11,8 @@
     "BOOKSTACK_TOKEN_ID": "<bookstack-readonly-token-id>",
     "BOOKSTACK_TOKEN_SECRET": "<bookstack-readonly-token-secret>",
     "MANTIS_API_TOKEN": "<mantis-readonly-api-token>",
-    "MCP_OPERATOR_TOKEN": ""
+    "MCP_OPERATOR_TOKEN": "",
+    "SPPR_EMBEDDING_KEY": ""
   },
   "embedding": {
     "model": "intfloat/multilingual-e5-base"
@@ -59,6 +60,10 @@
       "languages": [ "rus", "eng" ]
     }
   },
+  "spprServer": {
+    "configPath": "D:/ITL/MCP/sppr/collector.json",
+    "credentialPath": "D:/ITL/MCP/sppr/secrets/collector.json"
+  },
   "helpSearchServer": {
     "platformVersion": "8.3.24.1548",
     "platformBinPath": "C:/Program Files/1cv8/8.3.24.1548/bin"
@@ -72,7 +77,7 @@
   },
   "toolsListProxy": {
     "enabled": true,
-    "serverIds": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph" ],
+    "serverIds": [ "docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "sppr", "code", "graph" ],
     "portOffset": 4000,
     "image": "itl/mcp-tools-list-proxy:local"
   },

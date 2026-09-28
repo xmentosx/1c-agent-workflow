@@ -70,12 +70,42 @@ The system SHALL preserve actual relation types, direction, endpoint identities,
 - **WHEN** an idea/error table row contains a target type outside the supported type mapping
 - **THEN** the system reports the unresolved target and coverage limitation without treating it as a supported idea or fetching its content
 
+### Requirement: Idea provenance and additional attributes
+The system SHALL collect the idea registrant, source, topic and typed basis, and additional attributes of ideas and technical projects. Property labels, values, value types and text values SHALL remain readable. Meaningful values and addressed lookup labels SHALL participate in lexical and semantic indexing. Typed business references SHALL use the existing corpus admission and stub rules; scalar values MUST NOT become links merely because their text resembles a UUID.
+
+#### Scenario: Additional attribute contains a foreign reference and another contains zero
+- **WHEN** an eligible idea or technical project has additional attributes with a reference outside the corpus, a zero, a false or a scalar string
+- **THEN** their values and explicit types remain readable, the reference becomes a stub without foreign content, and zero/false are not treated as empty
+
+#### Scenario: Idea basis is a supported typed reference
+- **WHEN** an eligible idea contains an explicit basis type and nonempty reference
+- **THEN** the graph preserves the actual basis relation and exposes the original type without guessing from the referenced UUID or expanding the allowed projects
+
+### Requirement: Idea-step row identity
+The system SHALL retain the technical identifier on idea-step rows and use it with the relation and endpoints for stable identity. Reciprocal rows SHALL be correlated only for the same endpoints and identifier. A technical identifier alone MUST NOT create a missing step reference. Duplicate identities SHALL preserve the previous generation and provide a source-correction continuation.
+
+#### Scenario: Two requirements share the same idea and step
+- **WHEN** two differently identified rows between one idea and step are reordered
+- **THEN** both texts and identities remain distinct, and matching reciprocal rows can still be correlated
+
+#### Scenario: Duplicate technical identity is corrected
+- **WHEN** duplicate identities prevent collection and the operator corrects the source rows
+- **THEN** the previous generation remains readable until a successful retry publishes both corrected relationships
+
 ### Requirement: Reliable reconciliation and removal
-The system SHALL reconcile membership, deletion marks, versions and dependencies during complete scans and publish source-content changes only after successful collection. Missing pages, authorization errors and timeouts MUST NOT be interpreted as deletions. Successful reconciliation SHALL remove deleted, marked or moved-out cards and invalid relations.
+The system SHALL reconcile membership, deletion marks, versions and dependencies during complete scans and publish source-content changes only after successful collection. Missing pages, authorization errors and timeouts MUST NOT be interpreted as deletions. Successful reconciliation SHALL remove deleted, marked or moved-out card content and edges removed from the source, while retaining surviving recorded references to unavailable objects as stubs.
 
 #### Scenario: Object disappears during a successful scan
 - **WHEN** complete inventory and ownership checks confirm deletion or movement out of the allowed corpus
-- **THEN** the next published generation excludes the object and relations that no longer have valid eligible endpoints
+- **THEN** the next published generation excludes the object's content and outgoing edges, while surviving incoming references remain unavailable stubs
+
+#### Scenario: Addressed optional dependency returns HTTP 404
+- **WHEN** a shared LCM or lookup dependency returns HTTP 404 and a successful filtered entity-set query confirms the same UUID is absent
+- **THEN** collection continues without its stale content/label and exposes the reference as not_found in the next successful generation
+
+#### Scenario: HTTP 404 does not establish absence
+- **WHEN** the confirmation fails or still returns the object, or HTTP 404 occurs on a required card, table, or page
+- **THEN** collection fails without publishing partial deletions or treating authorization/transport/publication errors as absence
 
 #### Scenario: Scan fails after reading some pages
 - **WHEN** a later page fails or collection cannot establish a complete inventory
@@ -84,6 +114,17 @@ The system SHALL reconcile membership, deletion marks, versions and dependencies
 #### Scenario: Shared value or relation row changes
 - **WHEN** a lookup/LCM description or a technical-project idea row changes
 - **THEN** the successful collection refreshes the affected content even if another referencing card's version did not change
+
+### Requirement: Whole-object version reuse
+The system SHALL treat DataVersion as covering card fields and table rows, as confirmed by the source owner. It SHALL reuse saved raw fields and table rows only when the object version and corresponding projections match. Version changes SHALL refresh card content and rows; projection changes or legacy snapshots without table projection metadata SHALL refresh the affected tables. Version checks around collection and independent dependency refresh MUST remain effective.
+
+#### Scenario: Nightly reconciliation finds an unchanged object
+- **WHEN** its version and scalar/table projections match the saved snapshot
+- **THEN** no business-field or table read is needed for that object, while membership/version checks and addressed dependency checks still execute
+
+#### Scenario: Table edit or projection extension
+- **WHEN** a table edit changes its object's DataVersion, or a table projection changes without a source edit
+- **THEN** the affected rows are reread, graph/text content reflects the new projection, and only changed text fragments require new compatible vectors
 
 ### Requirement: Compatible content embeddings
 The system SHALL use OpenRouter `qwen/qwen3-embedding-8b` for eligible text and reuse a vector only when text and embedding profile are compatible. The profile MUST include model/provider, dimension and relevant instructions/normalization versions. Vectors for changed text or incompatible profiles MUST NOT be represented as current semantic coverage.

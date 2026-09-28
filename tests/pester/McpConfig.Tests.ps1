@@ -14,6 +14,41 @@
         $McpHostText = $context.McpHostText
     }
 
+    It "discovers SPPR in the host registry and writes a remote client without local provisioning" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР подключение с пробелом'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $registryRoot = Join-Path $root 'registry'
+        New-Item -ItemType Directory -Path $registryRoot -Force | Out-Null
+        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:22007/mcp'; health = 'running' }
+        @{ schemaVersion = 1; host = @{ hostId = 'dev-ermakov' }; configurations = @(); servers = @($endpoint) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Encoding UTF8
+        & {
+            . $HelperPath -ProjectRoot $root -Action help -McpServerId sppr -McpProvider local *> $null
+            function Get-Vibecoding1cMcpRegistryRoot { return $registryRoot }
+            function Test-Vibecoding1cMcpBookStackVirtualServerEnabled { return $false }
+            function Test-Vibecoding1cMcpMantisTicketVirtualServerEnabled { return $false }
+            function Ensure-Vibecoding1cMcpRegistry { }
+            $manifest = Add-Vibecoding1cMcpVirtualServersToManifest -Manifest @{ servers = @() }
+            @($manifest.servers).Count | Should -Be 1
+            $server = $manifest.servers[0]
+            $server.id | Should -Be 'sppr'
+            $server.scope | Should -Be 'global'
+            (Get-Vibecoding1cMcpSelectedProvider -Server $server -Selection @{ defaultProvider = 'local' }) | Should -Be 'remote'
+            (Test-Vibecoding1cMcpServerNeedsRemoteConfig -Server $server) | Should -BeFalse
+            $selection = @{ servers = @(@{ id = 'sppr'; enabled = $true; provider = 'remote'; hostId = 'dev-ermakov' }) }
+            function Read-Vibecoding1cMcpSelection { return $selection }
+            $runtime = New-Vibecoding1cMcpRemoteRuntime -Server $server -Selection $selection
+            $runtime.url | Should -Be $endpoint.url
+            $path = Join-Path $root 'config.toml'
+            Set-Content -LiteralPath $path -Value @('[mcp_servers.external]', 'url = "http://external.test/mcp"') -Encoding UTF8
+            Write-Vibecoding1cMcpCodexConfig -Path $path -BlockId 'fixture-sppr' -Endpoints @($runtime)
+            $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
+            $text | Should -Match 'mcp_servers."sppr-knowledge"'
+            $text | Should -Match 'http://dev-ermakov:22007/mcp'
+            $text | Should -Match 'http://external.test/mcp'
+            $text | Should -Not -Match 'password|credential|collector|odata'
+        }
+    }
+
     It "treats remote endpoints without branch fingerprints as shared rather than stale" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

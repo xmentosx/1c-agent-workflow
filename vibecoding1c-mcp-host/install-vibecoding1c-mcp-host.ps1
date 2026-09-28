@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "sppr-prepare", "sppr-collector-install", "sppr-collector-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -956,6 +956,11 @@ function Ensure-ServerDockerImageAvailable {
         Invoke-DockerCommandChecked -Arguments @("build", "-t", $Image, $sourceRoot) -TimeoutSec 900 -Description "docker build codechecker overlay"
         return
     }
+    if ([string](Get-ObjectValue -Object $Server -Name 'id' -Default '') -eq 'sppr') {
+        $sourceRoot = Join-Path $PSScriptRoot 'sppr-mcp'
+        Invoke-DockerCommandChecked -Arguments @('build', '-t', $Image, $sourceRoot) -TimeoutSec 900 -Description 'docker build SPPR MCP'
+        return
+    }
     if (Test-BookStackProductDocsServer -Server $Server) {
         $sourceRoot = Get-BookStackProductDocsSourceRoot
         if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot "Dockerfile") -PathType Leaf)) {
@@ -1140,6 +1145,9 @@ function Add-HostVirtualServersToManifest {
     }
     if (-not $hasMantis) {
         $servers += Get-MantisTicketServerDefinition
+    }
+    if (@($servers | Where-Object { [string](Get-ObjectValue -Object $_ -Name 'id' -Default '') -eq 'sppr' }).Count -eq 0) {
+        $servers += Get-SpprServerDefinition
     }
     $manifestHash["servers"] = $servers
     return [pscustomobject]$manifestHash
@@ -2411,6 +2419,9 @@ function Resolve-ServerVolumes {
         [object]$Server,
         [object]$ConfigState = $null
     )
+    if ([string](Get-ObjectValue -Object $Server -Name 'id' -Default '') -eq 'sppr') {
+        return @(Get-SpprVolumes -Config $Config)
+    }
     $volumes = @()
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $volumeEntries = @(As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) + @(Get-HostDefaultVolumeEntries -Server $Server)
@@ -2525,7 +2536,8 @@ function Start-DockerServer {
         }
     }
     foreach ($volume in $volumes) {
-        $args += @("-v", "$($volume.host):$($volume.container)")
+        $access = $(if ([bool](Get-ObjectValue -Object $volume -Name 'readOnly' -Default $false)) { ':ro' } else { '' })
+        $args += @("-v", "$($volume.host):$($volume.container)$access")
     }
     $args += $Runtime.image
     Write-Host "Starting container: $containerName -> $($Runtime.url)"
@@ -2719,6 +2731,7 @@ function Get-AiRules1cMcpClientName {
         "graph" { return "1c-graph-metadata-mcp" }
         "bookstack" { return "BookStack-product-docs-mcp" }
         "mantis" { return "itl-mantis-ticket-mcp" }
+        "sppr" { return "sppr-knowledge" }
         default { return "" }
     }
 }
@@ -4309,6 +4322,7 @@ function Get-HostServerSafeHealthTool {
         "codechecker" { return "fetch_its" }
         "bookstack" { return "index_status" }
         "mantis" { return "health" }
+        "sppr" { return "sppr_index_status" }
         "code" { return "stats" }
         "graph" { return "get_indexing_status" }
         default { return "" }
@@ -5367,6 +5381,7 @@ function Show-HostStatus {
 }
 
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
+. (Join-Path $PSScriptRoot "sppr-host.ps1")
 $config = Read-HostConfig
 switch ($Action) {
     "bookstack-direct" {
@@ -5389,6 +5404,7 @@ switch ($Action) {
         Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
     }
     "setup" {
+        if ($ServerId -eq 'sppr') { Initialize-SpprRuntime -Config $config }
         Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
         Publish-Registry -Config $config
         Show-HostStatus -Config $config -TargetServerId $ServerId
@@ -5455,4 +5471,7 @@ switch ($Action) {
         Invoke-HostConfigDumpHelper -ResolvedConfigPath $ConfigPath -TargetConfigId $ConfigId
         Refresh-HostConfigurations -Config $config -TargetConfigId $ConfigId | Out-Null
     }
+    "sppr-prepare" { Initialize-SpprRuntime -Config $config }
+    "sppr-collector-install" { Install-SpprCollector -Config $config }
+    "sppr-collector-uninstall" { Uninstall-SpprCollector -Config $config }
 }
