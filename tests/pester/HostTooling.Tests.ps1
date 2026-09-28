@@ -964,6 +964,17 @@ services:
         ($output -join [Environment]::NewLine) | Should -Match "Ran 8 tests"
     }
 
+    It "qualifies Mantis delta, recovery and write journal through UTF-8 native transport" {
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.core.ps1')
+        . (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1')
+        $script:ProjectRoot = $RepoRoot
+        $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/mantis-ticket-mcp/test_index.py'
+        $result = Invoke-ItlNativeProcessCapture -FilePath (Get-Command python).Source -Arguments @('-X', 'utf8', $testPath)
+        $result.exitCode | Should -Be 0 -Because $result.stderr
+        $result.stderr | Should -Match 'OK'
+        $result.stdout | Should -Match ([regex]::Escape('Mantis UTF-8: путь с пробелом / original имя.txt'))
+    }
+
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -1852,11 +1863,12 @@ services:
         $bookStackServerText | Should -Match "next_cursor"
         $bookStackServerText | Should -Match "semantic_min_score"
         $mantisRequirementsText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\requirements.txt")
-        $mantisRequirementsText | Should -Match "fastmcp>=2\.10,<3\.0"
+        $mantisRequirementsText | Should -Match "fastmcp==2\.14\.7"
+        $mantisRequirementsText | Should -Match "zvec==0\.7\.0"
         $mantisRequirementsText | Should -Match "pytesseract"
         $mantisRequirementsText | Should -Match "Pillow"
         $mantisServerText = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "vibecoding1c-mcp-host\mantis-ticket-mcp\server.py")
-        $mantisServerText | Should -Match 'FastMCP\("mantis-ticket", stateless_http=True\)'
+        $mantisServerText | Should -Match 'FastMCP\("mantis-ticket", stateless_http=True, lifespan=lifespan\)'
         foreach ($toolName in @("read_ticket", "get_attachment", "health")) {
             $mantisServerText | Should -Match "def $toolName"
         }
@@ -2402,6 +2414,18 @@ services:
                 $mantisEnv["MANTIS_OCR_LANGUAGES"] | Should -Be "rus,eng"
                 $mantisVolumes = @(Resolve-ServerVolumes -Config $hostConfig -Server $mantisServer)
                 @($mantisVolumes | Where-Object { $_.container -eq "/data/attachments" }).Count | Should -Be 1
+                @($mantisVolumes | Where-Object { $_.container -eq "/data/mantis" }).Count | Should -Be 1
+                $mantisEnv["MANTIS_INDEX_ENABLED"] | Should -Be "false"
+                $mantisEnv["MANTIS_MONTHLY_BUDGET_USD"] | Should -Be "5"
+                $mantisEnv["MANTIS_WRITE_ACTIONS"] | Should -BeNullOrEmpty
+                $mantisEnv["MANTIS_WRITE_PROJECT_IDS"] | Should -BeNullOrEmpty
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName syncProjectIds -NotePropertyValue @(17)
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeActions -NotePropertyValue @('add_comment')
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeProjectIds -NotePropertyValue @(17)
+                $selectedMantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
+                $selectedMantisEnv['MANTIS_SYNC_PROJECT_IDS'] | Should -Be '17'
+                $selectedMantisEnv['MANTIS_WRITE_ACTIONS'] | Should -Be 'add_comment'
+                $selectedMantisEnv['MANTIS_WRITE_PROJECT_IDS'] | Should -Be '17'
                 (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {

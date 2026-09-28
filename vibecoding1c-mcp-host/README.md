@@ -48,7 +48,14 @@ JSON copy in clients that expose both result forms.
 The `mantis` global server is built locally from `mantis-ticket-mcp/`.
 Configure `mantisTicketServer.baseUrl`, set read-only `MANTIS_API_TOKEN` in `secrets`,
 and keep `mantis` in `enabledServers.global`. The MCP publishes as
-`itl-mantis-ticket-mcp` and exposes `read_ticket`, `get_attachment`, and `health`.
+`itl-mantis-ticket-mcp` and preserves `read_ticket`, `get_attachment`, and `health`.
+Optional search and guarded writes add `search_tickets`, `mantis_metadata`,
+`execute_write`, `write_operation`, and `index_control`. The index and write action/project
+allowlists are disabled by default; configure the separate Mantis state volume before
+qualification. Search returns five cards by default, a cursor, and at most 12,000 characters
+per structured page, without duplicating the JSON in textual MCP content. See the
+[Mantis operator guide](mantis-ticket-mcp/README.md) for identity headers, qualification,
+cost limits, permission coverage, recovery, and rollback.
 Ticket reads return original image attachments as MCP image content. Per-call OCR is disabled by
 default so vision-capable models inspect the original; clients without image support can repeat
 `read_ticket` with `image_ocr=true` to receive the draft OCR fallback alongside the original.

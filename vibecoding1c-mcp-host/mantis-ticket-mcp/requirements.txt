@@ -1,6 +1,9 @@
-fastmcp>=2.10,<3.0
+fastmcp==2.14.7
+mcp==1.30.0
 markdown>=3.6,<4.0
 bleach>=6.1,<7.0
 Pillow>=10.0,<12.0
 pytesseract>=0.3,<0.4
 pypdf>=4.0,<6.0
+zvec==0.7.0
+numpy==2.2.6
