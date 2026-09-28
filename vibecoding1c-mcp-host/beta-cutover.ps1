@@ -444,7 +444,7 @@ function Get-BetaCutoverContext {
     }
     $runtime.proxyContainerName = [string](Get-ObjectValue -Object $old -Name "proxyContainerName" -Default "$($old.containerName)-tools-list-proxy")
     if ($NativeEndpoint) {
-        if (-not $retainedIndex -or $oldChannel -ne "stable" -or $ServerId -eq "templates") { throw "Native endpoint conversion requires an accepted versioned stable server; Templates retains operator authorization proxy." }
+        if (-not $retainedIndex -or $oldChannel -ne "stable") { throw "Native endpoint conversion requires an accepted versioned stable server." }
         if ([string](Get-ObjectValue -Object $old -Name "endpointMode" -Default "") -eq "direct") { throw "This deployment already uses its native public endpoint." }
         if ([string]$old.image -cne [string]$runtime.image -or [string](Get-ObjectValue -Object $old -Name "manifestPath" -Default "") -cne $ReleaseManifest) { throw "Native conversion must reuse the exact accepted stable image and manifest; qualify an image upgrade separately." }
         $publicUri = [Uri]([string]$old.url)
