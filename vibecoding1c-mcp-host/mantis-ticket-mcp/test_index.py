@@ -12,6 +12,7 @@ import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
@@ -510,6 +511,51 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(etag, "full-etag")
         with patch.object(api, "request", return_value=({"issues": [{**ticket(), "notes": None, "attachments": None}]}, "")):
             self.assertEqual(api.issue(1)[0]["notes"], [])
+
+    def test_parent_import_keeps_child_only_page_and_never_uses_parent_acl_for_children(self):
+        api = Api(SimpleNamespace(validate=lambda: None, base_url="https://mantis.test", api_token="fixture", timeout_seconds=1))
+        children = [ticket(n, project=2) for n in range(2, 102)]
+        own = ticket(updated="2020-01-01T00:00:00Z")
+        self.api.items = {1: own, **{r["id"]: r for r in children}}
+        self.state.put_issue(children[0])  # Existing child data must not be purged.
+        self.state.run("UPDATE projects SET error='previous page failed' WHERE id=1")
+        pages = [children, [own]]
+        def response(path):
+            page = int(parse_qs(urlsplit(path).query)["page"][0])
+            return {"issues": copy.deepcopy(pages[page - 1]) if page <= 2 else []}, ""
+        self.index.api = api
+        with patch.object(api, "request", side_effect=response), patch.object(api, "context", return_value=self.api.context(1)) as context, patch.object(api, "visible_issue", side_effect=self.api.visible_issue) as visible:
+            self.index.sync_project(1)
+            self.assertEqual(self.state.one("SELECT import_page,error FROM projects WHERE id=1"), {"import_page": 2, "error": ""})
+            self.assertEqual(self.state.health()["issues"], 1)
+            self.index.sync_project(1)
+            self.assertIsNotNone(self.state.one("SELECT id FROM issues WHERE id=1"))
+            for _ in range(2):  # Compact verification agrees with the full import.
+                self.index.sync_project(1)
+            self.assertEqual(self.state.one("SELECT status FROM projects WHERE id=1")["status"], "catching_up")
+            self.assertTrue(all(call.args == (1,) for call in visible.call_args_list))
+            self.assertTrue(all(call.args == (1,) for call in context.call_args_list))
+        self.assertEqual(self.state.health()["issues"], 2)
+        self.assertIsNotNone(self.state.one("SELECT id FROM issues WHERE id=2"))
+
+    def test_parent_delta_preserves_raw_pages_but_fetches_only_its_own_issues(self):
+        own = ticket(updated="2026-09-28T11:59:00+03:00")
+        children = [ticket(n, project=2) for n in range(2, 102)]
+        self.api.items = {1: own, **{r["id"]: r for r in children}}
+        self.state.run("UPDATE projects SET status='current',checkpoint=? WHERE id=1", (timestamp(own["updated_at"]),))
+        with patch.object(self.api, "headers", side_effect=lambda project, page, size: copy.deepcopy(children if page == 1 else [own] if page == 2 else [])), patch.object(self.api, "visible_issue", wraps=self.api.visible_issue) as visible:
+            self.index.sync_project(1)
+            visible.assert_called_once_with(1)
+        self.assertEqual(self.state.health()["issues"], 1)
+        self.assertEqual(self.state.one("SELECT checkpoint,status FROM projects WHERE id=1"), {"checkpoint": timestamp(children[0]["updated_at"]), "status": "current"})
+
+    def test_create_reconciliation_does_not_adopt_matching_child_issue(self):
+        child = ticket(2, project=2)
+        self.api.items[2] = child
+        with patch.object(self.api, "headers", return_value=[child]), patch.object(self.api, "visible_issue", wraps=self.api.visible_issue) as visible:
+            result = self.writer.reconcile({"action": "create_issue", "project_id": 1, "fields": {"summary": child["summary"]}}, {"user_id": 3025}, 0)
+            self.assertIsNone(result)
+            visible.assert_not_called()
 
     def test_read_only_rollback_also_checks_file_parent(self):
         from server import MantisClient, Settings, MantisApiError

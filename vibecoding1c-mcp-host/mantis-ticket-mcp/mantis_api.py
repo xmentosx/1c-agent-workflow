@@ -96,8 +96,10 @@ class Api:
         if not isinstance(data.get("issues"), list):
             raise ApiError("Incomplete Mantis issue page")
         rows = data["issues"]
-        if any(object_id(row.get("project")) != int(project_id) for row in rows):
-            raise ApiError("Mantis returned an issue outside the requested project")
+        if any(object_id(row.get("project")) <= 0 for row in rows):
+            raise ApiError("Mantis returned an issue without its project")
+        # Mantis includes subprojects. Keep the raw page length/order; consumers
+        # select the exact project without mistaking a child-only page for EOF.
         return rows
 
     def issue(self, issue_id):
@@ -119,11 +121,16 @@ class Api:
     def initial_page(self, project_id, page, size):
         data, _ = self.request("issues?" + urlencode({"project_id": int(project_id), "filter_id": "any", "page": page, "page_size": size}))
         rows = data.get("issues")
-        if not isinstance(rows, list) or any(object_id(r.get("project")) != int(project_id) for r in rows):
-            raise ApiError("Incomplete or wrong-project initial page")
+        if not isinstance(rows, list) or any(object_id(r.get("project")) <= 0 for r in rows):
+            raise ApiError("Incomplete initial page or missing issue project")
         context = self.context(project_id)
         result = []
         for row in rows:
+            if object_id(row["project"]) != int(project_id):
+                # Each accessible project has its own import and ACL context.
+                # A child row is neither a parent issue nor a revocation proof.
+                result.append({"skipped_id": int(row["id"]), "updated_at": row["updated_at"]})
+                continue
             try:
                 result.append({"issue": self.filter_visible(self.normalize_lists(row), context)})
             except ApiError as exc:
