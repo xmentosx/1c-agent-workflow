@@ -5,6 +5,7 @@ import tempfile
 import types
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import unittest
 from pathlib import Path
@@ -241,6 +242,66 @@ class BookStackClientStructureTests(unittest.TestCase):
 
 
 class EmbeddingClientTests(unittest.TestCase):
+    def test_query_cache_is_bounded_profile_specific_and_returns_independent_vectors(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "QUERY_EMBEDDING_CACHE_SIZE", 2):
+            client = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "remote-model"))
+            client.embed = mock.Mock(return_value=[1.0, 0.0])
+            client.embed_query("Заказ")[0] = 99
+            self.assertEqual(client.embed_query("Заказ"), [1.0, 0.0])
+            client.embed_query("договор")
+            client.embed_query("Заказ")  # Most recently used, survives the next insertion.
+            client.embed_query("проект")
+            client.embed_query("Заказ")
+            self.assertEqual(client.embed.call_count, 3)
+            client.embed_query("договор")
+            self.assertEqual(client.embed.call_count, 4)
+            client.api_base = "https://another-provider.test/v1"
+            client.embed_query("договор")
+            self.assertEqual(client.embed.call_count, 5)
+            client.model = "another-model"
+            client.embed_query("договор")
+            self.assertEqual(client.embed.call_count, 6)
+
+    def test_simultaneous_identical_queries_share_success_and_retry_after_failure(self):
+        for failure in (False, True):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:
+                client = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "remote-model"))
+                entered, waiting, release = threading.Event(), threading.Event(), threading.Event()
+
+                class WaitingFuture(server.Future):
+                    def result(self, timeout=None):
+                        waiting.set()
+                        return super().result(timeout=5)
+
+                def embed(text):
+                    entered.set()
+                    if not release.wait(5):
+                        raise TimeoutError("test did not release provider")
+                    if failure:
+                        raise server.BookStackApiError("provider unavailable")
+                    return [1.0, 0.0]
+
+                client.embed = mock.Mock(side_effect=embed)
+                with mock.patch.object(server, "Future", WaitingFuture), ThreadPoolExecutor(max_workers=2) as pool:
+                    first = pool.submit(client.embed_query, "одинаковый запрос")
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        second = pool.submit(client.embed_query, "одинаковый запрос")
+                        self.assertTrue(waiting.wait(5))
+                    finally:
+                        release.set()
+                    for result in (first, second):
+                        if failure:
+                            with self.assertRaisesRegex(server.BookStackApiError, "provider unavailable"):
+                                result.result(timeout=5)
+                        else:
+                            self.assertEqual(result.result(timeout=5), [1.0, 0.0])
+                self.assertEqual(client.embed.call_count, 1)
+                client.embed.side_effect = None
+                client.embed.return_value = [1.0, 0.0]
+                self.assertEqual(client.embed_query("одинаковый запрос"), [1.0, 0.0])
+                self.assertEqual(client.embed.call_count, 2 if failure else 1)
+
     def test_multilingual_e5_uses_retrieval_prefixes_and_versioned_storage_key(self):
         with tempfile.TemporaryDirectory() as temp_root:
             settings = make_settings(
@@ -494,6 +555,64 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertLessEqual(len(result["results"][0]["preview"]), server.SEARCH_PREVIEW_CHARS + 6)
         self.assertLess(len(json.dumps(result, ensure_ascii=False)), 6000)
         self.assertIn("next_cursor=5", server.tool_result_summary("search", result))
+
+    def test_text_search_works_without_embeddings_including_live_fallback_and_pagination(self):
+        pages = [page(index, "Точный термин в середине документа.") for index in range(1, 8)]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, pages)
+            for item in pages:
+                service.index_page(item)
+            service.embeddings = FakeEmbeddings()
+            service.embeddings.embed_query = mock.Mock(side_effect=AssertionError("text must not embed"))
+            service.last_embedding_error = "previous provider outage"
+            first = service.search_docs("Точный термин", None, 3, mode="text")
+            second = service.search_docs("Точный термин", None, 3, first["next_cursor"], mode="text")
+            absent = service.search_docs("отсутствующий термин", None, 3, mode="text")
+            self.assertEqual(first["mode"], "text")
+            self.assertEqual(first["total_matches"], 7)
+            self.assertFalse({p["id"] for p in first["results"]} & {p["id"] for p in second["results"]})
+            self.assertNotIn("semantic_status", first)
+            self.assertEqual(absent["results"], [])
+            self.assertEqual(len(service.client.search_calls), 1)
+            service.embeddings.embed_query.assert_not_called()
+
+    def test_semantic_mode_does_not_return_lexical_fallback_and_unknown_mode_does_not_search(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, [page(1, "exact keyword")])
+            service.embeddings = LowConfidenceEmbeddings()
+            service.index_page(service.client.pages[1])
+            result = service.search_docs("exact keyword", {"live": True}, 5, mode="semantic")
+            self.assertEqual(result["results"], [])
+            self.assertEqual(result["mode"], "semantic")
+            with mock.patch.object(service, "semantic_results") as semantic:
+                invalid = service.search_docs("exact keyword", None, 5, mode="typo")
+                self.assertFalse(invalid["ok"])
+                semantic.assert_not_called()
+            self.assertEqual(service.client.search_calls, [])
+
+    def test_cached_query_reuses_embedding_across_cursors_and_filters_but_refreshes_results(self):
+        pages = [page(index, "Architecture decision.") for index in range(1, 8)]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, pages)
+            service.embeddings = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "fake-model"))
+            service.embeddings._tokenizer = WordTokenizer()
+            service.embeddings.embed = mock.Mock(return_value=[1.0, 0.0])
+            for item in pages:
+                service.index_page(item)
+            service.embeddings.embed.reset_mock()
+            first = service.search_docs("Architecture", None, 3)
+            second = service.search_docs("Architecture", None, 3, first["next_cursor"])
+            filtered = service.search_docs("Architecture", {"book": "Missing book"}, 3)
+            self.assertEqual(service.embeddings.embed.call_count, 1)
+            self.assertEqual(first["mode"], "hybrid")
+            self.assertFalse({p["id"] for p in first["results"]} & {p["id"] for p in second["results"]})
+            self.assertEqual(filtered["results"], [])
+            changed = dict(pages[0], name="Architecture updated", markdown="New current content.")
+            service.index_page(changed)
+            service.embeddings.embed.reset_mock()
+            refreshed = service.search_docs("Architecture", None, 20)
+            self.assertEqual(next(p for p in refreshed["results"] if p["id"] == 1)["title"], "Architecture updated")
+            service.embeddings.embed.assert_not_called()
 
     def test_search_cursor_pages_through_all_results_without_repeating_items(self):
         pages = [page(index, f"Architecture decision {index}.") for index in range(1, 13)]

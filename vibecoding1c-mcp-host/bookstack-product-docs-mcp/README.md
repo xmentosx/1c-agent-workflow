@@ -1,9 +1,29 @@
 # BookStack semantic indexing
 
 BookStack owns its SQLite cache, fragment vectors, inventory reconciliation and recovery.
-Public MCP tools and their arguments are unchanged. Exact/FTS search remains available
+Public MCP tools retain their existing arguments; `search_docs` adds optional `mode`.
+Exact/FTS search remains available
 when semantic indexing is incomplete; `search_docs` discloses that state. `read_page`
 continues returning the document during a provider failure.
+
+## Search modes and query cache
+
+`search_docs(query="...", mode="hybrid")` retains the default combined exact/FTS and
+semantic search. Use `mode="text"` for SQLite full-text/substring search without an
+embedding request, or `mode="semantic"` for vector matches only. Text and hybrid modes
+retain the existing BookStack API search fallback when the local search has no matches
+or `filters.live=true`; semantic mode never mixes in lexical fallback. Text search is
+independent of semantic-index readiness and provider availability. Keep the same query,
+filters and mode when following `next_cursor`.
+
+The embedding client keeps the last 256 successful query vectors in an in-memory LRU
+cache, keyed by the exact prefixed input hash and embedding profile. Repeated queries,
+including pagination and different filters, reuse the vector. Concurrent identical
+queries share one provider request; failures are not cached. Results are recomputed
+against current page revisions, so edits and reindexing remain visible. Changing the
+model/profile cannot reuse incompatible entries; restarting the process empties the
+cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
+SQLite schema migration and requires no reindexing.
 
 ## Configuration
 

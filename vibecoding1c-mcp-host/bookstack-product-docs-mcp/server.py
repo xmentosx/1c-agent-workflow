@@ -7,6 +7,9 @@ import re
 import sqlite3
 import threading
 import time
+from array import array
+from collections import OrderedDict
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +35,7 @@ QWEN_TOKENIZER = "Qwen/Qwen3-Embedding-8B"
 QWEN_REVISION = "c90816d848505624c2434128dfc61132162a0ee9"
 QWEN_INSTRUCTION = "Given a product documentation question, retrieve relevant passages that answer the question"
 QWEN_MIN_SCORE = 0.50
+QUERY_EMBEDDING_CACHE_SIZE = 256
 
 
 class BookStackApiError(RuntimeError):
@@ -322,6 +326,9 @@ class EmbeddingClient:
         self.chunk_tokens = settings.chunk_tokens
         self.chunk_overlap = settings.chunk_overlap
         self.on_usage = None
+        self._query_cache = OrderedDict()
+        self._query_pending = {}
+        self._query_lock = threading.Lock()
 
     def mode(self) -> str:
         if not self.model:
@@ -372,7 +379,34 @@ class EmbeddingClient:
         prefix = "query: " if self.uses_e5_retrieval_prefixes() else ""
         if self.is_qwen():
             prefix = f"Instruct: {QWEN_INSTRUCTION}\nQuery:"
-        return self.embed(prefix + text)
+        input_text = prefix + text
+        key = (self.storage_model(), hash_text(input_text))
+        with self._query_lock:
+            if key in self._query_cache:
+                self._query_cache.move_to_end(key)
+                return list(self._query_cache[key])
+            pending = self._query_pending.get(key)
+            owner = pending is None
+            if owner:
+                pending = Future()
+                self._query_pending[key] = pending
+        if not owner:
+            return list(pending.result())
+        try:
+            vector = array("d", self.embed(input_text))
+            with self._query_lock:
+                if vector:
+                    self._query_cache[key] = vector
+                    while len(self._query_cache) > QUERY_EMBEDDING_CACHE_SIZE:
+                        self._query_cache.popitem(last=False)
+                self._query_pending.pop(key)
+                pending.set_result(vector)
+            return list(vector)
+        except BaseException as exc:
+            with self._query_lock:
+                self._query_pending.pop(key, None)
+                pending.set_exception(exc)
+            raise
 
     def embed_passage(self, text: str) -> List[float]:
         prefix = "passage: " if self.uses_e5_retrieval_prefixes() else ""
@@ -750,6 +784,7 @@ class ProductDocsService:
         filters: Optional[Dict[str, Any]],
         limit: int,
         cursor: int = 0,
+        mode: str = "hybrid",
     ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
@@ -758,13 +793,15 @@ class ProductDocsService:
         cursor = int(cursor or 0)
         if cursor < 0:
             return {"ok": False, "error": "cursor must be zero or greater", "results": []}
+        if mode not in ("hybrid", "text", "semantic"):
+            return {"ok": False, "error": "mode must be hybrid, text or semantic", "results": []}
         cache_pages = self.cache.count_pages()
-        results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 else []
-        semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters)
+        results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 and mode != "semantic" else []
+        semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters) if mode != "text" else []
         results = rank_search_results(merge_results(results, semantic), query)
         live_used = False
         requested_end = cursor + limit
-        if not results or truthy(str(effective_filters.get("live", "false"))):
+        if mode != "semantic" and (not results or truthy(str(effective_filters.get("live", "false")))):
             live_used = True
             live_query = build_bookstack_search_query(query, effective_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
@@ -778,6 +815,7 @@ class ProductDocsService:
         result = {
             "ok": True,
             "query": query,
+            "mode": mode,
             "source": "cache+live" if live_used else "cache",
             "cursor": cursor,
             "limit": limit,
@@ -787,7 +825,7 @@ class ProductDocsService:
             "next_cursor": next_cursor,
             "results": [public_result(result, query) for result in page_results],
         }
-        if self.embeddings.enabled():
+        if mode != "text" and self.embeddings.enabled():
             coverage = self.fragment_index.status(self.embeddings.storage_model())
             if not coverage["semantic_ready"] or self.last_embedding_error:
                 result["semantic_status"] = "degraded" if self.last_embedding_error else "incomplete"
@@ -1373,10 +1411,11 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         filters: Optional[Dict[str, Any]] = None,
         limit: int = DEFAULT_SEARCH_LIMIT,
         cursor: int = 0,
+        mode: str = "hybrid",
     ):
-        """Search BookStack product docs. Start with 3-5 results; follow next_cursor when broader coverage is needed."""
+        """Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode."""
         try:
-            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor)
+            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor, mode=mode)
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "results": []}
         return wrap_result("search", result)
