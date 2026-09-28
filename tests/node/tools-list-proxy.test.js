@@ -9,6 +9,20 @@ const { spawn } = require('child_process');
 const proxyPath = path.resolve(__dirname, '../../vibecoding1c-mcp-host/tools-list-proxy/mcp-tools-list-proxy.js');
 const proxy = require(proxyPath);
 
+// Captured from the real BookStack FastMCP server: an additive argument must
+// ship with its proxy contract, otherwise existing client endpoints return 503.
+const bookstackTools = JSON.parse(fs.readFileSync(path.join(__dirname, '../fixtures/bookstack-tools.json'), 'utf8')).tools;
+const bookstackContract = JSON.parse(fs.readFileSync(path.join(path.dirname(proxyPath), 'tools-contract.json'), 'utf8')).servers.bookstack;
+const bookstackPayload = { jsonrpc: '2.0', id: 1, result: { tools: bookstackTools } };
+const bookstackPublic = JSON.parse(proxy.transformToolsListResponse(Buffer.from(JSON.stringify(bookstackPayload)), 'application/json', bookstackContract));
+const bookstackSearch = bookstackPublic.result.tools.find(tool => tool.name === 'search_docs');
+assert.strictEqual(bookstackSearch.inputSchema.properties.mode.default, 'hybrid');
+assert.ok(!bookstackSearch.inputSchema.required.includes('mode'));
+assert.deepStrictEqual(bookstackPublic.result.tools.map(tool => tool.name), ['search_docs', 'read_page', 'list_structure', 'reindex_docs', 'index_status']);
+const incompatibleBookstack = JSON.parse(JSON.stringify(bookstackPayload));
+incompatibleBookstack.result.tools[0].inputSchema.properties.mode.default = 'text';
+assert.throws(() => proxy.transformToolsListResponse(Buffer.from(JSON.stringify(incompatibleBookstack)), 'application/json', bookstackContract), /contract drift/);
+
 const tools = [
   {
     name: 'search',
