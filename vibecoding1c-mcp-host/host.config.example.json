@@ -36,7 +36,9 @@
     "reindexIntervalHours": 24,
     "indexOnStartup": true,
     "maxIndexPages": null,
-    "semanticMinScore": 0.82,
+    "semanticMinScore": null,
+    "chunkTokens": 1024,
+    "chunkOverlap": 64,
     "timeoutSeconds": 20
   },
   "mantisTicketServer": {
