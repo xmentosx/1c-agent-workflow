@@ -293,7 +293,7 @@ class Index:
             observed_at = self.state.clock()
             verifying = project["import_verify"]
             rows = self._page(project_id, page) if verifying else self.api.initial_page(project_id, page, 100)
-            headers = rows if verifying else [r.get("issue") or {"id": r["denied_id"], "updated_at": r["updated_at"]} for r in rows]
+            headers = rows if verifying else [r.get("issue") or {"id": r.get("denied_id") or r["skipped_id"], "updated_at": r["updated_at"]} for r in rows]
             signature = [(int(r["id"]), timestamp(r["updated_at"])) for r in headers]
             dates = [modified for _, modified in signature]
             if dates != sorted(dates, reverse=True):
@@ -304,6 +304,8 @@ class Index:
             for row in rows:
                 if self.stop.is_set() or self.paused.is_set():
                     return
+                if row.get("skipped_id") or (verifying and object_id(row["project"]) != project_id):
+                    continue
                 if verifying:
                     stored = self.state.one("SELECT modified FROM issues WHERE id=?", (int(row["id"]),))
                     modified = timestamp(row["updated_at"])
@@ -329,6 +331,7 @@ class Index:
                     self.state.run("UPDATE projects SET import_page=1,import_verify=1,import_digest='',previous_digest=? WHERE id=?", (fingerprint, project_id))
             else:
                 self.state.run("UPDATE projects SET import_page=?,import_digest=? WHERE id=?", (page + 1, fingerprint, project_id))
+            self.state.run("UPDATE projects SET error='' WHERE id=?", (project_id,))
             return
         boundary = max(0, project["checkpoint"] - self.overlap)
         # Two complete recent-window enumerations must agree, including equal
@@ -342,23 +345,25 @@ class Index:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Delta time budget reached; checkpoint retained, continuing on the next cycle")
                 rows = self._page(project_id, page)
-                signature = tuple((int(r["id"]), timestamp(r["updated_at"])) for r in rows)
+                signature = tuple((int(r["id"]), timestamp(r["updated_at"]), object_id(r["project"])) for r in rows)
                 if signature and signature == previous_page:
                     raise RuntimeError("Mantis repeated a page; checkpoint retained")
                 previous_page = signature
-                for issue_id, modified in signature:
+                for issue_id, modified, owner in signature:
                     if modified >= boundary:
-                        found[issue_id] = max(modified, found.get(issue_id, 0))
+                        found[issue_id] = (modified, owner)
                 if len(rows) < 100 or (rows and timestamp(rows[-1]["updated_at"]) < boundary):
                     return found
             raise RuntimeError("Recent delta window exceeded its page budget; checkpoint retained")
         first, second = scan(), scan()
         if first != second:
             raise RuntimeError("Mantis pagination moved; checkpoint retained for the next bounded attempt")
-        upper = max(second.values(), default=project["checkpoint"])
+        upper = max((modified for modified, _ in second.values()), default=project["checkpoint"])
         signature = digest(sorted(second.items()))
         server_time = getattr(self.api, "server_time", 0)
-        for issue_id, modified in second.items():
+        for issue_id, (modified, owner) in second.items():
+            if owner != project_id:
+                continue
             stored = self.state.one("SELECT modified FROM issues WHERE id=?", (issue_id,))
             seen = self.state.one("SELECT signature,modified FROM delta_progress WHERE project_id=? AND issue_id=?", (project_id, issue_id))
             # Equal-second edits have no version in compact headers: refresh the

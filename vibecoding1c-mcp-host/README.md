@@ -61,7 +61,20 @@ Ticket reads return original image attachments as MCP image content. Per-call OC
 default so vision-capable models inspect the original; clients without image support can repeat
 `read_ticket` with `image_ocr=true` to receive the draft OCR fallback alongside the original.
 
-The optional `toolsListProxy` (enabled in the example config) supports all permanently hosted
+BookStack uses its direct MCP endpoint (normally `:18005/mcp`). To remove an existing BookStack
+proxy, first change clients from `:22005/mcp` to the tracked `directUrl`, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-vibecoding1c-mcp-host.ps1 -Action bookstack-direct -ConfigPath .\host.config.json
+```
+
+The action qualifies the direct tools and `index_status`, publishes its URL in the registry,
+then removes only the BookStack proxy. It retains the running direct container and index.
+On publication failure the proxy and prior host state remain; repeat the same action after
+fixing the reported cause. Startup, `proxy`, and watchdog reconciliation preserve direct mode.
+Keep BookStack in `toolsListProxy.serverIds`: that list also selects watchdog targets.
+
+The optional `toolsListProxy` (enabled in the example config) supports the other permanently hosted
 MCP servers and excludes branch-local on-demand MCP. It forwards MCP sessions and `tools/call`
 unchanged. `tools/list` substitutes only reviewed top-level routing cards whose source-description
 hash still matches `tools-contract.json`; nested JSON Schema descriptions and unapproved or
@@ -247,6 +260,7 @@ reindex         Regenerate Report.txt, recreate RESET_DATABASE-capable servers.
 graph-cpu-migrate-model  Validate existing Graph vector dimensions and migrate one legacy CPU model id without rebuilding vectors.
 publish         Publish current host state to the registry repo.
 proxy           Transactionally rebuild and qualify tracked tools-list proxies, then publish.
+bookstack-direct Qualify and publish the existing direct BookStack endpoint, then remove its proxy.
 reconcile       Recover tracked runtimes/proxies and publish only MCP-ready endpoints.
 nightly-index-* Manage or run fresh-dump incremental Code and Graph indexing.
 ```

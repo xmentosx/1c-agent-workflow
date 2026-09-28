@@ -250,6 +250,8 @@ class Writer:
         if action == "create_issue" and not issue_id:
             candidates = []
             for header in self.api.headers(int(step["project_id"]), 1, 100):
+                if object_id(header["project"]) != int(step["project_id"]):
+                    continue
                 issue, _ = self.api.visible_issue(int(header["id"]))
                 if fields_match(issue, fields) and object_id(issue.get("reporter")) == record.get("user_id"):
                     candidates.append(int(issue["id"]))
