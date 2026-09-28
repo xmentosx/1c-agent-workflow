@@ -1,4 +1,4 @@
-function Get-BetaProjectIndexSettings {
+﻿function Get-BetaProjectIndexSettings {
     param([object]$Config, [object]$Server)
     # This opt-in belongs exclusively to new beta Code/Graph generations.
     if ([string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -ne "beta" -or
@@ -99,17 +99,23 @@ function Assert-BetaProjectContainerMounts {
     }
 }
 
-function Get-BetaCodeMetadataInventory {
-    param([string]$ContainerName, [object]$Activity)
+function Get-BetaCodeDatabasePath {
+    param([object]$Activity, [string]$FileName)
     $project = [string](Get-ObjectValue -Object $Activity -Name "metadataProjectId" -Default "")
     $generation = [string](Get-ObjectValue -Object $Activity -Name "metadataGenerationId" -Default "")
-    $database = "/app/chroma_db/metadata_details.db"
+    $database = "/app/chroma_db/$FileName"
     if ($project -or $generation) {
         if ($project -notmatch '^[a-zA-Z0-9_-]+$' -or $generation -notmatch '^[a-zA-Z0-9_-]+$') {
             throw "Code metadata generation identity is invalid; inspect stats before retrying beta-preflight."
         }
-        $database = "/app/chroma_db/projects/$project/generations/$generation/metadata_details.db"
+        $database = "/app/chroma_db/projects/$project/generations/$generation/$FileName"
     }
+    return $database
+}
+
+function Get-BetaCodeMetadataInventory {
+    param([string]$ContainerName, [object]$Activity)
+    $database = Get-BetaCodeDatabasePath -Activity $Activity -FileName "metadata_details.db"
     # Read the published database only. Do not import the server or start its indexer.
     $probe = "import json,sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps([r[0] for r in c.execute('SELECT full_path FROM objects ORDER BY full_path')],ensure_ascii=True))"
     $lines = @(Invoke-DockerCommandCapture -Arguments @("exec", $ContainerName, "python", "-c", $probe, $database) -TimeoutSec 60 -Description "read Code metadata identities for beta coverage")
@@ -131,11 +137,175 @@ function Get-BetaCodeMetadataInventory {
     return [pscustomobject]@{ keys = @($keys); rejected = @($rejected); total = $rows.Count }
 }
 
+function Get-BetaCodeFormInventory {
+    param([string]$ContainerName, [object]$Activity)
+    $database = Get-BetaCodeDatabasePath -Activity $Activity -FileName "form_index.db"
+    $probe = "import json,sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps([dict(zip(('object','name','path'),r)) for r in c.execute('SELECT object_name,form_name,file_path FROM forms ORDER BY object_name,form_name')],ensure_ascii=True))"
+    $lines = @(Invoke-DockerCommandCapture -Arguments @("exec", $ContainerName, "python", "-c", $probe, $database) -TimeoutSec 60 -Description "read Code form identities for beta coverage")
+    $rows = @(As-Array (ConvertFrom-Json -InputObject ($lines -join "`n")))
+    $expected = Get-ObjectValue -Object $Activity.coverage -Name "forms" -Default $null
+    if ($null -eq $expected -or $rows.Count -ne [long]$expected) { throw "Code form inventory disagrees with stats; wait for indexing to finish and rerun beta-preflight." }
+    $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($row in $rows) {
+        if (-not $row.object -or -not $row.name -or -not $row.path -or -not $keys.Add("$($row.object).$($row.name)|$($row.path)")) {
+            throw "Code form inventory contains invalid or duplicate identities."
+        }
+    }
+    return [pscustomobject]@{ rows = $rows; total = $rows.Count }
+}
+
+function New-BetaCodeSourceContext {
+    param([string]$ContainerName)
+    $root = Get-BetaContainerMountSource -ContainerName $ContainerName -Destination "/app/code"
+    # Only the pinned type/folder vocabulary comes from the image. XML is examined
+    # independently below; the production metadata parser is not a coverage oracle.
+    $probe = "import json,sys; sys.path.insert(0,'/app/src'); from config_report.settings import load_settings; print(json.dumps([dict(name=s.report_plural,folders=s.folder_names,tags=s.xml_element_names) for s in load_settings(None).object_types],ensure_ascii=True))"
+    $lines = @(Invoke-DockerCommandCapture -Arguments @("exec", $ContainerName, "python", "-c", $probe) -TimeoutSec 60 -Description "read pinned Code source vocabulary")
+    return @{ root = [IO.Path]::GetFullPath($root); types = @(As-Array (ConvertFrom-Json -InputObject ($lines -join "`n"))); files = @{}; xml = @{} }
+}
+
+function Get-BetaCodeSourcePath {
+    param([object]$Source, [string]$RelativePath)
+    if ([IO.Path]::IsPathRooted($RelativePath) -or $RelativePath -match '(^|[\\/])\.\.([\\/]|$)') { throw "Unsafe Code source path; inspect the inventory before retrying." }
+    $path = [IO.Path]::GetFullPath((Join-Path $Source.root $RelativePath))
+    if (-not $path.StartsWith($Source.root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Code source path leaves its root." }
+    return $path
+}
+
+function Set-BetaCodeSourceObservation {
+    param([object]$Source, [string]$Path, [string]$Value)
+    if ($Source.files.ContainsKey($Path)) {
+        $before = $Source.files[$Path]
+        if ($before -cne $Value) {
+            if ($before -eq 'absent' -or $Value -eq 'absent' -or ($before -ne 'present' -and $Value -ne 'present')) {
+                throw "Code source changed during coverage verification; wait for a coherent export and retry beta-preflight."
+            }
+            if ($Value -eq 'present') { return }
+        }
+    }
+    $Source.files[$Path] = $Value
+}
+
+function Read-BetaCodeSourceFile {
+    param([object]$Source, [string]$Path, [switch]$Xml)
+    # File.Exists hides access and I/O errors. Only explicit not-found is absence.
+    $stream = $null
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+    } catch [IO.FileNotFoundException] { Set-BetaCodeSourceObservation -Source $Source -Path $Path -Value 'absent'; return $false
+    } catch [IO.DirectoryNotFoundException] { Set-BetaCodeSourceObservation -Source $Source -Path $Path -Value 'absent'; return $false }
+    try {
+        if ($Xml) {
+            $memory = New-Object IO.MemoryStream
+            try { $stream.CopyTo($memory); $bytes = $memory.ToArray() } finally { $memory.Dispose() }
+            $sha = [Security.Cryptography.SHA256]::Create()
+            try { Set-BetaCodeSourceObservation -Source $Source -Path $Path -Value ([Convert]::ToBase64String($sha.ComputeHash($bytes))) } finally { $sha.Dispose() }
+            $document = New-Object Xml.XmlDocument
+            $document.XmlResolver = $null
+            $settings = New-Object Xml.XmlReaderSettings
+            $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+            $input = New-Object IO.MemoryStream(,$bytes)
+            $reader = [Xml.XmlReader]::Create($input, $settings)
+            try { $document.Load($reader) } finally { $reader.Dispose(); $input.Dispose() }
+            $Source.xml[$Path] = $document
+        } else { Set-BetaCodeSourceObservation -Source $Source -Path $Path -Value 'present' }
+        return $true
+    } finally { $stream.Dispose() }
+}
+
+function Get-BetaCodeSourceXml {
+    param([object]$Source, [string]$Path)
+    if (-not $Source.xml.ContainsKey($Path)) {
+        if (-not (Read-BetaCodeSourceFile -Source $Source -Path $Path -Xml)) { throw "Required Code XML is absent: $Path. Restore a coherent source export before retrying." }
+    }
+    return ,$Source.xml[$Path]
+}
+
+function Get-BetaXmlChildren {
+    param([object]$Node, [string[]]$Tags)
+    if ($null -ne $Node) { @($Node.ChildNodes | Where-Object { $_ -is [Xml.XmlElement] -and $Tags -ccontains $_.LocalName }) }
+}
+
+function Get-BetaXmlName {
+    param([object]$Node)
+    $properties = @(Get-BetaXmlChildren -Node $Node -Tags 'Properties')
+    if ($properties.Count -gt 1) { throw "Ambiguous XML Properties in Code source." }
+    if ($properties.Count -eq 1) {
+        $names = @(Get-BetaXmlChildren -Node $properties[0] -Tags 'Name')
+        if ($names.Count -ne 1) { throw "Missing or ambiguous XML Name in Code source." }
+        return $names[0].InnerText.Trim()
+    }
+    return $Node.InnerText.Trim()
+}
+
+function Resolve-BetaCodeSourceIdentity {
+    param([object]$Source, [string]$Identity)
+    $parts = $Identity.Split('.')
+    $types = @($Source.types | Where-Object { $_.name -ceq $parts[0] })
+    if ($parts.Count % 2 -ne 0 -or $types.Count -ne 1) { throw "Unsupported Code source identity '$Identity'; inspect source/parser differences before retrying." }
+    $type = $types[0]
+    $paths = @()
+    foreach ($folder in $type.folders) {
+        $path = Get-BetaCodeSourcePath -Source $Source -RelativePath "$folder/$($parts[1]).xml"
+        # Many missing members share a root. Cache first observations, then verify
+        # every observed file again once at the end of the coverage transaction.
+        $exists = if ($Source.files.ContainsKey($path)) { $Source.files[$path] -ne 'absent' } else { Read-BetaCodeSourceFile -Source $Source -Path $path -Xml }
+        if ($exists) { $paths += $path }
+    }
+    if ($paths.Count -gt 1) { throw "Ambiguous XML files for '$Identity'." }
+    if ($paths.Count -eq 0) {
+        if (-not $Source.ContainsKey('declarations')) {
+            $config = Get-BetaCodeSourceXml -Source $Source -Path (Get-BetaCodeSourcePath -Source $Source -RelativePath 'Configuration.xml')
+            $payload = @(Get-BetaXmlChildren -Node $config.DocumentElement -Tags 'Configuration')
+            if ($payload.Count -ne 1) { throw "Invalid Configuration.xml while resolving '$Identity'." }
+            $groups = @(Get-BetaXmlChildren -Node $payload[0] -Tags 'ChildObjects')
+            if ($groups.Count -ne 1) { throw "Missing or ambiguous Configuration.xml declarations." }
+            $Source.declarations = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+            foreach ($entry in $groups[0].ChildNodes) {
+                if ($entry -is [Xml.XmlElement]) { [void]$Source.declarations.Add("$($entry.LocalName)|$(Get-BetaXmlName -Node $entry)") }
+            }
+        }
+        foreach ($tag in $type.tags) {
+            if ($Source.declarations.Contains("$tag|$($parts[1])")) { throw "Declared Code object '$Identity' has no XML file; restore a coherent export before retrying." }
+        }
+        return [pscustomobject]@{ status = 'absent'; canonical = $null }
+    }
+    $xml = Get-BetaCodeSourceXml -Source $Source -Path $paths[0]
+    $nodes = @(Get-BetaXmlChildren -Node $xml.DocumentElement -Tags $type.tags)
+    if ($nodes.Count -ne 1) { throw "Invalid XML object for '$Identity'." }
+    $node = $nodes[0]
+    $name = Get-BetaXmlName -Node $node
+    if ($name -ine $parts[1]) { throw "XML object name disagrees with '$Identity'." }
+    $canonical = "$($parts[0]).$name"
+    $tags = @{ Реквизиты = 'Attribute'; ТабличныеЧасти = 'TabularSection'; Формы = 'Form'; Команды = 'Command'; Макеты = 'Template'; ЗначенияПеречисления = 'EnumValue'; Измерения = 'Dimension'; Ресурсы = 'Resource'; Подсистемы = 'Subsystem' }
+    for ($i = 2; $i -lt $parts.Count; $i += 2) {
+        if (-not $tags.ContainsKey($parts[$i])) { throw "Unsupported XML collection in '$Identity'." }
+        $groups = @(Get-BetaXmlChildren -Node $node -Tags 'ChildObjects')
+        if ($groups.Count -gt 1) { throw "Ambiguous XML ChildObjects in '$Identity'." }
+        $children = @()
+        if ($groups.Count -eq 1) { $children = @(Get-BetaXmlChildren -Node $groups[0] -Tags $tags[$parts[$i]] | Where-Object { (Get-BetaXmlName -Node $_) -ieq $parts[$i + 1] }) }
+        if ($children.Count -eq 0) { return [pscustomobject]@{ status = 'absent'; canonical = $null } }
+        if ($children.Count -ne 1) { throw "Ambiguous XML member in '$Identity'." }
+        $node = $children[0]
+        $canonical += ".$($parts[$i]).$(Get-BetaXmlName -Node $node)"
+    }
+    return [pscustomobject]@{ status = 'present'; canonical = $canonical }
+}
+
+function Assert-BetaCodeSourceUnchanged {
+    param([object]$Source)
+    foreach ($path in @($Source.files.Keys)) {
+        $before = $Source.files[$path]
+        [void](Read-BetaCodeSourceFile -Source $Source -Path $path -Xml:($before -notin @('present', 'absent')))
+        if ($Source.files[$path] -cne $before) { throw "Code source changed during coverage verification; wait for a coherent export and retry beta-preflight." }
+    }
+}
+
 function Assert-BetaCodeIndexCoverage {
-    param([object]$OldActivity, [object]$NewActivity, [switch]$Fresh)
+    param([object]$OldActivity, [object]$NewActivity, [switch]$Fresh, [object]$Source)
     if ($Fresh) {
         # Different model token budgets change chunk counts, but must retain source coverage.
-        foreach ($field in @("modules", "forms")) {
+        foreach ($field in @("modules")) {
             $oldCount = Get-ObjectValue -Object $OldActivity.coverage -Name $field -Default $null
             $newCount = Get-ObjectValue -Object $NewActivity.coverage -Name $field -Default $null
             if ($null -eq $oldCount -or $null -eq $newCount -or [long]$newCount -lt [long]$oldCount) {
@@ -153,9 +323,30 @@ function Assert-BetaCodeIndexCoverage {
         $newKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
         foreach ($key in @($newInventory.keys)) { [void]$newKeys.Add([string]$key) }
         $missing = @($oldInventory.keys | Where-Object { -not $newKeys.Contains([string]$_) })
-        if ($missing.Count -gt 0) {
-            throw "Fresh beta Code lost $($missing.Count) metadata object identities: $(($missing | Select-Object -First 5) -join ', '). Inspect source/parser differences before retrying; stable data is retained for rollback."
+        foreach ($key in $missing) {
+            if ($null -eq $Source) { throw "Fresh beta Code lost $($missing.Count) metadata object identities; current XML evidence is required before retrying." }
+            $resolved = Resolve-BetaCodeSourceIdentity -Source $Source -Identity $key
+            if ($resolved.status -ne 'absent' -and -not $newKeys.Contains([string]$resolved.canonical)) {
+                throw "Fresh beta Code lost metadata object identity '$key' present in current XML. Inspect the parser before retrying; stable data is retained for rollback."
+            }
         }
+        $oldForms = Get-ObjectValue -Object $OldActivity -Name "formInventory" -Default $null
+        $newForms = Get-ObjectValue -Object $NewActivity -Name "formInventory" -Default $null
+        if ($null -eq $oldForms -or $null -eq $newForms) { throw "Fresh beta Code form identities are missing; rerun beta-preflight with current host tooling." }
+        $oldFormKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        $newFormKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        foreach ($row in $oldForms.rows) { [void]$oldFormKeys.Add("$($row.object).$($row.name)|$($row.path)") }
+        foreach ($row in $newForms.rows) { [void]$newFormKeys.Add("$($row.object).$($row.name)|$($row.path)") }
+        foreach ($pair in @(@{ rows = $oldForms.rows; keys = $newFormKeys; expected = $false }, @{ rows = $newForms.rows; keys = $oldFormKeys; expected = $true })) {
+            foreach ($row in $pair.rows) {
+                if ($pair.keys.Contains("$($row.object).$($row.name)|$($row.path)")) { continue }
+                if ($null -eq $Source -or -not $row.path.StartsWith('/app/code/', [StringComparison]::Ordinal)) { throw "Code form needs verifiable current source coverage; inspect its source path before retrying." }
+                $path = Get-BetaCodeSourcePath -Source $Source -RelativePath $row.path.Substring(10)
+                $exists = Read-BetaCodeSourceFile -Source $Source -Path $path
+                if ($exists -ne $pair.expected) { throw "Fresh beta Code form identity '$($row.object).$($row.name)' disagrees with current source coverage. Inspect the form parser before retrying; stable data is retained for rollback." }
+            }
+        }
+        if ($null -ne $Source) { Assert-BetaCodeSourceUnchanged -Source $Source }
     }
     $oldCollections = Convert-ToHash -Object $OldActivity.collections
     $newCollections = Convert-ToHash -Object $NewActivity.collections
@@ -598,6 +789,8 @@ function Invoke-BetaCutover {
         if ($TargetServerId -eq "code" -and $context.freshProjectIndex) {
             $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.old.containerName -Activity $preflight.oldIndexActivity
             $preflight.oldIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
+            $forms = Get-BetaCodeFormInventory -ContainerName $context.old.containerName -Activity $preflight.oldIndexActivity
+            $preflight.oldIndexActivity | Add-Member -NotePropertyName formInventory -NotePropertyValue $forms -Force
         }
         $oldStopped = $false
         $stateChanged = $false
@@ -616,11 +809,15 @@ function Invoke-BetaCutover {
             $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)
             if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
             if ($TargetServerId -eq "code") {
+                $source = $null
                 if ($context.freshProjectIndex) {
                     $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.runtime.containerName -Activity $betaIndexActivity
                     $betaIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
+                    $forms = Get-BetaCodeFormInventory -ContainerName $context.runtime.containerName -Activity $betaIndexActivity
+                    $betaIndexActivity | Add-Member -NotePropertyName formInventory -NotePropertyValue $forms -Force
+                    $source = New-BetaCodeSourceContext -ContainerName $context.runtime.containerName
                 }
-                Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex
+                Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex -Source $source
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }

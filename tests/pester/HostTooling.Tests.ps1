@@ -158,6 +158,8 @@
             $new = [pscustomobject]@{ collections = @{ code = 40; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
             $old | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
             $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
+            $old | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            $new | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new } | Should -Throw "*lost indexed records*"
             $new.coverage.modules = 9
@@ -188,6 +190,8 @@
             $script:MetadataRows = @('Справочники.Контрагенты', 'ПланыВидовРасчета.Начисления')
             $new = [pscustomobject]@{ collections = @{ metadata = 2 }; coverage = @{ modules = 1; objects = 2; forms = 1 }; metadataProjectId = 'code-abc'; metadataGenerationId = 'generation-1' }
             $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new)
+            $old | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
+            $new | Add-Member -NotePropertyName formInventory -NotePropertyValue @{ rows = @() }
             $script:InventoryArguments[-1] | Should -Be '/app/chroma_db/projects/code-abc/generations/generation-1/metadata_details.db'
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
             # Equal/increased counts must not conceal replacement of a real object.
@@ -200,6 +204,97 @@
             { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*inventory disagrees with stats*'
             $new.metadataGenerationId = '../other'
             { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*generation identity is invalid*'
+        }
+    }
+
+    It "accepts only source-proven stale identities while retaining existing metadata and forms" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "source-coverage-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $root = Join-Path $TestDrive 'исходники с пробелом'
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $root 'Configuration.xml') -Encoding UTF8 -Value '<MetaDataObject xmlns="urn:1c"><Configuration><ChildObjects><Catalog>Клиенты</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Клиенты.xml') -Encoding UTF8 -Value '<MetaDataObject xmlns="urn:1c"><Catalog><Properties><Name>Клиенты</Name></Properties><ChildObjects><Attribute><Properties><Name>КодКлиента</Name></Properties></Attribute><Form>Основная</Form></ChildObjects></Catalog></MetaDataObject>'
+            Set-Content -LiteralPath (Join-Path $root 'НоваяФорма.xml') -Encoding UTF8 -Value '<Form />'
+            function New-FixtureSource { return @{ root = $root; types = @(@{ name = 'Справочники'; folders = @('Catalogs'); tags = @('Catalog') }); files = @{}; xml = @{} } }
+            $old = [pscustomobject]@{
+                collections = @{ metadata = 100; forms = 2 }; coverage = @{ modules = 10; objects = 5; forms = 2 }
+                metadataInventory = @{ keys = @('Справочники.Удаленный', 'Справочники.Удаленный.Реквизиты.Название', 'Справочники.Клиенты.Реквизиты.Устаревший', 'Справочники.клиенты', 'Справочники.Клиенты.Реквизиты.КодКлиента'); rejected = @() }
+                formInventory = @{ rows = @(@{ object = 'Справочники.Удаленный'; name = 'Старая'; path = '/app/code/Старая.xml' }, @{ object = 'Справочники.Клиенты'; name = 'Удаленная'; path = '/app/code/Удаленная.xml' }) }
+            }
+            $new = [pscustomobject]@{
+                collections = @{ metadata = 40; forms = 1 }; coverage = @{ modules = 10; objects = 3; forms = 1 }
+                metadataInventory = @{ keys = @('Справочники.Клиенты', 'Справочники.Клиенты.Реквизиты.КодКлиента', 'Справочники.Другой'); rejected = @() }
+                formInventory = @{ rows = @(@{ object = 'Справочники.Клиенты'; name = 'Новая'; path = '/app/code/НоваяФорма.xml' }) }
+            }
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Not -Throw
+            # A current member omitted by the beta parser still blocks with larger totals.
+            $new.metadataInventory.keys = @('Справочники.Клиенты', 'Справочники.Другой', 'Справочники.ЕщеОдин', 'Справочники.Новый', 'Справочники.Адреса', 'Справочники.Телефоны', 'Справочники.Контакты')
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*present in current XML*'
+            $new.metadataInventory.keys += 'Справочники.Клиенты.Реквизиты.КодКлиента'
+            # A case alias is not a deletion: canonical XML identity must be in beta.
+            $new.metadataInventory.keys = @($new.metadataInventory.keys | Where-Object { $_ -cne 'Справочники.Клиенты' })
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*present in current XML*'
+            $new.metadataInventory.keys += 'Справочники.Клиенты'
+            $new.coverage.objects = $new.metadataInventory.keys.Count
+            # Name prefixes confer no exemption: a real file for the old form blocks.
+            Set-Content -LiteralPath (Join-Path $root 'Удаленная.xml') -Value '<Form />'
+            foreach ($name in @('Выбор', 'Список')) {
+                Set-Content -LiteralPath (Join-Path $root "$name.xml") -Value '<Form />'
+                $new.formInventory.rows += @{ object = 'Справочники.Клиенты'; name = $name; path = "/app/code/$name.xml" }
+            }
+            $new.coverage.forms = $new.formInventory.rows.Count
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh -Source (New-FixtureSource) } | Should -Throw '*form identity*current source coverage*'
+        }
+    }
+
+    It "fails closed on incomplete ambiguous unreadable or changing XML source evidence" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "source-errors-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $root = Join-Path $TestDrive 'проверка XML с пробелом'
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs') -Force | Out-Null
+            $configXml = Join-Path $root 'Configuration.xml'
+            Set-Content -LiteralPath $configXml -Encoding UTF8 -Value '<MetaDataObject><Configuration><ChildObjects><Catalog>Клиенты</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            function New-FixtureSource { return @{ root = $root; types = @(@{ name = 'Справочники'; folders = @('Catalogs'); tags = @('Catalog') }); files = @{}; xml = @{} } }
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Клиенты' } | Should -Throw '*has no XML file*'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Неизвестные.Клиенты' } | Should -Throw '*Unsupported*'
+            { Get-BetaCodeSourcePath -Source (New-FixtureSource) -RelativePath '../foreign.xml' } | Should -Throw '*Unsafe*'
+            # A directory at the file path produces an access error, never absence.
+            New-Item -ItemType Directory -Path (Join-Path $root 'Catalogs/Ошибка.xml') | Out-Null
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Ошибка' } | Should -Throw
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Сломанный.xml') -Value '<broken>'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Сломанный' } | Should -Throw
+            Set-Content -LiteralPath (Join-Path $root 'Catalogs/Дубликат.xml') -Encoding UTF8 -Value '<MetaDataObject><Catalog><Properties><Name>Дубликат</Name></Properties><ChildObjects><Attribute><Properties><Name>Код</Name></Properties></Attribute><Attribute><Properties><Name>Код</Name></Properties></Attribute></ChildObjects></Catalog></MetaDataObject>'
+            { Resolve-BetaCodeSourceIdentity -Source (New-FixtureSource) -Identity 'Справочники.Дубликат.Реквизиты.Код' } | Should -Throw '*Ambiguous*'
+            $source = New-FixtureSource
+            (Resolve-BetaCodeSourceIdentity -Source $source -Identity 'Справочники.Отсутствующий').status | Should -Be 'absent'
+            Set-Content -LiteralPath $configXml -Encoding UTF8 -Value '<MetaDataObject><Configuration><ChildObjects><Catalog>Отсутствующий</Catalog></ChildObjects></Configuration></MetaDataObject>'
+            { Assert-BetaCodeSourceUnchanged -Source $source } | Should -Throw '*source changed*'
+        }
+    }
+
+    It "reads published form inventory in readonly mode and validates its stats count" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive 'form-inventory-config.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $Arguments[4] | Should -Match 'mode=ro'
+                $Arguments[-1] | Should -Be '/app/chroma_db/projects/code-abc/generations/generation-1/form_index.db'
+                return '[{"object":"Справочники.Клиенты","name":"Форма","path":"/app/code/Catalogs/Клиенты/Forms/Форма/Ext/Form.xml"}]'
+            }
+            $activity = @{ coverage = @{ forms = 1 }; metadataProjectId = 'code-abc'; metadataGenerationId = 'generation-1' }
+            $inventory = Get-BetaCodeFormInventory -ContainerName 'beta-code' -Activity $activity
+            $inventory.total | Should -Be 1
+            $inventory.rows[0].name | Should -Be 'Форма'
+            $activity.coverage.forms = 2
+            { Get-BetaCodeFormInventory -ContainerName 'beta-code' -Activity $activity } | Should -Throw '*inventory disagrees with stats*'
         }
     }
 
@@ -237,6 +332,7 @@
             function Ensure-ToolsListProxyImage {}
             function Get-BetaConfigurationIndexActivity { return @{ running = $false } }
             function Get-BetaCodeMetadataInventory { return @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 1 } }
+            function Get-BetaCodeFormInventory { return @{ rows = @(); total = 0 } }
             function Stop-StableForBetaCutover { $script:FreshSequence += "stop-stable" }
             function Initialize-BetaProjectVolumes { $script:FreshSequence += "prepare-fresh-volumes" }
             function Copy-BetaHostDirectory { throw "must not copy layout 2 into a fresh index" }
