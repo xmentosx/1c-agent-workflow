@@ -21,6 +21,80 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(
+        @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
+        @{ Existing = $false; Deny = $true }, @{ Existing = $true; Deny = $true }
+    ) {
+        param($Existing, $Deny)
+        $tempRoot = Join-Path $TestDrive ("proxy ключ с пробелом " + $Existing + $Deny)
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; baseUrl = 'http://localhost' }
+            $tokenPath = Join-Path $tempRoot 'beta-proxy-secrets\templates.operator-token'
+            $contractPath = Join-Path $tempRoot 'contract.json'
+            Write-Text -Path $contractPath -Value '{}'
+            if ($Existing) { Write-Text -Path $tokenPath -Value 'old-fixture-token' }
+            $script:TokenWrites = 0
+            $script:TokenDockerCalls = @()
+            $script:TokenRealWrite = (Get-Command Write-Text).ScriptBlock
+            $script:TokenRealAcl = (Get-Command Set-HostFileAccessControl).ScriptBlock
+            function Set-Acl { throw 'Provider Set-Acl must not request SACL privilege' }
+            function Set-HostFileAccessControl {
+                param($LiteralPath, $AclObject)
+                $LiteralPath | Should -BeExactly $tokenPath
+                if ($Deny) { throw 'fixture ACL denied' }
+                & $script:TokenRealAcl -LiteralPath $LiteralPath -AclObject $AclObject
+            }
+            function Write-Text {
+                param($Path, $Value)
+                if ($Value -eq 'new-fixture-token') {
+                    $acl = Get-Acl -LiteralPath $Path
+                    $acl.AreAccessRulesProtected | Should -BeTrue
+                    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+                    $rules.Count | Should -Be 2
+                    @($rules.IdentityReference.Value) | Should -Contain 'S-1-5-18'
+                    @($rules.IdentityReference.Value) | Should -Contain ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+                    $script:TokenWrites++
+                }
+                & $script:TokenRealWrite -Path $Path -Value $Value
+            }
+            function Test-ToolsListProxyTarget { return $true }
+            function Get-ToolsListProxySettings { return @{ portOffset = 4000; contractPath = $contractPath; image = 'fixture-proxy' } }
+            function Get-TemplatesBetaOperatorToken { return 'new-fixture-token' }
+            function Ensure-ToolsListProxyImage { }
+            function Get-HostContainerPublishState { return 'missing' }
+            function Wait-ToolsListProxyReady { return $true }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                $script:TokenDockerCalls += ,$Arguments
+                ($Arguments -join '|') | Should -Not -Match 'new-fixture-token'
+                $Arguments | Should -Contain "$tokenPath`:/app/operator-token:ro"
+            }
+            $runtime = [pscustomobject]@{ id = 'templates'; channel = 'beta'; containerName = 'fixture-templates'; hostPort = 18001; url = 'http://localhost:18001/mcp' }
+            if ($Deny) {
+                { Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime } | Should -Throw '*fixture ACL denied*'
+                $script:TokenWrites | Should -Be 0
+                $script:TokenDockerCalls.Count | Should -Be 0
+                if ($Existing) { (Read-Text -Path $tokenPath) | Should -BeExactly 'old-fixture-token' }
+                else { (Read-Text -Path $tokenPath) | Should -BeNullOrEmpty }
+                # The same operation continues after the ACL owner grants access.
+                $Deny = $false
+            }
+            foreach ($attempt in 1..2) {
+                $runtime.url = 'http://localhost:18001/mcp'
+                Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                $runtime.toolsContractStatus | Should -Be 'qualified'
+            }
+            $script:TokenWrites | Should -Be 2
+            $script:TokenDockerCalls.Count | Should -Be 2
+            (Read-Text -Path $tokenPath) | Should -BeExactly 'new-fixture-token'
+            Remove-Variable -Scope Script -Name TokenWrites, TokenDockerCalls, TokenRealWrite, TokenRealAcl
+        }
+    }
+
     It "scopes the BookStack credential profile without changing any other MCP" -Tag BookStackQwen {
         $tempRoot = Join-Path $TestDrive "BookStack ключ с пробелом"
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null

@@ -2529,6 +2529,19 @@ function Set-HostFileAccessControl {
     else { $file.SetAccessControl($AclObject) }
 }
 
+function Initialize-HostPrivateFile {
+    param([string]$LiteralPath)
+    # Apply the DACL before the first secret write and on every later write.
+    # A failed ACL update retains existing bytes and prevents the caller's write.
+    if (-not (Test-Path -LiteralPath $LiteralPath)) { Write-Text -Path $LiteralPath -Value "" }
+    $acl = [Security.AccessControl.FileSecurity]::new()
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
+        $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, "FullControl", "Allow"))
+    }
+    Set-HostFileAccessControl -LiteralPath $LiteralPath -AclObject $acl
+}
+
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2597,14 +2610,7 @@ function Start-ComposeServer {
     }
     Write-Text -Path $targetCompose -Value $composeText
     if ($null -ne (Get-BetaProjectIndexSettings -Config $Config -Server $Server)) {
-        # Protect a new empty file before it receives credentials; an ACL failure must not expose them.
-        if (-not (Test-Path -LiteralPath $envFilePath)) { Write-Text -Path $envFilePath -Value "" }
-        $acl = [Security.AccessControl.FileSecurity]::new()
-        $acl.SetAccessRuleProtection($true, $false)
-        foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
-            $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, "FullControl", "Allow"))
-        }
-        Set-HostFileAccessControl -LiteralPath $envFilePath -AclObject $acl
+        Initialize-HostPrivateFile -LiteralPath $envFilePath
     }
     Write-DotEnv -Path $envFilePath -Values $envValues
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
@@ -2828,7 +2834,10 @@ function Enable-ToolsListProxyForRuntime {
     $operatorTokenPath = ""
     if ($operatorToken) {
         $operatorTokenPath = Join-Path (Join-Path (Get-StateRoot -Config $Config) "beta-proxy-secrets") "templates.operator-token"
-        if (-not $DryRun) { Write-Text -Path $operatorTokenPath -Value $operatorToken }
+        if (-not $DryRun) {
+            Initialize-HostPrivateFile -LiteralPath $operatorTokenPath
+            Write-Text -Path $operatorTokenPath -Value $operatorToken
+        }
     }
     if ($DryRun) {
         Write-Host "Would qualify MCP tools-list proxy for '$id': $proxyUrl -> $directUrl"
