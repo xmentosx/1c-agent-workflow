@@ -114,13 +114,16 @@ services:
             }
             $script:GraphCredentialAclSeen = $false
             $script:GraphIsolationDockerCalls = @()
-            function Set-Acl {
+            $script:GraphRealSetAccessControl = (Get-Command Set-HostFileAccessControl).ScriptBlock
+            function Set-Acl { throw "The provider requires SeSecurityPrivilege on a repeated protected write" }
+            function Set-HostFileAccessControl {
                 param($LiteralPath, $AclObject)
                 $LiteralPath | Should -Not -Be $stableEnv
-                (Read-Text -Path $LiteralPath) | Should -BeNullOrEmpty
+                if (-not $script:GraphCredentialAclSeen) { (Read-Text -Path $LiteralPath) | Should -BeNullOrEmpty }
+                else { (Read-DotEnv -Path $LiteralPath).EMBEDDING_API_KEY | Should -BeExactly "fixture-private-key" }
                 $script:GraphCredentialAclSeen = $true
                 if ($DenyAcl) { throw "fixture access denied" }
-                Microsoft.PowerShell.Security\Set-Acl -LiteralPath $LiteralPath -AclObject $AclObject
+                & $script:GraphRealSetAccessControl -LiteralPath $LiteralPath -AclObject $AclObject
             }
             function Invoke-DockerCommandChecked {
                 param($Arguments)
@@ -131,6 +134,7 @@ services:
             if ($DenyAcl) {
                 { Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState } | Should -Throw "*fixture access denied*"
             } else {
+                Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState
                 Start-ComposeServer -Config $config -Server $server -Runtime $runtime -ConfigState $configState
             }
             $script:GraphCredentialAclSeen | Should -BeTrue
@@ -150,9 +154,9 @@ services:
                 $rules.Count | Should -Be 2
                 @($rules.IdentityReference.Value) | Should -Contain ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
                 @($rules.IdentityReference.Value) | Should -Contain "S-1-5-18"
-                $script:GraphIsolationDockerCalls.Count | Should -Be 2
+                $script:GraphIsolationDockerCalls.Count | Should -Be 4
             }
-            Remove-Variable -Scope Script -Name GraphCredentialAclSeen, GraphIsolationDockerCalls
+            Remove-Variable -Scope Script -Name GraphCredentialAclSeen, GraphIsolationDockerCalls, GraphRealSetAccessControl
         }
     }
     It "probes the authenticated embedding catalog without treating OpenRouter chat models as embeddings" -Tag BetaCutover {

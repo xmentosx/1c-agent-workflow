@@ -2445,6 +2445,15 @@ function Add-GraphCpuEmbeddingBootstrapToComposeText {
     return ($ComposeText.Substring(0, $match.Groups["body"].Index) + $commandLine + $body + $ComposeText.Substring($match.Index + $match.Length))
 }
 
+function Set-HostFileAccessControl {
+    param([string]$LiteralPath, [Security.AccessControl.FileSecurity]$AclObject)
+    # Persist only the modified DACL. Windows PowerShell's Set-Acl provider can
+    # request SACL access on a protected existing file, requiring SeSecurityPrivilege.
+    $file = [IO.FileInfo]::new($LiteralPath)
+    if ($PSVersionTable.PSEdition -eq "Core") { [IO.FileSystemAclExtensions]::SetAccessControl($file, $AclObject) }
+    else { $file.SetAccessControl($AclObject) }
+}
+
 function Start-ComposeServer {
     param(
         [object]$Config,
@@ -2519,7 +2528,7 @@ function Start-ComposeServer {
         foreach ($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.Principal.SecurityIdentifier]::new("S-1-5-18"))) {
             $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($sid, "FullControl", "Allow"))
         }
-        Set-Acl -LiteralPath $envFilePath -AclObject $acl
+        Set-HostFileAccessControl -LiteralPath $envFilePath -AclObject $acl
     }
     Write-DotEnv -Path $envFilePath -Values $envValues
     Write-Host "Starting compose project: $($Runtime.composeProject) -> $($Runtime.url)"
