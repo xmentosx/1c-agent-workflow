@@ -210,6 +210,112 @@
         }
     }
 
+    It "uses direct BookStack for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect {
+        $configPath = Join-Path $TestDrive 'bookstack direct кириллица.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @() }
+            function Read-HostState { return $state }
+            function Get-HostPort { return 18005 }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Invoke-DockerCommandChecked { throw 'unexpected Docker mutation' }
+            function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
+            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'mantis') } }
+            $definition = @{ id = 'bookstack'; scope = 'global'; image = 'pinned'; containerNameTemplate = 'itl-bookstack' }
+            foreach ($legacy in @($false, $true)) {
+                if ($legacy) { $state.servers = @(@{ id = 'bookstack'; scope = 'global'; configId = ''; url = 'http://host:22005/mcp'; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
+                $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
+                Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                $runtime.endpointMode | Should -Be 'direct'
+                $runtime.url | Should -Be 'http://host:18005/mcp'
+                $runtime.directUrl | Should -Be $runtime.url
+                $runtime.proxyPort | Should -Be 0
+                $runtime.proxyContainerName | Should -BeNullOrEmpty
+                $runtime.proxyContractPath | Should -BeNullOrEmpty
+            }
+            $definition.id = 'mantis'
+            (New-ServerRuntime -Config $config -Server $definition -Index 0).endpointMode | Should -Be 'proxy'
+            $state.servers = @($runtime)
+            '{}' | Set-Content (Get-HostStatePath -Config $config)
+            Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId bookstack
+        }
+    }
+
+    It "publishes direct BookStack before proxy removal and retains other runtimes and index metadata" -Tag BookStackDirect {
+        $configPath = Join-Path $TestDrive 'bookstack-migrate.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive; baseUrl = 'http://host' } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ id = 'bookstack'; scope = 'global'; configId = ''; containerName = 'bookstack'; hostPort = 18005; url = 'http://host:22005/mcp'; directUrl = 'http://host:18005/mcp'; proxyContainerName = 'custom-bookstack-proxy'; indexedAt = 'retained'; image = 'unchanged' }
+            $other = @{ id = 'mantis'; scope = 'global'; containerName = 'mantis'; url = 'http://host:22006/mcp' }
+            Write-HostState -Config $config -State @{ servers = @($old, $other) }
+            $script:DirectTest = @{ events = @(); proxy = 'running' }
+            function Get-HostServerPublishStatus { param($Server) $Server.url | Should -Be 'http://host:18005/mcp'; $script:DirectTest.events += 'tools'; return 'running' }
+            function Get-HostServerFunctionalHealth { $script:DirectTest.events += 'health'; return @{ status = 'qualified' } }
+            function Publish-Registry {
+                param($Config)
+                $current = Get-TrackedHostServerForIdentity -Config $Config -ServerId bookstack -Scope global
+                $current.endpointMode | Should -Be 'direct'
+                $current.url | Should -Be 'http://host:18005/mcp'
+                $script:DirectTest.events += 'publish'
+            }
+            function Get-HostContainerPublishState { param($ContainerName) $script:DirectTest.events += "inspect:$ContainerName"; return $script:DirectTest.proxy }
+            function Invoke-DockerCommandChecked { param($Arguments) ($Arguments -join ' ') | Should -Be 'rm -f custom-bookstack-proxy'; $script:DirectTest.events += 'remove'; $script:DirectTest.proxy = 'missing' }
+            Enable-BookStackDirectEndpoint -Config $config
+            ($script:DirectTest.events -join ',') | Should -Be 'tools,health,publish,inspect:custom-bookstack-proxy,remove'
+            $saved = Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global
+            $saved.indexedAt | Should -Be 'retained'
+            $saved.image | Should -Be 'unchanged'
+            $saved.containerName | Should -Be 'bookstack'
+            $saved.proxyContainerName | Should -BeNullOrEmpty
+            (Get-TrackedHostServerForIdentity -Config $config -ServerId mantis -Scope global).url | Should -Be $other.url
+            # A repeated action is harmless after the proxy is already gone.
+            Enable-BookStackDirectEndpoint -Config $config
+            @($script:DirectTest.events | Where-Object { $_ -eq 'remove' }).Count | Should -Be 1
+            $lease = Enter-McpHostMaintenanceLock -Config $config -Operation fixture
+            $lease.acquired | Should -BeTrue
+            { Enable-BookStackDirectEndpoint -Config $config } | Should -Throw '*repeat bookstack-direct*'
+            Exit-McpHostMaintenanceLock -Lease $lease
+            Remove-Variable -Scope Script -Name DirectTest
+        }
+    }
+
+    It "retains a working route on <Failure> failure and resumes BookStack proxy removal" -Tag BookStackDirect -TestCases @(
+        @{ Failure = 'tools' }, @{ Failure = 'health' }, @{ Failure = 'publish' }, @{ Failure = 'remove' }
+    ) {
+        param($Failure)
+        $configPath = Join-Path $TestDrive "bookstack-failure-$Failure.json"
+        @{ schemaVersion = 1; stateRoot = (Join-Path $TestDrive $Failure) } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $old = @{ id = 'bookstack'; scope = 'global'; configId = ''; containerName = 'bookstack'; hostPort = 18005; url = 'http://host:22005/mcp'; directUrl = 'http://host:18005/mcp'; proxyContainerName = 'custom-proxy' }
+            Write-HostState -Config $config -State @{ servers = @($old) }
+            $script:DirectTest = @{ failure = $Failure; removed = $false }
+            function Get-HostServerPublishStatus { if ($script:DirectTest.failure -eq 'tools') { return 'unreachable' }; return 'running' }
+            function Get-HostServerFunctionalHealth { return @{ status = $(if ($script:DirectTest.failure -eq 'health') { 'degraded' } else { 'qualified' }); message = 'fixture' } }
+            function Publish-Registry { if ($script:DirectTest.failure -eq 'publish') { throw 'fixture publish failure' } }
+            function Get-HostContainerPublishState { return 'running' }
+            function Invoke-DockerCommandChecked {
+                param($Arguments)
+                ($Arguments -join ' ') | Should -Be 'rm -f custom-proxy'
+                if ($script:DirectTest.failure -eq 'remove') { throw 'fixture Docker failure' }
+                $script:DirectTest.removed = $true
+            }
+            { Enable-BookStackDirectEndpoint -Config $config } | Should -Throw '*repeat bookstack-direct*'
+            $script:DirectTest.removed | Should -BeFalse
+            $saved = Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global
+            $saved.url | Should -Be $(if ($Failure -eq 'remove') { $old.directUrl } else { $old.url })
+            $saved.proxyContainerName | Should -Be 'custom-proxy'
+            $script:DirectTest.failure = ''
+            Enable-BookStackDirectEndpoint -Config $config
+            $script:DirectTest.removed | Should -BeTrue
+            (Get-TrackedHostServerForIdentity -Config $config -ServerId bookstack -Scope global).proxyContainerName | Should -BeNullOrEmpty
+            Remove-Variable -Scope Script -Name DirectTest
+        }
+    }
+
     It "keeps OpenRouter credentials and Linux volumes exclusive to beta Code and Graph" -Tag BetaCutover {
         $tempRoot = Join-Path $TestDrive "beta ключ с пробелом"
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null

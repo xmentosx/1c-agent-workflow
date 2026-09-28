@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
+    [ValidateSet("setup", "start", "stop", "status", "refresh-config", "reindex", "graph-cpu-migrate-model", "bookstack-direct", "publish", "proxy", "reconcile", "beta-preflight", "beta-cutover", "stable-preflight", "stable-cutover", "watchdog-install", "watchdog-status", "watchdog-run", "watchdog-uninstall", "nightly-index-install", "nightly-index-status", "nightly-index-run", "nightly-index-uninstall", "dump-config")]
     [string]$Action = "status",
 
     [string]$ConfigPath = ".\host.config.json",
@@ -4504,7 +4504,9 @@ function New-ServerRuntime {
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId
     $endpointMode = [string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "proxy")
-    if ($endpointMode -eq "direct") {
+    $reuseNative = $endpointMode -eq "direct"
+    if ($id -eq "bookstack") { $endpointMode = "direct" }
+    if ($reuseNative) {
         $hostPort = [int]$tracked.hostPort
         if ([string]$tracked.image -ceq $image) { $containerName = [string]$tracked.containerName }
     }
@@ -4523,11 +4525,11 @@ function New-ServerRuntime {
         containerName = $containerName
         proxyContainerName = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "") })
         proxyContractPath = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContractPath" -Default "") })
-        composeProject = $(if ($endpointMode -eq "direct" -and [string]$tracked.image -ceq $image) { [string](Get-ObjectValue -Object $tracked -Name "composeProject" -Default $containerName) } else { Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id })
+        composeProject = $(if ($reuseNative -and [string]$tracked.image -ceq $image) { [string](Get-ObjectValue -Object $tracked -Name "composeProject" -Default $containerName) } else { Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id })
         image = $image
         internalPort = $internalPort
         hostPort = $hostPort
-        url = $(if ($endpointMode -eq "direct") { [string]$tracked.url } else { "$baseUrl`:$hostPort/mcp" })
+        url = $(if ($reuseNative) { [string]$tracked.url } else { "$baseUrl`:$hostPort/mcp" })
         health = "unknown"
         platformVersion = $(if ($id -eq "docs") { [string]$localValues["HELP_PLATFORM_VERSION"] } else { "" })
         bspVersion = $(if ($id -eq "ssl") { [string]$localValues["BSP_VERSION"] } else { "" })
@@ -4539,6 +4541,63 @@ function New-ServerRuntime {
         sourceFingerprint = $(if ($ConfigState) { $ConfigState.sourceFingerprint } else { "" })
         reportHash = $(if ($ConfigState) { $ConfigState.reportHash } else { "" })
         indexedAt = $(if ($ConfigState) { $ConfigState.indexedAt } else { "" })
+    }
+}
+
+function Enable-BookStackDirectEndpoint {
+    param([object]$Config)
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "bookstack-direct" -WaitSeconds 0
+    if (-not $lease.acquired) {
+        throw "Host maintenance is active. Wait for its completion, then repeat bookstack-direct; the current BookStack remains available."
+    }
+    try {
+        $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId "bookstack" -Scope "global"
+        if ($null -eq $tracked) { throw "No tracked BookStack runtime. Run setup -ServerId bookstack first." }
+        $native = Convert-ToHash -Object $tracked
+        $containerName = [string](Get-ObjectValue -Object $tracked -Name "containerName" -Default "")
+        $hostPort = [int](Get-ObjectValue -Object $tracked -Name "hostPort" -Default 0)
+        if (-not $containerName -or $hostPort -le 0) { throw "Tracked BookStack has no direct container/port; repair its host state through setup -ServerId bookstack." }
+        $proxyName = [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
+        if ($proxyName -eq $containerName) { throw "BookStack proxy and direct container identities must differ." }
+        $baseUrl = ([string](Get-ObjectValue -Object $Config -Name "baseUrl" -Default "http://localhost")).TrimEnd("/")
+        $url = [string](Get-ObjectValue -Object $tracked -Name "directUrl" -Default "$baseUrl`:$hostPort/mcp")
+        Set-NativeRuntimeEndpoint -Runtime $native -Url $url
+        if ($DryRun) {
+            Write-Host "DRY-RUN: qualify and publish BookStack at $url, then remove $proxyName. The direct container and index are retained."
+            return
+        }
+        if ((Get-HostServerPublishStatus -Server $native) -ne "running") {
+            throw "BookStack direct MCP is not ready at $url. Restore its availability and repeat bookstack-direct; the proxy is retained."
+        }
+        $health = Get-HostServerFunctionalHealth -Server $native
+        if ($health.status -ne "qualified") {
+            throw "BookStack direct qualification failed: $($health.message). Restore its availability and repeat bookstack-direct; the proxy is retained."
+        }
+        # Retain the cleanup target until removal succeeds; direct mode ignores proxy routing.
+        $native["proxyContainerName"] = $proxyName
+        Update-HostStateServers -Config $Config -ServerStates @($native)
+        try {
+            Publish-Registry -Config $Config
+        } catch {
+            Update-HostStateServers -Config $Config -ServerStates @($tracked)
+            throw "BookStack registry publication failed; prior host state and proxy are retained. Resolve publication and repeat bookstack-direct. $($_.Exception.Message)"
+        }
+        $proxyState = Get-HostContainerPublishState -ContainerName $proxyName
+        if ($proxyState -eq "unknown") {
+            throw "BookStack is published directly, but proxy inspection failed. Restore Docker access and repeat bookstack-direct to finish removal."
+        }
+        if ($proxyState -ne "missing") {
+            try {
+                Invoke-DockerCommandChecked -Arguments @("rm", "-f", $proxyName)
+            } catch {
+                throw "BookStack is published directly, but proxy removal failed. Restore Docker access and repeat bookstack-direct. $($_.Exception.Message)"
+            }
+        }
+        Set-NativeRuntimeEndpoint -Runtime $native -Url $url
+        Update-HostStateServers -Config $Config -ServerStates @($native)
+        Write-Host "BookStack is published directly at $url; its tools-list proxy is removed."
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
     }
 }
 
@@ -5246,6 +5305,11 @@ function Show-HostStatus {
 . (Join-Path $PSScriptRoot "beta-cutover.ps1")
 $config = Read-HostConfig
 switch ($Action) {
+    "bookstack-direct" {
+        if ($ConfigId -or ($ServerId -and $ServerId -ne "bookstack")) { throw "bookstack-direct accepts only global BookStack." }
+        Enable-BookStackDirectEndpoint -Config $config
+        Show-HostStatus -Config $config -TargetServerId "bookstack"
+    }
     "stable-preflight" {
         if (-not $ReleaseManifest) { throw "stable-preflight requires -ReleaseManifest." }
         Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
