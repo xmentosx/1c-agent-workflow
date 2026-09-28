@@ -7,7 +7,8 @@ param(
     [string]$ConfigId = "",
     [string]$ServerId = "",
     [string]$ReleaseManifest = "",
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$RecreateBookStack
 )
 
 Set-StrictMode -Version Latest
@@ -20,6 +21,9 @@ $script:PythonExecutable = ""
 $script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 $script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
 $script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP host nightly configuration indexing."
+if ($RecreateBookStack -and ($Action -ne "start" -or $ServerId -ne "bookstack" -or $ConfigId)) {
+    throw "RecreateBookStack requires -Action start -ServerId bookstack without ConfigId; it preserves the prepared cache."
+}
 $script:WatchdogTaskPath = "\"
 
 function Read-Text {
@@ -1062,7 +1066,9 @@ function Get-BookStackProductDocsServerDefinition {
             [ordered]@{ name = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; from = "BOOKSTACK_REINDEX_INTERVAL_HOURS"; default = "24"; required = $false },
             [ordered]@{ name = "BOOKSTACK_INDEX_ON_STARTUP"; from = "BOOKSTACK_INDEX_ON_STARTUP"; default = "true"; required = $false },
             [ordered]@{ name = "BOOKSTACK_MAX_INDEX_PAGES"; from = "BOOKSTACK_MAX_INDEX_PAGES"; required = $false },
-            [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; default = "0.82"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_CHUNK_TOKENS"; from = "BOOKSTACK_CHUNK_TOKENS"; default = "1024"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_CHUNK_OVERLAP"; from = "BOOKSTACK_CHUNK_OVERLAP"; default = "64"; required = $false },
             [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
@@ -1266,6 +1272,16 @@ function Test-HostServerNeedsEmbedding {
 function Get-HostEmbeddingSettings {
     param([object]$Config, [object]$Server = $null)
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
+    $bookStackOverride = $null
+    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "bookstack") {
+        $bookStackSettings = Get-ObjectValue -Object $Config -Name "bookStackProductDocsServer" -Default $null
+        $bookStackOverride = Get-ObjectValue -Object $bookStackSettings -Name "embedding" -Default $null
+        if ($null -ne $bookStackOverride) {
+            $embedding = $bookStackOverride
+            $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
+            if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
+        }
+    }
     $betaIndex = Get-BetaProjectIndexSettings -Config $Config -Server $Server
     if ($null -ne $betaIndex) {
         $embedding = Get-ObjectValue -Object $betaIndex -Name "embedding" -Default $null
@@ -1275,6 +1291,9 @@ function Get-HostEmbeddingSettings {
     }
     $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
     $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
+    if ($null -ne $bookStackOverride -and $apiBase -and -not $apiKey) {
+        throw "BookStack remote embedding requires its configured API key; no CPU fallback is allowed."
+    }
     $mode = $(if ([string]::IsNullOrWhiteSpace($apiKey)) { "cpu" } else { "openai" })
     $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default $(if ($mode -eq "cpu") { "intfloat/multilingual-e5-base" } else { "" }))
     if ([string]::IsNullOrWhiteSpace($model)) {
@@ -1415,6 +1434,9 @@ function Ensure-HostEmbeddingModel {
         [string[]]$ProjectServerIds,
         [object]$Server = $null
     )
+    if ($null -eq $Server -and @($GlobalServerIds).Count -eq 1 -and $GlobalServerIds -contains "bookstack" -and -not $ProjectServerIds) {
+        $Server = Get-BookStackProductDocsServerDefinition
+    }
     if ($null -eq $Server -and -not (Test-HostEnabledServersNeedEmbedding -Manifest $Manifest -GlobalServerIds $GlobalServerIds -ProjectServerIds $ProjectServerIds)) {
         return
     }
@@ -2021,7 +2043,9 @@ function Get-HostLocalValues {
         BOOKSTACK_REINDEX_INTERVAL_HOURS = [string](Get-ObjectValue -Object $bookstack -Name "reindexIntervalHours" -Default "24")
         BOOKSTACK_INDEX_ON_STARTUP = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $bookstack -Name "indexOnStartup" -Default $true) -Default $true)
         BOOKSTACK_MAX_INDEX_PAGES = [string](Get-ObjectValue -Object $bookstack -Name "maxIndexPages" -Default "")
-        BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "0.82")
+        BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "")
+        BOOKSTACK_CHUNK_TOKENS = [string](Get-ObjectValue -Object $bookstack -Name "chunkTokens" -Default "1024")
+        BOOKSTACK_CHUNK_OVERLAP = [string](Get-ObjectValue -Object $bookstack -Name "chunkOverlap" -Default "64")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
         MANTIS_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "timeoutSeconds" -Default "20")
@@ -2363,6 +2387,16 @@ function Start-DockerServer {
         [switch]$PreparedBetaImage
     )
     $containerName = [string]$Runtime.containerName
+    $bookStackPrepared = $false
+    if ($Recreate -and [string]$Server.id -eq "bookstack" -and -not $ForceResetDatabase) {
+        $preparedEnv = Resolve-ServerEnv -Config $Config -Server $Server -ConfigState $ConfigState
+        if ($preparedEnv["RESET_DATABASE"] -ne "false") {
+            throw "BookStack cache-preserving replacement requires resetDatabase=false. Correct it and repeat start -ServerId bookstack -RecreateBookStack."
+        }
+        # Build before stopping the serving image. Other server paths are unchanged.
+        Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
+        $bookStackPrepared = $true
+    }
     Assert-BetaProjectVolumesReady -Config $Config -Server $Server -ConfigState $ConfigState
     $existing = Invoke-DockerCommandCapture -Arguments @("ps", "-a", "--filter", "name=^/$containerName$", "--format", "{{.Names}}") -TimeoutSec 60 -Description "docker ps for $containerName"
     if ($existing -contains $containerName) {
@@ -2410,7 +2444,7 @@ function Start-DockerServer {
             if (-not (Test-ModernHostServer -Server $Server) -or -not (Test-DockerImageAvailable -Image ([string]$Runtime.image))) {
                 throw "Prepared beta image '$($Runtime.image)' is not available for '$containerName'."
             }
-        } else {
+        } elseif (-not $bookStackPrepared) {
             Ensure-ServerDockerImageAvailable -Server $Server -Image ([string]$Runtime.image)
         }
         $previousSecrets = @{}
@@ -4422,11 +4456,25 @@ function New-ServerRuntime {
     }
 }
 
+function Invoke-BookStackReplacement {
+    param([object]$Config)
+    $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "bookstack-replace" -WaitSeconds 0
+    if (-not $lease.acquired) {
+        throw "Host maintenance is active. Wait for its completion, then repeat start -ServerId bookstack -RecreateBookStack; the current BookStack remains running."
+    }
+    try {
+        Start-HostServers -Config $Config -TargetServerId "bookstack" -RecreateBookStack
+    } finally {
+        Exit-McpHostMaintenanceLock -Lease $lease
+    }
+}
+
 function Start-HostServers {
     param(
         [object]$Config,
         [string]$TargetServerId = "",
-        [string]$TargetConfigId = ""
+        [string]$TargetConfigId = "",
+        [switch]$RecreateBookStack
     )
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
@@ -4454,7 +4502,10 @@ function Start-HostServers {
         $selectedServer = Get-SelectedHostServerDefinition -Config $Config -StableServer $server
         $runtime = New-ServerRuntime -Config $Config -Server $selectedServer -Index $runtimeIndex
         Write-Host "Global server '$id': container=$($runtime.containerName) image=$($runtime.image) url=$($runtime.url)"
-        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime
+        if ($id -eq "bookstack" -and $TargetServerId -ne "bookstack") {
+            Ensure-HostEmbeddingModel -Config $Config -Manifest $manifest -GlobalServerIds $globalIds -ProjectServerIds $projectIds -Server $selectedServer
+        }
+        Start-DockerServer -Config $Config -Server $selectedServer -Runtime $runtime -Recreate:($RecreateBookStack -and $id -eq "bookstack")
         Enable-ToolsListProxyForRuntime -Config $Config -Runtime $runtime
         $runtime.health = "running"
         $serverStates += $runtime
@@ -5129,7 +5180,8 @@ switch ($Action) {
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "start" {
-        Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
+        if ($RecreateBookStack) { Invoke-BookStackReplacement -Config $config }
+        else { Start-HostServers -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId }
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "stop" {

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
 
+from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
+
 
 DEFAULT_SEARCH_LIMIT = 5
 MAX_SEARCH_LIMIT = 20
@@ -25,10 +27,22 @@ DEFAULT_PAGE_MAX_CHARS = 12000
 MAX_PAGE_MAX_CHARS = 50000
 DEFAULT_STRUCTURE_LIMIT = 30
 MAX_STRUCTURE_LIMIT = 100
-EMBEDDING_PROFILE_VERSION = "retrieval-v2"
+EMBEDDING_PROFILE_VERSION = "retrieval-v3"
+QWEN_TOKENIZER = "Qwen/Qwen3-Embedding-8B"
+QWEN_REVISION = "c90816d848505624c2434128dfc61132162a0ee9"
+QWEN_INSTRUCTION = "Given a product documentation question, retrieve relevant passages that answer the question"
+QWEN_MIN_SCORE = 0.50
 
 
 class BookStackApiError(RuntimeError):
+    pass
+
+
+class EmbeddingUnavailable(BookStackApiError):
+    pass
+
+
+class IndexBusyError(BookStackApiError):
     pass
 
 
@@ -36,21 +50,54 @@ class HtmlTextExtractor(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.parts: List[str] = []
+        self.table_depth = 0
+        self.list_depth = 0
+        self.hidden_depth = 0
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
-        if tag.lower() in {"br", "p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4"}:
+        tag = tag.lower()
+        if tag in {"script", "style"}:
+            self.hidden_depth += 1
+        if self.hidden_depth:
+            return
+        in_block = self.table_depth > 0 or self.list_depth > 0
+        if tag == "table":
+            self.table_depth += 1
+        if tag in {"ul", "ol"}:
+            self.list_depth += 1
+        if re.fullmatch(r"h[1-6]", tag):
+            self.parts.append(" " if in_block else "\n\n" + "#" * int(tag[1]) + " ")
+        elif tag in {"p", "div", "section", "article", "ul", "ol", "table", "pre"}:
+            self.parts.append(" " if in_block else "\n\n")
+        elif tag in {"br", "li", "tr"}:
             self.parts.append("\n")
+            if tag == "li":
+                self.parts.append("- ")
+        elif tag in {"td", "th"}:
+            self.parts.append(" | ")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() in {"p", "div", "section", "article", "li", "tr", "h1", "h2", "h3", "h4"}:
+        tag = tag.lower()
+        if tag in {"script", "style"}:
+            self.hidden_depth = max(0, self.hidden_depth - 1)
+            return
+        if self.hidden_depth:
+            return
+        if tag == "table":
+            self.table_depth = max(0, self.table_depth - 1)
+        if tag in {"ul", "ol"}:
+            self.list_depth = max(0, self.list_depth - 1)
+        if tag.lower() in {"p", "div", "section", "article", "ul", "ol", "table", "pre", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append(" " if self.table_depth or self.list_depth else "\n\n")
+        elif tag.lower() in {"li", "tr"}:
             self.parts.append("\n")
 
     def handle_data(self, data: str) -> None:
-        if data:
+        if data and not self.hidden_depth:
             self.parts.append(data)
 
     def text(self) -> str:
-        return clean_text(" ".join(self.parts))
+        return clean_text("".join(self.parts))
 
 
 def utc_now() -> str:
@@ -60,7 +107,7 @@ def utc_now() -> str:
 def clean_text(value: str) -> str:
     text = value.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s+", "\n", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
@@ -115,6 +162,8 @@ class Settings:
     embedding_api_key: str
     embedding_model: str
     embedding_cache_dir: str
+    chunk_tokens: int = 1024
+    chunk_overlap: int = 64
 
     @staticmethod
     def from_env() -> "Settings":
@@ -129,7 +178,7 @@ class Settings:
             reindex_interval_hours=float_env("BOOKSTACK_REINDEX_INTERVAL_HOURS", 24.0),
             index_on_startup=truthy(os.environ.get("BOOKSTACK_INDEX_ON_STARTUP", "false")),
             max_index_pages=int_env("BOOKSTACK_MAX_INDEX_PAGES", 0),
-            semantic_min_score=float_env("BOOKSTACK_SEMANTIC_MIN_SCORE", DEFAULT_SEMANTIC_MIN_SCORE),
+            semantic_min_score=float_env("BOOKSTACK_SEMANTIC_MIN_SCORE", QWEN_MIN_SCORE if "qwen3-embedding" in os.environ.get("BOOKSTACK_EMBEDDING_MODEL", "").lower() else DEFAULT_SEMANTIC_MIN_SCORE),
             reset_database=truthy(os.environ.get("RESET_DATABASE", os.environ.get("BOOKSTACK_RESET_DATABASE", "false"))),
             embedding_api_base=os.environ.get("BOOKSTACK_EMBEDDING_API_BASE", os.environ.get("OPENAI_API_BASE", "")).strip().rstrip("/"),
             embedding_api_key=os.environ.get("BOOKSTACK_EMBEDDING_API_KEY", os.environ.get("OPENAI_API_KEY", "")).strip(),
@@ -138,6 +187,8 @@ class Settings:
                 "MODEL_CACHE_DIR",
                 os.environ.get("SENTENCE_TRANSFORMERS_HOME", "/app/model_cache"),
             ).strip(),
+            chunk_tokens=int_env("BOOKSTACK_CHUNK_TOKENS", 1024),
+            chunk_overlap=int_env("BOOKSTACK_CHUNK_OVERLAP", 64),
         )
 
     def validate(self) -> None:
@@ -195,9 +246,24 @@ class BookStackClient:
     def paginated(self, path: str, count: int = 500, max_items: int = 0) -> List[Dict[str, Any]]:
         offset = 0
         items: List[Dict[str, Any]] = []
+        expected_total = None
         while True:
             payload = self.get_json(path, {"count": count, "offset": offset})
-            batch = payload.get("data", payload if isinstance(payload, list) else [])
+            batch = payload if isinstance(payload, list) else payload.get("data", [])
+            if path == "/api/pages":
+                if (not isinstance(payload, dict) or not isinstance(payload.get("total"), int)
+                        or payload["total"] < 0 or not isinstance(batch, list)
+                        or any(not isinstance(item, dict) or (to_int(item.get("id")) or 0) <= 0 for item in batch)):
+                    raise BookStackApiError("Incomplete BookStack page inventory; retry reindex_docs")
+                if expected_total is None:
+                    expected_total = payload["total"]
+                if payload["total"] != expected_total or len(items) + len(batch) > expected_total:
+                    raise BookStackApiError("BookStack inventory changed during listing; retry reindex_docs")
+                known = {item["id"] for item in items}
+                if len({item["id"] for item in batch}) != len(batch) or any(item["id"] in known for item in batch):
+                    raise BookStackApiError("Duplicate BookStack page inventory; retry reindex_docs")
+                if not batch and len(items) < payload["total"]:
+                    raise BookStackApiError("Interrupted BookStack page inventory; retry reindex_docs")
             if not isinstance(batch, list):
                 break
             items.extend([item for item in batch if isinstance(item, dict)])
@@ -218,7 +284,11 @@ class BookStackClient:
         return self.paginated("/api/pages", max_items=max_items)
 
     def read_page(self, page_id: int) -> Dict[str, Any]:
-        return self.get_json(f"/api/pages/{page_id}")
+        page = self.get_json(f"/api/pages/{page_id}")
+        # The page API may omit its URL. BookStack's ID permalink survives renames.
+        if not page.get("url"):
+            page["url"] = self._url(f"/link/{page_id}")
+        return page
 
     def export_page(self, page_id: int, fmt: str) -> str:
         export_format = {"markdown": "markdown", "html": "html", "text": "plaintext"}.get(fmt, fmt)
@@ -248,6 +318,10 @@ class EmbeddingClient:
         self.model = settings.embedding_model
         self.cache_dir = settings.embedding_cache_dir or "/app/model_cache"
         self._local_model: Any = None
+        self._tokenizer: Any = None
+        self.chunk_tokens = settings.chunk_tokens
+        self.chunk_overlap = settings.chunk_overlap
+        self.on_usage = None
 
     def mode(self) -> str:
         if not self.model:
@@ -266,11 +340,38 @@ class EmbeddingClient:
     def storage_model(self) -> str:
         if not self.enabled():
             return ""
-        input_profile = "e5-prefixed" if self.uses_e5_retrieval_prefixes() else "plain"
-        return f"{self.model}::{EMBEDDING_PROFILE_VERSION}::{input_profile}"
+        profile = dict(endpoint=self.api_base, instruction=QWEN_INSTRUCTION if self.is_qwen() else "",
+                       tokenizer=QWEN_TOKENIZER if self.is_qwen() else self.model,
+                       revision=QWEN_REVISION if self.is_qwen() else "default",
+                       chunking=CHUNK_VERSION, tokens=self.fragment_limit(), overlap=self.chunk_overlap,
+                       prefix="e5" if self.uses_e5_retrieval_prefixes() else "plain")
+        return f"{self.model}::{EMBEDDING_PROFILE_VERSION}::{hash_text(json.dumps(profile, sort_keys=True))[:20]}"
+
+    def is_qwen(self) -> bool:
+        return self.model.lower().rsplit("/", 1)[-1] == "qwen3-embedding-8b"
+
+    def fragment_limit(self) -> int:
+        limit = min(self.chunk_tokens, 448 if self.uses_e5_retrieval_prefixes() else 8192)
+        if limit < 64 or self.chunk_overlap < 0 or self.chunk_overlap >= limit // 2:
+            raise BookStackApiError("Invalid BookStack chunk token/overlap settings")
+        return limit
+
+    def tokenizer(self):
+        if self._tokenizer is None:
+            from transformers import AutoTokenizer
+            kwargs = {"cache_dir": self.cache_dir, "use_fast": True}
+            if self.is_qwen():
+                kwargs["revision"] = QWEN_REVISION
+            self._tokenizer = AutoTokenizer.from_pretrained(QWEN_TOKENIZER if self.is_qwen() else self.model, **kwargs)
+        return self._tokenizer
+
+    def split_page(self, title: str, text: str):
+        return fragments(text, title, self.tokenizer(), self.fragment_limit(), self.chunk_overlap)
 
     def embed_query(self, text: str) -> List[float]:
         prefix = "query: " if self.uses_e5_retrieval_prefixes() else ""
+        if self.is_qwen():
+            prefix = f"Instruct: {QWEN_INSTRUCTION}\nQuery:"
         return self.embed(prefix + text)
 
     def embed_passage(self, text: str) -> List[float]:
@@ -280,12 +381,29 @@ class EmbeddingClient:
     def embed(self, text: str) -> List[float]:
         if not self.enabled():
             return []
+        tokens = len(self.tokenizer().encode(text, add_special_tokens=True))
+        maximum = 32768 if self.is_qwen() else (512 if self.uses_e5_retrieval_prefixes() else 8192)
+        if tokens > maximum:
+            raise BookStackApiError(f"Embedding input has {tokens} tokens, limit {maximum}; shorten the query or reindex with smaller fragments")
         if self.api_base:
             return self.embed_remote(text)
         return self.embed_local(text)
 
     def embed_remote(self, text: str) -> List[float]:
-        payload = json.dumps({"model": self.model, "input": text[:6000]}).encode("utf-8")
+        return self._remote_batch([text])[0]
+
+    def embed_passages(self, texts: List[str]) -> List[List[float]]:
+        if not self.api_base:
+            return [self.embed_passage(text) for text in texts]
+        prefix = "passage: " if self.uses_e5_retrieval_prefixes() else ""
+        inputs = [prefix + text for text in texts]
+        maximum = 32768 if self.is_qwen() else (512 if self.uses_e5_retrieval_prefixes() else 8192)
+        if any(len(self.tokenizer().encode(text, add_special_tokens=True)) > maximum for text in inputs):
+            raise BookStackApiError("Embedding passage exceeds model token limit; lower BOOKSTACK_CHUNK_TOKENS")
+        return self._remote_batch(inputs)
+
+    def _remote_batch(self, texts: List[str]) -> List[List[float]]:
+        payload = json.dumps({"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
@@ -294,12 +412,15 @@ class EmbeddingClient:
             with request.urlopen(req, timeout=30) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except Exception as exc:
-            raise BookStackApiError(f"Embedding request failed: {exc}") from exc
+            raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {getattr(exc, 'code', 'unavailable')}); retry reindex_docs") from exc
+        if self.on_usage is not None:
+            self.on_usage(result.get("usage") or {})
         data = result.get("data", [])
-        if not data:
-            return []
-        vector = data[0].get("embedding", [])
-        return [float(value) for value in vector]
+        if (len(data) != len(texts) or {item.get("index", 0) for item in data} != set(range(len(texts)))
+                or result.get("error") or result.get("model", self.model).lower() != self.model.lower()):
+            raise BookStackApiError("Embedding provider returned an incomplete response")
+        return [checked_vector(item.get("embedding", []), 4096 if self.is_qwen() else None)
+                for item in sorted(data, key=lambda item: item.get("index", 0))]
 
     def embed_local(self, text: str) -> List[float]:
         if self._local_model is None:
@@ -312,13 +433,13 @@ class EmbeddingClient:
                 raise BookStackApiError(f"Local embedding runtime is unavailable: {exc}") from exc
             self._local_model = SentenceTransformer(self.model, cache_folder=self.cache_dir)
         vector = self._local_model.encode(
-            text[:6000],
+            text,
             normalize_embeddings=True,
             show_progress_bar=False,
         )
         if hasattr(vector, "tolist"):
             vector = vector.tolist()
-        return [float(value) for value in vector]
+        return checked_vector(vector)
 
 
 class DocsCache:
@@ -459,7 +580,7 @@ class DocsCache:
         tags = page.get("tags", [])
         tags_json = json.dumps(tags, ensure_ascii=False)
         tags_text = " ".join(str(tag.get("name", "")) for tag in tags if isinstance(tag, dict))
-        content_hash = hash_text(content_text)
+        content_hash = hash_text(str(page.get("name", "")) + "\n\n" + content_text)
         with self.connect() as conn:
             conn.execute(
                 """
@@ -612,11 +733,16 @@ class ProductDocsService:
         self.settings = settings
         self.client = BookStackClient(settings)
         self.cache = DocsCache(settings.cache_path)
+        self.fragment_index = FragmentIndex(self.cache)
         self.embeddings = EmbeddingClient(settings)
+        self.embeddings.on_usage = lambda usage: self.fragment_index.usage(self.embeddings.storage_model(), usage)
         self.last_embedding_error = ""
+        self._index_lock = threading.RLock()
 
     def reset_cache(self) -> None:
-        self.cache.reset()
+        with self._index_lock:
+            self.cache.reset()
+            self.fragment_index.reset()
 
     def search_docs(
         self,
@@ -649,7 +775,7 @@ class ProductDocsService:
         total_matches = len(results)
         page_results = results[cursor:requested_end]
         next_cursor = cursor + len(page_results) if requested_end < total_matches else None
-        return {
+        result = {
             "ok": True,
             "query": query,
             "source": "cache+live" if live_used else "cache",
@@ -661,24 +787,33 @@ class ProductDocsService:
             "next_cursor": next_cursor,
             "results": [public_result(result, query) for result in page_results],
         }
+        if self.embeddings.enabled():
+            coverage = self.fragment_index.status(self.embeddings.storage_model())
+            if not coverage["semantic_ready"] or self.last_embedding_error:
+                result["semantic_status"] = "degraded" if self.last_embedding_error else "incomplete"
+                result["semantic_continuation"] = "index_status; reindex_docs resumes incomplete indexing"
+        return result
 
     def semantic_results(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not self.embeddings.enabled() or self.cache.count_pages() == 0:
             return []
         try:
             query_vector = self.embeddings.embed_query(query)
+            self.last_embedding_error = ""
         except Exception as exc:
             self.last_embedding_error = str(exc)
             return []
-        scored = []
-        for page, vector in self.cache.all_embeddings(self.embeddings.storage_model()):
+        best = {}
+        for page, vector in self.fragment_index.all_vectors(self.embeddings.storage_model()):
             if not matches_filters(page, filters):
                 continue
             score = cosine_similarity(query_vector, vector)
             if score >= self.settings.semantic_min_score:
                 page["semantic_score"] = score
                 page["source"] = "cache-semantic"
-                scored.append(page)
+                if page["id"] not in best or score > best[page["id"]]["semantic_score"]:
+                    best[page["id"]] = page
+        scored = list(best.values())
         scored.sort(key=lambda item: float(item.get("semantic_score", 0)), reverse=True)
         return scored[:limit]
 
@@ -702,10 +837,21 @@ class ProductDocsService:
         if (
             not cached
             or str(cached.get("updated_at", "")) != str(page.get("updated_at", ""))
+            or str(cached.get("name", "")) != str(page.get("name", ""))
             or not self.embedding_is_current(cached)
         ):
-            self.index_page(page)
-            cached = self.cache.get_page(int(resolved_id))
+            try:
+                self.index_page(page)
+            except IndexBusyError:
+                # Reading live content does not wait for a corpus rebuild.
+                cached = dict(normalize_search_item(page), markdown=page.get("markdown", ""),
+                              html=page.get("html", ""), content_text=clean_text(page.get("markdown") or html_to_text(page.get("html", ""))))
+            except EmbeddingUnavailable:
+                # Content is already cached before embedding. A provider outage
+                # must not prevent reading the live document.
+                cached = self.cache.get_page(int(resolved_id))
+            else:
+                cached = self.cache.get_page(int(resolved_id))
         content_format = (fmt or "markdown").lower()
         content = ""
         if content_format == "html":
@@ -765,7 +911,20 @@ class ProductDocsService:
         }
 
     def reindex_docs(self, force: bool = False, limit: int = 0) -> Dict[str, Any]:
-        pages = self.client.list_pages(max_items=limit or self.settings.max_index_pages)
+        if not self._index_lock.acquire(blocking=False):
+            return {"ok": False, "error": "Indexing is already running; inspect index_status and retry reindex_docs"}
+        self.fragment_index.state(in_progress=True, error="")
+        try:
+            return self._reindex_docs(force, limit)
+        except Exception as exc:
+            self.fragment_index.state(in_progress=False, error=str(exc), complete_profile="")
+            raise
+        finally:
+            self._index_lock.release()
+
+    def _reindex_docs(self, force: bool, limit: int) -> Dict[str, Any]:
+        effective_limit = limit or self.settings.max_index_pages
+        pages = self.client.list_pages(max_items=effective_limit)
         indexed = 0
         skipped = 0
         errors = []
@@ -778,6 +937,7 @@ class ProductDocsService:
                 cached
                 and not force
                 and str(cached.get("updated_at", "")) == str(page_summary.get("updated_at", ""))
+                and str(cached.get("name", "")) == str(page_summary.get("name", ""))
                 and self.embedding_is_current(cached)
             ):
                 skipped += 1
@@ -788,18 +948,31 @@ class ProductDocsService:
                 indexed += 1
             except Exception as exc:
                 errors.append({"page_id": page_id, "error": str(exc)})
+        deleted = 0
+        if not errors and not effective_limit:
+            deleted = self.fragment_index.reconcile({int(page["id"]) for page in pages})
+            self.fragment_index.state(in_progress=False, error="", complete_profile=self.embeddings.storage_model(), completed_at=utc_now())
+        else:
+            self.fragment_index.state(in_progress=False, complete_profile="",
+                                      error=errors[0]["error"] if errors else "Limited inventory; run reindex_docs without a limit")
         return {
             "ok": len(errors) == 0,
             "pages_seen": len(pages),
             "indexed": indexed,
             "skipped": skipped,
+            "deleted": deleted,
             "errors": errors[:20],
+            "error_count": len(errors),
             "cache_pages": self.cache.count_pages(),
             "indexed_at": utc_now(),
+            "coverage": self.fragment_index.status(self.embeddings.storage_model()),
         }
 
     def index_status(self) -> Dict[str, Any]:
         status = self.cache.index_status(self.embeddings.storage_model())
+        status.update(self.fragment_index.status(self.embeddings.storage_model()))
+        status["embedded_pages"] = status["ready_pages"] - status["empty_pages"]
+        status["provider_usage"] = self.fragment_index.usage(self.embeddings.storage_model())
         status.update(
             {
                 "ok": True,
@@ -819,26 +992,45 @@ class ProductDocsService:
         return status
 
     def index_page(self, page: Dict[str, Any]) -> None:
+        if not self._index_lock.acquire(blocking=False):
+            raise IndexBusyError("Indexing is already running; reindex_docs resumes pending pages")
+        try:
+            self._index_page(page)
+        finally:
+            self._index_lock.release()
+
+    def _index_page(self, page: Dict[str, Any]) -> None:
         markdown = str(page.get("markdown", "") or "")
         html = str(page.get("html", "") or "")
         content_text = clean_text(markdown or html_to_text(html))
         content_hash = self.cache.upsert_page(page, markdown=markdown, html=html, content_text=content_text)
-        if self.embeddings.enabled() and content_text:
+        if self.embeddings.enabled():
             try:
-                vector = self.embeddings.embed_passage(f"{page.get('name', '')}\n\n{content_text}")
-                self.cache.upsert_embedding(int(page["id"]), self.embeddings.storage_model(), content_hash, vector)
+                profile = self.embeddings.storage_model()
+                cached = self.cache.get_page(int(page["id"]))
+                if self.fragment_index.current(cached, profile):
+                    return
+                chunks = self.embeddings.split_page(str(page.get("name", "")), content_text) if content_text else []
+                missing = list({chunk["input_hash"]: chunk for chunk in chunks
+                                if self.fragment_index.vector(profile, chunk["input_hash"]) is None}.values())
+                for offset in range(0, len(missing), 8):
+                    batch = missing[offset:offset + 8]
+                    vectors = self.embeddings.embed_passages([chunk["input"] for chunk in batch])
+                    if len(vectors) != len(batch):
+                        raise BookStackApiError("Incomplete embedding batch; retry reindex_docs")
+                    for chunk, vector in zip(batch, vectors):
+                        self.fragment_index.save_vector(profile, chunk, vector)
+                self.fragment_index.publish(cached, profile, chunks)
                 self.last_embedding_error = ""
             except Exception as exc:
                 self.last_embedding_error = str(exc)
+                self.fragment_index.state(error=str(exc))
+                raise EmbeddingUnavailable(str(exc)) from exc
 
     def embedding_is_current(self, page: Dict[str, Any]) -> bool:
         if not self.embeddings.enabled():
             return True
-        return self.cache.has_embedding(
-            int(page.get("id", 0)),
-            self.embeddings.storage_model(),
-            str(page.get("content_hash", "")),
-        )
+        return self.fragment_index.current(page, self.embeddings.storage_model())
 
     def start_background_reindex(self, force: bool = False) -> None:
         thread = threading.Thread(target=lambda: self.reindex_docs(force=force), name="bookstack-reindex", daemon=True)
@@ -911,7 +1103,9 @@ def compact_structure_item(item: Dict[str, Any], scope: str) -> Dict[str, Any]:
 
 def public_result(page: Dict[str, Any], query: str) -> Dict[str, Any]:
     result = compact_page_metadata(page)
-    result["preview"] = preview_for(str(page.get("content_text", "") or page.get("preview", "")), query)
+    result["preview"] = preview_for(str(page.get("fragment_text", "") or page.get("content_text", "") or page.get("preview", "")), query)
+    if page.get("fragment"):
+        result["fragment"] = page["fragment"]
     if "semantic_score" in page:
         result["semantic_score"] = round(float(page["semantic_score"]), 4)
     return result
@@ -1123,6 +1317,9 @@ def merge_results(*result_sets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 current.update({key: value for key, value in item.items() if value})
             if item.get("semantic_score"):
                 current["semantic_score"] = item["semantic_score"]
+                if "fragment" in item:
+                    current["fragment"] = item["fragment"]
+                    current["fragment_text"] = item["fragment_text"]
     return list(by_key.values())
 
 

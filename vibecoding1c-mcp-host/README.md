@@ -200,13 +200,13 @@ For local CPU semantic search, keep the shared embedding setting:
 }
 ```
 
-BookStack MCP receives `EMBEDDING_MODEL`, uses the shared `<stateRoot>/model-cache`
-mounted as `/app/model_cache`, and loads the model locally through `sentence-transformers`.
-Retrieval inputs for E5 models use the required `query:` and `passage:` prefixes. The indexed
-embedding profile is versioned; a changed profile makes unchanged pages eligible for automatic
-reindexing instead of silently reusing incompatible vectors.
-When `embedding.apiKey` is configured instead, the server uses the existing
-OpenAI-compatible `/embeddings` endpoint path.
+BookStack inherits these settings unless `bookStackProductDocsServer.embedding` is supplied.
+That complete override applies only to BookStack; it accepts `model`, `apiBase`, `apiKey`,
+or `credentialFile` pointing to an existing private JSON file with those three fields.
+CPU mode uses `<stateRoot>/model-cache` through `sentence-transformers`; remote mode uses
+the OpenAI-compatible `/embeddings` API without a local-model fallback. See the
+[BookStack migration and recovery procedure](bookstack-product-docs-mcp/README.md) for
+OpenRouter/Qwen, structural fragments, truthful coverage and a cache-preserving switch.
 
 To set up and publish only the BookStack MCP without touching other configured servers:
 

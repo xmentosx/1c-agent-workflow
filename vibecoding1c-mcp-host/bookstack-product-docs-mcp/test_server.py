@@ -3,6 +3,9 @@ import os
 import sys
 import tempfile
 import types
+import re
+import threading
+from dataclasses import replace
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -161,6 +164,21 @@ class FakeEmbeddings:
         page_id = int(text.split("\n", 1)[0].rsplit(" ", 1)[-1])
         return [1.0, page_id / 100.0]
 
+    def split_page(self, title, text):
+        return server.fragments(text, title, WordTokenizer(), 64, 4)
+
+    def embed_passages(self, texts):
+        return [self.embed_passage(text) for text in texts]
+
+
+class WordTokenizer:
+    def __call__(self, text, **kwargs):
+        offsets = [(match.start(), match.end()) for match in re.finditer(r"\S+", text)]
+        return {"input_ids": list(range(len(offsets))), "offset_mapping": offsets}
+
+    def encode(self, text, **kwargs):
+        return self(text)["input_ids"]
+
 
 class LowConfidenceEmbeddings(FakeEmbeddings):
     def embed_passage(self, text):
@@ -176,6 +194,25 @@ class RankingEmbeddings(FakeEmbeddings):
 
 
 class BookStackClientStructureTests(unittest.TestCase):
+    def test_page_inventory_requires_complete_consistent_unique_batches(self):
+        client = object.__new__(server.BookStackClient)
+        for responses in (
+            [{"data": [{"id": 1}]}],
+            [{"total": 2, "data": [{"id": 1}]}, {"total": 2, "data": []}],
+            [{"total": 2, "data": [{"id": 1}]}, {"total": 2, "data": [{"id": 1}]}],
+            [{"total": 2, "data": [{"id": 1}]}, {"total": 1, "data": []}],
+        ):
+            client.get_json = mock.Mock(side_effect=responses)
+            with self.assertRaises(server.BookStackApiError):
+                client.list_pages()
+        client.get_json = mock.Mock(side_effect=[{"total": 2, "data": [{"id": 1}]}, {"total": 2, "data": [{"id": 2}]}])
+        self.assertEqual([p["id"] for p in client.list_pages()], [1, 2])
+        client.settings = mock.Mock(base_url="https://kb.example/bookstack")
+        client.get_json = mock.Mock(return_value={"id": 1})
+        self.assertEqual(client.read_page(1)["url"], "https://kb.example/bookstack/link/1")
+        client.get_json = mock.Mock(return_value={"id": 1, "url": "https://kb.example/original"})
+        self.assertEqual(client.read_page(1)["url"], "https://kb.example/original")
+
     def test_all_scope_uses_one_balanced_total_limit_and_compacts_items(self):
         client = object.__new__(server.BookStackClient)
         calls = []
@@ -218,10 +255,215 @@ class EmbeddingClientTests(unittest.TestCase):
             client.embed_passage("Документ заказа")
 
         self.assertEqual(inputs, ["query: заказ", "passage: Документ заказа"])
-        self.assertEqual(
-            client.storage_model(),
-            "intfloat/multilingual-e5-base::retrieval-v2::e5-prefixed",
-        )
+        self.assertIn("intfloat/multilingual-e5-base::retrieval-v3::", client.storage_model())
+
+    def test_qwen_query_instruction_passage_and_profile(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b")
+            client = server.EmbeddingClient(settings)
+            inputs = []
+            client.embed = lambda text: inputs.append(text) or [1.0]
+            client.embed_query("права пользователя")
+            client.embed_passage("Полный текст документа")
+            self.assertEqual(inputs[0], f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя")
+            self.assertEqual(inputs[1], "Полный текст документа")
+            original = client.storage_model()
+            client.chunk_tokens = 768
+            self.assertNotEqual(original, client.storage_model())
+            client.chunk_tokens = 1024
+            client.api_base = "https://openrouter.ai/api/v1"
+            self.assertNotEqual(original, client.storage_model())
+
+    def test_remote_keeps_full_input_and_rejects_invalid_vectors(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root) / "cache.sqlite", "remote-model"), embedding_api_base="https://example.test/v1")
+            client = server.EmbeddingClient(settings)
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [1, 0]}]}).encode()
+            text = "полный текст " * 900
+            with mock.patch.object(server.request, "urlopen", return_value=response) as call:
+                self.assertEqual(client.embed_remote(text), [1, 0])
+                self.assertEqual(json.loads(call.call_args.args[0].data)["input"], text)
+                for vector in ([], [0, 0], [float("nan"), 1], [float("inf")]):
+                    response.read.return_value = json.dumps({"data": [{"embedding": vector}]}).encode()
+                    with self.assertRaises(ValueError):
+                        client.embed_remote("query")
+
+    def test_qwen_dimension_and_default_threshold(self):
+        with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b", "BOOKSTACK_SEMANTIC_MIN_SCORE": ""}):
+            self.assertEqual(server.Settings.from_env().semantic_min_score, server.QWEN_MIN_SCORE)
+        with tempfile.TemporaryDirectory() as root:
+            client = server.EmbeddingClient(make_settings(Path(root)/"cache.sqlite", "qwen/qwen3-embedding-8b"))
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = json.dumps({"data": [{"embedding": [1, 0]}]}).encode()
+            with mock.patch.object(server.request, "urlopen", return_value=response), self.assertRaises(ValueError):
+                client.embed_remote("query")
+
+    def test_batch_reorders_complete_indices_and_rejects_missing_duplicate_indices(self):
+        with tempfile.TemporaryDirectory() as root:
+            client = server.EmbeddingClient(replace(make_settings(Path(root)/"cache.sqlite", "remote-model"), embedding_api_base="https://example.test/v1"))
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            with mock.patch.object(server.request, "urlopen", return_value=response):
+                response.read.return_value = json.dumps({"data": [{"index": 1, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()
+                self.assertEqual(client._remote_batch(["first", "second"]), [[1, 0], [0, 1]])
+                response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()
+                with self.assertRaises(server.BookStackApiError):
+                    client._remote_batch(["first", "second"])
+
+
+class FragmentIndexTests(unittest.TestCase):
+    def service(self, root, pages):
+        service = server.ProductDocsService(make_settings(Path(root) / "кэш с пробелом.sqlite"))
+        service.client = FakeClient(pages)
+        service.embeddings = FakeEmbeddings()
+        return service
+
+    def test_structure_preserves_blocks_and_full_unicode_tail(self):
+        table = "| поле | значение |\n" + "| срок | месяц |\n" * 5
+        listing = "- пункт первый\n- пункт второй\n"
+        text = "# Начало\n\n" + "вступление " * 35 + "\n\n" + table + "\n" + listing + "\n## Конец\n\n" + "заключение " * 400 + "🚀хвост"
+        chunks = server.fragments(text, "Название", WordTokenizer(), 64, 4)
+        self.assertTrue(any(table in chunk["input"] for chunk in chunks))
+        self.assertTrue(any(listing in chunk["input"] for chunk in chunks))
+        self.assertTrue(all(chunk["tokens"] <= 64 for chunk in chunks))
+        covered = set()
+        for chunk in chunks:
+            covered.update(range(chunk["start"], chunk["end"]))
+        self.assertEqual(covered, set(range(len(text))))
+        self.assertTrue(chunks[-1]["input"].endswith("🚀хвост"))
+        self.assertEqual(chunks[-1]["heading"], "Начало / Конец")
+
+    def test_html_headings_and_lists_survive_normalization(self):
+        text = server.html_to_text("<h1>Права</h1><p>Введение</p><h2>Назначения</h2><ul><li>Первый</li><li>Второй</li></ul><table><tr><td><p>Роль</p></td><td>Автор</td></tr></table><script>secret script</script>")
+        chunks = server.fragments(text, "Документ", WordTokenizer(), 64)
+        self.assertEqual(chunks[-1]["heading"], "Права / Назначения")
+        self.assertIn("- Первый", chunks[-1]["input"])
+        self.assertIn("Роль", chunks[-1]["input"])
+        self.assertNotIn("secret script", text)
+        self.assertNotIn("Роль\n\n", text)
+
+    def test_fenced_headings_are_not_sections_and_interrupted_state_survives_restart(self):
+        text = "# Intro\n\n```python\n# not a heading\n\nprint(1)\n```\n\n# Final\n\ntext"
+        chunks = server.fragments(text, "Title", WordTokenizer(), 64)
+        self.assertEqual([chunk["heading"] for chunk in chunks], ["Intro", "Final"])
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, [page(1, text)])
+            service.reindex_docs()
+            service.fragment_index.state(in_progress=True)
+            restarted = self.service(root, [page(1, text)])
+            self.assertFalse(restarted.index_status()["semantic_ready"])
+            self.assertTrue(restarted.reindex_docs()["coverage"]["semantic_ready"])
+            self.assertEqual(restarted.embeddings.passage_inputs, [])
+
+    def test_failed_page_resumes_saved_vectors_and_never_publishes_partial(self):
+        item = page(1, "# Введение\n\n" + " ".join(f"слово{i}" for i in range(1000)) + "\n\n# Финал\n\nконец")
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, [item])
+            original = service.embeddings.embed_passages
+            calls = 0
+            def flaky(text):
+                nonlocal calls
+                calls += 1
+                if calls == 2:
+                    raise RuntimeError("provider unavailable")
+                return original(text)
+            service.embeddings.embed_passages = flaky
+            failed = service.reindex_docs()
+            self.assertFalse(failed["ok"])
+            self.assertEqual(service.index_status()["ready_pages"], 0)
+            self.assertEqual(list(service.fragment_index.all_vectors(service.embeddings.storage_model())), [])
+            resumed = self.service(root, [item])
+            result = resumed.reindex_docs()
+            self.assertTrue(result["coverage"]["semantic_ready"])
+            self.assertEqual(len(resumed.embeddings.passage_inputs), result["coverage"]["fragments"] - 8)
+            with resumed.cache.connect() as reader:
+                reader.execute("BEGIN")
+                reader.execute("SELECT vector_json FROM fragment_vectors").fetchone()
+                usage = resumed.fragment_index.usage(resumed.embeddings.storage_model(), {"prompt_tokens": 3})
+                self.assertEqual(usage["tokens"], 3)
+            resumed.reindex_docs(force=True)
+            self.assertEqual(len(resumed.embeddings.passage_inputs), result["coverage"]["fragments"] - 8)
+
+    def test_changed_section_reuses_other_sections_title_invalidates_and_delete_reconciles(self):
+        items = [page(1, "# A\n\nfirst section\n\n# B\n\nsecond section"), page(2, ""), page(3, "third")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, items)
+            service.reindex_docs()
+            self.assertEqual(service.index_status()["empty_pages"], 1)
+            vectors = lambda: list(service.fragment_index.all_vectors(service.embeddings.storage_model()))
+            self.assertEqual({p["id"] for p, _ in vectors()}, {1, 3})
+            before = len(service.embeddings.passage_inputs)
+            items[0]["markdown"] = items[0]["markdown"].replace("second", "changed")
+            service.reindex_docs(force=True)
+            self.assertEqual(len(service.embeddings.passage_inputs), before + 1)
+            self.assertFalse(any("second section" in p["fragment_text"] for p, _ in vectors()))
+            items[0]["name"] = "Renamed 1"
+            service.reindex_docs()
+            self.assertEqual(len(service.embeddings.passage_inputs), before + 3)
+            self.assertEqual({p["name"] for p, _ in vectors() if p["id"] == 1}, {"Renamed 1"})
+            del service.client.pages[3]
+            service.reindex_docs(limit=1)
+            self.assertEqual(service.cache.count_pages(), 3)
+            self.assertFalse(service.index_status()["semantic_ready"])
+            self.assertEqual(service.reindex_docs()["deleted"], 1)
+            self.assertEqual(service.cache.count_pages(), 2)
+            self.assertEqual(service.cache.search("third", 20, {}), [])
+            self.assertEqual({p["id"] for p, _ in vectors()}, {1})
+
+    def test_middle_and_end_are_found_without_duplicate_pages(self):
+        item = page(1, "# Start\n\n" + "beginning " * 1500 + "\n\n# Middle\n\nmiddle marker\n\n# End\n\nfinal marker")
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, [item, page(2, "unrelated")])
+            service.embeddings.embed_passage = lambda text: [1, 0, 0] if "final marker" in text else ([0, 1, 0] if "middle marker" in text else [0, 0, 1])
+            service.embeddings.embed_query = lambda query: [1, 0, 0] if query == "last topic" else [0, 1, 0]
+            service.reindex_docs()
+            for query, heading in (("last topic", "End"), ("interior topic", "Middle")):
+                result = service.search_docs(query, None, 5)
+                self.assertEqual([row["id"] for row in result["results"]], [1])
+                self.assertEqual(result["results"][0]["fragment"]["heading"], heading)
+                self.assertGreater(result["results"][0]["fragment"]["start"], 6000)
+
+    def test_legacy_backup_is_readable_and_bad_inventory_preserves_pages(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "кэш с пробелом.sqlite"
+            cache = server.DocsCache(str(path))
+            cache.upsert_page(page(1, "legacy"), "legacy", "", "legacy")
+            cache.upsert_embedding(1, "e5", "legacy-hash", [1, 0])
+            service = self.service(root, [])
+            backup = server.DocsCache(str(path) + ".pre-fragments.sqlite")
+            self.assertEqual(backup.get_page(1)["content_text"], "legacy")
+            with backup.connect() as conn:
+                self.assertEqual(conn.execute("select count(*) from embeddings").fetchone()[0], 1)
+            service.client.list_pages = mock.Mock(side_effect=RuntimeError("source unavailable"))
+            with self.assertRaises(RuntimeError):
+                service.reindex_docs()
+            self.assertEqual(service.cache.count_pages(), 1)
+            self.assertFalse(service.index_status()["semantic_ready"])
+
+    def test_read_does_not_wait_for_reindex_and_survives_provider_failure(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, [page(1, "fresh content")])
+            locked, release = threading.Event(), threading.Event()
+            def worker():
+                with service._index_lock:
+                    locked.set()
+                    release.wait(5)
+            thread = threading.Thread(target=worker)
+            thread.start()
+            try:
+                self.assertTrue(locked.wait(2))
+                self.assertFalse(service.reindex_docs()["ok"])
+                result = service.read_page(1, "", "text")
+                self.assertEqual(result["content"], "fresh content")
+            finally:
+                release.set()
+                thread.join()
+            service.embeddings.embed_passages = mock.Mock(side_effect=RuntimeError("provider down"))
+            self.assertEqual(service.read_page(1, "", "text")["content"], "fresh content")
+            self.assertFalse(service.index_status()["semantic_ready"])
 
 
 class ProductDocsServiceTests(unittest.TestCase):

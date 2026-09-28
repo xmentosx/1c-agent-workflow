@@ -21,6 +21,121 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "scopes the BookStack credential profile without changing any other MCP" -Tag BookStackQwen {
+        $tempRoot = Join-Path $TestDrive "BookStack ключ с пробелом"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        @{ apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-bookstack-key"; model = "qwen/qwen3-embedding-8b" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; embedding = @{ model = "intfloat/multilingual-e5-base" }; secrets = @{ BOOKSTACK_TOKEN_ID = "fixture-id"; BOOKSTACK_TOKEN_SECRET = "fixture-secret" }; bookStackProductDocsServer = @{ baseUrl = "https://bookstack.test"; embedding = @{ credentialFile = $credentialPath } } }
+            foreach ($id in @("bookstack", "docs", "syntax", "templates", "ssl", "mantis", "code", "graph")) {
+                $server = [pscustomobject]@{ id = $id; embedding = $true; env = @(); volumes = @() }
+                $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                if ($id -eq "bookstack") {
+                    $settings.apiKey | Should -Be "fixture-bookstack-key"
+                    $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                    $settings.mode | Should -Be "openai"
+                } else {
+                    $settings.apiKey | Should -BeNullOrEmpty
+                    $settings.model | Should -Be "intfloat/multilingual-e5-base"
+                    $settings.mode | Should -Be "cpu"
+                }
+            }
+            $bookstackEnv = Resolve-ServerEnv -Config $config -Server (Get-BookStackProductDocsServerDefinition)
+            $bookstackEnv.BOOKSTACK_EMBEDDING_MODEL | Should -Be "qwen/qwen3-embedding-8b"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_API_KEY | Should -Be "fixture-bookstack-key"
+            $bookstackEnv.Contains("BOOKSTACK_SEMANTIC_MIN_SCORE") | Should -BeFalse
+            $script:BookStackProbedModel = ""
+            function Test-HostEmbeddingEndpointReady {
+                param($ApiBase, $Model, $ApiKey)
+                $script:BookStackProbedModel = $Model
+                return $true
+            }
+            Ensure-HostEmbeddingModel -Config $config -Manifest $null -GlobalServerIds @("bookstack") -ProjectServerIds @()
+            $script:BookStackProbedModel | Should -Be "qwen/qwen3-embedding-8b"
+            $config.bookStackProductDocsServer.embedding = @{ apiBase = "https://openrouter.ai/api/v1"; model = "qwen/qwen3-embedding-8b" }
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "bookstack" }) } | Should -Throw "*no CPU fallback*"
+        }
+    }
+
+    It "builds BookStack before cache-preserving replacement and refuses database reset" -Tag BookStackQwen {
+        $configPath = Join-Path $TestDrive "bookstack-recreate.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:BookStackCalls = @()
+            $script:BookStackReset = "false"
+            function Resolve-ServerEnv { return [ordered]@{ RESET_DATABASE = $script:BookStackReset } }
+            function Resolve-ServerVolumes { return @() }
+            function Ensure-ServerDockerImageAvailable { $script:BookStackCalls += "build" }
+            function Assert-BetaProjectVolumesReady { }
+            function Assert-BetaProjectContainerMounts { }
+            function Invoke-DockerCommandCapture { return @("itl-bookstack-product-docs") }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:BookStackCalls += ($Arguments -join ' ') }
+            $server = [pscustomobject]@{ id = "bookstack" }
+            $runtime = [pscustomobject]@{ containerName = "itl-bookstack-product-docs"; image = "itl/bookstack:prepared"; hostPort = 18005; internalPort = 8000; url = "http://localhost:18005/mcp" }
+            Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate
+            $script:BookStackCalls[0] | Should -Be "build"
+            $script:BookStackCalls[1] | Should -Be "rm -f itl-bookstack-product-docs"
+            ($script:BookStackCalls -join '|') | Should -Match 'RESET_DATABASE=false'
+            @($script:BookStackCalls | Where-Object { $_ -eq "build" }).Count | Should -Be 1
+            $script:BookStackCalls = @()
+            $script:BookStackReset = "true"
+            { Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate } | Should -Throw "*resetDatabase=false*"
+            $script:BookStackCalls.Count | Should -Be 0
+            # The original action succeeds after correcting the setting.
+            $script:BookStackReset = "false"
+            { Start-DockerServer -Config $config -Server $server -Runtime $runtime -Recreate } | Should -Not -Throw
+        }
+    }
+
+    It "round trips Python Unicode evidence through the host child-process helper" -Tag BookStackQwen {
+        $root = Join-Path $TestDrive "документы с пробелом"
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $configPath = Join-Path $root "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        $scriptPath = Join-Path $root "проверка.py"
+        [IO.File]::WriteAllText($scriptPath, "import sys; print(sys.argv[1])", [Text.UTF8Encoding]::new($false))
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $oldEncoding = $env:PYTHONIOENCODING
+            try {
+                $env:PYTHONIOENCODING = "utf-8"
+                $result = Invoke-ProcessCapture -FilePath python -Arguments @($scriptPath, $root)
+                $result.exitCode | Should -Be 0
+                $result.lines[0] | Should -BeExactly $root
+            } finally { $env:PYTHONIOENCODING = $oldEncoding }
+        }
+    }
+
+    It "continues the BookStack replacement after existing maintenance completes" -Tag BookStackQwen {
+        $configPath = Join-Path $TestDrive "bookstack-maintenance.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:BookStackLeaseAvailable = $false
+            $script:BookStackStarted = $false
+            $script:BookStackReleased = $false
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $script:BookStackLeaseAvailable } }
+            function Exit-McpHostMaintenanceLock { $script:BookStackReleased = $true }
+            function Start-HostServers {
+                param($Config, $TargetServerId, [switch]$RecreateBookStack)
+                $TargetServerId | Should -Be "bookstack"
+                $RecreateBookStack | Should -BeTrue
+                $script:BookStackStarted = $true
+            }
+            { Invoke-BookStackReplacement -Config $config } | Should -Throw "*repeat start*"
+            $script:BookStackStarted | Should -BeFalse
+            $script:BookStackLeaseAvailable = $true
+            Invoke-BookStackReplacement -Config $config
+            $script:BookStackStarted | Should -BeTrue
+            $script:BookStackReleased | Should -BeTrue
+        }
+    }
+
     It "keeps OpenRouter credentials and Linux volumes exclusive to beta Code and Graph" -Tag BetaCutover {
         $tempRoot = Join-Path $TestDrive "beta ключ с пробелом"
         New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
@@ -818,7 +933,7 @@ services:
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 15 tests"
+            ($output -join [Environment]::NewLine) | Should -Match "Ran 28 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
@@ -1793,7 +1908,8 @@ services:
         $hostConfig.secrets.MANTIS_API_TOKEN | Should -Match "^<"
         $hostConfig.bookStackProductDocsServer.baseUrl | Should -Match "^http"
         $hostConfig.bookStackProductDocsServer.reindexIntervalHours | Should -Be 24
-        $hostConfig.bookStackProductDocsServer.semanticMinScore | Should -Be 0.82
+        $hostConfig.bookStackProductDocsServer.semanticMinScore | Should -BeNullOrEmpty
+        $hostConfig.bookStackProductDocsServer.chunkTokens | Should -Be 1024
         $hostConfig.mantisTicketServer.baseUrl | Should -Match "^http"
         $hostConfig.mantisTicketServer.attachmentCachePath | Should -Match "mantis-ticket"
         $hostConfig.mantisTicketServer.maxAttachmentBytes | Should -Be 26214400
