@@ -4064,6 +4064,160 @@ services:
         }
     }
 
+    It "converts only the accepted stable image to the same public native address" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native контекст с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
+            $definition = @{ id = 'ssl'; scope = 'global'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'public-ssl' }
+            function Read-DistributionManifest { return @{ servers = @($definition) } }
+            $old = @{ channel = 'stable'; manifestPath = $release; containerName = 'accepted-ssl'; name = 'public-ssl'; url = 'http://host:22004/mcp'; directUrl = 'http://host:18004/mcp'; hostPort = 18004; proxyPort = 22004; proxyContainerName = 'proxy'; image = ('image@sha256:' + ('a' * 64)) }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq 'accepted-ssl') { return 'running' }; return 'missing' }
+            function New-ServerRuntime { return [pscustomobject]@{ name = 'public-ssl'; containerName = 'candidate'; hostPort = 18004; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)) } }
+            function Resolve-ServerEnv { return @{ RESET_DATABASE = 'false' } }
+            function Test-HostServerNeedsEmbedding { return $false }
+            $context = Get-BetaCutoverContext -Config @{} -ServerId ssl -ReleaseManifest $release -NativeEndpoint
+            $context.runtime.hostPort | Should -Be 22004
+            $context.runtime.url | Should -Be $old.url
+            $context.runtime.directUrl | Should -Be $old.url
+            $context.runtime.endpointMode | Should -Be 'direct'
+            $context.runtime.containerName | Should -Be 'accepted-ssl-native'
+            $context.runtime.proxyContainerName | Should -BeNullOrEmpty
+            $context.runtime.proxyPort | Should -Be 0
+            $old.image = 'other@sha256:fixture'
+            { Get-BetaCutoverContext -Config @{} -ServerId ssl -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*exact accepted stable image*'
+            $definition.id = 'templates'
+            { Get-BetaCutoverContext -Config @{} -ServerId templates -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*Templates retains*'
+        }
+    }
+
+    It "retains endpoint mode per deployment through ordinary runtime creation and proxy activation" -Tag NativeEndpoint {
+        $tempRoot = Join-Path $TestDrive 'native restart кириллица'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $configPath = Join-Path $tempRoot 'host.config.json'
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'code'; scope = 'project'; configId = 'pm4'; endpointMode = 'direct'; hostPort = 22101; url = 'http://original-host:22101/mcp'; containerName = 'code-pm4-native'; composeProject = 'code-pm4-native'; image = 'pinned' },
+                @{ id = 'code'; scope = 'project'; configId = 'pm5'; hostPort = 18100; url = 'http://host:22100/mcp'; containerName = 'code-pm5'; image = 'pinned'; proxyContainerName = 'proxy-pm5' }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostPort { return 18100 }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Invoke-DockerCommandChecked { throw 'native restart attempted Docker proxy mutation' }
+            $definition = @{ id = 'code'; scope = 'project'; image = 'pinned'; mcpNameTemplate = 'itl-{projectSlug}-code'; containerNameTemplate = 'default-{projectSlug}' }
+            $config = @{ stateRoot = $tempRoot; baseUrl = 'http://changed-host'; toolsListProxy = @{ enabled = $true; serverIds = @('code') } }
+            $configState = @{ configId = 'pm4'; sourceCommit = ''; sourceFingerprint = ''; reportHash = ''; indexedAt = '' }
+            $pm4 = New-ServerRuntime -Config $config -Server $definition -Index 0 -ConfigState $configState
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $pm4
+            $pm4.containerName | Should -Be 'code-pm4-native'
+            $pm4.composeProject | Should -Be 'code-pm4-native'
+            $pm4.hostPort | Should -Be 22101
+            $pm4.url | Should -Be 'http://original-host:22101/mcp'
+            $pm4.directUrl | Should -Be $pm4.url
+            $pm4.proxyPort | Should -Be 0
+            $configState.configId = 'pm5'
+            $pm5 = New-ServerRuntime -Config $config -Server $definition -Index 0 -ConfigState $configState
+            $pm5.endpointMode | Should -Be 'proxy'
+            $pm5.hostPort | Should -Be 18100
+            $pm5.proxyContainerName | Should -Be 'proxy-pm5'
+            # A targeted legacy proxy command is a no-op once all its deployments are native.
+            $state.servers = @($state.servers[0])
+            '{}' | Set-Content (Get-HostStatePath -Config $config)
+            function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
+            Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId code
+        }
+    }
+
+    It "keeps native deployment outside proxy repair retries for another configuration" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native-repair.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'code'; configId = 'pm4'; endpointMode = 'direct'; hostPort = 22101; containerName = 'native-pm4' },
+                @{ id = 'code'; configId = 'pm5'; hostPort = 18100; containerName = 'proxied-pm5'; proxyContainerName = 'proxy-pm5'; proxyPort = 22100 }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostStatePath { return $configPath }
+            function Invoke-DockerCommand { return 0 }
+            $script:NativeRepairCalls = @(); $script:NativeRepairAttempts = 0
+            function Invoke-DockerCommandChecked { param($Arguments) $script:NativeRepairCalls += ($Arguments -join ' ') }
+            function Get-HostContainerPublishState { return 'running' }
+            function Wait-HostTcpPortOpen { return $true }
+            function Test-ToolsListProxyReady { return $false }
+            function Enable-TrackedToolsListProxiesAndPublish { $script:NativeRepairAttempts++; if ($script:NativeRepairAttempts -eq 1) { throw 'fixture proxy failure' } }
+            Repair-TrackedMcpHostAndPublish -Config @{ toolsListProxy = @{ enabled = $true; serverIds = @('code') } } -TargetServerId code
+            $script:NativeRepairAttempts | Should -Be 2
+            $script:NativeRepairCalls | Should -Contain 'restart proxied-pm5'
+            $script:NativeRepairCalls | Should -Not -Contain 'restart native-pm4'
+            ($script:NativeRepairCalls -join '|') | Should -Not -Match 'native-pm4-tools-list-proxy'
+        }
+    }
+
+    It "publishes native endpoints only after MCP tools respond despite an open TCP port" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native-publish.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostContainerPublishState { return 'running' }
+            function Test-HostTcpPortOpen { return $true }
+            $server = @{ endpointMode = 'direct'; containerName = 'native'; hostPort = 22004; url = 'http://host:22004/mcp'; proxyUrl = 'stale'; proxyContainerName = 'old-proxy' }
+            function Test-ToolsListProxyReady { throw 'native endpoint used stale proxy state' }
+            $published = Update-ToolsListProxyPublishEndpoint -Server $server
+            $published.url | Should -Be $server.url
+            $published.proxyUrl | Should -BeNullOrEmpty
+            $published.toolsContractStatus | Should -Be 'native'
+            function Get-HostMcpToolsList { return @() }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
+            function Get-HostMcpToolsList { throw 'invalid MCP' }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
+            function Get-HostMcpToolsList { return @(@{ name = 'vector_store_state' }) }
+            (Get-HostServerPublishStatus -Server $server) | Should -Be 'running'
+        }
+    }
+
+    It "stops the old main and proxy before native binding and never copies or restores an index" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'native-cutover.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $runtime = [pscustomobject]@{ id = 'ssl'; scope = 'global'; name = 'public'; image = 'pinned'; containerName = 'new-native'; hostPort = 22004; channel = 'stable'; health = 'unknown'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json' }
+            Set-NativeRuntimeEndpoint -Runtime $runtime -Url 'http://host:22004/mcp'
+            $context = [pscustomobject]@{ serverId = 'ssl'; configId = ''; nativeEndpoint = $true; configState = $null; freshProjectIndex = $false; retainedIndex = $true; runtime = $runtime; betaServer = @{}; old = @{ containerName = 'old'; directUrl = 'http://host:18004/mcp'; url = 'http://host:22004/mcp'; proxyUrl = 'http://host:22004/mcp'; proxyPort = 22004; proxyContainerName = 'proxy' } }
+            $nativeTools = @(@{ name = 'state'; inputSchema = @{ type = 'object' } })
+            $preflight = @{ context = $context; oldTools = $nativeTools; oldPublicTools = @(@{ name = 'state'; inputSchema = @{ type = 'object' }; outputSchema = @{ type = 'object'; required = @('result') } }) }
+            $script:NativeSequence = @(); $script:NativeSaved = $null
+            function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
+            function Exit-McpHostMaintenanceLock { $script:NativeSequence += 'release' }
+            function Invoke-BetaPreflight { return $preflight }
+            function Assert-RegistryPushPreflight {}
+            function Ensure-ServerDockerImageAvailable {}
+            function Ensure-ToolsListProxyImage { throw 'unexpected native proxy build' }
+            function Get-BetaConfigurationIndexActivity { return $null }
+            function Invoke-DockerCommandChecked { param($Arguments) $script:NativeSequence += ($Arguments -join ' ') }
+            function Get-HostContainerPublishState { return 'exited' }
+            function Update-HostStateServers { param($ServerStates) $script:NativeSaved = @($ServerStates)[0] }
+            function Copy-BetaDataSnapshot { throw 'unexpected index copy' }
+            function Restore-StableAfterBetaFailure { throw 'unexpected rollback' }
+            function Start-DockerServer { $script:NativeSequence += 'start-native'; $script:NativeSaved.endpointMode | Should -Be 'direct'; $script:NativeSaved.proxyPort | Should -Be 0 }
+            function Wait-BetaCandidateReady {}
+            function Get-HostMcpToolsList { return $nativeTools }
+            function Get-HostServerFunctionalHealth { return @{ status = 'qualified' } }
+            function New-BetaProxyContract { throw 'unexpected proxy contract' }
+            function Publish-Registry { $script:NativeSequence += 'publish' }
+            Invoke-BetaCutover -Config @{} -TargetServerId ssl -ReleaseManifest $runtime.manifestPath -ForwardOnly -NativeEndpoint
+            ($script:NativeSequence -join ',') | Should -Be 'update --restart no old,stop old,update --restart no proxy,stop proxy,start-native,publish,release'
+            $script:NativeSaved.url | Should -Be 'http://host:22004/mcp'
+            $script:NativeSaved.toolsContractStatus | Should -Be 'native'
+            $script:NativeSaved.proxyContainerName | Should -BeNullOrEmpty
+        }
+    }
+
     It "prepares stable from an accepted beta without selecting a fresh generation or changing model" -Tag StableCutover {
         $configPath = Join-Path $TestDrive 'stable-context.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8

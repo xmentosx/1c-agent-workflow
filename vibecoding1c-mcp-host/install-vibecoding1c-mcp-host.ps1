@@ -8,6 +8,7 @@ param(
     [string]$ServerId = "",
     [string]$ReleaseManifest = "",
     [switch]$ForwardOnly,
+    [switch]$NativeEndpoint,
     [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0,
     [switch]$DryRun,
     [switch]$RecreateBookStack
@@ -23,6 +24,9 @@ $script:PythonExecutable = ""
 $script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
 if (($ForwardOnly -or $IndexReadyTimeoutSeconds) -and ($Action -ne "stable-cutover" -or -not $ReleaseManifest)) {
     throw "ForwardOnly and IndexReadyTimeoutSeconds require stable-cutover with a versioned ReleaseManifest."
+}
+if ($NativeEndpoint -and ($Action -notin @("stable-cutover", "stable-preflight") -or -not $ReleaseManifest -or ($Action -eq "stable-cutover" -and -not $ForwardOnly))) {
+    throw "NativeEndpoint requires stable-preflight or ForwardOnly stable-cutover with a versioned ReleaseManifest."
 }
 $script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
 $script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP host nightly configuration indexing."
@@ -2817,8 +2821,23 @@ function Ensure-ToolsListProxyImage {
     $script:ToolsListProxyImageReady = $true
 }
 
+function Set-NativeRuntimeEndpoint {
+    param([object]$Runtime, [string]$Url)
+    foreach ($pair in @{
+        endpointMode = "direct"; url = $Url; directUrl = $Url; toolsContractStatus = "native"
+        proxyUrl = ""; proxyPort = 0; proxyContainerName = ""; proxyContractPath = ""
+    }.GetEnumerator()) {
+        if ($Runtime -is [System.Collections.IDictionary]) { $Runtime[$pair.Key] = $pair.Value }
+        else { $Runtime | Add-Member -NotePropertyName $pair.Key -NotePropertyValue $pair.Value -Force }
+    }
+}
+
 function Enable-ToolsListProxyForRuntime {
     param([object]$Config, [object]$Runtime)
+    if ([string](Get-ObjectValue -Object $Runtime -Name "endpointMode" -Default "") -eq "direct") {
+        Set-NativeRuntimeEndpoint -Runtime $Runtime -Url ([string]$Runtime.url)
+        return
+    }
     $id = [string](Get-ObjectValue -Object $Runtime -Name "id" -Default "")
     if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $id)) { return }
 
@@ -2918,6 +2937,10 @@ function Enable-ToolsListProxyForRuntime {
 function Update-ToolsListProxyPublishEndpoint {
     param([object]$Server)
     $hash = Convert-ToHash -Object $Server
+    if ([string](Get-ObjectValue -Object $hash -Name "endpointMode" -Default "") -eq "direct") {
+        Set-NativeRuntimeEndpoint -Runtime $hash -Url ([string]$hash.url)
+        return $hash
+    }
     $directUrl = [string](Get-ObjectValue -Object $hash -Name "directUrl" -Default "")
     $proxyUrl = [string](Get-ObjectValue -Object $hash -Name "proxyUrl" -Default "")
     if (-not $directUrl -or -not $proxyUrl) { return $hash }
@@ -3038,6 +3061,8 @@ function Enable-TrackedToolsListProxiesAndPublish {
     $trackedIds = @($targets | ForEach-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") } | Select-Object -Unique)
     $missingIds = @($selectedIds | Where-Object { $_ -notin $trackedIds })
     if ($missingIds.Count -gt 0) { throw "Proxy targets are missing from tracked host state: $($missingIds -join ', ')." }
+    $targets = @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "endpointMode" -Default "") -ne "direct" })
+    if ($targets.Count -eq 0) { Write-Host "Selected deployments use native public MCP endpoints; no proxy activation is required."; return }
 
     if ($DryRun) {
         foreach ($server in $targets) {
@@ -3065,7 +3090,7 @@ function Enable-TrackedToolsListProxiesAndPublish {
         foreach ($server in As-Array (Get-ObjectValue -Object $state -Name "servers" -Default @())) {
             $serverHash = Convert-ToHash -Object $server
             $id = [string](Get-ObjectValue -Object $serverHash -Name "id" -Default "")
-            if ($id -notin $selectedIds) {
+            if ($id -notin $selectedIds -or [string](Get-ObjectValue -Object $serverHash -Name "endpointMode" -Default "") -eq "direct") {
                 $updatedServers += $serverHash
                 continue
             }
@@ -3217,6 +3242,8 @@ function Repair-TrackedMcpHostAndPublish {
             }
         }
 
+        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") { continue }
+
         $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
         $proxyPort = [int](Get-ObjectValue -Object $server -Name "proxyPort" -Default ($hostPort + [int]$settings.portOffset))
         $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
@@ -3237,7 +3264,7 @@ function Repair-TrackedMcpHostAndPublish {
             Enable-TrackedToolsListProxiesAndPublish -Config $Config -TargetServerId $id
         } catch {
             Write-Warning "Initial MCP qualification for '$id' failed; restarting only its tracked direct runtime and retrying once. $($_.Exception.Message)"
-            foreach ($server in @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id })) {
+            foreach ($server in @($targets | Where-Object { [string](Get-ObjectValue -Object $_ -Name "id" -Default "") -eq $id -and [string](Get-ObjectValue -Object $_ -Name "endpointMode" -Default "") -ne "direct" })) {
                 $containerName = [string](Get-ObjectValue -Object $server -Name "containerName" -Default "")
                 $hostPort = [int](Get-ObjectValue -Object $server -Name "hostPort" -Default 0)
                 Invoke-DockerCommandChecked -Arguments @("restart", $containerName) -TimeoutSec 180 -Description "docker restart $containerName"
@@ -4214,6 +4241,8 @@ function Get-HostServerSafeHealthTool {
     param([string]$ServerId)
 
     switch ($ServerId) {
+        "syntax" { return "syntaxcheck" }
+        "ssl" { return "vector_store_state" }
         "templates" { return "list_templates" }
         "codechecker" { return "fetch_its" }
         "bookstack" { return "index_status" }
@@ -4230,6 +4259,7 @@ function Get-HostServerSafeHealthArguments {
     if ($ServerId -eq "codechecker") {
         return [ordered]@{ id = "root" }
     }
+    if ($ServerId -eq "syntax") { return [ordered]@{ code = "Procedure HealthCheck()`nEndProcedure"; file_name = "HealthCheck.bsl" } }
     return $null
 }
 
@@ -4349,7 +4379,7 @@ function Get-HostServerPublishStatus {
     param([object]$Server)
 
     $proxyUrl = [string](Get-ObjectValue -Object $Server -Name "proxyUrl" -Default "")
-    if ($proxyUrl) {
+    if ($proxyUrl -and [string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -ne "direct") {
         $proxyContainerName = [string](Get-ObjectValue -Object $Server -Name "proxyContainerName" -Default "")
         $proxyState = Get-HostContainerPublishState -ContainerName $proxyContainerName
         if ($proxyState -eq "missing" -or $proxyState -eq "unknown") {
@@ -4380,6 +4410,11 @@ function Get-HostServerPublishStatus {
 
     $hostPort = [int](Get-ObjectValue -Object $Server -Name "hostPort" -Default 0)
     if (Test-HostTcpPortOpen -Port $hostPort) {
+        if ([string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -eq "direct") {
+            try {
+                if (@(Get-HostMcpToolsList -Url ([string]$Server.url)).Count -eq 0) { return "unreachable" }
+            } catch { return "unreachable" }
+        }
         return "running"
     }
     return "unreachable"
@@ -4466,8 +4501,14 @@ function New-ServerRuntime {
     }
     $localValues = Get-HostLocalValues -Config $Config -ConfigState $ConfigState
     $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId
+    $endpointMode = [string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "proxy")
+    if ($endpointMode -eq "direct") {
+        $hostPort = [int]$tracked.hostPort
+        if ([string]$tracked.image -ceq $image) { $containerName = [string]$tracked.containerName }
+    }
     return [pscustomobject]@{
         id = $id
+        endpointMode = $endpointMode
         channel = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable")
         manifestPath = [string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default "")
         scope = $scope
@@ -4478,13 +4519,13 @@ function New-ServerRuntime {
         name = $name
         clientNames = (Get-McpClientNames -ServerId $id)
         containerName = $containerName
-        proxyContainerName = [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "")
-        proxyContractPath = [string](Get-ObjectValue -Object $tracked -Name "proxyContractPath" -Default "")
-        composeProject = (Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id)
+        proxyContainerName = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContainerName" -Default "") })
+        proxyContractPath = $(if ($endpointMode -eq "direct") { "" } else { [string](Get-ObjectValue -Object $tracked -Name "proxyContractPath" -Default "") })
+        composeProject = $(if ($endpointMode -eq "direct" -and [string]$tracked.image -ceq $image) { [string](Get-ObjectValue -Object $tracked -Name "composeProject" -Default $containerName) } else { Expand-Template -Template $composeProjectTemplate -ConfigId $configId -ServerId $id })
         image = $image
         internalPort = $internalPort
         hostPort = $hostPort
-        url = "$baseUrl`:$hostPort/mcp"
+        url = $(if ($endpointMode -eq "direct") { [string]$tracked.url } else { "$baseUrl`:$hostPort/mcp" })
         health = "unknown"
         platformVersion = $(if ($id -eq "docs") { [string]$localValues["HELP_PLATFORM_VERSION"] } else { "" })
         bspVersion = $(if ($id -eq "ssl") { [string]$localValues["BSP_VERSION"] } else { "" })
@@ -5205,11 +5246,11 @@ $config = Read-HostConfig
 switch ($Action) {
     "stable-preflight" {
         if (-not $ReleaseManifest) { throw "stable-preflight requires -ReleaseManifest." }
-        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest
+        Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
     }
     "stable-cutover" {
         if (-not $ReleaseManifest) { throw "stable-cutover requires -ReleaseManifest." }
-        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -ForwardOnly:$ForwardOnly -IndexReadyTimeoutSeconds $IndexReadyTimeoutSeconds
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -ForwardOnly:$ForwardOnly -NativeEndpoint:$NativeEndpoint -IndexReadyTimeoutSeconds $IndexReadyTimeoutSeconds
     }
     "beta-preflight" {
         Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId
