@@ -140,10 +140,29 @@ if ($mergeCommits) {
 }
 
 $script:Blockers = [Collections.Generic.List[string]]::new()
+$rootComposition = if ($manifest.PSObject.Properties['targetComposition']) { [string]$manifest.targetComposition } else { 'replace' }
+if ($rootComposition -notin @('replace', 'append-upstream')) {
+    Add-Blocker "Invalid root targetComposition '$rootComposition'."
+}
+$rootTemplate = if ($manifest.PSObject.Properties['targetTemplate']) { [string]$manifest.targetTemplate } else { 'AGENTS.md' }
+if ([string]::IsNullOrWhiteSpace($rootTemplate)) {
+    Add-Blocker 'Root targetTemplate is empty.'
+}
+$upstreamAgents = (Invoke-AiRulesGit -Arguments @("show", "$UpstreamCommit`:AGENTS.md")).stdout
+function Get-ManagedTargetText {
+    param([object]$Target)
+    $templatePath = Join-Path $overlayRootFull ([string]$Target.template)
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) { return '' }
+    $templateText = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n").TrimEnd("`n")
+    if ([string]$Target.path -eq [string]$manifest.targetPath -and $rootComposition -eq 'append-upstream') {
+        return $upstreamAgents.Replace("`r`n", "`n").TrimEnd("`n") + "`n`n" + $templateText + "`n"
+    }
+    return $templateText + "`n"
+}
 $managedTargets = @(
     [pscustomobject]@{
         path = [string]$manifest.targetPath
-        template = "AGENTS.md"
+        template = $rootTemplate
         maximumCharacters = [int]$manifest.maximumTargetCharacters
         requiredAnchors = @($manifest.requiredTargetAnchors)
     }
@@ -163,7 +182,7 @@ foreach ($target in $managedTargets) {
         Add-Blocker "Managed target template is missing: $($target.template)"
         continue
     }
-    $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n")
+    $text = Get-ManagedTargetText -Target $target
     if ($target.maximumCharacters -gt 0 -and $text.Length -gt $target.maximumCharacters) {
         Add-Blocker "Managed target '$($target.path)' is $($text.Length) characters; budget is $($target.maximumCharacters)."
     }
@@ -174,7 +193,6 @@ foreach ($target in $managedTargets) {
     }
 }
 
-$upstreamAgents = (Invoke-AiRulesGit -Arguments @("show", "$UpstreamCommit`:AGENTS.md")).stdout
 foreach ($anchor in @($manifest.requiredUpstreamAnchors)) {
     if (-not $upstreamAgents.Contains([string]$anchor)) {
         Add-Blocker "Required upstream anchor disappeared: $anchor"
@@ -196,8 +214,11 @@ foreach ($mapping in $rootMappings) {
         Add-Blocker "Duplicate root contract mapping: $upstreamAnchor"
         continue
     }
-    if ($disposition -notin @("compact-root", "on-demand", "user-rules", "intentional-exclusion")) {
+    if ($disposition -notin @("compact-root", "upstream-root", "on-demand", "user-rules", "intentional-exclusion")) {
         Add-Blocker "Invalid root contract disposition '$disposition' for '$upstreamAnchor'."
+    }
+    if ($disposition -eq 'upstream-root' -and ($rootComposition -ne 'append-upstream' -or $destination -ne [string]$manifest.targetPath)) {
+        Add-Blocker "upstream-root requires append-upstream composition into '$($manifest.targetPath)': $upstreamAnchor"
     }
     $rootMappingsByAnchor[$upstreamAnchor] = $mapping
     if ($upstreamAgents.IndexOf($upstreamAnchor, [StringComparison]::Ordinal) -lt 0) {
@@ -208,10 +229,7 @@ foreach ($mapping in $rootMappings) {
     $destinationText = ""
     $managedDestination = @($managedTargets | Where-Object path -eq $destination | Select-Object -First 1)
     if ($managedDestination.Count -gt 0) {
-        $destinationTemplate = Join-Path $overlayRootFull ([string]$managedDestination[0].template)
-        if (Test-Path -LiteralPath $destinationTemplate -PathType Leaf) {
-            $destinationText = [IO.File]::ReadAllText($destinationTemplate, [Text.Encoding]::UTF8)
-        }
+        $destinationText = Get-ManagedTargetText -Target $managedDestination[0]
     }
     else {
         $destinationResult = Invoke-AiRulesGit -Arguments @("show", "HEAD`:$destination") -AllowFailure
@@ -318,9 +336,8 @@ if ($Mode -eq "Prepare" -and $script:Blockers.Count -eq 0) {
             }
         }
         foreach ($target in $managedTargets) {
-            $templatePath = Join-Path $overlayRootFull $target.template
             $targetPath = Join-Path $script:AiRulesRootFull $target.path
-            $text = [IO.File]::ReadAllText($templatePath, [Text.Encoding]::UTF8).Replace("`r`n", "`n").TrimEnd("`n") + "`n"
+            $text = Get-ManagedTargetText -Target $target
             [IO.File]::WriteAllText($targetPath, $text, $utf8)
         }
         $report.pendingResolvedPaths = @($manifest.pathDecisions | Where-Object disposition -in @("resolved", "downstream-only") | ForEach-Object path)
@@ -371,8 +388,7 @@ if ($Mode -eq "Verify" -and $script:Blockers.Count -eq 0) {
     }
 
     foreach ($target in $managedTargets) {
-        $templateText = [IO.File]::ReadAllText((Join-Path $overlayRootFull $target.template), [Text.Encoding]::UTF8)
-        $expected = Get-TextSha256 -Text $templateText
+        $expected = Get-TextSha256 -Text (Get-ManagedTargetText -Target $target)
         $actual = Get-GitTextSha256 -Commit "HEAD" -Path $target.path
         if ($actual -ne $expected) { Add-Blocker "Managed target differs from template: $($target.path)" }
     }

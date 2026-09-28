@@ -15,6 +15,10 @@
 - [Проверенный r36](https://github.com/xmentosx/itl_ai_rules_1c/tree/451c5a52e5b614c67406445d4af4b636da043aec),
   его `docs/DOWNSTREAM-PATCHES.md`, actual code и regression tests.
 - [Целевой upstream](https://github.com/comol/ai_rules_1c/tree/20a083e5bd9fa41402ad8428b740c4c01f0cc3d6).
+- [Опубликованный workflow master — главный installed baseline](https://github.com/xmentosx/1c-agent-workflow/tree/69c0863bfe3bd837543267f122e81a28dcfa5488):
+  rules `itl-main-410951e7-r33` / `9309bfbbc9f8d844a21bce55178c2e0d72eaf965`.
+  Remote/lock проверены 2026-09-28; r36 — baseline сохранения доработок и отдельной
+  дополнительной приёмки, а не замена реального upgrade с опубликованного пакета.
 - [Текущий path ledger](../../../templates/ai-rules-overlay/sections.json),
   [host ownership/transition](../../../docs/ai-rules-fork-upgrades.md),
   [действующий установленный overlay](../../../templates/USER-RULES.append.md).
@@ -26,7 +30,7 @@ paths сверяются перед созданием нового release ledg
 result SHA-256 рассчитывает реконструктор после реализации. Изменение intake
 требует incremental re-audit, а не сохранения этих чисел как вечной константы.
 
-## Принятые решения Q1–Q20
+## Принятые решения Q1–Q21
 
 | Решение | Зафиксированный результат | Где реализуется / приёмка |
 |---|---|---|
@@ -54,6 +58,31 @@ result SHA-256 рассчитывает реконструктор после р
 | Q18 | Optional plugin controlled fork через ITL; отдельный version lifecycle | D10; PL1–PL3 |
 | Q19 | Несколько установленных клиентов и отдельный session client | D8; CL1/CL3 |
 | Q20 | Десять текущих + ZCode/MiMo; other не полноценный ITL-клиент | D9; CL2/CL4 |
+| Q21.1 | Update основного проекта обновляет workflow доступных веток без merge бизнес-конфигурации, DB load и автотестов; deferred продолжается повтором update, refresh не обязателен | D3/D11; EV3, IM1/IM2 |
+| Q21.2 | Работающий процесс откладывает update; остановленные pending/failed операции получают обычную новую версию и продолжаются/восстанавливаются у прежнего owner; отдельный hotfix механизм не добавляется | D11; IM6 |
+
+## Закрытие замечаний полного ревью в постановке
+
+Ни одна строка ниже не означает выполненную реализацию или live-приёмку.
+Q21 заменяет прежний запрет обновления рабочих веток до refresh; остальные
+уточнения конкретизируют уже согласованные границы без нового продуктового выбора.
+
+| Замечание | Принятое уточнение | Требования / задачи |
+|---|---|---|
+| P1 Snapshot начинается поздно и заканчивается до post-copy | Одна root-транзакция pre-copy → новый процесс → rules/clients → commit → terminal; partial rollout по roots | D11; IM1; 5.1, 9.1 |
+| P1 Execution-guard cutover обновляет часть веток вне обычной миграции | Q21: полноценный файловый update всех доступных roots у одного owner; guard transition — его этап | D11; IM2/IM6; 9.3, 9.5, 9.6 |
+| P1 Resume зависит от движущегося master | Входы операции закреплены независимо от нового helper; ignored files из exact fork/client/render, main только проверенный cache | D11; IM6; 9.7 |
+| P1 Gate 6 не включён в ITL apply | Условная platform ladder и три сигнала внутри существующего load/check/apply, с recovery | D4; EV8; 3.6, 10.2, 10.4 |
+| P2 Истечение one-off permission обесценивает proof | Authorization provenance отдельно от достаточности; обычный check/export переиспользует proof при persistent off | D3/D4; EV3/EV4; 4.2, 4.4 |
+| P2 CLI mutations обходят store-write owner | Native CLI создаёт candidate в staging; полный diff/metadata/move проходит тот же batch/journal | D7; OS3; 6.4 |
+| P2 Приёмка ограничена r36 | Главный baseline — реальный published master/r33 со старым helper; r36 и legacy classes дополнительно | Context/D12; RQ1; 9.4, 10.4 |
+
+Дополнение Q21 к verification: весь dependency-lock больше не является единым
+основанием сброса proof; учитываются релевантные входы, без автоматического запуска
+тестов в update (EV3, задача 4.2). Сохранённая доработка metadata `Template` /
+`IntegrationService` остаётся SM5 и задачами 3.3/3.4. MCP standards Q9 — отдельное
+свидетельство SM7/RQ2; оно не заменяет эти validators и не создаёт новую задачу
+по переделке metadata Templates или MCP templates.
 
 ## Все 22 группы старого path ledger
 
@@ -185,6 +214,30 @@ descriptor снова приводит к отказу. Поэтому это р
 | Rollback стирает позднейшие user settings | D11: expected post-state и scoped reconciliation для env/MCP/ownership | IM1 post-migration edit |
 | Session client отсутствует в installed set | D8: идентификация не attach; общие операции доступны, client action даёт continuation | CL1 Claude-only project |
 | Новая ветка повторно сбрасывает намеренное on | D11: eligibility по provenance/version, новые scopes наследуют policy receipt | IM3 inherited on |
+
+## Схема нового release ledger
+
+Новый ledger строится из зафиксированных `oldUpstream`, `baselineFork=r36` и
+`targetUpstream` этого inventory. Обязательный набор решений — 459 путей из
+объединения old→r36 и old→target; прежние 197 entries остаются частью набора.
+Каждая запись получает `path`, один первичный `requirementId`, disposition
+`take-upstream|carry-forward|resolved|downstream-only` и проверяемую причину.
+Связанные смысловые требования и потребители остаются в таблицах выше: один
+первичный ID в ledger не отменяет их проверок.
+
+`AGENTS.md` собирается как точный новый upstream root плюс компактный
+`ITL-ROOT.md` и получает `resolved`. Все девять upstream `##`-разделов
+сопоставляются сами себе с disposition `upstream-root`; целевая сборка не
+принимает прежнюю полную замену. `USER-RULES.md` и пересекающиеся runtime,
+adapter, OpenSpec и verification файлы получают `resolved` только после
+поведенческого переноса. Для неизменённого downstream-owned файла допустим
+`carry-forward` после проверки зависимостей; новый чистый upstream путь —
+`take-upstream`. Удаление прежнего поведения также требует явного решения.
+
+`upstreamSha256`, `baselineSha256` и `resultSha256` попадут в итоговый
+`sections.json` только после точной сборки и сверки committed result; здесь
+нет заранее угаданных result hashes. Пока кандидат не квалифицирован, старый
+ledger для установленной r36 не подменяется этим планом.
 
 ## Остаток доказательств
 

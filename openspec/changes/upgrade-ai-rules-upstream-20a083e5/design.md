@@ -11,6 +11,13 @@
 `migration-map.md` связывает оба реестра с новыми владельцами и приёмкой.
 Итоговые byte hashes появятся после реализации у существующего сборщика.
 
+Не смешивать fork baseline для сохранения смыслов и исходный установленный
+workflow. Основная приёмка стартует с опубликованного `master`
+`69c0863bfe3bd837543267f122e81a28dcfa5488`, rules
+`itl-main-410951e7-r33` / `9309bfbbc9f8d844a21bce55178c2e0d72eaf965`
+(remote и lock проверены 2026-09-28). r36 остаётся дополнительным baseline для
+проектов develop. Замена только rules tag в новом helper не моделирует этот upgrade.
+
 Текущие точки расширения ITL: `agent-1c.core.ps1` (набор клиентов),
 `agent-1c.client-adapters.ps1` (surface/MCP/configuration),
 `agent-1c.ai-rules-migration.ps1` (snapshot/preflight/restore),
@@ -22,7 +29,7 @@
 
 ## Goals / Non-Goals
 
-**Goals:** реализовать Q1–Q20 и замечания двух ревью; сохранить конкретные
+**Goals:** реализовать Q1–Q21 и замечания ревью; сохранить конкретные
 действующие исправления; принять новое поведение upstream через все точки
 входа; сделать установку, многоклиентность, store и доказательства совместимыми
 с существующими владельцами и проверяемым откатом.
@@ -99,10 +106,21 @@ Evidence содержит actual/expected, тип проверки, точный
 область применимости, identity тестовой ИБ и загруженного состояния, runner/tool
 identity, revisions применимых требований (включая external store), артефакты
 результата и ограничения. Ключ свежести включает также версию схемы evidence и
-effective policy. Изменение зависимого входа инвалидирует соответствующую запись;
+применимые требования к достаточности результата. Разрешение нового запуска
+отделено от этих требований: invocation override сохраняется как provenance,
+его штатное истечение не инвалидирует результат. Изменение зависимого входа инвалидирует соответствующую запись;
 Git commit того же содержимого и посторонняя правка не инвалидируют её.
 При ручном/runtime доказательстве сохраняются реально наблюдавшиеся шаги и
 результат; словесного «я проверил» без evidence недостаточно.
+
+Обновление workflow не инвалидирует proof только из-за нового package commit
+или изменения посторонней записи dependency-lock. Вместо хеша всего lock
+используются относящиеся к доказательству зависимости/контракты проверяющего кода;
+классификация принадлежит существующему verification owner. Изменение checker,
+runner или acceptance, влияющее на достоверность, делает соответствующий proof
+stale; неизвестная совместимость не объявляется passed. Файловое обновление
+не запускает эту перепроверку: необходимость отражается для следующего обычного
+assessment/export/close. Новый результат не подделывается переносом старого хеша.
 
 Cadence: `affected` для изменённых входов владельца; `handoff` для дорогой
 регрессии к значимой передаче/закрытию с reuse свежего результата; `explicit`
@@ -156,6 +174,31 @@ recovery. Raw ответы и решения adjudication не заменяют�
 OpenSpec/test entrypoints используют этот контракт. Full-cycle parent review
 обязателен независимо от reviewer subagent; quick-fix без запроса не получает
 лишнего отдельного review.
+
+Gate 6 из `verification-gates` / `designer-batch-checks` входит в существующий
+ITL load/check/apply owner. Триггеры: применение расширения; загрузка/применение
+основной конфигурации с metadata/modules, не покрытыми MCP validators.
+Тот же механизм даёт platform fallback Gates 1–3 только при разрешённой работе
+с подходящей dev/test ИБ. Он не запускается от обновления файлов workflow.
+После snapshot и загрузки текущего артефакта в редактируемую конфигурацию,
+до `/UpdateDBCfg`, owner выполняет `/CheckModules` с применимыми runtime modes,
+`/CheckCanApplyConfigurationExtensions` для расширения, затем `/CheckConfig`.
+Нельзя оставлять объединённый load+apply обход этой границы. Первая ошибка
+останавливает apply; существующий owner сохраняет диагностику и восстанавливает
+своё состояние, давая продолжение исходной команды. Per-infobase guard,
+native process ownership, timeout, Unicode transport и маскирование секретов
+остаются общими; upstream пример с прямым Start-Process не становится ITL launcher.
+
+Pass требует согласованного process exit, свежего числового `/DumpResult` и
+отсутствия errors/warnings в `/Out`. Отсутствующий result, timeout и nonzero
+считаются отказом; success-фраза нейтрализует только свой фрагмент, не остаток
+строки с предупреждением/ошибкой. Evidence связывает source/artifact и загруженную
+конфигурацию, точную ИБ/extension, platform, modes и три сигнала. Повторное
+использование возможно только при совпадающих релевантных входах. EDT использует
+свой подтверждённый validation/update путь без второго deployment owner.
+Нет разрешённой платформы/dev-test ИБ — Gate 6 честно unverified с причиной:
+это не новое безусловное запрещение выдачи результата и не разрешение применять
+изменения в production либо обходить действующие ITL требования к apply.
 
 ### D5. Один repair session для двух входов
 
@@ -229,6 +272,22 @@ CLI остаётся единственным resolver store registry/precedence
 Locks не удерживаются во время рассуждений. Ожидание ограничено 30 секундами с диагностикой владельца;
 по timeout никакого принудительного удаления lock, продолжение — повтор исходной
 операции после завершения владельца. Независимые write-sets работают параллельно.
+
+Native CLI mutations проходят тот же owner через staging, а не напрямую в live
+store. Из согласованных readSet/tree membership готовится ограниченный временный
+planning context; закреплённый CLI выполняет там `new change` и другие штатные
+генерирующие операции, включая `.openspec.yaml`. CLI сохраняет владение schema,
+scaffold и разрешением путей; адаптер не переписывает его генератор. Изолированный
+контекст не меняет живой store, project binding, user registry или global prompts.
+После проверки полноты вывода и соответствия целевому root diff переводится
+в существующий batch, включая новые файлы и namespace membership. Staging paths
+не остаются ссылками в установленных artifacts. Возможность такой изоляции
+квалифицируется для выбранного CLI; её отсутствие не разрешает live-write bypass.
+Операции sync/archive готовят candidate таким же образом; прямые `mkdir/mv`
+в live root из bundle заменяются вызовом owner. Crash до commit оставляет только
+временную подготовку, после начала batch используется тот же journal recovery.
+При concurrent `new change` с одинаковым именем проходит один writer; второй
+сохраняет candidate для reconciliation. Неполный scaffold не считается готовым change.
 
 Lock и краткий operation journal находятся в runtime области выбранного store
 (Git common runtime при наличии Git). Lease — OS/file handle с проверенной
@@ -350,6 +409,15 @@ manifest, generated files, `client-surface.json`, `mcp/client-managed.json`, н�
 client roots и факт исходного отсутствия файлов. Shared внешние store и plugin/
 CLI cache не откатываются вместе с проектом. Отменённая или неудачная операция
 восстанавливает owned state и выдаёт existing recovery continuation.
+Граница одной root-транзакции начинается до замены host package и продолжается
+через fresh-process post-copy, rules/client migration, commit и terminal outcome.
+Pre-copy snapshot/receipt нельзя удалять сразу после копирования: новое поколение
+helper должно уметь возобновить/откатить это состояние. Target eligibility и
+переход lock планируются до первой замены; добавление OpenSpec dependency в locked
+проект выполняется явной миграцией lock без переключения dependencyMode в fresh.
+Failure до rules snapshot, после второго клиента, после commit и между roots
+имеет точное продолжение. Успешные roots сохраняются; сбой другого root не запускает
+глобальный откат уже обновлённых веток. Сводка не объявляет весь rollout завершённым.
 Restore проверяет expected post-state каждого затрагиваемого файла/managed
 вклада, включая ignored env/MCP и ownership manifests. Если после операции
 появилась пользовательская или чужая правка, её нельзя заменить старым snapshot:
@@ -376,11 +444,59 @@ deferred ветки остаются самостоятельными eligible s
 диску и без нового глобального project registry. Недостающий root — уточнение
 факта перед rollout; не основание заявлять «все проекты обновлены».
 
-Clean master принимает rules/client transition; активные worktrees обновляются
-через штатный refresh/refresh-lite с собственным env/receipt. Busy/dirty scope
-получает deferred outcome, сохранённые данные и точное продолжение. Для запроса
-Q4 «все существующие проекты» итог показывает каждую найденную область и
-не объявляет завершение при deferred/unreachable scope.
+Q21.1: update-workflow обновляет основной проект и workflow во всех доступных
+зарегистрированных ветках тем же владельцем и тем же exact candidate. Обновляются
+согласованно helper, rules, client surfaces, lock и owned env/MCP contributions;
+branch-specific базы, подключения, выбор клиента и пользовательские значения
+сохраняются. Это файловая операция: без merge src/cf/src/cfe из master, загрузки
+базы и автоматического запуска Vanessa/YAxUnit/Gate 6. Зависимость, требующая
+установки в ИБ, получает явный pending preparation и существующее продолжение;
+скачивание/выбор pin не выдаётся за выполненную установку в базу.
+Незатронутые dirty business files не мешают обновлению. Пользовательская правка
+в write-set, недоступный root или действительно работающий с ним процесс дают
+точный outcome и продолжение, не перезаписываются и не исчезают из inventory.
+Живую работу определяют существующие guards/ownership, не один статус failed
+или отсутствие окна терминала. Повтор update-workflow обрабатывает отложенные
+roots, завершённые roots идемпотентны; обязательного refresh и фонового ожидателя
+нет. Обычный refresh также использует тот же migration owner, когда сам запрошен;
+его исходные действия с конфигурацией/базой/проверками сохраняются. Client reload
+отражается в report. Для Q4 «все проекты» deferred/unreachable не равны completed.
+
+Q21.2: если процессы остановлены, pending/failed lifecycle или MERGE_HEAD сами по
+себе не запрещают обычное обновление workflow. Нет отдельного hotfix installer,
+пользовательского выбора «совместимого helper» или обязанности сначала закончить
+сломанный шаг. Совместимость сохранённого состояния — обязанность новой версии.
+После обновления повтор исходной команды продолжает прежнюю операцию либо входит
+в её существующее восстановление. Оно не запускается автоматически как часть
+файлового update и не получает права на дополнительные 1С-действия.
+Восстановление сначала сопоставляет recorded stage, Git и реально наблюдаемые
+owned effects; подтверждённые завершённые шаги не повторяет. Оно продолжает с
+доказанной точки либо восстанавливает только незавершённые owned effects для
+повтора конкретного шага. Неоднозначность сохраняет evidence и даёт адресное
+продолжение; нет произвольного reset, удаления конфликтов или правки JSON агентом.
+
+Update сохраняет цель операции, идентификатор и checkpoint, Git index/stages,
+уже разрешённые конфликты и пользовательские изменения. Изменения owned workflow
+paths учитывает тот же update/lifecycle owner в переходе baseline; он не делает
+случайный merge commit из чужого staging, не сбрасывает merge и не ослабляет
+проверки результата до «любой новый HEAD допустим». Если конфликт касается самих
+workflow paths, owner сверяет current/before/candidate и сохраняет все варианты
+до адресного reconciliation. Частичный cutover helper/templates отменяется как
+второй обычный updater: требуемый legacy execution-guard transition становится
+этапом той же операции, с существующими guards и сохранением recovery evidence.
+Повторная установка уже действующего поколения не чистит живое runtime-состояние.
+
+Цель refresh A отделена от версии его исполнителя. Даже если master стал B,
+продолжение переносит исходный бизнес-target A; новый helper читает его состояние.
+Rules/bundles восстанавливаются из точного fork и client/render identity
+согласованного installed workflow state, включая подтверждённые owned contributions.
+Без отдельного workflow update это target из исходной операции; после него — pin
+из записанного owned перехода. Например, бизнес-target остаётся A, а отдельно
+обновлённый workflow остаётся B. Main — только cache после проверки identity/hashes.
+Уже установленный пакет не понижается старым merge: его owned изменения учитываются
+как известный переход, а branch env/MCP не копируются из master. Недостающий
+immutable input даёт точное получение того же input, не замену на latest.
+Hash checks остаются строгими.
 
 ### D12. Квалификация и доставка
 
@@ -399,6 +515,18 @@ Build prerequisites не становятся обязательной уста�
 capabilities; фикстуры не создают fake live evidence. Existing publication policy,
 включая честный unverified server evidence и запрет direct push, сохраняется.
 
+Главный upgrade canary создаётся исходным опубликованным workflow master из
+Context, с его настоящим helper/rules/lock/runtime state. Перед квалификацией
+проверяется актуальный remote master: если он изменился, добавляется точный новый
+baseline и повторяется затронутая приёмка; старый результат не переименовывается.
+Дополнительно проверяются r36→new и представительные ранее поддержанные
+legacy upstream/controlled-fork manifest classes (global paths/ownership,
+delegated MCP, rollback), без каждого исторического тега и обязательной r36
+переустановки. Canary включает pending merge, остановку до/после post-copy,
+получение исправления ошибки старого helper, master A→B при resume A и частичный
+rollout с живой веткой. Неизменность бизнес-файлов/БД и отсутствие тестовых запусков
+проверяются у файлового update; продолжение исходной операции проверяется отдельно.
+
 Ordinary coherent source changes commit/RegisterChange; fork reconstruction from
 exact upstream с новым immutable tag остаётся pending. PublishDevelop владеет
 квалификацией, продвижением lock и finalization; master не меняется без отдельного
@@ -416,19 +544,37 @@ atomic push, что immutable component branch/tag, с прежним ancestry p
 развилку в описанных ниже границах. Пользователь отдельно указал:
 «реализацию пока не начинай». Apply не разрешён до нового прямого поручения;
 повторно согласовывать уже принятое решение без изменения его границ не нужно.
+Прямое поручение «Начинай реализацию по спеке» получено 2026-09-29; оно снимает
+этот hold для реализации в согласованных границах. Публикация и установка в
+реальные проекты остаются отдельными этапами с собственными задачами.
 
-Q1–Q20 фиксируют продуктовые решения; этот раздел задаёт конкретные границы для
+Q1–Q21 фиксируют продуктовые решения; этот раздел задаёт конкретные границы для
 принятого checkpoint по docs/package-architecture.md. Новые изменения installed
 state — multi-owner client membership, evidence schema, Caveman receipt и pinned
 CLI selection — мигрируются существующими host owners. Plugin — вызывающая
 сторона, без своей очереди/repair. Source/fork ownership остаётся прежним.
 
-Единственная новая узкая runtime authority — store write batch D7. Минимальный
+Новая узкая runtime authority для внешних документов — store write batch D7. Минимальный
 reproducer: два changes читают один main spec, первый пишет, второй теряет его
 добавление. Prompt-only предупреждение и проверка hash без эксклюзивной записи
 не закрывают race. Выбран scoped file operation с ограниченным ожиданием и
 compare/write/recovery; машинный демон, глобальный lock registry и перенос store
 под lifecycle отвергнуты как избыточные. Непересекающиеся записи не блокируются.
+
+Q21.1 и упрощение Q21.2 согласованы в последующем обсуждении: существующий
+update owner распространяет файловую миграцию на зарегистрированные worktrees,
+включая остановленные pending operations. Минимальный reproducer — старый helper
+не может завершить refresh из-за дефекта, а blanket pending guard не даёт обновить
+его. Только ожидание завершения/refresh не решает этот цикл; выбран обычный update
+и продолжение/восстановление у прежнего lifecycle owner, без второго repair owner
+или специального hotfix runtime. Границы — managed package/client state этих roots
+и учёт owned перехода в сохранённой операции; бизнес-источники, внешние specs,
+неавторизованные DB-действия и чужие процессы не переходят во владение updater.
+Работающий root откладывается без принудительной остановки; ожидание/отмена следуют
+существующим guards. Per-root recovery, partial outcome и повтор update описаны D11;
+это не распределённая транзакция и не новый service/registry. Guards, поддержка
+Windows/terminal и модель прав не ослабляются. Это согласование постановки,
+не разрешение apply; подробности внутри этих границ агент прорабатывает сам.
 
 Ресурсы: project/client write-set и точные store paths. Windows/privilege/terminal
 support не сужается. Cancellation идёт через существующего operation owner;
@@ -454,6 +600,9 @@ Canary: existing single-client upgrade/rollback; add/remove двух клиен�
   runtime/tool identity и exact intake; неизвестное не выдавать за passed.
 - Разовое proof можно переоценить → obligation coverage, context identity и единый
   assessment у всех потребителей; старые failures не стираются сменой режима.
+- Обновление останавливается между поколениями helper либо во время чужого merge →
+  pre-copy recovery на весь root, сохранение index/checkpoint и приёмка новой
+  версией старых остановленных операций; без blanket запрета pending state.
 
 ## Migration Plan
 
@@ -465,8 +614,10 @@ Canary: existing single-client upgrade/rollback; add/remove двух клиен�
    capabilities; собрать component/live evidence по acceptance scenarios.
 4. Через existing PublishDevelop получить immutable installable candidate.
 5. При явно выбранном rollout подготовить конечный inventory проектов/worktrees;
-   обновить master, затем ветки штатным refresh, провести one-time Caveman и
-   подтвердить каждый scope. Plugin подключается опционально.
+   обновить master и workflow доступных веток одним update-workflow, провести
+   one-time Caveman и подтвердить каждый scope. Отложенные roots обрабатывает
+   повтор update-workflow; исходную остановленную операцию продолжают её командой.
+   Refresh не обязателен для установки workflow. Plugin подключается опционально.
 6. При сбое restore собственного write-set/ownership; shared store/CLI cache не
    возвращаются вместе с веткой. После успешного обновления откат на прежний формат
    выполняется только через сохранённый совместимый snapshot/helper, не установкой
@@ -474,7 +625,7 @@ Canary: existing single-client upgrade/rollback; add/remove двух клиен�
 
 ## Open Questions
 
-Новых продуктовых выборов вместо Q1–Q20 не требуется. Неизвестные результаты
+Новых продуктовых выборов вместо Q1–Q21 не требуется. Неизвестные результаты
 qualification (минимальные runtime versions клиентов, live corpus, фактический
 inventory rollout) не считаются выполненными и имеют явные задачи/критерии.
 Если implementation выявит необходимость изменить owner, расширить authority,
