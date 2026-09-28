@@ -7,6 +7,8 @@ param(
     [string]$ConfigId = "",
     [string]$ServerId = "",
     [string]$ReleaseManifest = "",
+    [switch]$ForwardOnly,
+    [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0,
     [switch]$DryRun,
     [switch]$RecreateBookStack
 )
@@ -19,6 +21,9 @@ $script:Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 $OutputEncoding = $script:Utf8NoBom
 $script:PythonExecutable = ""
 $script:HostInstallerPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+if (($ForwardOnly -or $IndexReadyTimeoutSeconds) -and ($Action -ne "stable-cutover" -or -not $ReleaseManifest)) {
+    throw "ForwardOnly and IndexReadyTimeoutSeconds require stable-cutover with a versioned ReleaseManifest."
+}
 $script:WatchdogDescription = "Managed by 1c-agent-workflow standalone MCP host watchdog."
 $script:NightlyIndexDescription = "Managed by 1c-agent-workflow standalone MCP host nightly configuration indexing."
 if ($RecreateBookStack -and ($Action -ne "start" -or $ServerId -ne "bookstack" -or $ConfigId)) {
@@ -4309,6 +4314,16 @@ function Get-HostServerFunctionalHealth {
     param([object]$Server)
 
     $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    if ($id -eq "docs" -and (Test-ModernHostServer -Server $Server)) {
+        try {
+            $direct = [string](Get-ObjectValue -Object $Server -Name "directUrl" -Default (Get-ObjectValue -Object $Server -Name "url" -Default ""))
+            $ready = Invoke-RestMethod -Uri ($direct -replace '/mcp/?$', '/ready') -TimeoutSec 15
+            $activity = ConvertFrom-DocsReadyState -Value $ready
+            if ($activity.running) { return [pscustomobject]@{ status = "indexing"; message = "Docs native index phase: $($activity.phase); serving an older generation is not completed acceptance." } }
+            Assert-BetaDocsFunctionalCall -Url $direct
+            return [pscustomobject]@{ status = "qualified"; message = "Docs native index ready and safe MCP lookup passed." }
+        } catch { return [pscustomobject]@{ status = "degraded"; message = "Docs functional qualification failed: $($_.Exception.Message)" } }
+    }
     $toolName = Get-HostServerSafeHealthTool -ServerId $id
     if (-not $toolName) {
         return [pscustomobject]@{ status = "not-probed"; message = "No server-specific safe health tool is configured." }
@@ -5194,7 +5209,7 @@ switch ($Action) {
     }
     "stable-cutover" {
         if (-not $ReleaseManifest) { throw "stable-cutover requires -ReleaseManifest." }
-        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest
+        Invoke-BetaCutover -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId -ReleaseManifest $ReleaseManifest -ForwardOnly:$ForwardOnly -IndexReadyTimeoutSeconds $IndexReadyTimeoutSeconds
     }
     "beta-preflight" {
         Invoke-BetaPreflight -Config $config -TargetServerId $ServerId -TargetConfigId $ConfigId

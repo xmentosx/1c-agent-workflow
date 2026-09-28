@@ -382,8 +382,12 @@ function Assert-BetaCodeIndexCoverage {
 }
 
 function Assert-RetainedCodeIdentity {
-    param([object]$OldActivity, [object]$NewActivity)
+    param([object]$OldActivity, [object]$NewActivity, [switch]$AllowNewGeneration)
     foreach ($field in @("metadataProjectId", "metadataGenerationId")) {
+        if ($AllowNewGeneration -and $field -eq "metadataGenerationId") {
+            if (-not [string](Get-ObjectValue -Object $NewActivity -Name $field -Default "")) { throw "Rebuilt Code has no published generation identity." }
+            continue
+        }
         $before = [string](Get-ObjectValue -Object $OldActivity -Name $field -Default "")
         if (-not $before -or $before -cne [string](Get-ObjectValue -Object $NewActivity -Name $field -Default "")) { throw "Retained Code generation changed. Inspect fingerprints and restore the accepted snapshot; no rebuild is authorized." }
     }
@@ -659,10 +663,19 @@ function Get-BetaContainerMountSource {
     return [string]$matches[0].Source
 }
 
+function ConvertFrom-DocsReadyState {
+    param([object]$Value)
+    $status = [string](Get-ObjectValue -Object $Value -Name "status" -Default "")
+    if (-not $status -or $status -in @("error", "failed", "degraded")) { throw "Docs native index status is invalid or failed: '$status'." }
+    if ($status -eq "ready" -and ([long](Get-ObjectValue -Object $Value -Name "documents" -Default 0) -le 0 -or -not [string](Get-ObjectValue -Object $Value -Name "generation" -Default ""))) { throw "Docs ready response has no published corpus." }
+    return [pscustomobject]@{ running = ($status -ne "ready"); phase = $status; ready = $Value }
+}
+
 function Wait-BetaFreshIndexReady {
     param([object]$Context, [int]$TimeoutSeconds = 7200)
     $freshProjectIndex = [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)
-    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex) { return }
+    $forwardIndex = [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false) -and $Context.serverId -in @("code", "graph")
+    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex -and -not $forwardIndex) { return }
     $url = "http://localhost:$($Context.runtime.hostPort)/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $lastError = ""
@@ -670,7 +683,11 @@ function Wait-BetaFreshIndexReady {
         try {
             $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
             if ([int]$response.StatusCode -eq 200) {
-                if ($freshProjectIndex) {
+                if ($Context.serverId -eq "docs") {
+                    $docsActivity = ConvertFrom-DocsReadyState -Value (ConvertFrom-Json -InputObject ([string]$response.Content))
+                    if ($docsActivity.running) { throw "Docs is serving while its index is still being built ($($docsActivity.phase))." }
+                }
+                if ($freshProjectIndex -or $forwardIndex) {
                     $activity = Get-BetaConfigurationIndexActivity -ServerId $Context.serverId -Url ([string]$Context.runtime.url)
                     if ($activity.running) { throw "Beta index is still running ($($activity.phase))." }
                 }
@@ -692,9 +709,11 @@ function Wait-BetaCandidateReady {
     param([object]$Context)
     # At the observed rate (~3 docs/s), the 25,536-document Help corpus needs over two hours.
     $budgetSeconds = if ($Context.serverId -eq "docs") { 10800 } else { 7200 }
+    $requestedBudget = [int](Get-ObjectValue -Object $Context -Name "indexReadyTimeoutSeconds" -Default 0)
+    if ($requestedBudget -gt 0) { $budgetSeconds = $requestedBudget }
     $deadline = (Get-Date).AddSeconds($budgetSeconds)
     [void](Wait-HostMcpReadyConnection -Url ([string]$Context.runtime.url) -ServerId $Context.serverId -ConfigId $Context.configId -TimeoutSeconds $budgetSeconds -RetrySeconds 10)
-    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)) {
+    $freshIndexBudgetSeconds = if ($Context.serverId -eq "docs" -or [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false) -or [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false)) {
         [int][Math]::Max(1, [Math]::Ceiling(($deadline - (Get-Date)).TotalSeconds))
     } else { 7200 }
     Wait-BetaFreshIndexReady -Context $Context -TimeoutSeconds $freshIndexBudgetSeconds
@@ -852,14 +871,37 @@ function Invoke-BetaPreflight {
     return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldPublicTools = $oldPublicTools; oldIndexActivity = $oldIndexActivity }
 }
 
+function Set-ForwardCutoverTarget {
+    param([object]$Config, [object]$Context)
+    # The existing host state is also the watchdog's sole desired-runtime owner.
+    # Track the pinned replacement before starting it; never leave a stopped old
+    # main as the watchdog target after the shared store may have been changed.
+    $tracked = Convert-ToHash -Object $Context.runtime
+    foreach ($field in @("directUrl", "proxyUrl", "proxyPort", "proxyContainerName", "proxyContractPath")) {
+        if (-not (Get-ObjectValue -Object $tracked -Name $field -Default $null)) {
+            $value = Get-ObjectValue -Object $Context.old -Name $field -Default $null
+            if ($null -ne $value) { $tracked[$field] = $value }
+        }
+    }
+    $tracked["url"] = [string]$Context.old.url
+    $tracked["health"] = "degraded"
+    $tracked["functionalStatus"] = "not-probed"
+    $tracked["functionalMessage"] = "Forward upgrade selected; complete native readiness and source coverage acceptance."
+    if ($tracked.Contains("proxyBackupName")) { $tracked.Remove("proxyBackupName") }
+    Update-HostStateServers -Config $Config -ServerStates @($tracked)
+}
+
 function Invoke-BetaCutover {
-    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "")
+    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "", [switch]$ForwardOnly, [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0)
+    if (($ForwardOnly -or $IndexReadyTimeoutSeconds) -and -not $ReleaseManifest) { throw "Forward upgrade options require a versioned stable ReleaseManifest." }
     if ($DryRun) { throw "Use -Action beta-preflight for read-only qualification; beta-cutover does not support -DryRun." }
     $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "beta-cutover:${TargetServerId}:$TargetConfigId" -WaitSeconds 0
     if (-not $lease.acquired) { throw "MCP host maintenance is active: $($lease.path)" }
     try {
         $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest
         $context = $preflight.context
+        $context | Add-Member -NotePropertyName forwardOnly -NotePropertyValue ([bool]$ForwardOnly) -Force
+        $context | Add-Member -NotePropertyName indexReadyTimeoutSeconds -NotePropertyValue $IndexReadyTimeoutSeconds -Force
         $retainedIndex = [bool](Get-ObjectValue -Object $context -Name "retainedIndex" -Default $false)
         Assert-RegistryPushPreflight -Config $Config
         Ensure-ServerDockerImageAvailable -Server $context.betaServer -Image ([string]$context.runtime.image)
@@ -881,7 +923,10 @@ function Invoke-BetaCutover {
         try {
             $oldStopped = $true
             Stop-StableForBetaCutover -Context $context
-            Copy-BetaDataSnapshot -Config $Config -Context $context
+            if ($ForwardOnly) {
+                Assert-RetainedIndexStopped -Context $context
+                Set-ForwardCutoverTarget -Config $Config -Context $context
+            } else { Copy-BetaDataSnapshot -Config $Config -Context $context }
             $context | Add-Member -NotePropertyName candidateStarted -NotePropertyValue $true -Force
             if ($TargetServerId -eq "graph") {
                 Start-ComposeServer -Config $Config -Server $context.betaServer -Runtime $context.runtime -ConfigState $context.configState
@@ -903,7 +948,7 @@ function Invoke-BetaCutover {
                     $source = New-BetaCodeSourceContext -ContainerName $context.runtime.containerName
                 }
                 Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex -Source $source
-                if ($retainedIndex) { Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity }
+                if ($retainedIndex) { Assert-RetainedCodeIdentity -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -AllowNewGeneration:$ForwardOnly }
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
@@ -931,9 +976,12 @@ function Invoke-BetaCutover {
             Write-Host "Beta cutover complete: server=$TargetServerId configId=$TargetConfigId publicName=$($context.runtime.name) publicUrl=$($context.runtime.url) oldContainer=$($context.old.containerName) betaContainer=$($context.runtime.containerName) oldData=retained"
         } catch {
             $failure = $_
-            if ($oldStopped) {
+            if ($oldStopped -and -not $ForwardOnly) {
                 try { Restore-StableAfterBetaFailure -Config $Config -Context $context -StateChanged:$stateChanged }
                 catch { throw "Beta cutover failed: $($failure.Exception.Message). Automatic stable restoration also failed: $($_.Exception.Message)" }
+            }
+            if ($ForwardOnly) {
+                Write-Warning "Forward upgrade is incomplete; no old server or snapshot was restored. Preserve the replacement and its index. Repair the reported owner, then use start/reconcile for the tracked pinned stable runtime and repeat full native/tools/source acceptance before declaring completion."
             }
             throw $failure
         }
