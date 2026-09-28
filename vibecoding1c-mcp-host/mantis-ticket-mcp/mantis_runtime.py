@@ -101,8 +101,8 @@ class Runtime:
     def register(self, mcp):
         @mcp.tool
         def search_tickets(query: str, actor: str = "", filters: dict | None = None,
-                           mode: str = "all", limit: int = 5, cursor: str = "", semantic: bool = True) -> dict:
-            """Paged compact search (5 default, max 20, 12000 output chars). Follow next_cursor. Modes: all/comments/filenames; filters via mantis_metadata."""
+                           mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True) -> dict:
+            """Paged compact search (10 default, max 20, 12000 output chars). Follow next_cursor. Modes: all/comments/filenames; filters via mantis_metadata."""
             person = actor_name(actor)
             result = self.require().search(query, filters, mode, limit, cursor, semantic)
             self.audit(person, "search", "", result.get("status", "succeeded"))
@@ -197,5 +197,6 @@ class Runtime:
     def health(self):
         return {"enabled": bool(self.index), "error": self.error,
                 **({"state": self.index.state.health(), "semantic": self.index.semantic_status,
+                    "query_embedding_cache": self.index.query_cache_status(),
                     "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
                     "mantis": self.index.remote_status, "write_actions": sorted(self.writer.enabled)} if self.index else {})}

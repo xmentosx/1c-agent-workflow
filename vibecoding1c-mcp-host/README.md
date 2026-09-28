@@ -52,7 +52,7 @@ and keep `mantis` in `enabledServers.global`. The MCP publishes as
 Optional search and guarded writes add `search_tickets`, `mantis_metadata`,
 `execute_write`, `write_operation`, and `index_control`. The index and write action/project
 allowlists are disabled by default; configure the separate Mantis state volume before
-qualification. Search returns five cards by default, a cursor, and at most 12,000 characters
+qualification. Search returns ten cards by default, a cursor, and at most 12,000 characters
 per structured page, without duplicating the JSON in textual MCP content. See the
 [Mantis operator guide](mantis-ticket-mcp/README.md) for identity headers, qualification,
 cost limits, permission coverage, recovery, and rollback.

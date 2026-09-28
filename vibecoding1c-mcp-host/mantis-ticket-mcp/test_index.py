@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import io
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
 import time
@@ -241,9 +244,111 @@ class IndexTests(unittest.TestCase):
         self.assertFalse({i["id"] for i in first["issues"]} & {i["id"] for i in second["issues"]})
         self.assertEqual(second["issues"][0]["id"], first["issues"][-1]["id"] + 1)
         blank = self.search("")
-        self.assertEqual(len(blank["issues"]), 5)
+        self.assertEqual(len(blank["issues"]), 10)
         self.assertTrue(blank["next_cursor"])
         self.assertNotIn("description", blank["issues"][0])
+
+    def test_query_embedding_reused_across_pages_filters_and_source_changes(self):
+        from mantis_index import Embeddings
+        for number in range(1, 13):
+            self.api.items[number] = ticket(number)
+            self.state.put_issue(self.api.items[number])
+        self.state.run("UPDATE fragments SET vector_id=id,vector_version=version")
+        self.index.vectors = SimpleNamespace(
+            query=lambda vector: [r["vector_id"] for r in self.state.all("SELECT vector_id FROM fragments WHERE vector_id<>''")],
+            purge=lambda: None)
+        self.index.embeddings = Embeddings(self.state, "fixture")
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}], "usage": {"cost": 0.001}}
+        with patch("mantis_index.urlopen", side_effect=lambda *a, **kw: io.BytesIO(json.dumps(response).encode())) as request:
+            first = self.index.search("решения", limit=2)
+            second = self.index.search("решения", limit=2, cursor=first["next_cursor"])
+            self.assertEqual(first["query_embedding_cache"], "miss")
+            self.assertEqual(second["query_embedding_cache"], "hit")
+            self.assertFalse({r["id"] for r in first["issues"]} & {r["id"] for r in second["issues"]})
+            self.api.items[1]["description"] = "уже изменённое содержание"
+            self.index.refresh(1)
+            del self.api.items[2]
+            with self.assertRaises(ApiError):
+                self.index.refresh(2)
+            with patch.object(self.index, "refresh", wraps=self.index.refresh) as refreshed:
+                changed = self.index.search("решения", filters={"project_id": 1, "status": 90})
+            self.assertGreater(refreshed.call_count, 0, "Cached vectors must not bypass fresh issue access checks")
+            self.assertEqual(changed["query_embedding_cache"], "hit")
+            self.assertNotIn(2, {r["id"] for r in changed["issues"]})
+            self.assertNotIn("Описание решения", " ".join(m["snippet"] for r in changed["issues"] if r["id"] == 1 for m in r["matches"]))
+            request.assert_called_once()
+        self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges")["n"], 1)
+        self.assertEqual(self.state.one("SELECT SUM(actual) AS n FROM charges")["n"], 0.001)
+
+    def test_parallel_query_embeddings_share_one_provider_call(self):
+        started, release = threading.Event(), threading.Event()
+        calls = []
+        def embed(texts):
+            calls.append(texts)
+            started.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture release missing")
+            return [[0.125, 0.25]]
+        self.index.embeddings = SimpleNamespace(embed=embed)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(self.index.query_vector, "одновременный запрос") for _ in range(4)]
+            try:
+                self.assertTrue(started.wait(1))
+                deadline = time.monotonic() + 1
+                while self.index.query_cache_status()["shared"] < 3 and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                self.assertEqual(self.index.query_cache_status()["shared"], 3)
+            finally:
+                release.set()
+            results = [future.result(timeout=2) for future in futures]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sorted(status for _, status in results), ["miss", "shared", "shared", "shared"])
+        results[0][0][0] = 999
+        self.assertEqual(self.index.query_vector("одновременный запрос"), ([0.125, 0.25], "hit"))
+
+    def test_failed_query_embedding_releases_waiters_and_is_retried(self):
+        started, release = threading.Event(), threading.Event()
+        def fail(texts):
+            started.set()
+            release.wait(3)
+            raise RuntimeError("provider unavailable")
+        self.index.embeddings = SimpleNamespace(embed=fail)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(self.index.query_vector, "retry me")
+            self.assertTrue(started.wait(1))
+            second = executor.submit(self.index.query_vector, "retry me")
+            deadline = time.monotonic() + 1
+            while self.index.query_cache_status()["shared"] < 1 and time.monotonic() < deadline:
+                time.sleep(0.005)
+            release.set()
+            for future in (first, second):
+                with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+                    future.result(timeout=2)
+        self.assertEqual(self.index.query_cache_status()["pending"], 0)
+        self.assertEqual(self.index.query_cache_status()["entries"], 0)
+        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.5]])
+        self.assertEqual(self.index.query_vector("retry me"), ([0.5], "miss"))
+
+    def test_query_cache_is_bounded_profile_scoped_and_not_persistent(self):
+        calls = []
+        def embed(texts):
+            calls.append(texts)
+            return [[0.125] * 4096]
+        self.index.embeddings = SimpleNamespace(embed=embed)
+        for number in range(256):
+            self.index.query_vector(f"query {number}")
+        self.index.query_vector("query 0")  # Most recently used survives eviction.
+        self.index.query_vector("query 256")
+        self.assertEqual(self.index.query_cache_status()["entries"], 256)
+        self.assertEqual(self.index.query_vector("query 0")[1], "hit")
+        self.assertEqual(self.index.query_vector("query 1")[1], "miss")
+        self.assertEqual(len(calls), 258)
+        with patch("mantis_index.PROFILE", "different-model-profile"):
+            self.assertEqual(self.index.query_vector("query 0")[1], "miss")
+        self.assertEqual(self.index.query_cache_status()["entries"], 256)
+        recreated = Index(self.state, self.api, embeddings=self.index.embeddings)
+        self.assertEqual(recreated.query_vector("query 0")[1], "miss")
+        self.assertEqual(len(calls), 260)
 
     def test_delta_time_budget_resumes_fetched_progress_without_false_checkpoint(self):
         self.api.items[2] = ticket(2)
