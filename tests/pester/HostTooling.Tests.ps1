@@ -4113,13 +4113,15 @@ services:
         }
     }
 
-    It "converts only the accepted stable image to the same public native address" -Tag NativeEndpoint {
+    It "converts only the accepted stable <ServerId> image to the same public native address" -Tag NativeEndpoint -TestCases @(@{ ServerId = 'ssl' }, @{ ServerId = 'templates' }) {
+        param($ServerId)
+        $nativeServerId = $ServerId
         $configPath = Join-Path $TestDrive 'native контекст с пробелом.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $release = 'releases/fixture/vibecoding1c-mcp.manifest.json'
-            $definition = @{ id = 'ssl'; scope = 'global'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'public-ssl' }
+            $definition = @{ id = $nativeServerId; scope = 'global'; channel = 'stable'; manifestPath = $release; mcpNameTemplate = 'public-ssl' }
             function Read-DistributionManifest { return @{ servers = @($definition) } }
             $old = @{ channel = 'stable'; manifestPath = $release; containerName = 'accepted-ssl'; name = 'public-ssl'; url = 'http://host:22004/mcp'; directUrl = 'http://host:18004/mcp'; hostPort = 18004; proxyPort = 22004; proxyContainerName = 'proxy'; image = ('image@sha256:' + ('a' * 64)) }
             function Get-TrackedHostServerForIdentity { return $old }
@@ -4127,7 +4129,7 @@ services:
             function New-ServerRuntime { return [pscustomobject]@{ name = 'public-ssl'; containerName = 'candidate'; hostPort = 18004; url = ''; proxyContainerName = ''; image = ('image@sha256:' + ('a' * 64)) } }
             function Resolve-ServerEnv { return @{ RESET_DATABASE = 'false' } }
             function Test-HostServerNeedsEmbedding { return $false }
-            $context = Get-BetaCutoverContext -Config @{} -ServerId ssl -ReleaseManifest $release -NativeEndpoint
+            $context = Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint
             $context.runtime.hostPort | Should -Be 22004
             $context.runtime.url | Should -Be $old.url
             $context.runtime.directUrl | Should -Be $old.url
@@ -4136,9 +4138,36 @@ services:
             $context.runtime.proxyContainerName | Should -BeNullOrEmpty
             $context.runtime.proxyPort | Should -Be 0
             $old.image = 'other@sha256:fixture'
-            { Get-BetaCutoverContext -Config @{} -ServerId ssl -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*exact accepted stable image*'
-            $definition.id = 'templates'
-            { Get-BetaCutoverContext -Config @{} -ServerId templates -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*Templates retains*'
+            { Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*exact accepted stable image*'
+            $old.image = 'image@sha256:' + ('a' * 64)
+            $old.channel = 'beta'
+            { Get-BetaCutoverContext -Config @{} -ServerId $nativeServerId -ReleaseManifest $release -NativeEndpoint } | Should -Throw '*accepted versioned stable*'
+        }
+    }
+
+    It "keeps native Templates write authorization on the server without creating a token-injecting proxy" -Tag NativeEndpoint {
+        $configPath = Join-Path $TestDrive 'templates native авторизация.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $fixtureToken = 'TemplatesNativeOperator0123456789ABCDEF'
+            function Get-HostSecretValues { return @{ MCP_OPERATOR_TOKEN = $fixtureToken } }
+            function Get-HostLocalValues { return @{} }
+            function Test-HostServerNeedsEmbedding { return $false }
+            function Set-GraphOpenAiFallbackEnv {}
+            function Invoke-DockerCommandChecked { throw 'native Templates attempted proxy mutation' }
+            $config = @{ stateRoot = $TestDrive; templatesSearchServer = @{ enableWriteTools = $true }; toolsListProxy = @{ enabled = $true; serverIds = @('templates') } }
+            $server = @{ id = 'templates'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; env = @() }
+            $runtime = [pscustomobject]@{ id = 'templates'; name = 'public-templates'; containerName = 'templates-native'; hostPort = 22001 }
+            Set-NativeRuntimeEndpoint -Runtime $runtime -Url 'http://host:22001/mcp'
+            $resolved = Resolve-ServerEnv -Config $config -Server $server
+            $resolved['MCP_ENABLE_WRITE_TOOLS'] | Should -Be 'true'
+            $resolved['MCP_OPERATOR_TOKEN'] | Should -Be $fixtureToken
+            function Get-TemplatesBetaOperatorToken { throw 'native Templates attempted proxy token export' }
+            Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+            $runtime.endpointMode | Should -Be 'direct'
+            $runtime.proxyContainerName | Should -BeNullOrEmpty
+            $runtime.proxyPort | Should -Be 0
         }
     }
 

@@ -661,8 +661,14 @@ endpoint проверяется по native-контракту. Если Forward
 проверяет отдельное переключение уже принятого образа с proxy на native endpoint.
 Применение: `stable-cutover -ForwardOnly -NativeEndpoint` с теми же ServerId,
 ConfigId и ReleaseManifest. Обновление образа и удаление proxy квалифицируются
-последовательно. Templates сохраняет proxy для операторской авторизации; этот
-режим к нему не применяется.
+последовательно. Для Templates этот режим также доступен: `templatesearch`,
+`list_templates`, `get_template`, `plugin_state`, `remember` и `recall` работают
+без операторского токена. Для `add_template` и `plugin_reload` клиент сам передаёт
+`Authorization: Bearer …`; native endpoint не подставляет токен автоматически.
+Серверные `MCP_ENABLE_WRITE_TOOLS=true` и `MCP_OPERATOR_TOKEN` сохраняются; токен
+остаётся в локальном secret store и не переносится автоматически в клиентский
+конфиг. При приёмке отдельно проверьте отказ защищённых вызовов без токена и
+с неверным токеном, разрешённый вызов с явным токеном и обычную работу памяти.
 
 Существующий cutover под maintenance lease останавливает прежние main/Neo4j и
 proxy, отключает их restart policy, затем запускает тот же pinned образ с теми
