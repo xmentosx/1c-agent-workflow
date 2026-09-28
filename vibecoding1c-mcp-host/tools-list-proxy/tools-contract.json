@@ -131,8 +131,8 @@
       "structuralSha256": "04423bf430f36110f616841103a8f576010de416c87e71d53b388b4a64d88eea"
     },
     "mantis": {
-      "toolCount": 3,
-      "structuralSha256": "23f418064100f745af84d79896f8840c1ebff0df63a7c458285b25810ef591f1"
+      "toolCount": 8,
+      "structuralSha256": "eb1e06272d6c797adfb03c452ad7b0962562b4997844dc19965b727ee02cea95"
     },
     "code": {
       "toolCount": 15,

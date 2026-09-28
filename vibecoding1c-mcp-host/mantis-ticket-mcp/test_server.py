@@ -133,7 +133,8 @@ class MantisTicketServerTests(unittest.TestCase):
 
         self.assertEqual(mcp.name, "mantis-ticket")
         self.assertIs(mcp.options.get("stateless_http"), True)
-        self.assertEqual(mcp.registered_tools, ["read_ticket", "get_attachment", "health"])
+        self.assertEqual(mcp.registered_tools, ["read_ticket", "get_attachment", "health", "search_tickets",
+                                                "mantis_metadata", "execute_write", "write_operation", "index_control"])
 
     def test_extract_issue_id_from_common_urls(self):
         self.assertEqual(server.extract_issue_id("123"), 123)

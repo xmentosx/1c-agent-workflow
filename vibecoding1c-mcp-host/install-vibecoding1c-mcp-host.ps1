@@ -1090,6 +1090,14 @@ function Get-MantisTicketServerDefinition {
             [ordered]@{ name = "MANTIS_BASE_URL"; from = "MANTIS_BASE_URL"; required = $true },
             [ordered]@{ name = "MANTIS_API_TOKEN"; from = "MANTIS_API_TOKEN"; required = $true },
             [ordered]@{ name = "MANTIS_ATTACHMENT_CACHE_PATH"; value = "/data/attachments"; required = $false },
+            [ordered]@{ name = "MANTIS_STATE_PATH"; value = "/data/mantis"; required = $false },
+            [ordered]@{ name = "MANTIS_INDEX_ENABLED"; from = "MANTIS_INDEX_ENABLED"; default = "false"; required = $false },
+            [ordered]@{ name = "MANTIS_SYNC_INTERVAL_SECONDS"; from = "MANTIS_SYNC_INTERVAL_SECONDS"; default = "30"; required = $false },
+            [ordered]@{ name = "MANTIS_SYNC_PROJECT_IDS"; from = "MANTIS_SYNC_PROJECT_IDS"; default = ""; required = $false },
+            [ordered]@{ name = "MANTIS_MONTHLY_BUDGET_USD"; from = "MANTIS_MONTHLY_BUDGET_USD"; default = "5"; required = $false },
+            [ordered]@{ name = "MANTIS_WRITE_ACTIONS"; from = "MANTIS_WRITE_ACTIONS"; default = ""; required = $false },
+            [ordered]@{ name = "MANTIS_WRITE_PROJECT_IDS"; from = "MANTIS_WRITE_PROJECT_IDS"; default = ""; required = $false },
+            [ordered]@{ name = "MANTIS_OPENROUTER_API_KEY"; from = "MANTIS_OPENROUTER_API_KEY"; default = ""; required = $false },
             [ordered]@{ name = "MANTIS_TIMEOUT_SECONDS"; from = "MANTIS_TIMEOUT_SECONDS"; default = "20"; required = $false },
             [ordered]@{ name = "MANTIS_MAX_ATTACHMENT_BYTES"; from = "MANTIS_MAX_ATTACHMENT_BYTES"; default = "26214400"; required = $false },
             [ordered]@{ name = "MANTIS_MAX_INLINE_TEXT_CHARS"; from = "MANTIS_MAX_INLINE_TEXT_CHARS"; default = "16000"; required = $false },
@@ -2015,6 +2023,7 @@ function Get-HostLocalValues {
     $bspVersion = [string](Get-ObjectValue -Object $ssl -Name "bspVersion" -Default "")
     $bookStackCachePath = [string](Get-ObjectValue -Object $bookstack -Name "cachePath" -Default (Join-Path (Get-StateRoot -Config $Config) "bookstack-product-docs"))
     $mantisAttachmentCachePath = [string](Get-ObjectValue -Object $mantis -Name "attachmentCachePath" -Default (Join-Path (Join-Path (Get-StateRoot -Config $Config) "mantis-ticket") "attachments"))
+    $mantisStatePath = [string](Get-ObjectValue -Object $mantis -Name "statePath" -Default (Join-Path (Join-Path (Get-StateRoot -Config $Config) "mantis-ticket") "index"))
     $mantisOcr = Get-ObjectValue -Object $mantis -Name "ocr" -Default $null
     $defaultResetDatabase = "false"
     $codeResetDatabase = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $code -Name "resetDatabase" -Default $false) -Default $false)
@@ -2027,6 +2036,7 @@ function Get-HostLocalValues {
         PATH_MODEL_CACHE = (Join-Path (Get-StateRoot -Config $Config) "model-cache")
         PATH_BOOKSTACK_CACHE = (Get-FullPath $bookStackCachePath)
         PATH_MANTIS_ATTACHMENT_CACHE = (Get-FullPath $mantisAttachmentCachePath)
+        PATH_MANTIS_STATE = (Get-FullPath $mantisStatePath)
         PATH_1C_BIN = $(if ($platformBinPath) { Get-FullPath $platformBinPath } else { "" })
         PLATFORM_VERSION = $platformVersion
         HELP_PLATFORM_VERSION = $platformVersion
@@ -2048,6 +2058,12 @@ function Get-HostLocalValues {
         BOOKSTACK_CHUNK_OVERLAP = [string](Get-ObjectValue -Object $bookstack -Name "chunkOverlap" -Default "64")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
+        MANTIS_INDEX_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "indexEnabled" -Default $false) -Default $false)
+        MANTIS_SYNC_INTERVAL_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "syncIntervalSeconds" -Default "30")
+        MANTIS_SYNC_PROJECT_IDS = ((As-Array (Get-ObjectValue -Object $mantis -Name "syncProjectIds" -Default @())) -join ",")
+        MANTIS_MONTHLY_BUDGET_USD = [string](Get-ObjectValue -Object $mantis -Name "monthlyBudgetUsd" -Default "5")
+        MANTIS_WRITE_ACTIONS = ((As-Array (Get-ObjectValue -Object $mantis -Name "writeActions" -Default @())) -join ",")
+        MANTIS_WRITE_PROJECT_IDS = ((As-Array (Get-ObjectValue -Object $mantis -Name "writeProjectIds" -Default @())) -join ",")
         MANTIS_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "timeoutSeconds" -Default "20")
         MANTIS_MAX_ATTACHMENT_BYTES = [string](Get-ObjectValue -Object $mantis -Name "maxAttachmentBytes" -Default "26214400")
         MANTIS_MAX_INLINE_TEXT_CHARS = [string](Get-ObjectValue -Object $mantis -Name "maxInlineTextChars" -Default "16000")
@@ -2196,7 +2212,10 @@ function Get-HostDefaultVolumeEntries {
         return @([ordered]@{ from = "PATH_BOOKSTACK_CACHE"; to = "/data"; required = $false })
     }
     if ($id -eq "mantis") {
-        return @([ordered]@{ from = "PATH_MANTIS_ATTACHMENT_CACHE"; to = "/data/attachments"; required = $false })
+        return @(
+            [ordered]@{ from = "PATH_MANTIS_ATTACHMENT_CACHE"; to = "/data/attachments"; required = $false },
+            [ordered]@{ from = "PATH_MANTIS_STATE"; to = "/data/mantis"; required = $false }
+        )
     }
     return @()
 }
@@ -2364,7 +2383,7 @@ function Resolve-ServerVolumes {
                     $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "<unknown>")
                     throw "Required volume path for '$from' on vibecoding1c MCP server '$serverId' was not found: $hostPath"
                 }
-                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE" -or $from -eq "PATH_MANTIS_ATTACHMENT_CACHE") {
+                if ($from -eq "PATH_BASES" -or $from -eq "PATH_METADATA" -or $from -eq "PATH_MODEL_CACHE" -or $from -eq "PATH_MANTIS_ATTACHMENT_CACHE" -or $from -eq "PATH_MANTIS_STATE") {
                     New-Item -ItemType Directory -Force -Path $hostPath | Out-Null
                 } else {
                     continue

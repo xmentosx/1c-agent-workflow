@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import traceback
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -208,14 +209,19 @@ class MantisClient:
         raise MantisApiError(f"Mantis REST response did not contain issue {issue_id}.")
 
     def get_issue_file(self, issue_id: int, file_id: int) -> Dict[str, Any]:
+        # 2.28.1's direct file endpoint does not reliably enforce the parent
+        # private-note visibility. Require a visible reference even in read-only
+        # rollback mode, where the local search index is disabled.
+        from mantis_state import sources
+        issue = self.get_issue(issue_id)
+        if not any(source_file == int(file_id) for _, _, _, source_file, _ in sources(issue)):
+            raise MantisApiError(f"File {file_id} is not present in the visible issue {issue_id} or its comments")
         data = self.request_json(f"/api/rest/issues/{issue_id}/files/{file_id}")
         files = data.get("files") if isinstance(data, dict) else None
         if isinstance(files, list) and files:
             for file_entry in files:
                 if int_value(file_entry.get("id")) == file_id:
                     return file_entry
-            if isinstance(files[0], dict):
-                return files[0]
         raise MantisApiError(f"Mantis REST response did not contain file {file_id} for issue {issue_id}.")
 
 
@@ -745,6 +751,8 @@ class MantisTicketService:
         normalized["comments"] = notes
         normalized["attachments"] = issue_attachments
         normalized["agent_context_markdown"] = self.build_agent_context(normalized)
+        if hasattr(self.client, "validate_issue_snapshot"):
+            self.client.validate_issue_snapshot(issue)
         return {"ok": True, "ticket": normalized}
 
     def get_attachment(self, issue_id: int, file_id: int, include_content: bool = True) -> Dict[str, Any]:
@@ -911,8 +919,11 @@ class MantisTicketService:
 
     def cache_attachment(self, issue_id: int, file_id: int, filename: str, content: bytes) -> Dict[str, Any]:
         path = self.cached_attachment_path(issue_id, file_id, filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        with self.attachment_guard(issue_id, file_id):
+            if path.parent.is_symlink() or getattr(path.parent, "is_junction", lambda: False)() or path.is_symlink():
+                raise MantisApiError("Unexpected link in the Mantis attachment cache")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
         return {
             "cache_key": f"{issue_id}/{file_id}",
             "cached": True,
@@ -920,6 +931,9 @@ class MantisTicketService:
 
     def cached_attachment_path(self, issue_id: int, file_id: int, filename: str) -> Path:
         return self.settings.attachment_cache_path / str(issue_id) / f"{file_id}-{safe_filename(filename)}"
+
+    def attachment_guard(self, issue_id: int, file_id: int):
+        return self.client.attachment_guard(issue_id, file_id) if hasattr(self.client, "attachment_guard") else nullcontext()
 
     def read_cached_attachment(self, attachment: Dict[str, Any]) -> bytes:
         if not attachment.get("cached"):
@@ -930,7 +944,8 @@ class MantisTicketService:
             str(attachment.get("filename") or "attachment"),
         )
         try:
-            return path.read_bytes()
+            with self.attachment_guard(int_value(attachment.get("issue_id")), int_value(attachment.get("id"))):
+                return path.read_bytes()
         except OSError:
             return b""
 
@@ -1030,7 +1045,22 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
 
     settings = Settings.from_env()
     service = MantisTicketService(settings)
-    mcp = FastMCP("mantis-ticket", stateless_http=True)
+    from mantis_runtime import Runtime, actor_name
+    runtime = Runtime(settings, service.client)
+    if runtime.index:
+        service.client = runtime
+
+    @asynccontextmanager
+    async def lifespan(app):
+        if runtime.index:
+            runtime.index.start()
+        try:
+            yield {}
+        finally:
+            if runtime.index:
+                runtime.index.close()
+
+    mcp = FastMCP("mantis-ticket", stateless_http=True, lifespan=lifespan)
 
     output_schema = {"type": "object", "additionalProperties": True}
 
@@ -1127,12 +1157,20 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
     ) -> Any:
         """Read a Mantis ticket with original images as visual content. Set image_ocr=true only as a non-visual fallback."""
         try:
+            if runtime.index:
+                runtime.audit(actor_name(), "read_ticket", extract_issue_id(url_or_id))
             result = service.read_ticket(
                 url_or_id=url_or_id,
                 include_comments=include_comments,
                 include_attachments=include_attachments,
                 image_ocr=image_ocr,
             )
+            if runtime.index:
+                verified = runtime.index.state.one("SELECT verified FROM issues WHERE id=?", (extract_issue_id(url_or_id),))
+                if not verified:
+                    raise MantisApiError("Issue access changed during reading; retry a fresh read")
+                result["freshness"] = {"mantis": runtime.index.remote_status,
+                    "last_verified": verified["verified"]}
             return ticket_tool_result(result, image_ocr=image_ocr)
         except Exception as exc:
             return error_tool_result(exc)
@@ -1141,6 +1179,8 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
     def get_attachment(issue_id: int, file_id: int, include_content: bool = True) -> Any:
         """Return an original Mantis image as visual content and preserve structured attachment metadata."""
         try:
+            if runtime.index:
+                runtime.audit(actor_name(), "get_attachment", f"{issue_id}/{file_id}")
             result = service.get_attachment(issue_id=issue_id, file_id=file_id, include_content=include_content)
             return attachment_tool_result(result)
         except Exception as exc:
@@ -1156,8 +1196,10 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
             "attachment_cache_path": str(settings.attachment_cache_path),
             "ocr_enabled": settings.ocr_enabled,
             "ocr_languages": list(settings.ocr_languages),
+            "index": runtime.health(),
         }
 
+    runtime.register(mcp)
     return mcp, service
 
 

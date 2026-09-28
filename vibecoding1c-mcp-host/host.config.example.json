@@ -44,6 +44,13 @@
   "mantisTicketServer": {
     "baseUrl": "http://mantis.itland.local",
     "attachmentCachePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/attachments",
+    "statePath": "D:/ITL/MCP/vibecoding1c/mantis-ticket/index",
+    "indexEnabled": false,
+    "syncIntervalSeconds": 30,
+    "syncProjectIds": [],
+    "monthlyBudgetUsd": 5,
+    "writeActions": [],
+    "writeProjectIds": [],
     "timeoutSeconds": 20,
     "maxAttachmentBytes": 26214400,
     "maxInlineTextChars": 16000,
