@@ -215,6 +215,30 @@ descriptor снова приводит к отказу. Поэтому это р
 | Session client отсутствует в installed set | D8: идентификация не attach; общие операции доступны, client action даёт continuation | CL1 Claude-only project |
 | Новая ветка повторно сбрасывает намеренное on | D11: eligibility по provenance/version, новые scopes наследуют policy receipt | IM3 inherited on |
 
+## Схема нового release ledger
+
+Новый ledger строится из зафиксированных `oldUpstream`, `baselineFork=r36` и
+`targetUpstream` этого inventory. Обязательный набор решений — 459 путей из
+объединения old→r36 и old→target; прежние 197 entries остаются частью набора.
+Каждая запись получает `path`, один первичный `requirementId`, disposition
+`take-upstream|carry-forward|resolved|downstream-only` и проверяемую причину.
+Связанные смысловые требования и потребители остаются в таблицах выше: один
+первичный ID в ledger не отменяет их проверок.
+
+`AGENTS.md` собирается как точный новый upstream root плюс компактный
+`ITL-ROOT.md` и получает `resolved`. Все девять upstream `##`-разделов
+сопоставляются сами себе с disposition `upstream-root`; целевая сборка не
+принимает прежнюю полную замену. `USER-RULES.md` и пересекающиеся runtime,
+adapter, OpenSpec и verification файлы получают `resolved` только после
+поведенческого переноса. Для неизменённого downstream-owned файла допустим
+`carry-forward` после проверки зависимостей; новый чистый upstream путь —
+`take-upstream`. Удаление прежнего поведения также требует явного решения.
+
+`upstreamSha256`, `baselineSha256` и `resultSha256` попадут в итоговый
+`sections.json` только после точной сборки и сверки committed result; здесь
+нет заранее угаданных result hashes. Пока кандидат не квалифицирован, старый
+ledger для установленной r36 не подменяется этим планом.
+
 ## Остаток доказательств
 
 Все строки описывают ожидаемый перенос. Не выполнены реализация fork/host,

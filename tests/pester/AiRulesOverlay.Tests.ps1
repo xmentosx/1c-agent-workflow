@@ -174,6 +174,65 @@ Describe "controlled ai_rules_1c release overlay" {
         }
     }
 
+    It "keeps the exact new upstream root before the ITL appendix" {
+        $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-ai-root-" + [guid]::NewGuid().ToString('N'))
+        $forkRoot = Join-Path $tempRoot 'fork'
+        $overlayRoot = Join-Path $tempRoot 'overlay'
+        try {
+            New-Item -ItemType Directory -Force -Path $forkRoot, $overlayRoot | Out-Null
+            & git -C $forkRoot init --quiet
+            & git -C $forkRoot config user.email tests@example.invalid
+            & git -C $forkRoot config user.name 'ITL Tests'
+            $upstreamRoot = "# Rules`n## New verification`nconditional gate`n"
+            $appendix = [IO.File]::ReadAllText((Join-Path $RepoRoot 'templates\ai-rules-overlay\ITL-ROOT.md'), $Utf8NoBom).Replace("`r`n", "`n")
+            $expectedRoot = $upstreamRoot + "`n" + $appendix
+            [IO.File]::WriteAllText((Join-Path $forkRoot 'AGENTS.md'), $upstreamRoot, $Utf8NoBom)
+            & git -C $forkRoot add AGENTS.md
+            & git -C $forkRoot commit --quiet -m upstream
+            $upstreamCommit = (& git -C $forkRoot rev-parse HEAD).Trim()
+            & git -C $forkRoot switch -q -c release/test
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'ITL-ROOT.md'), $appendix, $Utf8NoBom)
+            $manifest = [ordered]@{
+                schemaVersion = 3
+                baselineUpstreamCommit = $upstreamCommit
+                baselineReleaseCommit = $upstreamCommit
+                intakeUpstreamCommit = $upstreamCommit
+                targetPath = 'AGENTS.md'
+                targetTemplate = 'ITL-ROOT.md'
+                targetComposition = 'append-upstream'
+                maximumTargetCharacters = 22000
+                requiredUpstreamAnchors = @('## New verification')
+                requiredTargetAnchors = @('## New verification', '## ITL managed-project ownership', 'executionPath=quick-fix|full-cycle')
+                additionalTargets = @()
+                pathDecisions = @(
+                    [ordered]@{
+                        path = 'AGENTS.md'; requirementId = 'ITL-ROOT-001'; disposition = 'resolved'; reason = 'Preserve upstream and append ITL ownership.'
+                        upstreamSha256 = Get-NormalizedTextSha256 $upstreamRoot
+                        baselineSha256 = Get-NormalizedTextSha256 $upstreamRoot
+                        resultSha256 = Get-NormalizedTextSha256 $expectedRoot
+                    }
+                )
+            }
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'sections.json'), (($manifest | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
+            $rootContract = [ordered]@{
+                schemaVersion = 1; upstreamPath = 'AGENTS.md'
+                mappings = @([ordered]@{ upstreamAnchor = '## New verification'; destination = 'AGENTS.md'; destinationAnchor = '## New verification'; disposition = 'upstream-root' })
+            }
+            [IO.File]::WriteAllText((Join-Path $overlayRoot 'root-contract.json'), (($rootContract | ConvertTo-Json -Depth 8) + "`n"), $Utf8NoBom)
+            $reportPath = Join-Path $tempRoot 'report.json'
+
+            & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstreamCommit -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Prepare
+            [IO.File]::ReadAllText((Join-Path $forkRoot 'AGENTS.md'), $Utf8NoBom) | Should -BeExactly $expectedRoot
+            & git -C $forkRoot add AGENTS.md
+            & git -C $forkRoot commit --quiet -m downstream-root
+            & $BuilderPath -AiRulesRoot $forkRoot -UpstreamCommit $upstreamCommit -OverlayRoot $overlayRoot -ReportPath $reportPath -Mode Verify
+            (Get-Content -LiteralPath $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be 'verified'
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     It "routes structural Form.xml edits through the specialized tool" {
         $agentsText = Get-Content -LiteralPath (Join-Path $RepoRoot "templates\ai-rules-overlay\AGENTS.md") -Raw -Encoding UTF8
         foreach ($marker in @(

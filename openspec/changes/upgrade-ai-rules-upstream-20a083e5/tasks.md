@@ -1,8 +1,8 @@
 ## 1. Закрепить входы и границы реализации
 
-- [ ] 1.1 После отдельного поручения начать реализацию сверить её границы с принятым architecture checkpoint из design.md: владельцы, write-set, отмена, recovery, поддержка и canary. Повторно не открывать Q1–Q21 и согласованный D7 без новых обстоятельств. Критерий: D1–D12, store write owner и согласованный Q21 переход остаются в принятых границах; указание «реализацию пока не начинай» снято новым прямым поручением (SM2, OS3, IM6, RQ4).
-- [ ] 1.2 Создать upgrade branch controlled fork непосредственно от закреплённого 20a083e5, сверить old/fork/new identities и 459 входных путей с path-inventory.json; при новом intake выполнить incremental audit до переноса. Критерий: нет merge старой ветки целиком, каждый прежний ledger path и дополнительный semantic ID учтён (SM1).
-- [ ] 1.3 Распределить migration-map по итоговым requirement owners и потребителям; подготовить схему нового release ledger без фиктивных result hashes. Критерий: все 22 группы, скрытые подинварианты и новые upstream entrypoints имеют preserve/adapt/retire и поведенческую приёмку (SM1, RQ1).
+- [x] 1.1 После отдельного поручения начать реализацию сверить её границы с принятым architecture checkpoint из design.md: владельцы, write-set, отмена, recovery, поддержка и canary. Повторно не открывать Q1–Q21 и согласованный D7 без новых обстоятельств. Критерий: D1–D12, store write owner и согласованный Q21 переход остаются в принятых границах; указание «реализацию пока не начинай» снято новым прямым поручением (SM2, OS3, IM6, RQ4).
+- [x] 1.2 Создать upgrade branch controlled fork непосредственно от закреплённого 20a083e5, сверить old/fork/new identities и 459 входных путей с path-inventory.json; при новом intake выполнить incremental audit до переноса. Критерий: нет merge старой ветки целиком, каждый прежний ledger path и дополнительный semantic ID учтён (SM1).
+- [x] 1.3 Распределить migration-map по итоговым requirement owners и потребителям; подготовить схему нового release ledger без фиктивных result hashes. Критерий: все 22 группы, скрытые подинварианты и новые upstream entrypoints имеют preserve/adapt/retire и поведенческую приёмку (SM1, RQ1).
 
 ## 2. Перенести правила и orchestration в controlled fork
 
