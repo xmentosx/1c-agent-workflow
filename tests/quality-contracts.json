@@ -380,7 +380,7 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/ParserDocsBudgets.Tests.ps1",
-      "paths": ["AGENTS.md", "README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*", ".agents/skills/grill*/*", ".agents/skills/domain-modeling/*", ".agents/skills/openspec-*/*", "openspec/*"],
+      "paths": ["AGENTS.md", "CONTEXT.md", "README.md", "LICENSE*", "docs/*", ".gitignore", ".gitattributes", ".agents/skills/*/SKILL.md", ".agents/skills/1c-workflow/references/*", ".agents/skills/grill*/*", ".agents/skills/domain-modeling/*", ".agents/skills/openspec-*/*", "openspec/*"],
       "tests": ["tests/pester/ParserDocsBudgets.Tests.ps1"]
     },
     {
