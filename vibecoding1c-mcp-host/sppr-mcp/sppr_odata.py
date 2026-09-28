@@ -20,6 +20,12 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+class HttpStatusError(SpprError):
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f"HTTP {status}; verify endpoint/access or retry later. Remote body redacted.")
+
+
 class Http:
     def __init__(self, timeout=30, max_bytes=16 * 1024 * 1024, before=lambda: None):
         self.timeout, self.max_bytes, self.before = timeout, max_bytes, before
@@ -42,7 +48,7 @@ class Http:
                 code = exc.code
                 exc.close()
                 if code not in (429, 502, 503, 504) or attempt == 2:
-                    raise SpprError(f"HTTP {code}; verify endpoint/access or retry later. Remote body redacted.") from None
+                    raise HttpStatusError(code) from None
             except (URLError, TimeoutError, OSError):
                 if attempt == 2:
                     raise SpprError("Network request failed; verify connectivity and retry. Details redacted.") from None
@@ -148,11 +154,11 @@ class OData:
                 raise SpprError("Source ignored the project filter; collection stopped before business reads.")
             yield row
 
-    def header(self, kind, identifier):
+    def header(self, kind, identifier, optional=False):
         fields = ["Ref_Key", "DataVersion", "DeletionMark"]
         if KINDS[kind].owner:
             fields.append(KINDS[kind].owner)
-        return self.read(kind, identifier, fields)
+        return self.read(kind, identifier, fields, optional=optional)
 
     def read_scoped(self, kind, identifier, fields, header):
         owner = KINDS[kind].owner
@@ -167,8 +173,21 @@ class OData:
             raise SpprError("Object ownership/version changed; discard this collection and retry.")
         return {name: rows[0][name] for name in fields if name in rows[0]}
 
-    def read(self, kind, identifier, fields):
-        raw = self.get(kind, {"$select": ",".join(fields)}, identifier)
+    def read(self, kind, identifier, fields, optional=False):
+        if optional and kind not in SHARED and kind not in LOOKUPS:
+            raise SpprError("Only addressed shared objects and lookup values may be optional.")
+        try:
+            raw = self.get(kind, {"$select": ",".join(fields)}, identifier)
+        except HttpStatusError as exc:
+            if not optional or exc.status != 404:
+                raise
+            # A missing route/publication is not proof of a deleted object. Confirm
+            # absence through the entity set; all errors in this request stay fatal.
+            probe = self.get(kind, {"$select": "Ref_Key", "$filter": f"Ref_Key eq guid'{guid(identifier)}'", "$top": 2})
+            rows = probe.get("value")
+            if not isinstance(rows, list) or rows:
+                raise SpprError("Object returned HTTP 404 but absence was not confirmed; retry collection or verify the publication.") from None
+            return None
         # Ignore unsolicited fields even if a misconfigured service sends them.
         return {name: raw[name] for name in fields if name in raw}
 
@@ -192,15 +211,13 @@ class Collection:
 
 
 def collect(source, settings, policy, previous=None):
-    """Two complete inventories reject unstable scans; table rows are read nightly.
-
-    DataVersion is not assumed to cover table changes until live evidence exists.
-    Version equality reuses only scalar projections, never skips table reads.
+    """Two complete inventories reject unstable scans. DataVersion covers the whole
+    object, including its rows; reuse requires matching saved field projections.
     """
     started = now()
     clock_started = time.monotonic()
     previous = previous or {}
-    objects, edges, lookup_cache = {}, [], {}
+    objects, edges, lookup_cache, unavailable = {}, [], {}, {}
     coverage = {"unreadable_fields": 0, "unsupported_references": 0, "types": {}}
 
     def check():
@@ -244,9 +261,13 @@ def collect(source, settings, policy, previous=None):
                       if n in source.schema.properties.get(kind, {})]
             if "Description" not in fields:
                 return None
-            raw = source.read(kind, identifier, fields)
-            lookup_cache[marker] = {} if raw.get("DeletionMark") else {
-                "label": raw.get("Заголовок") or raw.get("Description"), "tp_role": raw.get("СрезТП")}
+            raw = source.read(kind, identifier, fields, optional=True)
+            if raw is None or raw.get("DeletionMark"):
+                unavailable[marker] = "not_found" if raw is None else "marked_for_deletion"
+                lookup_cache[marker] = {"state": unavailable[marker]}
+            else:
+                lookup_cache[marker] = {"label": raw.get("Заголовок") or raw.get("Description"),
+                                        "tp_role": raw.get("СрезТП"), "state": "available"}
         return lookup_cache[marker]
 
     def add_edges(obj, entity, raw, prefix="", row_number=None):
@@ -261,6 +282,7 @@ def collect(source, settings, policy, previous=None):
                 destination = row_fields if prefix else obj["fields"]
                 if name in destination:
                     destination[name]["label"] = details.get("label")
+                    destination[name]["reference_state"] = details.get("state", "unavailable")
                 if not prefix and obj["kind"] == "Catalog_ТехническиеПроекты" and name == "итлТип_Key":
                     obj["tp_role"] = details.get("tp_role")
                     obj["fields"]["итлТип_Key/СрезТП"] = {
@@ -289,12 +311,18 @@ def collect(source, settings, policy, previous=None):
             raise SpprError("Source deletion changed during collection; retry.")
         columns = source.schema.projection(kind)
         old = previous.get(object_id, {})
-        if old.get("version") == header["DataVersion"] and old.get("projection") == columns:
+        same_version = old.get("version") == header["DataVersion"]
+        if same_version and old.get("projection") == columns:
             raw = copy.deepcopy(old["raw"])
         else:
             raw = source.read_scoped(kind, identifier, columns, header)
-        # Table reads are deliberately independent of scalar DataVersion reuse.
-        tables = {name: source.table(kind, identifier, name) for name in KINDS[kind].tables}
+        table_projections = {name: source.schema.projection(kind + "_" + name, row=True) for name in KINDS[kind].tables}
+        tables = {}
+        for name, projection in table_projections.items():
+            if same_version and old.get("table_projections", {}).get(name) == projection and name in old.get("tables", {}):
+                tables[name] = copy.deepcopy(old["tables"][name])
+            else:
+                tables[name] = source.table(kind, identifier, name)
         if source.header(kind, identifier) != fresh_header:
             raise SpprError("Object changed while reading its fields/rows; retry collection.")
         title = raw.get("Description") or " ".join(str(raw.get(x) or "") for x in ("Number", "Date")).strip() or identifier
@@ -302,7 +330,7 @@ def collect(source, settings, policy, previous=None):
                "roots": [project] if project else [], "provenance": {},
                "version": header["DataVersion"], "title": title, "is_folder": bool(raw.get("IsFolder")),
                "fields": fields_from(raw, columns), "raw": raw, "projection": columns,
-               "tables": tables, "observed_at": now()}
+               "tables": tables, "table_projections": table_projections, "observed_at": now()}
         objects[object_id] = obj
         add_edges(obj, kind, raw)
         for table, rows in tables.items():
@@ -335,8 +363,11 @@ def collect(source, settings, policy, previous=None):
         kind, identifier = object_id.split(":", 1)
         if object_id not in objects:
             check()
-            header = source.header(kind, identifier)
-            if header.get("DeletionMark"):
+            if object_id in unavailable:
+                continue
+            header = source.header(kind, identifier, optional=True)
+            if header is None or header.get("DeletionMark"):
+                unavailable[object_id] = "not_found" if header is None else "marked_for_deletion"
                 continue
             load_object(kind, identifier, header, None)
         obj = objects[object_id]
@@ -357,7 +388,8 @@ def collect(source, settings, policy, previous=None):
         coverage["unreadable_fields"] += sum(f["state"] == "unreadable" for f in obj["fields"].values())
     for edge in edges:
         coverage["unreadable_fields"] += sum(f["state"] == "unreadable" for f in edge["fields"].values())
-        edge["target_state"] = "indexed" if edge["target"] in objects else "outside_corpus_or_unavailable"
+        edge["target_state"] = "indexed" if edge["target"] in objects else unavailable.get(edge["target"], "outside_corpus_or_unavailable")
+    coverage["unavailable_references"] = len(unavailable)
     if hasattr(source, "http"):
         coverage.update({"odata_requests": source.http.requests, "odata_response_bytes": source.http.bytes})
     coverage["collection_seconds"] = round(time.monotonic() - clock_started, 3)

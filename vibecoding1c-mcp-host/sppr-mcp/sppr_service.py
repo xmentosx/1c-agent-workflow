@@ -267,7 +267,10 @@ class Service:
                         return self.summary(objects[identifier], policy)
                     kind, uuid = identifier.split(":", 1)
                     links = navigation(self.settings, kind, uuid) if kind in KINDS else None
-                    return {"id": identifier, "state": "outside_corpus_or_unavailable", "links": links,
+                    state = edge.get("target_state", "outside_corpus_or_unavailable")
+                    if state == "indexed":
+                        state = "outside_corpus_or_unavailable"  # Policy may have revoked the cached target.
+                    return {"id": identifier, "state": state, "links": links,
                             "link_notice": None if links else "Unsupported metadata type; no validated link."}
                 preview = [{"field": name, "text": str(record.get("value") or "")[:240]}
                            for name, record in edge["fields"].items() if record.get("state") == "value"

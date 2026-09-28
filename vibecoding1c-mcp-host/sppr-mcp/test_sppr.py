@@ -16,7 +16,7 @@ import numpy as np
 from sppr_core import (BUSINESS_FIELDS, IDENTITY, KINDS, LOOKUPS, Policy, Settings, SpprError,
                        fields_from, guid, key, navigation, rich_text)
 from sppr_embeddings import QueryCache, vector
-from sppr_odata import Collection, Schema, collect
+from sppr_odata import Collection, HttpStatusError, Schema, collect
 from sppr_service import Service
 from sppr_store import Store, atomic_json, writer_lock
 
@@ -105,7 +105,7 @@ def fixture_schema():
 class FakeSource:
     def __init__(self):
         self.schema = Schema(fixture_schema())
-        self.data, self.rows, self.reads = {}, {}, []
+        self.data, self.rows, self.reads, self.table_reads = {}, {}, [], []
         self.fail_inventory = False
         self.inventory_calls = 0
 
@@ -126,14 +126,23 @@ class FakeSource:
         return [self.header(kind, r["Ref_Key"]) for k, r in self.data.items()
                 if k.startswith(kind + ":") and r.get(KINDS[kind].owner) == owner and not r["DeletionMark"]]
 
-    def header(self, kind, identifier):
-        raw = self.data[key(kind, identifier)]
+    def header(self, kind, identifier, optional=False):
+        raw = self.data.get(key(kind, identifier))
+        if raw is None:
+            if optional:
+                return None
+            raise HttpStatusError(404)
         names = {"Ref_Key", "DataVersion", "DeletionMark", KINDS[kind].owner}
         return {n: raw[n] for n in names if n in raw}
 
-    def read(self, kind, identifier, fields):
+    def read(self, kind, identifier, fields, optional=False):
         self.reads.append((kind, identifier, fields))
-        return {n: v for n, v in self.data[kind + ":" + identifier].items() if n in fields}
+        raw = self.data.get(kind + ":" + identifier)
+        if raw is None:
+            if optional:
+                return None
+            raise HttpStatusError(404)
+        return {n: v for n, v in raw.items() if n in fields}
 
     def read_scoped(self, kind, identifier, fields, header):
         if self.header(kind, identifier) != header:
@@ -141,6 +150,7 @@ class FakeSource:
         return self.read(kind, identifier, fields)
 
     def table(self, kind, identifier, name):
+        self.table_reads.append((kind, identifier, name))
         return copy.deepcopy(self.rows.get((kind, identifier, name), []))
 
     def idea_row(self, tp, idea, text, row=1, kind=IDEA):
@@ -299,6 +309,7 @@ class SpprTests(unittest.TestCase):
         self.assertEqual(sorted(map(len, groups.values())), [1, 2, 2])
         for row in self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")]:
             row["LineNumber"] = 3 - row["LineNumber"]
+        self.source.data[key(IDEA, uuid(3))]["DataVersion"] = "v2"
         changed = self.collect(old.objects)
         self.assertEqual({e["id"] for e in changed.edges}, {e["id"] for e in old.edges})
         self.assertFalse(any("Catalog_итлТехническиеИдентификаторы" in kind for kind, _, _ in self.source.reads))
@@ -317,12 +328,14 @@ class SpprTests(unittest.TestCase):
         service = Service(self.settings, self.provider)
         generation = service.status()["generation"]
         row["ШагПроцесса_Key"] = uuid(5)
+        self.source.data[key(IDEA, uuid(3))]["DataVersion"] = "v2"
         self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")].append({**row, "LineNumber": 2})
         with self.assertRaisesRegex(SpprError, "Duplicate relationship identity"):
             self.publish()
         self.assertEqual(service.status()["generation"], generation)
         # Operator correction in the source lets the original collection complete.
         self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")][1]["ТехническийИдентификатор_Key"] = uuid(62)
+        self.source.data[key(IDEA, uuid(3))]["DataVersion"] = "v3"
         self.publish()
         rows = service.relations(key(IDEA, uuid(3)), relation="итлШагиПроцессов/ШагПроцесса_Key")["relations"]
         self.assertEqual(len(rows), 2)
@@ -344,6 +357,7 @@ class SpprTests(unittest.TestCase):
         for moved in (False, True):
             if moved:
                 self.source.rows[(TP, uuid(1), "ИдеиИОшибки")] = []
+                self.source.data[key(TP, uuid(1))]["DataVersion"] = "v2"
             self.publish()
             service = Service(self.settings, self.provider)
             record, = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
@@ -438,16 +452,104 @@ class SpprTests(unittest.TestCase):
             texts.extend(f["value"] for f in read["fields"] if f["field"] == "РеализацияИдеи")
         self.assertCountEqual(texts, ["Реализация в первом ТП", "Другая реализация во втором ТП"])
 
-    def test_table_updates_do_not_depend_on_parent_version(self):
+    def test_unchanged_object_reuses_fields_rows_and_vectors(self):
         self.publish()
         old, vectors = self.store.previous()
-        self.source.rows[(TP, uuid(1), "ИдеиИОшибки")][0]["РеализацияИдеи"] = "Новая реализация без смены версии"
+        self.source.table_reads.clear()
+        self.source.reads.clear()
+        before = len(self.provider.calls)
         result = self.collect(old)
-        self.assertIn("Новая реализация без смены версии", json.dumps(result.edges, ensure_ascii=False))
+        self.assertEqual(self.source.table_reads, [])
+        self.assertEqual(self.source.reads, [])
+        self.assertEqual(result.objects[key(TP, uuid(1))]["tables"], old[key(TP, uuid(1))]["tables"])
+        self.assertIsNot(result.objects[key(TP, uuid(1))]["tables"], old[key(TP, uuid(1))]["tables"])
+        self.store.publish(result, self.policy, self.provider, vectors)
+        self.assertEqual(len(self.provider.calls), before)
+
+    def test_table_update_uses_parent_version_and_embeds_only_changed_text(self):
+        self.publish()
+        old, vectors = self.store.previous()
+        self.source.table_reads.clear()
+        self.source.rows[(TP, uuid(1), "ИдеиИОшибки")][0]["РеализацияИдеи"] = "Новая реализация после изменения карточки"
+        self.source.data[key(TP, uuid(1))]["DataVersion"] = "v2"
+        result = self.collect(old)
+        self.assertIn("Новая реализация после изменения карточки", json.dumps(result.edges, ensure_ascii=False))
+        self.assertEqual(set(self.source.table_reads), {(TP, uuid(1), table) for table in KINDS[TP].tables})
         before = len(self.provider.calls)
         self.store.publish(result, self.policy, self.provider, vectors)
         new_calls = self.provider.calls[before:]
         self.assertEqual(sum(map(len, new_calls)), 1)
+
+    def test_table_projection_change_and_legacy_cache_refresh_rows_once(self):
+        old = self.collect().objects
+        old[key(TP, uuid(1))]["table_projections"]["ИдеиИОшибки"].remove("итлКомментарий")
+        self.source.table_reads.clear()
+        refreshed = self.collect(old)
+        self.assertEqual(self.source.table_reads, [(TP, uuid(1), "ИдеиИОшибки")])
+        self.assertIn("итлКомментарий", refreshed.objects[key(TP, uuid(1))]["table_projections"]["ИдеиИОшибки"])
+        for obj in old.values():
+            obj.pop("table_projections")
+        self.source.table_reads.clear()
+        refreshed = self.collect(old)
+        self.assertTrue(self.source.table_reads)
+        self.source.table_reads.clear()
+        self.collect(refreshed.objects)
+        self.assertEqual(self.source.table_reads, [])
+
+    def test_shared_and_lookup_changes_refresh_even_with_cached_parent_rows(self):
+        self.source.lookup("Catalog_Пользователи", 40, "Старое имя")
+        self.source.data[key(TP, uuid(1))]["итлРазработчик_Key"] = uuid(40)
+        old = self.collect().objects
+        self.source.table_reads.clear()
+        self.source.data[key(SOLUTION, uuid(6))].update({"Description": "Обновлённое решение", "DataVersion": "v2"})
+        self.source.lookup("Catalog_Пользователи", 40, "Новое имя", DataVersion="v2")
+        result = self.collect(old)
+        self.assertEqual(self.source.table_reads, [])
+        self.assertEqual(result.objects[key(SOLUTION, uuid(6))]["title"], "Обновлённое решение")
+        self.assertEqual(result.objects[key(TP, uuid(1))]["fields"]["итлРазработчик_Key"]["label"], "Новое имя")
+
+    def test_missing_shared_object_and_lookup_publish_stubs_without_stale_content(self):
+        self.source.lookup("Catalog_Пользователи", 40, "Удаляемое имя")
+        self.source.data[key(TP, uuid(1))]["итлРазработчик_Key"] = uuid(40)
+        self.publish()
+        del self.source.data[key(SOLUTION, uuid(6))]
+        del self.source.data["Catalog_Пользователи:" + uuid(40)]
+        self.publish()
+        service = Service(self.settings, self.provider)
+        self.assertEqual(service.status()["coverage"]["unavailable_references"], 2)
+        edge, = service.relations(key(TP, uuid(1)), relation="Решение_Key")["relations"]
+        self.assertEqual(edge["target"]["state"], "not_found")
+        self.assertNotIn("title", edge["target"])
+        with self.assertRaisesRegex(SpprError, "unavailable"):
+            service.read(key(SOLUTION, uuid(6)))
+        fields = self.read_fields(service, key(TP, uuid(1)))
+        self.assertIsNone(fields["итлРазработчик_Key"]["label"])
+        self.assertEqual(fields["итлРазработчик_Key"]["reference_state"], "not_found")
+        self.provider.fail = True
+        self.assertEqual(service.search("Удаляемое")["hits"], [])
+
+    def test_marked_shared_object_is_unavailable_without_blocking_collection(self):
+        self.publish()
+        self.source.data[key(SOLUTION, uuid(6))]["DeletionMark"] = True
+        self.publish()
+        edge, = Service(self.settings, self.provider).relations(key(TP, uuid(1)), relation="Решение_Key")["relations"]
+        self.assertEqual(edge["target"]["state"], "marked_for_deletion")
+
+    def test_cached_rows_do_not_bypass_version_checks(self):
+        original = self.publish()
+        header = self.source.header
+        calls = 0
+        def changing(kind, identifier, optional=False):
+            nonlocal calls
+            if (kind, identifier) == (TP, uuid(1)):
+                calls += 1
+                if calls == 3:  # Inventory, pre-read, then post-read.
+                    self.source.data[key(TP, uuid(1))]["DataVersion"] = "v2"
+            return header(kind, identifier, optional=optional)
+        with patch.object(self.source, "header", side_effect=changing):
+            with self.assertRaisesRegex(SpprError, "changed while reading"):
+                self.publish()
+        self.assertEqual(self.store.manifest()["generation"], original["generation"])
 
     def test_textual_row_without_reference_remains_searchable(self):
         self.source.rows[(TP, uuid(1), "ИдеиИОшибки")].append({
