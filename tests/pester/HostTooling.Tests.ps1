@@ -156,6 +156,8 @@
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $old = [pscustomobject]@{ collections = @{ code = 100; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
             $new = [pscustomobject]@{ collections = @{ code = 40; metadata = 20 }; coverage = @{ modules = 10; objects = 20; forms = 5 } }
+            $old | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
+            $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 20 }
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new } | Should -Throw "*lost indexed records*"
             $new.coverage.modules = 9
@@ -163,6 +165,41 @@
             $new.coverage.modules = 10
             $new.collections.code = 0
             { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw "*lost indexed records*"
+        }
+    }
+
+    It "compares actual metadata identities without requiring legacy report parser artifacts" -Tag BetaCutover {
+        $configPath = Join-Path $TestDrive "metadata-identity-config.json"
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $script:MetadataRows = @('Справочники.Контрагенты', '0', 'IsFolder', 'в отчете "Права доступа"."')
+            $script:InventoryArguments = @()
+            function Invoke-DockerCommandCapture {
+                param($Arguments)
+                $script:InventoryArguments = $Arguments
+                return (ConvertTo-Json -InputObject $script:MetadataRows -Compress)
+            }
+            $old = [pscustomobject]@{ collections = @{ metadata = 1 }; coverage = @{ modules = 1; objects = 4; forms = 1 } }
+            $old | Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName "old-code" -Activity $old)
+            $old.metadataInventory.keys.Count | Should -Be 1
+            $old.metadataInventory.rejected.Count | Should -Be 3
+            $script:InventoryArguments[-1] | Should -Be '/app/chroma_db/metadata_details.db'
+            $script:MetadataRows = @('Справочники.Контрагенты', 'ПланыВидовРасчета.Начисления')
+            $new = [pscustomobject]@{ collections = @{ metadata = 2 }; coverage = @{ modules = 1; objects = 2; forms = 1 }; metadataProjectId = 'code-abc'; metadataGenerationId = 'generation-1' }
+            $new | Add-Member -NotePropertyName metadataInventory -NotePropertyValue (Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new)
+            $script:InventoryArguments[-1] | Should -Be '/app/chroma_db/projects/code-abc/generations/generation-1/metadata_details.db'
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Not -Throw
+            # Equal/increased counts must not conceal replacement of a real object.
+            $new.metadataInventory.keys = @('Справочники.Другой', 'ПланыВидовРасчета.Начисления')
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw '*lost 1 metadata object identities*'
+            $new.metadataInventory.keys = @('Справочники.Контрагенты')
+            $new.metadataInventory.rejected = @('IsFolder')
+            { Assert-BetaCodeIndexCoverage -OldActivity $old -NewActivity $new -Fresh } | Should -Throw '*malformed object identities*'
+            $new.coverage.objects = 3
+            { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*inventory disagrees with stats*'
+            $new.metadataGenerationId = '../other'
+            { Get-BetaCodeMetadataInventory -ContainerName "beta-code" -Activity $new } | Should -Throw '*generation identity is invalid*'
         }
     }
 
@@ -191,7 +228,7 @@
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $script:FreshSequence = @()
-            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = @{ configId = "pm4corp" }; freshProjectIndex = $true; old = @{ directUrl = "http://old/mcp" }; betaServer = @{ id = "code" }; runtime = @{ image = "fixture@sha256:abc" } }
+            $context = [pscustomobject]@{ serverId = "code"; configId = "pm4corp"; configState = @{ configId = "pm4corp" }; freshProjectIndex = $true; old = @{ directUrl = "http://old/mcp"; containerName = "old-code" }; betaServer = @{ id = "code" }; runtime = @{ image = "fixture@sha256:abc" } }
             function Enter-McpHostMaintenanceLock { return @{ acquired = $true } }
             function Exit-McpHostMaintenanceLock { $script:FreshSequence += "unlock" }
             function Invoke-BetaPreflight { return @{ context = $context; oldIndexActivity = @{ running = $false } } }
@@ -199,6 +236,7 @@
             function Ensure-ServerDockerImageAvailable {}
             function Ensure-ToolsListProxyImage {}
             function Get-BetaConfigurationIndexActivity { return @{ running = $false } }
+            function Get-BetaCodeMetadataInventory { return @{ keys = @('Справочники.Контрагенты'); rejected = @(); total = 1 } }
             function Stop-StableForBetaCutover { $script:FreshSequence += "stop-stable" }
             function Initialize-BetaProjectVolumes { $script:FreshSequence += "prepare-fresh-volumes" }
             function Copy-BetaHostDirectory { throw "must not copy layout 2 into a fresh index" }

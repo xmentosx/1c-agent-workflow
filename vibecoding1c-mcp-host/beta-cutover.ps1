@@ -99,16 +99,62 @@ function Assert-BetaProjectContainerMounts {
     }
 }
 
+function Get-BetaCodeMetadataInventory {
+    param([string]$ContainerName, [object]$Activity)
+    $project = [string](Get-ObjectValue -Object $Activity -Name "metadataProjectId" -Default "")
+    $generation = [string](Get-ObjectValue -Object $Activity -Name "metadataGenerationId" -Default "")
+    $database = "/app/chroma_db/metadata_details.db"
+    if ($project -or $generation) {
+        if ($project -notmatch '^[a-zA-Z0-9_-]+$' -or $generation -notmatch '^[a-zA-Z0-9_-]+$') {
+            throw "Code metadata generation identity is invalid; inspect stats before retrying beta-preflight."
+        }
+        $database = "/app/chroma_db/projects/$project/generations/$generation/metadata_details.db"
+    }
+    # Read the published database only. Do not import the server or start its indexer.
+    $probe = "import json,sqlite3,sys; c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True); print(json.dumps([r[0] for r in c.execute('SELECT full_path FROM objects ORDER BY full_path')],ensure_ascii=True))"
+    $lines = @(Invoke-DockerCommandCapture -Arguments @("exec", $ContainerName, "python", "-c", $probe, $database) -TimeoutSec 60 -Description "read Code metadata identities for beta coverage")
+    $rows = @(As-Array (ConvertFrom-Json -InputObject ($lines -join "`n")))
+    $expected = Get-ObjectValue -Object $Activity.coverage -Name "objects" -Default $null
+    if ($null -eq $expected -or $rows.Count -ne [long]$expected) {
+        throw "Code metadata inventory disagrees with stats (rows=$($rows.Count), stats=$expected); wait for indexing to finish and rerun beta-preflight."
+    }
+    $keys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $rejected = @()
+    foreach ($row in $rows) {
+        if ($row -isnot [string] -or [string]::IsNullOrWhiteSpace($row)) { throw "Code metadata inventory contains an invalid row." }
+        # Legacy report parsing can promote scalar values and multiline descriptions
+        # into objects. Real full_path values are qualified 1C identifier segments.
+        if ($row -cmatch '^[\p{L}_][\p{L}\p{M}\p{Nd}_]*(\.[\p{L}_][\p{L}\p{M}\p{Nd}_]*)+$') {
+            if (-not $keys.Add($row)) { throw "Code metadata inventory contains duplicate identities." }
+        } else { $rejected += $row }
+    }
+    return [pscustomobject]@{ keys = @($keys); rejected = @($rejected); total = $rows.Count }
+}
+
 function Assert-BetaCodeIndexCoverage {
     param([object]$OldActivity, [object]$NewActivity, [switch]$Fresh)
     if ($Fresh) {
         # Different model token budgets change chunk counts, but must retain source coverage.
-        foreach ($field in @("modules", "objects", "forms")) {
+        foreach ($field in @("modules", "forms")) {
             $oldCount = Get-ObjectValue -Object $OldActivity.coverage -Name $field -Default $null
             $newCount = Get-ObjectValue -Object $NewActivity.coverage -Name $field -Default $null
             if ($null -eq $oldCount -or $null -eq $newCount -or [long]$newCount -lt [long]$oldCount) {
                 throw "Fresh beta Code source coverage '$field' is missing or below the stable baseline. Stable data is retained for rollback."
             }
+        }
+        $oldInventory = Get-ObjectValue -Object $OldActivity -Name "metadataInventory" -Default $null
+        $newInventory = Get-ObjectValue -Object $NewActivity -Name "metadataInventory" -Default $null
+        if ($null -eq $oldInventory -or $null -eq $newInventory) {
+            throw "Fresh beta Code metadata identities are missing; rerun beta-preflight with current host tooling."
+        }
+        if (@($newInventory.rejected).Count -gt 0) {
+            throw "Fresh beta Code metadata contains malformed object identities. Inspect the parser; stable data is retained for rollback."
+        }
+        $newKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        foreach ($key in @($newInventory.keys)) { [void]$newKeys.Add([string]$key) }
+        $missing = @($oldInventory.keys | Where-Object { -not $newKeys.Contains([string]$_) })
+        if ($missing.Count -gt 0) {
+            throw "Fresh beta Code lost $($missing.Count) metadata object identities: $(($missing | Select-Object -First 5) -join ', '). Inspect source/parser differences before retrying; stable data is retained for rollback."
         }
     }
     $oldCollections = Convert-ToHash -Object $OldActivity.collections
@@ -291,6 +337,8 @@ function Get-BetaConfigurationIndexActivity {
                 objects = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "metadata_details" -Default $null) -Name "objects" -Default $null
                 forms = Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "form_index" -Default $null) -Name "forms" -Default $null
             }
+            metadataProjectId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "project_id" -Default "")
+            metadataGenerationId = [string](Get-ObjectValue -Object (Get-ObjectValue -Object (Get-ObjectValue -Object $data -Name "generation" -Default $null) -Name "published" -Default $null) -Name "generation_id" -Default "")
         }
     }
     $tasks = Get-ObjectValue -Object $payload -Name "background_tasks" -Default $null
@@ -547,6 +595,10 @@ function Invoke-BetaCutover {
             if ($latestIndexActivity.running) { throw "Stable '$TargetServerId' began indexing after preflight; cutover would interrupt it." }
             $preflight.oldIndexActivity = $latestIndexActivity
         }
+        if ($TargetServerId -eq "code" -and $context.freshProjectIndex) {
+            $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.old.containerName -Activity $preflight.oldIndexActivity
+            $preflight.oldIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
+        }
         $oldStopped = $false
         $stateChanged = $false
         try {
@@ -564,6 +616,10 @@ function Invoke-BetaCutover {
             $betaIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.runtime.url)
             if ($null -ne $betaIndexActivity -and $betaIndexActivity.running) { throw "Beta '$TargetServerId' started configuration indexing ($($betaIndexActivity.phase)); refusing a full reindex." }
             if ($TargetServerId -eq "code") {
+                if ($context.freshProjectIndex) {
+                    $inventory = Get-BetaCodeMetadataInventory -ContainerName $context.runtime.containerName -Activity $betaIndexActivity
+                    $betaIndexActivity | Add-Member -NotePropertyName metadataInventory -NotePropertyValue $inventory -Force
+                }
                 Assert-BetaCodeIndexCoverage -OldActivity $preflight.oldIndexActivity -NewActivity $betaIndexActivity -Fresh:$context.freshProjectIndex
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
