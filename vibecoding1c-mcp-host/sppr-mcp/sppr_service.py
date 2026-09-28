@@ -15,6 +15,7 @@ import numpy as np
 from sppr_core import (FILTER_FIELDS, KINDS, Policy, SpprError, canonical, digest,
                        guid, navigation, split_key)
 from sppr_embeddings import QueryCache
+from sppr_links import IDEA, MEMBERSHIP, PARENT, development_context
 from sppr_store import Store
 
 
@@ -76,6 +77,7 @@ class Service:
                 "provenance": {p: path[:8] for p, path in list(provenance.items())[:3]},
                 "provenance_complete": len(provenance) <= 3 and all(len(path) <= 8 for path in provenance.values()),
                 "is_folder": obj["is_folder"], "observed_at": obj["observed_at"],
+                "tp_role": obj.get("tp_role"),
                 "links": navigation(self.settings, obj["kind"], obj["uuid"])}
 
     def checked(self, response, policy):
@@ -215,18 +217,39 @@ class Service:
                                  "edge_id": edge_id, "fields": page, "complete": end >= len(units),
                                  "cursor": self.next_cursor(end, context) if end < len(units) else None}, policy)
 
-    def relations(self, object_id, direction="both", relation=None, cursor=None, limit=10):
+    def relations(self, object_id, direction="both", relation=None, cursor=None, limit=10, view="stored"):
         self.limit(limit)
         split_key(object_id)
         if direction not in ("both", "outgoing", "incoming"):
             raise SpprError("direction must be both, outgoing or incoming.")
+        if view not in ("stored", "development"):
+            raise SpprError("view must be stored or development.")
+        if view == "development" and (not object_id.startswith(IDEA + ":") or direction != "both" or relation):
+            raise SpprError("development view requires an idea ID, direction=both and no relation filter.")
         policy = Policy.load(self.settings.policy)
         with self.store.reader() as (db, manifest):
             objects = self.objects(db, policy)
             if object_id not in objects:
                 raise SpprError("Object is outside the active corpus; search again under the current policy.")
-            context = digest(["relations", object_id, direction, relation, limit, manifest["generation"], policy.token])
+            context = digest(["relations", object_id, direction, relation, limit, view, manifest["generation"], policy.token])
             offset = self.cursor(cursor, context)
+            if view == "development":
+                kinds = sorted(MEMBERSHIP | {PARENT})
+                rows = db.execute("SELECT data FROM edges WHERE relation IN (?,?,?) ORDER BY id", kinds)
+                records = development_context(object_id, objects, (json.loads(r["data"]) for r in rows))
+                output = []
+                for record in records[offset:offset+limit]:
+                    item = dict(record)
+                    for role in ("chtz", "developer_task", "related_tp"):
+                        item[role] = self.summary(objects[record[role]], policy) if record[role] else None
+                    evidence = list(dict.fromkeys(record["evidence"]))
+                    item.update({"evidence": evidence[:20], "evidence_count": len(evidence),
+                                 "evidence_complete": len(evidence) <= 20})
+                    output.append(item)
+                end = offset + len(output)
+                return self.checked({**self.envelope(manifest, policy), "view": view, "contexts": output,
+                                     "complete": end >= len(records), "scope": "role interpretation over currently indexed relationships",
+                                     "cursor": self.next_cursor(end, context) if end < len(records) else None}, policy)
             selected = []
             for row in db.execute("SELECT data FROM edges WHERE source=? OR target=? ORDER BY id", (object_id, object_id)):
                 edge = json.loads(row["data"])
@@ -250,6 +273,7 @@ class Service:
                            for name, record in edge["fields"].items() if record.get("state") == "value"
                            and isinstance(record.get("value"), str) and not name.endswith(("_Key", "_Type"))][:3]
                 output.append({"id": edge["id"], "relation": edge["relation"], "row": edge["row"],
+                               "technical_id": edge.get("technical_id"), "correlation_id": edge.get("correlation_id"),
                                "source": endpoint(edge["source"]), "target": endpoint(edge["target"]),
                                "preview": preview, "read_text": {"object_id": edge["source"], "edge_id": edge["id"]}})
             end = offset + len(output)

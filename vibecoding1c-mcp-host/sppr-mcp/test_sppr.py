@@ -27,6 +27,7 @@ STEP = "Catalog_ШагиПроцесса"
 SOLUTION = "Catalog_LCM_Решения"
 PROBLEM = "Catalog_LCM_Проблемы"
 FUNCTION = "Catalog_ФункцииСистемы"
+PROPERTY = "ChartOfCharacteristicTypes_ДополнительныеРеквизитыИСведения"
 A, B = str(UUID(int=1000)), str(UUID(int=2000))
 
 
@@ -57,12 +58,16 @@ def fixture_schema():
             refs.update({"итлРазработчик_Key": "Catalog_Пользователи", "Решение_Key": SOLUTION})
             for name, target in (("итлТестирующий_Key", "Catalog_Пользователи"),
                                  ("итлТип_Key", "Catalog_итлТипыТП"),
+                                 ("итлРодитель_Key", TP), ("Parent_Key", TP),
                                  ("итлСпринтДляПроработкиАналитиком_Key", "Catalog_итлСпринты"),
                                  ("итлСпринтДляРазработки_Key", "Catalog_итлСпринты")):
                 fields[name], refs[name] = "Edm.Guid", target
         if kind == IDEA:
             fields["итлСтатусРаботы_Key"] = "Edm.Guid"
             refs["итлСтатусРаботы_Key"] = "Catalog_итлСтатусыИдей"
+            fields.update({"Основание": "Edm.String", "Основание_Type": "Edm.String", "Тематика": "Edm.String"})
+            for name, target in (("Зарегистрировал_Key", "Catalog_Пользователи"), ("Источник_Key", "Catalog_ИсточникиИдей")):
+                fields[name], refs[name] = "Edm.Guid", target
         if kind in (SOLUTION, PROBLEM):
             fields["Parent_Key"] = "Edm.Guid"
             refs["Parent_Key"] = SOLUTION
@@ -72,6 +77,9 @@ def fixture_schema():
             row_refs = {}
             if table == "ИдеиИОшибки":
                 row_fields.update({"Идея": "Edm.String", "Идея_Type": "Edm.String", "РеализацияИдеи": "Edm.String", "итлКомментарий": "Edm.String"})
+            elif table == "ДополнительныеРеквизиты":
+                row_fields.update({"Свойство_Key": "Edm.Guid", "Значение": "Edm.String", "Значение_Type": "Edm.String", "ТекстоваяСтрока": "Edm.String"})
+                row_refs["Свойство_Key"] = PROPERTY
             else:
                 column, target = {"Процессы": ("Гиперссылка_Key", PROCESS), "Функции": ("Гиперссылка_Key", FUNCTION),
                                   "итлИдеи": ("Идея_Key", IDEA), "ПредшествующиеПроцессы": ("Процесс_Key", PROCESS),
@@ -80,9 +88,17 @@ def fixture_schema():
                                   "LCM_ФункциональныеРешения": ("ФункциональноеРешение_Key", "Catalog_LCM_ФункциональныеРешения")}.get(table, ("Раздел_Key", "Catalog_РазделыПроекта"))
                 row_fields[column] = "Edm.Guid"
                 row_refs[column] = target
+            if (kind, table) in ((IDEA, "итлШагиПроцессов"), (STEP, "итлИдеи")):
+                row_fields.update({"ТехническийИдентификатор_Key": "Edm.Guid", "ФункциональноеТребование": "Edm.String"})
+                row_refs["ТехническийИдентификатор_Key"] = "Catalog_итлТехническиеИдентификаторы"
             entity(kind + "_" + table, row_fields, row_refs)
     for kind in sorted(LOOKUPS):
-        entity(kind, {"Ref_Key": "Edm.Guid", "Description": "Edm.String", "DataVersion": "Edm.String", "DeletionMark": "Edm.Boolean"}, {})
+        fields = {"Ref_Key": "Edm.Guid", "Description": "Edm.String", "DataVersion": "Edm.String", "DeletionMark": "Edm.Boolean"}
+        if kind == PROPERTY:
+            fields["Заголовок"] = "Edm.String"
+        if kind == "Catalog_итлТипыТП":
+            fields["СрезТП"] = "Edm.String"
+        entity(kind, fields, {})
     return ('<Schema>' + ''.join(entities + associations) + '</Schema>').encode()
 
 
@@ -131,6 +147,10 @@ class FakeSource:
         self.rows.setdefault((TP, uuid(tp), "ИдеиИОшибки"), []).append(
             {"Ref_Key": uuid(tp), "LineNumber": row, "Идея": uuid(idea), "Идея_Type": "StandardODATA." + kind,
              "РеализацияИдеи": text, "итлКомментарий": "Комментарий строки"})
+
+    def lookup(self, kind, number, description, **fields):
+        self.data[kind + ":" + uuid(number)] = {"Ref_Key": uuid(number), "DataVersion": "v1",
+            "DeletionMark": False, "Description": description, **fields}
 
 
 class FakeEmbeddings:
@@ -181,6 +201,217 @@ class SpprTests(unittest.TestCase):
     def publish(self):
         previous, vectors = self.store.previous()
         return self.store.publish(self.collect(previous), self.policy, self.provider, vectors)
+
+    def read_fields(self, service, object_id):
+        fields, cursor = {}, None
+        while True:
+            page = service.read(object_id, cursor=cursor, limit=20)
+            fields.update({f["field"]: f for f in page["fields"]})
+            cursor = page["cursor"]
+            if not cursor:
+                return fields
+
+    def role_fixture(self, separate=False):
+        self.source.lookup("Catalog_итлТипыТП", 51, "(Эпик)", СрезТП="ЧТЗ")
+        self.source.lookup("Catalog_итлТипыТП", 52, "Название не определяет роль ЧТЗ", СрезТП="ЗадачаРазработчику")
+        self.source.data[key(TP, uuid(1))]["итлТип_Key"] = uuid(51)
+        self.source.rows[(TP, uuid(1), "ИдеиИОшибки")] = []
+        self.source.rows[(TP, uuid(2), "ИдеиИОшибки")] = []
+        self.source.idea_row(1, 3, "Требование ЧТЗ")
+        if separate:
+            self.source.data[key(TP, uuid(2))].update({"итлТип_Key": uuid(52), "итлРодитель_Key": uuid(1)})
+            self.source.idea_row(2, 3, "Реализация разработчика")
+
+    def test_idea_provenance_fields_and_typed_basis_respect_scope(self):
+        self.source.lookup("Catalog_Пользователи", 40, "Регистратор Семёнов")
+        self.source.lookup("Catalog_ИсточникиИдей", 41, "Обращение заказчика")
+        self.source.data[key(IDEA, uuid(3))].update({"Зарегистрировал_Key": uuid(40), "Источник_Key": uuid(41),
+            "Основание": uuid(90), "Основание_Type": "StandardODATA." + TP, "Тематика": "Нормирование себестоимости"})
+        collected = self.collect()
+        basis = [e for e in collected.edges if e["relation"] == "Основание"]
+        self.assertEqual([e["target"] for e in basis], [key(TP, uuid(90))])
+        self.assertEqual(basis[0]["target_state"], "outside_corpus_or_unavailable")
+        self.assertFalse(any(identifier == uuid(90) for _, identifier, _ in self.source.reads))
+        self.store.publish(collected, self.policy, self.provider)
+        service = Service(self.settings, self.provider)
+        fields = self.read_fields(service, key(IDEA, uuid(3)))
+        self.assertEqual(fields["Основание_Type"]["value"], "StandardODATA." + TP)
+        self.assertEqual(fields["Зарегистрировал_Key"]["label"], "Регистратор Семёнов")
+        self.assertEqual(fields["Источник_Key"]["label"], "Обращение заказчика")
+        self.provider.fail = True
+        for text in ("Семёнов", "Обращение", "Нормирование"):
+            self.assertEqual(service.search(text)["hits"][0]["id"], key(IDEA, uuid(3)))
+        raw = self.source.data[key(IDEA, uuid(3))]
+        raw["Основание_Type"] = "Edm.String"
+        self.assertFalse(any(e["relation"] == "Основание" for e in self.collect().edges))
+        raw["Основание_Type"] = "StandardODATA.Catalog_НеПоддержан"
+        edge = next(e for e in self.collect().edges if e["relation"] == "Основание")
+        self.assertFalse(edge["supported"])
+
+    def test_additional_attributes_keep_labels_types_values_and_foreign_stubs(self):
+        self.source.lookup(PROPERTY, 42, "ВнутреннееИмя", Заголовок="Класс согласования")
+        self.source.lookup("Catalog_ЗначенияСвойствОбъектов", 43, "Архитектурный совет")
+        values = [("Высокая точность", "Edm.String"), (0, "Edm.Decimal"), (False, "Edm.Boolean"),
+                  (uuid(43), "StandardODATA.Catalog_ЗначенияСвойствОбъектов"),
+                  (uuid(90), "StandardODATA." + TP), (uuid(90), "Edm.String")]
+        for kind, number in ((TP, 1), (IDEA, 3)):
+            self.source.rows[(kind, uuid(number), "ДополнительныеРеквизиты")] = [
+                {"Ref_Key": uuid(number), "LineNumber": row, "Свойство_Key": uuid(42),
+                 "Значение": value, "Значение_Type": typ, "ТекстоваяСтрока": "Обоснование выбора"}
+                for row, (value, typ) in enumerate(values, 1)]
+        self.publish()
+        service = Service(self.settings, self.provider)
+        for kind, number in ((TP, 1), (IDEA, 3)):
+            fields = self.read_fields(service, key(kind, uuid(number)))
+            self.assertEqual(fields["ДополнительныеРеквизиты/1/Свойство_Key"]["label"], "Класс согласования")
+            self.assertEqual(fields["ДополнительныеРеквизиты/2/Значение"]["value"], 0)
+            self.assertIs(fields["ДополнительныеРеквизиты/3/Значение"]["value"], False)
+            self.assertEqual(fields["ДополнительныеРеквизиты/3/Значение"]["state"], "value")
+            self.assertEqual(fields["ДополнительныеРеквизиты/4/Значение"]["label"], "Архитектурный совет")
+            rows = service.relations(key(kind, uuid(number)), relation="ДополнительныеРеквизиты/Значение")["relations"]
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["target"]["id"], key(TP, uuid(90)))
+            self.assertNotIn("title", rows[0]["target"])
+            row_fields = service.read(**rows[0]["read_text"], limit=20)["fields"]
+            self.assertTrue(any(f.get("label") == "Класс согласования" for f in row_fields))
+        self.provider.fail = True
+        for query in ("согласования", "Архитектурный", "точность", "Обоснование", "false", "0"):
+            self.assertEqual({h["id"] for h in service.search(query)["hits"]}, {key(TP, uuid(1)), key(IDEA, uuid(3))})
+        self.assertFalse(any(identifier == uuid(90) for _, identifier, _ in self.source.reads))
+        self.assertEqual(sum(kind == PROPERTY for kind, _, _ in self.source.reads), 1)
+
+    def test_step_row_identity_survives_reordering_and_matches_only_same_endpoints(self):
+        self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")] = [
+            {"Ref_Key": uuid(3), "LineNumber": n, "ШагПроцесса_Key": uuid(5),
+             "ТехническийИдентификатор_Key": uuid(60+n), "ФункциональноеТребование": "Требование " + str(n)} for n in (1, 2)]
+        self.source.rows[(STEP, uuid(5), "итлИдеи")] = [
+            {"Ref_Key": uuid(5), "LineNumber": n, "Идея_Key": uuid(3),
+             "ТехническийИдентификатор_Key": uuid(60+n)} for n in (1, 2)]
+        self.source.add(STEP, 8, project=uuid(4))
+        self.source.rows[(STEP, uuid(8), "итлИдеи")] = [
+            {"Ref_Key": uuid(8), "LineNumber": 1, "Идея_Key": uuid(3), "ТехническийИдентификатор_Key": uuid(61)}]
+        old = self.collect()
+        correlated = [e for e in old.edges if e["correlation_id"]]
+        self.assertEqual(len(correlated), 5)
+        groups = {}
+        for edge in correlated:
+            groups.setdefault(edge["correlation_id"], []).append(edge["id"])
+        self.assertEqual(sorted(map(len, groups.values())), [1, 2, 2])
+        for row in self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")]:
+            row["LineNumber"] = 3 - row["LineNumber"]
+        changed = self.collect(old.objects)
+        self.assertEqual({e["id"] for e in changed.edges}, {e["id"] for e in old.edges})
+        self.assertFalse(any("Catalog_итлТехническиеИдентификаторы" in kind for kind, _, _ in self.source.reads))
+        self.store.publish(changed, self.policy, self.provider)
+        page = Service(self.settings, self.provider).relations(key(IDEA, uuid(3)), limit=20)
+        self.assertEqual(sum(bool(e["technical_id"]) for e in page["relations"]), 5)
+
+    def test_step_empty_reference_does_not_invent_link_and_duplicate_identity_rejects_scan(self):
+        row = {"Ref_Key": uuid(3), "LineNumber": 1, "ШагПроцесса_Key": uuid(0),
+               "ТехническийИдентификатор_Key": uuid(61), "ФункциональноеТребование": "Без шага"}
+        self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")] = [row]
+        result = self.collect()
+        self.assertFalse(any(e["technical_id"] for e in result.edges))
+        self.assertEqual(result.objects[key(IDEA, uuid(3))]["fields"]["итлШагиПроцессов/1/ТехническийИдентификатор_Key"]["value"], uuid(61))
+        self.store.publish(result, self.policy, self.provider)
+        service = Service(self.settings, self.provider)
+        generation = service.status()["generation"]
+        row["ШагПроцесса_Key"] = uuid(5)
+        self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")].append({**row, "LineNumber": 2})
+        with self.assertRaisesRegex(SpprError, "Duplicate relationship identity"):
+            self.publish()
+        self.assertEqual(service.status()["generation"], generation)
+        # Operator correction in the source lets the original collection complete.
+        self.source.rows[(IDEA, uuid(3), "итлШагиПроцессов")][1]["ТехническийИдентификатор_Key"] = uuid(62)
+        self.publish()
+        rows = service.relations(key(IDEA, uuid(3)), relation="итлШагиПроцессов/ШагПроцесса_Key")["relations"]
+        self.assertEqual(len(rows), 2)
+
+    def test_development_one_tp_performs_both_roles_from_type_slice(self):
+        self.role_fixture()
+        self.publish()
+        service = Service(self.settings, self.provider)
+        records = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["mode"], "same_tp")
+        self.assertEqual(records[0]["chtz"]["id"], key(TP, uuid(1)))
+        self.assertEqual(records[0]["chtz"], records[0]["developer_task"])
+        self.assertTrue(records[0]["evidence"])
+        self.assertEqual(service.read(key(TP, uuid(1)))["object"]["tp_role"], "ЧТЗ")
+
+    def test_development_separate_task_and_idea_moved_out_of_chtz(self):
+        self.role_fixture(separate=True)
+        for moved in (False, True):
+            if moved:
+                self.source.rows[(TP, uuid(1), "ИдеиИОшибки")] = []
+            self.publish()
+            service = Service(self.settings, self.provider)
+            record, = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+            self.assertEqual(record["mode"], "separate_tp")
+            self.assertEqual(record["chtz"]["id"], key(TP, uuid(1)))
+            self.assertEqual(record["developer_task"]["id"], key(TP, uuid(2)))
+            self.assertEqual(record["evidence_count"], 2 if moved else 3)
+            self.assertEqual(record["chtz"]["tp_role"], "ЧТЗ")
+            self.assertEqual(record["developer_task"]["tp_role"], "ЗадачаРазработчику")
+            self.assertEqual(record["issues"], [])
+
+    def test_development_never_uses_folder_parent_or_guesses_by_name(self):
+        self.role_fixture(separate=True)
+        task = self.source.data[key(TP, uuid(2))]
+        task.pop("итлРодитель_Key")
+        task["Parent_Key"] = uuid(1)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        records = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+        self.assertEqual([r["mode"] for r in records], ["unresolved", "unresolved"])
+        self.assertEqual(records[0]["issues"], ["parent_missing"])
+        # Even a name that looks like ЧТЗ must not substitute for the absent slice.
+        self.source.data["Catalog_итлТипыТП:" + uuid(52)].pop("СрезТП")
+        self.publish()
+        records = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+        self.assertIn("tp_role_unrecognized", records[0]["issues"])
+
+    def test_development_parent_chain_cycle_and_foreign_parent(self):
+        self.role_fixture(separate=True)
+        self.source.add(TP, 11, итлРодитель_Key=uuid(1))
+        self.source.data[key(TP, uuid(2))]["итлРодитель_Key"] = uuid(11)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        record, = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+        self.assertEqual(record["chtz"]["id"], key(TP, uuid(1)))
+        self.assertEqual(record["evidence_count"], 4)
+        for parent, issue in ((2, "parent_cycle"), (90, "parent_outside_corpus_or_unavailable")):
+            self.source.data[key(TP, uuid(11))].update({"итлРодитель_Key": uuid(parent), "DataVersion": "v" + str(parent)})
+            self.publish()
+            records = service.relations(key(IDEA, uuid(3)), view="development")["contexts"]
+            self.assertIn(issue, records[0]["issues"])
+            self.assertNotIn("FOREIGN-TEXT-TRAP", json.dumps(records))
+
+    def test_development_multiple_tasks_pagination_and_policy_revocation(self):
+        self.role_fixture(separate=True)
+        self.source.data[key(TP, uuid(90))].update({"итлТип_Key": uuid(52), "итлРодитель_Key": uuid(1)})
+        self.source.idea_row(90, 3, "Вторая задача")
+        self.set_policy([A, B])
+        self.publish()
+        service = Service(self.settings, self.provider)
+        first = service.relations(key(IDEA, uuid(3)), view="development", limit=1)
+        second = service.relations(key(IDEA, uuid(3)), view="development", limit=1, cursor=first["cursor"])
+        self.assertTrue(second["complete"])
+        self.assertEqual({p["contexts"][0]["developer_task"]["id"] for p in (first, second)}, {key(TP, uuid(2)), key(TP, uuid(90))})
+        with self.assertRaisesRegex(SpprError, "Continuation"):
+            service.relations(key(IDEA, uuid(3)), cursor=first["cursor"], limit=1)
+        self.set_policy([A])
+        with self.assertRaisesRegex(SpprError, "Continuation"):
+            service.relations(key(IDEA, uuid(3)), view="development", limit=1, cursor=first["cursor"])
+        fresh = service.relations(key(IDEA, uuid(3)), view="development")
+        self.assertEqual(len(fresh["contexts"]), 1)
+        self.assertNotIn("FOREIGN-TEXT-TRAP", json.dumps(fresh))
+        self.assertNotIn(key(TP, uuid(90)), json.dumps(fresh))
+        for kwargs in ({"object_id": key(TP, uuid(1)), "view": "development"},
+                       {"object_id": key(IDEA, uuid(3)), "view": "development", "direction": "outgoing"},
+                       {"object_id": key(IDEA, uuid(3)), "view": "invalid"}):
+            with self.assertRaises(SpprError):
+                service.relations(**kwargs)
 
     def test_scope_shared_cycles_steps_and_secret_projections(self):
         collected = self.collect()

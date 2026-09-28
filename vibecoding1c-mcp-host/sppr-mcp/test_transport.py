@@ -88,6 +88,10 @@ def test_odata_projection_utf8_no_redirect(self):
 
 
 def test_mcp_over_real_http_two_clients(self):
+    self.source.lookup("Catalog_итлТипыТП", 51, "(Эпик)", СрезТП="ЧТЗ")
+    self.source.lookup("Catalog_итлТипыТП", 52, "Разработка", СрезТП="ЗадачаРазработчику")
+    self.source.data[key(TP, uuid(1))]["итлТип_Key"] = uuid(51)
+    self.source.data[key(TP, uuid(2))].update({"итлТип_Key": uuid(52), "итлРодитель_Key": uuid(1)})
     self.publish()
     service = Service(self.settings, self.provider)
     mcp = create_mcp(service)
@@ -120,6 +124,11 @@ def test_mcp_over_real_http_two_clients(self):
                 self.assertNotEqual(obj.structured_content["fields"], more.structured_content["fields"])
                 links = await client.call_tool("list_sppr_relations", {"object_id": key(IDEA, uuid(3))})
                 self.assertEqual(len(links.structured_content["relations"]), 2)
+                roles = await client.call_tool("list_sppr_relations", {"object_id": key(IDEA, uuid(3)), "view": "development"})
+                context, = roles.structured_content["contexts"]
+                self.assertEqual(context["mode"], "separate_tp")
+                self.assertEqual(context["chtz"]["id"], key(TP, uuid(1)))
+                self.assertEqual(context["developer_task"]["id"], key(TP, uuid(2)))
                 status = await client.call_tool("sppr_index_status", {})
                 self.assertEqual(status.structured_content["state"], "available")
                 self.assertNotIn("DO-NOT-READ-SECRET", json.dumps(status.structured_content))

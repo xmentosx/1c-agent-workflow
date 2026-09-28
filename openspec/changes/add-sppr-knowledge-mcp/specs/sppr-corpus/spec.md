@@ -70,6 +70,28 @@ The system SHALL preserve actual relation types, direction, endpoint identities,
 - **WHEN** an idea/error table row contains a target type outside the supported type mapping
 - **THEN** the system reports the unresolved target and coverage limitation without treating it as a supported idea or fetching its content
 
+### Requirement: Idea provenance and additional attributes
+The system SHALL collect the idea registrant, source, topic and typed basis, and additional attributes of ideas and technical projects. Property labels, values, value types and text values SHALL remain readable. Meaningful values and addressed lookup labels SHALL participate in lexical and semantic indexing. Typed business references SHALL use the existing corpus admission and stub rules; scalar values MUST NOT become links merely because their text resembles a UUID.
+
+#### Scenario: Additional attribute contains a foreign reference and another contains zero
+- **WHEN** an eligible idea or technical project has additional attributes with a reference outside the corpus, a zero, a false or a scalar string
+- **THEN** their values and explicit types remain readable, the reference becomes a stub without foreign content, and zero/false are not treated as empty
+
+#### Scenario: Idea basis is a supported typed reference
+- **WHEN** an eligible idea contains an explicit basis type and nonempty reference
+- **THEN** the graph preserves the actual basis relation and exposes the original type without guessing from the referenced UUID or expanding the allowed projects
+
+### Requirement: Idea-step row identity
+The system SHALL retain the technical identifier on idea-step rows and use it with the relation and endpoints for stable identity. Reciprocal rows SHALL be correlated only for the same endpoints and identifier. A technical identifier alone MUST NOT create a missing step reference. Duplicate identities SHALL preserve the previous generation and provide a source-correction continuation.
+
+#### Scenario: Two requirements share the same idea and step
+- **WHEN** two differently identified rows between one idea and step are reordered
+- **THEN** both texts and identities remain distinct, and matching reciprocal rows can still be correlated
+
+#### Scenario: Duplicate technical identity is corrected
+- **WHEN** duplicate identities prevent collection and the operator corrects the source rows
+- **THEN** the previous generation remains readable until a successful retry publishes both corrected relationships
+
 ### Requirement: Reliable reconciliation and removal
 The system SHALL reconcile membership, deletion marks, versions and dependencies during complete scans and publish source-content changes only after successful collection. Missing pages, authorization errors and timeouts MUST NOT be interpreted as deletions. Successful reconciliation SHALL remove deleted, marked or moved-out cards and invalid relations.
 

@@ -55,6 +55,21 @@ The MCP SHALL remain usable with the last valid corpus when OData is unavailable
 - **WHEN** the latest synchronization failed due to OData unavailability
 - **THEN** searches continue against the previous generation and show its observation time and last synchronization failure
 
+### Requirement: Explicit ChTZ and developer task context
+For an idea, the relation tool SHALL provide a bounded development view deriving roles from technical-project membership, type `СрезТП` and explicit `итлРодитель_Key` chains. If only a resolved ChTZ is present, it SHALL perform both roles; separate developer tasks SHALL be paired with their ChTZ using stored parent evidence. The view MUST distinguish rule-derived interpretation from stored edges, retain multiple contexts and report unknown roles, missing/out-of-scope parents and cycles without guessing by names or folder parents. Current policy SHALL apply to every endpoint and continuation.
+
+#### Scenario: The same technical project performs both roles
+- **WHEN** an idea has a ChTZ membership and no separate or unresolved task membership in the current corpus
+- **THEN** one context identifies the same technical project as both ChTZ and developer task, with source evidence and the explicit fallback rule
+
+#### Scenario: Idea is moved into a separate developer task
+- **WHEN** an idea belongs to a developer task whose explicit parent chain reaches a ChTZ
+- **THEN** the context returns both technical projects and parent evidence even if the idea no longer appears in the ChTZ table
+
+#### Scenario: Role is unknown or project access is revoked
+- **WHEN** type evidence or a required parent is unavailable, or current policy excludes a previously indexed task
+- **THEN** the view does not disclose excluded content, does not infer a role from the title and invalidates continuations issued under the old policy
+
 ### Requirement: Native and web navigation
 The MCP SHALL return installed-client and web-client navigation links for every supported eligible object in search hits, card responses and relation lists. Both links MUST address the same typed object in `pskov/itland_work_SPPR`, remain stable across renames and contain no credentials. Platform-compatible encoding MUST be established from actual 1C reference behavior.
 

@@ -138,9 +138,6 @@ class Store:
                 db.executemany("INSERT INTO roots VALUES(?,?)", [(obj["id"], p) for p in obj["roots"]])
                 fields = dict(obj["fields"])
                 fields["title"] = {"state": "value", "value": obj["title"]}
-                for name, value in obj["fields"].items():
-                    if value.get("label"):
-                        fields[name + "/label"] = {"state": "value", "value": value["label"]}
                 docs.extend((obj["id"], None, part) for part in fragments(fields, self.settings.chunk_chars))
             for edge in collection.edges:
                 db.execute("INSERT INTO edges VALUES(?,?,?,?,?)", (edge["id"], edge["source"], edge["target"], edge["relation"], canonical(edge)))

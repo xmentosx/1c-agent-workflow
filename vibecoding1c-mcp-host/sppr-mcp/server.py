@@ -36,9 +36,9 @@ def create_mcp(service):
         return invoke(service.read, object_id=object_id, cursor=cursor, limit=limit, edge_id=edge_id)
 
     @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
-    def list_sppr_relations(object_id: str, direction: str = "both", relation: str | None = None, cursor: str | None = None, limit: int = 10):
-        """List stored adjacent relations, not semantic suggestions. direction: both/outgoing/incoming. Follow cursor to complete; then visit returned IDs for more hops."""
-        return invoke(service.relations, object_id=object_id, direction=direction, relation=relation, cursor=cursor, limit=limit)
+    def list_sppr_relations(object_id: str, direction: str = "both", relation: str | None = None, cursor: str | None = None, limit: int = 10, view: str = "stored"):
+        """List stored links (view=stored), including idea-step row identities. For an idea, view=development explains ChTZ/developer-task roles and source evidence; use direction=both and no relation filter. Follow cursor for all indexed results."""
+        return invoke(service.relations, object_id=object_id, direction=direction, relation=relation, cursor=cursor, limit=limit, view=view)
 
     @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
     def sppr_index_status():

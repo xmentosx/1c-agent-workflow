@@ -4,16 +4,15 @@ from __future__ import annotations
 import base64
 import copy
 import json
-import re
 import time
 from collections import deque
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from sppr_core import (BUSINESS_FIELDS, IDENTITY, KINDS, LOOKUPS, PROCESS, RICH_FIELDS,
+from sppr_core import (BUSINESS_FIELDS, IDENTITY, KINDS, LOOKUPS, POLYMORPHIC_FIELDS, PROCESS, RICH_FIELDS,
                        ROW_FIELDS, SHARED, STEP, ZERO, Policy, SpprError, digest,
-                       fields_from, guid, key, now, safe_xml)
+                       fields_from, guid, key, now, reference_type, safe_xml)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -93,11 +92,10 @@ class Schema:
         for name, target in self.refs.get(entity, {}).items():
             if name in raw and raw[name] and raw[name] != ZERO:
                 yield name, target, guid(raw[name])
-        if raw.get("Идея") and raw["Идея"] != ZERO:
-            target = str(raw.get("Идея_Type", "")).split(".")[-1]
-            if not re.fullmatch(r"(?:Catalog|Document)_[\w]+", target):
-                target = "unsupported"
-            yield "Идея", target, guid(raw["Идея"])
+        for name in sorted(POLYMORPHIC_FIELDS):
+            target = reference_type(raw.get(name + "_Type"))
+            if target and raw.get(name) and raw[name] != ZERO:
+                yield name, target, guid(raw[name])
 
 
 class OData:
@@ -236,33 +234,50 @@ def collect(source, settings, policy, previous=None):
         marker = kind + ":" + identifier
         if marker not in lookup_cache:
             check()
-            # Label-only reads cannot recursively expand a lookup dictionary.
-            fields = [n for n in ("Ref_Key", "Description", "DataVersion", "DeletionMark")
+            # Addressed labels/type discriminators cannot recursively expand a dictionary.
+            allowed = ["Ref_Key", "Description", "DataVersion", "DeletionMark"]
+            if kind == "Catalog_итлТипыТП":
+                allowed.append("СрезТП")
+            if kind == "ChartOfCharacteristicTypes_ДополнительныеРеквизитыИСведения":
+                allowed.append("Заголовок")
+            fields = [n for n in allowed
                       if n in source.schema.properties.get(kind, {})]
             if "Description" not in fields:
                 return None
             raw = source.read(kind, identifier, fields)
-            lookup_cache[marker] = None if raw.get("DeletionMark") else raw.get("Description")
+            lookup_cache[marker] = {} if raw.get("DeletionMark") else {
+                "label": raw.get("Заголовок") or raw.get("Description"), "tp_role": raw.get("СрезТП")}
         return lookup_cache[marker]
 
     def add_edges(obj, entity, raw, prefix="", row_number=None):
         row_fields = fields_from(raw, source.schema.projection(entity, row=True)) if prefix else {}
+        technical_id = raw.get("ТехническийИдентификатор_Key")
+        technical_id = guid(technical_id) if technical_id and technical_id != ZERO else None
         for name, kind, identifier in source.schema.references(entity, raw):
-            if name in ("Owner_Key", "Проект_Key"):
+            if name in ("Owner_Key", "Проект_Key", "ТехническийИдентификатор_Key"):
                 continue
             if kind in LOOKUPS:
-                label = lookup(kind, identifier)
-                if not prefix and name in obj["fields"]:
-                    obj["fields"][name]["label"] = label
+                details = lookup(kind, identifier) or {}
+                destination = row_fields if prefix else obj["fields"]
+                if name in destination:
+                    destination[name]["label"] = details.get("label")
+                if not prefix and obj["kind"] == "Catalog_ТехническиеПроекты" and name == "итлТип_Key":
+                    obj["tp_role"] = details.get("tp_role")
+                    obj["fields"]["итлТип_Key/СрезТП"] = {
+                        "state": "value" if obj["tp_role"] else "unavailable", "value": obj["tp_role"]}
                 continue
             if kind not in KINDS:
                 coverage["unsupported_references"] += 1
             target = kind + ":" + identifier
             relation = prefix + name
-            edges.append({"id": digest([obj["id"], relation, row_number, target]),
+            correlation = digest([sorted([obj["id"], target]), technical_id]) if technical_id and {
+                obj["kind"], kind} == {"Catalog_Идеи", STEP} else None
+            edges.append({"id": digest([obj["id"], relation, technical_id or row_number, target]),
                           "source": obj["id"], "target": target, "relation": relation,
                           "row": row_number, "fields": row_fields,
+                          "technical_id": technical_id, "correlation_id": correlation,
                           "supported": kind in KINDS})
+        return row_fields
 
     def load_object(kind, identifier, header, project):
         check()
@@ -293,11 +308,10 @@ def collect(source, settings, policy, previous=None):
         for table, rows in tables.items():
             for row in rows:
                 edge_count = len(edges)
-                add_edges(obj, kind + "_" + table, row, table + "/", row["LineNumber"])
-                if len(edges) == edge_count:
+                row_fields = add_edges(obj, kind + "_" + table, row, table + "/", row["LineNumber"])
+                if len(edges) == edge_count or table == "ДополнительныеРеквизиты":
                     # A textual requirement can have an empty reference. Keep it readable
                     # and searchable on the parent without inventing a relationship.
-                    row_fields = fields_from(row, source.schema.projection(kind + "_" + table, row=True))
                     obj["fields"].update({f"{table}/{row['LineNumber']}/{name}": value
                                           for name, value in row_fields.items()
                                           if value["state"] != "not_applicable"})
@@ -336,6 +350,8 @@ def collect(source, settings, policy, previous=None):
     if inventory() != initial:
         raise SpprError("Source inventory changed during collection; previous generation retained. Retry next window.")
     check()
+    if len({edge["id"] for edge in edges}) != len(edges):
+        raise SpprError("Duplicate relationship identity; correct duplicate technical row identifiers in SPPR and retry collection.")
     for obj in objects.values():
         coverage["types"][obj["kind"]] = coverage["types"].get(obj["kind"], 0) + 1
         coverage["unreadable_fields"] += sum(f["state"] == "unreadable" for f in obj["fields"].values())

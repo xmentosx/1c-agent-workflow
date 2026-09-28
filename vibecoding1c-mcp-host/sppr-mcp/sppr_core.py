@@ -59,8 +59,8 @@ class Kind:
 
 
 KINDS = {
-    "Catalog_ТехническиеПроекты": Kind(tables=("ИдеиИОшибки", "Процессы", "Функции", "РазделыПроекта", "LCM_ФункциональныеРешения")),
-    "Catalog_Идеи": Kind(tables=("РазделыПроекта", "итлПроцессы", "итлШагиПроцессов", "LCM_ФункциональныеРешения")),
+    "Catalog_ТехническиеПроекты": Kind(tables=("ИдеиИОшибки", "Процессы", "Функции", "РазделыПроекта", "LCM_ФункциональныеРешения", "ДополнительныеРеквизиты")),
+    "Catalog_Идеи": Kind(tables=("РазделыПроекта", "итлПроцессы", "итлШагиПроцессов", "LCM_ФункциональныеРешения", "ДополнительныеРеквизиты")),
     "Catalog_Процессы": Kind(tables=("ПредшествующиеПроцессы", "РазделыПроекта", "итлИдеи")),
     "Catalog_ШагиПроцесса": Kind(tables=("итлИдеи",)),
     "Catalog_РазделыПроекта": Kind(),
@@ -78,17 +78,28 @@ ZERO = str(UUID(int=0))
 IDENTITY = {"Ref_Key", "DataVersion", "DeletionMark", "Owner_Key", "Проект_Key"}
 TEXT_FIELDS = set("Description Code Number Date Описание ПодробноеОписание Заметки Комментарий КонцепцияПроекта ЦелиПроекта итлОписание Проблематика Результат КогдаСтартует ЧемЗавершается ТребованияКСистеме ПовесткаВстречи ОбсужденияИРешения МестоПроведения ПолныйКод НаименованиеВИнтерфейсе итлПричина".split())
 BUSINESS_FIELDS = TEXT_FIELDS | set("Parent_Key IsFolder Статус Важность ДатаЗакрытия ДатаРегистрации ДатаНачала ДатаОкончания ДатаЗавершения ПлановаяДатаНачала ПлановаяДатаОкончания ДатаПроведения ТипФункции ТипШага итлТипПроцесса Очередность Ответственный_Key Исполнитель_Key итлИсполнитель_Key итлРазработчик_Key итлТестирующий_Key итлСтатусРаботы_Key СтатусПротокола_Key итлТип_Key итлТипИдеи_Key итлСпринтДляПроработкиАналитиком_Key итлСпринтДляРазработки_Key итлСсылкаНаМантис итлКодMantis итлСостояниеMantis РазделПроекта_Key ЦелеваяЗадача_Key ФункцияСистемы_Key ВложенныйПроцесс_Key итлВложенныйПроцесс_Key Решение_Key итлРодитель_Key итлВладелецПроцесса_Key".split())
+BUSINESS_FIELDS.update("Зарегистрировал_Key Источник_Key Основание Основание_Type Тематика".split())
 RICH_FIELDS = {"ХранилищеОписания", "ХранилищеЗаметок", "ХранилищеКонцепции", "ХранилищеЦелей", "ХранилищеОбсужденийИРешений", "ХранилищеФункциональногоТребования"}
 ROW_FIELDS = set("Ref_Key LineNumber Идея_Key Идея Идея_Type Раздел_Key Процесс_Key ШагПроцесса_Key Гиперссылка_Key ФункциональноеРешение_Key Проблема_Key ОписаниеИзменений РеализацияИдеи итлРеализацияИдеиРазработчика итлРеализацияИдеиСтрока итлКомментарий итлКомментарийСтрока ФункциональноеТребование".split())
+ROW_FIELDS.update("ТехническийИдентификатор_Key Свойство_Key Значение Значение_Type ТекстоваяСтрока".split())
 LOOKUPS = {"Catalog_Пользователи", "Catalog_итлСтатусыРаботТехническихПроектов", "Catalog_итлТипыТП", "Catalog_итлТипИдеи", "Catalog_итлСпринты", "Catalog_итлСтатусыПротокола", "Catalog_Роли"}
 LOOKUPS.update({"Catalog_итлСтатусыИдей", "Catalog_ИсточникиИдей", "Catalog_итлСтатусыРабот",
                 "Catalog_ПрофилиПользователей", "Catalog_итлСтатусыРаботШагиПроцессов", "Catalog_итлКонтрагенты"})
+LOOKUPS.update({"ChartOfCharacteristicTypes_ДополнительныеРеквизитыИСведения",
+                "Catalog_ЗначенияСвойствОбъектов", "Catalog_ЗначенияСвойствОбъектовИерархия"})
+POLYMORPHIC_FIELDS = {"Идея", "Основание", "Значение"}
 FILTER_FIELDS = {
     "status": ("итлСтатусРаботы_Key", "СтатусПротокола_Key", "Статус"),
     "developer": ("итлРазработчик_Key",), "tester": ("итлТестирующий_Key",),
     "business_type": ("итлТип_Key", "итлТипИдеи_Key", "ТипФункции", "ТипШага", "итлТипПроцесса"),
     "sprint": ("итлСпринтДляПроработкиАналитиком_Key", "итлСпринтДляРазработки_Key"),
 }
+
+
+def reference_type(value):
+    """Only an explicit entity type can make a polymorphic value a reference."""
+    name = str(value or "").split(".")[-1]
+    return name if re.fullmatch(r"(?:Catalog|Document|ChartOfCharacteristicTypes)_[\w]+", name) else None
 
 
 @dataclass(frozen=True)
@@ -250,10 +261,13 @@ def navigation(settings, kind, identifier):
 def fields_from(raw, available):
     fields = {}
     for name in sorted(available):
-        if name.endswith(("_Base64Data", "_Type")) or name in IDENTITY:
+        if name.endswith("_Base64Data") or (name.endswith("_Type") and name[:-5] not in POLYMORPHIC_FIELDS) or name in IDENTITY:
             continue
         value = raw.get(name)
         fields[name] = {"state": "value" if value not in (None, "") else "empty", "value": value}
+        if name in POLYMORPHIC_FIELDS:
+            fields[name]["value_type"] = raw.get(name + "_Type")
+            fields[name]["reference_type"] = reference_type(raw.get(name + "_Type"))
     for name in sorted(RICH_FIELDS):
         if name + "_Base64Data" not in available:
             continue
@@ -272,9 +286,16 @@ def fields_from(raw, available):
 def fragments(fields, size):
     for name, record in fields.items():
         value = record.get("value")
-        if record.get("state") != "value" or not isinstance(value, str) or name.endswith("_Key"):
-            continue
-        value = value.strip()
-        # Exact non-overlapping offsets let full reading reconstruct every character.
-        for offset in range(0, len(value), size):
-            yield {"field": name, "offset": offset, "text": value[offset:offset + size]}
+        texts = []
+        if record.get("label"):
+            texts.append((name + "/label", record["label"]))
+        if record.get("state") == "value" and not name.endswith(("_Key", "_Type")) and not record.get("reference_type"):
+            if isinstance(value, str):
+                texts.append((name, value))
+            elif isinstance(value, (bool, int, float)) and record.get("value_type"):
+                texts.append((name, canonical(value)))
+        for field_name, text in texts:
+            text = text.strip()
+            # Exact non-overlapping offsets let full reading reconstruct every character.
+            for offset in range(0, len(text), size):
+                yield {"field": field_name, "offset": offset, "text": text[offset:offset + size]}
