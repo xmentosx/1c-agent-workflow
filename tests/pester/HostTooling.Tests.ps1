@@ -927,7 +927,7 @@ services:
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-            ($output -join [Environment]::NewLine) | Should -Match "Ran 28 tests"
+            ($output -join [Environment]::NewLine) | Should -Match "Ran 33 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
