@@ -507,8 +507,28 @@ function Assert-BetaToolsContract {
     if ($ServerId -eq "graph") {
         # Approved Graph v2 migration: arbitrary Cypher is replaced by named
         # templates; business_search is unavailable without business generation.
-        # All other old calls still go through the unchanged compatibility gate.
+        # Retained inputs still go through the unchanged compatibility gate.
         $OldTools = @($OldTools | Where-Object { $_.name -notin @("execute_metadata_cypher", "business_search") })
+        if ($CheckOutputs) {
+            $OldTools = @(foreach ($old in $OldTools) {
+                $output = Convert-ToHash -Object (Get-ObjectValue -Object $old -Name "outputSchema" -Default $null)
+                $properties = Convert-ToHash -Object (Get-ObjectValue -Object $output -Name "properties" -Default $null)
+                $result = Convert-ToHash -Object (Get-ObjectValue -Object $properties -Name "result" -Default $null)
+                $required = @(As-Array (Get-ObjectValue -Object $output -Name "required" -Default @()))
+                $new = @($BetaTools | Where-Object { $_.name -eq $old.name })
+                # Only the observed FastMCP string wrapper is replaced by v2
+                # text JSON. Unknown output contracts retain the generic gate.
+                if ($output.Count -eq 4 -and $output.type -eq "object" -and
+                    $output["x-fastmcp-wrap-result"] -eq $true -and
+                    $properties.Count -eq 1 -and $result.Count -eq 1 -and $result.type -eq "string" -and
+                    $required.Count -eq 1 -and $required[0] -eq "result" -and
+                    $new.Count -eq 1 -and $null -eq (Get-ObjectValue -Object $new[0] -Name "outputSchema" -Default $null)) {
+                    $copy = Convert-ToHash -Object $old
+                    $copy.Remove("outputSchema")
+                    $copy
+                } else { $old }
+            })
+        }
         $template = @($BetaTools | Where-Object { $_.name -eq "run_graph_cypher_template" })
         if ($template.Count -ne 1) { throw "Beta Graph v2 requires run_graph_cypher_template." }
         $inputSchema = Get-ObjectValue -Object $template[0] -Name "inputSchema" -Default $null
@@ -837,6 +857,10 @@ function Invoke-BetaCutover {
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
             $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
             Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $preflight.oldTools -BetaTools $publicTools -CheckOutputs
+            if ($TargetServerId -eq "graph") {
+                $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
+                if ($publicActivity.running) { throw "Beta Graph public status reports unfinished indexing." }
+            }
             if ($TargetServerId -eq "docs") {
                 Assert-BetaDocsFunctionalCall -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
             }

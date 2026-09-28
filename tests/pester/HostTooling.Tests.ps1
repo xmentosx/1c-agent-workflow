@@ -670,6 +670,18 @@ services:
                 $old = @($search, @{ name = "execute_metadata_cypher" }, @{ name = "business_search" })
                 $beta = @($search, $template)
                 { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools $beta -CheckOutputs } | Should -Not -Throw
+                $legacySearch = @{
+                    name = $search.name; inputSchema = $search.inputSchema
+                    outputSchema = @{ type = "object"; properties = @{ result = @{ type = "string" } }; required = @("result"); "x-fastmcp-wrap-result" = $true }
+                }
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Not -Throw
+                $legacySearch.outputSchema | Should -Not -BeNullOrEmpty
+                { Assert-BetaToolsContract -ServerId code -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
+                $legacySearch.outputSchema.properties.result.type = "object"
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
+                $legacySearch.outputSchema.properties.result.type = "string"
+                $legacySearch.outputSchema.properties.Add("business_field", @{ type = "string" })
+                { Assert-BetaToolsContract -ServerId graph -OldTools @($legacySearch) -BetaTools $beta -CheckOutputs } | Should -Throw "*removed its output schema*"
                 { Assert-BetaToolsContract -ServerId code -OldTools $old -BetaTools $beta } | Should -Throw
                 { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($template) } | Should -Throw
                 { Assert-BetaToolsContract -ServerId graph -OldTools $old -BetaTools @($search) } | Should -Throw
