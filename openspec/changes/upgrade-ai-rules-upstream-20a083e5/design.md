@@ -409,8 +409,16 @@ atomic push, что immutable component branch/tag, с прежним ancestry p
 
 ### Architecture checkpoint for the implementation
 
+**Согласовано пользователем 2026-09-28.** Принят предложенный в D7 механизм
+безопасной записи внешних спецификаций: проверка исходных revisions, краткие
+блокировки затронутых документов, reconciliation при конфликте и восстановление
+собственных записей после аварии. Согласование закрывает эту архитектурную
+развилку в описанных ниже границах. Пользователь отдельно указал:
+«реализацию пока не начинай». Apply не разрешён до нового прямого поручения;
+повторно согласовывать уже принятое решение без изменения его границ не нужно.
+
 Q1–Q20 фиксируют продуктовые решения; этот раздел задаёт конкретные границы для
-review перед apply по docs/package-architecture.md. Новые изменения installed
+принятого checkpoint по docs/package-architecture.md. Новые изменения installed
 state — multi-owner client membership, evidence schema, Caveman receipt и pinned
 CLI selection — мигрируются существующими host owners. Plugin — вызывающая
 сторона, без своей очереди/repair. Source/fork ownership остаётся прежним.
