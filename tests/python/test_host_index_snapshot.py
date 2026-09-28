@@ -1,5 +1,6 @@
 """Round-trip real SQLite/binary data, and prove rejection precedes deletion."""
 import io
+import os
 from contextlib import closing
 from pathlib import Path
 import runpy
@@ -69,6 +70,62 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already exists"):
             helper["snapshot"](self.data, self.archive)
         self.assertEqual(proof["sha256"], helper["digest"](self.archive))
+
+    def write_link_archive(self, links, extra_names=()):
+        with tarfile.open(self.archive, "w") as archive:
+            root = tarfile.TarInfo("index")
+            root.type = tarfile.DIRTYPE
+            archive.addfile(root)
+            for name, target in links:
+                member = tarfile.TarInfo(name)
+                member.type = tarfile.SYMTYPE
+                member.linkname = target
+                archive.addfile(member)
+            for name in extra_names:
+                archive.addfile(tarfile.TarInfo(name), io.BytesIO())
+
+    def test_model_cache_relative_links_and_chain_are_contained(self):
+        links = [("index/model_cache/models/blobs/model", "../../blobs/ab/model"),
+                 ("index/model_cache/models/snapshots/revision/model", "../../blobs/model"),
+                 ("index/model_cache/models/snapshots/revision/1_Pooling/config.json", "../../../blobs/config")]
+        self.write_link_archive(links, ("index/model_cache/blobs/ab/model", "index/model_cache/models/blobs/config"))
+        with tarfile.open(self.archive) as archive:
+            members = archive.getmembers()
+        helper["validate_members"](members)
+        self.assertEqual([(m.name, m.linkname) for m in members if m.issym()], links)
+
+    def test_link_resolution_escape_cycle_and_link_parent_reject_before_deletion(self):
+        cases = [
+            ([("index/dir/back", ".."), ("index/escape", "dir/back/../outside")], ()),
+            ([("index/one", "two"), ("index/two", "one")], ()),
+            ([("index/link", "inside")], ("index/link/child",)),
+        ]
+        for links, extra_names in cases:
+            with self.subTest(links=links):
+                self.write_link_archive(links, extra_names)
+                before = self.database.read_bytes()
+                with self.assertRaises(ValueError):
+                    helper["restore"](self.data, self.archive, helper["digest"](self.archive))
+                self.assertEqual(before, self.database.read_bytes())
+
+    @unittest.skipUnless(os.name == "posix", "Symlink extraction is qualified in the Linux Docker snapshot runtime")
+    def test_real_model_cache_link_chain_roundtrip(self):
+        blob = self.data / "model_cache/blobs/ab/model"
+        blob.parent.mkdir(parents=True)
+        blob.write_bytes(b"retained model bytes")
+        first = self.data / "model_cache/models/blobs/model"
+        first.parent.mkdir(parents=True)
+        first.symlink_to("../../blobs/ab/model")
+        second = self.data / "model_cache/models/snapshots/revision/model"
+        second.parent.mkdir(parents=True)
+        second.symlink_to("../../blobs/model")
+        proof = helper["snapshot"](self.data, self.archive)
+        blob.write_bytes(b"candidate model bytes")
+        second.unlink()
+        helper["restore"](self.data, self.archive, proof["sha256"])
+        self.assertEqual(os.readlink(first), "../../blobs/ab/model")
+        self.assertEqual(os.readlink(second), "../../blobs/model")
+        self.assertEqual(second.read_bytes(), b"retained model bytes")
 
 
 if __name__ == "__main__":
