@@ -27,6 +27,14 @@ permitted. Conflict preserves both current content and the candidate contributio
 Read dependencies and change-tree membership SHALL remain protected during the
 apply window; archive MUST verify the revision that was successfully synced.
 Process death SHALL release the lock lease without manual lock-file deletion.
+Native CLI-generated writes, including new-change metadata and archive moves,
+SHALL use an isolated staging context and then the same protected batch/journal.
+The pinned CLI remains the schema/scaffold authority; staging MUST NOT write to
+the live store, user registry, global prompts or project binding. Candidate
+completeness, target path mapping, read revisions and namespace membership SHALL
+be validated before live replacement. No bundle route may bypass the owner with
+direct live CLI writes or directory moves. Unsupported staging capability SHALL
+report its limitation instead of falling back to an unprotected write.
 
 #### Scenario: Two changes update one capability
 - **WHEN** one writer commits after the other read the main spec
@@ -43,6 +51,14 @@ Process death SHALL release the lock lease without manual lock-file deletion.
 #### Scenario: Delta changes before archive
 - **WHEN** a delta or change-tree input changes after sync preparation or before archive
 - **THEN** revision mismatch stops the stale operation and preserves the changed active delta for reconciliation rather than archiving it using earlier sync evidence
+
+#### Scenario: Two native new-change commands choose the same name
+- **WHEN** both CLI preparations read the same absent destination
+- **THEN** one complete batch may create it and the other detects namespace drift before replacement, preserving its candidate without corrupting metadata
+
+#### Scenario: CLI stops after creating metadata in staging
+- **WHEN** generation fails after writing .openspec.yaml but before a complete candidate is accepted
+- **THEN** the live store is unchanged and no partial scaffold is reported as a ready change; a crash during subsequent live writes uses the existing journal recovery
 
 ### Requirement: OS4 Compatible executable and intact bundles are separate
 The integration SHALL resolve an exact compatible CLI executable without changing

@@ -6,10 +6,29 @@ upstream installer, adapter, metadata, tool-policy, plugin and Python checks.
 Source inputs, runtimes, exact fork and bundle identities SHALL enter reuse keys.
 Tests are adapted only when an accepted contract changes, retaining the original
 defect reproducer or equivalent proof. Omitted applicable checks remain unverified.
+The primary installed-upgrade acceptance SHALL start from the actual published
+workflow master package, including its old helper, rules, dependencies and state;
+changing only a rules tag in the new helper is insufficient. The reviewed baseline
+is workflow 69c0863bfe3bd837543267f122e81a28dcfa5488 with rules
+itl-main-410951e7-r33 at 9309bfbbc9f8d844a21bce55178c2e0d72eaf965.
+Before qualification the remote master SHALL be rechecked; a newer published
+baseline requires the corresponding additional transition evidence. r36 projects
+and representative previously supported legacy upstream/controlled-fork manifest
+classes SHALL remain covered without requiring every historic tag or intermediate
+r36 installation. Rollback, delegated MCP and user/global ownership remain part
+of those upgrade contracts.
 
 #### Scenario: Old downstream Full is green
 - **WHEN** new upstream checks have not run
 - **THEN** the old record cannot qualify the new release or be reused as complete proof
+
+#### Scenario: Upgrade from the published workflow master
+- **WHEN** a project installed by the actual published baseline upgrades with idle, busy and stopped-pending worktrees
+- **THEN** its old helper hands off to a coherent new package, deferred roots remain explicit, and original commands resume/recover without business merge, database changes or tests being hidden inside file update
+
+#### Scenario: Older supported manifest owns global client paths
+- **WHEN** a representative legacy upstream or controlled-fork installation upgrades directly
+- **THEN** the new owner preserves user/global content, delegated MCP and rollback without assuming r36 already normalized the manifest
 
 ### Requirement: RQ2 Qualification distinguishes static and live capabilities
 Qualification SHALL distinguish file placement, CLI/schema validation, client

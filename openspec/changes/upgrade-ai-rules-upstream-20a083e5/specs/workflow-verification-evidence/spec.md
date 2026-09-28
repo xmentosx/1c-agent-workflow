@@ -32,6 +32,13 @@ requirements revision, source/fragment identity, target infobase and loaded stat
 actual runner, result and limitations. Readiness, canonical check, repair, export
 and close MUST use one assessment. Relevant changes invalidate dependent proof;
 unrelated edits and committing identical checked content do not.
+Execution authorization SHALL be recorded as provenance separately from proof
+sufficiency. Expiry of a permitted one-off invocation alone MUST NOT invalidate
+its proof. An unrelated package version or dependency-lock entry change MUST NOT
+invalidate proof; changed relevant checker/runner/acceptance inputs SHALL do so.
+The existing verification owner SHALL make that assessment without treating an
+unknown compatibility result as passed. A file-only workflow update MUST NOT
+automatically execute newly required checks.
 
 #### Scenario: External requirements change without source changes
 - **WHEN** acceptance relevant to an existing proof changes in the selected store
@@ -40,6 +47,14 @@ unrelated edits and committing identical checked content do not.
 #### Scenario: Incomplete runtime obligation
 - **WHEN** only a fragment or filtered subset was checked while integration remains applicable
 - **THEN** the result reports partial coverage and cannot pass block export as whole-task verification
+
+#### Scenario: Workflow-only update preserves applicable proof
+- **WHEN** package/reporting files or unrelated lock entries change without changing checked inputs or the relevant verification contract
+- **THEN** existing proof remains reusable and neither a database reload nor a test run is triggered solely by that update
+
+#### Scenario: Updated checker fixes a false-success defect
+- **WHEN** the new checker changes the validity of an earlier successful result
+- **THEN** dependent proof becomes stale with a reason for the next ordinary assessment/export/close; unrelated proof remains, and file installation itself does not launch tests
 
 ### Requirement: EV4 Execution settings do not prohibit test authoring
 Execution off SHALL not prohibit preparing needed test artifacts. An explicit
@@ -50,6 +65,10 @@ authorization and missing required capabilities still apply.
 #### Scenario: Named Vanessa run with its persistent mode off
 - **WHEN** the user explicitly requests that scenario and no broader no-UI instruction forbids it
 - **THEN** that run is allowed in the authorized scope, the persistent mode remains off, and unrelated components do not start
+
+#### Scenario: One-off permission expires before ordinary check and export
+- **WHEN** a named run produced sufficient complete proof, its invocation ended, and persistent execution remains off
+- **THEN** canonical check and block export reuse that fresh proof without a second UI run or persistent setting change; genuinely changed inputs or obligations still invalidate it
 
 ### Requirement: EV5 Capability policy is provider-aware and non-bypassable
 Effective policy SHALL distinguish authoring, saved Vanessa, interactive UI,
@@ -97,3 +116,40 @@ failures. Event-log, load state, snapshot and artifact SHA obligations remain.
 #### Scenario: Broken selected test runner
 - **WHEN** a selected runner returns zero tests or invalid results
 - **THEN** alternative-proof support cannot relabel the failed execution as skipped or successful
+
+### Requirement: EV8 Conditional platform Gate 6 belongs to the ITL apply owner
+The existing load/check/apply owner SHALL verify applicability before extension
+application, or main configuration load/apply with relevant metadata/modules not
+covered by MCP validation. It SHALL bind the artifact to the editable configuration and
+run the upstream platform ladder before UpdateDBCfg. CheckModules SHALL include
+applicable runtime modes; extension applicability SHALL be checked for extensions;
+CheckConfig SHALL follow. The same owner SHALL provide authorized dev/test
+platform fallback for unavailable Gates 1–3 validators where applicable.
+Snapshot, per-infobase guard, native process ownership, timeout and scoped recovery
+SHALL remain authoritative; no separate raw launcher or second EDT deployment
+owner is introduced. Failure SHALL stop apply and provide the original operation's
+recovery/continuation. Pass SHALL require process exit, a fresh numeric DumpResult
+and Out diagnostics to agree; warnings fail. Success phrases SHALL neutralize
+only their own fragments, never other findings on the same line.
+Evidence SHALL record artifact/loaded-state identity, target/extension, platform,
+modes and all three result signals. Reuse SHALL require matching relevant inputs.
+When no authorized platform/test base is available, the owner SHALL report
+unverified evidence and the upstream delivery limitation, not a new blanket
+delivery block or permission to bypass existing ITL apply requirements.
+File-only workflow update has no Gate 6 trigger.
+
+#### Scenario: Extension interceptor points to a removed method
+- **WHEN** static validators pass but the platform applicability check reports the missing method
+- **THEN** the owner stops before applying to the database, preserves diagnostics and offers scoped recovery through the original command
+
+#### Scenario: Process exit is zero but another signal fails
+- **WHEN** DumpResult is nonzero/missing or Out contains a warning/error even alongside a success phrase
+- **THEN** the gate fails without treating exit code zero or a clean fragment as a pass
+
+#### Scenario: Evidence belongs to a different loaded artifact or runtime mode
+- **WHEN** a prior platform result does not match the current artifact, relevant target state or required modes
+- **THEN** it is not reused as current applicability proof and the owner performs the required authorized checks before apply
+
+#### Scenario: No suitable platform target or EDT owns deployment
+- **WHEN** no authorized matching dev/test base is available or the project uses the qualified EDT validation/update path
+- **THEN** the former remains explicitly unverified under delivery policy and the latter uses its equivalent evidence without a second deployment owner
