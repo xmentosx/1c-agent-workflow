@@ -402,7 +402,7 @@ function Assert-RetainedCodeIdentity {
 }
 
 function Get-BetaCutoverContext {
-    param([object]$Config, [string]$ServerId, [string]$ConfigId, [string]$ReleaseManifest = "")
+    param([object]$Config, [string]$ServerId, [string]$ConfigId, [string]$ReleaseManifest = "", [switch]$NativeEndpoint)
     $retainedIndex = -not [string]::IsNullOrWhiteSpace($ReleaseManifest)
     if (-not $ServerId) { throw "Beta cutover requires -ServerId." }
     $stableManifest = Read-DistributionManifest -Config $Config
@@ -443,6 +443,17 @@ function Get-BetaCutoverContext {
         $runtime.url = "$baseUrl`:$($runtime.hostPort)/mcp"
     }
     $runtime.proxyContainerName = [string](Get-ObjectValue -Object $old -Name "proxyContainerName" -Default "$($old.containerName)-tools-list-proxy")
+    if ($NativeEndpoint) {
+        if (-not $retainedIndex -or $oldChannel -ne "stable" -or $ServerId -eq "templates") { throw "Native endpoint conversion requires an accepted versioned stable server; Templates retains operator authorization proxy." }
+        if ([string](Get-ObjectValue -Object $old -Name "endpointMode" -Default "") -eq "direct") { throw "This deployment already uses its native public endpoint." }
+        if ([string]$old.image -cne [string]$runtime.image -or [string](Get-ObjectValue -Object $old -Name "manifestPath" -Default "") -cne $ReleaseManifest) { throw "Native conversion must reuse the exact accepted stable image and manifest; qualify an image upgrade separately." }
+        $publicUri = [Uri]([string]$old.url)
+        if ($publicUri.Scheme -ne "http" -or $publicUri.Port -ne [int]$old.proxyPort -or $publicUri.AbsolutePath -ne "/mcp") { throw "Native conversion requires the tracked local public HTTP MCP mapping." }
+        $runtime.containerName = [string]$old.containerName + "-native"
+        $runtime | Add-Member -NotePropertyName composeProject -NotePropertyValue ([string](Get-ObjectValue -Object $old -Name "composeProject" -Default $old.containerName) + "-native") -Force
+        $runtime.hostPort = $publicUri.Port
+        Set-NativeRuntimeEndpoint -Runtime $runtime -Url ([string]$old.url)
+    }
     if ($runtime.name -ne [string]$old.name -or $runtime.containerName -eq [string]$old.containerName) {
         throw "Beta '$ServerId' must keep the public name and use a distinct container."
     }
@@ -468,7 +479,7 @@ function Get-BetaCutoverContext {
         if ($oldModel -and $oldModel -ne [string]$runtime.embeddingModel) { throw "Beta '$ServerId' would change embedding model from '$oldModel' to '$($runtime.embeddingModel)'." }
     }
     if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
-    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; retainedIndex = $retainedIndex }
+    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; retainedIndex = $retainedIndex; nativeEndpoint = [bool]$NativeEndpoint }
 }
 
 function Get-HostMcpToolsList {
@@ -776,6 +787,11 @@ function Stop-StableForBetaCutover {
         Invoke-DockerCommandChecked -Arguments @("update", "--restart", "no", $neo4jName) -TimeoutSec 60 -Description "disable stable restart for $neo4jName"
         Invoke-DockerCommandChecked -Arguments @("stop", $neo4jName) -TimeoutSec 180 -Description "stop stable $neo4jName"
     }
+    if ([bool](Get-ObjectValue -Object $Context -Name "nativeEndpoint" -Default $false)) {
+        $proxyName = [string]$Context.old.proxyContainerName
+        Invoke-DockerCommandChecked -Arguments @("update", "--restart", "no", $proxyName) -TimeoutSec 60 -Description "disable replaced proxy restart"
+        Invoke-DockerCommandChecked -Arguments @("stop", $proxyName) -TimeoutSec 120 -Description "release public port for native MCP"
+    }
 }
 
 function Copy-BetaDataSnapshot {
@@ -841,30 +857,31 @@ function Restore-StableAfterBetaFailure {
 }
 
 function Invoke-BetaPreflight {
-    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "")
+    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "", [switch]$NativeEndpoint)
     if (-not $TargetServerId) { throw "beta-preflight requires -ServerId." }
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
-    $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest
+    $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
     if ($context.retainedIndex) { [void](Get-RetainedIndexMounts -Config $Config -Context $context) }
     if ($context.freshProjectIndex) {
         Ensure-HostEmbeddingModel -Config $Config -Server $context.betaServer
         Initialize-BetaProjectVolumes -Config $Config -Context $context -InspectOnly
     }
-    if (-not (Test-ToolsListProxyTarget -Config $Config -ServerId $TargetServerId)) { throw "Beta cutover requires the existing public tools-list proxy for '$TargetServerId'." }
+    $oldNative = [string](Get-ObjectValue -Object $context.old -Name "endpointMode" -Default "") -eq "direct"
+    if (-not $oldNative -and -not (Test-ToolsListProxyTarget -Config $Config -ServerId $TargetServerId)) { throw "Beta cutover requires the existing public tools-list proxy for '$TargetServerId'." }
     $oldDirectUrl = [string](Get-ObjectValue -Object $context.old -Name "directUrl" -Default "")
     if (-not $oldDirectUrl) { throw "Stable '$TargetServerId' has no tracked direct URL." }
     $proxyName = [string](Get-ObjectValue -Object $context.old -Name "proxyContainerName" -Default "")
-    if (-not $proxyName -or (Get-HostContainerPublishState -ContainerName $proxyName) -ne "running") { throw "Stable '$TargetServerId' has no running public proxy." }
+    if (-not $oldNative -and (-not $proxyName -or (Get-HostContainerPublishState -ContainerName $proxyName) -ne "running")) { throw "Stable '$TargetServerId' has no running public proxy." }
     $upstreamUrl = "http://host.docker.internal:$($context.old.hostPort)/mcp"
-    if (-not (Test-ToolsListProxyReady -Port ([int]$context.old.proxyPort) -ExpectedServerId $TargetServerId -ExpectedUpstreamUrl $upstreamUrl)) {
+    if (-not $oldNative -and -not (Test-ToolsListProxyReady -Port ([int]$context.old.proxyPort) -ExpectedServerId $TargetServerId -ExpectedUpstreamUrl $upstreamUrl)) {
         throw "Stable '$TargetServerId' public proxy is not qualified."
     }
     if ($context.serverId -eq "graph" -and (Get-HostContainerPublishState -ContainerName "$($context.old.containerName)-neo4j") -ne "running") {
         throw "Stable Graph Neo4j is not running."
     }
     $oldTools = @(Get-HostMcpToolsList -Url $oldDirectUrl)
-    $oldPublicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.old.proxyPort)/mcp")
+    $oldPublicTools = @(Get-HostMcpToolsList -Url ([string]$context.old.url))
     $oldIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url $oldDirectUrl
     if ($null -ne $oldIndexActivity -and $oldIndexActivity.running) { throw "Stable '$TargetServerId' configId '$TargetConfigId' is indexing ($($oldIndexActivity.phase)); cutover would interrupt it." }
     Write-Host "Beta preflight passed: server=$TargetServerId configId=$TargetConfigId oldTools=$($oldTools.Count) publicName=$($context.old.name) publicUrl=$($context.old.url) betaImage=$($context.runtime.image)"
@@ -878,6 +895,7 @@ function Set-ForwardCutoverTarget {
     # main as the watchdog target after the shared store may have been changed.
     $tracked = Convert-ToHash -Object $Context.runtime
     foreach ($field in @("directUrl", "proxyUrl", "proxyPort", "proxyContainerName", "proxyContractPath")) {
+        if ([string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "") -eq "direct") { break }
         if (-not (Get-ObjectValue -Object $tracked -Name $field -Default $null)) {
             $value = Get-ObjectValue -Object $Context.old -Name $field -Default $null
             if ($null -ne $value) { $tracked[$field] = $value }
@@ -892,20 +910,21 @@ function Set-ForwardCutoverTarget {
 }
 
 function Invoke-BetaCutover {
-    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "", [switch]$ForwardOnly, [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0)
+    param([object]$Config, [string]$TargetServerId, [string]$TargetConfigId, [string]$ReleaseManifest = "", [switch]$ForwardOnly, [switch]$NativeEndpoint, [ValidateRange(0, 86400)][int]$IndexReadyTimeoutSeconds = 0)
     if (($ForwardOnly -or $IndexReadyTimeoutSeconds) -and -not $ReleaseManifest) { throw "Forward upgrade options require a versioned stable ReleaseManifest." }
+    if ($NativeEndpoint -and (-not $ReleaseManifest -or -not $ForwardOnly)) { throw "Native conversion requires a ForwardOnly versioned stable cutover." }
     if ($DryRun) { throw "Use -Action beta-preflight for read-only qualification; beta-cutover does not support -DryRun." }
     $lease = Enter-McpHostMaintenanceLock -Config $Config -Operation "beta-cutover:${TargetServerId}:$TargetConfigId" -WaitSeconds 0
     if (-not $lease.acquired) { throw "MCP host maintenance is active: $($lease.path)" }
     try {
-        $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest
+        $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
         $context = $preflight.context
         $context | Add-Member -NotePropertyName forwardOnly -NotePropertyValue ([bool]$ForwardOnly) -Force
         $context | Add-Member -NotePropertyName indexReadyTimeoutSeconds -NotePropertyValue $IndexReadyTimeoutSeconds -Force
         $retainedIndex = [bool](Get-ObjectValue -Object $context -Name "retainedIndex" -Default $false)
         Assert-RegistryPushPreflight -Config $Config
         Ensure-ServerDockerImageAvailable -Server $context.betaServer -Image ([string]$context.runtime.image)
-        Ensure-ToolsListProxyImage -Config $Config
+        if ([string](Get-ObjectValue -Object $context.runtime -Name "endpointMode" -Default "") -ne "direct") { Ensure-ToolsListProxyImage -Config $Config }
         if ($TargetServerId -eq "graph") { Ensure-DockerImageAvailable -Image ([string]$context.betaServer.neo4jImage) }
         $latestIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url ([string]$context.old.directUrl)
         if ($null -ne $latestIndexActivity) {
@@ -952,17 +971,18 @@ function Invoke-BetaCutover {
             }
             $health = Get-HostServerFunctionalHealth -Server $context.runtime
             if ($health.status -eq "degraded") { throw "Beta functional health failed: $($health.message)" }
-            $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context
+            $nativePublic = [string](Get-ObjectValue -Object $context.runtime -Name "endpointMode" -Default "") -eq "direct"
+            if (-not $nativePublic) { $context.runtime.proxyContractPath = New-BetaProxyContract -Config $Config -Context $context }
             Enable-ToolsListProxyForRuntime -Config $Config -Runtime $context.runtime
-            $publicTools = @(Get-HostMcpToolsList -Url "http://localhost:$($context.runtime.proxyPort)/mcp")
-            $oldPublicTools = @(As-Array (Get-ObjectValue -Object $preflight -Name "oldPublicTools" -Default $preflight.oldTools))
+            $publicTools = @(Get-HostMcpToolsList -Url ([string]$context.runtime.url))
+            $oldPublicTools = if ($nativePublic) { @($preflight.oldTools) } else { @(As-Array (Get-ObjectValue -Object $preflight -Name "oldPublicTools" -Default $preflight.oldTools)) }
             Assert-BetaToolsContract -ServerId $TargetServerId -OldTools $oldPublicTools -BetaTools $publicTools -CheckOutputs
             if ($TargetServerId -eq "graph") {
-                $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
+                $publicActivity = Get-BetaConfigurationIndexActivity -ServerId graph -Url ([string]$context.runtime.url)
                 if ($publicActivity.running) { throw "Beta Graph public status reports unfinished indexing." }
             }
             if ($TargetServerId -eq "docs") {
-                Assert-BetaDocsFunctionalCall -Url "http://localhost:$($context.runtime.proxyPort)/mcp"
+                Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url)
             }
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force

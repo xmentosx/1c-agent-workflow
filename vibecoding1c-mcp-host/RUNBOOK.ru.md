@@ -645,15 +645,39 @@ Graph и уже работающие операции этот параметр 
 кандидат и не прерывает его индексатор; после естественного завершения выполните
 прежнюю полную приёмку через tracked runtime.
 
+### Публичный native MCP после приёмки stable
+
+Когда компактный native tools-контракт принят, `stable-preflight -NativeEndpoint`
+проверяет отдельное переключение уже принятого образа с proxy на native endpoint.
+Применение: `stable-cutover -ForwardOnly -NativeEndpoint` с теми же ServerId,
+ConfigId и ReleaseManifest. Обновление образа и удаление proxy квалифицируются
+последовательно. Templates сохраняет proxy для операторской авторизации; этот
+режим к нему не применяется.
+
+Существующий cutover под maintenance lease останавливает прежние main/Neo4j и
+proxy, отключает их restart policy, затем запускает тот же pinned образ с теми
+же индексами на прежнем публичном порту. Имя MCP и URL сохраняются; копия индекса
+не создаётся. Единственный владелец выбора endpoint — существующая запись
+deployment в host-state (`endpointMode=direct`), отдельно для каждого ConfigId.
+Start, reconcile, watchdog и proxy activation сохраняют этот выбор; proxy другой
+конфигурации остаётся независимым. Registry проверяет native MCP tools/list;
+открытого TCP-порта недостаточно. Старый proxy остаётся stopped до проверки
+поиска, source coverage и restart persistence, затем его можно удалить.
+
+При ошибке применяется продолжение ForwardOnly выше: исправить новый runtime,
+затем start/reconcile и полная приёмка. Не запускайте старый proxy на уже занятом
+публичном порту. Для следующих обновлений сохранены versioned manifest, модель,
+тома и публичный адрес принятого native deployment.
+
 Перед каждой операцией оператор подтверждает idle, неизменный source scope,
-совместимость layout/fingerprint и достаточные RAM/диск для образа, полного
-несжатого snapshot, временных данных запуска и резерва. Само наличие
+совместимость layout/fingerprint и достаточные RAM/диск для образа, временных
+данных запуска и резерва; без ForwardOnly учитывается и полный несжатый snapshot. Само наличие
 readiness-бюджета не разрешает новую полную индексацию. Reset flags запрещены;
-Code дополнительно требует прежнее опубликованное поколение, полные metadata/
+Code вне ForwardOnly требует прежнее опубликованное поколение; в обоих режимах — полные metadata/
 form identities и source coverage. Проверка Graph vectors/identities и
 functional/restart acceptance остаётся частью приёмки конкретного проекта.
 
-После остановки прежнего main (и Neo4j для Graph) согласованный снимок Docs,
+Без ForwardOnly после остановки прежнего main (и Neo4j для Graph) согласованный снимок Docs,
 Templates, SSL, Code либо Graph создаётся под `stateRoot/snapshots/cutover-*`.
 ACL каталога устанавливается до записи: только оператор и SYSTEM. Копирующий
 Python процесс запускается в изолированном контейнере без сети, читает один
