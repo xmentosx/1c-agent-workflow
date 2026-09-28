@@ -412,6 +412,8 @@ function Get-BetaCutoverContext {
     if ($stable.Count -ne 1 -or $beta.Count -ne 1) { throw "Both distribution manifests must define exactly one '$ServerId' server." }
     $stableServer = $stable[0]
     $betaServer = $beta[0]
+    $globalIndexSettings = if ($retainedIndex) { Get-GlobalEmbeddingIndexSettings -Config $Config -Server $betaServer } else { $null }
+    if ($null -ne $globalIndexSettings) { $betaServer = Add-GlobalEmbeddingIndexProfile -Config $Config -Server $betaServer }
     $scope = Get-ServerScope -Server $stableServer
     if ($scope -ne (Get-ServerScope -Server $betaServer)) { throw "Beta '$ServerId' changes server scope." }
     if ($scope -eq "project" -and -not $ConfigId) { throw "Project MCP '$ServerId' requires -ConfigId." }
@@ -424,6 +426,7 @@ function Get-BetaCutoverContext {
     $old = Get-TrackedHostServerForIdentity -Config $Config -ServerId $ServerId -Scope $scope -ConfigId $ConfigId
     if ($null -eq $old) { throw "Stable '$ServerId' is not tracked for configId '$ConfigId'." }
     $oldChannel = [string](Get-ObjectValue -Object $old -Name "channel" -Default "stable")
+    $freshGlobalIndex = $null -ne $globalIndexSettings -and [string](Get-ObjectValue -Object $old -Name "indexGeneration" -Default "") -ne [string]$globalIndexSettings.indexGeneration
     if ($retainedIndex) {
         if ($oldChannel -ne "beta" -and -not [string](Get-ObjectValue -Object $old -Name "manifestPath" -Default "")) { throw "Stable retained cutover requires an accepted modern index. Migrate the legacy layout first; no automatic reindex is permitted." }
         if ($oldChannel -notin @("beta", "stable")) { throw "Unknown accepted server channel." }
@@ -476,10 +479,23 @@ function Get-BetaCutoverContext {
     if ((Test-HostServerNeedsEmbedding -Server $betaServer) -and -not $freshProjectIndex) {
         $oldModel = [string](Get-ObjectValue -Object $old -Name "embeddingModel" -Default "")
         if ($retainedIndex -and -not $oldModel) { throw "Accepted embedding model is not recorded. Verify and record its actual settings before stable-preflight." }
-        if ($oldModel -and $oldModel -ne [string]$runtime.embeddingModel) { throw "Beta '$ServerId' would change embedding model from '$oldModel' to '$($runtime.embeddingModel)'." }
+        if (-not $freshGlobalIndex -and $oldModel -and $oldModel -ne [string]$runtime.embeddingModel) { throw "Beta '$ServerId' would change embedding model from '$oldModel' to '$($runtime.embeddingModel)'." }
     }
+    if ($freshGlobalIndex) { Assert-FreshGlobalIndexTarget -Config $Config -Old $old -Server $betaServer -Runtime $runtime }
     if ($retainedIndex -and (Get-HostContainerPublishState -ContainerName $runtime.containerName) -ne "missing") { throw "Candidate container already exists. Inspect its prior cutover proof and finish recovery before retrying." }
-    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; retainedIndex = $retainedIndex; nativeEndpoint = [bool]$NativeEndpoint }
+    return [pscustomobject]@{ serverId = $ServerId; configId = $ConfigId; scope = $scope; old = $old; betaServer = $betaServer; configState = $configState; runtime = $runtime; freshProjectIndex = $freshProjectIndex; freshGlobalIndex = $freshGlobalIndex; retainedIndex = $retainedIndex; nativeEndpoint = [bool]$NativeEndpoint }
+}
+
+function Assert-FreshGlobalIndexTarget {
+    param([object]$Config, [object]$Old, [object]$Server, [object]$Runtime)
+    $indexPath = switch ([string]$Server.id) { docs { "/app/index" }; templates { "/app/chroma_db" }; ssl { "/app/zvec_db" } }
+    $context = [pscustomobject]@{ betaServer = $Server; serverId = [string]$Server.id; scope = "global"; configState = $null; configId = "" }
+    $target = Get-BetaVolumePath -Config $Config -Context $context -ContainerPath $indexPath
+    $source = Assert-BetaPathUnderStateRoot -Config $Config -Path (Get-BetaContainerMountSource -ContainerName ([string]$Old.containerName) -Destination $indexPath)
+    if ($source -ieq $target) { throw "Global embedding migration requires a separate index path for rollback." }
+    if (-not (Test-Path -LiteralPath $source -PathType Container)) { throw "Accepted global index is missing: $source" }
+    if (Test-Path -LiteralPath $target) { throw "Fresh global index path already exists: $target. Inspect earlier migration state before retrying." }
+    if ([string]$Runtime.embeddingMode -ne "openai") { throw "Fresh global index requires remote embedding credentials." }
 }
 
 function Get-HostMcpToolsList {
@@ -715,8 +731,9 @@ function ConvertFrom-DocsReadyState {
 function Wait-BetaFreshIndexReady {
     param([object]$Context, [int]$TimeoutSeconds = 7200)
     $freshProjectIndex = [bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)
+    $freshGlobalIndex = [bool](Get-ObjectValue -Object $Context -Name "freshGlobalIndex" -Default $false)
     $forwardIndex = [bool](Get-ObjectValue -Object $Context -Name "forwardOnly" -Default $false) -and $Context.serverId -in @("code", "graph")
-    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex -and -not $forwardIndex) { return }
+    if ($Context.serverId -notin @("docs", "ssl") -and -not $freshProjectIndex -and -not $freshGlobalIndex -and -not $forwardIndex) { return }
     $url = "http://localhost:$($Context.runtime.hostPort)/ready"
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $lastError = ""
@@ -724,9 +741,24 @@ function Wait-BetaFreshIndexReady {
         try {
             $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 20
             if ([int]$response.StatusCode -eq 200) {
+                $ready = ConvertFrom-Json -InputObject ([string]$response.Content)
                 if ($Context.serverId -eq "docs") {
-                    $docsActivity = ConvertFrom-DocsReadyState -Value (ConvertFrom-Json -InputObject ([string]$response.Content))
+                    $docsActivity = ConvertFrom-DocsReadyState -Value $ready
                     if ($docsActivity.running) { throw "Docs is serving while its index is still being built ($($docsActivity.phase))." }
+                }
+                if ($freshGlobalIndex) {
+                    if ($Context.serverId -eq "ssl" -and [string]$ready.state -ne "ready") { throw "SSL Qwen index is not ready." }
+                    if ($Context.serverId -eq "docs") {
+                        if ([string]$ready.embedding.model -ne [string]$Context.runtime.embeddingModel -or [string]$ready.embedding.backend -eq "local") { throw "Docs ready index does not use the selected remote embedding model." }
+                        if ([long]$ready.documents -lt [long]$Context.oldIndexReady.documents) { throw "Docs Qwen index lost documents." }
+                    }
+                    if ($Context.serverId -eq "templates") {
+                        if ([string]$ready.state -ne "ready" -or [string]$ready.embedding.model -ne [string]$Context.runtime.embeddingModel -or [string]$ready.embedding.backend -eq "cpu") { throw "Templates Qwen index is not ready with the selected remote model." }
+                        foreach ($kind in @("templates", "memories")) {
+                            if ([long](Get-ObjectValue -Object $ready.collections -Name $kind -Default 0) -lt [long](Get-ObjectValue -Object $Context.oldIndexReady.collections -Name $kind -Default 0)) { throw "Templates Qwen index lost '$kind' rows." }
+                        }
+                        if ([long]$ready.index_pending.count -ne 0 -or $ready.retrieval.templates_collection.embedding_identity_matches -ne $true -or $ready.retrieval.memories_collection.embedding_identity_matches -ne $true) { throw "Templates Qwen vector collections are not fully indexed." }
+                    }
                 }
                 if ($freshProjectIndex -or $forwardIndex) {
                     $activity = Get-BetaConfigurationIndexActivity -ServerId $Context.serverId -Url ([string]$Context.runtime.url)
@@ -826,6 +858,18 @@ function Stop-StableForBetaCutover {
 
 function Copy-BetaDataSnapshot {
     param([object]$Config, [object]$Context)
+    if ([bool](Get-ObjectValue -Object $Context -Name "freshGlobalIndex" -Default $false)) {
+        $path = switch ($Context.serverId) { docs { "/app/index" }; templates { "/app/chroma_db" }; ssl { "/app/zvec_db" } }
+        $target = Get-BetaVolumePath -Config $Config -Context $Context -ContainerPath $path
+        New-Item -ItemType Directory -Path $target -ErrorAction Stop | Out-Null
+        if ($Context.serverId -eq "templates") {
+            $source = Assert-BetaPathUnderStateRoot -Config $Config -Path (Get-BetaContainerMountSource -ContainerName ([string]$Context.old.containerName) -Destination $path)
+            $database = Join-Path $source "templates.db"
+            if (-not (Test-Path -LiteralPath $database -PathType Leaf)) { throw "Templates source rows are missing; refusing an empty migration." }
+            Copy-Item -LiteralPath $database -Destination (Join-Path $target "templates.db") -ErrorAction Stop
+        }
+        return
+    }
     if ([bool](Get-ObjectValue -Object $Context -Name "retainedIndex" -Default $false)) { Save-RetainedIndexSnapshot -Config $Config -Context $Context; return }
     if ([bool](Get-ObjectValue -Object $Context -Name "freshProjectIndex" -Default $false)) {
         Initialize-BetaProjectVolumes -Config $Config -Context $Context
@@ -867,7 +911,7 @@ function Restore-StableAfterBetaFailure {
     } elseif ((Get-HostContainerPublishState -ContainerName $betaName) -ne "missing") {
         Invoke-DockerCommandChecked -Arguments @("rm", "-f", $betaName) -TimeoutSec 180 -Description "stop beta $betaName"
     }
-    if ([bool](Get-ObjectValue -Object $Context -Name "retainedIndex" -Default $false)) { Restore-RetainedIndexSnapshot -Config $Config -Context $Context }
+    if ([bool](Get-ObjectValue -Object $Context -Name "retainedIndex" -Default $false) -and -not [bool](Get-ObjectValue -Object $Context -Name "freshGlobalIndex" -Default $false)) { Restore-RetainedIndexSnapshot -Config $Config -Context $Context }
     $oldName = [string]$Context.old.containerName
     if ($Context.serverId -eq "graph") {
         Invoke-DockerCommandChecked -Arguments @("update", "--restart", "unless-stopped", "$oldName-neo4j") -TimeoutSec 60 -Description "restore stable Neo4j restart policy"
@@ -892,7 +936,8 @@ function Invoke-BetaPreflight {
     Ensure-HostPrerequisites -Config $Config
     Ensure-Distribution -Config $Config
     $context = Get-BetaCutoverContext -Config $Config -ServerId $TargetServerId -ConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
-    if ($context.retainedIndex) { [void](Get-RetainedIndexMounts -Config $Config -Context $context) }
+    if ($context.retainedIndex -and -not $context.freshGlobalIndex) { [void](Get-RetainedIndexMounts -Config $Config -Context $context) }
+    if ($context.freshGlobalIndex) { Ensure-HostEmbeddingModel -Config $Config -Server $context.betaServer }
     if ($context.freshProjectIndex) {
         Ensure-HostEmbeddingModel -Config $Config -Server $context.betaServer
         Initialize-BetaProjectVolumes -Config $Config -Context $context -InspectOnly
@@ -914,8 +959,14 @@ function Invoke-BetaPreflight {
     $oldPublicTools = @(Get-HostMcpToolsList -Url ([string]$context.old.url))
     $oldIndexActivity = Get-BetaConfigurationIndexActivity -ServerId $TargetServerId -Url $oldDirectUrl
     if ($null -ne $oldIndexActivity -and $oldIndexActivity.running) { throw "Stable '$TargetServerId' configId '$TargetConfigId' is indexing ($($oldIndexActivity.phase)); cutover would interrupt it." }
+    $oldIndexReady = $null
+    if ($context.freshGlobalIndex -and $TargetServerId -in @("docs", "templates")) {
+        $oldIndexReady = Invoke-RestMethod -Uri ($oldDirectUrl -replace '/mcp/?$', '/ready') -TimeoutSec 20
+        if ($TargetServerId -eq "docs" -and ([string]$oldIndexReady.status -ne "ready" -or [long]$oldIndexReady.documents -le 0)) { throw "Accepted Docs corpus is not ready for comparison." }
+        if ($TargetServerId -eq "templates" -and ([string]$oldIndexReady.state -ne "ready" -or [long]$oldIndexReady.collections.templates -le 0)) { throw "Accepted Templates corpus is not ready for comparison." }
+    }
     Write-Host "Beta preflight passed: server=$TargetServerId configId=$TargetConfigId oldTools=$($oldTools.Count) publicName=$($context.old.name) publicUrl=$($context.old.url) betaImage=$($context.runtime.image)"
-    return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldPublicTools = $oldPublicTools; oldIndexActivity = $oldIndexActivity }
+    return [pscustomobject]@{ context = $context; oldTools = $oldTools; oldPublicTools = $oldPublicTools; oldIndexActivity = $oldIndexActivity; oldIndexReady = $oldIndexReady }
 }
 
 function Set-ForwardCutoverTarget {
@@ -949,6 +1000,7 @@ function Invoke-BetaCutover {
     try {
         $preflight = Invoke-BetaPreflight -Config $Config -TargetServerId $TargetServerId -TargetConfigId $TargetConfigId -ReleaseManifest $ReleaseManifest -NativeEndpoint:$NativeEndpoint
         $context = $preflight.context
+        $context | Add-Member -NotePropertyName oldIndexReady -NotePropertyValue (Get-ObjectValue -Object $preflight -Name "oldIndexReady" -Default $null) -Force
         $context | Add-Member -NotePropertyName forwardOnly -NotePropertyValue ([bool]$ForwardOnly) -Force
         $context | Add-Member -NotePropertyName indexReadyTimeoutSeconds -NotePropertyValue $IndexReadyTimeoutSeconds -Force
         $retainedIndex = [bool](Get-ObjectValue -Object $context -Name "retainedIndex" -Default $false)

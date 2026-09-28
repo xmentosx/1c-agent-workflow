@@ -1053,6 +1053,10 @@ function Get-SelectedHostServerDefinition {
     if ([string](Get-ObjectValue -Object $selected -Name "mcpNameTemplate" -Default "") -ne [string](Get-ObjectValue -Object $StableServer -Name "mcpNameTemplate" -Default "")) {
         throw "Beta server '$id' would change the public MCP name."
     }
+    $profile = Get-GlobalEmbeddingIndexSettings -Config $Config -Server $selected
+    if ($null -ne $profile -and [string](Get-ObjectValue -Object $tracked -Name "indexGeneration" -Default "") -eq [string]$profile.indexGeneration) {
+        $selected = Add-GlobalEmbeddingIndexProfile -Config $Config -Server $selected
+    }
     return $selected
 }
 
@@ -1289,15 +1293,31 @@ function Test-HostServerNeedsEmbedding {
 function Get-HostEmbeddingSettings {
     param([object]$Config, [object]$Server = $null)
     $embedding = Get-ObjectValue -Object $Config -Name "embedding" -Default $null
-    $bookStackOverride = $null
-    if ([string](Get-ObjectValue -Object $Server -Name "id" -Default "") -eq "bookstack") {
-        $bookStackSettings = Get-ObjectValue -Object $Config -Name "bookStackProductDocsServer" -Default $null
-        $bookStackOverride = Get-ObjectValue -Object $bookStackSettings -Name "embedding" -Default $null
-        if ($null -ne $bookStackOverride) {
-            $embedding = $bookStackOverride
-            $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
-            if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
+    $serverId = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+    $settingsKey = switch ($serverId) {
+        "bookstack" { "bookStackProductDocsServer" }
+        "docs" { "helpSearchServer" }
+        "templates" { "templatesSearchServer" }
+        "ssl" { "sslSearchServer" }
+        default { "" }
+    }
+    $serverOverride = $null
+    if ($settingsKey) {
+        $serverSettings = Get-ObjectValue -Object $Config -Name $settingsKey -Default $null
+        $configuredGeneration = [string](Get-ObjectValue -Object $serverSettings -Name "indexGeneration" -Default "")
+        $selectedGeneration = [string](Get-ObjectValue -Object $Server -Name "indexGeneration" -Default "")
+        if ($serverId -in @("docs", "templates", "ssl") -and
+            $null -ne (Get-ObjectValue -Object $serverSettings -Name "embedding" -Default $null) -and -not $configuredGeneration) {
+            throw "$settingsKey.indexGeneration is required with a per-server embedding override; changing the accepted index in place is forbidden."
         }
+        if (-not $configuredGeneration -or $selectedGeneration -eq $configuredGeneration) {
+            $serverOverride = Get-ObjectValue -Object $serverSettings -Name "embedding" -Default $null
+        }
+        if ($null -ne $serverOverride) { $embedding = $serverOverride }
+    }
+    if ($null -ne $serverOverride) {
+        $credentialFile = [string](Get-ObjectValue -Object $embedding -Name "credentialFile" -Default "")
+        if ($credentialFile) { $embedding = Read-JsonFile -Path $credentialFile }
     }
     $betaIndex = Get-BetaProjectIndexSettings -Config $Config -Server $Server
     if ($null -ne $betaIndex) {
@@ -1308,8 +1328,8 @@ function Get-HostEmbeddingSettings {
     }
     $apiBase = [string](Get-ObjectValue -Object $embedding -Name "apiBase" -Default "")
     $apiKey = [string](Get-ObjectValue -Object $embedding -Name "apiKey" -Default "")
-    if ($null -ne $bookStackOverride -and $apiBase -and -not $apiKey) {
-        throw "BookStack remote embedding requires its configured API key; no CPU fallback is allowed."
+    if ($null -ne $serverOverride -and $apiBase -and -not $apiKey) {
+        throw "Server '$serverId' remote embedding requires its configured API key; no CPU fallback is allowed."
     }
     $mode = $(if ([string]::IsNullOrWhiteSpace($apiKey)) { "cpu" } else { "openai" })
     $model = [string](Get-ObjectValue -Object $embedding -Name "model" -Default $(if ($mode -eq "cpu") { "intfloat/multilingual-e5-base" } else { "" }))
@@ -1326,6 +1346,48 @@ function Get-HostEmbeddingSettings {
         apiKey = $apiKey
         model = $model
     }
+}
+
+function Get-GlobalEmbeddingIndexSettings {
+    param([object]$Config, [object]$Server)
+    $key = switch ([string](Get-ObjectValue -Object $Server -Name "id" -Default "")) {
+        "docs" { "helpSearchServer" }
+        "templates" { "templatesSearchServer" }
+        "ssl" { "sslSearchServer" }
+        default { "" }
+    }
+    if (-not $key) { return $null }
+    $settings = Get-ObjectValue -Object $Config -Name $key -Default $null
+    $generation = [string](Get-ObjectValue -Object $settings -Name "indexGeneration" -Default "")
+    if (-not $generation) { return $null }
+    if ($generation -notmatch '^[a-z0-9][a-z0-9-]{0,31}$') { throw "$key.indexGeneration must be a lowercase slug of at most 32 characters." }
+    if ($null -eq (Get-ObjectValue -Object $settings -Name "embedding" -Default $null)) { throw "$key.embedding is required with indexGeneration." }
+    return $settings
+}
+
+function Add-GlobalEmbeddingIndexProfile {
+    param([object]$Config, [object]$Server)
+    $settings = Get-GlobalEmbeddingIndexSettings -Config $Config -Server $Server
+    if ($null -eq $settings) { return $Server }
+    $generation = [string]$settings.indexGeneration
+    $copy = Convert-ToHash -Object $Server
+    $copy["indexGeneration"] = $generation
+    $copy["containerNameTemplate"] = [string]$Server.containerNameTemplate + "-$generation"
+    $indexPath = switch ([string]$Server.id) { docs { "/app/index" }; templates { "/app/chroma_db" }; ssl { "/app/zvec_db" } }
+    $volumes = @()
+    $found = 0
+    foreach ($entry in As-Array (Get-ObjectValue -Object $Server -Name "volumes" -Default @())) {
+        $volume = Convert-ToHash -Object $entry
+        if ([string]$volume.to -eq $indexPath) {
+            if ([string]$volume.from -ne "PATH_BASES" -or -not [string]$volume.subdir) { throw "Global '$($Server.id)' has no versioned index directory to migrate." }
+            $volume["subdir"] = [string]$volume.subdir + "-$generation"
+            $found++
+        }
+        $volumes += [pscustomobject]$volume
+    }
+    if ($found -ne 1) { throw "Global '$($Server.id)' must have exactly one index mount." }
+    $copy["volumes"] = $volumes
+    return [pscustomobject]$copy
 }
 
 function Get-HostEmbeddingProbeBase {
@@ -4506,9 +4568,10 @@ function New-ServerRuntime {
     $endpointMode = [string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "proxy")
     $reuseNative = $endpointMode -eq "direct"
     if ($id -eq "bookstack") { $endpointMode = "direct" }
+    $indexGeneration = [string](Get-ObjectValue -Object $Server -Name "indexGeneration" -Default "")
     if ($reuseNative) {
         $hostPort = [int]$tracked.hostPort
-        if ([string]$tracked.image -ceq $image) { $containerName = [string]$tracked.containerName }
+        if (-not $indexGeneration -and [string]$tracked.image -ceq $image) { $containerName = [string]$tracked.containerName }
     }
     return [pscustomobject]@{
         id = $id
@@ -4537,6 +4600,7 @@ function New-ServerRuntime {
         configurationVersion = $(if ($ConfigState) { [string](Get-ObjectValue -Object $ConfigState -Name "configurationVersion" -Default "") } else { "" })
         embeddingMode = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.mode } else { "" })
         embeddingModel = $(if ($null -ne $embeddingSettings) { [string]$embeddingSettings.model } else { "" })
+        indexGeneration = $indexGeneration
         sourceCommit = $(if ($ConfigState) { $ConfigState.sourceCommit } else { "" })
         sourceFingerprint = $(if ($ConfigState) { $ConfigState.sourceFingerprint } else { "" })
         reportHash = $(if ($ConfigState) { $ConfigState.reportHash } else { "" })

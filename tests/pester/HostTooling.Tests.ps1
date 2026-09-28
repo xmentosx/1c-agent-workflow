@@ -135,6 +135,105 @@
         }
     }
 
+    It "scopes OpenRouter credentials to Docs, Templates and SSL without changing other MCPs" -Tag GlobalQwen {
+        $tempRoot = Join-Path $TestDrive "global keys кириллица"
+        New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+        $configPath = Join-Path $tempRoot "host.config.json"
+        $credentialPath = Join-Path $tempRoot "credential.json"
+        @{ schemaVersion = 1; stateRoot = $tempRoot } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        @{ apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-global-key"; model = "qwen/qwen3-embedding-8b" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $config = [pscustomobject]@{
+                stateRoot = $tempRoot
+                embedding = @{ model = "intfloat/multilingual-e5-base" }
+                helpSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+                templatesSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+                sslSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ credentialFile = $credentialPath } }
+            }
+            foreach ($id in @("docs", "templates", "ssl", "bookstack", "syntax", "code", "graph")) {
+                $server = [pscustomobject]@{ id = $id; embedding = $true; indexGeneration = $(if ($id -in @("docs", "templates", "ssl")) { "qwen3-20260929" } else { "" }); env = @(); volumes = @() }
+                $settings = Get-HostEmbeddingSettings -Config $config -Server $server
+                if ($id -in @("docs", "templates", "ssl")) {
+                    $settings.mode | Should -Be "openai"
+                    $settings.model | Should -Be "qwen/qwen3-embedding-8b"
+                    $settings.apiKey | Should -Be "fixture-global-key"
+                } else {
+                    $settings.mode | Should -Be "cpu"
+                    $settings.model | Should -Be "intfloat/multilingual-e5-base"
+                }
+            }
+            $config.sslSearchServer.embedding = @{ apiBase = "https://openrouter.ai/api/v1"; model = "qwen/qwen3-embedding-8b" }
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "ssl"; indexGeneration = "qwen3-20260929" }) } | Should -Throw "*no CPU fallback*"
+            $config.sslSearchServer.embedding = @{ credentialFile = $credentialPath }
+            $config.sslSearchServer.indexGeneration = $null
+            { Get-HostEmbeddingSettings -Config $config -Server ([pscustomobject]@{ id = "ssl" }) } | Should -Throw "*indexGeneration*"
+            $old = [pscustomobject]@{
+                id = "templates"; channel = "stable"; embedding = $true
+                containerNameTemplate = "itl-templates-stable"
+                volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta" })
+            }
+            (Get-HostEmbeddingSettings -Config $config -Server $old).mode | Should -Be "cpu"
+            $candidate = Add-GlobalEmbeddingIndexProfile -Config $config -Server $old
+            $candidate.containerNameTemplate | Should -Be "itl-templates-stable-qwen3-20260929"
+            $candidate.volumes[0].subdir | Should -Be "mcp_templates_beta-qwen3-20260929"
+            $old.volumes[0].subdir | Should -Be "mcp_templates_beta"
+            (Get-HostEmbeddingSettings -Config $config -Server $candidate).model | Should -Be "qwen/qwen3-embedding-8b"
+        }
+    }
+
+    It "plans a fresh global generation without touching the accepted index" -Tag GlobalQwen {
+        $root = Join-Path $TestDrive "global migration кириллица"
+        $bases = Join-Path $root "bases"
+        $oldPath = Join-Path $bases "mcp_templates_beta"
+        New-Item -ItemType Directory -Path $oldPath -Force | Out-Null
+        $configPath = Join-Path $root "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $release = "releases/fixture/vibecoding1c-mcp.manifest.json"
+            $config = @{ stateRoot = $root; embedding = @{ model = "intfloat/multilingual-e5-base" }; templatesSearchServer = @{ indexGeneration = "qwen3-20260929"; embedding = @{ apiBase = "https://example.test/v1"; apiKey = "fixture"; model = "qwen/qwen3-embedding-8b" } } }
+            $legacy = @{ id = "templates"; scope = "global"; mcpNameTemplate = "itl-templates" }
+            $candidate = @{ id = "templates"; scope = "global"; channel = "stable"; manifestPath = $release; mcpNameTemplate = "itl-templates"; containerNameTemplate = "itl-templates-stable"; embedding = $true; volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta" }) }
+            function Read-DistributionManifest { param($ManifestPath) if ($ManifestPath) { return @{ servers = @($candidate) } }; return @{ servers = @($legacy) } }
+            $old = @{ channel = "stable"; manifestPath = $release; containerName = "old-templates"; name = "itl-templates"; hostPort = 18001; directUrl = "http://host:18001/mcp"; embeddingModel = "intfloat/multilingual-e5-base" }
+            function Get-TrackedHostServerForIdentity { return $old }
+            function Get-HostContainerPublishState { param($ContainerName) if ($ContainerName -eq "old-templates") { return "running" }; return "missing" }
+            function Get-HostLocalValues { return @{ PATH_BASES = $bases } }
+            function Get-BetaContainerMountSource { return $oldPath }
+            function Resolve-ServerEnv { return @{ RESET_DATABASE = "false"; RESET_CACHE = "false" } }
+            function New-ServerRuntime { param($Config, $Server) $model = (Get-HostEmbeddingSettings -Config $Config -Server $Server); return [pscustomobject]@{ name = "itl-templates"; containerName = $Server.containerNameTemplate; image = ("image@sha256:" + ("a" * 64)); hostPort = 18001; url = "http://host:18001/mcp"; proxyContainerName = ""; embeddingMode = $model.mode; embeddingModel = $model.model; indexGeneration = $Server.indexGeneration } }
+            $context = Get-BetaCutoverContext -Config $config -ServerId "templates" -ReleaseManifest $release
+            $context.freshGlobalIndex | Should -BeTrue
+            $context.runtime.embeddingModel | Should -Be "qwen/qwen3-embedding-8b"
+            (Test-Path -LiteralPath (Join-Path $bases "mcp_templates_beta-qwen3-20260929")) | Should -BeFalse
+            (Test-Path -LiteralPath $oldPath) | Should -BeTrue
+        }
+    }
+
+    It "copies Templates rows but not E5 vectors into the new generation" -Tag GlobalQwen {
+        $root = Join-Path $TestDrive "template rows кириллица"
+        $bases = Join-Path $root "bases"
+        $oldPath = Join-Path $bases "mcp_templates_beta"
+        New-Item -ItemType Directory -Path (Join-Path $oldPath "zvec_db") -Force | Out-Null
+        [IO.File]::WriteAllBytes((Join-Path $oldPath "templates.db"), [byte[]]@(1, 2, 3, 4))
+        [IO.File]::WriteAllBytes((Join-Path $oldPath "zvec_db\old.vector"), [byte[]]@(5))
+        $configPath = Join-Path $root "host.config.json"
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Get-HostLocalValues { return @{ PATH_BASES = $bases } }
+            function Get-BetaContainerMountSource { return $oldPath }
+            $server = @{ id = "templates"; volumes = @(@{ from = "PATH_BASES"; to = "/app/chroma_db"; subdir = "mcp_templates_beta-qwen3-20260929" }) }
+            $context = @{ serverId = "templates"; scope = "global"; configId = ""; configState = $null; freshGlobalIndex = $true; betaServer = $server; old = @{ containerName = "old-templates" } }
+            Copy-BetaDataSnapshot -Config @{ stateRoot = $root } -Context $context
+            $target = Join-Path $bases "mcp_templates_beta-qwen3-20260929"
+            [IO.File]::ReadAllBytes((Join-Path $target "templates.db")) | Should -Be ([byte[]]@(1, 2, 3, 4))
+            (Test-Path -LiteralPath (Join-Path $target "zvec_db")) | Should -BeFalse
+            (Test-Path -LiteralPath (Join-Path $oldPath "zvec_db\old.vector")) | Should -BeTrue
+        }
+    }
+
     It "builds BookStack before cache-preserving replacement and refuses database reset" -Tag BookStackQwen {
         $configPath = Join-Path $TestDrive "bookstack-recreate.json"
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
