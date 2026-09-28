@@ -10,11 +10,17 @@ import shutil
 import threading
 import time
 import uuid
+from array import array
+from collections import OrderedDict
+from concurrent.futures import Future
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 from mantis_api import ApiError
 from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link
+
+
+QUERY_EMBEDDING_CACHE_SIZE = 256
 
 
 class Vectors:
@@ -153,9 +159,55 @@ class Index:
         self.paused = threading.Event()
         self.worker = None
         self.work_lock = threading.Lock()
+        self._query_cache = OrderedDict()
+        self._query_pending = {}
+        self._query_lock = threading.Lock()
+        self._query_hits = self._query_misses = self._query_shared = 0
         self.remote_status = "not_checked"
         self.semantic_status = "not_configured" if not embeddings or not vectors else "pending"
         self.cleanup()
+
+    def query_vector(self, query):
+        # Cache only the embedding of the exact model input, never result cards,
+        # source text or permissions. Pagination/filter changes reuse this input.
+        key = (PROFILE, digest(query))
+        with self._query_lock:
+            if key in self._query_cache:
+                self._query_cache.move_to_end(key)
+                self._query_hits += 1
+                return list(self._query_cache[key]), "hit"
+            pending = self._query_pending.get(key)
+            owner = pending is None
+            if owner:
+                pending = Future()
+                self._query_pending[key] = pending
+                self._query_misses += 1
+            else:
+                self._query_shared += 1
+        if not owner:
+            return list(pending.result(timeout=self.api.settings.timeout_seconds + 1)), "shared"
+        try:
+            vector = array("d", self.embeddings.embed([query])[0])
+            if not vector:
+                raise ValueError("Empty query embedding")
+            with self._query_lock:
+                self._query_cache[key] = vector
+                while len(self._query_cache) > QUERY_EMBEDDING_CACHE_SIZE:
+                    self._query_cache.popitem(last=False)
+                self._query_pending.pop(key)
+            pending.set_result(vector)
+            return list(vector), "miss"
+        except BaseException as exc:
+            with self._query_lock:
+                self._query_pending.pop(key, None)
+            pending.set_exception(exc)
+            raise
+
+    def query_cache_status(self):
+        with self._query_lock:
+            return {"storage": "memory", "entries": len(self._query_cache), "limit": QUERY_EMBEDDING_CACHE_SIZE,
+                    "pending": len(self._query_pending), "hits": self._query_hits,
+                    "misses": self._query_misses, "shared": self._query_shared}
 
     def cleanup(self):
         with self.state.lock:
@@ -423,7 +475,7 @@ class Index:
                 raise
             return {**json.loads(cached["data"]), "access_check": "cached", "last_verified": cached["verified"]}
 
-    def search(self, query, filters=None, mode="all", limit=5, cursor="", semantic=True):
+    def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True):
         if mode not in {"all", "comments", "filenames"}:
             raise ValueError("mode must be all, comments or filenames")
         if not isinstance(query, str) or len(query) > 2000:
@@ -475,11 +527,13 @@ class Index:
             for row in self.state.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
                 ranks[row["id"]] = 10
         query_semantics = "not_requested"
+        query_cache = "not_requested"
         if semantic:
             query_semantics = "unavailable"
+            query_cache = "unavailable"
             if self.vectors and self.embeddings and query.strip():
                 try:
-                    vector = self.embeddings.embed([query])[0]
+                    vector, query_cache = self.query_vector(query)
                     for rank, key in enumerate(self.vectors.query(vector)):
                         row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
                         if row:
@@ -556,6 +610,7 @@ class Index:
         result = {"ok": True, "issues": [], "next_cursor": "",
                 "candidate_limit": 10000, "candidate_window_limited": len(ranks) >= 10000,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
+                "query_embedding_cache": query_cache,
                 "mantis": self.remote_status, "silent_changes": "Newly visible sources without updated_at require an issue refresh",
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},
