@@ -554,9 +554,39 @@ function Assert-BetaToolsAcceptOldCalls {
 }
 
 function Assert-BetaDocsFunctionalCall {
-    param([string]$Url)
+    param([string]$Url, [switch]$NativeResponse, [string]$ExpectedGeneration = "")
     $connection = Open-HostMcpConnection -Url $Url
-    $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments ([ordered]@{ query = "String" })
+    $arguments = if ($NativeResponse) { [ordered]@{ query = "HTTP"; top_k = 1; max_items = 1; max_chars = 4000 } } else { [ordered]@{ query = "String" } }
+    $response = Invoke-HostMcpTool -Connection $connection -Name "docsearch" -Arguments $arguments
+    if ([bool](Get-ObjectValue -Object $response -Name "isError" -Default $false)) { throw "Docs docsearch returned an MCP error." }
+    if ($NativeResponse) {
+        # Stable Docs 4.1 returns one compact JSON text envelope. The public
+        # legacy proxy still owns its string wrapper until native cutover.
+        $texts = @(As-Array (Get-ObjectValue -Object $response -Name "content" -Default @()) | Where-Object { $_.type -eq "text" })
+        if ($texts.Count -ne 1) { throw "Native Docs docsearch requires one JSON text result." }
+        try { $payload = ConvertFrom-Json -InputObject ([string]$texts[0].text) -ErrorAction Stop }
+        catch { throw "Native Docs docsearch returned invalid JSON." }
+        $results = @(As-Array (Get-ObjectValue -Object $payload -Name "results" -Default @()))
+        if ([string](Get-ObjectValue -Object $payload -Name "schema_version" -Default "") -ne "4.1" -or
+            [string](Get-ObjectValue -Object $payload -Name "tool" -Default "") -ne "docsearch" -or
+            [string](Get-ObjectValue -Object $payload -Name "outcome" -Default "") -ne "ok" -or
+            $null -ne (Get-ObjectValue -Object $payload -Name "error" -Default $null) -or
+            (Get-ObjectValue -Object $payload -Name "returned" -Default 0) -ne 1 -or $results.Count -ne 1 -or
+            (Get-ObjectValue -Object $payload -Name "total" -Default 0) -lt 1) {
+            throw "Native Docs docsearch did not return one successful known-query result."
+        }
+        $generation = [string](Get-ObjectValue -Object $payload -Name "generation" -Default "")
+        if (-not $generation -or ($ExpectedGeneration -and $generation -cne $ExpectedGeneration)) { throw "Native Docs docsearch generation differs from readiness." }
+        $hit = $results[0]
+        $citation = Get-ObjectValue -Object $hit -Name "citation" -Default $null
+        $name = [string](Get-ObjectValue -Object $citation -Name "full_name" -Default (Get-ObjectValue -Object $citation -Name "name" -Default ""))
+        $snippets = @(As-Array (Get-ObjectValue -Object $hit -Name "snippets" -Default @()))
+        if (-not [string](Get-ObjectValue -Object $hit -Name "doc_id" -Default "") -or -not $name -or
+            $snippets.Count -eq 0 -or @($snippets | Where-Object { $_ -isnot [string] -or [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
+            throw "Native Docs docsearch result lacks document identity, citation or snippets."
+        }
+        return
+    }
     $structured = Get-ObjectValue -Object $response -Name "structuredContent" -Default $null
     $legacyResult = Get-ObjectValue -Object $structured -Name "result" -Default $null
     if ($legacyResult -isnot [string] -or [string]::IsNullOrWhiteSpace($legacyResult)) {
@@ -982,7 +1012,7 @@ function Invoke-BetaCutover {
                 if ($publicActivity.running) { throw "Beta Graph public status reports unfinished indexing." }
             }
             if ($TargetServerId -eq "docs") {
-                Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url)
+                Assert-BetaDocsFunctionalCall -Url ([string]$context.runtime.url) -NativeResponse:$nativePublic
             }
             $context.runtime.health = "running"
             $context.runtime | Add-Member -NotePropertyName betaCutoverAt -NotePropertyValue (Get-Date).ToString("o") -Force

@@ -670,6 +670,44 @@ services:
             }
         } finally { Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue }
     }
+    It "qualifies stable Docs compact native results while rejecting typed errors and incomplete evidence" -Tag DocsNativeHealth {
+        $configPath = Join-Path $TestDrive 'native Docs справка.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            function Open-HostMcpConnection { return @{} }
+            function Invoke-HostMcpTool {
+                param($Connection, $Name, $Arguments)
+                $Name | Should -Be 'docsearch'
+                $Arguments.query | Should -Be 'HTTP'
+                $Arguments.top_k | Should -Be 1
+                $Arguments.max_items | Should -Be 1
+                $Arguments.max_chars | Should -Be 4000
+                return $script:NativeDocsResponse
+            }
+            $good = '{"schema_version":"4.1","tool":"docsearch","outcome":"ok","generation":"published","total":1,"returned":1,"results":[{"doc_id":"HTTPConnection.html#0","citation":{"name":"HTTPСоединение"},"snippets":["HTTPСоединение (HTTPConnection)"]}]}'
+            $script:NativeDocsResponse = @{ isError = $false; content = @(@{ type = 'text'; text = $good }) }
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse -ExpectedGeneration published } | Should -Not -Throw
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse -ExpectedGeneration stale } | Should -Throw '*generation*'
+            foreach ($invalid in @(
+                $good.Replace('"outcome":"ok"', '"outcome":"not_found"'),
+                $good.Replace('"outcome":"ok"', '"outcome":"ok","error":{"code":"timeout"}'),
+                $good.Replace('"returned":1', '"returned":0'),
+                $good.Replace('"schema_version":"4.1"', '"schema_version":"unknown"'),
+                $good.Replace('"doc_id":"HTTPConnection.html#0"', '"doc_id":""'),
+                $good.Replace('"citation":{"name":"HTTPСоединение"}', '"citation":{}'),
+                $good.Replace('"snippets":["HTTPСоединение (HTTPConnection)"]', '"snippets":[]'),
+                'not JSON'
+            )) {
+                $script:NativeDocsResponse.content[0].text = $invalid
+                { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse } | Should -Throw '*Native Docs*'
+            }
+            $script:NativeDocsResponse.content[0].text = $good
+            $script:NativeDocsResponse.isError = $true
+            { Assert-BetaDocsFunctionalCall -Url 'http://direct/mcp' -NativeResponse } | Should -Throw '*MCP error*'
+            Remove-Variable -Scope Script -Name NativeDocsResponse
+        }
+    }
     It "gives Docs MCP and fresh index one three-hour readiness budget" -Tag BetaCutover {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-beta-docs-budget-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -3962,13 +4000,24 @@ services:
             $script:DocsFunctionalLookups = 0
             $script:DocsHealthStatus = 'indexing'
             function Invoke-RestMethod { return @{ status = $script:DocsHealthStatus; documents = 25536; generation = 'new' } }
-            function Assert-BetaDocsFunctionalCall { $script:DocsFunctionalLookups++ }
+            function Assert-BetaDocsFunctionalCall {
+                param($Url, [switch]$NativeResponse, $ExpectedGeneration)
+                $script:DocsFunctionalLookups++
+                $Url | Should -Be 'http://direct/mcp'
+                $ExpectedGeneration | Should -Be 'new'
+                $NativeResponse.IsPresent | Should -Be $script:ExpectNativeDocs
+            }
+            $script:ExpectNativeDocs = $true
             $server = @{ id = 'docs'; channel = 'stable'; manifestPath = 'releases/fixture/vibecoding1c-mcp.manifest.json'; directUrl = 'http://direct/mcp'; url = 'http://proxy/mcp' }
             (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'indexing'
             $script:DocsFunctionalLookups | Should -Be 0
             $script:DocsHealthStatus = 'ready'
             (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'qualified'
             $script:DocsFunctionalLookups | Should -Be 1
+            $server.channel = 'beta'
+            $script:ExpectNativeDocs = $false
+            (Get-HostServerFunctionalHealth -Server $server).status | Should -Be 'qualified'
+            $script:DocsFunctionalLookups | Should -Be 2
         }
     }
 

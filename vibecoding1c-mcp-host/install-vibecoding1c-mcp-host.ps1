@@ -4350,7 +4350,9 @@ function Get-HostServerFunctionalHealth {
             $ready = Invoke-RestMethod -Uri ($direct -replace '/mcp/?$', '/ready') -TimeoutSec 15
             $activity = ConvertFrom-DocsReadyState -Value $ready
             if ($activity.running) { return [pscustomobject]@{ status = "indexing"; message = "Docs native index phase: $($activity.phase); serving an older generation is not completed acceptance." } }
-            Assert-BetaDocsFunctionalCall -Url $direct
+            $nativeDocs = [string](Get-ObjectValue -Object $Server -Name "channel" -Default "stable") -eq "stable" -and
+                -not [string]::IsNullOrWhiteSpace([string](Get-ObjectValue -Object $Server -Name "manifestPath" -Default ""))
+            Assert-BetaDocsFunctionalCall -Url $direct -NativeResponse:$nativeDocs -ExpectedGeneration ([string](Get-ObjectValue -Object $ready -Name "generation" -Default ""))
             return [pscustomobject]@{ status = "qualified"; message = "Docs native index ready and safe MCP lookup passed." }
         } catch { return [pscustomobject]@{ status = "degraded"; message = "Docs functional qualification failed: $($_.Exception.Message)" } }
     }
