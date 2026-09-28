@@ -126,6 +126,18 @@ Rules:
 
 Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MCP path in ITL projects. ITL owns MCP client config and removes default upstream endpoints after rules install/update only after ready vibecoding1c replacements have been written. If selection or state is incomplete, preserve upstream entries as a working fallback and run `vibecoding1c-mcp-setup` when ready.
 
+## SPPR project knowledge
+
+The shared registry advertises logical server `sppr` as `sppr-knowledge`.
+Workflow setup/select connects its remote endpoint; installed projects do not
+provision the OData collector or store 1C credentials. After the host publishes
+the endpoint, refresh the registry, select `-McpServerId sppr -McpProvider remote`
+and write the active client config through the existing helper actions.
+The corpus follows the server's explicit project allowlist, independently of
+the installed project's infobase. Search is top-k; use `list_sppr_relations`
+continuations for complete stored relations and `read_sppr_object` for fields.
+`sppr_index_status` reports freshness and extraction/vector gaps without scanning.
+
 ## Vanessa UI MCP
 
 Vanessa UI MCP is always branch-local and exposed as the stable logical server `itl-vanessa-ui`. The client sees compact `resolve_tool` and `call_tool`; its full verified catalog remains internal. Static form structure, handlers, commands, bindings, and direct edits use graph/code MCP and sources instead.

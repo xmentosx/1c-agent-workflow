@@ -1049,6 +1049,91 @@ services:
         $result.stdout | Should -Match ([regex]::Escape('Mantis UTF-8: путь с пробелом / original имя.txt'))
     }
 
+    It "isolates SPPR runtime volumes and rejects credentials inside reader mounts" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР хост с пробелом'
+        $public = Join-Path $root 'public'
+        $state = Join-Path $root 'state'
+        New-Item -ItemType Directory -Path $public,$state -Force | Out-Null
+        $componentPath = Join-Path $root 'collector.json'
+        @{ state = $state; policy = (Join-Path $public 'policy.json') } | ConvertTo-Json | Set-Content -LiteralPath $componentPath -Encoding UTF8
+        $hostPath = Join-Path $root 'host.json'
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
+            $config = [pscustomobject]@{ stateRoot = $root; spprServer = @{ configPath = $componentPath; credentialPath = (Join-Path $root 'secrets\collector.json') }; secrets = @{ SPPR_EMBEDDING_KEY = 'fixture-embedding-key'; ONEC_PASSWORD = 'must-not-enter-reader' } }
+            $server = Get-SpprServerDefinition
+            (Test-HostServerNeedsEmbedding -Server $server) | Should -BeFalse
+            $envValues = Resolve-ServerEnv -Config $config -Server $server
+            @($envValues.Keys).Count | Should -Be 2
+            $envValues.SPPR_EMBEDDING_KEY | Should -Be 'fixture-embedding-key'
+            $mounts = @(Resolve-ServerVolumes -Config $config -Server $server)
+            $mounts.Count | Should -Be 2
+            @($mounts | Where-Object { -not $_.readOnly }).Count | Should -Be 0
+            @($mounts.host) | Should -Not -Contain $config.spprServer.credentialPath
+            $config.spprServer.credentialPath = Join-Path $state 'password.json'
+            { Get-SpprHostSettings -Config $config } | Should -Throw '*outside*reader mounts*'
+            $config.spprServer.credentialPath = Join-Path $root 'secrets\collector.json'
+            @{ state = $state; policy = (Join-Path $public 'policy.json'); password = 'trap' } | ConvertTo-Json | Set-Content -LiteralPath $componentPath -Encoding UTF8
+            { Get-SpprHostSettings -Config $config } | Should -Throw '*unknown fields*'
+        }
+    }
+
+    It "uses Limited InteractiveToken for the SPPR task and never enables missed-run catch-up" -Tag Sppr {
+        $root = Join-Path $TestDrive 'СППР задача с пробелом'
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $hostPath = Join-Path $root 'host.json'
+        $credentialPath = Join-Path $root 'credential.json'
+        '{}' | Set-Content -LiteralPath $credentialPath -Encoding UTF8
+        @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
+            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; taskPath = '\ITL\'; description = 'owned fixture'; pythonPath = 'C:\СППР runtime\python.exe' } }
+            function Get-ScheduledTask { return $null }
+            function Initialize-SpprRuntime { }
+            function Invoke-ProcessWithTimeout { return @{ exitCode = 0; lines = @('01:00') } }
+            function New-ScheduledTaskAction {
+                param($Execute,$Argument,$WorkingDirectory)
+                $Execute | Should -Be 'C:\СППР runtime\python.exe'
+                $Argument | Should -Match ([regex]::Escape('"C:\СППР пример\collector.json"'))
+                $Argument | Should -Not -Match 'outside-window'
+                return @{ owned = $true }
+            }
+            function New-ScheduledTaskTrigger { param([switch]$Daily,$At); return @{ at = $At } }
+            function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel); $LogonType | Should -Be 'Interactive'; $RunLevel | Should -Be 'Limited'; return @{ user = $UserId } }
+            function New-ScheduledTaskSettingsSet {
+                param($MultipleInstances,$ExecutionTimeLimit,[switch]$Hidden,[switch]$StartWhenAvailable)
+                $MultipleInstances | Should -Be 'IgnoreNew'
+                $StartWhenAvailable | Should -BeFalse
+                return @{ bounded = $true }
+            }
+            function Register-ScheduledTask { param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force); $TaskName | Should -Be 'fixture-sppr' }
+            Install-SpprCollector -Config @{} *> $null
+            { Assert-SpprTaskOwned -Task @{ Description = 'another owner' } -Settings @{ description = 'owned fixture' } } | Should -Throw '*another owner*'
+        }
+    }
+
+    It "qualifies SPPR corpus and HTTP tools with the selected isolated Python runtime" -Tag Sppr {
+        $python = if ($env:SPPR_TEST_PYTHON) { $env:SPPR_TEST_PYTHON } else { Join-Path $RepoRoot 'build\sppr-venv\Scripts\python.exe' }
+        if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
+            throw 'Prepare build/sppr-venv with sppr-mcp/requirements.txt or set SPPR_TEST_PYTHON to that isolated runtime, then repeat the SPPR owner tests.'
+        }
+        $hostPath = Join-Path $TestDrive 'sppr-transport-host.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $hostPath *> $null
+            foreach ($name in @('test_sppr.py','test_transport.py')) {
+                $path = Join-Path $RepoRoot ('vibecoding1c-mcp-host\sppr-mcp\' + $name)
+                $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B',$path) -TimeoutSec 120
+                $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
+                ($result.lines -join "`n") | Should -Match 'OK'
+            }
+            $unicode = 'C:\СППР проверка\путь с пробелом\описание.json'
+            $probe = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-c','import sys; print(sys.argv[1])',$unicode) -TimeoutSec 30
+            $probe.exitCode | Should -Be 0
+            $probe.lines[0] | Should -BeExactly $unicode
+        }
+    }
+
     It "falls back to the direct endpoint when the qualified proxy is unavailable" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-tools-proxy-state-" + [guid]::NewGuid().ToString("N"))
         $configPath = Join-Path $tempRoot "host.config.json"
@@ -1969,7 +2054,7 @@ services:
         $hostConfig.graphMetadataSearchServer.resetDatabase | Should -Be $false
         $hostConfig.graphMetadataSearchServer.PSObject.Properties["reindexIntervalHours"] | Should -Not -BeNullOrEmpty
         $hostConfig.toolsListProxy.enabled | Should -BeTrue
-        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "code", "graph")
+        @($hostConfig.toolsListProxy.serverIds) | Should -Be @("docs", "templates", "syntax", "codechecker", "ssl", "bookstack", "mantis", "sppr", "code", "graph")
         $hostConfig.toolsListProxy.portOffset | Should -Be 4000
         $hostConfig.watchdog.enabled | Should -BeTrue
         $hostConfig.watchdog.intervalMinutes | Should -Be 5

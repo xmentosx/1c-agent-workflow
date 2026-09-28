@@ -130,6 +130,10 @@
       "toolCount": 5,
       "structuralSha256": "79b9535d2998a923dbda74107c7ced3ef403cb6efa356ef5b36dd0bdc37c3a28"
     },
+    "sppr": {
+      "toolCount": 4,
+      "structuralSha256": "5015bf1f3e14f8d4aab123a4105758760375cf66e1f1862394ceab6d0c133544"
+    },
     "mantis": {
       "toolCount": 8,
       "structuralSha256": "a348093fd4386d75e8e7298232b261acb0217cce434b5189c499e2387fcda255"

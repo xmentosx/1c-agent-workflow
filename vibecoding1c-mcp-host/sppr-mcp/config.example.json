@@ -1,0 +1,14 @@
+{
+  "state": "D:/ITL/MCP/sppr/state",
+  "policy": "D:/ITL/MCP/sppr/public/policy.json",
+  "odata_url": "http://pskov.itland.local:8080/itland_work_SPPR/odata/standard.odata/",
+  "native_base": "e1c://server/pskov/itland_work_SPPR",
+  "web_base": "http://pskov.itland.local:8080/itland_work_SPPR/",
+  "api_base": "https://openrouter.ai/api/v1",
+  "model": "qwen/qwen3-embedding-8b",
+  "dimension": 4096,
+  "cache_size": 256,
+  "night_start": "01:00",
+  "night_end": "06:00",
+  "time_zone": "Europe/Moscow"
+}

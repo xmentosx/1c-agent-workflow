@@ -1,0 +1,71 @@
+"""Compatible document/query vectors; only query vectors live in the bounded LRU."""
+from __future__ import annotations
+
+import json
+from collections import OrderedDict
+from threading import Lock
+
+import numpy as np
+
+from sppr_core import SpprError
+from sppr_odata import Http
+
+
+def vector(values, dimension):
+    try:
+        result = np.asarray(values, dtype=np.float32)
+        norm = np.linalg.norm(result)
+        if result.shape != (dimension,) or not np.isfinite(result).all() or not np.isfinite(norm) or norm <= 0:
+            raise ValueError()
+        return result / norm
+    except (ValueError, TypeError, OverflowError):
+        raise SpprError("Embedding dimension or values do not match the configured profile; rebuild with a verified profile.") from None
+
+
+class Embeddings:
+    def __init__(self, settings, api_key, before=lambda: None):
+        self.settings = settings
+        self.api_key = api_key
+        self.http = Http(settings.timeout, settings.max_response_bytes, before)
+        self.usage = {"requests": 0, "tokens": 0}
+
+    def embed(self, texts):
+        if not self.api_key:
+            raise SpprError("OpenRouter key unavailable; configure the external embedding credential.")
+        body = {"model": self.settings.model, "input": texts, "encoding_format": "float"}
+        if self.settings.dimension != 4096:
+            body["dimensions"] = self.settings.dimension
+        headers = {"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"}
+        raw = self.http.request(self.settings.api_base.rstrip("/") + "/embeddings", headers=headers,
+                                body=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+        self.usage["requests"] += 1
+        try:
+            data = json.loads(raw)
+            rows = data["data"]
+            if len(rows) != len(texts) or sorted(r["index"] for r in rows) != list(range(len(texts))):
+                raise ValueError()
+            results = [vector(r["embedding"], self.settings.dimension) for r in sorted(rows, key=lambda r: r["index"])]
+            self.usage["tokens"] += int(data.get("usage", {}).get("total_tokens", 0))
+            return results
+        except (KeyError, TypeError, ValueError):
+            raise SpprError("Embedding provider returned an invalid response; lexical search remains available.") from None
+
+
+class QueryCache:
+    def __init__(self, settings, provider):
+        self.settings, self.provider = settings, provider
+        self.values = OrderedDict()
+        self.lock = Lock()
+
+    def get(self, query):
+        marker = (self.settings.profile, query)
+        # One bounded critical section also coalesces identical concurrent misses.
+        with self.lock:
+            if marker in self.values:
+                self.values.move_to_end(marker)
+                return self.values[marker], True
+            value = self.provider.embed([self.settings.query_instruction + query])[0]
+            self.values[marker] = value
+            while len(self.values) > self.settings.cache_size:
+                self.values.popitem(last=False)
+            return value, False
