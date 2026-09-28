@@ -22,7 +22,7 @@ def digest(path):
 
 def validate_members(members):
     seen = set()
-    links = set()
+    links = {}
     for member in members:
         path = PurePosixPath(member.name)
         if path.is_absolute() or ".." in path.parts or not path.parts:
@@ -35,13 +35,41 @@ def validate_members(members):
             raise ValueError("Snapshot contains a non-file index entry")
         if member.issym() or member.islnk():
             target = PurePosixPath(member.linkname)
-            if target.is_absolute() or ".." in target.parts or not target.parts:
+            if target.is_absolute() or not target.parts or (member.islnk() and ".." in target.parts):
                 raise ValueError("Snapshot link escapes the index")
-            links.add(path)
+            links[path] = member
+
+    def resolve(parts, visiting):
+        # Hugging Face snapshots use ../../blobs links, including link chains.
+        # Resolve each component through archive links before processing '..':
+        # lexical normalization alone misses escapes through a linked directory.
+        current = []
+        for part in parts:
+            if part == "..":
+                if len(current) <= 1:
+                    raise ValueError("Snapshot link escapes the index")
+                current.pop()
+                continue
+            current.append(part)
+            if current[0] != "index":
+                raise ValueError("Snapshot link escapes the index")
+            path = PurePosixPath(*current)
+            link = links.get(path)
+            if link is not None:
+                if path in visiting:
+                    raise ValueError("Snapshot contains a link cycle")
+                target = PurePosixPath(link.linkname).parts
+                if link.issym():
+                    target = tuple(current[:-1]) + target
+                current = resolve(target, visiting | {path})
+        return current
+
     for member in members:
         path = PurePosixPath(member.name)
         if any(parent in links for parent in path.parents):
             raise ValueError("Snapshot writes through a link")
+        if path in links:
+            resolve(path.parts, set())
         if member.islnk() and str(PurePosixPath(member.linkname)) not in seen:
             raise ValueError("Snapshot hard link has no member target")
 
