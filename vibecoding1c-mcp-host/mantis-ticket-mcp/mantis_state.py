@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import html
+import inspect
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -217,6 +219,8 @@ class State:
     @contextmanager
     def transaction(self):
         with self.lock:
+            started = time.monotonic()
+            caller = inspect.currentframe().f_back.f_code.co_name
             self.db.execute("BEGIN IMMEDIATE")
             try:
                 yield
@@ -224,6 +228,11 @@ class State:
             except BaseException:
                 self.db.execute("ROLLBACK")
                 raise
+            finally:
+                elapsed = time.monotonic() - started
+                if elapsed > 10:
+                    logging.getLogger(__name__).warning(
+                        "Mantis state transaction latency: caller=%s held=%.3fs", caller, elapsed)
 
     def run(self, sql, args=()):
         with self.lock:

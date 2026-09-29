@@ -5,6 +5,7 @@ import base64
 import hashlib
 import http.client
 import json
+import logging
 import math
 import os
 import random
@@ -1202,6 +1203,14 @@ class Index:
                     "continuation": "Search index is briefly busy; retry the same query and cursor"}
 
     def _search(self, query, filters, mode, limit, cursor, semantic, sort_by, similar_to, reader):
+        stage_started = time.monotonic()
+        def checkpoint(stage):
+            nonlocal stage_started
+            elapsed = time.monotonic() - stage_started
+            if elapsed > 10:
+                logging.getLogger(__name__).warning(
+                    "Mantis search stage latency: stage=%s elapsed=%.3fs", stage, elapsed)
+            stage_started = time.monotonic()
         if mode not in {"all", "comments", "filenames", "attachment_contents"}:
             raise ValueError("mode must be all, comments, filenames or attachment_contents")
         if sort_by not in {"relevance", "updated_at", "created_at"}:
@@ -1284,6 +1293,7 @@ class Index:
         if exact:
             for row in reader.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
                 ranks[row["id"]] = 10
+        checkpoint("candidate_ranking")
         query_semantics = "not_requested"
         query_cache = "not_requested"
         if semantic:
@@ -1325,6 +1335,7 @@ class Index:
                         if not submitted:
                             self.search_semantic_slots.release()
                         pool.shutdown(wait=False, cancel_futures=True)
+        checkpoint("semantic_query")
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1436,6 +1447,7 @@ class Index:
             return ordered, source_version(records, tags), list(issue_ids), attachment_sources
         revision = reader.source_revision()
         initial, initial_version, issue_ids, attachment_sources = grouped()
+        checkpoint("group_candidates")
         refresh_deadline = time.monotonic() + SEARCH_REFRESH_BUDGET_SECONDS
         checked = set()
         page_ids = [issue["id"] for issue in initial[:min(limit, SEARCH_REFRESH_LIMIT)]]
@@ -1483,6 +1495,7 @@ class Index:
                         break
                 except ApiError:
                     pass
+        checkpoint("access_probes")
         final_records = {}
         for start in range(0, len(issue_ids), 400):
             batch = issue_ids[start:start + 400]
@@ -1532,6 +1545,7 @@ class Index:
                 if not result["issues"]:
                     raise ValueError("One result exceeds the compact output budget; narrow the query or read its exact issue ID")
                 break
+        checkpoint("final_validation_and_output")
         emitted = len(result["issues"])
         with self.search_cursor_lock:
             if session_id:

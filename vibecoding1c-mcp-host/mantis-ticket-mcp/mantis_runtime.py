@@ -5,7 +5,9 @@ import base64
 import json
 import os
 import math
+import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -107,8 +109,14 @@ class Runtime:
                            sort_by: str = "relevance", similar_to: int = 0) -> dict:
             """Paged live search (10 default, max 20, 12000 chars). Continue with next_cursor within 15 minutes; use query or similar_to and filter/sort via mantis_metadata."""
             person = actor_name(actor)
+            started = time.monotonic()
             result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to)
+            search_seconds = time.monotonic() - started
             self.audit(person, "search", "", result.get("status", "succeeded"))
+            audit_seconds = time.monotonic() - started - search_seconds
+            if search_seconds > 10 or audit_seconds > 10:
+                logging.getLogger(__name__).warning(
+                    "Mantis search latency: compute=%.3fs audit=%.3fs", search_seconds, audit_seconds)
             from fastmcp.tools.tool import ToolResult
             from mcp.types import TextContent
             summary = f"Mantis search: {len(result.get('issues', []))} issue(s); next page: {bool(result.get('next_cursor'))}; status: {result.get('status', 'ok')}. Results are in structuredContent."
