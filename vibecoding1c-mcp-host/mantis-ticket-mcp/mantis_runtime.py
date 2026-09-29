@@ -193,7 +193,7 @@ class Runtime:
                     raise ValueError("Unknown or already reconciled reservation")
                 index.state.settle(charge_id, actual_cost_usd)
             elif action == "rebuild_vectors":
-                if not index.work_lock.acquire(blocking=False):
+                if index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
                     raise RuntimeError("Index work is still finishing; pause it and retry rebuild_vectors")
                 try:
                     with index.state.lock:
@@ -208,7 +208,7 @@ class Runtime:
                 finally:
                     index.work_lock.release()
             elif action == "compact_vectors":
-                if not index.paused.is_set() or not index.work_lock.acquire(blocking=False):
+                if not index.paused.is_set() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
                     raise RuntimeError("Pause indexing and wait for work_in_progress=false before compact_vectors")
                 try:
                     if not index.vectors:
@@ -221,7 +221,8 @@ class Runtime:
             elif action != "status":
                 raise ValueError("action must be status, pause, resume, storage, compact_vectors, rebuild_vectors or settle_charge")
             self.audit(person, "index_" + action, charge_id)
-            return {**self.health(), "paused": index.paused.is_set(), "work_in_progress": index.work_lock.locked(),
+            return {**self.health(), "paused": index.paused.is_set(),
+                    "work_in_progress": index.work_lock.locked() or index.attachment_work_lock.locked(),
                     "index_diagnostics": index.embedding_diagnostics(detail),
                     **({"storage": storage} if action in {"storage", "compact_vectors"} else {}),
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
@@ -231,4 +232,7 @@ class Runtime:
                 **({"state": self.index.state.health(), "semantic": self.index.semantic_status,
                     "query_embedding_cache": self.index.query_cache_status(),
                     "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
-                    "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled} if self.index else {})}
+                    "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled,
+                    "attachment_extraction": {"enabled": self.index.attachment_enabled,
+                        "stage": self.index.attachment_stage, "error": self.index.attachment_error,
+                        **self.index.state.attachment_status()}} if self.index else {})}

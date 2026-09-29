@@ -23,6 +23,7 @@ Docker-образа, прав на тестовом Mantis и canary с реал
 | `syncProjectIds` | `MANTIS_SYNC_PROJECT_IDS` | `[]` означает все доступные; для canary задать ID одного проекта |
 | `monthlyBudgetUsd` | `MANTIS_MONTHLY_BUDGET_USD` | `5`; календарный месяц UTC, включая поисковые эмбеддинги |
 | `writeEnabled` | `MANTIS_WRITE_ENABLED` | `false`; общий выключатель записи на время обслуживания |
+| `attachmentExtractEnabled` | `MANTIS_ATTACHMENT_EXTRACT_ENABLED` | `false` при поставке; включает отдельный ограниченный работник извлечения текста |
 | `secrets.MANTIS_API_TOKEN` | `MANTIS_API_TOKEN` | Общая служебная учётная запись |
 | `secrets.MANTIS_OPENROUTER_API_KEY` | `MANTIS_OPENROUTER_API_KEY` | Необязательный отдельный ключ; без него доступен текстовый поиск |
 
@@ -38,7 +39,15 @@ HTTP-заголовок `X-Mantis-Actor: <имя или логин>`. Это з�
 символов с перекрытием 180. Зависимости: FastMCP 2.14.7, MCP SDK 1.30.0, Zvec 0.7.0, NumPy 2.2.6;
 SQLite берётся из Python и должен поддерживать FTS5 и JSON-функции. Полный исходный текст и
 исходные имена файлов индексируются отдельно от обрезанного ответа reader.
-Содержимое PDF/изображений и OCR в поисковый индекс не попадают.
+Текстовый слой PDF, DOCX и XLSX индексируется отдельным работником после включения
+`attachmentExtractEnabled`. Изображения, сканы без текстового слоя и OCR в поисковый
+индекс не попадают. Статусы и количество файлов по категориям видны в
+`index_control(action="status")` → `attachment_extraction`.
+На файл действуют пределы: 5 МиБ исходных байтов, 50 МиБ распакованного ZIP,
+40 страниц PDF, 2000 абзацев/20 таблиц DOCX, 20 листов/20 000 ячеек XLSX,
+100 000 извлечённых символов и 20 секунд работы парсера с лимитом памяти 512 МиБ.
+Выход за предел помечается `partial` или `too_large`; `unsupported` и `failed`
+не считаются полным покрытием. Исходные байты извлекатель не сохраняет.
 
 ## Компактный поиск и продолжение
 
@@ -54,7 +63,9 @@ SQLite берётся из Python и должен поддерживать FTS5 
 ```
 
 Без фильтра рассматриваются все доступные проекты и статусы. `mode` принимает
-`all`, `comments`, `filenames`. Фильтры: `project_id`, числовой `status`, список
+`all`, `comments`, `filenames`, `attachment_contents`. Совпадение внутри файла
+содержит `file_id`, имя, координату страницы/абзаца/ячейки, краткий фрагмент и
+`file_url`; `filenames` ищет только по именам. Фильтры: `project_id`, числовой `status`, список
 `tags` (ID или имена), `custom_fields` (ID → значение, вместе с проектом),
 `created_after/before`, `updated_after/before` (ISO 8601 с timezone),
 `handler_id`, `reporter_id`, числовые `priority`/`severity`, точные строки

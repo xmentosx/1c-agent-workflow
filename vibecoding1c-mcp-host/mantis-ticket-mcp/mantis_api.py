@@ -42,7 +42,7 @@ class Api:
         self.opener = build_opener(NoRedirect())
         self.server_time = 0
 
-    def request(self, path, method="GET", payload=None, etag=""):
+    def request(self, path, method="GET", payload=None, etag="", max_response_bytes=0):
         headers = {"Authorization": self.settings.api_token, "Accept": "application/json",
                    "Content-Type": "application/json", "User-Agent": "mantis-ticket-mcp/2"}
         if etag:
@@ -51,7 +51,9 @@ class Api:
         request = Request(self.settings.base_url + "/api/rest/" + path.lstrip("/"), body, headers, method=method)
         try:
             with self.opener.open(request, timeout=self.settings.timeout_seconds) as response:
-                raw = response.read()
+                raw = response.read(max_response_bytes + 1) if max_response_bytes else response.read()
+                if max_response_bytes and len(raw) > max_response_bytes:
+                    raise ApiError("Mantis file response exceeds the extraction limit", 413)
                 if response.headers.get("Date"):
                     self.server_time = parsedate_to_datetime(response.headers["Date"]).timestamp()
                 return (json.loads(raw.decode("utf-8")) if raw else {}), response.headers.get("ETag", "")

@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
+from mantis_extract import PARSER_VERSION, SUPPORTED, extension
+
 
 SCHEMA_VERSION = 1
 PROFILE = "qwen/qwen3-embedding-8b:4096:chars1800-overlap180-v1"
@@ -77,6 +79,24 @@ def sources(issue):
                 seen.add(file_id)
                 parent = note_id or object_id(file.get("bugnote_id") or file.get("note_id"))
                 yield f"{issue_id}:file:{file_id}", "filename", parent, file_id, str(file.get("filename") or file.get("name") or "")
+
+
+def file_descriptors(issue):
+    """Visible Mantis file IDs are immutable source identities; metadata detects replacement."""
+    result = {}
+    for owner in (issue.get("notes") or []) + [issue]:
+        parent = int(owner["id"]) if owner is not issue else 0
+        for file in (owner.get("attachments") or []) + (owner.get("files") or []):
+            file_id = int(file["id"])
+            if file_id in result:
+                continue
+            name = str(file.get("filename") or file.get("name") or "")
+            note_id = parent or object_id(file.get("bugnote_id") or file.get("note_id"))
+            descriptor = digest([PARSER_VERSION, file_id, note_id, name, file.get("size"),
+                                 file.get("created_at"), file.get("content_type") or file.get("file_type")])
+            result[file_id] = {"descriptor": descriptor, "filename": name, "note_id": note_id,
+                               "size": int(file.get("size") or 0)}
+    return result
 
 
 class State:
@@ -162,6 +182,12 @@ class State:
                 CREATE TABLE IF NOT EXISTS catalog(key TEXT PRIMARY KEY, data TEXT NOT NULL, verified REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS delta_progress(project_id INTEGER NOT NULL, issue_id INTEGER NOT NULL,
                     modified REAL NOT NULL, signature TEXT NOT NULL, PRIMARY KEY(project_id,issue_id));
+                CREATE TABLE IF NOT EXISTS attachment_extracts(issue_id INTEGER NOT NULL, file_id INTEGER NOT NULL,
+                    descriptor TEXT NOT NULL, status TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '',
+                    segments TEXT NOT NULL DEFAULT '[]', error TEXT NOT NULL DEFAULT '',
+                    retry_at REAL NOT NULL DEFAULT 0, updated REAL NOT NULL,
+                    PRIMARY KEY(issue_id,file_id));
+                CREATE INDEX IF NOT EXISTS attachment_extracts_work ON attachment_extracts(status,retry_at);
             """)
             self.db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
             # This is the sole profile in v1. Never silently rebuild a changed model.
@@ -237,6 +263,9 @@ class State:
             if previous and previous["hash"] == version:
                 return False
             old = {row["id"]: row for row in self.all("SELECT * FROM fragments WHERE issue_id=?", (issue_id,))}
+            visible = file_descriptors(issue)
+            extracted = {row["file_id"]: row for row in self.all(
+                "SELECT * FROM attachment_extracts WHERE issue_id=?", (issue_id,))}
             keep = set()
             replacements = []
             removed = set()
@@ -253,14 +282,29 @@ class State:
                         removed.add(key)
                     replacements.append((key, issue_id, kind, note, file, text if kind == "filename" else source,
                                          fragment, fragment.casefold(), fragment_version))
+            for key, row in old.items():
+                if row["kind"] == "attachment_content" and row["file_id"] in visible and \
+                        row["file_id"] in extracted and extracted[row["file_id"]]["descriptor"] == visible[row["file_id"]]["descriptor"]:
+                    keep.add(key)
             for key in old.keys() - keep:
-                if old[key]["file_id"]:
+                if old[key]["file_id"] and old[key]["file_id"] not in visible:
                     self.run("INSERT OR IGNORE INTO cache_deletes VALUES(?,?)", (issue_id, old[key]["file_id"]))
                 removed.add(key)
             self._remove_fragments([old[key] for key in removed])
             for row in replacements:
                 self.run("INSERT INTO fragments(id,issue_id,kind,note_id,file_id,source,text,folded,version) VALUES(?,?,?,?,?,?,?,?,?)", row)
                 self.run("INSERT INTO search_text(id,text) VALUES(?,?)", (row[0], row[6]))
+            for file_id, info in visible.items():
+                previous_extract = extracted.get(file_id)
+                if not previous_extract or previous_extract["descriptor"] != info["descriptor"]:
+                    status = "pending" if extension(info["filename"]) in SUPPORTED else "unsupported"
+                    self.run("INSERT OR REPLACE INTO attachment_extracts"
+                             "(issue_id,file_id,descriptor,status,content_hash,segments,error,retry_at,updated)"
+                             " VALUES(?,?,?,?,?,?,?,?,?)",
+                             (issue_id, file_id, info["descriptor"], status, "", "[]",
+                              "" if status == "pending" else "format", 0, self.clock()))
+            for file_id in extracted.keys() - visible.keys():
+                self.run("DELETE FROM attachment_extracts WHERE issue_id=? AND file_id=?", (issue_id, file_id))
             visible_notes = {int(note["id"]) for note in issue.get("notes", [])}
             visible_files = {file_id for _, _, _, file_id, _ in sources(issue) if file_id}
             if any((row["note_id"] and row["note_id"] not in visible_notes) or
@@ -286,6 +330,114 @@ class State:
                 self.run("DELETE FROM embedding_spool WHERE fragment_id=?", (row["id"],))
                 self.run("DELETE FROM fragments WHERE id=?", (row["id"],))
 
+    def enqueue_existing_attachments(self, limit=100):
+        """Pace the v1 filename backfill; newly refreshed issues enqueue directly."""
+        with self.transaction():
+            saved = self.one("SELECT value FROM meta WHERE key='attachment_backfill_rowid'")
+            cursor = int(saved["value"]) if saved else 0
+            rows = self.all("SELECT f.rowid,f.issue_id,f.file_id,f.source FROM fragments f "
+                            "JOIN issues i ON i.id=f.issue_id WHERE f.kind='filename' AND f.rowid>? "
+                            "ORDER BY f.rowid LIMIT ?", (cursor, limit))
+            for row in rows:
+                status = "pending" if extension(row["source"]) in SUPPORTED else "unsupported"
+                self.run("INSERT OR IGNORE INTO attachment_extracts"
+                         "(issue_id,file_id,descriptor,status,content_hash,segments,error,retry_at,updated)"
+                         " VALUES(?,?,?,?,?,?,?,?,?)", (row["issue_id"], row["file_id"], "", status,
+                         "", "[]", "" if status == "pending" else "format", 0, self.clock()))
+            if rows:
+                self.run("INSERT OR REPLACE INTO meta VALUES('attachment_backfill_rowid',?)", (str(rows[-1]["rowid"]),))
+            self.run("INSERT OR REPLACE INTO meta VALUES('attachment_backfill_complete',?)",
+                     ("1" if len(rows) < limit else "0",))
+            return len(rows)
+
+    def next_attachment(self):
+        return self.one("SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
+                        "WHERE e.status='pending' AND e.retry_at<=? ORDER BY e.updated DESC,e.issue_id,e.file_id LIMIT 1",
+                        (self.clock(),))
+
+    def invalidate_attachment(self, issue_id, file_id, descriptor):
+        with self.transaction():
+            row = self.one("SELECT descriptor FROM attachment_extracts WHERE issue_id=? AND file_id=?", (issue_id,file_id))
+            if not row or row["descriptor"] == descriptor:
+                return
+            old = self.all("SELECT * FROM fragments WHERE issue_id=? AND file_id=? AND kind='attachment_content'",
+                           (issue_id,file_id))
+            self._remove_fragments(old)
+            self.run("UPDATE attachment_extracts SET descriptor=?,status='pending',content_hash='',segments='[]',"
+                     "error='',retry_at=0,updated=? WHERE issue_id=? AND file_id=?",
+                     (descriptor,self.clock(),issue_id,file_id))
+            if old:
+                self.changed()
+
+    def publish_attachment(self, issue_id, file_id, descriptor, content_hash, result):
+        """One transaction binds extracted text to the still-visible file descriptor."""
+        with self.transaction():
+            row = self.one("SELECT descriptor FROM attachment_extracts WHERE issue_id=? AND file_id=?",
+                           (issue_id,file_id))
+            issue_row = self.one("SELECT data FROM issues WHERE id=?", (issue_id,))
+            if not row or not issue_row or row["descriptor"] != descriptor:
+                return False
+            info = file_descriptors(json.loads(issue_row["data"])).get(file_id)
+            if not info or info["descriptor"] != descriptor:
+                return False
+            old = self.all("SELECT * FROM fragments WHERE issue_id=? AND file_id=? AND kind='attachment_content'",
+                           (issue_id,file_id))
+            self._remove_fragments(old)
+            segments = result.get("segments", []) if result["status"] in {"ready", "partial"} else []
+            for number, segment in enumerate(segments):
+                text = str(segment["text"])
+                key = f"{issue_id}:file:{file_id}:content:{number}"
+                source = encode({"filename": info["filename"], "location": segment["location"]})
+                self.run("INSERT INTO fragments(id,issue_id,kind,note_id,file_id,source,text,folded,version)"
+                         " VALUES(?,?,?,?,?,?,?,?,?)", (key,issue_id,"attachment_content",info["note_id"],file_id,
+                         source,text,text.casefold(),digest([PROFILE,text])))
+                self.run("INSERT INTO search_text(id,text) VALUES(?,?)", (key,text))
+            self.run("UPDATE attachment_extracts SET status=?,content_hash=?,segments=?,error=?,retry_at=0,updated=? "
+                     "WHERE issue_id=? AND file_id=?", (result["status"],content_hash,encode(segments),
+                     str(result.get("reason") or "")[:80],self.clock(),issue_id,file_id))
+            self.changed()
+            return True
+
+    def retry_attachment(self, issue_id, file_id, error, delay=300):
+        self.run("UPDATE attachment_extracts SET status='pending',error=?,retry_at=?,updated=? "
+                 "WHERE issue_id=? AND file_id=?", (str(error)[:80],self.clock()+delay,self.clock(),issue_id,file_id))
+
+    def drop_attachment(self, issue_id, file_id):
+        with self.transaction():
+            old = self.all("SELECT * FROM fragments WHERE issue_id=? AND file_id=? AND kind='attachment_content'",
+                           (issue_id,file_id))
+            self._remove_fragments(old)
+            self.run("DELETE FROM attachment_extracts WHERE issue_id=? AND file_id=?", (issue_id,file_id))
+            if old:
+                self.changed()
+
+    def rehydrate_attachment(self):
+        row = self.one("SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
+                       "WHERE e.status IN ('ready','partial') AND e.segments<>'[]' AND NOT EXISTS "
+                       "(SELECT 1 FROM fragments f WHERE f.issue_id=e.issue_id AND f.file_id=e.file_id "
+                       "AND f.kind='attachment_content') LIMIT 1")
+        if not row:
+            return False
+        info = file_descriptors(json.loads(row["data"])).get(row["file_id"])
+        if not info:
+            self.drop_attachment(row["issue_id"],row["file_id"])
+            return False
+        if info["descriptor"] != row["descriptor"]:
+            self.invalidate_attachment(row["issue_id"],row["file_id"],info["descriptor"])
+            return False
+        return self.publish_attachment(row["issue_id"],row["file_id"],row["descriptor"],row["content_hash"],
+                                       {"status":row["status"],"segments":json.loads(row["segments"]),
+                                        "reason":row["error"]})
+
+    def attachment_status(self):
+        counts = {row["status"]: row["n"] for row in self.all(
+            "SELECT status,COUNT(*) AS n FROM attachment_extracts GROUP BY status")}
+        backfill = self.one("SELECT value FROM meta WHERE key='attachment_backfill_complete'")
+        return {"counts": counts, "pending": counts.get("pending", 0), "ready": counts.get("ready", 0),
+                "partial": counts.get("partial", 0), "unsupported": counts.get("unsupported", 0),
+                "too_large": counts.get("too_large", 0), "failed": counts.get("failed", 0),
+                "backfill_complete": bool(backfill and backfill["value"] == "1")}
+
     def purge_issue(self, issue_id, project_id=0):
         with self.transaction():
             self._purge_issue(issue_id, project_id)
@@ -304,6 +456,7 @@ class State:
         project_id = previous["project_id"] if previous else project_id
         self.run("INSERT OR REPLACE INTO tombstones VALUES(?,?,?,1)", (issue_id, project_id, self.clock()))
         self._remove_fragments(self.all("SELECT * FROM fragments WHERE issue_id=?", (issue_id,)))
+        self.run("DELETE FROM attachment_extracts WHERE issue_id=?", (issue_id,))
         self.run("DELETE FROM issues WHERE id=?", (issue_id,))
         self._redact_operations("issue_id", issue_id)
         self.changed()

@@ -4,6 +4,7 @@ import base64
 import copy
 import json
 import io
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -17,7 +18,7 @@ from urllib.error import HTTPError, URLError
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
-from mantis_state import State, digest, timestamp
+from mantis_state import State, digest, timestamp, file_descriptors
 from mantis_write import Writer, ACTIONS
 
 
@@ -107,7 +108,7 @@ class FakeApi:
     def metadata(self, project_id):
         return {**self.context(project_id), "custom_fields": self.definitions}
 
-    def request(self, path, method="GET", payload=None, etag=""):
+    def request(self, path, method="GET", payload=None, etag="", max_response_bytes=0):
         if method == "GET" and "/files/" in path:
             return {"files": [self.files[int(path.rsplit("/", 1)[1])]]}, ""
         self.sent.append((method, path, payload, etag))
@@ -538,6 +539,64 @@ class IndexTests(unittest.TestCase):
         self.assertFalse(self.search("SECRETBODY")["issues"])
         print("Mantis UTF-8: путь с пробелом / original имя.txt")
 
+    def test_attachment_content_search_survives_issue_edit_and_obeys_revocation(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.xlsx", "size": 120}]
+        self.index.refresh(1)
+        info = file_descriptors(self.api.items[1])[91]
+        self.assertTrue(self.state.publish_attachment(1, 91, info["descriptor"], "sha-fixture",
+            {"status": "ready", "segments": [{"location": {"sheet": "План", "cell": "B4"},
+                "text": "уникальныйтексттаблицы"}]}))
+        match = self.search("уникальныйтексттаблицы", mode="attachment_contents")["issues"][0]["matches"][0]
+        self.assertEqual(match["file_id"], 91)
+        self.assertEqual(match["location"], {"sheet": "План", "cell": "B4"})
+        self.assertIn("file_download.php?file_id=91", match["file_url"])
+        fallback = self.index.search("уникальныйтексттаблицы", mode="attachment_contents", semantic=True)
+        self.assertTrue(fallback["issues"])
+        self.assertEqual(fallback["semantic_query"], "unavailable")
+        self.api.items[1]["description"] = "Unrelated issue edit"
+        self.index.refresh(1)
+        self.assertEqual(self.state.attachment_status()["ready"], 1)
+        self.assertTrue(self.search("уникальныйтексттаблицы", mode="attachment_contents")["issues"])
+        self.api.items[1]["attachments"] = []
+        self.index.refresh(1)
+        self.assertFalse(self.search("уникальныйтексттаблицы", mode="attachment_contents")["issues"])
+        self.assertEqual(self.state.attachment_status()["ready"], 0)
+
+    def test_extraction_worker_reuses_unchanged_file_after_restart(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 24}]
+        self.api.files[91] = {"id": 91, "content": base64.b64encode(b"pdf-fixture").decode()}
+        self.index.refresh(1)
+        self.index.attachment_enabled = True
+        parsed = {"status": "ready", "segments": [{"location": {"page": 1}, "text": "текстизвлечённогофайла"}]}
+        process = SimpleNamespace(returncode=0, stdout=json.dumps(parsed, ensure_ascii=False).encode(), stderr=b"")
+        with patch("mantis_index.subprocess.run", return_value=process) as runner:
+            self.assertEqual(self.index.extract_pending(), 1)
+            self.assertEqual(self.state.attachment_status()["ready"], 1)
+            self.state.close()
+            self.state = State(self.root / "state", self.root / "files")
+            self.index = Index(self.state, self.api)
+            self.index.attachment_enabled = True
+            self.api.items[1]["description"] = "Unrelated edit"
+            self.index.refresh(1)
+            self.assertEqual(self.index.extract_pending(), 0)
+            self.assertEqual(runner.call_count, 1)
+        with self.state.transaction():
+            self.state._remove_fragments(self.state.all(
+                "SELECT * FROM fragments WHERE kind='attachment_content' AND issue_id=1"))
+            self.state.changed()
+        self.assertTrue(self.state.rehydrate_attachment())
+        self.assertTrue(self.search("текстизвлечённогофайла", mode="attachment_contents")["issues"])
+
+    def test_timed_out_parser_is_bounded_and_does_not_publish_text(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 20}]
+        self.api.files[91] = {"id": 91, "content": base64.b64encode(b"pdf-fixture").decode()}
+        self.index.refresh(1)
+        self.index.attachment_enabled = True
+        with patch("mantis_index.subprocess.run", side_effect=subprocess.TimeoutExpired("parser", 20)):
+            self.assertEqual(self.index.extract_pending(), 1)
+        self.assertEqual(self.state.attachment_status()["failed"], 1)
+        self.assertFalse(self.state.all("SELECT id FROM fragments WHERE kind='attachment_content'"))
+
     def test_unchanged_fragments_and_status_do_not_reembed(self):
         self.index.refresh(1)
         self.state.run("UPDATE fragments SET vector_version=version,vector_id=id")
@@ -697,8 +756,19 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(visible["notes"], [])
         self.assertEqual(visible["attachments"], [])
         self.assertEqual(etag, "full-etag")
-        with patch.object(api, "request", return_value=({"issues": [{**ticket(), "notes": None, "attachments": None}]}, "")):
-            self.assertEqual(api.issue(1)[0]["notes"], [])
+        with patch.object(api, "request", return_value=({"issues": [{**ticket(), "notes": None, "attachments": None,
+                                                                        "relationships": None}]}, "")):
+            issue = api.issue(1)[0]
+            self.assertEqual(issue["notes"], [])
+            self.assertEqual(issue["relationships"], [])
+
+    def test_attachment_api_response_is_capped_before_json_decode(self):
+        api = Api(SimpleNamespace(validate=lambda: None, base_url="https://mantis.test", api_token="fixture", timeout_seconds=1))
+        class Response(io.BytesIO):
+            headers = {}
+        with patch.object(api.opener, "open", return_value=Response(b"x" * 101)):
+            with self.assertRaisesRegex(ApiError, "extraction limit"):
+                api.request("issues/1/files/9", max_response_bytes=100)
 
     def test_parent_import_keeps_child_only_page_and_never_uses_parent_acl_for_children(self):
         api = Api(SimpleNamespace(validate=lambda: None, base_url="https://mantis.test", api_token="fixture", timeout_seconds=1))

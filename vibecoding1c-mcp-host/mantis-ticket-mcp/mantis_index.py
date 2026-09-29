@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import os
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -18,7 +21,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from mantis_api import ApiError
-from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link
+from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link, file_descriptors
+from mantis_extract import MAX_INPUT
 
 
 QUERY_EMBEDDING_CACHE_SIZE = 256
@@ -232,6 +236,11 @@ class Index:
             self.paused.set()
         self.worker = None
         self.work_lock = threading.Lock()
+        self.attachment_worker = None
+        self.attachment_work_lock = threading.Lock()
+        self.attachment_enabled = os.environ.get("MANTIS_ATTACHMENT_EXTRACT_ENABLED", "false").lower() in {"true", "1", "yes"}
+        self.attachment_stage = "disabled" if not self.attachment_enabled else "idle"
+        self.attachment_error = ""
         self._initial_progress = {}
         self._query_cache = OrderedDict()
         self._query_pending = {}
@@ -631,6 +640,97 @@ class Index:
             self.stage = "idle"
             self.work_lock.release()
 
+    def extract_pending(self, limit=2):
+        if not self.attachment_enabled or self.paused.is_set() or self.stop.is_set():
+            return 0
+        if not self.attachment_work_lock.acquire(blocking=False):
+            return 0
+        completed = 0
+        try:
+            self.attachment_stage = "backfill"
+            if self.state.rehydrate_attachment():
+                completed += 1
+            if not self.state.next_attachment():
+                self.state.enqueue_existing_attachments(100)
+            for _ in range(limit):
+                if self.paused.is_set() or self.stop.is_set():
+                    break
+                row = self.state.next_attachment()
+                if not row:
+                    break
+                issue_id, file_id = int(row["issue_id"]), int(row["file_id"])
+                try:
+                    self.attachment_stage = "verify_source"
+                    issue, _, stale = self.refresh(issue_id, allow_cache=False)
+                    if stale:
+                        raise ApiError("Mantis did not freshly verify the attachment")
+                    info = file_descriptors(issue).get(file_id)
+                    if not info:
+                        self.state.drop_attachment(issue_id, file_id)
+                        continue
+                    if row["descriptor"] != info["descriptor"]:
+                        self.state.invalidate_attachment(issue_id, file_id, info["descriptor"])
+                    if info["size"] > MAX_INPUT:
+                        self.state.publish_attachment(issue_id,file_id,info["descriptor"],"",
+                            {"status":"too_large","reason":"input_bytes","segments":[]})
+                        completed += 1
+                        continue
+                    self.attachment_stage = "download"
+                    response, _ = self.api.request(f"issues/{issue_id}/files/{file_id}",
+                                                   max_response_bytes=8 * 1024 * 1024)
+                    files = response.get("files") or []
+                    source = next((file for file in files if object_id(file) == file_id), None)
+                    if not source or not isinstance(source.get("content"), str):
+                        raise ApiError("Mantis did not provide the verified file bytes")
+                    payload = base64.b64decode(source["content"], validate=True)
+                    if len(payload) > MAX_INPUT:
+                        result = {"status":"too_large","reason":"input_bytes","segments":[]}
+                    else:
+                        self.attachment_stage = "parse"
+                        child_env = {key: value for key, value in os.environ.items()
+                                     if key.upper() in {"PATH", "SYSTEMROOT", "TEMP", "TMP"}}
+                        child_env["PYTHONIOENCODING"] = "utf-8"
+                        child_env["PYTHONPATH"] = str(Path(__file__).parent)
+                        try:
+                            child = subprocess.run([sys.executable, "-m", "mantis_extract", info["filename"]],
+                                                   input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                                   env=child_env, timeout=20, check=False)
+                            if child.returncode or len(child.stdout) > 1_000_000:
+                                raise RuntimeError("parser_failed")
+                            result = json.loads(child.stdout.decode("utf-8"))
+                            segments = result.get("segments")
+                            if result.get("status") not in {"ready", "partial", "unsupported", "too_large", "failed"} or \
+                                    not isinstance(segments, list) or len(segments) > 1000 or \
+                                    any(not isinstance(s, dict) or not isinstance(s.get("location"), dict)
+                                        for s in segments) or \
+                                    sum(len(str(s.get("text", ""))) for s in segments) > 100_000:
+                                raise RuntimeError("parser_contract")
+                        except (subprocess.TimeoutExpired, RuntimeError, ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                            result = {"status":"failed","reason":"parser_failed_or_timeout","segments":[]}
+                    self.attachment_stage = "publish"
+                    if self.state.publish_attachment(issue_id,file_id,info["descriptor"],
+                                                     hashlib.sha256(payload).hexdigest(),result):
+                        completed += 1
+                    self.attachment_error = ""
+                except ApiError as exc:
+                    if exc.status == 413:
+                        current = self.state.one("SELECT descriptor FROM attachment_extracts WHERE issue_id=? AND file_id=?",
+                                                 (issue_id,file_id))
+                        if current:
+                            self.state.publish_attachment(issue_id,file_id,current["descriptor"],"",
+                                {"status":"too_large","reason":"response_bytes","segments":[]})
+                    else:
+                        self.state.retry_attachment(issue_id,file_id,"mantis_unavailable",300)
+                    self.attachment_error = "file_too_large" if exc.status == 413 else \
+                        "mantis_unavailable" if not exc.status else f"mantis_http_{exc.status}"
+                except Exception:
+                    self.state.retry_attachment(issue_id,file_id,"extraction_retry",300)
+                    self.attachment_error = "extraction_retry"
+        finally:
+            self.attachment_stage = "idle"
+            self.attachment_work_lock.release()
+        return completed
+
     def start(self):
         if self.worker and self.worker.is_alive():
             return
@@ -642,6 +742,17 @@ class Index:
                 self.stop.wait(self.interval)
         self.worker = threading.Thread(target=run, name="mantis-index", daemon=True)
         self.worker.start()
+        if self.attachment_enabled:
+            def extract_loop():
+                while not self.stop.is_set():
+                    if not self.paused.is_set():
+                        try:
+                            self.extract_pending()
+                        except Exception:
+                            self.attachment_error = "extractor_cycle_failed"
+                    self.stop.wait(self.interval)
+            self.attachment_worker = threading.Thread(target=extract_loop, name="mantis-attachments", daemon=True)
+            self.attachment_worker.start()
 
     def close(self):
         self.stop.set()
@@ -649,6 +760,10 @@ class Index:
             self.worker.join(timeout=self.api.settings.timeout_seconds * 6 + 5)
             if self.worker.is_alive():
                 raise RuntimeError("Mantis worker is still stopping; keep its state owner open")
+        if self.attachment_worker:
+            self.attachment_worker.join(timeout=self.api.settings.timeout_seconds * 6 + 45)
+            if self.attachment_worker.is_alive():
+                raise RuntimeError("Mantis attachment worker is still stopping; keep its state owner open")
         if self.vectors:
             self.vectors.close()
         self.state.close()
@@ -715,8 +830,8 @@ class Index:
 
     def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True,
                sort_by="relevance", similar_to=0):
-        if mode not in {"all", "comments", "filenames"}:
-            raise ValueError("mode must be all, comments or filenames")
+        if mode not in {"all", "comments", "filenames", "attachment_contents"}:
+            raise ValueError("mode must be all, comments, filenames or attachment_contents")
         if sort_by not in {"relevance", "updated_at", "created_at"}:
             raise ValueError("sort_by must be relevance, updated_at or created_at")
         if not isinstance(query, str) or len(query) > 2000:
@@ -777,7 +892,8 @@ class Index:
             for row in self.state.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT 10000", (query.casefold(),)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
         else:
-            source_kind = {"comments": "comment", "filenames": "filename"}.get(mode)
+            source_kind = {"comments": "comment", "filenames": "filename",
+                           "attachment_contents": "attachment_content"}.get(mode)
             rows = self.state.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT 10000", (source_kind, source_kind))
             ranks.update({row["id"]: 1 / (60 + rank) for rank, row in enumerate(rows)})
         if exact:
@@ -860,7 +976,9 @@ class Index:
             names = {object_id(t): t.get("name", "") for t in json.loads(tags)}
             for key, rank in sorted(ranks.items(), key=lambda item: -item[1]):
                 row = records.get(key)
-                if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {"comments": "comment", "filenames": "filename"}[mode]):
+                if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
+                        "comments": "comment", "filenames": "filename",
+                        "attachment_contents": "attachment_content"}[mode]):
                     continue
                 issue = parsed.get(row["issue_id"])
                 if not issue or not matches(issue, names):
@@ -873,11 +991,18 @@ class Index:
                 entry["score"] = max(entry["score"], rank)
                 if len(entry["matches"]) < 3:
                     position = next((row["text"].casefold().find(t.casefold()) for t in tokens if t.casefold() in row["text"].casefold()), 0)
-                    entry["matches"].append({"type": row["kind"], "note_id": row["note_id"], "file_id": row["file_id"],
-                        "filename": row["source"][:1000] if row["kind"] == "filename" else "",
-                        "filename_truncated": row["kind"] == "filename" and len(row["source"]) > 1000,
+                    attachment = json.loads(row["source"]) if row["kind"] == "attachment_content" else {}
+                    filename = (attachment.get("filename", "") if attachment else row["source"]
+                                if row["kind"] == "filename" else "")
+                    match = {"type": row["kind"], "note_id": row["note_id"], "file_id": row["file_id"],
+                        "filename": filename[:1000], "filename_truncated": len(filename) > 1000,
                         "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
-                        "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")})
+                        "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")}
+                    if attachment:
+                        match["location"] = attachment.get("location", {})
+                        match["file_url"] = self.api.settings.base_url + \
+                            f"/file_download.php?file_id={int(row['file_id'])}&type=bug"
+                    entry["matches"].append(match)
             if sort_by == "relevance":
                 ordered = sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
             else:
@@ -905,6 +1030,10 @@ class Index:
             final_records.update((row["issue_id"], row) for row in self.state.all(
                 f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
         final_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
+        if self.state.revision() != revision and (mode == "attachment_contents" or any(
+                match["type"] == "attachment_content" for issue in initial for match in issue["matches"])):
+            return {"ok": False, "status": "results_changed",
+                    "continuation": "Repeat search without cursor; attachment content changed during this page"}
         if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
@@ -920,6 +1049,8 @@ class Index:
                 "candidate_limit": 10000, "candidate_window_limited": len(ranks) >= 10000,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
+                "attachment_extraction": {"enabled": self.attachment_enabled,
+                                           **self.state.attachment_status()},
                 "mantis": self.remote_status, "silent_changes": "Newly visible sources without updated_at require an issue refresh",
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},

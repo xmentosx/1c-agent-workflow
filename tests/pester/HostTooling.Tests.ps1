@@ -2820,13 +2820,16 @@ services:
                 $mantisEnv["MANTIS_INDEX_ENABLED"] | Should -Be "false"
                 $mantisEnv["MANTIS_MONTHLY_BUDGET_USD"] | Should -Be "5"
                 $mantisEnv["MANTIS_WRITE_ENABLED"] | Should -Be "false"
+                $mantisEnv["MANTIS_ATTACHMENT_EXTRACT_ENABLED"] | Should -Be "false"
                 $mantisEnv.Contains("MANTIS_WRITE_ACTIONS") | Should -Be $false
                 $mantisEnv.Contains("MANTIS_WRITE_PROJECT_IDS") | Should -Be $false
                 $hostConfig.mantisTicketServer | Add-Member -NotePropertyName syncProjectIds -NotePropertyValue @(17)
                 $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeEnabled -NotePropertyValue $true
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName attachmentExtractEnabled -NotePropertyValue $true
                 $selectedMantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
                 $selectedMantisEnv['MANTIS_SYNC_PROJECT_IDS'] | Should -Be '17'
                 $selectedMantisEnv['MANTIS_WRITE_ENABLED'] | Should -Be 'true'
+                $selectedMantisEnv['MANTIS_ATTACHMENT_EXTRACT_ENABLED'] | Should -Be 'true'
                 (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {

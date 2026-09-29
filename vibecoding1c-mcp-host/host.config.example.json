@@ -51,6 +51,7 @@
     "syncProjectIds": [],
     "monthlyBudgetUsd": 5,
     "writeEnabled": false,
+    "attachmentExtractEnabled": false,
     "timeoutSeconds": 20,
     "maxAttachmentBytes": 26214400,
     "maxInlineTextChars": 16000,
