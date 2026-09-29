@@ -139,6 +139,35 @@ def test_mcp_over_real_http_two_clients(self):
                 self.assertEqual(status.structured_content["state"], "available")
                 self.assertNotIn("DO-NOT-READ-SECRET", json.dumps(status.structured_content))
         self.assertEqual(responses[0], responses[1])
+        entered, release = threading.Event(), threading.Event()
+        def slow_provider():
+            entered.set()
+            if not release.wait(10):
+                raise SpprError("fixture provider wait expired")
+        self.provider.hook = slow_provider
+        calls = len(self.provider.calls)
+        async with Client(f"http://127.0.0.1:{port}/mcp") as first, Client(f"http://127.0.0.1:{port}/mcp") as second:
+            pending = asyncio.create_task(first.call_tool("search_sppr", {"query": "slow uncached query"}))
+            duplicate = None
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 2))
+                duplicate = asyncio.create_task(second.call_tool("search_sppr", {"query": "slow uncached query"}))
+                status, card, warm = await asyncio.wait_for(asyncio.gather(
+                    second.call_tool("sppr_index_status", {}),
+                    second.call_tool("read_sppr_object", {"object_id": key(TP, uuid(1))}),
+                    second.call_tool("search_sppr", {"query": "54321"}),
+                ), timeout=2)
+                self.assertEqual(status.structured_content["state"], "available")
+                self.assertEqual(card.structured_content["object"]["id"], key(TP, uuid(1)))
+                self.assertTrue(warm.structured_content["query_vector_cached"])
+                self.assertFalse(pending.done())
+            finally:
+                release.set()
+                await pending
+                if duplicate is not None:
+                    await duplicate
+                self.provider.hook = None
+        self.assertEqual(len(self.provider.calls), calls + 1)
     try:
         asyncio.run(exercise())
     finally:
