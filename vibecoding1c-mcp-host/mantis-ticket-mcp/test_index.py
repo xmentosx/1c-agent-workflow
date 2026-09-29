@@ -171,6 +171,29 @@ class FakeApi:
         raise ApiError("unknown note")
 
 
+class MemoryVectors:
+    dimension = 2
+    failed = False
+
+    def __init__(self):
+        self.docs = {}
+        self.lock = threading.Lock()
+
+    def existing(self, keys):
+        with self.lock:
+            return set(keys) & self.docs.keys()
+
+    def upsert_batch(self, rows):
+        with self.lock:
+            self.docs.update(rows)
+
+    def purge(self):
+        pass
+
+    def close(self):
+        pass
+
+
 class IndexTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="mantis Пробел ")
@@ -459,17 +482,196 @@ class IndexTests(unittest.TestCase):
         from mantis_index import EmbeddingError
         self.index.sync_projects = {1}
         self.state.run("UPDATE projects SET status='current',checkpoint=1")
-        self.index.embeddings = SimpleNamespace(embed=lambda texts: (_ for _ in ()).throw(EmbeddingError("rate_limited", 429)))
         self.index.refresh(1)
-        with patch.object(self.index, "sync_project"), patch.object(self.index, "embed_pending", side_effect=EmbeddingError("rate_limited", 429)) as attempted:
-            self.index.tick()
-            self.index.tick()
-        self.assertEqual(attempted.call_count, 1)
+        self.index.vectors = SimpleNamespace(existing=lambda keys: set(), dimension=2, failed=False)
+        calls = []
+        def denied(texts):
+            calls.append(texts)
+            raise EmbeddingError("rate_limited", 429)
+        self.index.embeddings = SimpleNamespace(embed=denied)
+        worker = threading.Thread(target=self.index._embedding_loop)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 2
+            while not self.index.embedding_diagnostics()["next_retry_at"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+        finally:
+            self.index.stop.set()
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(calls), 1)
         status = self.index.embedding_diagnostics(detail=True)
         self.assertEqual(status["last_error_category"], "rate_limited")
         self.assertEqual(status["last_error"]["http_status"], 429)
         self.assertEqual(status["consecutive_failures"], 1)
         self.assertGreater(status["next_retry_at"], self.state.clock())
+
+    def test_embedding_requests_overlap_and_claim_distinct_fragments(self):
+        for number in range(1, 9):
+            self.state.put_issue(ticket(number, text=f"independent fragment {number}"))
+        self.index.vectors = MemoryVectors()
+        self.index.embedding_workers = 4
+        self.index.embedding_batch = 2
+        started, release = threading.Event(), threading.Event()
+        calls = []
+        lock = threading.Lock()
+        def embed(texts):
+            with lock:
+                calls.append(list(texts))
+                if len(calls) == 4:
+                    started.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture release missing")
+            return [[0.25, 0.5] for _ in texts]
+        self.index.embeddings = SimpleNamespace(embed=embed, timeout=1)
+        worker = threading.Thread(target=self.index._embedding_loop)
+        worker.start()
+        try:
+            self.assertTrue(started.wait(2), "Four provider calls should overlap without waiting for Mantis sync")
+            self.assertEqual(self.index.embedding_diagnostics()["in_flight_batches"], 4)
+            self.assertEqual(len(self.index.embedding_claimed), 8)
+        finally:
+            self.index.stop.set()
+            release.set()
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(self.index.vectors.docs), 8)
+        self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+        self.assertEqual(self.index.embedding_diagnostics()["ready_5m"], 8)
+
+    def test_recent_embedding_lane_protects_fresh_issue_from_old_backlog(self):
+        self.state.put_issue(ticket(1, updated="2020-01-01T00:00:00Z"))
+        self.state.put_issue(ticket(2, updated="2026-09-29T12:00:00Z"))
+        self.index.embedding_batch = 1
+        self.assertEqual(self.index._embedding_candidates(recent=True)[0]["issue_id"], 2)
+        self.assertEqual(self.index._embedding_candidates(recent=False)[0]["issue_id"], 1)
+
+    def test_embedding_continues_while_mantis_page_is_slow(self):
+        self.index.refresh(1)
+        self.index.vectors = MemoryVectors()
+        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.25, 0.5] for _ in texts], timeout=1)
+        entered, release = threading.Event(), threading.Event()
+        original = self.api.initial_page
+        def slow_page(*args):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture release missing")
+            return original(*args)
+        self.api.initial_page = slow_page
+        self.index.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            deadline = time.monotonic() + 2
+            while not self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertGreater(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0,
+                               "Embedding must progress before the Mantis page returns")
+        finally:
+            release.set()
+            self.index.stop.set()
+            self.index.worker.join(timeout=3)
+            self.index.embedding_worker.join(timeout=3)
+        self.assertFalse(self.index.worker.is_alive())
+        self.assertFalse(self.index.embedding_worker.is_alive())
+
+    def test_revoked_inflight_fragment_is_never_published(self):
+        self.index.refresh(1)
+        self.index.vectors = MemoryVectors()
+        entered, release = threading.Event(), threading.Event()
+        def embed(texts):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture release missing")
+            return [[0.25, 0.5] for _ in texts]
+        self.index.embeddings = SimpleNamespace(embed=embed)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            self.assertTrue(self.index._dispatch_embedding(pool))
+            future = next(iter(self.index.embedding_inflight))
+            self.assertTrue(entered.wait(1))
+            self.state.purge_issue(1)
+            release.set()
+            self.index._publish_embedding(future)
+        self.index._flush_due_embeddings(force=True)
+        self.assertFalse(self.index.vectors.docs)
+        self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+
+    def test_pause_waits_for_inflight_result_and_flushes_paid_vector(self):
+        self.index.refresh(1)
+        self.index.vectors = MemoryVectors()
+        entered, release = threading.Event(), threading.Event()
+        calls = []
+        def embed(texts):
+            calls.append(texts)
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("fixture release missing")
+            return [[0.25, 0.5] for _ in texts]
+        self.index.embeddings = SimpleNamespace(embed=embed, timeout=1)
+        worker = threading.Thread(target=self.index._embedding_loop)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(2))
+            with self.index.embedding_lock:
+                self.index.paused.set()
+            self.assertTrue(self.index.embedding_active())
+            release.set()
+            deadline = time.monotonic() + 2
+            while self.index.embedding_active() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(self.index.embedding_active())
+            self.assertTrue(self.index.vectors.docs)
+            self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+            self.assertEqual(len(calls), 1)
+        finally:
+            self.index.stop.set()
+            release.set()
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+
+    def test_one_network_failure_does_not_stall_other_embedding_batches(self):
+        from mantis_index import EmbeddingError
+        for number in range(1, 5):
+            self.state.put_issue(ticket(number, text=f"body {number}"))
+        self.index.vectors = MemoryVectors()
+        self.index.embedding_workers = 2
+        self.index.embedding_batch = 1
+        calls = []
+        lock = threading.Lock()
+        def embed(texts):
+            with lock:
+                calls.append(texts)
+                first = len(calls) == 1
+            if first:
+                raise EmbeddingError("timeout")
+            return [[0.25, 0.5]]
+        self.index.embeddings = SimpleNamespace(embed=embed, timeout=1)
+        worker = threading.Thread(target=self.index._embedding_loop)
+        worker.start()
+        try:
+            deadline = time.monotonic() + 2
+            while not self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertGreater(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+            self.assertGreaterEqual(len(calls), 2)
+            self.assertLessEqual(self.index.embedding_retry_at, self.state.clock())
+        finally:
+            self.index.stop.set()
+            worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(self.index.vectors.docs)
+
+    def test_parallel_budget_reservations_share_one_limit(self):
+        def reserve(_):
+            try:
+                self.state.reserve(0.3, 0.5)
+                return "reserved"
+            except RuntimeError:
+                return "budget"
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            outcomes = list(pool.map(reserve, range(4)))
+        self.assertEqual(outcomes.count("reserved"), 1)
+        self.assertEqual(outcomes.count("budget"), 3)
+        self.assertLessEqual(self.state.health()["cost"][0]["accounted_usd"], 0.5)
 
     def test_extended_filters_sorting_and_participant_resolution(self):
         first = self.api.items[1]

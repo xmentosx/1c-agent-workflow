@@ -161,6 +161,7 @@ class State:
                 CREATE INDEX IF NOT EXISTS fragments_vector ON fragments(vector_id);
                 CREATE INDEX IF NOT EXISTS fragments_pending ON fragments(id) WHERE version<>vector_version;
                 CREATE INDEX IF NOT EXISTS issues_search ON issues(id,hash,verified);
+                CREATE INDEX IF NOT EXISTS issues_modified ON issues(modified DESC,id);
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_text USING fts5(id UNINDEXED, text, tokenize='unicode61');
                 CREATE TABLE IF NOT EXISTS vector_deletes(id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS embedding_spool(fragment_id TEXT PRIMARY KEY,

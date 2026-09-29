@@ -2,6 +2,7 @@
 import tempfile
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from mantis_state import State, digest
@@ -16,6 +17,17 @@ class FixedEmbeddings:
     def embed(self, texts):
         self.calls.append(list(texts))
         return [[1.0] + [0.0] * 4095 for _ in texts]
+
+
+def pump(index, batch=32, flush=False):
+    """Exercise the production dispatch/publication path without a timer thread."""
+    index.embedding_batch = batch
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        index._dispatch_embedding(pool)
+        for future in list(index.embedding_inflight):
+            index._publish_embedding(future)
+    if flush:
+        index._flush_due_embeddings(force=True)
 
 
 class ZvecTests(unittest.TestCase):
@@ -61,7 +73,7 @@ class ZvecTests(unittest.TestCase):
             vectors = Vectors(state)
             index = Index(state, api, vectors, provider)
             index.refresh(1)
-            index.embed_pending(batch=1)
+            pump(index, batch=1)
             self.assertEqual(state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 1)
             self.assertEqual(state.health()["embedding_backlog"], 2)
             state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
@@ -73,8 +85,10 @@ class ZvecTests(unittest.TestCase):
             index = Index(state, api, vectors, provider)
             try:
                 self.assertTrue(index.paused.is_set(), "A restart must preserve the user pause")
-                index.embed_pending(batch=1)
-                index.embed_pending(batch=1)
+                state.run("UPDATE meta SET value='0' WHERE key='index_paused'")
+                index.paused.clear()
+                pump(index, batch=1)
+                pump(index, batch=1, flush=True)
                 self.assertEqual(len(provider.calls), 2, "Durably spooled paid results must not be bought again")
                 self.assertEqual(state.health()["embedding_backlog"], 0)
                 self.assertEqual(state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
@@ -99,7 +113,7 @@ class ZvecTests(unittest.TestCase):
             vectors = Vectors(state)
             index = Index(state, api, vectors, provider)
             index.refresh(1)
-            index.embed_pending(batch=1)
+            pump(index, batch=1)
             paid = state.one("SELECT fragment_id,version,vector FROM embedding_spool")
             from array import array
             vector = array("f")
@@ -112,8 +126,8 @@ class ZvecTests(unittest.TestCase):
             vectors = Vectors(state)
             index = Index(state, api, vectors, provider)
             try:
-                index.embed_pending(batch=1)
-                index.embed_pending(batch=1)
+                pump(index, batch=1)
+                pump(index, batch=1, flush=True)
                 self.assertEqual(len(provider.calls), 2)
                 self.assertEqual(state.health()["embedding_backlog"], 0)
                 self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 2)
@@ -136,12 +150,12 @@ class ZvecTests(unittest.TestCase):
             try:
                 index.refresh(1)
                 index.refresh(2)
-                index.embed_pending()
+                pump(index, flush=True)
                 self.assertEqual(state.health()["embedding_backlog"], 0)
                 self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 4)
                 calls = len(provider.calls)
                 index.refresh(1)
-                index.embed_pending()
+                pump(index, flush=True)
                 self.assertEqual(len(provider.calls), calls)
                 # Simulate crash after Zvec upsert, before SQLite completion.
                 state.run("UPDATE fragments SET vector_version='' WHERE issue_id=1")
@@ -154,7 +168,7 @@ class ZvecTests(unittest.TestCase):
                 vectors = Vectors(state)
                 self.assertFalse(orphan.exists(), "Unpublished generations must be retired before serving")
                 index = Index(state, api, vectors, provider)
-                index.embed_pending()
+                pump(index, flush=True)
                 self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 4)
                 self.assertEqual(len(provider.calls), calls, "durable Zvec success must not be purchased again after a lost SQLite completion")
                 old_generation = vectors.generation
@@ -165,7 +179,7 @@ class ZvecTests(unittest.TestCase):
                 self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 2)
                 self.assertEqual(state.health()["cleanup_pending"], 0)
                 index.refresh(1)
-                index.embed_pending()
+                pump(index, flush=True)
                 self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 4)
                 print("Unicode round trip: путь с пробелом / original имя.txt")
             finally:

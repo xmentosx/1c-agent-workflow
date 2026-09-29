@@ -14,8 +14,8 @@ import threading
 import time
 import uuid
 from array import array
-from collections import OrderedDict
-from concurrent.futures import Future
+from collections import OrderedDict, deque
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -28,6 +28,9 @@ from mantis_extract import MAX_INPUT
 QUERY_EMBEDDING_CACHE_SIZE = 256
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
+EMBEDDING_WORKERS = 4
+EMBEDDING_REQUEST_BATCH = 32
+MAX_EMBEDDING_RESPONSE_BYTES = 16 << 20
 
 
 class EmbeddingError(RuntimeError):
@@ -198,7 +201,10 @@ class Embeddings:
                           {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"}, method="POST")
         try:
             with urlopen(request, timeout=self.timeout) as response:
-                data = json.load(response)
+                payload = response.read(MAX_EMBEDDING_RESPONSE_BYTES + 1)
+            if len(payload) > MAX_EMBEDDING_RESPONSE_BYTES:
+                raise ValueError("Embedding response exceeds its size limit")
+            data = json.loads(payload)
             rows = sorted(data["data"], key=lambda r: r["index"])
             if [r["index"] for r in rows] != list(range(len(texts))):
                 raise ValueError("Incomplete embeddings response")
@@ -236,6 +242,19 @@ class Index:
             self.paused.set()
         self.worker = None
         self.work_lock = threading.Lock()
+        self.embedding_worker = None
+        self.embedding_lock = threading.RLock()
+        self.embedding_inflight = {}
+        self.embedding_claimed = set()
+        self.embedding_cooldowns = {}
+        self.embedding_busy = False
+        self.embedding_workers = max(1, min(8, int(os.environ.get("MANTIS_EMBEDDING_WORKERS", EMBEDDING_WORKERS))))
+        self.embedding_batch = max(1, min(64, int(os.environ.get("MANTIS_EMBEDDING_BATCH_SIZE", EMBEDDING_REQUEST_BATCH))))
+        self.embedding_events = deque()
+        self.embedding_ready_events = deque()
+        self.embedding_dispatches = 0
+        self.embedding_last_seconds = None
+        self.embedding_stage = "idle"
         self.attachment_worker = None
         self.attachment_work_lock = threading.Lock()
         self.attachment_enabled = os.environ.get("MANTIS_ATTACHMENT_EXTRACT_ENABLED", "false").lower() in {"true", "1", "yes"}
@@ -255,31 +274,61 @@ class Index:
         self.cleanup()
 
     def embedding_diagnostics(self, detail=False):
-        result = {"stage": self.stage, "last_error_category": (self.last_embedding_error or {}).get("category"),
-                  "last_error_at": (self.last_embedding_error or {}).get("at"),
-                  "consecutive_failures": self.embedding_attempts,
-                  "next_retry_at": self.embedding_retry_at or None}
-        if detail and self.last_embedding_error:
-            result["last_error"] = dict(self.last_embedding_error)
-        return result
+        with self.embedding_lock:
+            self._trim_embedding_events()
+            result = {"stage": self.stage, "embedding_stage": self.embedding_stage,
+                      "last_error_category": (self.last_embedding_error or {}).get("category"),
+                      "last_error_at": (self.last_embedding_error or {}).get("at"),
+                      "consecutive_failures": self.embedding_attempts,
+                      "next_retry_at": self.embedding_retry_at or None,
+                      "workers": self.embedding_workers, "batch_size": self.embedding_batch,
+                      "in_flight_batches": len(self.embedding_inflight),
+                      "in_flight_fragments": len(self.embedding_claimed),
+                      "spooled_5m": sum(count for _, count, ok in self.embedding_events if ok),
+                      "ready_5m": sum(count for _, count in self.embedding_ready_events),
+                      "failed_batches_5m": sum(1 for _, _, ok in self.embedding_events if not ok),
+                      "last_batch_seconds": self.embedding_last_seconds}
+            if detail and self.last_embedding_error:
+                result["last_error"] = dict(self.last_embedding_error)
+            return result
+
+    def _trim_embedding_events(self):
+        cutoff = self.state.clock() - 300
+        while self.embedding_events and self.embedding_events[0][0] < cutoff:
+            self.embedding_events.popleft()
+        while self.embedding_ready_events and self.embedding_ready_events[0][0] < cutoff:
+            self.embedding_ready_events.popleft()
+
+    def embedding_active(self):
+        with self.embedding_lock:
+            return (self.embedding_busy or bool(self.embedding_inflight) or
+                    (self.paused.is_set() and self.vectors and not getattr(self.vectors, "failed", False) and
+                     bool(self.state.one("SELECT 1 FROM embedding_spool LIMIT 1"))))
 
     def _embedding_failure(self, exc):
-        category = exc.category if isinstance(exc, EmbeddingError) else (
-            "vector_storage" if isinstance(exc, (OSError, IOError)) else "internal")
-        self.embedding_attempts += 1
-        delay = min(900, 30 * 2 ** min(self.embedding_attempts - 1, 5))
-        if category in {"authentication", "payment", "permission", "budget"}:
-            delay = max(delay, 3600)
-        self.embedding_retry_at = self.state.clock() + delay
-        self.last_embedding_error = {"category": category, "at": self.state.clock(),
-                                     "http_status": exc.status if isinstance(exc, EmbeddingError) else None,
-                                     "reservation": "unknown_until_reconciled" if isinstance(exc, EmbeddingError)
-                                     and category not in {"not_configured", "budget"} else "not_created"}
-        self.semantic_status = "error:" + category
+        with self.embedding_lock:
+            category = exc.category if isinstance(exc, EmbeddingError) else (
+                "vector_storage" if isinstance(exc, (OSError, IOError)) or
+                getattr(self.vectors, "failed", False) else "internal")
+            self.embedding_attempts += 1
+            delay = min(900, 30 * 2 ** min(self.embedding_attempts - 1, 5))
+            if category in {"authentication", "payment", "permission", "budget", "vector_storage"}:
+                delay = max(delay, 3600)
+            if category in {"authentication", "payment", "permission", "budget", "vector_storage", "rate_limited"} or self.embedding_attempts >= 2:
+                self.embedding_retry_at = max(self.embedding_retry_at, self.state.clock() + delay)
+            self.last_embedding_error = {"category": category, "at": self.state.clock(),
+                                         "http_status": exc.status if isinstance(exc, EmbeddingError) else None,
+                                         "reservation": "unknown_until_reconciled" if isinstance(exc, EmbeddingError)
+                                         and category not in {"not_configured", "budget"} else "not_created"}
+            self.semantic_status = "error:" + category
 
     def _embedding_success(self):
-        self.embedding_attempts = 0
-        self.embedding_retry_at = 0
+        with self.embedding_lock:
+            if self.state.clock() >= self.embedding_retry_at:
+                self.embedding_attempts = 0
+                self.embedding_retry_at = 0
+                self.semantic_status = "partial" if self.state.one(
+                    "SELECT 1 FROM fragments WHERE version<>vector_version LIMIT 1") else "ready"
 
     def query_vector(self, query):
         # Cache only the embedding of the exact model input, never result cards,
@@ -544,53 +593,150 @@ class Index:
                 self.state.changed()
             return len(rows)
 
-    def embed_pending(self, batch=16):
-        if not self.vectors:
-            return
-        if not self.embeddings:
-            self.flush_embedding_spool()
-            return
+    def _embedding_candidates(self, recent):
+        """One recent lane protects freshness; other lanes drain the oldest backlog."""
         selected = sorted(self.sync_projects)
-        scope = " AND issue_id IN (SELECT id FROM issues WHERE project_id IN (" + ",".join("?" for _ in selected) + "))" if selected else ""
-        spool = self.state.one("SELECT COUNT(*) AS n,MIN(created) AS oldest FROM embedding_spool")
-        if spool["n"] >= EMBEDDING_DISK_BATCH or (spool["oldest"] and self.state.clock() - spool["oldest"] >= EMBEDDING_FLUSH_MAX_AGE):
-            self.flush_embedding_spool()
-        rows = self.state.all("SELECT * FROM fragments WHERE version<>vector_version AND id NOT IN "
-                              "(SELECT fragment_id FROM embedding_spool)" + scope + " LIMIT ?", (*selected, batch))
-        present = self.vectors.existing([digest([r["id"], r["version"]]) for r in rows])
-        pending = []
-        for row in rows:
-            key = digest([row["id"], row["version"]])
-            if key in present:
-                with self.state.transaction():
-                    if self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
-                                      (key, row["version"], row["id"], row["version"])).rowcount:
-                        self.state.changed()
-            else:
-                pending.append(row)
-        rows = pending
-        if not rows:
-            if self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"]:
-                self.flush_embedding_spool()
-            self.semantic_status = "partial" if self.state.health()["embedding_backlog"] else "ready"
-            return
-        values = self.embeddings.embed([r["text"] for r in rows])
-        with self.state.transaction():
-            for row, vector in zip(rows, values):
+        scope = (" AND i.project_id IN (" + ",".join("?" for _ in selected) + ")") if selected else ""
+        now = self.state.clock()
+        self.embedding_cooldowns = {key: until for key, until in self.embedding_cooldowns.items() if until > now}
+        window = self.embedding_batch + len(self.embedding_claimed) + len(self.embedding_cooldowns)
+        source = ("issues i INDEXED BY issues_modified CROSS JOIN fragments f INDEXED BY fragments_issue"
+                  if recent else "fragments f JOIN issues i ON i.id=f.issue_id")
+        relation = " AND f.issue_id=i.id" if recent else ""
+        order = "i.modified DESC,i.id" if recent else "f.id"
+        rows = self.state.all(f"SELECT f.* FROM {source} "
+            "WHERE f.version<>f.vector_version" + relation + " AND NOT EXISTS "
+            "(SELECT 1 FROM embedding_spool s WHERE s.fragment_id=f.id AND s.version=f.version)" + scope +
+            f" ORDER BY {order} LIMIT ?", (*selected, min(window, 2048)))
+        return [row for row in rows if row["id"] not in self.embedding_claimed
+                and (row["id"], row["version"]) not in self.embedding_cooldowns][:self.embedding_batch]
+
+    def _dispatch_embedding(self, pool):
+        with self.embedding_lock:
+            if self.paused.is_set() or self.stop.is_set() or getattr(self.vectors, "failed", False) or self.state.clock() < self.embedding_retry_at:
+                return False
+            self.embedding_busy = True
+            self.embedding_stage = "select"
+            try:
+                rows = self._embedding_candidates(recent=self.embedding_dispatches % self.embedding_workers == 0)
+                if not rows:
+                    return False
+                present = self.vectors.existing([digest([r["id"], r["version"]]) for r in rows])
+                missing = []
+                for row in rows:
+                    key = digest([row["id"], row["version"]])
+                    if key in present:
+                        with self.state.transaction():
+                            if self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
+                                              (key, row["version"], row["id"], row["version"])).rowcount:
+                                self.state.changed()
+                    else:
+                        missing.append(row)
+                if missing:
+                    future = pool.submit(self.embeddings.embed, [row["text"] for row in missing])
+                    self.embedding_inflight[future] = (missing, time.monotonic())
+                    self.embedding_claimed.update(row["id"] for row in missing)
+                    self.embedding_dispatches += 1
+                return True
+            finally:
+                self.embedding_busy = False
+                self.embedding_stage = "provider" if self.embedding_inflight else "idle"
+
+    def _publish_embedding(self, future):
+        with self.embedding_lock:
+            rows, started = self.embedding_inflight[future]
+            self.embedding_busy = True
+            self.embedding_stage = "publish"
+        try:
+            values = future.result()
+            if len(values) != len(rows):
+                raise ValueError("Incomplete embeddings response")
+            vectors = []
+            for vector in values:
                 if len(vector) != self.vectors.dimension or not all(math.isfinite(v) for v in vector):
                     raise ValueError("Embedding dimension or finite-value check failed")
                 data = array("f", vector)
                 if not all(math.isfinite(v) for v in data):
                     raise ValueError("Embedding cannot be represented by finite FP32 values")
-                current = self.state.one("SELECT version FROM fragments WHERE id=?", (row["id"],))
-                if not current or current["version"] != row["version"]:
-                    continue
-                self.state.run("INSERT OR REPLACE INTO embedding_spool VALUES(?,?,?,?)",
-                               (row["id"], row["version"], data.tobytes(), self.state.clock()))
-        spool = self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")
-        if spool["n"] >= EMBEDDING_DISK_BATCH or len(rows) < batch:
-            self.flush_embedding_spool()
-        self.semantic_status = "partial" if self.state.health()["embedding_backlog"] else "ready"
+                vectors.append(data.tobytes())
+            saved = 0
+            with self.state.transaction():
+                for row, data in zip(rows, vectors):
+                    current = self.state.one("SELECT version FROM fragments WHERE id=?", (row["id"],))
+                    if current and current["version"] == row["version"]:
+                        self.state.run("INSERT OR REPLACE INTO embedding_spool VALUES(?,?,?,?)",
+                                       (row["id"], row["version"], data, self.state.clock()))
+                        saved += 1
+            with self.embedding_lock:
+                self.embedding_events.append((self.state.clock(), saved, True))
+                self.embedding_last_seconds = round(time.monotonic() - started, 3)
+            self._embedding_success()
+            if self.paused.is_set() or self.stop.is_set():
+                self._flush_due_embeddings(force=True)
+        except Exception as exc:
+            with self.embedding_lock:
+                delay = 60 if isinstance(exc, EmbeddingError) and exc.category == "rate_limited" else 30
+                for row in rows:
+                    self.embedding_cooldowns[(row["id"], row["version"])] = self.state.clock() + delay
+                self.embedding_events.append((self.state.clock(), 0, False))
+                self.embedding_last_seconds = round(time.monotonic() - started, 3)
+            self._embedding_failure(exc)
+        finally:
+            with self.embedding_lock:
+                del self.embedding_inflight[future]
+                self.embedding_claimed.difference_update(row["id"] for row in rows)
+                self.embedding_busy = False
+                self.embedding_stage = "provider" if self.embedding_inflight else "idle"
+
+    def _flush_due_embeddings(self, force=False):
+        if not self.vectors or getattr(self.vectors, "failed", False):
+            return 0
+        spool = self.state.one("SELECT COUNT(*) AS n,MIN(created) AS oldest FROM embedding_spool")
+        if not spool["n"] or not (force or spool["n"] >= EMBEDDING_DISK_BATCH or
+                (spool["oldest"] and self.state.clock() - spool["oldest"] >= EMBEDDING_FLUSH_MAX_AGE)):
+            return 0
+        with self.embedding_lock:
+            self.embedding_busy = True
+            self.embedding_stage = "flush"
+        try:
+            count = self.flush_embedding_spool()
+            with self.embedding_lock:
+                self.embedding_ready_events.append((self.state.clock(), count))
+            return count
+        finally:
+            with self.embedding_lock:
+                self.embedding_busy = False
+                self.embedding_stage = "provider" if self.embedding_inflight else "idle"
+
+    def _embedding_loop(self):
+        if not self.vectors:
+            return
+        with ThreadPoolExecutor(max_workers=self.embedding_workers, thread_name_prefix="mantis-embed-http") as pool:
+            while not self.stop.is_set() or self.embedding_inflight:
+                if self.embeddings and not self.stop.is_set() and not self.paused.is_set():
+                    try:
+                        while len(self.embedding_inflight) < self.embedding_workers and self.state.clock() >= self.embedding_retry_at:
+                            if not self._dispatch_embedding(pool):
+                                break
+                    except Exception as exc:
+                        self._embedding_failure(exc)
+                if self.embedding_inflight:
+                    done, _ = wait(tuple(self.embedding_inflight), timeout=1, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        self._publish_embedding(future)
+                else:
+                    self.stop.wait(1)
+                    if self.embeddings and self.state.clock() >= self.embedding_retry_at and not self.embedding_inflight and \
+                            not self.state.one("SELECT 1 FROM fragments WHERE version<>vector_version LIMIT 1"):
+                        self.semantic_status = "ready"
+                try:
+                    self._flush_due_embeddings(force=self.paused.is_set() or self.stop.is_set())
+                except Exception as exc:
+                    self._embedding_failure(exc)
+            try:
+                self._flush_due_embeddings(force=True)
+            except Exception as exc:
+                self._embedding_failure(exc)
 
     def tick(self):
         if not self.work_lock.acquire(blocking=False):
@@ -602,7 +748,6 @@ class Index:
                 self.remote_status = "available"
             except Exception:
                 self.remote_status = "unavailable"
-            next_embeddings = time.monotonic()
             for project in self.state.all("SELECT id,status FROM projects WHERE status<>'access_removed'"):
                 if self.sync_projects and project["id"] not in self.sync_projects:
                     continue
@@ -613,29 +758,11 @@ class Index:
                     self.sync_project(project["id"])
                 except Exception as exc:
                     self.state.run("UPDATE projects SET error=?,status=CASE WHEN status='initializing' THEN status ELSE 'retrying' END WHERE id=?", (str(exc)[:300], project["id"]))
-                # Do not defer all vectors until the last project's import.
-                if not self.paused.is_set() and not self.stop.is_set() and time.monotonic() >= next_embeddings and self.state.clock() >= self.embedding_retry_at:
-                    try:
-                        self.stage = "embeddings"
-                        self.embed_pending()
-                        self._embedding_success()
-                    except Exception as exc:
-                        self._embedding_failure(exc)
-                    next_embeddings = time.monotonic() + 5
             try:
                 self.stage = "cleanup"
                 self.cleanup()
-                until = time.monotonic() + 5
-                for _ in range(8):
-                    if self.state.clock() < self.embedding_retry_at:
-                        break
-                    self.stage = "embeddings"
-                    self.embed_pending(batch=64)
-                    self._embedding_success()
-                    if self.stop.is_set() or self.paused.is_set() or self.semantic_status == "ready" or time.monotonic() >= until:
-                        break
             except Exception as exc:
-                self._embedding_failure(exc)
+                self.semantic_status = "cleanup pending: " + str(exc)[:160]
         finally:
             self.stage = "idle"
             self.work_lock.release()
@@ -746,6 +873,17 @@ class Index:
                 self.stop.wait(self.interval)
         self.worker = threading.Thread(target=run, name="mantis-index", daemon=True)
         self.worker.start()
+        if self.vectors:
+            def run_embeddings():
+                while not self.stop.is_set():
+                    try:
+                        self._embedding_loop()
+                    except Exception as exc:
+                        self._embedding_failure(exc)
+                        self.embedding_stage = "retrying"
+                    self.stop.wait(1)
+            self.embedding_worker = threading.Thread(target=run_embeddings, name="mantis-embeddings", daemon=True)
+            self.embedding_worker.start()
         if self.attachment_enabled:
             def extract_loop():
                 while not self.stop.is_set():
@@ -768,6 +906,10 @@ class Index:
             self.attachment_worker.join(timeout=self.api.settings.timeout_seconds * 6 + 45)
             if self.attachment_worker.is_alive():
                 raise RuntimeError("Mantis attachment worker is still stopping; keep its state owner open")
+        if self.embedding_worker:
+            self.embedding_worker.join(timeout=max(180, getattr(self.embeddings, "timeout", 0) * 3 + 45))
+            if self.embedding_worker.is_alive():
+                raise RuntimeError("Mantis embedding worker is still stopping; keep its state owner open")
         if self.vectors:
             self.vectors.close()
         self.state.close()

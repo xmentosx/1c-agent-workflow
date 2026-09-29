@@ -47,7 +47,8 @@ class Runtime:
         except (ImportError, RuntimeError, OSError, ValueError) as exc:
             self.error = "Vector backend unavailable: " + str(exc)[:160]
         key = os.environ.get("MANTIS_OPENROUTER_API_KEY", "")
-        provider = Embeddings(state, key, cap=float(os.environ.get("MANTIS_MONTHLY_BUDGET_USD", "5")), timeout=settings.timeout_seconds) if key else None
+        provider = Embeddings(state, key, cap=float(os.environ.get("MANTIS_MONTHLY_BUDGET_USD", "5")),
+                              timeout=int(os.environ.get("MANTIS_EMBEDDING_TIMEOUT_SECONDS", "45"))) if key else None
         self.index = Index(state, Api(settings), vectors, provider,
                            interval=int(os.environ.get("MANTIS_SYNC_INTERVAL_SECONDS", "30")),
                            sync_projects=[int(p) for p in os.environ.get("MANTIS_SYNC_PROJECT_IDS", "").split(",") if p.strip()])
@@ -181,11 +182,13 @@ class Runtime:
             person = actor_name(actor)
             index = self.require()
             if action == "pause":
-                index.state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
-                index.paused.set()
+                with index.embedding_lock:
+                    index.state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
+                    index.paused.set()
             elif action == "resume":
-                index.state.run("UPDATE meta SET value='0' WHERE key='index_paused'")
-                index.paused.clear()
+                with index.embedding_lock:
+                    index.state.run("UPDATE meta SET value='0' WHERE key='index_paused'")
+                    index.paused.clear()
             elif action == "settle_charge":
                 if actual_cost_usd is None or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0:
                     raise ValueError("Provide the confirmed non-negative actual_cost_usd")
@@ -193,10 +196,10 @@ class Runtime:
                     raise ValueError("Unknown or already reconciled reservation")
                 index.state.settle(charge_id, actual_cost_usd)
             elif action == "rebuild_vectors":
-                if index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
+                if not index.paused.is_set() or index.embedding_active() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
                     raise RuntimeError("Index work is still finishing; pause it and retry rebuild_vectors")
                 try:
-                    with index.state.lock:
+                    with index.embedding_lock, index.state.lock:
                         if index.vectors:
                             with index.vectors.lock:
                                 index.vectors.close()
@@ -208,12 +211,13 @@ class Runtime:
                 finally:
                     index.work_lock.release()
             elif action == "compact_vectors":
-                if not index.paused.is_set() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
+                if not index.paused.is_set() or index.embedding_active() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
                     raise RuntimeError("Pause indexing and wait for work_in_progress=false before compact_vectors")
                 try:
-                    if not index.vectors:
-                        raise RuntimeError("Vector backend is unavailable")
-                    storage = index.vectors.compact(clear_deletions=True)
+                    with index.embedding_lock:
+                        if not index.vectors:
+                            raise RuntimeError("Vector backend is unavailable")
+                        storage = index.vectors.compact(clear_deletions=True)
                 finally:
                     index.work_lock.release()
             elif action == "storage":
@@ -222,7 +226,7 @@ class Runtime:
                 raise ValueError("action must be status, pause, resume, storage, compact_vectors, rebuild_vectors or settle_charge")
             self.audit(person, "index_" + action, charge_id)
             return {**self.health(), "paused": index.paused.is_set(),
-                    "work_in_progress": index.work_lock.locked() or index.attachment_work_lock.locked(),
+                    "work_in_progress": index.work_lock.locked() or index.attachment_work_lock.locked() or index.embedding_active(),
                     "index_diagnostics": index.embedding_diagnostics(detail),
                     **({"storage": storage} if action in {"storage", "compact_vectors"} else {}),
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
