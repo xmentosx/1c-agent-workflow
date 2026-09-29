@@ -74,6 +74,14 @@ class Api:
             raise ApiError("Incomplete Mantis project catalog")
         return data["projects"]
 
+    def project_users(self, project_id, page, size=100, handlers_only=False):
+        endpoint = "handlers" if handlers_only else "users"
+        data, _ = self.request(f"projects/{int(project_id)}/{endpoint}?" + urlencode({
+            "page": int(page), "page_size": int(size), "include_access_levels": 1}))
+        if not isinstance(data.get("users"), list):
+            raise ApiError("Incomplete Mantis project user page")
+        return data["users"]
+
     def config(self, project_id):
         query = urlencode([("project_id", int(project_id))] + [("option[]", key) for key in CONFIG_KEYS])
         data, _ = self.request("config?" + query)

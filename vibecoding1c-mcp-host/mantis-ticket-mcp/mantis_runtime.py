@@ -103,10 +103,11 @@ class Runtime:
         @mcp.tool
         @worker_tool
         def search_tickets(query: str, actor: str = "", filters: dict | None = None,
-                           mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True) -> dict:
-            """Paged compact search (10 default, max 20, 12000 output chars). Follow next_cursor. Modes: all/comments/filenames; filters via mantis_metadata."""
+                           mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True,
+                           sort_by: str = "relevance") -> dict:
+            """Paged compact search (10 default, max 20, 12000 chars). sort_by: relevance/updated_at/created_at; filters via mantis_metadata."""
             person = actor_name(actor)
-            result = self.require().search(query, filters, mode, limit, cursor, semantic)
+            result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by)
             self.audit(person, "search", "", result.get("status", "succeeded"))
             from fastmcp.tools.tool import ToolResult
             from mcp.types import TextContent
@@ -115,11 +116,18 @@ class Runtime:
 
         @mcp.tool
         @worker_tool
-        def mantis_metadata(project_id: int = 0, actor: str = "") -> dict:
-            """Discover projects, filter names and write actions; specify a project for its field and permission definitions."""
+        def mantis_metadata(project_id: int = 0, actor: str = "", participants_query: str = "",
+                            participant_cursor: str = "", participant_limit: int = 10,
+                            handlers_only: bool = False) -> dict:
+            """Discover projects, filters and field definitions; participants_query searches project users in bounded pages."""
             person = actor_name(actor)
             index = self.require()
             self.audit(person, "metadata", project_id)
+            if participants_query or participant_cursor or handlers_only:
+                if not project_id:
+                    raise ValueError("project_id is required for participant lookup")
+                return index.project_participants(project_id, participants_query, participant_limit,
+                                                  participant_cursor, handlers_only)
             if project_id:
                 return index.metadata(project_id)
             projects = index.state.all("SELECT data,verified FROM projects WHERE status<>'access_removed'")
@@ -127,7 +135,9 @@ class Runtime:
                     "write_actions": sorted(ACTIONS),
                     "enabled_write_actions": sorted(self.writer.enabled),
                     "enabled_write_projects": sorted(self.writer.enabled_projects),
-                    "filters": ["project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before"],
+                    "filters": ["project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
+                                "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"],
+                    "sort_by": ["relevance", "updated_at", "created_at"],
                     "write_steps": {"action": "required", "issue_id": "existing target or previous create result",
                                     "project_id": "required for create", "fields": "API field values", "expected_version": "required for editing: inspect via write_operation",
                                     "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach"},
@@ -165,8 +175,9 @@ class Runtime:
 
         @mcp.tool
         @worker_tool
-        def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None) -> dict:
-            """Index status/pause/resume/storage/compact_vectors/rebuild_vectors. Compaction reuses paid vectors; rebuild may buy embeddings."""
+        def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None,
+                          detail: bool = False) -> dict:
+            """Index status/pause/resume/storage/compact_vectors/rebuild_vectors. Use detail for safe error diagnostics."""
             person = actor_name(actor)
             index = self.require()
             if action == "pause":
@@ -211,6 +222,7 @@ class Runtime:
                 raise ValueError("action must be status, pause, resume, storage, compact_vectors, rebuild_vectors or settle_charge")
             self.audit(person, "index_" + action, charge_id)
             return {**self.health(), "paused": index.paused.is_set(), "work_in_progress": index.work_lock.locked(),
+                    "index_diagnostics": index.embedding_diagnostics(detail),
                     **({"storage": storage} if action in {"storage", "compact_vectors"} else {}),
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
 

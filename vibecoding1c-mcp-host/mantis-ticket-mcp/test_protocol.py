@@ -40,7 +40,7 @@ class ProtocolTests(unittest.TestCase):
                         try:
                             await asyncio.sleep(0.05)
                             tools = await asyncio.wait_for(client.list_tools(), 1)
-                            self.assertEqual(len(tools), 8)
+                            self.assertEqual(len(tools), 9)
                             self.assertLess(time.monotonic() - start, 1,
                                             "A database writer must not freeze the MCP HTTP event loop")
                             self.assertFalse(pending.done(), "The read still waits for the writer")
@@ -65,7 +65,7 @@ class ProtocolTests(unittest.TestCase):
                     async with Client(mcp) as client:
                         tools = await client.list_tools()
                         schema = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
-                        self.assertEqual(len(tools), 8)
+                        self.assertEqual(len(tools), 9)
                         search_schema = next(t.inputSchema for t in tools if t.name == "search_tickets")
                         self.assertEqual(search_schema["properties"]["limit"]["default"], 10)
                         self.assertNotIn("fixture analyst", schema)

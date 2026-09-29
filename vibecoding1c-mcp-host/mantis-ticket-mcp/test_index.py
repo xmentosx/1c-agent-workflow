@@ -13,6 +13,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
+from urllib.error import HTTPError, URLError
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
@@ -51,6 +52,15 @@ class FakeApi:
     def projects(self):
         self.me()
         return copy.deepcopy(self.project_list)
+
+    def project_users(self, project_id, page, size=100, handlers_only=False):
+        self.me()
+        users = [{"id": 10, "name": "ivan", "real_name": "Иван Петров", "access_level": {"id": 55}},
+                 {"id": 11, "name": "ivanov", "real_name": "Иван Сидоров", "access_level": {"id": 55}},
+                 {"id": 12, "name": "anna", "real_name": "Анна", "access_level": {"id": 25}}]
+        if handlers_only:
+            users = users[:2]
+        return users[(page - 1) * size:page * size]
 
     def tags(self):
         return [{"id": 1, "name": "renamed"}]
@@ -414,6 +424,65 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(self.state.one("SELECT status FROM charges")["status"], "unknown")
         with self.assertRaises(ValueError):
             Embeddings(self.state, "fixture", cap=float("nan"))
+
+    def test_embedding_errors_keep_reservations_and_expose_safe_categories(self):
+        from mantis_index import Embeddings, EmbeddingError
+        provider = Embeddings(self.state, "fixture")
+        with patch("mantis_index.urlopen", side_effect=HTTPError("https://openrouter.ai", 429, "private provider detail", {}, None)):
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["private search text"])
+        self.assertEqual((caught.exception.category, caught.exception.status), ("rate_limited", 429))
+        self.assertNotIn("private", str(caught.exception))
+        self.assertEqual(self.state.one("SELECT status FROM charges")["status"], "unknown")
+        with patch("mantis_index.urlopen", side_effect=URLError("private hostname")):
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["another private text"])
+        self.assertEqual(caught.exception.category, "network")
+        self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges WHERE status='unknown'")["n"], 2)
+
+    def test_embedding_worker_backs_off_and_reports_diagnostics(self):
+        from mantis_index import EmbeddingError
+        self.index.sync_projects = {1}
+        self.state.run("UPDATE projects SET status='current',checkpoint=1")
+        self.index.embeddings = SimpleNamespace(embed=lambda texts: (_ for _ in ()).throw(EmbeddingError("rate_limited", 429)))
+        self.index.refresh(1)
+        with patch.object(self.index, "sync_project"), patch.object(self.index, "embed_pending", side_effect=EmbeddingError("rate_limited", 429)) as attempted:
+            self.index.tick()
+            self.index.tick()
+        self.assertEqual(attempted.call_count, 1)
+        status = self.index.embedding_diagnostics(detail=True)
+        self.assertEqual(status["last_error_category"], "rate_limited")
+        self.assertEqual(status["last_error"]["http_status"], 429)
+        self.assertEqual(status["consecutive_failures"], 1)
+        self.assertGreater(status["next_retry_at"], self.state.clock())
+
+    def test_extended_filters_sorting_and_participant_resolution(self):
+        first = self.api.items[1]
+        first.update(handler={"id": 10}, priority={"id": 30}, severity={"id": 50},
+                     version="5.1", target_version="5.2", fixed_in_version="")
+        second = ticket(2, updated="2026-09-29T12:00:00+03:00")
+        second["created_at"] = "1999-01-01T00:00:00+03:00"
+        second.update(handler={"id": 11}, priority={"id": 30}, severity={"id": 50},
+                      version="5.1", target_version="5.3", fixed_in_version="")
+        self.api.items[2] = second
+        self.index.refresh(1)
+        self.index.refresh(2)
+        result = self.search("решения", filters={"handler_id": 10, "reporter_id": 3025,
+                         "priority": 30, "severity": 50, "version": "5.1", "target_version": "5.2"})
+        self.assertEqual([i["id"] for i in result["issues"]], [1])
+        recent = self.search("решения", sort_by="updated_at")
+        created = self.search("решения", sort_by="created_at")
+        self.assertEqual([i["id"] for i in recent["issues"]], [2, 1])
+        self.assertEqual([i["id"] for i in created["issues"]], [1, 2])
+        with self.assertRaisesRegex(ValueError, "Unsupported filters"):
+            self.search("решения", filters={"unknown": 1})
+        with self.assertRaisesRegex(ValueError, "sort_by"):
+            self.search("решения", sort_by="anything")
+        page = self.index.project_participants(1, "Иван", limit=1)
+        self.assertEqual(page["participants"][0]["id"], 10)
+        self.assertTrue(page["next_cursor"])
+        follow = self.index.project_participants(1, "Иван", limit=1, cursor=page["next_cursor"])
+        self.assertEqual(follow["participants"][0]["id"], 11)
 
     def test_moving_pages_retain_checkpoint_then_converge(self):
         self.api.items = {n: ticket(n) for n in range(1, 122)}

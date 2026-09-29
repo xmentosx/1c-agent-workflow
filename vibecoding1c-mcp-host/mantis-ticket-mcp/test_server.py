@@ -134,8 +134,33 @@ class MantisTicketServerTests(unittest.TestCase):
 
         self.assertEqual(mcp.name, "mantis-ticket")
         self.assertIs(mcp.options.get("stateless_http"), True)
-        self.assertEqual(mcp.registered_tools, ["read_ticket", "get_attachment", "health", "search_tickets",
+        self.assertEqual(mcp.registered_tools, ["read_ticket", "read_comments", "get_attachment", "health", "search_tickets",
                                                 "mantis_metadata", "execute_write", "write_operation", "index_control"])
+
+    def test_comments_pages_long_text_and_detects_discussion_change(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = FakeClient()
+            original = client.get_issue
+            notes = [{"id": n, "created_at": f"2026-09-{n:02d}T12:00:00Z", "text": "x" * 7100 if n == 3 else f"note {n}",
+                      "reporter": {"id": n, "name": f"user{n}"}} for n in range(1, 4)]
+            client.get_issue = lambda issue_id: {**original(issue_id), "notes": notes}
+            service = server.MantisTicketService(server.Settings("http://mantis.local", "fixture", Path(tmp)), client)
+            first = service.read_comments("1", limit=1)
+            self.assertEqual([c["id"] for c in first["comments"]], [3])
+            self.assertFalse(first["comments"][0]["text_complete"])
+            seen = first["comments"][0]["text"]
+            cursor = first["next_cursor"]
+            while cursor:
+                page = service.read_comments("1", limit=1, cursor=cursor)
+                if page["comments"][0]["id"] != 3:
+                    break
+                seen += page["comments"][0]["text"]
+                cursor = page["next_cursor"]
+            self.assertEqual(seen, "x" * 7100)
+            self.assertEqual(service.read_comments("1", note_id=2)["comments"][0]["text"], "note 2")
+            notes[0]["text"] = "changed"
+            changed = service.read_comments("1", cursor=first["next_cursor"])
+            self.assertEqual(changed["status"], "discussion_changed")
 
     def test_extract_issue_id_from_common_urls(self):
         self.assertEqual(server.extract_issue_id("123"), 123)

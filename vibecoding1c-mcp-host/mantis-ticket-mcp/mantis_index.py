@@ -14,6 +14,7 @@ from array import array
 from collections import OrderedDict
 from concurrent.futures import Future
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from mantis_api import ApiError
@@ -23,6 +24,14 @@ from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, i
 QUERY_EMBEDDING_CACHE_SIZE = 256
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
+
+
+class EmbeddingError(RuntimeError):
+    """A safe provider failure category; the reservation remains conservative."""
+
+    def __init__(self, category, status=0):
+        self.category, self.status = category, status
+        super().__init__(f"Embedding {category}" + (f" (HTTP {status})" if status else ""))
 
 
 class Vectors:
@@ -172,10 +181,13 @@ class Embeddings:
 
     def embed(self, texts):
         if not self.key:
-            raise RuntimeError("OpenRouter is not configured")
+            raise EmbeddingError("not_configured")
         # UTF-8 byte count is a conservative input-token bound for this tokenizer.
         reserve = (sum(len(text.encode("utf-8")) + 32 for text in texts)) * self.max_price / 1_000_000
-        charge = self.state.reserve(reserve, self.cap)
+        try:
+            charge = self.state.reserve(reserve, self.cap)
+        except RuntimeError as exc:
+            raise EmbeddingError("budget") from exc
         body = {"model": "qwen/qwen3-embedding-8b", "input": texts, "dimensions": 4096,
                 "encoding_format": "float", "provider": {"max_price": {"prompt": self.max_price}}}
         request = Request("https://openrouter.ai/api/v1/embeddings", encode(body).encode("utf-8"),
@@ -195,8 +207,18 @@ class Embeddings:
             if cost is not None:
                 self.state.settle(charge, float(cost))
             return vectors
-        except Exception as exc:
-            raise RuntimeError("Embedding request failed; its cost reservation remains pending") from exc
+        except HTTPError as exc:
+            category = {401: "authentication", 402: "payment", 403: "permission", 429: "rate_limited"}.get(
+                exc.code, "provider_unavailable" if exc.code >= 500 else "provider_rejected")
+            raise EmbeddingError(category, exc.code) from exc
+        except (TimeoutError, ConnectionError) as exc:
+            raise EmbeddingError("timeout" if isinstance(exc, TimeoutError) else "network") from exc
+        except URLError as exc:
+            raise EmbeddingError("network") from exc
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, IndexError) as exc:
+            raise EmbeddingError("invalid_response") from exc
+        except OSError as exc:
+            raise EmbeddingError("network") from exc
 
 
 class Index:
@@ -217,7 +239,38 @@ class Index:
         self._query_hits = self._query_misses = self._query_shared = 0
         self.remote_status = "not_checked"
         self.semantic_status = "not_configured" if not embeddings or not vectors else "pending"
+        self.stage = "idle"
+        self.embedding_attempts = 0
+        self.embedding_retry_at = 0
+        self.last_embedding_error = None
         self.cleanup()
+
+    def embedding_diagnostics(self, detail=False):
+        result = {"stage": self.stage, "last_error_category": (self.last_embedding_error or {}).get("category"),
+                  "last_error_at": (self.last_embedding_error or {}).get("at"),
+                  "consecutive_failures": self.embedding_attempts,
+                  "next_retry_at": self.embedding_retry_at or None}
+        if detail and self.last_embedding_error:
+            result["last_error"] = dict(self.last_embedding_error)
+        return result
+
+    def _embedding_failure(self, exc):
+        category = exc.category if isinstance(exc, EmbeddingError) else (
+            "vector_storage" if isinstance(exc, (OSError, IOError)) else "internal")
+        self.embedding_attempts += 1
+        delay = min(900, 30 * 2 ** min(self.embedding_attempts - 1, 5))
+        if category in {"authentication", "payment", "permission", "budget"}:
+            delay = max(delay, 3600)
+        self.embedding_retry_at = self.state.clock() + delay
+        self.last_embedding_error = {"category": category, "at": self.state.clock(),
+                                     "http_status": exc.status if isinstance(exc, EmbeddingError) else None,
+                                     "reservation": "unknown_until_reconciled" if isinstance(exc, EmbeddingError)
+                                     and category not in {"not_configured", "budget"} else "not_created"}
+        self.semantic_status = "error:" + category
+
+    def _embedding_success(self):
+        self.embedding_attempts = 0
+        self.embedding_retry_at = 0
 
     def query_vector(self, query):
         # Cache only the embedding of the exact model input, never result cards,
@@ -534,6 +587,7 @@ class Index:
         if not self.work_lock.acquire(blocking=False):
             return
         try:
+            self.stage = "catalogs"
             try:
                 self.catalogs()
                 self.remote_status = "available"
@@ -546,26 +600,35 @@ class Index:
                 if self.stop.is_set() or self.paused.is_set():
                     return
                 try:
+                    self.stage = "sync_project"
                     self.sync_project(project["id"])
                 except Exception as exc:
                     self.state.run("UPDATE projects SET error=?,status=CASE WHEN status='initializing' THEN status ELSE 'retrying' END WHERE id=?", (str(exc)[:300], project["id"]))
                 # Do not defer all vectors until the last project's import.
-                if not self.paused.is_set() and not self.stop.is_set() and time.monotonic() >= next_embeddings:
+                if not self.paused.is_set() and not self.stop.is_set() and time.monotonic() >= next_embeddings and self.state.clock() >= self.embedding_retry_at:
                     try:
+                        self.stage = "embeddings"
                         self.embed_pending()
+                        self._embedding_success()
                     except Exception as exc:
-                        self.semantic_status = str(exc)[:200]
+                        self._embedding_failure(exc)
                     next_embeddings = time.monotonic() + 5
             try:
+                self.stage = "cleanup"
                 self.cleanup()
                 until = time.monotonic() + 5
                 for _ in range(8):
+                    if self.state.clock() < self.embedding_retry_at:
+                        break
+                    self.stage = "embeddings"
                     self.embed_pending(batch=64)
+                    self._embedding_success()
                     if self.stop.is_set() or self.paused.is_set() or self.semantic_status == "ready" or time.monotonic() >= until:
                         break
             except Exception as exc:
-                self.semantic_status = str(exc)[:200]
+                self._embedding_failure(exc)
         finally:
+            self.stage = "idle"
             self.work_lock.release()
 
     def start(self):
@@ -602,15 +665,69 @@ class Index:
                 raise
             return {**json.loads(cached["data"]), "access_check": "cached", "last_verified": cached["verified"]}
 
-    def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True):
+    def project_participants(self, project_id, query="", limit=10, cursor="", handlers_only=False):
+        if int(project_id) <= 0 or not isinstance(query, str) or len(query) > 120:
+            raise ValueError("Provide a project_id and a query of at most 120 characters")
+        limit = max(1, min(int(limit), 20))
+        identity = digest([int(project_id), query.casefold(), bool(handlers_only)])
+        page, position = 1, 0
+        if cursor:
+            try:
+                token = json.loads(base64.urlsafe_b64decode(cursor))
+                if token["identity"] != identity:
+                    raise ValueError()
+                page, position = int(token["page"]), int(token["position"])
+                if not 1 <= page <= 10000 or not 0 <= position < 100:
+                    raise ValueError()
+            except Exception as exc:
+                raise ValueError("Participant query changed or cursor is invalid; restart without cursor") from exc
+        participants = []
+        scanned = 0
+        exhausted = False
+        for _ in range(5):
+            rows = self.api.project_users(project_id, page, 100, handlers_only)
+            if position > len(rows):
+                raise ValueError("Project participants changed during pagination; restart without cursor")
+            for at in range(position, len(rows)):
+                user = rows[at]
+                name = str(user.get("name") or "")
+                real_name = str(user.get("real_name") or "")
+                if query.casefold() not in (name + " " + real_name).casefold():
+                    continue
+                participants.append({"id": object_id(user), "name": name[:120],
+                                     "real_name": real_name[:120], "access_level": user.get("access_level")})
+                if len(participants) >= limit:
+                    next_page, next_position = (page + 1, 0) if at + 1 >= len(rows) else (page, at + 1)
+                    more = at + 1 < len(rows) or len(rows) == 100
+                    next_cursor = base64.urlsafe_b64encode(encode({"identity": identity,
+                        "page": next_page, "position": next_position}).encode()).decode() if more else ""
+                    return {"project_id": int(project_id), "participants": participants,
+                            "next_cursor": next_cursor, "access_check": "fresh", "scanned_pages": scanned + 1}
+            scanned += 1
+            if len(rows) < 100:
+                exhausted = True
+                break
+            page, position = page + 1, 0
+        next_cursor = "" if exhausted else base64.urlsafe_b64encode(encode({"identity": identity,
+            "page": page, "position": 0}).encode()).decode()
+        return {"project_id": int(project_id), "participants": participants, "next_cursor": next_cursor,
+                "access_check": "fresh", "scanned_pages": scanned}
+
+    def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True, sort_by="relevance"):
         if mode not in {"all", "comments", "filenames"}:
             raise ValueError("mode must be all, comments or filenames")
+        if sort_by not in {"relevance", "updated_at", "created_at"}:
+            raise ValueError("sort_by must be relevance, updated_at or created_at")
         if not isinstance(query, str) or len(query) > 2000:
             raise ValueError("Query must be at most 2000 characters")
         filters = filters or {}
-        allowed = {"project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before"}
+        allowed = {"project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
+                   "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"}
         if set(filters) - allowed:
             raise ValueError("Unsupported filters: " + ", ".join(sorted(set(filters) - allowed)))
+        for name in ("handler_id", "reporter_id", "priority", "severity"):
+            if name in filters and (isinstance(filters[name], bool) or int(filters[name]) < 0):
+                raise ValueError(name + " must be a non-negative Mantis ID")
         if filters.get("custom_fields"):
             if not filters.get("project_id"):
                 raise ValueError("custom_fields requires project_id and project metadata")
@@ -619,7 +736,7 @@ class Index:
             if set(map(str, filters["custom_fields"])) - definitions.keys():
                 raise ValueError("Unknown custom field for this project; call mantis_metadata")
         limit = max(1, min(int(limit), 20))
-        identity = digest([query, filters, mode, semantic])
+        identity = digest([query, filters, mode, semantic, sort_by])
         offset = 0
         if cursor:
             try:
@@ -673,6 +790,13 @@ class Index:
                 return False
             if "status" in filters and object_id(issue.get("status")) != int(filters["status"]):
                 return False
+            for name, field in (("handler_id", "handler"), ("reporter_id", "reporter"),
+                                ("priority", "priority"), ("severity", "severity")):
+                if name in filters and object_id(issue.get(field)) != int(filters[name]):
+                    return False
+            for name in ("version", "target_version", "fixed_in_version"):
+                if name in filters and str(issue.get(name) or "").casefold() != str(filters[name]).casefold():
+                    return False
             tags = issue.get("tags", [])
             available = {str(object_id(t)) for t in tags} | {names.get(object_id(t), t.get("name", "")) for t in tags}
             if not set(map(str, filters.get("tags", []))) <= available:
@@ -708,7 +832,8 @@ class Index:
             records = source_rows()
             # Read only card/filter fields, once per issue. Joining the entire
             # issue (including every comment) to each fragment multiplies I/O.
-            fields = ("summary", "project", "status", "tags", "custom_fields", "created_at", "updated_at")
+            fields = ("summary", "project", "status", "tags", "custom_fields", "created_at", "updated_at",
+                      "handler", "reporter", "priority", "severity", "version", "target_version", "fixed_in_version")
             paths = ",".join("'$." + field + "'" for field in fields)
             issue_ids = list({row["issue_id"] for row in records.values()})
             parsed = {}
@@ -729,7 +854,8 @@ class Index:
                     continue
                 entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
                     "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
-                    "status": issue.get("status"), "score": 0, "matches": [],
+                    "status": issue.get("status"), "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
+                    "handler": issue.get("handler"), "score": 0, "matches": [],
                     "last_verified": row["verified"], "url": self.api.settings.base_url + f"/view.php?id={row['issue_id']}"})
                 entry["score"] = max(entry["score"], rank)
                 if len(entry["matches"]) < 3:
@@ -739,7 +865,11 @@ class Index:
                         "filename_truncated": row["kind"] == "filename" and len(row["source"]) > 1000,
                         "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
                         "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")})
-            return sorted(groups.values(), key=lambda r: (-r["score"], r["id"])), source_version(records, tags), issue_ids
+            if sort_by == "relevance":
+                ordered = sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
+            else:
+                ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
+            return ordered, source_version(records, tags), issue_ids
         initial, initial_version, issue_ids = grouped()
         revision = self.state.revision()
         refresh_deadline = time.monotonic() + 10

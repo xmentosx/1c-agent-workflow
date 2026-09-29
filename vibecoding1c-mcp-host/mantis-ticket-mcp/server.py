@@ -756,6 +756,72 @@ class MantisTicketService:
             self.client.validate_issue_snapshot(issue)
         return {"ok": True, "ticket": normalized}
 
+    def read_comments(self, url_or_id: str, note_id: int = 0, direction: str = "newest",
+                      limit: int = 10, cursor: str = "") -> Dict[str, Any]:
+        """Read bounded discussion pages and continue long notes without truncation."""
+        if direction not in {"newest", "oldest"}:
+            raise ValueError("direction must be newest or oldest")
+        if not 1 <= int(limit) <= 20 or int(note_id) < 0:
+            raise ValueError("limit must be 1..20 and note_id must be non-negative")
+        issue_id = extract_issue_id(url_or_id)
+        issue = self.client.get_issue(issue_id)
+        notes = [note for note in self.as_list(issue.get("notes")) if isinstance(note, dict)]
+        notes.sort(key=lambda note: (str(note.get("created_at") or ""), int_value(note.get("id"))),
+                   reverse=direction == "newest")
+        if note_id:
+            notes = [note for note in notes if int_value(note.get("id")) == int(note_id)]
+            if not notes:
+                raise MantisApiError("Comment is not visible in this issue")
+        version = hashlib.sha256(json.dumps(notes, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+        position, offset = 0, 0
+        if cursor:
+            if len(cursor) > 512:
+                raise ValueError("Invalid comment cursor; restart without cursor")
+            try:
+                token = json.loads(base64.urlsafe_b64decode(cursor))
+                if (token["issue_id"], token["note_id"], token["direction"], token["version"]) != (issue_id, int(note_id), direction, version):
+                    return {"ok": False, "status": "discussion_changed",
+                            "continuation": "Discussion changed; restart without cursor"}
+                position, offset = int(token["position"]), int(token["offset"])
+                if not (0 <= position < len(notes) and 0 <= offset < len(str(notes[position].get("text") or "")) + 1):
+                    raise ValueError()
+            except (ValueError, KeyError, TypeError) as exc:
+                raise ValueError("Invalid comment cursor; restart without cursor") from exc
+        result = {"ok": True, "issue_id": issue_id, "direction": direction, "comments": [],
+                  "next_cursor": "", "output_char_limit": 12000, "discussion_version": version}
+        def make_cursor(pos, char_offset):
+            return base64.urlsafe_b64encode(json.dumps({"issue_id": issue_id, "note_id": int(note_id),
+                "direction": direction, "version": version, "position": pos, "offset": char_offset},
+                separators=(",", ":")).encode()).decode()
+        while position < len(notes) and len(result["comments"]) < int(limit):
+            note = notes[position]
+            raw = str(note.get("text") or "")
+            part = raw[offset:offset + 3000]
+            attachments = [{"id": int_value(file.get("id")), "filename": str(file.get("filename") or "")[:300],
+                            "size": int_value(file.get("size"))} for file in self.as_list(note.get("attachments"))
+                           if isinstance(file, dict)][:20]
+            reporter = normalize_user(note.get("reporter"))
+            card = {"id": int_value(note.get("id")), "reporter": {key: str(reporter.get(key) or "")[:120]
+                    if key != "id" else reporter.get("id") for key in ("id", "name", "real_name")},
+                    "created_at": note.get("created_at", ""), "updated_at": note.get("updated_at", ""),
+                    "url": f"{self.settings.base_url}/view.php?id={issue_id}#c{int_value(note.get('id'))}",
+                    "text": part, "text_offset": offset, "text_complete": offset + len(part) >= len(raw),
+                    "attachments": attachments}
+            previous_cursor = result["next_cursor"]
+            result["comments"].append(card)
+            next_position, next_offset = (position + 1, 0) if card["text_complete"] else (position, offset + len(part))
+            result["next_cursor"] = make_cursor(next_position, next_offset) if next_position < len(notes) else ""
+            if len(json.dumps(result, ensure_ascii=False)) > 12000:
+                result["comments"].pop()
+                if not result["comments"]:
+                    raise ValueError("Comment metadata exceeds the 12000-character response limit")
+                result["next_cursor"] = previous_cursor
+                break
+            position, offset = next_position, next_offset
+        if hasattr(self.client, "validate_issue_snapshot"):
+            self.client.validate_issue_snapshot(issue)
+        return result
+
     def get_attachment(self, issue_id: int, file_id: int, include_content: bool = True) -> Dict[str, Any]:
         data = self.client.get_issue_file(int(issue_id), int(file_id))
         meta = self.normalize_attachment_meta(int(issue_id), data, scope="unknown", note_id=0)
@@ -1174,6 +1240,26 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
                 result["freshness"] = {"mantis": runtime.index.remote_status,
                     "last_verified": verified["verified"]}
             return ticket_tool_result(result, image_ocr=image_ocr)
+        except Exception as exc:
+            return error_tool_result(exc)
+
+    @mcp.tool(output_schema=output_schema)
+    @worker_tool
+    def read_comments(url_or_id: str, note_id: int = 0, direction: str = "newest",
+                      limit: int = 10, cursor: str = "") -> Any:
+        """Read up to 10 comments (max 20) or one note_id; use next_cursor for pages and long text."""
+        try:
+            issue_id = extract_issue_id(url_or_id)
+            if runtime.index:
+                runtime.audit(actor_name(), "read_comments", issue_id)
+            result = service.read_comments(url_or_id, note_id, direction, limit, cursor)
+            if runtime.index and result.get("ok"):
+                verified = runtime.index.state.one("SELECT verified FROM issues WHERE id=?", (issue_id,))
+                if not verified:
+                    raise MantisApiError("Issue access changed during reading; retry a fresh read")
+                result["freshness"] = {"mantis": runtime.index.remote_status, "last_verified": verified["verified"]}
+            return ToolResult(content=[TextContent(type="text", text=f"Mantis comments: {len(result.get('comments', []))}; next page: {bool(result.get('next_cursor'))}. Results are in structuredContent.")],
+                              structured_content=result)
         except Exception as exc:
             return error_tool_result(exc)
 
