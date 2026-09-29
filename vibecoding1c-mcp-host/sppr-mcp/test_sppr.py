@@ -20,7 +20,7 @@ import numpy as np
 from sppr_core import (BUSINESS_FIELDS, IDENTITY, KINDS, LOOKUPS, Policy, Settings, SpprError,
                        fields_from, guid, key, navigation, rich_text)
 from sppr_embeddings import QueryCache, vector
-from sppr_odata import Collection, HttpStatusError, Schema, collect
+from sppr_odata import Collection, Http, HttpNetworkError, HttpStatusError, Schema, collect
 from sppr_service import Service
 from sppr_store import Store, atomic_json, writer_lock
 from sppr_worker import embed_pending
@@ -215,7 +215,8 @@ class SpprTests(unittest.TestCase):
 
     def publish(self, *, embed=True):
         previous, vectors = self.store.previous()
-        result = self.store.publish(self.collect(previous), self.policy, previous_vectors=vectors)
+        result = self.store.publish(self.collect(previous), self.policy,
+                                    previous_vectors=vectors, previous_objects=previous)
         if embed:
             try:
                 progress = self.embed()
@@ -1060,6 +1061,130 @@ class SpprTests(unittest.TestCase):
         self.embed(workers=4, batch_size=1)
         self.assertEqual(len(self.provider.calls), before)
 
+    def test_six_embedding_requests_overlap_and_continuous_task_has_bounded_run(self):
+        from collector import run
+        self.publish(embed=False)
+        barrier = threading.Barrier(6)
+        active = {"count": 0, "peak": 0, "entered": 0}
+        lock = threading.Lock()
+        def hook():
+            with lock:
+                active["entered"] += 1
+                active["count"] += 1
+                active["peak"] = max(active["peak"], active["count"])
+                first_wave = active["entered"] <= 6
+            if first_wave:
+                barrier.wait(timeout=5)
+            with lock:
+                active["count"] -= 1
+        self.provider.hook = hook
+        self.embed(workers=6, batch_size=1)
+        self.assertEqual(active["peak"], 6)
+        with patch("collector.embed_pending", return_value={}) as pending:
+            run(self.settings, {"api_key": "fixture"}, operation="embed-pending",
+                session_check=lambda: None, continuous=True)
+        self.assertEqual(pending.call_args.kwargs["max_seconds"], 11 * 3600)
+
+    def test_changed_cards_are_embedded_before_historic_backlog(self):
+        self.publish(embed=False)
+        previous, vectors = self.store.previous()
+        idea = key(IDEA, uuid(3))
+        self.source.data[idea].update(Описание="Новая приоритетная идея", DataVersion="v2")
+        self.store.publish(self.collect(previous), self.policy,
+                           previous_vectors=vectors, previous_objects=previous)
+        with self.store.reader() as (db, _):
+            target = db.execute("SELECT text FROM fragments WHERE object_id=? AND priority=1 ORDER BY id LIMIT 1",
+                                (idea,)).fetchone()[0]
+            old = db.execute("SELECT COUNT(*) FROM fragments WHERE priority=0").fetchone()[0]
+        self.assertGreater(old, 0)
+        self.embed(workers=1, batch_size=1)
+        self.assertEqual(self.provider.calls[0][0], target)
+
+    def test_network_batch_retry_preserves_progress_and_provider_metrics(self):
+        self.publish(embed=False)
+        calls = 0
+        def flaky():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise HttpNetworkError("fixture network reset")
+        self.provider.hook = flaky
+        result = self.embed(workers=1, batch_size=32)
+        self.assertTrue(result["semantic_complete"])
+        self.assertEqual(result["transient_failures"], 1)
+        self.assertGreaterEqual(result["provider_5m"]["http_attempts"], 2)
+        self.assertEqual(result["provider_5m"]["failed_batches"], 1)
+        self.assertEqual(result["provider_5m"]["saved_vectors"], result["saved_vectors"])
+
+    def test_rate_limit_cooldown_survives_scheduled_restart(self):
+        self.publish(embed=False)
+        def rate_limited():
+            raise HttpStatusError(429, retry_after=120)
+        self.provider.hook = rate_limited
+        deferred = self.embed(workers=1, max_seconds=1)
+        self.assertEqual(deferred["state"], "deferred")
+        self.assertEqual(len(self.provider.calls), 1)
+        self.assertGreater(deferred["retry_not_before"], time.time() + 100)
+        self.assertEqual(self.embed(workers=1, max_seconds=1)["state"], "deferred")
+        self.assertEqual(len(self.provider.calls), 1)
+        atomic_json(self.settings.state / "embed_attempt.json",
+                    {"generation": self.store.manifest()["generation"],
+                     "retry_not_before": time.time() - 1})
+        self.provider.hook = None
+        self.assertTrue(self.embed(workers=1)["semantic_complete"])
+
+    def test_query_http_uses_one_attempt_and_search_keeps_lexical_results(self):
+        from concurrent.futures import Future
+        from urllib.error import URLError
+        class Offline:
+            def open(self, *_args, **_kwargs):
+                raise URLError("fixture offline")
+        http = Http(timeout=1, attempts=1)
+        http.opener = Offline()
+        with patch("sppr_odata.time.sleep") as sleep:
+            with self.assertRaises(HttpNetworkError):
+                http.request("https://example.invalid/embeddings")
+        self.assertEqual(http.requests, 1)
+        sleep.assert_not_called()
+        self.publish()
+        class OfflineQuery:
+            def embed(self, _texts):
+                raise HttpNetworkError("fixture network reset")
+        result = Service(self.settings, OfflineQuery()).search("планирования")
+        self.assertEqual(result["search_mode"], "lexical_exact")
+        self.assertTrue(result["hits"])
+        self.assertIn("fixture network reset", result["degradation"])
+        bounded = QueryCache(replace(self.settings, query_timeout=1), FakeEmbeddings())
+        bounded.pending[(self.settings.profile, "same query")] = Future()
+        begun = time.monotonic()
+        with self.assertRaisesRegex(SpprError, "timed out"):
+            bounded.get("same query")
+        self.assertLess(time.monotonic() - begun, 3)
+
+    def test_search_reads_published_vectors_while_worker_waits_for_provider(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.publish()
+        idea = key(IDEA, uuid(3))
+        self.source.data[idea].update(Описание="Новая идея во время поиска", DataVersion="v2")
+        self.publish(embed=False)
+        entered, release = threading.Event(), threading.Event()
+        def waiting():
+            entered.set()
+            self.assertTrue(release.wait(5))
+        self.provider.hook = waiting
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.embed, workers=1, batch_size=1)
+            try:
+                self.assertTrue(entered.wait(5))
+                begun = time.monotonic()
+                result = Service(self.settings, FakeEmbeddings()).search("Карточка")
+                self.assertLess(time.monotonic() - begun, 2)
+                self.assertTrue(result["hits"])
+                self.assertEqual(result["search_mode"], "hybrid")
+            finally:
+                release.set()
+            self.assertTrue(pending.result(timeout=15)["semantic_complete"])
+
     def test_unpublished_journal_batches_do_not_mutate_reader_snapshot(self):
         self.publish(embed=False)
         with self.store.reader(live_vectors=True) as (db, _):
@@ -1069,6 +1194,8 @@ class SpprTests(unittest.TestCase):
         self.store.vectors.insert(self.settings.profile, [(pending[0]["hash"], value)])
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 0)
         first = self.store.vectors.publish_snapshot(force=True)
+        self.assertGreater(first["snapshot_bytes"], 0)
+        self.assertGreaterEqual(first["elapsed_seconds"], 0)
         first_file = self.settings.state / ("vectors-" + first["generation"] + ".sqlite")
         first_size = first_file.stat().st_size
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 1)

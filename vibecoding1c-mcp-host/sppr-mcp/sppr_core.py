@@ -130,6 +130,8 @@ class Settings:
     cache_size: int = 256
     page_size: int = 100
     timeout: int = 30
+    embedding_timeout: int = 120
+    query_timeout: int = 25
     max_response_bytes: int = 16 * 1024 * 1024
     max_objects: int = 100000
     chunk_chars: int = 1800
@@ -170,9 +172,9 @@ class Settings:
             raise SpprError("Use the approved Qwen3 embedding profile and verified dimension.")
         if not 1 <= self.cache_size <= 10000 or not 1 <= self.page_size <= 1000 or not 256 <= self.chunk_chars <= 8000:
             raise SpprError("Cache, page or chunk limits are outside supported bounds.")
-        if self.generations_to_keep < 2 or self.timeout < 1 or self.max_objects < 1:
+        if self.generations_to_keep < 2 or self.timeout < 1 or not 1 <= self.embedding_timeout <= 300 or not 1 <= self.query_timeout <= 60 or self.max_objects < 1:
             raise SpprError("Keep at least two generations and use positive runtime limits.")
-        if not 1 <= self.embedding_workers <= 4 or not 1 <= self.embedding_batch_size <= 32 or not 30 <= self.embedding_run_seconds <= 600:
+        if not 1 <= self.embedding_workers <= 6 or not 1 <= self.embedding_batch_size <= 32 or not 30 <= self.embedding_run_seconds <= 600:
             raise SpprError("Embedding worker limits are outside supported bounds.")
         if not 1 <= self.embedding_interval_minutes <= 60:
             raise SpprError("Embedding schedule interval must be 1..60 minutes.")

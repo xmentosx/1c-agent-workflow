@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from collections import OrderedDict
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from threading import Lock
 
 import numpy as np
@@ -24,10 +24,11 @@ def vector(values, dimension):
 
 
 class Embeddings:
-    def __init__(self, settings, api_key, before=lambda: None):
+    def __init__(self, settings, api_key, before=lambda: None, *, timeout=None, attempts=3):
         self.settings = settings
         self.api_key = api_key
-        self.http = Http(settings.timeout, settings.max_response_bytes, before)
+        self.http = Http(settings.embedding_timeout if timeout is None else timeout,
+                         settings.max_response_bytes, before, attempts=attempts)
         self.usage = {"requests": 0, "tokens": 0}
 
     def embed(self, texts):
@@ -37,8 +38,10 @@ class Embeddings:
         if self.settings.dimension != 4096:
             body["dimensions"] = self.settings.dimension
         headers = {"Authorization": "Bearer " + self.api_key, "Content-Type": "application/json"}
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        self.request_bytes = len(payload)
         raw = self.http.request(self.settings.api_base.rstrip("/") + "/embeddings", headers=headers,
-                                body=json.dumps(body, ensure_ascii=False).encode("utf-8"))
+                                body=payload)
         self.usage["requests"] += 1
         try:
             data = json.loads(raw)
@@ -71,7 +74,10 @@ class QueryCache:
                 future = self.pending[marker] = Future()
         # Coalesce identical misses without blocking other keys or ready vectors.
         if not owner:
-            return future.result(), True
+            try:
+                return future.result(timeout=self.settings.query_timeout + 1), True
+            except FutureTimeout:
+                raise SpprError("Query embedding timed out; lexical results remain available.") from None
         try:
             value = self.provider.embed([self.settings.query_instruction + query])[0]
         except BaseException as exc:

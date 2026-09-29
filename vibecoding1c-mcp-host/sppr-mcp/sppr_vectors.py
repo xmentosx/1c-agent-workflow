@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -101,13 +102,16 @@ class VectorJournal:
             generation = uuid4().hex
             staging = self.path.parent / ("vectors-" + generation + ".staging")
             completed = self.path.parent / ("vectors-" + generation + ".sqlite")
+            begun = time.monotonic()
             try:
                 with closing(sqlite3.connect(staging)) as target:
                     source.backup(target)
                     if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                         raise SpprError("Vector snapshot integrity failed; previous vectors remain active.")
                 os.replace(staging, completed)
-                result = {"generation": generation, "count": count, "published_at": now()}
+                result = {"generation": generation, "count": count, "published_at": now(),
+                          "snapshot_bytes": completed.stat().st_size,
+                          "elapsed_seconds": round(time.monotonic() - begun, 3)}
                 atomic_json(self.active, result)
                 self.prune_snapshots(generation)
                 return result

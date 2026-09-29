@@ -98,19 +98,21 @@ class Store:
     def semantic_progress(self, db, manifest):
         return vector_coverage(db, manifest["profile"])
 
-    def pending_page(self, db, policy, profile, after_id, limit=256):
+    def pending_page(self, db, policy, profile, after_id, limit=256, priority=None):
         if not policy.projects:
             return []
         placeholders = ",".join("?" for _ in policy.projects)
+        priority_clause = " AND f.priority=1" if priority == 1 else ""
         return db.execute(f"""
             SELECT f.id,f.hash,f.text FROM fragments f
             WHERE f.id>? AND f.vector IS NULL
+              {priority_clause}
               AND NOT EXISTS(SELECT 1 FROM vec.vectors v WHERE v.profile=? AND v.hash=f.hash)
               AND EXISTS(SELECT 1 FROM roots r WHERE r.object_id=f.object_id AND r.project IN ({placeholders}))
             ORDER BY f.id LIMIT ?
         """, (after_id, profile, *sorted(policy.projects), limit)).fetchall()
 
-    def publish(self, collection, policy, previous_vectors=None, before=lambda: None):
+    def publish(self, collection, policy, previous_vectors=None, previous_objects=None, before=lambda: None):
         before()
         self.state.mkdir(parents=True, exist_ok=True)
         # A one-time legacy import is committed before the new lexical snapshot.
@@ -126,7 +128,7 @@ class Store:
         manifest = {"generation": generation, "source": self.settings.source_id,
                     "profile": self.settings.profile, "observed_start": collection.started,
                     "observed_end": collection.finished, "published_at": now(), "coverage": coverage,
-                    "mode": "nightly_reconciliation", "vector_storage": "journal",
+                    "mode": "nightly_reconciliation", "vector_storage": "journal", "priority_schema": 1,
                     "objects": len(collection.objects),
                     "edges": len(collection.edges), "policy": policy.token}
         try:
@@ -136,13 +138,16 @@ class Store:
                 CREATE TABLE edges(id TEXT PRIMARY KEY,source TEXT,target TEXT,relation TEXT,data TEXT NOT NULL);
                 CREATE INDEX edges_source ON edges(source); CREATE INDEX edges_target ON edges(target);
                 CREATE TABLE fragments(id INTEGER PRIMARY KEY,object_id TEXT,edge_id TEXT,field TEXT,
-                    offset INTEGER,text TEXT,hash TEXT,vector BLOB);
+                    offset INTEGER,text TEXT,hash TEXT,vector BLOB,priority INTEGER NOT NULL);
                 CREATE INDEX fragments_object ON fragments(object_id);
+                CREATE INDEX fragments_edge ON fragments(edge_id);
+                CREATE INDEX fragments_priority ON fragments(priority DESC,id);
                 CREATE VIRTUAL TABLE search_text USING fts5(text,tokenize='unicode61');
                 CREATE TABLE metadata(data TEXT NOT NULL);
             """)
             self.vectors.attach_reader(db)
             docs = []
+            previous_objects = previous_objects or {}
             for obj in collection.objects.values():
                 if not policy.permits(obj["roots"]):
                     raise SpprError("Object has no allowed provenance; discard collection and review scope.")
@@ -150,18 +155,24 @@ class Store:
                 db.executemany("INSERT INTO roots VALUES(?,?)", [(obj["id"], p) for p in obj["roots"]])
                 fields = dict(obj["fields"])
                 fields["title"] = {"state": "value", "value": obj["title"]}
-                docs.extend((obj["id"], None, part) for part in fragments(fields, self.settings.chunk_chars))
+                old = previous_objects.get(obj["id"], {})
+                fresh = int(old.get("version") != obj["version"] or old.get("fields") != obj["fields"] or
+                            old.get("roots") != obj["roots"])
+                docs.extend((obj["id"], None, part, fresh) for part in fragments(fields, self.settings.chunk_chars))
             for edge in collection.edges:
                 db.execute("INSERT INTO edges VALUES(?,?,?,?,?)", (edge["id"], edge["source"], edge["target"], edge["relation"], canonical(edge)))
-                docs.extend((edge["source"], edge["id"], part) for part in fragments(edge["fields"], self.settings.chunk_chars))
-            for index, (object_id, edge_id, part) in enumerate(docs):
+                source = collection.objects.get(edge["source"], {})
+                old = previous_objects.get(edge["source"], {})
+                fresh = int(old.get("version") != source.get("version") or old.get("fields") != source.get("fields"))
+                docs.extend((edge["source"], edge["id"], part, fresh) for part in fragments(edge["fields"], self.settings.chunk_chars))
+            for index, (object_id, edge_id, part, fresh) in enumerate(docs):
                 if index % 256 == 0:
                     before()
                     policy.unchanged(self.settings.policy)
                 text = part["text"]
                 hashed = digest([self.settings.profile, text])
-                cursor = db.execute("INSERT INTO fragments(object_id,edge_id,field,offset,text,hash,vector) VALUES(?,?,?,?,?,?,?)",
-                                    (object_id, edge_id, part["field"], part["offset"], text, hashed, None))
+                cursor = db.execute("INSERT INTO fragments(object_id,edge_id,field,offset,text,hash,vector,priority) VALUES(?,?,?,?,?,?,?,?)",
+                                    (object_id, edge_id, part["field"], part["offset"], text, hashed, None, fresh))
                 db.execute("INSERT INTO search_text(rowid,text) VALUES(?,?)", (cursor.lastrowid, text))
                 coverage["fragments"] += 1
             coverage["vectors"] = vector_coverage(db, self.settings.profile)["vectors"]

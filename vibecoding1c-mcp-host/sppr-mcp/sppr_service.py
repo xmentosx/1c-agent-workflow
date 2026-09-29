@@ -97,7 +97,10 @@ class Service:
             # when its indexed idea is selected. Preserve row provenance in hits.
             row_owners = {}
             if object_ids is not None:
-                for row in db.execute("SELECT id,source,target FROM edges ORDER BY id"):
+                placeholders = ",".join("?" for _ in candidates)
+                edges = (db.execute("SELECT id,source,target FROM edges WHERE target IN (" + placeholders + ") ORDER BY id",
+                                    tuple(candidates)) if candidates else ())
+                for row in edges:
                     if row["source"] in objects and row["target"] in candidates:
                         row_owners[row["id"]] = row["target"]
             def owner(row):
@@ -132,10 +135,20 @@ class Service:
                     if rank >= 500:
                         break
             mode, cached, degradation = "lexical_exact", False, None
+            scope_sql, scope_args = "", []
+            if 0 < len(candidates) + len(row_owners) <= 400:
+                parts = []
+                if candidates:
+                    parts.append("f.object_id IN (" + ",".join("?" for _ in candidates) + ")")
+                    scope_args.extend(candidates)
+                if row_owners:
+                    parts.append("f.edge_id IN (" + ",".join("?" for _ in row_owners) + ")")
+                    scope_args.extend(row_owners)
+                scope_sql = " AND (" + " OR ".join(parts) + ")"
             has_vectors = db.execute("""
                 SELECT 1 FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
-                WHERE f.vector IS NOT NULL OR v.vector IS NOT NULL LIMIT 1
-            """, (manifest["profile"],)).fetchone() is not None
+                WHERE (f.vector IS NOT NULL OR v.vector IS NOT NULL)""" + scope_sql + " LIMIT 1",
+                                     (manifest["profile"], *scope_args)).fetchone() is not None
             if manifest["profile"] == self.settings.profile and candidates and has_vectors:
                 try:
                     qv, cached = self.queries.get(query)
@@ -143,8 +156,8 @@ class Service:
                     cursor = db.execute("""
                         SELECT f.*,COALESCE(v.vector,f.vector) AS active_vector
                         FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
-                        WHERE f.vector IS NOT NULL OR v.vector IS NOT NULL ORDER BY f.id
-                    """, (manifest["profile"],))
+                        WHERE (f.vector IS NOT NULL OR v.vector IS NOT NULL)""" + scope_sql + " ORDER BY f.id",
+                                        (manifest["profile"], *scope_args))
                     while rows := cursor.fetchmany(256):
                         rows = [r for r in rows if owner(r) is not None]
                         if not rows:

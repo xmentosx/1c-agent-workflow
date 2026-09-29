@@ -74,7 +74,8 @@ def create_mcp(service):
 
 def main():
     settings = Settings.load(os.environ["SPPR_CONFIG"])
-    provider = Embeddings(settings, os.environ.get("SPPR_EMBEDDING_KEY", ""))
+    provider = Embeddings(settings, os.environ.get("SPPR_EMBEDDING_KEY", ""),
+                          timeout=settings.query_timeout, attempts=1)
     create_mcp(Service(settings, provider)).run(transport="http", host="0.0.0.0", port=8000)
 
 

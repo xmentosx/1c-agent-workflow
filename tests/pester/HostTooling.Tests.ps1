@@ -1343,7 +1343,7 @@ services:
                 $Execute | Should -Be 'C:\СППР runtime\python.exe'
                 $Argument | Should -Match ([regex]::Escape('"C:\СППР пример\collector.json"'))
                 $Argument | Should -Not -Match 'outside-window'
-                return @{ owned = $true }
+                return @{ owned = $true; argument = $Argument }
             }
             function New-ScheduledTaskTrigger { param([switch]$Daily,[switch]$Once,[switch]$AtLogOn,$At,$User,$RepetitionInterval); return @{ at = $At; daily = $Daily.IsPresent; once = $Once.IsPresent; logon = $AtLogOn.IsPresent; interval = $RepetitionInterval } }
             function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel); $LogonType | Should -Be 'Interactive'; $RunLevel | Should -Be 'Limited'; return @{ user = $UserId } }
@@ -1351,17 +1351,20 @@ services:
                 param($MultipleInstances,$ExecutionTimeLimit,[switch]$Hidden,[switch]$StartWhenAvailable)
                 $MultipleInstances | Should -Be 'IgnoreNew'
                 $StartWhenAvailable | Should -BeFalse
-                return @{ bounded = $true }
+                return @{ bounded = $true; executionLimit = $ExecutionTimeLimit }
             }
             function Register-ScheduledTask {
                 param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force)
                 $TaskName | Should -BeIn @('fixture-sppr','fixture-sppr-embeddings')
                 if ($TaskName -eq 'fixture-sppr-embeddings') {
+                    $Action.argument | Should -Match '--continuous'
+                    $Settings.executionLimit.TotalHours | Should -Be 12
                     @($Trigger).Count | Should -Be 2
                     @($Trigger | Where-Object logon).Count | Should -Be 1
                     @($Trigger | Where-Object once).Count | Should -Be 1
                     $Description | Should -Be 'owned embeddings fixture'
                 } else {
+                    $Action.argument | Should -Not -Match '--continuous'
                     $Description | Should -Be 'owned fixture'
                     $Trigger.daily | Should -BeTrue
                 }
