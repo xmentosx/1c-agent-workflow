@@ -17,7 +17,7 @@ import time
 import uuid
 from array import array
 from collections import OrderedDict, deque
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
 from dataclasses import replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -412,6 +412,7 @@ class Index:
         self.worker = None
         self.work_lock = threading.Lock()
         self.search_refresh_slots = threading.BoundedSemaphore(SEARCH_REFRESH_WORKERS)
+        self.search_semantic_slots = threading.BoundedSemaphore(2)
         self.search_cursor_lock = threading.Lock()
         self.search_cursors = OrderedDict()
         self.embedding_worker = None
@@ -1281,16 +1282,38 @@ class Index:
                 if len(ranks) >= SEARCH_CANDIDATE_LIMIT:
                     query_semantics = "skipped:broad_candidate_window; narrow the query or filters"
                     query_cache = "not_requested"
+                elif not self.search_semantic_slots.acquire(blocking=False):
+                    query_semantics = "busy:semantic_search_capacity"
                 else:
+                    def semantic_matches():
+                        try:
+                            vector, cache = self.query_vector(query)
+                            matches = []
+                            for rank, key in enumerate(self.vectors.query(vector)):
+                                row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
+                                if row:
+                                    matches.append((row["id"], rank))
+                            return matches, cache
+                        finally:
+                            self.search_semantic_slots.release()
+                    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mantis-search-semantic")
+                    submitted = False
                     try:
-                        vector, query_cache = self.query_vector(query)
-                        for rank, key in enumerate(self.vectors.query(vector)):
-                            row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
-                            if row:
-                                ranks[row["id"]] = ranks.get(row["id"], 0) + 1 / (60 + rank)
+                        future = pool.submit(semantic_matches)
+                        submitted = True
+                        matches, query_cache = future.result(
+                            timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS)
+                        for key, rank in matches:
+                            ranks[key] = ranks.get(key, 0) + 1 / (60 + rank)
                         query_semantics = "available"
+                    except FutureTimeoutError:
+                        query_semantics = "timeout:interactive_semantic_budget"
                     except Exception as exc:
                         query_semantics = str(exc)[:180]
+                    finally:
+                        if not submitted:
+                            self.search_semantic_slots.release()
+                        pool.shutdown(wait=False, cancel_futures=True)
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1425,12 +1448,18 @@ class Index:
                     return False
                 finally:
                     self.search_refresh_slots.release()
-            with ThreadPoolExecutor(max_workers=min(SEARCH_REFRESH_WORKERS, len(page_ids)),
-                                    thread_name_prefix="mantis-search-access") as pool:
-                futures = [pool.submit(probe, issue_id) for issue_id in page_ids]
-                for issue_id, future in zip(page_ids, futures):
+            pool = ThreadPoolExecutor(max_workers=min(SEARCH_REFRESH_WORKERS, len(page_ids)),
+                                      thread_name_prefix="mantis-search-access")
+            try:
+                futures = {pool.submit(probe, issue_id): issue_id for issue_id in page_ids}
+                completed, _ = wait(futures, timeout=SEARCH_REFRESH_BUDGET_SECONDS)
+                for future in completed:
                     if future.result():
-                        checked.add(issue_id)
+                        checked.add(futures[future])
+            finally:
+                # Slow Mantis reads may continue to verify/cache their issues,
+                # but cannot hold this response past its interactive budget.
+                pool.shutdown(wait=False, cancel_futures=True)
         else:
             for issue_id in page_ids:
                 if time.monotonic() > refresh_deadline:

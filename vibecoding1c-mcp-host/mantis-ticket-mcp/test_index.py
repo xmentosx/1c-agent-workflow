@@ -1674,6 +1674,55 @@ class IndexTests(unittest.TestCase):
         self.assertIn("broad_candidate_window", result["semantic_query"])
         self.assertEqual(result["query_embedding_cache"], "not_requested")
 
+    def test_slow_semantic_query_falls_back_within_interactive_budget(self):
+        self.index.refresh(1)
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        self.index.embeddings = SimpleNamespace()
+        release, finished = threading.Event(), threading.Event()
+        def slow_query(query):
+            try:
+                release.wait(1)
+                return [0], "miss"
+            finally:
+                finished.set()
+        try:
+            with patch.object(self.index, "query_vector", side_effect=slow_query), \
+                 patch("mantis_index.QUERY_EMBEDDING_TIMEOUT_SECONDS", 0.03):
+                started = time.monotonic()
+                result = self.index.search("решения", semantic=True, limit=1)
+                elapsed = time.monotonic() - started
+            self.assertTrue(result["ok"])
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual(result["semantic_query"], "timeout:interactive_semantic_budget")
+            self.assertEqual(result["query_embedding_cache"], "unavailable")
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+
+    def test_slow_access_probe_does_not_hold_search_response(self):
+        from server import Settings
+        self.state.put_issue(ticket(1, text="needle"))
+        self.index.api = Api(Settings("https://mantis.test", "fixture", self.root / "files"))
+        release, finished = threading.Event(), threading.Event()
+        def slow_refresh(issue_id, **kwargs):
+            try:
+                release.wait(1)
+                return ticket(issue_id, text="needle"), "", False
+            finally:
+                finished.set()
+        try:
+            with patch.object(self.index, "refresh", side_effect=slow_refresh), \
+                 patch("mantis_index.SEARCH_REFRESH_BUDGET_SECONDS", 0.03):
+                started = time.monotonic()
+                result = self.index.search("needle", semantic=False, limit=1)
+                elapsed = time.monotonic() - started
+            self.assertTrue(result["ok"])
+            self.assertLess(elapsed, 0.5)
+            self.assertEqual(result["issues"][0]["access_check"], "cached")
+        finally:
+            release.set()
+            self.assertTrue(finished.wait(1))
+
     def test_relevance_pages_read_only_the_needed_broad_candidates(self):
         for issue_id in range(1, 651):
             self.state.put_issue(ticket(issue_id, text="needle"))
