@@ -314,6 +314,34 @@ class IndexTests(unittest.TestCase):
         self.index.refresh(1)
         self.assertEqual(self.search("UniqueIdentifier234")["issues"][0]["id"], 1)
 
+    def test_all_query_terms_rank_a_relevant_issue_before_single_word_hits(self):
+        self.api.items = {
+            1: ticket(1, text="Excel " * 80),
+            2: ticket(2, text="Загрузка данных из Excel"),
+            3: ticket(3, text="Загрузка данных из файла"),
+        }
+        for issue in self.api.items.values():
+            self.state.put_issue(issue)
+        result = self.search("загрузка excel", limit=3)
+        self.assertEqual([item["id"] for item in result["issues"]], [2, 1, 3])
+
+    def test_semantic_fragment_lookup_uses_search_reader_during_index_writes(self):
+        self.state.put_issue(ticket(1))
+        self.state.run("UPDATE fragments SET vector_id='semantic-key',vector_version=version")
+        self.index.vectors = SimpleNamespace(query=lambda vector: ["semantic-key"], purge=lambda: None)
+        self.index.embeddings = SimpleNamespace()
+        original = self.state.one
+        def guarded(sql, args=()):
+            if "SELECT id FROM fragments WHERE vector_id=?" in sql:
+                raise AssertionError("Semantic lookups must not contend for the writer connection")
+            return original(sql, args)
+        with patch.object(self.index, "query_vector", return_value=([0.0], "hit")), \
+             patch.object(self.state, "one", side_effect=guarded):
+            result = self.index.search("unrelated phrase", semantic=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["semantic_query"], "available")
+        self.assertEqual(result["issues"][0]["id"], 1)
+
     def test_broad_and_empty_search_are_paged_under_the_output_budget(self):
         for number in range(1, 26):
             issue = ticket(number, text="совпадение " * 1000)
@@ -1706,6 +1734,9 @@ class IndexTests(unittest.TestCase):
         finally:
             release.set()
             self.assertTrue(finished.wait(1))
+            for thread in threading.enumerate():
+                if thread.name.startswith("mantis-search-semantic"):
+                    thread.join(timeout=1)
 
     def test_slow_access_probe_does_not_hold_search_response(self):
         from server import Settings

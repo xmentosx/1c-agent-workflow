@@ -1280,8 +1280,14 @@ class Index:
         tokens = re.findall(r"\w+", query, re.UNICODE)
         if tokens:
             expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+            if len(tokens) > 1:
+                all_terms = " AND ".join('"' + t.replace('"', '""') + '"' for t in tokens)
+                for rank, row in enumerate(reader.all(
+                        "SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?",
+                        (all_terms, SEARCH_CANDIDATE_LIMIT))):
+                    ranks[row["id"]] = 2 + 1 / (60 + rank)
             for rank, row in enumerate(reader.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
-                ranks[row["id"]] = 1 / (60 + rank)
+                ranks.setdefault(row["id"], 1 / (60 + rank))
         if query.strip():
             for row in reader.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?", (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
@@ -1308,12 +1314,23 @@ class Index:
                 else:
                     def semantic_matches():
                         try:
+                            started = time.monotonic()
                             vector, cache = self.query_vector(query)
-                            matches = []
-                            for rank, key in enumerate(self.vectors.query(vector)):
-                                row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
-                                if row:
-                                    matches.append((row["id"], rank))
+                            embedded = time.monotonic()
+                            keys = self.vectors.query(vector)
+                            queried = time.monotonic()
+                            with SearchReader(self.state) as semantic_reader:
+                                holders = ",".join("?" for _ in keys)
+                                found = {row["vector_id"]: row["id"] for row in semantic_reader.all(
+                                    f"SELECT vector_id,id FROM fragments WHERE vector_id IN ({holders}) "
+                                    "AND version=vector_version", keys)} if keys else {}
+                            matches = [(found[key], rank) for rank, key in enumerate(keys) if key in found]
+                            elapsed = time.monotonic() - started
+                            if elapsed > 10:
+                                logging.getLogger(__name__).warning(
+                                    "Mantis semantic latency: embedding=%.3fs vector_query=%.3fs "
+                                    "fragment_lookup=%.3fs",
+                                    embedded - started, queried - embedded, time.monotonic() - queried)
                             return matches, cache
                         finally:
                             self.search_semantic_slots.release()
