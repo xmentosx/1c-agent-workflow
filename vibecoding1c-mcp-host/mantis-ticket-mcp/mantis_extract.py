@@ -137,6 +137,9 @@ def extract_bytes(filename, data):
 
 
 def main():
+    # openpyxl optionally imports NumPy; keep its BLAS startup inside the parser limit.
+    for variable in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ[variable] = "1"
     if os.name == "posix":
         import resource
         resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024, 512 * 1024 * 1024))

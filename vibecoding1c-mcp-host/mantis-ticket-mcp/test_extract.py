@@ -52,7 +52,7 @@ class ExtractionTests(unittest.TestCase):
             with self.subTest(name=name):
                 child = subprocess.run([sys.executable, "-m", "mantis_extract", name], input=data,
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20, cwd=Path(__file__).parent,
-                    env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+                    env={**os.environ, "PYTHONIOENCODING": "utf-8", "OPENBLAS_NUM_THREADS": "12"})
                 self.assertEqual(child.returncode, 0, child.stderr.decode(errors="replace"))
                 result = json.loads(child.stdout.decode("utf-8"))
                 self.assertEqual(result["status"], "ready")
