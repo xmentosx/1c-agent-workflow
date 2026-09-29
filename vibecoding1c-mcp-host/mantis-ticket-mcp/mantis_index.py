@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -16,9 +18,12 @@ import uuid
 from array import array
 from collections import OrderedDict, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from queue import Empty, Full, LifoQueue
+from urllib.parse import urlsplit
+from urllib.request import getproxies, proxy_bypass
 
 from mantis_api import ApiError
 from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link, file_descriptors
@@ -36,8 +41,8 @@ MAX_EMBEDDING_RESPONSE_BYTES = 16 << 20
 class EmbeddingError(RuntimeError):
     """A safe provider failure category; the reservation remains conservative."""
 
-    def __init__(self, category, status=0):
-        self.category, self.status = category, status
+    def __init__(self, category, status=0, retry_after=0):
+        self.category, self.status, self.retry_after = category, status, retry_after
         super().__init__(f"Embedding {category}" + (f" (HTTP {status})" if status else ""))
 
 
@@ -181,54 +186,191 @@ class Vectors:
 
 
 class Embeddings:
-    def __init__(self, state, key, cap=5.0, max_price=0.04, timeout=20):
-        if not math.isfinite(cap) or cap < 0 or not math.isfinite(max_price) or max_price <= 0:
-            raise ValueError("Embedding budget and price must be finite non-negative amounts (price > 0)")
-        self.state, self.key, self.cap, self.max_price, self.timeout = state, key, cap, max_price, timeout
+    def __init__(self, state, key, cap=5.0, max_price=0.04, timeout=120, connect_timeout=5,
+                 retries=2, connection_factory=None):
+        if (not math.isfinite(cap) or cap < 0 or not math.isfinite(max_price) or max_price <= 0 or
+                not math.isfinite(timeout) or timeout <= 0 or not math.isfinite(connect_timeout) or
+                connect_timeout <= 0 or retries < 0 or retries > 5):
+            raise ValueError("Invalid embedding budget, price, timeout or retry count")
+        self.state, self.key, self.cap, self.max_price = state, key, cap, max_price
+        self.timeout, self.connect_timeout, self.retries = timeout, connect_timeout, retries
+        self.connection_factory = connection_factory or self._new_connection
+        self.connections = LifoQueue(maxsize=16)
+        self.request_lock = threading.Lock()
+        self.request_events = deque(maxlen=2048)
+
+    def close(self):
+        while True:
+            try:
+                self.connections.get_nowait().close()
+            except Empty:
+                return
+
+    def _new_connection(self):
+        host = "openrouter.ai"
+        proxy = getproxies().get("https")
+        if proxy and not proxy_bypass(host):
+            parsed = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise OSError("Unsupported HTTPS proxy configuration")
+            connection = http.client.HTTPSConnection(parsed.hostname,
+                                                     parsed.port or (443 if parsed.scheme == "https" else 80),
+                                                     timeout=self.connect_timeout)
+            tunnel_headers = {}
+            if parsed.username is not None:
+                credentials = f"{parsed.username}:{parsed.password or ''}".encode("utf-8")
+                tunnel_headers["Proxy-Authorization"] = "Basic " + base64.b64encode(credentials).decode("ascii")
+            connection.set_tunnel(host, 443, headers=tunnel_headers)
+            return connection
+        return http.client.HTTPSConnection(host, timeout=self.connect_timeout)
+
+    def _borrow_connection(self):
+        try:
+            return self.connections.get_nowait()
+        except Empty:
+            return self.connection_factory()
+
+    def _release_connection(self, connection):
+        try:
+            self.connections.put_nowait(connection)
+        except Full:
+            connection.close()
+
+    @staticmethod
+    def _retry_after(value):
+        if not value:
+            return 0
+        try:
+            seconds = float(value)
+            return max(0, seconds) if math.isfinite(seconds) else 0
+        except (TypeError, ValueError):
+            try:
+                return max(0, (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+    @staticmethod
+    def _category(status):
+        return {401: "authentication", 402: "payment", 403: "permission", 408: "timeout",
+                429: "rate_limited"}.get(
+            status, "provider_unavailable" if status >= 500 else "provider_rejected")
+
+    @staticmethod
+    def _network_cause(exc):
+        current, seen = exc, set()
+        for _ in range(8):
+            cause = getattr(current, "__cause__", None)
+            if cause is None or id(cause) in seen:
+                break
+            seen.add(id(cause))
+            current = cause
+        errno = current.errno if isinstance(current, OSError) and isinstance(current.errno, int) else None
+        return type(current).__name__, errno
+
+    def _record(self, started, request_bytes, response_bytes, attempt, category, status=0,
+                error_type="", cause_type="", os_errno=None):
+        event = {"at": self.state.clock(), "seconds": round(time.monotonic() - started, 3),
+                 "request_bytes": request_bytes, "response_bytes": response_bytes,
+                 "attempt": attempt, "category": category, "http_status": status,
+                 "error_type": error_type, "cause_type": cause_type, "os_errno": os_errno}
+        with self.request_lock:
+            self.request_events.append(event)
+
+    def diagnostics(self):
+        with self.request_lock:
+            cutoff = self.state.clock() - 300
+            while self.request_events and self.request_events[0]["at"] < cutoff:
+                self.request_events.popleft()
+            events = list(self.request_events)
+        durations = sorted(item["seconds"] for item in events)
+        sizes = sorted(item["request_bytes"] for item in events)
+        failures = {}
+        for item in events:
+            if item["category"] != "ok":
+                failures[item["category"]] = failures.get(item["category"], 0) + 1
+        def percentile(values, fraction):
+            return values[int((len(values) - 1) * fraction)] if values else None
+        return {"attempts_5m": len(events), "successes_5m": len(events) - sum(failures.values()),
+                "failures_5m": failures, "request_bytes_p50": percentile(sizes, 0.5),
+                "request_bytes_p95": percentile(sizes, 0.95),
+                "seconds_p50": percentile(durations, 0.5), "seconds_p95": percentile(durations, 0.95),
+                "last_attempt": dict(events[-1]) if events else None}
 
     def embed(self, texts):
         if not self.key:
             raise EmbeddingError("not_configured")
         # UTF-8 byte count is a conservative input-token bound for this tokenizer.
         reserve = (sum(len(text.encode("utf-8")) + 32 for text in texts)) * self.max_price / 1_000_000
-        try:
-            charge = self.state.reserve(reserve, self.cap)
-        except RuntimeError as exc:
-            raise EmbeddingError("budget") from exc
         body = {"model": "qwen/qwen3-embedding-8b", "input": texts, "dimensions": 4096,
                 "encoding_format": "float", "provider": {"max_price": {"prompt": self.max_price}}}
-        request = Request("https://openrouter.ai/api/v1/embeddings", encode(body).encode("utf-8"),
-                          {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"}, method="POST")
-        try:
-            with urlopen(request, timeout=self.timeout) as response:
+        request_bytes = encode(body).encode("utf-8")
+        headers = {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"}
+        for attempt in range(1, self.retries + 2):
+            # Every network attempt may be billed even when its response is lost.
+            try:
+                charge = self.state.reserve(reserve, self.cap)
+            except RuntimeError as exc:
+                raise EmbeddingError("budget") from exc
+            started, response_bytes, status = time.monotonic(), 0, 0
+            connection = None
+            try:
+                connection = self._borrow_connection()
+                if connection.sock is None:
+                    connection.connect()
+                connection.sock.settimeout(30)
+                connection.request("POST", "/api/v1/embeddings", body=request_bytes, headers=headers)
+                connection.sock.settimeout(self.timeout)
+                response = connection.getresponse()
+                status = response.status
+                if status >= 400:
+                    retry_after = self._retry_after(response.getheader("Retry-After"))
+                    raise EmbeddingError(self._category(status), status, retry_after)
                 payload = response.read(MAX_EMBEDDING_RESPONSE_BYTES + 1)
-            if len(payload) > MAX_EMBEDDING_RESPONSE_BYTES:
-                raise ValueError("Embedding response exceeds its size limit")
-            data = json.loads(payload)
-            rows = sorted(data["data"], key=lambda r: r["index"])
-            if [r["index"] for r in rows] != list(range(len(texts))):
-                raise ValueError("Incomplete embeddings response")
-            vectors = [r["embedding"] for r in rows]
-            if any(len(v) != 4096 or not all(math.isfinite(x) for x in v) for v in vectors):
-                raise ValueError("Invalid embedding vector")
-            cost = data.get("usage", {}).get("cost")
-            if cost is not None and (not math.isfinite(float(cost)) or float(cost) < 0):
-                raise ValueError("Invalid provider cost")
-            if cost is not None:
-                self.state.settle(charge, float(cost))
-            return vectors
-        except HTTPError as exc:
-            category = {401: "authentication", 402: "payment", 403: "permission", 429: "rate_limited"}.get(
-                exc.code, "provider_unavailable" if exc.code >= 500 else "provider_rejected")
-            raise EmbeddingError(category, exc.code) from exc
-        except (TimeoutError, ConnectionError) as exc:
-            raise EmbeddingError("timeout" if isinstance(exc, TimeoutError) else "network") from exc
-        except URLError as exc:
-            raise EmbeddingError("network") from exc
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError, IndexError) as exc:
-            raise EmbeddingError("invalid_response") from exc
-        except OSError as exc:
-            raise EmbeddingError("network") from exc
+                response_bytes = len(payload)
+                if response_bytes > MAX_EMBEDDING_RESPONSE_BYTES:
+                    raise ValueError("Embedding response exceeds its size limit")
+                if response.will_close:
+                    connection.close()
+                else:
+                    self._release_connection(connection)
+                connection = None
+                data = json.loads(payload)
+                rows = sorted(data["data"], key=lambda row: row["index"])
+                if [row["index"] for row in rows] != list(range(len(texts))):
+                    raise ValueError("Incomplete embeddings response")
+                vectors = [row["embedding"] for row in rows]
+                if any(len(vector) != 4096 or not all(math.isfinite(x) for x in vector) for vector in vectors):
+                    raise ValueError("Invalid embedding vector")
+                cost = data.get("usage", {}).get("cost")
+                if cost is not None and (not math.isfinite(float(cost)) or float(cost) < 0):
+                    raise ValueError("Invalid provider cost")
+                if cost is not None:
+                    self.state.settle(charge, float(cost))
+                self._record(started, len(request_bytes), response_bytes, attempt, "ok", status)
+                return vectors
+            except (OSError, http.client.HTTPException) as exc:
+                error = EmbeddingError("timeout" if isinstance(exc, TimeoutError) else "network")
+                cause_type, os_errno = self._network_cause(exc)
+                self._record(started, len(request_bytes), response_bytes, attempt, error.category,
+                             status, type(exc).__name__, cause_type, os_errno)
+            except EmbeddingError as exc:
+                error = exc
+                self._record(started, len(request_bytes), response_bytes, attempt, error.category,
+                             status, "HTTP" if status else "")
+            except (KeyError, TypeError, ValueError, IndexError) as exc:
+                error = EmbeddingError("invalid_response")
+                self._record(started, len(request_bytes), response_bytes, attempt, error.category,
+                             status, type(exc).__name__)
+            finally:
+                if connection is not None:
+                    connection.close()
+            if attempt > self.retries or error.category not in {"timeout", "network", "rate_limited", "provider_unavailable"}:
+                raise error
+            # Respect long Retry-After by returning control to the index scheduler.
+            if error.retry_after > 60:
+                raise error
+            time.sleep(max(error.retry_after, min(8, 2 ** (attempt - 1)) + random.random() * 0.25))
+        raise RuntimeError("Unreachable embedding retry state")
 
 
 class Index:
@@ -288,6 +430,8 @@ class Index:
                       "ready_5m": sum(count for _, count in self.embedding_ready_events),
                       "failed_batches_5m": sum(1 for _, _, ok in self.embedding_events if not ok),
                       "last_batch_seconds": self.embedding_last_seconds}
+            if self.embeddings and hasattr(self.embeddings, "diagnostics"):
+                result["provider_requests"] = self.embeddings.diagnostics()
             if detail and self.last_embedding_error:
                 result["last_error"] = dict(self.last_embedding_error)
             return result
@@ -316,6 +460,8 @@ class Index:
                 # An intermittent provider must not idle a large backfill for
                 # many minutes after a burst of connection resets.
                 delay = min(delay, 60)
+            if isinstance(exc, EmbeddingError) and exc.retry_after:
+                delay = max(delay, min(900, exc.retry_after))
             if category in {"authentication", "payment", "permission", "budget", "vector_storage"}:
                 delay = max(delay, 3600)
             if category in {"authentication", "payment", "permission", "budget", "vector_storage", "rate_limited"} or self.embedding_attempts >= 2:
@@ -911,9 +1057,13 @@ class Index:
             if self.attachment_worker.is_alive():
                 raise RuntimeError("Mantis attachment worker is still stopping; keep its state owner open")
         if self.embedding_worker:
-            self.embedding_worker.join(timeout=max(180, getattr(self.embeddings, "timeout", 0) * 3 + 45))
+            attempts = getattr(self.embeddings, "retries", 0) + 1
+            self.embedding_worker.join(timeout=max(180, getattr(self.embeddings, "timeout", 0) * attempts +
+                                                   60 * (attempts - 1) + 45))
             if self.embedding_worker.is_alive():
                 raise RuntimeError("Mantis embedding worker is still stopping; keep its state owner open")
+        if self.embeddings and hasattr(self.embeddings, "close"):
+            self.embeddings.close()
         if self.vectors:
             self.vectors.close()
         self.state.close()

@@ -48,7 +48,7 @@ class Runtime:
             self.error = "Vector backend unavailable: " + str(exc)[:160]
         key = os.environ.get("MANTIS_OPENROUTER_API_KEY", "")
         provider = Embeddings(state, key, cap=float(os.environ.get("MANTIS_MONTHLY_BUDGET_USD", "5")),
-                              timeout=int(os.environ.get("MANTIS_EMBEDDING_TIMEOUT_SECONDS", "45"))) if key else None
+                              timeout=int(os.environ.get("MANTIS_EMBEDDING_TIMEOUT_SECONDS", "120"))) if key else None
         self.index = Index(state, Api(settings), vectors, provider,
                            interval=int(os.environ.get("MANTIS_SYNC_INTERVAL_SECONDS", "30")),
                            sync_projects=[int(p) for p in os.environ.get("MANTIS_SYNC_PROJECT_IDS", "").split(",") if p.strip()])

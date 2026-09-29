@@ -14,12 +14,45 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
-from urllib.error import HTTPError, URLError
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
 from mantis_state import State, digest, timestamp, file_descriptors
 from mantis_write import Writer, ACTIONS
+
+
+class FakeEmbeddingResponse:
+    def __init__(self, status=200, data=None, text="", headers=None):
+        self.status = status
+        self.payload = json.dumps(data).encode("utf-8") if data is not None else text.encode("utf-8")
+        self.headers = headers or {}
+        self.will_close = False
+
+    def getheader(self, name):
+        return self.headers.get(name)
+
+    def read(self, limit):
+        return self.payload[:limit]
+
+
+class FakeEmbeddingConnection:
+    def __init__(self, handler):
+        self.handler = handler
+        self.sock = None
+        self.timeouts = []
+
+    def connect(self):
+        self.sock = SimpleNamespace(settimeout=self.timeouts.append)
+
+    def request(self, method, path, body, headers):
+        self.body = body
+        self.headers = headers
+
+    def getresponse(self):
+        return self.handler(self)
+
+    def close(self):
+        self.sock = None
 
 
 def ticket(issue_id=1, project=1, text="Описание решения", updated="2026-09-28T12:00:00+03:00"):
@@ -306,9 +339,14 @@ class IndexTests(unittest.TestCase):
         self.index.vectors = SimpleNamespace(
             query=lambda vector: [r["vector_id"] for r in self.state.all("SELECT vector_id FROM fragments WHERE vector_id<>''")],
             purge=lambda: None)
-        self.index.embeddings = Embeddings(self.state, "fixture")
         response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}], "usage": {"cost": 0.001}}
-        with patch("mantis_index.urlopen", side_effect=lambda *a, **kw: io.BytesIO(json.dumps(response).encode())) as request:
+        requests = []
+        def serve(request):
+            requests.append(request)
+            return FakeEmbeddingResponse(data=response)
+        self.index.embeddings = Embeddings(self.state, "fixture",
+                                           connection_factory=lambda: FakeEmbeddingConnection(serve))
+        try:
             first = self.index.search("решения", limit=2)
             second = self.index.search("решения", limit=2, cursor=first["next_cursor"])
             self.assertEqual(first["query_embedding_cache"], "miss")
@@ -325,7 +363,9 @@ class IndexTests(unittest.TestCase):
             self.assertEqual(changed["query_embedding_cache"], "hit")
             self.assertNotIn(2, {r["id"] for r in changed["issues"]})
             self.assertNotIn("Описание решения", " ".join(m["snippet"] for r in changed["issues"] if r["id"] == 1 for m in r["matches"]))
-            request.assert_called_once()
+            self.assertEqual(len(requests), 1)
+        finally:
+            self.index.embeddings.close()
         self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges")["n"], 1)
         self.assertEqual(self.state.one("SELECT SUM(actual) AS n FROM charges")["n"], 0.001)
 
@@ -454,29 +494,122 @@ class IndexTests(unittest.TestCase):
 
     def test_missing_billing_stays_unknown_and_invalid_budget_is_rejected(self):
         from mantis_index import Embeddings
-        import io
-        provider = Embeddings(self.state, "fixture")
         data = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}]}
-        with patch("mantis_index.urlopen", return_value=io.BytesIO(json.dumps(data).encode())):
+        provider = Embeddings(self.state, "fixture", connection_factory=lambda: FakeEmbeddingConnection(
+            lambda request: FakeEmbeddingResponse(data=data)))
+        try:
             provider.embed(["test"])
+        finally:
+            provider.close()
         self.assertEqual(self.state.one("SELECT status FROM charges")["status"], "unknown")
         with self.assertRaises(ValueError):
             Embeddings(self.state, "fixture", cap=float("nan"))
 
     def test_embedding_errors_keep_reservations_and_expose_safe_categories(self):
         from mantis_index import Embeddings, EmbeddingError
-        provider = Embeddings(self.state, "fixture")
-        with patch("mantis_index.urlopen", side_effect=HTTPError("https://openrouter.ai", 429, "private provider detail", {}, None)):
+        mode = ["rate"]
+        def serve(request):
+            if mode[0] == "rate":
+                return FakeEmbeddingResponse(429, text="private provider detail")
+            raise ConnectionError("private hostname")
+        provider = Embeddings(self.state, "fixture", retries=0,
+                              connection_factory=lambda: FakeEmbeddingConnection(serve))
+        try:
             with self.assertRaises(EmbeddingError) as caught:
                 provider.embed(["private search text"])
-        self.assertEqual((caught.exception.category, caught.exception.status), ("rate_limited", 429))
-        self.assertNotIn("private", str(caught.exception))
-        self.assertEqual(self.state.one("SELECT status FROM charges")["status"], "unknown")
-        with patch("mantis_index.urlopen", side_effect=URLError("private hostname")):
+            self.assertEqual((caught.exception.category, caught.exception.status), ("rate_limited", 429))
+            self.assertNotIn("private", str(caught.exception))
+            self.assertEqual(self.state.one("SELECT status FROM charges")["status"], "unknown")
+            mode[0] = "network"
             with self.assertRaises(EmbeddingError) as caught:
                 provider.embed(["another private text"])
-        self.assertEqual(caught.exception.category, "network")
+            self.assertEqual(caught.exception.category, "network")
+            diagnostic = provider.diagnostics()
+            self.assertEqual(diagnostic["failures_5m"], {"rate_limited": 1, "network": 1})
+            self.assertEqual(diagnostic["last_attempt"]["error_type"], "ConnectionError")
+            self.assertNotIn("private", json.dumps(diagnostic))
+        finally:
+            provider.close()
         self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges WHERE status='unknown'")["n"], 2)
+
+    def test_embedding_retry_uses_separate_reservations_and_records_attempts(self):
+        from mantis_index import Embeddings
+        calls = []
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}],
+                    "usage": {"cost": 0.001}}
+        def serve(request):
+            calls.append(request)
+            if len(calls) == 1:
+                raise TimeoutError("private transient detail")
+            return FakeEmbeddingResponse(data=response)
+        connections = []
+        def factory():
+            connection = FakeEmbeddingConnection(serve)
+            connections.append(connection)
+            return connection
+        provider = Embeddings(self.state, "fixture", retries=2, connection_factory=factory)
+        try:
+            self.assertEqual((provider.connect_timeout, provider.timeout), (5, 120))
+            with patch("mantis_index.time.sleep"):
+                self.assertEqual(len(provider.embed(["test"])[0]), 4096)
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(connections[0].timeouts, [30, 120])
+            rows = self.state.all("SELECT status,actual FROM charges ORDER BY created,id")
+            self.assertEqual([row["status"] for row in rows].count("unknown"), 1)
+            self.assertEqual([row["status"] for row in rows].count("settled"), 1)
+            diagnostic = provider.diagnostics()
+            self.assertEqual(diagnostic["attempts_5m"], 2)
+            self.assertEqual(diagnostic["failures_5m"], {"timeout": 1})
+            self.assertEqual(diagnostic["last_attempt"]["attempt"], 2)
+            self.assertGreater(diagnostic["request_bytes_p50"], 0)
+            self.assertNotIn("test", json.dumps(diagnostic))
+        finally:
+            provider.close()
+
+    def test_embedding_provider_error_retries_but_invalid_response_does_not(self):
+        from mantis_index import Embeddings, EmbeddingError
+        calls = []
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}]}
+        def serve(request):
+            calls.append(request)
+            return FakeEmbeddingResponse(503) if len(calls) == 1 else FakeEmbeddingResponse(data=response)
+        provider = Embeddings(self.state, "fixture",
+                              connection_factory=lambda: FakeEmbeddingConnection(serve))
+        try:
+            with patch("mantis_index.time.sleep"):
+                provider.embed(["test"])
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(provider.diagnostics()["failures_5m"], {"provider_unavailable": 1})
+        finally:
+            provider.close()
+        provider = Embeddings(self.state, "fixture", connection_factory=lambda: FakeEmbeddingConnection(
+            lambda request: FakeEmbeddingResponse(text="private invalid payload")))
+        try:
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["private text"])
+            self.assertEqual(caught.exception.category, "invalid_response")
+            self.assertEqual(provider.diagnostics()["attempts_5m"], 1)
+            self.assertNotIn("private", json.dumps(provider.diagnostics()))
+        finally:
+            provider.close()
+
+    def test_embedding_long_retry_after_returns_to_scheduler(self):
+        from mantis_index import Embeddings, EmbeddingError
+        calls = []
+        def serve(request):
+            calls.append(request)
+            return FakeEmbeddingResponse(429, headers={"Retry-After": "120"})
+        provider = Embeddings(self.state, "fixture",
+                              connection_factory=lambda: FakeEmbeddingConnection(serve))
+        try:
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["test"])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(caught.exception.retry_after, 120)
+            self.index._embedding_failure(caught.exception)
+            self.assertGreaterEqual(self.index.embedding_retry_at - self.state.clock(), 119)
+        finally:
+            provider.close()
 
     def test_embedding_worker_backs_off_and_reports_diagnostics(self):
         from mantis_index import EmbeddingError

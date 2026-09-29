@@ -2810,7 +2810,7 @@ services:
                 $mantisEnv["MANTIS_BASE_URL"] | Should -Be "http://mantis.test"
                 $mantisEnv["MANTIS_API_TOKEN"] | Should -Be "fixture-mantis-token"
                 $mantisEnv["MANTIS_TIMEOUT_SECONDS"] | Should -Be "25"
-                $mantisEnv["MANTIS_EMBEDDING_TIMEOUT_SECONDS"] | Should -Be "45"
+                $mantisEnv["MANTIS_EMBEDDING_TIMEOUT_SECONDS"] | Should -Be "120"
                 $mantisEnv["MANTIS_EMBEDDING_WORKERS"] | Should -Be "4"
                 $mantisEnv["MANTIS_EMBEDDING_BATCH_SIZE"] | Should -Be "32"
                 $mantisEnv["MANTIS_MAX_ATTACHMENT_BYTES"] | Should -Be "12345"

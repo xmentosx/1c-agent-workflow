@@ -1113,7 +1113,7 @@ function Get-MantisTicketServerDefinition {
             [ordered]@{ name = "MANTIS_SYNC_INTERVAL_SECONDS"; from = "MANTIS_SYNC_INTERVAL_SECONDS"; default = "30"; required = $false },
             [ordered]@{ name = "MANTIS_EMBEDDING_WORKERS"; from = "MANTIS_EMBEDDING_WORKERS"; default = "4"; required = $false },
             [ordered]@{ name = "MANTIS_EMBEDDING_BATCH_SIZE"; from = "MANTIS_EMBEDDING_BATCH_SIZE"; default = "32"; required = $false },
-            [ordered]@{ name = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; from = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; default = "45"; required = $false },
+            [ordered]@{ name = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; from = "MANTIS_EMBEDDING_TIMEOUT_SECONDS"; default = "120"; required = $false },
             [ordered]@{ name = "MANTIS_SYNC_PROJECT_IDS"; from = "MANTIS_SYNC_PROJECT_IDS"; default = ""; required = $false },
             [ordered]@{ name = "MANTIS_MONTHLY_BUDGET_USD"; from = "MANTIS_MONTHLY_BUDGET_USD"; default = "5"; required = $false },
             [ordered]@{ name = "MANTIS_WRITE_ENABLED"; from = "MANTIS_WRITE_ENABLED"; default = "false"; required = $false },
@@ -2144,7 +2144,7 @@ function Get-HostLocalValues {
         MANTIS_SYNC_INTERVAL_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "syncIntervalSeconds" -Default "30")
         MANTIS_EMBEDDING_WORKERS = [string](Get-ObjectValue -Object $mantis -Name "embeddingWorkers" -Default "4")
         MANTIS_EMBEDDING_BATCH_SIZE = [string](Get-ObjectValue -Object $mantis -Name "embeddingBatchSize" -Default "32")
-        MANTIS_EMBEDDING_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "embeddingTimeoutSeconds" -Default "45")
+        MANTIS_EMBEDDING_TIMEOUT_SECONDS = [string](Get-ObjectValue -Object $mantis -Name "embeddingTimeoutSeconds" -Default "120")
         MANTIS_SYNC_PROJECT_IDS = ((As-Array (Get-ObjectValue -Object $mantis -Name "syncProjectIds" -Default @())) -join ",")
         MANTIS_MONTHLY_BUDGET_USD = [string](Get-ObjectValue -Object $mantis -Name "monthlyBudgetUsd" -Default "5")
         MANTIS_WRITE_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "writeEnabled" -Default $false) -Default $false)
