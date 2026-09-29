@@ -111,6 +111,7 @@ class State:
         try:
             if not marker.exists():
                 marker.write_text(encode({"owner": OWNER}), encoding="utf-8")
+            existing_database = (self.root / "mantis.sqlite").exists()
             self.db = sqlite3.connect(str(self.root / "mantis.sqlite"), check_same_thread=False, isolation_level=None, timeout=10)
             self.db.row_factory = sqlite3.Row
             version = self.db.execute("PRAGMA user_version").fetchone()[0]
@@ -142,6 +143,8 @@ class State:
                 CREATE INDEX IF NOT EXISTS issues_search ON issues(id,hash,verified);
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_text USING fts5(id UNINDEXED, text, tokenize='unicode61');
                 CREATE TABLE IF NOT EXISTS vector_deletes(id TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS embedding_spool(fragment_id TEXT PRIMARY KEY,
+                    version TEXT NOT NULL, vector BLOB NOT NULL, created REAL NOT NULL);
                 CREATE TABLE IF NOT EXISTS cache_deletes(issue_id INTEGER NOT NULL, file_id INTEGER NOT NULL,
                     PRIMARY KEY(issue_id,file_id));
                 CREATE TABLE IF NOT EXISTS tombstones(issue_id INTEGER PRIMARY KEY, project_id INTEGER,
@@ -166,6 +169,9 @@ class State:
             if row and row["value"] != PROFILE:
                 raise RuntimeError("Mantis embedding profile differs; explicit index migration is required (keep journal and revocations)")
             self.run("INSERT OR IGNORE INTO meta VALUES('profile',?)", (PROFILE,))
+            # An older index has no durable pause bit. Upgrading it starts paused
+            # so a restarted worker cannot grow the disk before qualification.
+            self.run("INSERT OR IGNORE INTO meta VALUES('index_paused',?)", ("1" if existing_database else "0",))
         except Exception:
             if hasattr(self, "db"):
                 self.db.close()
@@ -277,6 +283,7 @@ class State:
             for row in batch:
                 if row["vector_id"]:
                     self.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (row["vector_id"],))
+                self.run("DELETE FROM embedding_spool WHERE fragment_id=?", (row["id"],))
                 self.run("DELETE FROM fragments WHERE id=?", (row["id"],))
 
     def purge_issue(self, issue_id, project_id=0):
@@ -356,6 +363,7 @@ class State:
         return {"schema": SCHEMA_VERSION, "profile": PROFILE, "revision": self.revision(),
                 "issues": self.one("SELECT COUNT(*) AS n FROM issues")["n"],
                 "embedding_backlog": self.one("SELECT COUNT(*) AS n FROM fragments WHERE version<>vector_version")["n"],
+                "embedding_spooled": self.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"],
                 "cleanup_pending": self.one("SELECT COUNT(*) AS n FROM tombstones WHERE cleanup=1")["n"],
                 "vector_deletes_pending": self.one("SELECT COUNT(*) AS n FROM vector_deletes")["n"],
                 "cache_deletes_pending": self.one("SELECT COUNT(*) AS n FROM cache_deletes")["n"],

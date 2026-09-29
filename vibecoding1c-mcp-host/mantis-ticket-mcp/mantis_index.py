@@ -21,6 +21,8 @@ from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, i
 
 
 QUERY_EMBEDDING_CACHE_SIZE = 256
+EMBEDDING_DISK_BATCH = 512
+EMBEDDING_FLUSH_MAX_AGE = 60
 
 
 class Vectors:
@@ -30,6 +32,7 @@ class Vectors:
         self.state = state
         self.dimension = dimension
         self.lock = threading.RLock()
+        self.failed = False
         self.root = state.root / "vectors"
         self.root.mkdir(exist_ok=True)
         row = state.one("SELECT value FROM meta WHERE key='vector_generation'")
@@ -60,14 +63,80 @@ class Vectors:
                     raise RuntimeError("Unexpected Mantis vector generation; inspect the owned volume")
                 shutil.rmtree(path)
 
-    def upsert(self, key, vector):
-        if len(vector) != self.dimension or not all(math.isfinite(v) for v in vector):
-            raise ValueError("Embedding dimension or finite-value check failed")
+    def upsert_batch(self, rows):
+        """Publish one durable Zvec segment for a bounded group of vectors."""
+        for _, vector in rows:
+            if len(vector) != self.dimension or not all(math.isfinite(v) for v in vector):
+                raise ValueError("Embedding dimension or finite-value check failed")
+        if not rows:
+            return
         with self.lock:
-            result = self.collection.upsert(self.z.Doc(id=key, vectors={"embedding": vector}))
-            if not result.ok():
-                raise RuntimeError("Zvec rejected an embedding")
-            self.collection.flush()
+            if self.failed:
+                raise RuntimeError("Zvec write failed; restart the Mantis owner before retrying")
+            try:
+                result = self.collection.upsert([self.z.Doc(id=key, vectors={"embedding": list(vector)})
+                                                 for key, vector in rows])
+                if not all(item.ok() for item in result):
+                    raise RuntimeError("Zvec rejected an embedding")
+                self.collection.flush()
+            except BaseException:
+                self.failed = True
+                raise
+
+    def storage(self):
+        """On-demand disk diagnostic; never scan files in a search call."""
+        path = self.root / self.generation
+        files = (p for p in path.rglob("*") if p.is_file())
+        count = bytes_used = 0
+        for file in files:
+            count += 1
+            bytes_used += file.stat().st_size
+        return {"generation": self.generation, "files": count, "bytes": bytes_used,
+                "free_bytes": shutil.disk_usage(self.root).free}
+
+    def compact(self, clear_deletions=False, batch=512):
+        """Copy current vectors into a compact generation without buying embeddings."""
+        with self.state.lock, self.lock:
+            ids = [row["vector_id"] for row in self.state.all(
+                "SELECT vector_id FROM fragments WHERE vector_id<>'' AND vector_version=version")]
+            if len(ids) != len(set(ids)):
+                raise RuntimeError("Duplicate current vector IDs; inspect Mantis state before compaction")
+            if shutil.disk_usage(self.root).free < max(1 << 30, len(ids) * self.dimension * 4 * 2):
+                raise RuntimeError("Not enough free space for a second Mantis vector generation")
+            generation = uuid.uuid4().hex
+            new = self._create(self.root / generation)
+            published = False
+            try:
+                for start in range(0, len(ids), batch):
+                    keys = ids[start:start + batch]
+                    docs = self.collection.fetch(keys)
+                    if len(docs) != len(keys):
+                        raise RuntimeError("A current Mantis vector is missing; keep the old generation")
+                    result = new.upsert(list(docs.values()))
+                    if not all(item.ok() for item in result):
+                        raise RuntimeError("Zvec rejected a copied Mantis vector")
+                    new.flush()
+                new.close()
+                new = self.z.open(str(self.root / generation))
+                for start in range(0, len(ids), batch):
+                    keys = ids[start:start + batch]
+                    if len(new.fetch(keys, include_vector=False)) != len(keys):
+                        raise RuntimeError("Copied Mantis vector generation failed reopen verification")
+                self.state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (generation,))
+                published = True
+                old = self.collection
+                self.collection, self.generation = new, generation
+                old.close()
+                self._remove_old()
+                if clear_deletions:
+                    self.state.cleanup_files()
+                    self.state.run("DELETE FROM vector_deletes")
+                    self.state.run("UPDATE tombstones SET cleanup=0")
+                return {"vectors": len(ids), **self.storage()}
+            except BaseException:
+                if not published:
+                    new.close()
+                raise
 
     def query(self, vector, limit=200):
         with self.lock:
@@ -75,6 +144,8 @@ class Vectors:
 
     def existing(self, keys):
         with self.lock:
+            if self.failed:
+                raise RuntimeError("Zvec write failed; restart the Mantis owner before inspecting durability")
             return set(self.collection.fetch(keys, include_vector=False)) if keys else set()
 
     def purge(self):
@@ -87,29 +158,7 @@ class Vectors:
             if not self.state.one("SELECT id FROM vector_deletes LIMIT 1") and not self.state.one("SELECT issue_id FROM tombstones WHERE cleanup=1 LIMIT 1"):
                 self._remove_old()
                 return
-            generation = uuid.uuid4().hex
-            new = self._create(self.root / generation)
-            try:
-                rows = self.state.all("SELECT vector_id FROM fragments WHERE vector_id<>'' AND vector_version=version")
-                for start in range(0, len(rows), 100):
-                    docs = self.collection.fetch([r["vector_id"] for r in rows[start:start + 100]])
-                    if docs:
-                        result = new.upsert(list(docs.values()))
-                        if not all(s.ok() for s in result):
-                            raise RuntimeError("Zvec purge projection failed")
-                new.flush()
-                self.state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (generation,))
-                old = self.collection
-                self.collection, self.generation = new, generation
-                old.close()
-                self._remove_old()
-                self.state.cleanup_files()
-                self.state.run("DELETE FROM vector_deletes")
-                self.state.run("UPDATE tombstones SET cleanup=0")
-            except BaseException:
-                if self.collection is not new:
-                    new.close()
-                raise
+            self.compact(clear_deletions=True)
 
     def close(self):
         self.collection.close()
@@ -157,6 +206,8 @@ class Index:
         self.sync_projects = {int(project) for project in sync_projects}
         self.stop = threading.Event()
         self.paused = threading.Event()
+        if state.one("SELECT value FROM meta WHERE key='index_paused'")["value"] == "1":
+            self.paused.set()
         self.worker = None
         self.work_lock = threading.Lock()
         self._initial_progress = {}
@@ -399,18 +450,57 @@ class Index:
                            (upper, self.state.clock(), project_id))
             self.state.run("DELETE FROM delta_progress WHERE project_id=?", (project_id,))
 
+    def flush_embedding_spool(self):
+        """Flush paid vectors once, then atomically mark their SQLite versions ready."""
+        if not self.vectors:
+            return 0
+        with self.state.lock:
+            self.state.run("""DELETE FROM embedding_spool WHERE NOT EXISTS
+                (SELECT 1 FROM fragments f WHERE f.id=embedding_spool.fragment_id
+                 AND f.version=embedding_spool.version)""")
+            rows = self.state.all("""SELECT s.fragment_id,s.version,s.vector FROM embedding_spool s
+                JOIN fragments f ON f.id=s.fragment_id AND f.version=s.version
+                ORDER BY s.created,s.fragment_id LIMIT ?""", (EMBEDDING_DISK_BATCH,))
+            if not rows:
+                return 0
+            keys = {row["fragment_id"]: digest([row["fragment_id"], row["version"]]) for row in rows}
+            present = self.vectors.existing(list(keys.values()))
+            missing = []
+            for row in rows:
+                key = keys[row["fragment_id"]]
+                if key not in present:
+                    vector = array("f")
+                    vector.frombytes(row["vector"])
+                    missing.append((key, vector))
+            self.vectors.upsert_batch(missing)
+            with self.state.transaction():
+                for row in rows:
+                    self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
+                                   (keys[row["fragment_id"]], row["version"], row["fragment_id"], row["version"]))
+                    self.state.run("DELETE FROM embedding_spool WHERE fragment_id=? AND version=?",
+                                   (row["fragment_id"], row["version"]))
+                self.state.changed()
+            return len(rows)
+
     def embed_pending(self, batch=16):
-        if not self.vectors or not self.embeddings:
+        if not self.vectors:
+            return
+        if not self.embeddings:
+            self.flush_embedding_spool()
             return
         selected = sorted(self.sync_projects)
         scope = " AND issue_id IN (SELECT id FROM issues WHERE project_id IN (" + ",".join("?" for _ in selected) + "))" if selected else ""
-        rows = self.state.all("SELECT * FROM fragments WHERE version<>vector_version" + scope + " LIMIT ?", (*selected, batch))
+        spool = self.state.one("SELECT COUNT(*) AS n,MIN(created) AS oldest FROM embedding_spool")
+        if spool["n"] >= EMBEDDING_DISK_BATCH or (spool["oldest"] and self.state.clock() - spool["oldest"] >= EMBEDDING_FLUSH_MAX_AGE):
+            self.flush_embedding_spool()
+        rows = self.state.all("SELECT * FROM fragments WHERE version<>vector_version AND id NOT IN "
+                              "(SELECT fragment_id FROM embedding_spool)" + scope + " LIMIT ?", (*selected, batch))
         present = self.vectors.existing([digest([r["id"], r["version"]]) for r in rows])
         pending = []
         for row in rows:
             key = digest([row["id"], row["version"]])
             if key in present:
-                with self.state.lock:
+                with self.state.transaction():
                     if self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
                                       (key, row["version"], row["id"], row["version"])).rowcount:
                         self.state.changed()
@@ -418,19 +508,26 @@ class Index:
                 pending.append(row)
         rows = pending
         if not rows:
+            if self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"]:
+                self.flush_embedding_spool()
             self.semantic_status = "partial" if self.state.health()["embedding_backlog"] else "ready"
             return
         values = self.embeddings.embed([r["text"] for r in rows])
-        for row, vector in zip(rows, values):
-            with self.state.lock:
+        with self.state.transaction():
+            for row, vector in zip(rows, values):
+                if len(vector) != self.vectors.dimension or not all(math.isfinite(v) for v in vector):
+                    raise ValueError("Embedding dimension or finite-value check failed")
+                data = array("f", vector)
+                if not all(math.isfinite(v) for v in data):
+                    raise ValueError("Embedding cannot be represented by finite FP32 values")
                 current = self.state.one("SELECT version FROM fragments WHERE id=?", (row["id"],))
                 if not current or current["version"] != row["version"]:
                     continue
-                key = digest([row["id"], row["version"]])
-                self.vectors.upsert(key, vector)
-                self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
-                               (key, row["version"], row["id"], row["version"]))
-                self.state.changed()
+                self.state.run("INSERT OR REPLACE INTO embedding_spool VALUES(?,?,?,?)",
+                               (row["id"], row["version"], data.tobytes(), self.state.clock()))
+        spool = self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")
+        if spool["n"] >= EMBEDDING_DISK_BATCH or len(rows) < batch:
+            self.flush_embedding_spool()
         self.semantic_status = "partial" if self.state.health()["embedding_backlog"] else "ready"
 
     def tick(self):

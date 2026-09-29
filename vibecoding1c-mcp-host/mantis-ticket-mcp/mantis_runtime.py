@@ -166,12 +166,14 @@ class Runtime:
         @mcp.tool
         @worker_tool
         def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None) -> dict:
-            """Index status/pause/resume/rebuild_vectors. Rebuild may buy embeddings within budget. settle_charge needs explicit confirmation of actual billing."""
+            """Index status/pause/resume/storage/compact_vectors/rebuild_vectors. Compaction reuses paid vectors; rebuild may buy embeddings."""
             person = actor_name(actor)
             index = self.require()
             if action == "pause":
+                index.state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
                 index.paused.set()
             elif action == "resume":
+                index.state.run("UPDATE meta SET value='0' WHERE key='index_paused'")
                 index.paused.clear()
             elif action == "settle_charge":
                 if actual_cost_usd is None or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0:
@@ -194,10 +196,22 @@ class Runtime:
                         index.cleanup()
                 finally:
                     index.work_lock.release()
+            elif action == "compact_vectors":
+                if not index.paused.is_set() or not index.work_lock.acquire(blocking=False):
+                    raise RuntimeError("Pause indexing and wait for work_in_progress=false before compact_vectors")
+                try:
+                    if not index.vectors:
+                        raise RuntimeError("Vector backend is unavailable")
+                    storage = index.vectors.compact(clear_deletions=True)
+                finally:
+                    index.work_lock.release()
+            elif action == "storage":
+                storage = index.vectors.storage() if index.vectors else {"error": "Vector backend unavailable"}
             elif action != "status":
-                raise ValueError("action must be status, pause, resume, rebuild_vectors or settle_charge")
+                raise ValueError("action must be status, pause, resume, storage, compact_vectors, rebuild_vectors or settle_charge")
             self.audit(person, "index_" + action, charge_id)
             return {**self.health(), "paused": index.paused.is_set(), "work_in_progress": index.work_lock.locked(),
+                    **({"storage": storage} if action in {"storage", "compact_vectors"} else {}),
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
 
     def health(self):

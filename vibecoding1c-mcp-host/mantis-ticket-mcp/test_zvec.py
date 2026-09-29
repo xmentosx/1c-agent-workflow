@@ -4,7 +4,7 @@ import unittest
 import uuid
 from pathlib import Path
 
-from mantis_state import State
+from mantis_state import State, digest
 from mantis_index import Index, Vectors
 from test_index import FakeApi, ticket
 
@@ -19,6 +19,111 @@ class FixedEmbeddings:
 
 
 class ZvecTests(unittest.TestCase):
+    def test_legacy_state_migrates_to_safe_pause(self):
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state = State(root / "state", root / "files")
+            state.run("DELETE FROM meta WHERE key='index_paused'")
+            state.close()
+            state = State(root / "state", root / "files")
+            try:
+                self.assertEqual(state.one("SELECT value FROM meta WHERE key='index_paused'")["value"], "1")
+            finally:
+                state.close()
+
+    def test_full_disk_batch_uses_one_segment_and_reopens(self):
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state = State(root / "state", root / "files")
+            vectors = Vectors(state)
+            try:
+                rows = [(f"batch-{i}", [float(i + 1)] + [0.0] * 4095) for i in range(512)]
+                vectors.upsert_batch(rows)
+                data = vectors.storage()
+                self.assertLess(data["bytes"], 24 << 20,
+                                "One durable batch must not create a separate large segment per vector")
+                self.assertEqual(len(vectors.existing([key for key, _ in rows])), 512)
+                vectors.close()
+                state.close()
+                state = State(root / "state", root / "files")
+                vectors = Vectors(state)
+                self.assertEqual(len(vectors.existing([key for key, _ in rows])), 512)
+            finally:
+                vectors.close()
+                state.close()
+
+    def test_paid_spool_survives_restart_and_compaction_reuses_vectors(self):
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state = State(root / "state", root / "files")
+            api = FakeApi()
+            provider = FixedEmbeddings()
+            vectors = Vectors(state)
+            index = Index(state, api, vectors, provider)
+            index.refresh(1)
+            index.embed_pending(batch=1)
+            self.assertEqual(state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 1)
+            self.assertEqual(state.health()["embedding_backlog"], 2)
+            state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
+            vectors.close()
+            state.close()
+
+            state = State(root / "state", root / "files")
+            vectors = Vectors(state)
+            index = Index(state, api, vectors, provider)
+            try:
+                self.assertTrue(index.paused.is_set(), "A restart must preserve the user pause")
+                index.embed_pending(batch=1)
+                index.embed_pending(batch=1)
+                self.assertEqual(len(provider.calls), 2, "Durably spooled paid results must not be bought again")
+                self.assertEqual(state.health()["embedding_backlog"], 0)
+                self.assertEqual(state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+                original_size = vectors.storage()["bytes"]
+                old_generation = vectors.generation
+                result = vectors.compact()
+                self.assertLess(result["bytes"], original_size)
+                self.assertNotEqual(vectors.generation, old_generation)
+                self.assertFalse((root / "state" / "vectors" / old_generation).exists())
+                self.assertEqual(len(provider.calls), 2, "Compaction must not call the embedding provider")
+                self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 2)
+            finally:
+                vectors.close()
+                state.close()
+
+    def test_crash_after_zvec_flush_reconciles_spool_without_purchase(self):
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state = State(root / "state", root / "files")
+            api = FakeApi()
+            provider = FixedEmbeddings()
+            vectors = Vectors(state)
+            index = Index(state, api, vectors, provider)
+            index.refresh(1)
+            index.embed_pending(batch=1)
+            paid = state.one("SELECT fragment_id,version,vector FROM embedding_spool")
+            from array import array
+            vector = array("f")
+            vector.frombytes(paid["vector"])
+            vectors.upsert_batch([(digest([paid["fragment_id"], paid["version"]]), vector)])
+            vectors.close()
+            state.close()
+
+            state = State(root / "state", root / "files")
+            vectors = Vectors(state)
+            index = Index(state, api, vectors, provider)
+            try:
+                index.embed_pending(batch=1)
+                index.embed_pending(batch=1)
+                self.assertEqual(len(provider.calls), 2)
+                self.assertEqual(state.health()["embedding_backlog"], 0)
+                self.assertEqual(len(vectors.query([1.0] + [0.0] * 4095)), 2)
+                index.refresh(1)
+                state.purge_issue(1)
+                self.assertEqual(state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+            finally:
+                vectors.close()
+                state.close()
+
     def test_projection_crash_replay_purge_regain_and_unicode_path(self):
         with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
             root = Path(directory)
