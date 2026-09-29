@@ -40,7 +40,7 @@ class ProtocolTests(unittest.TestCase):
                         try:
                             await asyncio.sleep(0.05)
                             tools = await asyncio.wait_for(client.list_tools(), 1)
-                            self.assertEqual(len(tools), 9)
+                            self.assertEqual(len(tools), 10)
                             self.assertLess(time.monotonic() - start, 1,
                                             "A database writer must not freeze the MCP HTTP event loop")
                             self.assertFalse(pending.done(), "The read still waits for the writer")
@@ -65,7 +65,7 @@ class ProtocolTests(unittest.TestCase):
                     async with Client(mcp) as client:
                         tools = await client.list_tools()
                         schema = json.dumps([t.model_dump() for t in tools], ensure_ascii=False)
-                        self.assertEqual(len(tools), 9)
+                        self.assertEqual(len(tools), 10)
                         search_schema = next(t.inputSchema for t in tools if t.name == "search_tickets")
                         self.assertEqual(search_schema["properties"]["limit"]["default"], 10)
                         self.assertNotIn("fixture analyst", schema)
@@ -76,6 +76,9 @@ class ProtocolTests(unittest.TestCase):
                         read = await client.call_tool("read_ticket", {"url_or_id": "1"})
                         self.assertTrue(any(b.type == "image" for b in read.content))
                         self.assertIn("freshness", read.structured_content)
+                        history = await client.call_tool("ticket_history", {"url_or_id": "1"})
+                        self.assertTrue(history.structured_content["ok"])
+                        self.assertLess(len(history.content[0].text), 200)
                         health = await client.call_tool("health", {})
                         self.assertTrue(health.structured_content["index"]["enabled"])
                         self.assertEqual(health.structured_content["index"]["query_embedding_cache"]["limit"], 256)

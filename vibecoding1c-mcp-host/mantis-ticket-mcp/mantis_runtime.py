@@ -102,12 +102,12 @@ class Runtime:
     def register(self, mcp):
         @mcp.tool
         @worker_tool
-        def search_tickets(query: str, actor: str = "", filters: dict | None = None,
+        def search_tickets(query: str = "", actor: str = "", filters: dict | None = None,
                            mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True,
-                           sort_by: str = "relevance") -> dict:
-            """Paged compact search (10 default, max 20, 12000 chars). sort_by: relevance/updated_at/created_at; filters via mantis_metadata."""
+                           sort_by: str = "relevance", similar_to: int = 0) -> dict:
+            """Paged search (10 default, max 20, 12000 chars). Use query or similar_to issue ID; filter/sort via mantis_metadata."""
             person = actor_name(actor)
-            result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by)
+            result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to)
             self.audit(person, "search", "", result.get("status", "succeeded"))
             from fastmcp.tools.tool import ToolResult
             from mcp.types import TextContent

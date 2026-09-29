@@ -484,6 +484,21 @@ class IndexTests(unittest.TestCase):
         follow = self.index.project_participants(1, "Иван", limit=1, cursor=page["next_cursor"])
         self.assertEqual(follow["participants"][0]["id"], 11)
 
+    def test_similar_issue_uses_source_text_excludes_self_and_falls_back(self):
+        self.api.items[2] = ticket(2, text="Описание решения для похожего обращения")
+        self.index.refresh(1)
+        self.index.refresh(2)
+        result = self.search("", similar_to=1)
+        self.assertEqual(result["similar_to"], 1)
+        self.assertEqual(result["similarity_mode"], "lexical_fallback")
+        self.assertNotIn(1, {issue["id"] for issue in result["issues"]})
+        self.assertIn(2, {issue["id"] for issue in result["issues"]})
+        with self.assertRaisesRegex(ValueError, "either query or similar_to"):
+            self.search("both", similar_to=1)
+        del self.api.items[1]
+        with self.assertRaises(ApiError):
+            self.search("", similar_to=1)
+
     def test_moving_pages_retain_checkpoint_then_converge(self):
         self.api.items = {n: ticket(n) for n in range(1, 122)}
         self.state.run("UPDATE projects SET status='current',checkpoint=1")

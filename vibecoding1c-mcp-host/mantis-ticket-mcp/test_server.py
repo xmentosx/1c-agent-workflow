@@ -134,8 +134,30 @@ class MantisTicketServerTests(unittest.TestCase):
 
         self.assertEqual(mcp.name, "mantis-ticket")
         self.assertIs(mcp.options.get("stateless_http"), True)
-        self.assertEqual(mcp.registered_tools, ["read_ticket", "read_comments", "get_attachment", "health", "search_tickets",
+        self.assertEqual(mcp.registered_tools, ["read_ticket", "read_comments", "ticket_history", "get_attachment", "health", "search_tickets",
                                                 "mantis_metadata", "execute_write", "write_operation", "index_control"])
+
+    def test_history_pages_visible_fields_and_hides_note_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = FakeClient()
+            original = client.get_issue
+            events = [{"created_at": f"2026-09-{n:02d}T12:00:00Z", "user": {"id": 10, "name": "editor"},
+                       "type": {"id": 0, "name": "field_changed"}, "field": {"name": "status"},
+                       "old_value": {"id": 10, "name": "new"}, "new_value": {"id": 50, "name": "assigned"}} for n in range(1, 4)]
+            events.append({"created_at": "2026-09-04T12:00:00Z", "type": {"name": "note_added"},
+                           "note": {"id": 999}, "new_value": "PRIVATE_NOTE_987"})
+            client.get_issue = lambda issue_id: {**original(issue_id), "history": events}
+            service = server.MantisTicketService(server.Settings("http://mantis.local", "fixture", Path(tmp)), client)
+            first = service.ticket_history("1", limit=1)
+            self.assertEqual(len(first["events"]), 1)
+            self.assertEqual(first["events"][0]["created_at"], "2026-09-03T12:00:00Z")
+            self.assertEqual(first["omitted_unverified_events"], 1)
+            self.assertNotIn("PRIVATE_NOTE_987", str(first))
+            second = service.ticket_history("1", limit=1, cursor=first["next_cursor"])
+            self.assertEqual(second["events"][0]["created_at"], "2026-09-02T12:00:00Z")
+            self.assertEqual(len(service.ticket_history("1", from_date="2026-09-03T00:00:00Z")["events"]), 1)
+            events[0]["new_value"] = {"id": 60, "name": "resolved"}
+            self.assertEqual(service.ticket_history("1", cursor=first["next_cursor"])["status"], "history_changed")
 
     def test_comments_pages_long_text_and_detects_discussion_change(self):
         with tempfile.TemporaryDirectory() as tmp:

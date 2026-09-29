@@ -713,13 +713,26 @@ class Index:
         return {"project_id": int(project_id), "participants": participants, "next_cursor": next_cursor,
                 "access_check": "fresh", "scanned_pages": scanned}
 
-    def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True, sort_by="relevance"):
+    def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True,
+               sort_by="relevance", similar_to=0):
         if mode not in {"all", "comments", "filenames"}:
             raise ValueError("mode must be all, comments or filenames")
         if sort_by not in {"relevance", "updated_at", "created_at"}:
             raise ValueError("sort_by must be relevance, updated_at or created_at")
         if not isinstance(query, str) or len(query) > 2000:
             raise ValueError("Query must be at most 2000 characters")
+        if isinstance(similar_to, bool) or int(similar_to) < 0:
+            raise ValueError("similar_to must be a positive issue ID")
+        similar_to = int(similar_to)
+        if similar_to:
+            if query.strip():
+                raise ValueError("Use either query or similar_to, not both")
+            source, _, _ = self.refresh(similar_to)
+            query = (str(source.get("summary") or "")[:240] + "\n" +
+                     str(source.get("description") or "")[:900] + "\n" +
+                     str(source.get("steps_to_reproduce") or "")[:400]).strip()
+            if not query:
+                raise ValueError("Source issue has no searchable summary or description")
         filters = filters or {}
         allowed = {"project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
                    "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"}
@@ -736,7 +749,7 @@ class Index:
             if set(map(str, filters["custom_fields"])) - definitions.keys():
                 raise ValueError("Unknown custom field for this project; call mantis_metadata")
         limit = max(1, min(int(limit), 20))
-        identity = digest([query, filters, mode, semantic, sort_by])
+        identity = digest([query, filters, mode, semantic, sort_by, similar_to])
         offset = 0
         if cursor:
             try:
@@ -847,7 +860,7 @@ class Index:
             names = {object_id(t): t.get("name", "") for t in json.loads(tags)}
             for key, rank in sorted(ranks.items(), key=lambda item: -item[1]):
                 row = records.get(key)
-                if not row or (mode != "all" and row["kind"] != {"comments": "comment", "filenames": "filename"}[mode]):
+                if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {"comments": "comment", "filenames": "filename"}[mode]):
                     continue
                 issue = parsed.get(row["issue_id"])
                 if not issue or not matches(issue, names):
@@ -902,7 +915,8 @@ class Index:
             entry["access_check"] = "fresh" if entry["id"] in checked else "cached"
         snapshot = self.state.health()
         corpus_status = "partial" if self.semantic_status == "ready" and snapshot["embedding_backlog"] else self.semantic_status
-        result = {"ok": True, "issues": [], "next_cursor": "",
+        result = {"ok": True, "issues": [], "next_cursor": "", "similar_to": similar_to or None,
+                "similarity_mode": ("semantic" if query_semantics == "available" else "lexical_fallback") if similar_to else None,
                 "candidate_limit": 10000, "candidate_window_limited": len(ranks) >= 10000,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
