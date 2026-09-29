@@ -39,6 +39,8 @@ SEARCH_REFRESH_LIMIT = 10
 SEARCH_REFRESH_WORKERS = 4
 SEARCH_REFRESH_BUDGET_SECONDS = 15
 SEARCH_API_TIMEOUT_SECONDS = 3
+SEARCH_CURSOR_TTL_SECONDS = 900
+SEARCH_CURSOR_CAPACITY = 128
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
@@ -410,6 +412,8 @@ class Index:
         self.worker = None
         self.work_lock = threading.Lock()
         self.search_refresh_slots = threading.BoundedSemaphore(SEARCH_REFRESH_WORKERS)
+        self.search_cursor_lock = threading.Lock()
+        self.search_cursors = OrderedDict()
         self.embedding_worker = None
         self.embedding_lock = threading.RLock()
         # Serializes a Zvec flush with physical cleanup, without blocking
@@ -1221,17 +1225,30 @@ class Index:
                 raise ValueError("Unknown custom field for this project; call mantis_metadata")
         limit = max(1, min(int(limit), 20))
         identity = digest([query, filters, mode, semantic, sort_by, similar_to])
-        offset = 0
+        session_id = ""
+        step = 0
+        seen = set()
         if cursor:
             try:
                 token = json.loads(base64.urlsafe_b64decode(cursor))
-                if token["query"] != identity:
+                if token["query"] != identity or not isinstance(token["session"], str):
                     raise ValueError()
-                offset = int(token["offset"])
-                if not 0 <= offset <= SEARCH_CANDIDATE_LIMIT:
+                session_id, step = token["session"], int(token["step"])
+                with self.search_cursor_lock:
+                    now = time.monotonic()
+                    for key, entry in list(self.search_cursors.items()):
+                        if now - entry["touched"] > SEARCH_CURSOR_TTL_SECONDS:
+                            del self.search_cursors[key]
+                    session = self.search_cursors.get(session_id)
+                    if not session or session["identity"] != identity or session["step"] != step:
+                        raise ValueError()
+                    seen = set(session["seen"])
+                    session["touched"] = now
+                    self.search_cursors.move_to_end(session_id)
+                if len(seen) > SEARCH_CANDIDATE_LIMIT:
                     raise ValueError()
             except Exception as exc:
-                raise ValueError("Search changed or cursor is invalid; restart without cursor") from exc
+                raise ValueError("Search cursor expired or invalid; restart without cursor") from exc
         exact = re.fullmatch(r"#?(\d+)", query.strip())
         if exact:
             try:
@@ -1274,11 +1291,6 @@ class Index:
                         query_semantics = "available"
                     except Exception as exc:
                         query_semantics = str(exc)[:180]
-        cursor_mode = "semantic" if query_semantics == "available" else "lexical"
-        cursor_revision = (self.state.revision() if cursor_mode == "semantic"
-                           else self.state.source_revision())
-        if cursor and (token.get("mode") != cursor_mode or token.get("revision") != cursor_revision):
-            raise ValueError("Search changed or cursor is invalid; restart without cursor")
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1332,7 +1344,7 @@ class Index:
                 rows = {row["id"]: row for row in self.state.all(
                     "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
                     "f.source,f.text,f.version FROM fragments f JOIN issues i ON i.id=f.issue_id "
-                    f"WHERE f.id IN ({placeholders})", keys)}
+                    f"WHERE f.id IN ({placeholders})", keys) if row["issue_id"] not in seen}
                 records.update(rows)
                 new_issues = {row["issue_id"] for row in rows.values()} - issue_ids
                 issue_ids.update(new_issues)
@@ -1347,7 +1359,7 @@ class Index:
                                                   if value is not None}
                 for key, rank in batch:
                     row = rows.get(key)
-                    if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
+                    if not row or row["issue_id"] in seen or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
                             "comments": "comment", "filenames": "filename",
                             "attachment_contents": "attachment_content"}[mode]):
                         continue
@@ -1379,8 +1391,8 @@ class Index:
                 # A relevance page needs one more card to prove continuation.
                 # Continue through ties so the stable issue-ID tiebreaker is
                 # unaffected by where a 400-fragment disk batch ended.
-                if sort_by == "relevance" and len(groups) > offset + limit:
-                    cutoff = sorted((entry["score"] for entry in groups.values()), reverse=True)[offset + limit]
+                if sort_by == "relevance" and len(groups) > limit:
+                    cutoff = sorted((entry["score"] for entry in groups.values()), reverse=True)[limit]
                     if start + len(batch) == len(ranked) or ranked[start + len(batch)][1] < cutoff:
                         break
             if sort_by == "relevance":
@@ -1392,7 +1404,7 @@ class Index:
         initial, initial_version, issue_ids, attachment_sources = grouped()
         refresh_deadline = time.monotonic() + SEARCH_REFRESH_BUDGET_SECONDS
         checked = set()
-        page_ids = [issue["id"] for issue in initial[offset:offset + min(limit, SEARCH_REFRESH_LIMIT)]]
+        page_ids = [issue["id"] for issue in initial[:min(limit, SEARCH_REFRESH_LIMIT)]]
         if isinstance(self.api, Api) and page_ids:
             # Four short-lived readers check displayed cards concurrently.
             # A server-wide semaphore bounds load when searches overlap; an
@@ -1453,8 +1465,6 @@ class Index:
         if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
-        cursor_revision = (self.state.revision() if cursor_mode == "semantic"
-                           else self.state.source_revision())
         groups = initial
         verified = {row["issue_id"]: row["verified"] for row in final_records.values()}
         for entry in groups:
@@ -1473,7 +1483,7 @@ class Index:
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},
                 "output_char_limit": 12000}
-        for entry in groups[offset:offset + limit]:
+        for entry in groups[:limit]:
             result["issues"].append(entry)
             # Reserve space for the cursor; even an unfiltered request remains
             # bounded. Page advance uses emitted cards, not the requested limit.
@@ -1483,7 +1493,24 @@ class Index:
                     raise ValueError("One result exceeds the compact output budget; narrow the query or read its exact issue ID")
                 break
         emitted = len(result["issues"])
-        if len(groups) > offset + emitted:
-            result["next_cursor"] = base64.urlsafe_b64encode(encode({"query": identity, "mode": cursor_mode,
-                "revision": cursor_revision, "offset": offset + emitted}).encode()).decode()
+        with self.search_cursor_lock:
+            if session_id:
+                session = self.search_cursors.get(session_id)
+                if not session or session["identity"] != identity or session["step"] != step:
+                    raise ValueError("Search cursor expired or advanced; restart without cursor")
+            if len(groups) > emitted:
+                if not session_id:
+                    session_id = uuid.uuid4().hex
+                    session = {"identity": identity, "step": 0, "seen": set(), "touched": time.monotonic()}
+                    self.search_cursors[session_id] = session
+                session["seen"].update(entry["id"] for entry in result["issues"])
+                session["step"] += 1
+                session["touched"] = time.monotonic()
+                self.search_cursors.move_to_end(session_id)
+                while len(self.search_cursors) > SEARCH_CURSOR_CAPACITY:
+                    self.search_cursors.popitem(last=False)
+                result["next_cursor"] = base64.urlsafe_b64encode(encode({"query": identity,
+                    "session": session_id, "step": session["step"]}).encode()).decode()
+            elif session_id:
+                del self.search_cursors[session_id]
         return result

@@ -1373,7 +1373,7 @@ class IndexTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.search("x", filters={"made_up": True})
 
-    def test_grouping_pagination_and_stale_cursor(self):
+    def test_grouping_pagination_survives_source_changes_without_repeats(self):
         for n in range(1, 4):
             self.api.items[n] = ticket(n)
             self.api.items[n]["notes"] = [{"id": 100 + n, "text": "решения комментарий"}]
@@ -1384,10 +1384,17 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(len(self.search("решения")["issues"]), 3)
         self.api.items[1]["description"] += " changed"
         self.index.refresh(1)
+        self.api.items[4] = ticket(4, text="решения newly indexed")
+        self.index.refresh(4)
+        third = self.search("решения", limit=1, cursor=second["next_cursor"])
+        self.assertTrue(third["ok"])
+        self.assertNotIn(third["issues"][0]["id"], {first["issues"][0]["id"], second["issues"][0]["id"]})
+        with self.assertRaisesRegex(ValueError, "restart"):
+            self.search("other query", cursor=third["next_cursor"])
         with self.assertRaisesRegex(ValueError, "restart"):
             self.search("решения", cursor=first["next_cursor"])
 
-    def test_lexical_cursor_survives_vector_progress_but_semantic_cursor_does_not(self):
+    def test_search_cursor_survives_vector_progress_in_both_modes(self):
         for issue_id in range(1, 4):
             self.api.items[issue_id] = ticket(issue_id, text="needle")
             self.index.refresh(issue_id)
@@ -1406,8 +1413,26 @@ class IndexTests(unittest.TestCase):
             semantic = self.index.search("needle", semantic=True, limit=1)
             self.assertEqual(semantic["semantic_query"], "available")
             self.state.changed(source=False)
-            with self.assertRaisesRegex(ValueError, "restart"):
-                self.index.search("needle", semantic=True, limit=1, cursor=semantic["next_cursor"])
+            next_semantic = self.index.search("needle", semantic=True, limit=1, cursor=semantic["next_cursor"])
+            self.assertTrue(next_semantic["ok"])
+            self.assertNotEqual(next_semantic["issues"][0]["id"], semantic["issues"][0]["id"])
+
+    def test_search_cursor_is_bounded_and_expires(self):
+        for issue_id in range(1, 4):
+            self.api.items[issue_id] = ticket(issue_id, text="needle")
+            self.index.refresh(issue_id)
+        with patch("mantis_index.SEARCH_CURSOR_CAPACITY", 2):
+            oldest = self.index.search("needle", semantic=False, limit=1)
+            self.index.search("needle", semantic=False, limit=1, filters={"status": 90})
+            self.index.search("needle", semantic=False, limit=1, sort_by="updated_at")
+        self.assertEqual(len(self.index.search_cursors), 2)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.index.search("needle", semantic=False, limit=1, cursor=oldest["next_cursor"])
+        live = self.index.search("needle", semantic=False, limit=1)
+        session_id = json.loads(base64.urlsafe_b64decode(live["next_cursor"]))["session"]
+        self.index.search_cursors[session_id]["touched"] -= 901
+        with self.assertRaisesRegex(ValueError, "expired"):
+            self.index.search("needle", semantic=False, limit=1, cursor=live["next_cursor"])
 
     def test_source_revision_catches_up_after_legacy_runtime_restart(self):
         self.index.refresh(1)
