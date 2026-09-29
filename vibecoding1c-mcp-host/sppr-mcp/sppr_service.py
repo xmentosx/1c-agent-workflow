@@ -7,15 +7,57 @@ import heapq
 import json
 import re
 import secrets
-from collections import defaultdict
+import time
+from collections import Counter, defaultdict, deque
+from threading import Lock
 
 import numpy as np
 
 from sppr_core import KINDS, Policy, SpprError, canonical, digest, navigation, split_key
-from sppr_embeddings import QueryCache
+from sppr_embeddings import QueryCache, QueryWaitTimeout
 from sppr_links import IDEA, MEMBERSHIP, PARENT, development_context
+from sppr_odata import HttpNetworkError, HttpStatusError
 from sppr_store import Store
 from sppr_retrieval import Graph, field_matches, field_units, identifiers, integer, page_items, select, strings
+
+
+class SearchDiagnostics:
+    """Bounded process-local timings and counts; never retains query text."""
+
+    def __init__(self):
+        self.lock = Lock()
+        self.counts = Counter()
+        self.fallbacks = Counter()
+        self.uncached_ms = deque(maxlen=64)
+        self.cached_ms = deque(maxlen=64)
+        self.local_ms = deque(maxlen=64)
+
+    def record(self, mode, cached, query_ms, local_ms, degradation_kind):
+        with self.lock:
+            self.counts["requests"] += 1
+            self.counts["hybrid" if mode == "hybrid" else "lexical_only"] += 1
+            if query_ms is not None:
+                self.counts["query_cache_hits" if cached else "query_cache_misses"] += 1
+                (self.cached_ms if cached else self.uncached_ms).append(query_ms)
+            self.local_ms.append(local_ms)
+            if degradation_kind:
+                self.fallbacks[degradation_kind] += 1
+
+    @staticmethod
+    def latency(values):
+        ordered = sorted(values)
+        if not ordered:
+            return {"samples": 0, "p95_ms": None, "max_ms": None}
+        p95 = max(0, (95 * len(ordered) + 99) // 100 - 1)
+        return {"samples": len(ordered), "p95_ms": ordered[p95], "max_ms": ordered[-1]}
+
+    def snapshot(self, query_timeout):
+        with self.lock:
+            return {"query_timeout_seconds": query_timeout, "window": 64,
+                    "counts": dict(self.counts), "fallbacks": dict(self.fallbacks),
+                    "uncached_query_vector": self.latency(self.uncached_ms),
+                    "cached_query_vector": self.latency(self.cached_ms),
+                    "local_search": self.latency(self.local_ms)}
 
 
 class Service:
@@ -23,6 +65,7 @@ class Service:
         self.settings = settings
         self.store = Store(settings)
         self.queries = QueryCache(settings, provider)
+        self.search_diagnostics = SearchDiagnostics()
         self.cursor_key = secrets.token_bytes(32)
 
     @staticmethod
@@ -84,6 +127,7 @@ class Service:
         return response
 
     def search(self, query, filters=None, limit=10, object_ids=None, fields=None):
+        started = time.monotonic_ns()
         self.limit(limit)
         if not isinstance(query, str) or not query.strip() or len(query) > 4000:
             raise SpprError("Provide a nonempty query of at most 4000 characters.")
@@ -156,6 +200,7 @@ class Service:
                     if rank >= 500:
                         break
             mode, cached, degradation = "lexical_exact", False, None
+            query_ms, degradation_kind = None, None
             scope_sql, scope_args = "", []
             if 0 < len(candidates) + len(row_owners) <= 400:
                 parts = []
@@ -176,8 +221,14 @@ class Service:
                 row["hash"] in vectors and owner(row) is not None
                 for row in db.execute(fragment_sql, scope_args))
             if manifest["profile"] == self.settings.profile and candidates and has_vectors:
+                phase = "embedding"
                 try:
-                    qv, cached = self.queries.get(query)
+                    embedding_started = time.monotonic_ns()
+                    try:
+                        qv, cached = self.queries.get(query)
+                    finally:
+                        query_ms = (time.monotonic_ns() - embedding_started) // 1_000_000
+                    phase = "ranking"
                     hashes = list(vectors)
                     matrix = np.stack([np.frombuffer(vectors[hashed], dtype=np.float32) for hashed in hashes])
                     if matrix.shape[1] != self.settings.dimension:
@@ -203,8 +254,19 @@ class Service:
                     mode = "hybrid"
                 except SpprError as exc:
                     degradation = str(exc)
+                    if phase == "ranking":
+                        degradation_kind = "local_vector_index"
+                    elif isinstance(exc, HttpNetworkError):
+                        degradation_kind = exc.category
+                    elif isinstance(exc, HttpStatusError):
+                        degradation_kind = f"http_{exc.status}"
+                    elif isinstance(exc, QueryWaitTimeout):
+                        degradation_kind = "shared_query_timeout"
+                    else:
+                        degradation_kind = "embedding_error"
             elif manifest["profile"] != self.settings.profile:
                 degradation = "Embedding profile changed; rebuild vectors before semantic search."
+                degradation_kind = "profile_mismatch"
             ranked = sorted(scores, key=lambda k: (-scores[k], k))[:limit]
             hits = []
             for oid in ranked:
@@ -212,10 +274,16 @@ class Service:
                 item.update({"match": sorted(reasons[oid]), "score": scores[oid], "excerpt": excerpts.get(oid),
                              "relationship": "возможно связано" if reasons[oid] == {"semantic"} else "search_match"})
                 hits.append(item)
-            return self.checked({**self.envelope(manifest, policy), "search_mode": mode,
-                                 "query_vector_cached": cached, "degradation": degradation, "hits": hits,
-                                 "object_ids": object_ids, "fields": fields,
-                                 "exhaustive": False, "note": "Top-k search; use list_sppr_relations for stored relationships."}, policy)
+            total_ms = (time.monotonic_ns() - started) // 1_000_000
+            local_ms = max(0, total_ms - (query_ms or 0))
+            result = self.checked({**self.envelope(manifest, policy), "search_mode": mode,
+                                   "query_vector_cached": cached, "degradation": degradation,
+                                   "degradation_kind": degradation_kind,
+                                   "timing_ms": {"query_vector": query_ms, "local_search": local_ms, "total": total_ms},
+                                   "hits": hits, "object_ids": object_ids, "fields": fields,
+                                   "exhaustive": False, "note": "Top-k search; use list_sppr_relations for stored relationships."}, policy)
+            self.search_diagnostics.record(mode, cached, query_ms, local_ms, degradation_kind)
+            return result
 
     @staticmethod
     def excerpt(row):
@@ -468,5 +536,6 @@ class Service:
                        "embedding_schedule": {"mode": "periodic", "interval_minutes": self.settings.embedding_interval_minutes,
                                               "max_in_flight": self.settings.embedding_workers,
                                               "requires_open_user_session": True},
-                       "protocol": "functional tool response", "query_cache_size": len(self.queries.values)})
+                       "protocol": "functional tool response", "query_cache_size": len(self.queries.values),
+                       "search_diagnostics": self.search_diagnostics.snapshot(self.settings.query_timeout)})
         return self.checked(result, policy)

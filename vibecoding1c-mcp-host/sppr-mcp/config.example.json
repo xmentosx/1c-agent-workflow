@@ -9,7 +9,7 @@
   "dimension": 4096,
   "cache_size": 256,
   "embedding_timeout": 120,
-  "query_timeout": 25,
+  "query_timeout": 45,
   "embedding_workers": 4,
   "embedding_batch_size": 16,
   "embedding_run_seconds": 240,

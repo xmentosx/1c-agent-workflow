@@ -131,7 +131,7 @@ class Settings:
     page_size: int = 100
     timeout: int = 30
     embedding_timeout: int = 120
-    query_timeout: int = 25
+    query_timeout: int = 45
     max_response_bytes: int = 16 * 1024 * 1024
     max_objects: int = 100000
     chunk_chars: int = 1800

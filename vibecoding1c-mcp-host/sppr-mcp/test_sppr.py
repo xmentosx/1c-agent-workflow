@@ -844,12 +844,30 @@ class SpprTests(unittest.TestCase):
     def test_outage_cached_uncached_and_changed_text(self):
         self.publish()
         service = Service(self.settings, self.provider)
-        service.search("54321")
+        first = service.search("54321")
+        self.assertEqual(first["search_mode"], "hybrid")
+        self.assertIsNone(first["degradation_kind"])
+        self.assertGreaterEqual(first["timing_ms"]["query_vector"], 0)
         self.provider.fail = True
-        self.assertEqual(service.search("54321")["search_mode"], "hybrid")
+        cached = service.search("54321")
+        self.assertEqual(cached["search_mode"], "hybrid")
+        self.assertTrue(cached["query_vector_cached"])
         failed = service.search("проблемы")
         self.assertEqual(failed["search_mode"], "lexical_exact")
         self.assertTrue(failed["degradation"])
+        self.assertEqual(failed["degradation_kind"], "embedding_error")
+        self.assertGreaterEqual(failed["timing_ms"]["local_search"], 0)
+        diagnostics = service.status()["search_diagnostics"]
+        self.assertEqual(diagnostics["query_timeout_seconds"], 45)
+        self.assertEqual(diagnostics["counts"], {"requests": 3, "hybrid": 2,
+                                                 "query_cache_misses": 2, "query_cache_hits": 1,
+                                                 "lexical_only": 1})
+        self.assertEqual(diagnostics["fallbacks"], {"embedding_error": 1})
+        self.assertEqual(diagnostics["uncached_query_vector"]["samples"], 2)
+        self.assertEqual(diagnostics["cached_query_vector"]["samples"], 1)
+        self.assertEqual(diagnostics["local_search"]["samples"], 3)
+        self.assertNotIn("54321", json.dumps(diagnostics))
+        self.assertNotIn("проблемы", json.dumps(diagnostics))
         self.source.data[key(TP, uuid(1))].update(Описание="НЕБЫВАЛЫЙ новый текст", DataVersion="v3")
         result = self.publish()
         self.assertFalse(result["semantic_complete"])
@@ -1142,10 +1160,19 @@ class SpprTests(unittest.TestCase):
         http = Http(timeout=1, attempts=1)
         http.opener = Offline()
         with patch("sppr_odata.time.sleep") as sleep:
-            with self.assertRaises(HttpNetworkError):
+            with self.assertRaises(HttpNetworkError) as offline:
                 http.request("https://example.invalid/embeddings")
+        self.assertEqual(offline.exception.category, "network")
         self.assertEqual(http.requests, 1)
         sleep.assert_not_called()
+        class TimedOut:
+            def open(self, *_args, **_kwargs):
+                raise URLError(TimeoutError("fixture slow socket"))
+        http.opener = TimedOut()
+        with self.assertRaises(HttpNetworkError) as timeout:
+            http.request("https://example.invalid/embeddings")
+        self.assertEqual(timeout.exception.category, "timeout")
+        self.assertNotIn("fixture slow socket", str(timeout.exception))
         self.publish()
         class OfflineQuery:
             def embed(self, _texts):
@@ -1154,6 +1181,15 @@ class SpprTests(unittest.TestCase):
         self.assertEqual(result["search_mode"], "lexical_exact")
         self.assertTrue(result["hits"])
         self.assertIn("fixture network reset", result["degradation"])
+        self.assertEqual(result["degradation_kind"], "network")
+        class TimeoutQuery:
+            def embed(self, _texts):
+                raise HttpNetworkError(category="timeout")
+        timed = Service(self.settings, TimeoutQuery())
+        fallback = timed.search("планирования")
+        self.assertEqual(fallback["search_mode"], "lexical_exact")
+        self.assertEqual(fallback["degradation_kind"], "timeout")
+        self.assertEqual(timed.status()["search_diagnostics"]["fallbacks"], {"timeout": 1})
         bounded = QueryCache(replace(self.settings, query_timeout=1), FakeEmbeddings())
         bounded.pending[(self.settings.profile, "same query")] = Future()
         begun = time.monotonic()

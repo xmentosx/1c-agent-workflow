@@ -31,7 +31,9 @@ class HttpStatusError(SpprError):
 
 
 class HttpNetworkError(SpprError):
-    pass
+    def __init__(self, message="Network request failed; verify connectivity and retry. Details redacted.", *, category="network"):
+        self.category = category
+        super().__init__(message)
 
 
 def retry_after_seconds(value):
@@ -74,9 +76,11 @@ class Http:
                     raise HttpStatusError(code, retry_after) from None
                 if retry_after > 60:
                     raise HttpStatusError(code, retry_after) from None
-            except (URLError, TimeoutError, OSError):
+            except (URLError, TimeoutError, OSError) as exc:
                 if attempt == self.attempts - 1:
-                    raise HttpNetworkError("Network request failed; verify connectivity and retry. Details redacted.") from None
+                    reason = exc.reason if isinstance(exc, URLError) else exc
+                    category = "timeout" if isinstance(reason, TimeoutError) else "network"
+                    raise HttpNetworkError(category=category) from None
             time.sleep(max(0.25 * (attempt + 1), min(retry_after, 60)))
         raise SpprError("Request failed.")
 

@@ -12,6 +12,10 @@ from sppr_core import SpprError
 from sppr_odata import Http
 
 
+class QueryWaitTimeout(SpprError):
+    """Another call owns this query vector but exceeded the interactive wait."""
+
+
 def vector(values, dimension):
     try:
         result = np.asarray(values, dtype=np.float32)
@@ -77,7 +81,7 @@ class QueryCache:
             try:
                 return future.result(timeout=self.settings.query_timeout + 1), True
             except FutureTimeout:
-                raise SpprError("Query embedding timed out; lexical results remain available.") from None
+                raise QueryWaitTimeout("Query embedding timed out; lexical results remain available.") from None
         try:
             value = self.provider.embed([self.settings.query_instruction + query])[0]
         except BaseException as exc:
