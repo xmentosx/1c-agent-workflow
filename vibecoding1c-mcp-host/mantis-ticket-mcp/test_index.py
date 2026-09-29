@@ -513,6 +513,33 @@ class IndexTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual([issue["id"] for issue in result["issues"]], [1])
 
+    def test_compact_search_does_not_load_unmatched_comment_bodies(self):
+        self.api.items[1]["summary"] = "needle"
+        self.api.items[1]["notes"] = [{"id": 9, "text": "unrelated history " * 10000}]
+        self.index.refresh(1)
+        original = self.state.all
+        loaded = [0]
+        def measured(sql, args=()):
+            rows = original(sql, args)
+            loaded[0] += len(json.dumps(rows, ensure_ascii=False))
+            return rows
+        with patch.object(self.state, "all", side_effect=measured), patch.object(self.index, "refresh", return_value=(None, "", True)):
+            result = self.index.search("needle", semantic=False)
+        self.assertEqual([item["id"] for item in result["issues"]], [1])
+        self.assertLess(loaded[0], 20000, "A compact card must not materialize the issue's unrelated history")
+
+    def test_tag_rename_during_search_invalidates_filter_selection(self):
+        self.api.items[1]["tags"] = [{"id": 7}]
+        self.index.refresh(1)
+        self.state.put_catalog("tags", [{"id": 7, "name": "old"}])
+        original = self.index.refresh
+        def rename(issue_id, *args, **kwargs):
+            self.state.put_catalog("tags", [{"id": 7, "name": "new"}])
+            return original(issue_id, *args, **kwargs)
+        with patch.object(self.index, "refresh", side_effect=rename):
+            result = self.index.search("решения", filters={"tags": ["old"]}, semantic=False)
+        self.assertEqual(result["status"], "results_changed")
+
     def test_outage_has_no_ttl_and_partial_page_no_tombstone(self):
         self.index.refresh(1)
         self.api.down = True

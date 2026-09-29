@@ -590,31 +590,46 @@ class Index:
                 if field + "_before" in filters and value > timestamp(filters[field + "_before"]):
                     return False
             return True
-        def grouped():
-            groups = {}
-            versions = []
+        def source_rows():
             records = {}
             keys = list(ranks)
             for start in range(0, len(keys), 400):
                 batch = keys[start:start + 400]
                 placeholders = ",".join("?" for _ in batch)
                 records.update((row["id"], row) for row in self.state.all(
-                    "SELECT f.*,i.data,i.verified,i.hash AS issue_hash FROM fragments f JOIN issues i ON i.id=f.issue_id "
+                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,f.source,f.text"
+                    " FROM fragments f JOIN issues i ON i.id=f.issue_id "
                     f"WHERE f.id IN ({placeholders})", batch))
-            known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
-            names = {object_id(t): t.get("name", "") for t in json.loads(known_tags["data"])} if known_tags else {}
+            return records
+        def source_version(records, tags):
+            # put_issue commits the issue hash and all source fragments in one
+            # transaction; vector-only progress does not change source content.
+            return digest([sorted({(row["issue_id"], row["issue_hash"]) for row in records.values()}),
+                           tags if filters.get("tags") else ""])
+        def grouped():
+            groups = {}
+            records = source_rows()
+            # Read only card/filter fields, once per issue. Joining the entire
+            # issue (including every comment) to each fragment multiplies I/O.
+            fields = ("summary", "project", "status", "tags", "custom_fields", "created_at", "updated_at")
+            paths = ",".join("'$." + field + "'" for field in fields)
+            issue_ids = list({row["issue_id"] for row in records.values()})
             parsed = {}
+            for start in range(0, len(issue_ids), 400):
+                batch = issue_ids[start:start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                for row in self.state.all(f"SELECT id,json_extract(data,{paths}) AS card FROM issues WHERE id IN ({placeholders})", batch):
+                    parsed[row["id"]] = {key: value for key, value in zip(fields, json.loads(row["card"])) if value is not None}
+            known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
+            tags = known_tags["data"] if known_tags else "[]"
+            names = {object_id(t): t.get("name", "") for t in json.loads(tags)}
             for key, rank in sorted(ranks.items(), key=lambda item: -item[1]):
                 row = records.get(key)
                 if not row or (mode != "all" and row["kind"] != {"comments": "comment", "filenames": "filename"}[mode]):
                     continue
-                version = (row["issue_id"], row["issue_hash"])
-                if version not in parsed:
-                    parsed[version] = json.loads(row["data"])
-                issue = parsed[version]
-                if not matches(issue, names):
+                issue = parsed.get(row["issue_id"])
+                if not issue or not matches(issue, names):
                     continue
-                versions.append((key, row["version"], row["issue_hash"]))
                 entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
                     "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
                     "status": issue.get("status"), "score": 0, "matches": [],
@@ -627,8 +642,8 @@ class Index:
                         "filename_truncated": row["kind"] == "filename" and len(row["source"]) > 1000,
                         "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
                         "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")})
-            return sorted(groups.values(), key=lambda r: (-r["score"], r["id"])), digest(versions)
-        initial, initial_version = grouped()
+            return sorted(groups.values(), key=lambda r: (-r["score"], r["id"])), source_version(records, tags), issue_ids
+        initial, initial_version, issue_ids = grouped()
         revision = self.state.revision()
         refresh_deadline = time.monotonic() + 10
         checked = set()
@@ -643,11 +658,20 @@ class Index:
                     break
             except ApiError:
                 pass
-        groups, final_version = grouped()
-        if final_version != initial_version:
+        final_records = {}
+        for start in range(0, len(issue_ids), 400):
+            batch = issue_ids[start:start + 400]
+            placeholders = ",".join("?" for _ in batch)
+            final_records.update((row["issue_id"], row) for row in self.state.all(
+                f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
+        final_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
+        if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
+        groups = initial
+        verified = {row["issue_id"]: row["verified"] for row in final_records.values()}
         for entry in groups:
+            entry["last_verified"] = verified[entry["id"]]
             entry["access_check"] = "fresh" if entry["id"] in checked else "cached"
         snapshot = self.state.health()
         corpus_status = "partial" if self.semantic_status == "ready" and snapshot["embedding_backlog"] else self.semantic_status
