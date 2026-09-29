@@ -221,6 +221,192 @@ class SpprTests(unittest.TestCase):
             if not cursor:
                 return fields
 
+    def all_items(self, method, **kwargs):
+        items, cursor = [], None
+        for _ in range(1000):
+            page = method(**kwargs, cursor=cursor)
+            self.assertLess(len(json.dumps(page, ensure_ascii=False).encode("utf-8")), 32000)
+            items.extend(page["items"])
+            cursor = page["cursor"]
+            if cursor is None:
+                return items, page
+        self.fail("Continuation failed to terminate")
+
+    def test_context_cycles_rows_roles_and_selected_text_without_provider(self):
+        self.role_fixture(separate=True)
+        # Keep the foreign endpoint and shared cyclic solution graph in this fixture.
+        self.source.idea_row(1, 90, "Foreign endpoint reference", row=2, kind=TP)
+        self.source.idea_row(2, 91, "Unsupported endpoint", row=2, kind="Catalog_ФункцииМеханизмов")
+        text = "Кириллица и пробелы 🙂 " * 500
+        self.source.data[key(IDEA, uuid(3))]["Описание"] = text
+        self.publish()
+        service = Service(self.settings, self.provider)
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.context, object_ids=[key(IDEA, uuid(3))],
+                                    depth=6, fields=["Описание", "РеализацияИдеи"], limit=5)
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertTrue(last["complete"])
+        nodes = [i["object"]["id"] for i in items if i["kind"] == "object"]
+        self.assertEqual(set(nodes), {key(IDEA, uuid(3)), key(TP, uuid(1)), key(TP, uuid(2)),
+                                     key(SOLUTION, uuid(6)), key(SOLUTION, uuid(7))})
+        self.assertEqual(len(nodes), len(set(nodes)))
+        edges = [i for i in items if i["kind"] == "relation"]
+        self.assertEqual(len(edges), len({e["id"] for e in edges}))
+        roles = [i for i in items if i["kind"] == "development"]
+        self.assertEqual(roles[0]["mode"], "separate_tp")
+        self.assertEqual(roles[0]["chtz"], key(TP, uuid(1)))
+        self.assertEqual(roles[0]["developer_task"], key(TP, uuid(2)))
+        parts = [i for i in items if i["kind"] == "field" and i["object_id"] == key(IDEA, uuid(3))]
+        self.assertEqual("".join(i["value"] for i in parts), text)
+        realizations = [i for i in items if i["kind"] == "field" and i.get("edge_id")]
+        self.assertTrue(any(i["value"] == "Реализация разработчика" for i in realizations))
+        self.assertNotIn("FOREIGN-TEXT-TRAP", json.dumps(items))
+        self.assertTrue(any(i["kind"] == "boundary" and i["id"] == key(TP, uuid(90)) for i in items))
+        self.assertTrue(any(i["kind"] == "boundary" and i["links"] is None for i in items))
+        for i in items:
+            if i["kind"] == "object" and i["depth"]:
+                self.assertIn(i["via"]["edge_id"], {e["id"] for e in edges})
+
+    def test_context_limits_have_frontier_and_never_infer_same_tp_from_partial_walk(self):
+        self.role_fixture(separate=True)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        items, last = self.all_items(service.context, object_ids=[idea], depth=0)
+        self.assertIn("depth", last["stop_reasons"])
+        self.assertFalse(last["complete"])
+        self.assertEqual([i for i in items if i["kind"] == "development"][0]["mode"], "separate_tp")
+        self.assertTrue(any(i["kind"] == "frontier" and i["object_id"] == idea for i in items))
+        items, last = self.all_items(service.context, object_ids=[idea], depth=6, max_objects=2)
+        self.assertIn("max_objects", last["stop_reasons"])
+        self.assertEqual(last["object_count"], 2)
+        from sppr_retrieval import Graph
+        with patch.object(Graph, "EDGE_BUDGET", 1):
+            items, last = self.all_items(service.context, object_ids=[idea], depth=6)
+            self.assertIn("edge_budget", last["stop_reasons"])
+        items, last = self.all_items(service.context, object_ids=[idea], direction="outgoing", relations=["Решение_Key"])
+        self.assertEqual(last["object_count"], 1)
+        self.assertTrue(last["complete"])
+
+    def test_list_objects_exhausts_exact_filters_without_embeddings(self):
+        for n in range(100, 145):
+            self.source.add(IDEA, n, Статус="В работе")
+        self.publish()
+        service = Service(self.settings, self.provider)
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.list_objects, filters={"type": IDEA, "status": "В работе"}, limit=7)
+        self.assertEqual(len(items), 45)
+        self.assertEqual(last["total"], 45)
+        self.assertEqual([i["id"] for i in items], sorted(i["id"] for i in items))
+        self.assertTrue(last["complete"])
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertEqual(service.list_objects({"project": B})["total"], 0)
+        with self.assertRaisesRegex(SpprError, "Supported filters"):
+            service.list_objects({"raw_sql": "SELECT *"})
+
+    def test_batch_read_keeps_single_read_and_projects_fields(self):
+        text = "Очень длинное описание 🙂 " * 600
+        self.source.data[key(TP, uuid(1))]["Описание"] = text
+        self.publish()
+        service = Service(self.settings, self.provider)
+        ids = [key(TP, uuid(1)), key(IDEA, uuid(3))]
+        items, last = self.all_items(service.read, object_id=ids, fields=["Описание"], limit=3)
+        parts = [i["value"] for i in items if i["kind"] == "field" and i["object_id"] == ids[0]]
+        self.assertEqual("".join(parts), text)
+        self.assertEqual(len([i for i in items if i["kind"] == "object"]), 2)
+        self.assertTrue(last["complete"])
+        single = service.read(ids[0], fields=["Описание"], limit=1)
+        self.assertIn("object", single)
+        self.assertEqual(single["fields"][0]["field"], "Описание")
+        with self.assertRaisesRegex(SpprError, "single"):
+            service.read(ids, edge_id="row")
+        with self.assertRaisesRegex(SpprError, "unavailable"):
+            service.read(ids + [key(TP, uuid(90))])
+
+    def test_scoped_search_filters_fragments_and_preserves_incoming_realization_source(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        result = service.search("Реализация", object_ids=[idea], fields=["РеализацияИдеи"])
+        self.assertEqual([h["id"] for h in result["hits"]], [idea])
+        excerpt = result["hits"][0]["excerpt"]
+        self.assertEqual(excerpt["field"], "РеализацияИдеи")
+        self.assertEqual(excerpt["object_id"], key(TP, uuid(1)))
+        self.assertIsNotNone(excerpt["edge_id"])
+        self.assertTrue(service.search("Реализация", object_ids=[idea], fields=["Описание"])["query_vector_cached"])
+        self.provider.fail = True
+        self.assertEqual(service.search("54321", object_ids=[key(TP, uuid(1))], fields=["Описание"])["hits"], [])
+        self.assertEqual(service.search("Реализация", object_ids=[key(TP, uuid(90))])["hits"], [])
+        scoped = service.search("Реализация", object_ids=[idea], fields=["NoSuchField"])
+        self.assertEqual(scoped["hits"], [])
+
+    def test_shortest_paths_direction_multiple_paths_and_honest_limits(self):
+        self.source.data[key(TP, uuid(2))]["Решение_Key"] = uuid(6)
+        self.publish()
+        service = Service(self.settings, self.provider)
+        a, b = key(IDEA, uuid(3)), key(SOLUTION, uuid(6))
+        before = len(self.provider.calls)
+        items, last = self.all_items(service.paths, source_id=a, target_id=b, max_paths=10, limit=2)
+        paths = [i for i in items if i["kind"] == "path"]
+        self.assertEqual(len(paths), 2)
+        self.assertTrue(all(len(i["edge_ids"]) == 2 for i in paths))
+        self.assertTrue(last["complete"])
+        self.assertEqual(len(self.provider.calls), before)
+        self.assertFalse(service.paths(a, b, direction="outgoing")["found"])
+        self.assertFalse(service.paths(a, b, relations=["Parent_Key"])["found"])
+        self.assertIn("depth", service.paths(a, b, depth=1)["stop_reasons"])
+        self.assertIn("max_paths", service.paths(a, b, max_paths=1)["stop_reasons"])
+        self.assertIn("max_objects", service.paths(a, b, max_objects=1)["stop_reasons"])
+        self.assertTrue(service.paths(a, a, depth=0)["found"])
+        with self.assertRaisesRegex(SpprError, "outside"):
+            service.paths(a, key(TP, uuid(90)))
+
+    def test_new_cursors_bind_parameters_generation_and_current_policy(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        a, b = key(IDEA, uuid(3)), key(TP, uuid(1))
+        requests = [(service.context, {"object_ids": [a]}),
+                    (service.paths, {"source_id": a, "target_id": b}),
+                    (service.list_objects, {}), (service.read, {"object_id": [a, b], "fields": ["Описание"]})]
+        cursors = []
+        for method, args in requests:
+            token = method(**args, limit=1)["cursor"]
+            self.assertIsNotNone(token)
+            cursors.append(token)
+            with self.assertRaisesRegex(SpprError, "Continuation"):
+                method(**args, limit=2, cursor=token)
+        self.publish()
+        for (method, args), token in zip(requests, cursors):
+            with self.assertRaisesRegex(SpprError, "Continuation"):
+                method(**args, limit=1, cursor=token)
+        token = service.list_objects(limit=1)["cursor"]
+        self.set_policy([])
+        with self.assertRaisesRegex(SpprError, "Continuation"):
+            service.list_objects(limit=1, cursor=token)
+        for method, args in requests:
+            if method != service.list_objects:
+                with self.assertRaises(SpprError):
+                    method(**args)
+
+    def test_new_selection_validation_and_revocation_before_response(self):
+        self.publish()
+        service = Service(self.settings, self.provider)
+        idea = key(IDEA, uuid(3))
+        for args in ({"depth": True}, {"depth": 7}, {"max_objects": 201}, {"fields": []},
+                     {"relations": []}, {"direction": "any"}, {"limit": 21}):
+            with self.assertRaises(SpprError):
+                service.context([idea], **args)
+        with self.assertRaises(SpprError):
+            service.context([])
+        original = service.compact
+        def revoke(*args):
+            result = original(*args)
+            self.set_policy([])
+            return result
+        with patch.object(service, "compact", side_effect=revoke):
+            with self.assertRaisesRegex(SpprError, "policy changed"):
+                service.context([idea])
+
     def role_fixture(self, separate=False):
         self.source.lookup("Catalog_итлТипыТП", 51, "(Эпик)", СрезТП="ЧТЗ")
         self.source.lookup("Catalog_итлТипыТП", 52, "Название не определяет роль ЧТЗ", СрезТП="ЗадачаРазработчику")

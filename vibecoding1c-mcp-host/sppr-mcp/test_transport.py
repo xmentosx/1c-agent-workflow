@@ -3,6 +3,7 @@ import asyncio
 import base64
 import json
 import socket
+import subprocess
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -118,7 +119,23 @@ def test_mcp_over_real_http_two_clients(self):
         for _ in range(2):
             async with Client(f"http://127.0.0.1:{port}/mcp") as client:
                 tools = await client.list_tools()
-                self.assertEqual({t.name for t in tools}, {"search_sppr", "read_sppr_object", "list_sppr_relations", "sppr_index_status"})
+                self.assertEqual({t.name for t in tools}, {"search_sppr", "read_sppr_object", "list_sppr_relations", "sppr_index_status",
+                                                         "get_sppr_context", "list_sppr_objects", "find_sppr_paths"})
+                # Seven bounded tools replace repeated client-side orchestration;
+                # keep the always-on schema below this measured explicit budget.
+                self.assertLess(len(json.dumps([t.model_dump(mode="json", exclude_none=True) for t in tools],
+                                               ensure_ascii=False, separators=(",", ":")).encode("utf-8")), 8000)
+                proxy_root = Path(__file__).resolve().parent.parent / "tools-list-proxy"
+                # Feed actual FastMCP schemas into the production proxy boundary;
+                # changing a tool without its deployed contract must fail here.
+                checked = subprocess.run(["node", "-e",
+                    "const fs=require('fs'),p=require('./mcp-tools-list-proxy.js');"
+                    "const c=JSON.parse(fs.readFileSync('tools-contract.json','utf8')).servers.sppr;"
+                    "p.transformToolsListResponse(fs.readFileSync(0),'application/json',c);"],
+                    cwd=proxy_root, input=json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
+                        "tools": [t.model_dump(mode="json", exclude_none=True) for t in tools]}}),
+                    encoding="utf-8", capture_output=True, timeout=10)
+                self.assertEqual(checked.returncode, 0, checked.stderr)
                 for tool in tools:
                     self.assertTrue(tool.annotations.readOnlyHint)
                 hit = await client.call_tool("search_sppr", {"query": "54321"})
@@ -135,6 +152,20 @@ def test_mcp_over_real_http_two_clients(self):
                 self.assertEqual(context["mode"], "separate_tp")
                 self.assertEqual(context["chtz"]["id"], key(TP, uuid(1)))
                 self.assertEqual(context["developer_task"]["id"], key(TP, uuid(2)))
+                batch = await client.call_tool("read_sppr_object", {"object_id": [key(TP, uuid(1)), key(IDEA, uuid(3))], "fields": ["Описание"]})
+                self.assertEqual(len([i for i in batch.structured_content["items"] if i["kind"] == "object"]), 2)
+                listing = await client.call_tool("list_sppr_objects", {"filters": {"type": TP}, "limit": 1})
+                self.assertEqual(listing.structured_content["total"], 2)
+                self.assertIsNotNone(listing.structured_content["cursor"])
+                graph = await client.call_tool("get_sppr_context", {"object_ids": [key(IDEA, uuid(3))], "depth": 2, "limit": 1})
+                self.assertGreaterEqual(graph.structured_content["object_count"], 3)
+                more_graph = await client.call_tool("get_sppr_context", {"object_ids": [key(IDEA, uuid(3))], "depth": 2, "limit": 1,
+                                                                       "cursor": graph.structured_content["cursor"]})
+                self.assertNotEqual(graph.structured_content["items"], more_graph.structured_content["items"])
+                paths = await client.call_tool("find_sppr_paths", {"source_id": key(IDEA, uuid(3)), "target_id": key(TP, uuid(1))})
+                self.assertTrue(paths.structured_content["found"])
+                scoped = await client.call_tool("search_sppr", {"query": "Реализация", "object_ids": [key(IDEA, uuid(3))], "fields": ["РеализацияИдеи"]})
+                self.assertEqual(scoped.structured_content["hits"][0]["id"], key(IDEA, uuid(3)))
                 status = await client.call_tool("sppr_index_status", {})
                 self.assertEqual(status.structured_content["state"], "available")
                 self.assertNotIn("DO-NOT-READ-SECRET", json.dumps(status.structured_content))

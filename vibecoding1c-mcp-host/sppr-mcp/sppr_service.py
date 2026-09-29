@@ -2,21 +2,19 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import hmac
 import json
 import re
 import secrets
-import sqlite3
 from collections import defaultdict
 
 import numpy as np
 
-from sppr_core import (FILTER_FIELDS, KINDS, Policy, SpprError, canonical, digest,
-                       guid, navigation, split_key)
+from sppr_core import KINDS, Policy, SpprError, canonical, digest, navigation, split_key
 from sppr_embeddings import QueryCache
 from sppr_links import IDEA, MEMBERSHIP, PARENT, development_context
 from sppr_store import Store
+from sppr_retrieval import Graph, field_matches, field_units, identifiers, integer, page_items, select, strings
 
 
 class Service:
@@ -84,42 +82,38 @@ class Service:
         policy.unchanged(self.settings.policy)
         return response
 
-    def search(self, query, filters=None, limit=10):
+    def search(self, query, filters=None, limit=10, object_ids=None, fields=None):
         self.limit(limit)
         if not isinstance(query, str) or not query.strip() or len(query) > 4000:
             raise SpprError("Provide a nonempty query of at most 4000 characters.")
-        filters = filters or {}
-        if not isinstance(filters, dict) or set(filters) - (set(FILTER_FIELDS) | {"project", "type"}):
-            raise SpprError("Supported filters: project, type, status, developer, tester, business_type, sprint.")
-        if any(not isinstance(v, str) or len(v) > 500 for v in filters.values()):
-            raise SpprError("Filter values must be strings of at most 500 characters.")
-        if "type" in filters and filters["type"] not in KINDS:
-            raise SpprError("Unsupported metadata type filter.")
+        object_ids, fields = identifiers(object_ids), strings(fields, "fields")
         policy = Policy.load(self.settings.policy)
         with self.store.reader() as (db, manifest):
-            candidates = self.objects(db, policy)
-            def matches(obj):
-                for name, wanted in filters.items():
-                    if name == "project":
-                        if guid(wanted) not in set(obj["roots"]) & policy.projects:
-                            return False
-                    elif name == "type":
-                        if obj["kind"] != wanted:
-                            return False
-                    else:
-                        actual = [str(obj["fields"].get(f, {}).get(a, "")).casefold()
-                                  for f in FILTER_FIELDS[name] for a in ("value", "label")]
-                        if wanted.casefold() not in actual:
-                            return False
-                return True
-            candidates = {k: v for k, v in candidates.items() if matches(v)}
+            objects = self.objects(db, policy)
+            candidates = select(objects, filters, policy.projects)
+            if object_ids is not None:
+                candidates = {k: v for k, v in candidates.items() if k in object_ids}
+            # A realization belongs to the source TP row and is also searchable
+            # when its indexed idea is selected. Preserve row provenance in hits.
+            row_owners = {}
+            if object_ids is not None:
+                for row in db.execute("SELECT id,source,target FROM edges ORDER BY id"):
+                    if row["source"] in objects and row["target"] in candidates:
+                        row_owners[row["id"]] = row["target"]
+            def owner(row):
+                if not field_matches(row["field"], fields):
+                    return None
+                oid = row["object_id"]
+                return oid if oid in candidates else row_owners.get(row["edge_id"])
             scores = defaultdict(float)
             reasons = defaultdict(set)
             excerpts = {}
             normalized = query.strip().casefold()
             for object_id, obj in candidates.items():
-                exact = [obj["uuid"], object_id, obj["title"]]
-                exact.extend(str(obj["fields"].get(f, {}).get("value", "")) for f in ("Code", "Number", "итлКодMantis", "итлСсылкаНаМантис"))
+                exact = [obj["uuid"], object_id] if fields is None else []
+                if field_matches("title", fields):
+                    exact.append(obj["title"])
+                exact.extend(str(obj["fields"].get(f, {}).get("value", "")) for f in ("Code", "Number", "итлКодMantis", "итлСсылкаНаМантис") if field_matches(f, fields))
                 if normalized in {x.casefold() for x in exact if x}:
                     scores[object_id] += 10
                     reasons[object_id].add("exact")
@@ -128,8 +122,8 @@ class Service:
                 expression = " OR ".join('"' + t + '"' for t in tokens)
                 rank = 0
                 for row in db.execute("SELECT f.*,bm25(search_text) AS rank FROM search_text JOIN fragments f ON f.id=search_text.rowid WHERE search_text MATCH ? ORDER BY rank,f.id", (expression,)):
-                    oid = row["object_id"]
-                    if oid not in candidates:
+                    oid = owner(row)
+                    if oid is None:
                         continue
                     rank += 1
                     scores[oid] += 1 / (60 + rank)
@@ -144,7 +138,7 @@ class Service:
                     semantic = []
                     cursor = db.execute("SELECT * FROM fragments WHERE vector IS NOT NULL ORDER BY id")
                     while rows := cursor.fetchmany(256):
-                        rows = [r for r in rows if r["object_id"] in candidates]
+                        rows = [r for r in rows if owner(r) is not None]
                         if not rows:
                             continue
                         matrix = np.stack([np.frombuffer(r["vector"], dtype=np.float32) for r in rows])
@@ -155,7 +149,7 @@ class Service:
                         semantic.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
                         del semantic[500:]
                     for rank, (similarity, row) in enumerate(semantic, 1):
-                        oid = row["object_id"]
+                        oid = owner(row)
                         scores[oid] += 1 / (60 + rank)
                         reasons[oid].add("semantic")
                         excerpts.setdefault(oid, self.excerpt(row))
@@ -173,6 +167,7 @@ class Service:
                 hits.append(item)
             return self.checked({**self.envelope(manifest, policy), "search_mode": mode,
                                  "query_vector_cached": cached, "degradation": degradation, "hits": hits,
+                                 "object_ids": object_ids, "fields": fields,
                                  "exhaustive": False, "note": "Top-k search; use list_sppr_relations for stored relationships."}, policy)
 
     @staticmethod
@@ -180,42 +175,160 @@ class Service:
         return {"text": row["text"][:700], "field": row["field"], "offset": row["offset"],
                 "edge_id": row["edge_id"], "object_id": row["object_id"]}
 
-    def read(self, object_id, cursor=None, limit=10, edge_id=None):
+    def read(self, object_id, cursor=None, limit=10, edge_id=None, fields=None):
         self.limit(limit)
-        split_key(object_id)
+        batch = isinstance(object_id, list)
+        ids = identifiers(object_id if batch else [object_id], 20)
+        fields = strings(fields, "fields")
+        if batch and edge_id:
+            raise SpprError("edge_id requires a single source object_id; use read_text from a relation.")
         policy = Policy.load(self.settings.policy)
         with self.store.reader() as (db, manifest):
-            obj = self.objects(db, policy).get(object_id)
-            if not obj:
+            objects = self.objects(db, policy)
+            if any(oid not in objects for oid in ids):
                 raise SpprError("Object is unavailable in the current corpus; search again or check the project policy.")
-            fields = obj["fields"]
+            obj = objects[ids[0]]
+            records = obj["fields"]
             if edge_id:
                 row = db.execute("SELECT data FROM edges WHERE id=? AND source=?", (edge_id, object_id)).fetchone()
                 if not row:
                     raise SpprError("Relation row is not available on this object.")
-                fields = json.loads(row["data"])["fields"]
-            context = digest(["read", object_id, edge_id, limit, manifest["generation"], policy.token])
+                records = json.loads(row["data"])["fields"]
+            context = digest(["read", ids, batch, edge_id, fields, limit, manifest["generation"], policy.token])
             offset = self.cursor(cursor, context)
-            units = []
-            for name, record in sorted(fields.items()):
-                value = record.get("value")
-                if isinstance(value, str) and len(value) > 1800:
-                    for pos in range(0, len(value), 1800):
-                        units.append({"field": name, "state": record["state"], "value": value[pos:pos+1800],
-                                      "offset": pos, "total_chars": len(value)})
-                else:
-                    units.append({"field": name, **record})
-            page, used = [], 0
-            for unit in units[offset:offset+limit]:
-                size = len(canonical(unit))
-                if page and used + size > 14000:
-                    break
-                page.append(unit)
-                used += size
+            def batch_items():
+                for oid in ids:
+                    yield {"kind": "object", "object": self.compact(objects[oid], policy)}
+                    for unit in field_units(objects[oid]["fields"], fields):
+                        yield {"kind": "field", "object_id": oid, **unit}
+            page, complete = page_items(batch_items() if batch else field_units(records, fields), offset, limit)
             end = offset + len(page)
-            return self.checked({**self.envelope(manifest, policy), "object": self.summary(obj, policy),
-                                 "edge_id": edge_id, "fields": page, "complete": end >= len(units),
-                                 "cursor": self.next_cursor(end, context) if end < len(units) else None}, policy)
+            result = {"items": page, "object_ids": ids} if batch else {
+                "object": self.summary(obj, policy), "edge_id": edge_id, "fields": page}
+            return self.checked({**self.envelope(manifest, policy), **result, "selected_fields": fields,
+                                 "complete": complete, "cursor": None if complete else self.next_cursor(end, context)}, policy)
+
+    def compact(self, obj, policy):
+        summary = self.summary(obj, policy)
+        return {k: summary[k] for k in ("id", "type", "title", "title_truncated", "tp_role", "links")}
+
+    def item_page(self, items, parameters, manifest, policy, cursor, limit):
+        self.limit(limit)
+        context = digest([parameters, limit, manifest["generation"], policy.token])
+        offset = self.cursor(cursor, context)
+        page, complete = page_items(items, offset, limit)
+        return {"items": page, "page_complete": complete,
+                "cursor": None if complete else self.next_cursor(offset + len(page), context)}
+
+    def list_objects(self, filters=None, cursor=None, limit=10):
+        policy = Policy.load(self.settings.policy)
+        with self.store.reader() as (db, manifest):
+            objects = select(self.objects(db, policy), filters, policy.projects)
+            items = (self.compact(objects[k], policy) for k in sorted(objects))
+            page = self.item_page(items, ["list", filters], manifest, policy, cursor, limit)
+            return self.checked({**self.envelope(manifest, policy), **page, "total": len(objects),
+                                 "complete": page["page_complete"], "scope": "all indexed objects matching exact filters"}, policy)
+
+    @staticmethod
+    def edge_item(edge):
+        return {"kind": "relation", **{k: edge.get(k) for k in
+                ("id", "source", "target", "relation", "row", "technical_id", "correlation_id")},
+                "read_text": {"object_id": edge["source"], "edge_id": edge["id"]}}
+
+    @staticmethod
+    def role_edges(db, objects):
+        kinds = sorted(MEMBERSHIP | {PARENT})
+        return [dict(r) for r in db.execute(
+            "SELECT id,source,target,relation FROM edges WHERE relation IN (?,?,?) ORDER BY id", kinds)
+            if r["source"] in objects]
+
+    def context(self, object_ids, depth=2, direction="both", relations=None, max_objects=50,
+                fields=None, cursor=None, limit=10):
+        ids = identifiers(object_ids, 20)
+        if ids is None:
+            raise SpprError("Provide at least one seed object_id.")
+        fields = strings(fields, "fields")
+        policy = Policy.load(self.settings.policy)
+        with self.store.reader() as (db, manifest):
+            objects = self.objects(db, policy)
+            if any(oid not in objects for oid in ids):
+                raise SpprError("Seed object is outside the active corpus; search again under the current policy.")
+            graph = Graph(db, objects, direction, relations)
+            walk = graph.walk(ids, depth, max_objects)
+            # Role interpretation must see all indexed memberships, not infer
+            # same_tp from a traversal that stopped before a separate task.
+            roles = self.role_edges(db, objects)
+            def items():
+                for oid, level in walk["distance"].items():
+                    parent = walk["via"][oid]
+                    yield {"kind": "object", "object": self.compact(objects[oid], policy), "depth": level,
+                           "via": {"object_id": parent[0], "edge_id": parent[1]} if parent else None}
+                    if fields is not None:
+                        for unit in field_units(objects[oid]["fields"], fields):
+                            yield {"kind": "field", "object_id": oid, **unit}
+                    if objects[oid]["kind"] == IDEA:
+                        for role in development_context(oid, objects, roles):
+                            evidence = list(dict.fromkeys(role["evidence"]))
+                            yield {"kind": "development", "object_id": oid, **role,
+                                   "evidence": evidence[:20], "evidence_complete": len(evidence) <= 20,
+                                   "scope": "all indexed development relationships",
+                                   "read_more": {"object_id": oid, "view": "development"}}
+                terminals = set()
+                for edge in walk["edges"].values():
+                    yield self.edge_item(edge)
+                    for endpoint in (edge["source"], edge["target"]):
+                        if endpoint not in walk["distance"] and endpoint not in terminals:
+                            terminals.add(endpoint)
+                            kind, uuid = endpoint.split(":", 1)
+                            state = "traversal_limit" if endpoint in objects else edge.get("target_state", "outside_corpus_or_unavailable")
+                            if state == "indexed":
+                                state = "outside_corpus_or_unavailable"
+                            yield {"kind": "boundary", "id": endpoint, "state": state,
+                                   "links": navigation(self.settings, kind, uuid) if kind in KINDS else None}
+                    if fields is not None:
+                        for unit in field_units(edge["fields"], fields):
+                            yield {"kind": "field", "object_id": edge["source"], "edge_id": edge["id"], **unit}
+                for oid in walk["frontier"]:
+                    yield {"kind": "frontier", "object_id": oid,
+                           "continue_from": {"object_ids": [oid], "direction": direction, "relations": relations}}
+            page = self.item_page(items(), ["context", ids, depth, direction, relations, max_objects, fields],
+                                  manifest, policy, cursor, limit)
+            return self.checked({**self.envelope(manifest, policy), **page,
+                "object_count": len(walk["distance"]), "relation_count": len(walk["edges"]),
+                "traversal_complete": not walk["stop_reasons"], "stop_reasons": walk["stop_reasons"],
+                "complete": page["page_complete"] and not walk["stop_reasons"],
+                "examined_edges": walk["examined_edges"], "selected_fields": fields,
+                "scope": "reachable indexed objects under requested direction and relations; outside-corpus endpoints are terminal",
+                "continuation": "Follow cursor for this traversal; for stop_reasons increase bounds or continue from frontier objects."}, policy)
+
+    def paths(self, source_id, target_id, depth=4, direction="both", relations=None,
+              max_objects=200, max_paths=5, cursor=None, limit=10):
+        identifiers([source_id, target_id])
+        integer(max_paths, "max_paths", 1, 20)
+        policy = Policy.load(self.settings.policy)
+        with self.store.reader() as (db, manifest):
+            objects = self.objects(db, policy)
+            if source_id not in objects or target_id not in objects:
+                raise SpprError("Path endpoint is outside the active corpus; search again under the current policy.")
+            graph = Graph(db, objects, direction, relations)
+            walk = graph.walk([source_id], depth, max_objects, target_id)
+            paths, more = graph.shortest_paths(walk, source_id, target_id, max_paths)
+            stops = walk["stop_reasons"] + (["max_paths"] if more else [])
+            def items():
+                for number, path in enumerate(paths, 1):
+                    yield {"kind": "path", "number": number, **path}
+                used_nodes = sorted({oid for path in paths for oid in path["object_ids"]})
+                used_edges = sorted({eid for path in paths for eid in path["edge_ids"]})
+                for oid in used_nodes:
+                    yield {"kind": "object", "object": self.compact(objects[oid], policy)}
+                for eid in used_edges:
+                    yield self.edge_item(walk["edges"][eid])
+            page = self.item_page(items(), ["paths", source_id, target_id, depth, direction, relations, max_objects, max_paths],
+                                  manifest, policy, cursor, limit)
+            return self.checked({**self.envelope(manifest, policy), **page, "found": bool(paths),
+                "path_count": len(paths), "stop_reasons": stops, "complete": page["page_complete"] and not stops,
+                "scope": "shortest stored paths within requested bounds; semantic similarity is not a link",
+                "continuation": "Follow cursor; increase depth/max_objects/max_paths for a reported stop reason."}, policy)
 
     def relations(self, object_id, direction="both", relation=None, cursor=None, limit=10, view="stored"):
         self.limit(limit)
@@ -234,9 +347,7 @@ class Service:
             context = digest(["relations", object_id, direction, relation, limit, view, manifest["generation"], policy.token])
             offset = self.cursor(cursor, context)
             if view == "development":
-                kinds = sorted(MEMBERSHIP | {PARENT})
-                rows = db.execute("SELECT data FROM edges WHERE relation IN (?,?,?) ORDER BY id", kinds)
-                records = development_context(object_id, objects, (json.loads(r["data"]) for r in rows))
+                records = development_context(object_id, objects, self.role_edges(db, objects))
                 output = []
                 for record in records[offset:offset+limit]:
                     item = dict(record)
