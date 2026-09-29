@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
-from mantis_state import State, digest, timestamp, file_descriptors
+from mantis_state import SearchReader, State, digest, timestamp, file_descriptors
 from mantis_write import Writer, ACTIONS
 
 
@@ -1158,13 +1158,13 @@ class IndexTests(unittest.TestCase):
         self.api.items[1]["summary"] = "needle"
         self.api.items[1]["notes"] = [{"id": 9, "text": "unrelated history " * 10000}]
         self.index.refresh(1)
-        original = self.state.all
+        original = SearchReader.all
         loaded = [0]
-        def measured(sql, args=()):
-            rows = original(sql, args)
+        def measured(reader, sql, args=()):
+            rows = original(reader, sql, args)
             loaded[0] += len(json.dumps(rows, ensure_ascii=False))
             return rows
-        with patch.object(self.state, "all", side_effect=measured), patch.object(self.index, "refresh", return_value=(None, "", True)):
+        with patch.object(SearchReader, "all", measured), patch.object(self.index, "refresh", return_value=(None, "", True)):
             result = self.index.search("needle", semantic=False)
         self.assertEqual([item["id"] for item in result["issues"]], [1])
         self.assertLess(loaded[0], 20000, "A compact card must not materialize the issue's unrelated history")
@@ -1723,17 +1723,41 @@ class IndexTests(unittest.TestCase):
             release.set()
             self.assertTrue(finished.wait(1))
 
+    def test_search_reads_while_writer_holds_its_python_lock(self):
+        from server import Settings
+        self.state.put_issue(ticket(1, text="needle"))
+        self.index.api = Api(Settings("https://mantis.test", "fixture", self.root / "files"))
+        acquired, release = threading.Event(), threading.Event()
+        def hold_writer():
+            with self.state.lock:
+                acquired.set()
+                release.wait(2)
+        worker = threading.Thread(target=hold_writer)
+        worker.start()
+        self.assertTrue(acquired.wait(1))
+        try:
+            with patch.object(self.index, "refresh", return_value=(ticket(1, text="needle"), "", False)):
+                started = time.monotonic()
+                result = self.index.search("needle", semantic=False, limit=1)
+                elapsed = time.monotonic() - started
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["issues"][0]["id"], 1)
+            self.assertLess(elapsed, 1.0)
+        finally:
+            release.set()
+            worker.join(2)
+
     def test_relevance_pages_read_only_the_needed_broad_candidates(self):
         for issue_id in range(1, 651):
             self.state.put_issue(ticket(issue_id, text="needle"))
         self.api.down = True
-        read = self.state.all
+        read = SearchReader.all
         fetched = []
-        def counted(sql, args=()):
+        def counted(reader, sql, args=()):
             if "FROM fragments f JOIN issues i" in sql:
                 fetched.append(len(args))
-            return read(sql, args)
-        with patch.object(self.state, "all", side_effect=counted):
+            return read(reader, sql, args)
+        with patch.object(SearchReader, "all", counted):
             first = self.index.search("needle", semantic=False, limit=10)
             first_reads = sum(fetched)
             fetched.clear()

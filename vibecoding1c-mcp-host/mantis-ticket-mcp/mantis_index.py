@@ -9,6 +9,7 @@ import math
 import os
 import random
 import re
+import sqlite3
 import shutil
 import subprocess
 import sys
@@ -27,7 +28,7 @@ from urllib.parse import urlsplit
 from urllib.request import getproxies, proxy_bypass
 
 from mantis_api import Api, ApiError
-from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link, file_descriptors
+from mantis_state import PROFILE, SearchReader, State, digest, encode, object_id, timestamp, is_link, file_descriptors
 from mantis_extract import MAX_INPUT
 
 
@@ -1191,6 +1192,16 @@ class Index:
 
     def search(self, query, filters=None, mode="all", limit=10, cursor="", semantic=True,
                sort_by="relevance", similar_to=0):
+        try:
+            with SearchReader(self.state) as reader:
+                return self._search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to, reader)
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower():
+                raise
+            return {"ok": False, "status": "index_busy",
+                    "continuation": "Search index is briefly busy; retry the same query and cursor"}
+
+    def _search(self, query, filters, mode, limit, cursor, semantic, sort_by, similar_to, reader):
         if mode not in {"all", "comments", "filenames", "attachment_contents"}:
             raise ValueError("mode must be all, comments, filenames or attachment_contents")
         if sort_by not in {"relevance", "updated_at", "created_at"}:
@@ -1260,18 +1271,18 @@ class Index:
         tokens = re.findall(r"\w+", query, re.UNICODE)
         if tokens:
             expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
-            for rank, row in enumerate(self.state.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
+            for rank, row in enumerate(reader.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
                 ranks[row["id"]] = 1 / (60 + rank)
         if query.strip():
-            for row in self.state.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?", (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
+            for row in reader.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?", (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
         else:
             source_kind = {"comments": "comment", "filenames": "filename",
                            "attachment_contents": "attachment_content"}.get(mode)
-            rows = self.state.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT ?", (source_kind, source_kind, SEARCH_CANDIDATE_LIMIT))
+            rows = reader.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT ?", (source_kind, source_kind, SEARCH_CANDIDATE_LIMIT))
             ranks.update({row["id"]: 1 / (60 + rank) for rank, row in enumerate(rows)})
         if exact:
-            for row in self.state.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
+            for row in reader.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
                 ranks[row["id"]] = 10
         query_semantics = "not_requested"
         query_cache = "not_requested"
@@ -1356,7 +1367,7 @@ class Index:
             paths = ",".join("'$." + field + "'" for field in fields)
             issue_ids = set()
             parsed = {}
-            known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
+            known_tags = reader.one("SELECT data FROM catalog WHERE key='tags'")
             tags = known_tags["data"] if known_tags else "[]"
             names = {object_id(t): t.get("name", "") for t in json.loads(tags)}
             ranked = sorted(ranks.items(), key=lambda item: -item[1])
@@ -1364,7 +1375,7 @@ class Index:
                 batch = ranked[start:start + 400]
                 keys = [key for key, _ in batch]
                 placeholders = ",".join("?" for _ in keys)
-                rows = {row["id"]: row for row in self.state.all(
+                rows = {row["id"]: row for row in reader.all(
                     "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
                     "f.source,f.text,f.version FROM fragments f JOIN issues i ON i.id=f.issue_id "
                     f"WHERE f.id IN ({placeholders})", keys) if row["issue_id"] not in seen}
@@ -1376,7 +1387,7 @@ class Index:
                     for begin in range(0, len(ids), 400):
                         slice_ids = ids[begin:begin + 400]
                         holders = ",".join("?" for _ in slice_ids)
-                        for item in self.state.all(
+                        for item in reader.all(
                                 f"SELECT id,json_extract(data,{paths}) AS card FROM issues WHERE id IN ({holders})", slice_ids):
                             parsed[item["id"]] = {field: value for field, value in zip(fields, json.loads(item["card"]))
                                                   if value is not None}
@@ -1423,7 +1434,7 @@ class Index:
             else:
                 ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
             return ordered, source_version(records, tags), list(issue_ids), attachment_sources
-        revision = self.state.source_revision()
+        revision = reader.source_revision()
         initial, initial_version, issue_ids, attachment_sources = grouped()
         refresh_deadline = time.monotonic() + SEARCH_REFRESH_BUDGET_SECONDS
         checked = set()
@@ -1476,17 +1487,17 @@ class Index:
         for start in range(0, len(issue_ids), 400):
             batch = issue_ids[start:start + 400]
             placeholders = ",".join("?" for _ in batch)
-            final_records.update((row["issue_id"], row) for row in self.state.all(
+            final_records.update((row["issue_id"], row) for row in reader.all(
                 f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
-        final_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
-        if self.state.source_revision() != revision and attachment_sources:
+        final_tags = reader.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
+        if reader.source_revision() != revision and attachment_sources:
             current_sources = {}
             keys = list(attachment_sources)
             for start in range(0, len(keys), 400):
                 batch = keys[start:start + 400]
                 placeholders = ",".join("?" for _ in batch)
                 current_sources.update((row["id"], (row["version"], row["source"]))
-                    for row in self.state.all(
+                    for row in reader.all(
                         f"SELECT id,version,source FROM fragments WHERE id IN ({placeholders})", batch))
             if current_sources != attachment_sources:
                 return {"ok": False, "status": "results_changed",
@@ -1499,7 +1510,7 @@ class Index:
         for entry in groups:
             entry["last_verified"] = verified[entry["id"]]
             entry["access_check"] = "fresh" if entry["id"] in checked else "cached"
-        snapshot = self.state.health()
+        snapshot = reader.health()
         corpus_status = "partial" if self.semantic_status == "ready" and snapshot["embedding_backlog"] else self.semantic_status
         result = {"ok": True, "issues": [], "next_cursor": "", "similar_to": similar_to or None,
                 "similarity_mode": ("semantic" if query_semantics == "available" else "lexical_fallback") if similar_to else None,
@@ -1507,7 +1518,7 @@ class Index:
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
                 "attachment_extraction": {"enabled": self.attachment_enabled,
-                                           **self.state.attachment_status()},
+                                           **reader.attachment_status()},
                 "mantis": self.remote_status, "silent_changes": "Newly visible sources without updated_at require an issue refresh",
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},

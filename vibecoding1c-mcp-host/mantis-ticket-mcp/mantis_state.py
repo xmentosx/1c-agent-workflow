@@ -549,3 +549,32 @@ class State:
                 "catalog_verified": self.all("SELECT key,verified FROM catalog"),
                 "projects": projects,
                 "cost": self.all("SELECT month,SUM(COALESCE(actual,reserved)) AS accounted_usd,SUM(status='unknown') AS unresolved FROM charges GROUP BY month")}
+
+
+class SearchReader:
+    """A read-only connection keeps search independent of the writer's Python lock."""
+
+    health = State.health
+    attachment_status = State.attachment_status
+    revision = State.revision
+    source_revision = State.source_revision
+
+    def __init__(self, state: State):
+        self.clock = state.clock
+        self.db = sqlite3.connect((state.root / "mantis.sqlite").as_uri() + "?mode=ro",
+                                  uri=True, timeout=2)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA query_only=ON")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.db.close()
+
+    def all(self, sql, args=()):
+        return [dict(row) for row in self.db.execute(sql, args).fetchall()]
+
+    def one(self, sql, args=()):
+        rows = self.all(sql, args)
+        return rows[0] if rows else None
