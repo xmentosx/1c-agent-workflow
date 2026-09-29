@@ -506,6 +506,18 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(status["consecutive_failures"], 1)
         self.assertGreater(status["next_retry_at"], self.state.clock())
 
+    def test_network_backoff_is_bounded_and_successful_query_unblocks_backfill(self):
+        from mantis_index import EmbeddingError
+        for _ in range(5):
+            self.index._embedding_failure(EmbeddingError("network"))
+        self.assertLessEqual(self.index.embedding_retry_at - self.state.clock(), 61)
+        self.assertEqual(self.index.embedding_attempts, 5)
+        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.25, 0.5]])
+        self.assertEqual(self.index.query_vector("provider recovered"), ([0.25, 0.5], "miss"))
+        self.assertEqual(self.index.embedding_attempts, 0)
+        self.assertEqual(self.index.embedding_retry_at, 0)
+
+
     def test_embedding_requests_overlap_and_claim_distinct_fragments(self):
         for number in range(1, 9):
             self.state.put_issue(ticket(number, text=f"independent fragment {number}"))

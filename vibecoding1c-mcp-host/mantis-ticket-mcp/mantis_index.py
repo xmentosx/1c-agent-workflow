@@ -312,6 +312,10 @@ class Index:
                 getattr(self.vectors, "failed", False) else "internal")
             self.embedding_attempts += 1
             delay = min(900, 30 * 2 ** min(self.embedding_attempts - 1, 5))
+            if category in {"network", "timeout", "provider_unavailable"}:
+                # An intermittent provider must not idle a large backfill for
+                # many minutes after a burst of connection resets.
+                delay = min(delay, 60)
             if category in {"authentication", "payment", "permission", "budget", "vector_storage"}:
                 delay = max(delay, 3600)
             if category in {"authentication", "payment", "permission", "budget", "vector_storage", "rate_limited"} or self.embedding_attempts >= 2:
@@ -324,11 +328,10 @@ class Index:
 
     def _embedding_success(self):
         with self.embedding_lock:
-            if self.state.clock() >= self.embedding_retry_at:
-                self.embedding_attempts = 0
-                self.embedding_retry_at = 0
-                self.semantic_status = "partial" if self.state.one(
-                    "SELECT 1 FROM fragments WHERE version<>vector_version LIMIT 1") else "ready"
+            self.embedding_attempts = 0
+            self.embedding_retry_at = 0
+            self.semantic_status = "partial" if self.state.one(
+                "SELECT 1 FROM fragments WHERE version<>vector_version LIMIT 1") else "ready"
 
     def query_vector(self, query):
         # Cache only the embedding of the exact model input, never result cards,
@@ -353,6 +356,7 @@ class Index:
             vector = array("d", self.embeddings.embed([query])[0])
             if not vector:
                 raise ValueError("Empty query embedding")
+            self._embedding_success()
             with self._query_lock:
                 self._query_cache[key] = vector
                 while len(self._query_cache) > QUERY_EMBEDDING_CACHE_SIZE:
