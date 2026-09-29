@@ -392,7 +392,7 @@ function Get-Vibecoding1cMcpRegistryHosts {
     $hostInfo = Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "host" -Default $null
     $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $hostInfo -Name "hostId" -Default "legacy-host")
     $baseUrl = [string](Get-Vibecoding1cMcpObjectValue -Object $hostInfo -Name "baseUrl" -Default "")
-    $publishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "publishedAt" -Default "")
+    $publishedAt = ConvertTo-Vibecoding1cMcpTimestampText -Value (Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "publishedAt" -Default "")
     $configurations = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "configurations" -Default @()))
     $servers = @(ConvertTo-Vibecoding1cMcpArray (Get-Vibecoding1cMcpObjectValue -Object $Registry -Name "servers" -Default @()))
     if ($configurations.Count -eq 0 -and $servers.Count -eq 0 -and -not $baseUrl) {
@@ -416,8 +416,9 @@ function Copy-Vibecoding1cMcpRegistryChildHostMetadata {
 
     $hash = ConvertTo-Vibecoding1cMcpHashtable -Object $Child
     $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $HostEntry -Name "hostId" -Default "")
-    $publishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $HostEntry -Name "publishedAt" -Default "")
+    $publishedAt = ConvertTo-Vibecoding1cMcpTimestampText -Value (Get-Vibecoding1cMcpObjectValue -Object $HostEntry -Name "publishedAt" -Default "")
     $baseUrl = [string](Get-Vibecoding1cMcpObjectValue -Object $HostEntry -Name "baseUrl" -Default "")
+    if ($hash.Contains("indexedAt")) { $hash["indexedAt"] = ConvertTo-Vibecoding1cMcpTimestampText -Value $hash["indexedAt"] }
     if (-not $hash.Contains("hostId") -or -not $hash["hostId"]) { $hash["hostId"] = $hostId }
     if (-not $hash.Contains("hostPublishedAt") -or -not $hash["hostPublishedAt"]) { $hash["hostPublishedAt"] = $publishedAt }
     if (-not $hash.Contains("publishedAt") -or -not $hash["publishedAt"]) { $hash["publishedAt"] = $publishedAt }
@@ -695,11 +696,23 @@ function Test-Vibecoding1cMcpEndpointUsableForClientConfig {
     return -not [bool](Get-Vibecoding1cMcpEndpointUnavailableStatus -Endpoint $Endpoint)
 }
 
+function ConvertTo-Vibecoding1cMcpTimestampText {
+    param([object]$Value)
+
+    if ($Value -is [DateTime]) {
+        return $Value.ToString("yyyy-MM-ddTHH:mm:ssK", [Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -is [DateTimeOffset]) {
+        return $Value.ToString("yyyy-MM-ddTHH:mm:ssK", [Globalization.CultureInfo]::InvariantCulture)
+    }
+    return [string]$Value
+}
+
 function Format-Vibecoding1cMcpRemoteEndpointInfo {
     param([object]$Endpoint)
 
     $hostId = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "hostId" -Default "<unknown-host>")
-    $publishedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "hostPublishedAt" -Default (Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "publishedAt" -Default ""))
+    $publishedAt = ConvertTo-Vibecoding1cMcpTimestampText -Value (Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "hostPublishedAt" -Default (Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "publishedAt" -Default ""))
     $url = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "url" -Default "")
     $configId = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configId" -Default "")
     $status = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "status" -Default "")
@@ -707,7 +720,7 @@ function Format-Vibecoding1cMcpRemoteEndpointInfo {
     $configName = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configurationName" -Default "")
     $configVersion = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "configurationVersion" -Default "")
     $model = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "embeddingModel" -Default "")
-    $indexedAt = [string](Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "indexedAt" -Default "")
+    $indexedAt = ConvertTo-Vibecoding1cMcpTimestampText -Value (Get-Vibecoding1cMcpObjectValue -Object $Endpoint -Name "indexedAt" -Default "")
     $details = @("hostId=$hostId")
     if ($publishedAt) { $details += "publishedAt=$publishedAt" }
     if ($url) { $details += "url=$url" }
@@ -852,13 +865,16 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
         [switch]$RefreshRegistry
     )
 
+    if ($RefreshRegistry) {
+        Ensure-Vibecoding1cMcpRegistry | Out-Null
+    }
+
     $reasons = @()
     $selectionPath = Get-Vibecoding1cMcpSelectionPath
     if (-not (Test-Path -LiteralPath $selectionPath -PathType Leaf -ErrorAction SilentlyContinue)) {
         $reasons += "selection file is missing"
     }
 
-    $registryReady = $false
     $registryPath = Join-Path (Get-Vibecoding1cMcpRegistryRoot) "registry.json"
     $canValidateRegistryEndpoints = $RefreshRegistry -or (Test-Path -LiteralPath $registryPath -PathType Leaf -ErrorAction SilentlyContinue)
     foreach ($server in Select-Vibecoding1cMcpManifestServers) {
@@ -894,10 +910,6 @@ function Get-Vibecoding1cMcpSelectionCompleteness {
             }
         }
 
-        if ($RefreshRegistry -and -not $registryReady) {
-            Ensure-Vibecoding1cMcpRegistry | Out-Null
-            $registryReady = $true
-        }
         $hostId = Get-Vibecoding1cMcpSelectedHostId -Server $server -Selection $Selection
         if (-not $canValidateRegistryEndpoints) {
             continue

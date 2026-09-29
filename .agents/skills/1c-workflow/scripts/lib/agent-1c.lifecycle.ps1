@@ -5877,6 +5877,24 @@ function Update-WorkflowPackage {
             Update-AiRules1c
         }
     }
+    if (Test-Path -LiteralPath (Get-Vibecoding1cMcpSelectionPath) -PathType Leaf) {
+        $mcpRegistryRefreshed = $false
+        try {
+            Refresh-Vibecoding1cMcpRegistry
+            $mcpRegistryRefreshed = $true
+        } catch {
+            Write-Warning "MCP registry refresh failed during update-workflow; existing client connections are preserved. $($_.Exception.Message)"
+        }
+        if ($mcpRegistryRefreshed) {
+            $mcpSelection = Read-Vibecoding1cMcpSelection
+            $mcpSelectionCompleteness = Get-Vibecoding1cMcpSelectionCompleteness -Selection $mcpSelection
+            if ($mcpSelectionCompleteness.isComplete) {
+                Invoke-AiRules1cManagedMcpConfigReconcile -Operation "update-workflow MCP reconcile" | Out-Null
+            } else {
+                Write-Warning "MCP client connection update deferred because the saved selection is incomplete: $(@($mcpSelectionCompleteness.reasons) -join '; '). Existing client connections are preserved."
+            }
+        }
+    }
 
     # These actions can materialize tracked client/tool files. Keep them inside
     # the update transaction so the allowlist, commit, and final clean check own

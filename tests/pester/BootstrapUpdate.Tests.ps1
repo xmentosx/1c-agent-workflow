@@ -840,6 +840,8 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
         $previousVanessaSourceBuild = $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE
         $previousOnDemandSourceBuild = $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE
         $previousArtifactCacheRoot = $env:ITL_ARTIFACT_CACHE_ROOT
+        $previousMcpLocalHome = $env:VIBECODING1C_MCP_LOCAL_HOME
+        $previousMcpRegistryRepo = $env:VIBECODING1C_MCP_REGISTRY_REPO
         $artifactCacheRoot = Join-Path $tempRoot "artifact cache"
         $qualifiedVanessaSourceBuild = if ([string]::IsNullOrWhiteSpace($previousVanessaSourceBuild)) {
             Join-Path $RepoRoot "build\third-party\vanessa-automation\1.2.043.42-itl-r1\vanessa-automation-single.1.2.043.42-itl-r1.zip"
@@ -879,6 +881,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             # qualified from the current source change before it is committed. Keep the fixture's
             # canonical lock aligned with that candidate instead of silently exercising the old pin.
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\dependency-lock.json") -Destination $sourceLockPath -Force
+            foreach ($module in @('agent-1c.lifecycle.ps1', 'agent-1c.vibecoding1c-mcp.ps1')) {
+                Copy-Item -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\$module") -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\scripts\lib\$module") -Force
+            }
             Copy-Item `
                 -LiteralPath (Join-Path $RepoRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
                 -Destination (Join-Path $sourceRoot ".agents\skills\1c-workflow\assets\ondemand-mcp\compatibility.json") `
@@ -893,7 +898,7 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             $sourceLock.dependencies.yaxunit.url = $yaxunitFixture
             $sourceLock.dependencies.yaxunit.sha256 = (Get-FileHash -LiteralPath $yaxunitFixture -Algorithm SHA256).Hash.ToLowerInvariant()
             Set-Content -LiteralPath $sourceLockPath -Encoding UTF8 -Value (($sourceLock | ConvertTo-Json -Depth 20) + [Environment]::NewLine)
-            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json $catalogRelativePath
+            & git -C $sourceRoot add templates/dependency-lock.json .agents/skills/1c-workflow/assets/ondemand-mcp/compatibility.json $catalogRelativePath .agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1 .agents/skills/1c-workflow/scripts/lib/agent-1c.vibecoding1c-mcp.ps1
             & git -C $sourceRoot commit --quiet -m "test: use current local dependency candidates"
             $LASTEXITCODE | Should -Be 0
             $sourceCommit = ((& git -C $sourceRoot rev-parse HEAD).Trim())
@@ -939,6 +944,12 @@ SECRET=keep
 ROCTUP_MCP_ENABLED=false
 "@
             Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\state.json") -Encoding UTF8 -Value '{"state":"keep"}'
+            $mcpSelection = @{
+                schemaVersion = 1
+                defaultProvider = 'local'
+                servers = @('docs', 'templates', 'syntax', 'codechecker', 'ssl', 'code', 'graph' | ForEach-Object { @{ id = $_; enabled = $false } })
+            }
+            Set-Content -LiteralPath (Join-Path $projectRoot ".agent-1c\mcp\vibecoding1c-selection.json") -Encoding UTF8 -Value ($mcpSelection | ConvertTo-Json -Depth 8)
             Set-Content -LiteralPath (Join-Path $projectRoot ".codex\config.toml") -Encoding UTF8 -Value '[mcp_servers.custom]'
             Set-Content -LiteralPath (Join-Path $projectRoot ".kilo\kilo.json") -Encoding UTF8 -Value '{"custom":"keep"}'
             Set-Content -LiteralPath (Join-Path $projectRoot "USER-RULES.md") -Encoding UTF8 -Value @"
@@ -967,12 +978,31 @@ local after
             } | ConvertTo-Json -Depth 8)
             $commitCountBefore = ((& git -C $projectRoot rev-list --count HEAD).Trim())
 
+            $registryPublisher = Join-Path $tempRoot 'опубликованный registry'
+            $mcpLocalHome = Join-Path $tempRoot 'локальный MCP'
+            New-Item -ItemType Directory -Path $registryPublisher, $mcpLocalHome -Force | Out-Null
+            & git init --quiet $registryPublisher
+            & git -C $registryPublisher config user.email 'test@example.com'
+            & git -C $registryPublisher config user.name 'Test User'
+            @{ schemaVersion = 1; configurations = @(); servers = @() } | ConvertTo-Json -Depth 8 |
+                Set-Content -LiteralPath (Join-Path $registryPublisher 'registry.json') -Encoding UTF8
+            & git -C $registryPublisher add registry.json
+            & git -C $registryPublisher commit --quiet -m 'initial registry'
+            & git clone --quiet $registryPublisher (Join-Path $mcpLocalHome 'registry')
+            $spprEndpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:18007/mcp'; health = 'running' }
+            @{ schemaVersion = 1; host = @{ hostId = 'dev-ermakov' }; configurations = @(); servers = @($spprEndpoint) } |
+                ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registryPublisher 'registry.json') -Encoding UTF8
+            & git -C $registryPublisher add registry.json
+            & git -C $registryPublisher commit --quiet -m 'publish SPPR'
+
             $env:ITL_WORKFLOW_SOURCE_PATH = $sourceRoot
             $env:ITL_WORKFLOW_REPO = ""
             $env:ITL_WORKFLOW_REF = ""
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $qualifiedVanessaSourceBuild
             $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = [string]$qualifiedOnDemandSourceBuild.path
             $env:ITL_ARTIFACT_CACHE_ROOT = $artifactCacheRoot
+            $env:VIBECODING1C_MCP_LOCAL_HOME = $mcpLocalHome
+            $env:VIBECODING1C_MCP_REGISTRY_REPO = $registryPublisher
             & powershell -NoProfile -ExecutionPolicy Bypass -File $HelperPath -ProjectRoot $projectRoot -Action update-workflow -SkipAiRules > $stdoutPath 2> $stderrPath
             $diagnostic = ((Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue) + [Environment]::NewLine + (Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue))
             $LASTEXITCODE | Should -Be 0 -Because $diagnostic
@@ -1045,6 +1075,8 @@ local after
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json")) | Should -Match "keep"
             $updatedKiloConfig = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".kilo\kilo.json") | ConvertFrom-Json
             $updatedKiloConfig.PSObject.Properties.Name | Should -Not -Contain "plugin"
+            $updatedKiloConfig.mcp.'sppr-knowledge'.url | Should -Be 'http://dev-ermakov:18007/mcp'
+            ((Get-Content -LiteralPath (Join-Path $mcpLocalHome 'registry\registry.json') -Raw -Encoding UTF8 | ConvertFrom-Json).servers[0].id) | Should -Be 'sppr'
             (Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot "scratch.local")) | Should -Match "keep untracked"
 
             $lock = Get-Content -Encoding UTF8 -Raw (Join-Path $projectRoot ".agent-1c\dependency-lock.json") | ConvertFrom-Json
@@ -1079,6 +1111,8 @@ local after
             $env:ITL_VANESSA_AUTOMATION_SOURCE_BUILD_ARCHIVE = $previousVanessaSourceBuild
             $env:ITL_ONDEMAND_MCP_SOURCE_BUILD_EXE = $previousOnDemandSourceBuild
             $env:ITL_ARTIFACT_CACHE_ROOT = $previousArtifactCacheRoot
+            $env:VIBECODING1C_MCP_LOCAL_HOME = $previousMcpLocalHome
+            $env:VIBECODING1C_MCP_REGISTRY_REPO = $previousMcpRegistryRepo
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force
             }

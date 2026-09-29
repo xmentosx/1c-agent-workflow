@@ -129,10 +129,14 @@ Do not use upstream `/installmcp`, `/updatemcp`, or `/checkmcp` as the normal MC
 ## SPPR project knowledge
 
 The shared registry advertises logical server `sppr` as `sppr-knowledge`.
-Workflow setup/select connects its remote endpoint; installed projects do not
-provision the OData collector or store 1C credentials. After the host publishes
-the endpoint, refresh the registry, select `-McpServerId sppr -McpProvider remote`
-and write the active client config through the existing helper actions.
+Workflow setup refreshes the registry before discovering servers, so a newly
+published SPPR endpoint is connected by default. For a project with a saved MCP
+selection, `update-workflow` also refreshes the registry and reconciles the
+active client; an incomplete selection leaves existing connections intact and
+requires `vibecoding1c-mcp-setup`. A project that deferred MCP setup still
+needs that action. Explicit `sync-client-mcp` reads the local registry; run
+`vibecoding1c-mcp-refresh-registry` first when newly published servers are needed.
+Installed projects do not provision the OData collector or store 1C credentials.
 The corpus follows the server's explicit project allowlist, independently of
 the installed project's infobase. Search is top-k; use `list_sppr_relations`
 continuations for complete stored relations and `read_sppr_object` for fields.
