@@ -9,28 +9,15 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
-import numpy as np
-
-from sppr_core import Policy, SpprError, canonical, digest, fragments, now
-
-
-def atomic_json(path, value):
-    temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    try:
-        with temp.open("w", encoding="utf-8", newline="\n") as stream:
-            stream.write(canonical(value))
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temp, path)
-    finally:
-        temp.unlink(missing_ok=True)
+from sppr_core import Policy, SpprError, atomic_json, canonical, digest, fragments, now
+from sppr_vectors import VectorJournal, coverage as vector_coverage
 
 
 @contextmanager
-def writer_lock(state):
+def writer_lock(state, name="collector.lock"):
     state.mkdir(parents=True, exist_ok=True)
     # OS releases this advisory lock on crash; never guess a PID or remove a stale lock.
-    stream = (state / "collector.lock").open("a+b")
+    stream = (state / name).open("a+b")
     if os.fstat(stream.fileno()).st_size == 0:
         stream.write(b"0")
         stream.flush()
@@ -65,6 +52,7 @@ class Store:
     def __init__(self, settings):
         self.settings = settings
         self.state = settings.state
+        self.vectors = VectorJournal(settings)
 
     def manifest(self):
         try:
@@ -80,13 +68,17 @@ class Store:
             raise SpprError("Active manifest is invalid; use collector rollback to a verified generation.") from None
 
     @contextmanager
-    def reader(self):
+    def reader(self, *, live_vectors=False):
         manifest = self.manifest()
         path = self.state / (manifest["generation"] + ".sqlite")
+        connection = None
         try:
             connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
             connection.row_factory = sqlite3.Row
+            self.vectors.attach_reader(connection, live=live_vectors)
         except sqlite3.Error:
+            if connection is not None:
+                connection.close()
             raise SpprError("Active generation is unavailable; retry or restore a completed generation.") from None
         try:
             yield connection, manifest
@@ -99,24 +91,43 @@ class Store:
         with self.reader() as (db, manifest):
             objects = {r["id"]: json.loads(r["data"]) for r in db.execute("SELECT id,data FROM objects")}
             vectors = {}
-            if manifest["profile"] == self.settings.profile:
+            if manifest["profile"] == self.settings.profile and manifest.get("vector_storage") != "journal":
                 vectors = {r["hash"]: r["vector"] for r in db.execute("SELECT hash,vector FROM fragments WHERE vector IS NOT NULL")}
             return objects, vectors
 
-    def publish(self, collection, policy, provider, previous_vectors=None, before=lambda: None):
+    def semantic_progress(self, db, manifest):
+        return vector_coverage(db, manifest["profile"])
+
+    def pending_page(self, db, policy, profile, after_id, limit=256):
+        if not policy.projects:
+            return []
+        placeholders = ",".join("?" for _ in policy.projects)
+        return db.execute(f"""
+            SELECT f.id,f.hash,f.text FROM fragments f
+            WHERE f.id>? AND f.vector IS NULL
+              AND NOT EXISTS(SELECT 1 FROM vec.vectors v WHERE v.profile=? AND v.hash=f.hash)
+              AND EXISTS(SELECT 1 FROM roots r WHERE r.object_id=f.object_id AND r.project IN ({placeholders}))
+            ORDER BY f.id LIMIT ?
+        """, (after_id, profile, *sorted(policy.projects), limit)).fetchall()
+
+    def publish(self, collection, policy, previous_vectors=None, before=lambda: None):
         before()
         self.state.mkdir(parents=True, exist_ok=True)
+        # A one-time legacy import is committed before the new lexical snapshot.
+        # Interrupted runs therefore never have to buy already saved vectors again.
+        with closing(self.vectors.open_writer()) as journal:
+            self.vectors.insert(self.settings.profile, (previous_vectors or {}).items(), journal)
         generation = uuid4().hex
         staging = self.state / (generation + ".staging")
         completed = self.state / (generation + ".sqlite")
-        db = sqlite3.connect(staging)
-        previous_vectors = previous_vectors or {}
+        db = sqlite3.connect(staging, uri=True)
         coverage = dict(collection.coverage)
         coverage.update({"fragments": 0, "vectors": 0})
         manifest = {"generation": generation, "source": self.settings.source_id,
                     "profile": self.settings.profile, "observed_start": collection.started,
                     "observed_end": collection.finished, "published_at": now(), "coverage": coverage,
-                    "mode": "nightly_reconciliation", "objects": len(collection.objects),
+                    "mode": "nightly_reconciliation", "vector_storage": "journal",
+                    "objects": len(collection.objects),
                     "edges": len(collection.edges), "policy": policy.token}
         try:
             db.executescript("""
@@ -130,6 +141,7 @@ class Store:
                 CREATE VIRTUAL TABLE search_text USING fts5(text,tokenize='unicode61');
                 CREATE TABLE metadata(data TEXT NOT NULL);
             """)
+            self.vectors.attach_reader(db)
             docs = []
             for obj in collection.objects.values():
                 if not policy.permits(obj["roots"]):
@@ -142,40 +154,17 @@ class Store:
             for edge in collection.edges:
                 db.execute("INSERT INTO edges VALUES(?,?,?,?,?)", (edge["id"], edge["source"], edge["target"], edge["relation"], canonical(edge)))
                 docs.extend((edge["source"], edge["id"], part) for part in fragments(edge["fields"], self.settings.chunk_chars))
-            missing = {}
-            for _, _, part in docs:
-                hashed = digest([self.settings.profile, part["text"]])
-                if hashed not in previous_vectors:
-                    missing[hashed] = part["text"]
-            pending = list(missing.items())
-            for start in range(0, len(pending), 16):
-                before()
-                policy.unchanged(self.settings.policy)
-                batch = pending[start:start+16]
-                try:
-                    values = provider.embed([text for _, text in batch])
-                    if len(values) != len(batch):
-                        raise SpprError("Embedding batch length mismatch.")
-                    for (hashed, _), value in zip(batch, values):
-                        previous_vectors[hashed] = value.astype(np.float32).tobytes()
-                except SpprError:
-                    # Source collection is complete; publish lexical content, never stale vectors.
-                    before()
-                    policy.unchanged(self.settings.policy)
-                    break
             for index, (object_id, edge_id, part) in enumerate(docs):
                 if index % 256 == 0:
                     before()
                     policy.unchanged(self.settings.policy)
                 text = part["text"]
                 hashed = digest([self.settings.profile, text])
-                values = previous_vectors.get(hashed)
                 cursor = db.execute("INSERT INTO fragments(object_id,edge_id,field,offset,text,hash,vector) VALUES(?,?,?,?,?,?,?)",
-                                    (object_id, edge_id, part["field"], part["offset"], text, hashed, values))
+                                    (object_id, edge_id, part["field"], part["offset"], text, hashed, None))
                 db.execute("INSERT INTO search_text(rowid,text) VALUES(?,?)", (cursor.lastrowid, text))
                 coverage["fragments"] += 1
-                coverage["vectors"] += int(values is not None)
-            manifest["embedding_usage"] = dict(getattr(provider, "usage", {}))
+            coverage["vectors"] = vector_coverage(db, self.settings.profile)["vectors"]
             manifest["semantic_complete"] = coverage["vectors"] == coverage["fragments"]
             db.execute("INSERT INTO metadata VALUES(?)", (canonical(manifest),))
             db.commit()
@@ -187,6 +176,13 @@ class Store:
             os.replace(staging, completed)
             atomic_json(self.state / "active.json", manifest)
             self.prune(generation)
+            try:
+                # One immutable vector checkpoint per nightly reconciliation at
+                # most, after the lexical corpus is already visible to readers.
+                self.vectors.publish_snapshot(force=True)
+            except (OSError, sqlite3.Error, SpprError):
+                # The worker can republish durable journal rows independently.
+                pass
             return manifest
         finally:
             db.close()
@@ -194,7 +190,8 @@ class Store:
 
     def prune(self, active):
         try:
-            generations = sorted(self.state.glob("*.sqlite"), key=lambda p: p.stat().st_mtime, reverse=True)
+            generations = sorted((p for p in self.state.glob("*.sqlite") if re.fullmatch(r"[0-9a-f]{32}", p.stem)),
+                                 key=lambda p: p.stat().st_mtime, reverse=True)
         except OSError:
             # Cleanup is best effort after publication; it cannot invalidate an active snapshot.
             return
@@ -205,6 +202,12 @@ class Store:
                 except OSError:
                     # Windows keeps an open reader's file pinned. Retry on the next publish.
                     pass
+        try:
+            retained = [p for p in generations if p.exists()]
+            self.vectors.prune(retained)
+        except (OSError, sqlite3.Error, ValueError, KeyError):
+            # Reclaiming unused vectors is best effort, never a publication gate.
+            pass
 
     def rollback(self, generation):
         if not re.fullmatch(r"[0-9a-f]{32}", generation):

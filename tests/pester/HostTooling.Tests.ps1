@@ -1325,7 +1325,7 @@ services:
         }
     }
 
-    It "uses Limited InteractiveToken for the SPPR task and never enables missed-run catch-up" -Tag Sppr {
+    It "uses Limited InteractiveToken for both SPPR tasks and never enables missed-run catch-up" -Tag Sppr {
         $root = Join-Path $TestDrive 'СППР задача с пробелом'
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $hostPath = Join-Path $root 'host.json'
@@ -1334,7 +1334,7 @@ services:
         @{ schemaVersion = 1; stateRoot = $root } | ConvertTo-Json | Set-Content -LiteralPath $hostPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $hostPath *> $null
-            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; taskPath = '\ITL\'; description = 'owned fixture'; pythonPath = 'C:\СППР runtime\python.exe' } }
+            function Get-SpprHostSettings { return [pscustomobject]@{ configPath = 'C:\СППР пример\collector.json'; credentialPath = $credentialPath; taskName = 'fixture-sppr'; embeddingTaskName = 'fixture-sppr-embeddings'; taskPath = '\ITL\'; description = 'owned fixture'; embeddingDescription = 'owned embeddings fixture'; pythonPath = 'C:\СППР runtime\python.exe'; settings = @{ embedding_interval_minutes = 5; embedding_run_seconds = 240; timeout = 30 } } }
             function Get-ScheduledTask { return $null }
             function Initialize-SpprRuntime { }
             function Invoke-ProcessWithTimeout { return @{ exitCode = 0; lines = @('01:00') } }
@@ -1345,7 +1345,7 @@ services:
                 $Argument | Should -Not -Match 'outside-window'
                 return @{ owned = $true }
             }
-            function New-ScheduledTaskTrigger { param([switch]$Daily,$At); return @{ at = $At } }
+            function New-ScheduledTaskTrigger { param([switch]$Daily,[switch]$Once,[switch]$AtLogOn,$At,$User,$RepetitionInterval); return @{ at = $At; daily = $Daily.IsPresent; once = $Once.IsPresent; logon = $AtLogOn.IsPresent; interval = $RepetitionInterval } }
             function New-ScheduledTaskPrincipal { param($UserId,$LogonType,$RunLevel); $LogonType | Should -Be 'Interactive'; $RunLevel | Should -Be 'Limited'; return @{ user = $UserId } }
             function New-ScheduledTaskSettingsSet {
                 param($MultipleInstances,$ExecutionTimeLimit,[switch]$Hidden,[switch]$StartWhenAvailable)
@@ -1353,7 +1353,19 @@ services:
                 $StartWhenAvailable | Should -BeFalse
                 return @{ bounded = $true }
             }
-            function Register-ScheduledTask { param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force); $TaskName | Should -Be 'fixture-sppr' }
+            function Register-ScheduledTask {
+                param($TaskName,$TaskPath,$Action,$Trigger,$Settings,$Principal,$Description,[switch]$Force)
+                $TaskName | Should -BeIn @('fixture-sppr','fixture-sppr-embeddings')
+                if ($TaskName -eq 'fixture-sppr-embeddings') {
+                    @($Trigger).Count | Should -Be 2
+                    @($Trigger | Where-Object logon).Count | Should -Be 1
+                    @($Trigger | Where-Object once).Count | Should -Be 1
+                    $Description | Should -Be 'owned embeddings fixture'
+                } else {
+                    $Description | Should -Be 'owned fixture'
+                    $Trigger.daily | Should -BeTrue
+                }
+            }
             Install-SpprCollector -Config @{} *> $null
             { Assert-SpprTaskOwned -Task @{ Description = 'another owner' } -Settings @{ description = 'owned fixture' } } | Should -Throw '*another owner*'
         }

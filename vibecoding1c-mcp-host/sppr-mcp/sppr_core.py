@@ -4,12 +4,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import UUID
+from uuid import uuid4
 from xml.etree import ElementTree as ET
 from zoneinfo import ZoneInfo
 
@@ -28,6 +30,18 @@ def digest(value):
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def atomic_json(path, value):
+    temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
+    try:
+        with temp.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(canonical(value))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def guid(value):
@@ -123,6 +137,10 @@ class Settings:
     night_end: str = "06:00"
     time_zone: str = "Europe/Moscow"
     generations_to_keep: int = 3
+    embedding_workers: int = 4
+    embedding_batch_size: int = 16
+    embedding_run_seconds: int = 240
+    embedding_interval_minutes: int = 5
 
     @classmethod
     def load(cls, path):
@@ -154,6 +172,10 @@ class Settings:
             raise SpprError("Cache, page or chunk limits are outside supported bounds.")
         if self.generations_to_keep < 2 or self.timeout < 1 or self.max_objects < 1:
             raise SpprError("Keep at least two generations and use positive runtime limits.")
+        if not 1 <= self.embedding_workers <= 4 or not 1 <= self.embedding_batch_size <= 32 or not 30 <= self.embedding_run_seconds <= 600:
+            raise SpprError("Embedding worker limits are outside supported bounds.")
+        if not 1 <= self.embedding_interval_minutes <= 60:
+            raise SpprError("Embedding schedule interval must be 1..60 minutes.")
         for value in (self.night_start, self.night_end):
             if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
                 raise SpprError("Night window must use HH:MM.")

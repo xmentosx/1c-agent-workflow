@@ -66,7 +66,7 @@ def create_mcp(service):
 
     @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
     async def sppr_index_status():
-        """Show current corpus, freshness, coverage and last collector outcome; does not start indexing."""
+        """Show corpus freshness, live semantic progress and separate collection/embedding outcomes; does not start indexing."""
         return await invoke(service.status)
 
     return mcp

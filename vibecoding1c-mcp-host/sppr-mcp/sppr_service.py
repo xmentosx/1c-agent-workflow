@@ -54,7 +54,7 @@ class Service:
     def envelope(self, manifest, policy):
         return {"generation": manifest["generation"], "source": manifest["source"], "observed_start": manifest["observed_start"],
                 "observed_end": manifest["observed_end"], "mode": manifest["mode"],
-                "coverage": manifest["coverage"], "coverage_scope": "published generation before current policy filtering",
+                "coverage": manifest["coverage"], "coverage_scope": "at collection publication before current policy filtering; current vectors in sppr_index_status",
                 "profile_compatible": manifest["profile"] == self.settings.profile,
                 "current_policy": policy.token}
 
@@ -132,16 +132,24 @@ class Service:
                     if rank >= 500:
                         break
             mode, cached, degradation = "lexical_exact", False, None
-            if manifest["profile"] == self.settings.profile and candidates:
+            has_vectors = db.execute("""
+                SELECT 1 FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
+                WHERE f.vector IS NOT NULL OR v.vector IS NOT NULL LIMIT 1
+            """, (manifest["profile"],)).fetchone() is not None
+            if manifest["profile"] == self.settings.profile and candidates and has_vectors:
                 try:
                     qv, cached = self.queries.get(query)
                     semantic = []
-                    cursor = db.execute("SELECT * FROM fragments WHERE vector IS NOT NULL ORDER BY id")
+                    cursor = db.execute("""
+                        SELECT f.*,COALESCE(v.vector,f.vector) AS active_vector
+                        FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
+                        WHERE f.vector IS NOT NULL OR v.vector IS NOT NULL ORDER BY f.id
+                    """, (manifest["profile"],))
                     while rows := cursor.fetchmany(256):
                         rows = [r for r in rows if owner(r) is not None]
                         if not rows:
                             continue
-                        matrix = np.stack([np.frombuffer(r["vector"], dtype=np.float32) for r in rows])
+                        matrix = np.stack([np.frombuffer(r["active_vector"], dtype=np.float32) for r in rows])
                         if matrix.shape[1] != self.settings.dimension:
                             raise SpprError("Stored vector dimension does not match the profile; rebuild semantic coverage.")
                         for score, row in zip(matrix @ qv, rows):
@@ -401,15 +409,25 @@ class Service:
             with self.store.reader() as (db, manifest):
                 visible = self.objects(db, policy)
                 result = {**self.envelope(manifest, policy), "state": "available", "visible_objects": len(visible)}
+                result["semantic_progress"] = self.store.semantic_progress(db, manifest)
+                result["semantic_complete"] = result["semantic_progress"]["pending"] == 0
         except SpprError as exc:
             result = {"state": "unavailable", "reason": str(exc)}
         try:
             attempt = json.loads((self.settings.state / "attempt.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             attempt = None
+        try:
+            embedding_attempt = json.loads((self.settings.state / "embed_attempt.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            embedding_attempt = None
         result.update({"projects": sorted(policy.projects), "last_attempt": attempt,
+                       "last_embedding_attempt": embedding_attempt,
                        "schedule": {"mode": "nightly_reconciliation", "start": self.settings.night_start,
                                     "end": self.settings.night_end, "time_zone": self.settings.time_zone,
                                     "requires_open_user_session": True},
+                       "embedding_schedule": {"mode": "periodic", "interval_minutes": self.settings.embedding_interval_minutes,
+                                              "max_in_flight": self.settings.embedding_workers,
+                                              "requires_open_user_session": True},
                        "protocol": "functional tool response", "query_cache_size": len(self.queries.values)})
         return self.checked(result, policy)

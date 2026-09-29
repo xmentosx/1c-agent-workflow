@@ -19,7 +19,7 @@ function Get-SpprHostSettings {
         throw 'Configure spprServer.configPath using sppr-mcp/config.example.json, then repeat the SPPR action.'
     }
     $settings = Read-JsonFile -Path $configFile
-    $allowedFields = @('state','policy','odata_url','native_base','web_base','api_base','model','dimension','query_instruction','cache_size','page_size','timeout','max_response_bytes','max_objects','chunk_chars','night_start','night_end','time_zone','generations_to_keep')
+    $allowedFields = @('state','policy','odata_url','native_base','web_base','api_base','model','dimension','query_instruction','cache_size','page_size','timeout','max_response_bytes','max_objects','chunk_chars','night_start','night_end','time_zone','generations_to_keep','embedding_workers','embedding_batch_size','embedding_run_seconds','embedding_interval_minutes')
     if (@($settings.PSObject.Properties.Name | Where-Object { $_ -notin $allowedFields }).Count -gt 0) {
         throw 'SPPR component config contains unknown fields. Keep credentials in the separate credentialPath file, then retry.'
     }
@@ -48,8 +48,9 @@ function Get-SpprHostSettings {
         statePath = [IO.Path]::GetFullPath($statePath); publicRoot = $publicRoot
         credentialPath = $credentials; runtimeRoot = $runtimeRoot
         pythonPath = (Join-Path $runtimeRoot 'Scripts\python.exe')
-        taskName = 'ITL SPPR Collector'; taskPath = '\ITL\'
+        taskName = 'ITL SPPR Collector'; embeddingTaskName = 'ITL SPPR Embeddings'; taskPath = '\ITL\'
         description = 'ITL SPPR collector; InteractiveToken; owner-local nightly reconciliation'
+        embeddingDescription = 'ITL SPPR embeddings; InteractiveToken; owner-local bounded worker'
     }
 }
 
@@ -110,7 +111,11 @@ function Install-SpprCollector {
     }
     $existing = Get-ScheduledTask -TaskName $sppr.taskName -TaskPath $sppr.taskPath -ErrorAction SilentlyContinue
     Assert-SpprTaskOwned -Task $existing -Settings $sppr
-    if ($DryRun) { Write-Host 'Would install a Limited InteractiveToken SPPR task without missed-run catch-up.'; return }
+    $existingEmbeddings = Get-ScheduledTask -TaskName $sppr.embeddingTaskName -TaskPath $sppr.taskPath -ErrorAction SilentlyContinue
+    if ($existingEmbeddings -and [string](Get-ObjectValue -Object $existingEmbeddings -Name 'Description' -Default '') -ne $sppr.embeddingDescription) {
+        throw 'A task with the SPPR embeddings name has another owner. No task was changed.'
+    }
+    if ($DryRun) { Write-Host 'Would install Limited InteractiveToken SPPR collection and embedding tasks.'; return }
     Initialize-SpprRuntime -Config $Config
     $collector = Join-Path $PSScriptRoot 'sppr-mcp\collector.py'
     $arguments = Join-HostProcessArguments -Arguments @('-X', 'utf8', '-B', $collector, 'collect', '--config', $sppr.configPath, '--credentials', $sppr.credentialPath)
@@ -122,8 +127,20 @@ function Install-SpprCollector {
     $trigger = New-ScheduledTaskTrigger -Daily -At $runAt
     $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
     $taskSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 12) -Hidden
+    $embedArguments = Join-HostProcessArguments -Arguments @('-X', 'utf8', '-B', $collector, 'embed-pending', '--config', $sppr.configPath, '--credentials', $sppr.credentialPath)
+    $embedAction = New-ScheduledTaskAction -Execute $sppr.pythonPath -Argument $embedArguments -WorkingDirectory (Split-Path -Parent $collector)
+    $embedIntervalMinutes = [int](Get-ObjectValue -Object $sppr.settings -Name 'embedding_interval_minutes' -Default 5)
+    $embedTriggers = @(
+        (New-ScheduledTaskTrigger -AtLogOn -User ([Security.Principal.WindowsIdentity]::GetCurrent().Name)),
+        (New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $embedIntervalMinutes))
+    )
+    $embedRunSeconds = [int](Get-ObjectValue -Object $sppr.settings -Name 'embedding_run_seconds' -Default 240)
+    $httpTimeoutSeconds = [int](Get-ObjectValue -Object $sppr.settings -Name 'timeout' -Default 30)
+    $embedTaskLimit = [Math]::Max(900, $embedRunSeconds + 3 * $httpTimeoutSeconds + 300)
+    $embedSettings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds $embedTaskLimit) -Hidden
+    Register-ScheduledTask -TaskName $sppr.embeddingTaskName -TaskPath $sppr.taskPath -Action $embedAction -Trigger $embedTriggers -Settings $embedSettings -Principal $principal -Description $sppr.embeddingDescription -Force | Out-Null
     Register-ScheduledTask -TaskName $sppr.taskName -TaskPath $sppr.taskPath -Action $action -Trigger $trigger -Settings $taskSettings -Principal $principal -Description $sppr.description -Force | Out-Null
-    Write-Host 'SPPR collector task installed; collection requires an open user session and the configured night window.'
+    Write-Host 'SPPR collection and embedding tasks installed; both require an open user session, and collection uses the night window.'
 }
 
 function Uninstall-SpprCollector {
@@ -131,7 +148,12 @@ function Uninstall-SpprCollector {
     $sppr = Get-SpprHostSettings -Config $Config
     $existing = Get-ScheduledTask -TaskName $sppr.taskName -TaskPath $sppr.taskPath -ErrorAction SilentlyContinue
     Assert-SpprTaskOwned -Task $existing -Settings $sppr
-    if (-not $existing) { return }
-    if ($DryRun) { Write-Host 'Would remove only the managed SPPR collector task.'; return }
-    Unregister-ScheduledTask -TaskName $sppr.taskName -TaskPath $sppr.taskPath -Confirm:$false
+    $existingEmbeddings = Get-ScheduledTask -TaskName $sppr.embeddingTaskName -TaskPath $sppr.taskPath -ErrorAction SilentlyContinue
+    if ($existingEmbeddings -and [string](Get-ObjectValue -Object $existingEmbeddings -Name 'Description' -Default '') -ne $sppr.embeddingDescription) {
+        throw 'A task with the SPPR embeddings name has another owner. No task was changed.'
+    }
+    if (-not $existing -and -not $existingEmbeddings) { return }
+    if ($DryRun) { Write-Host 'Would remove only the managed SPPR collection and embedding tasks.'; return }
+    if ($existing) { Unregister-ScheduledTask -TaskName $sppr.taskName -TaskPath $sppr.taskPath -Confirm:$false }
+    if ($existingEmbeddings) { Unregister-ScheduledTask -TaskName $sppr.embeddingTaskName -TaskPath $sppr.taskPath -Confirm:$false }
 }

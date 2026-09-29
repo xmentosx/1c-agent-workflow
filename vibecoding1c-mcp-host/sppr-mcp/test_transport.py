@@ -28,6 +28,7 @@ class TransportTests(unittest.TestCase):
     set_policy = fixtures.SpprTests.set_policy
     collect = fixtures.SpprTests.collect
     publish = fixtures.SpprTests.publish
+    embed = fixtures.SpprTests.embed
 
 
 def test_odata_projection_utf8_no_redirect(self):
