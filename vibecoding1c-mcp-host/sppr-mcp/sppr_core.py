@@ -221,6 +221,9 @@ def rich_text(encoded, content_type):
     if content_type != "application/xml+xdto":
         raise SpprError("Unsupported rich-text content type.")
     try:
+        if isinstance(encoded, str):
+            # 1C wraps Base64 lines; retain strict validation of every other character.
+            encoded = encoded.translate(str.maketrans("", "", " \t\r\n"))
         data = base64.b64decode(encoded, validate=True)
     except (ValueError, TypeError):
         raise SpprError("Invalid Base64 description.") from None

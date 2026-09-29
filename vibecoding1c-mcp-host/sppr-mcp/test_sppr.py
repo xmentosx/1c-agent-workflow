@@ -702,6 +702,12 @@ class SpprTests(unittest.TestCase):
         xml = '<FormattedDocument><id>INTERNAL-ID</id><content><p><text>Первый</text></p><p><text>Второй</text></p></content></FormattedDocument>'
         encoded = base64.b64encode(xml.encode()).decode()
         self.assertEqual(rich_text(encoded, "application/xml+xdto"), "Первый\nВторой")
+        wrapped = "\r\n".join(encoded[pos:pos + 64] for pos in range(0, len(encoded), 64)) + "\r\n"
+        self.assertEqual(rich_text(wrapped, "application/xml+xdto"), "Первый\nВторой")
+        self.assertEqual(rich_text(" \t" + wrapped, "application/xml+xdto"), "Первый\nВторой")
+        for invalid in (encoded + "!", encoded + "\x00", encoded + "\u00a0"):
+            with self.assertRaisesRegex(SpprError, "Invalid Base64"):
+                rich_text(invalid, "application/xml+xdto")
         for xml in ('<!DOCTYPE x [<!ENTITY y SYSTEM "http://trap.test">]><FormattedDocument/>', '<Unknown/>', '<broken',
                     '<FormattedDocument><unknown>unreadable content</unknown></FormattedDocument>'):
             with self.assertRaises(SpprError):
