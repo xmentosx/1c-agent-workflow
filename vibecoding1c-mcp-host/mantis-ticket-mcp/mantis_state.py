@@ -21,6 +21,11 @@ from mantis_extract import PARSER_VERSION, SUPPORTED, extension
 SCHEMA_VERSION = 1
 PROFILE = "qwen/qwen3-embedding-8b:4096:chars1800-overlap180-v1"
 OWNER = "itl-mantis-ticket-state-v1"
+REHYDRATE_ATTACHMENT_QUERY = (
+    "SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
+    "WHERE e.status IN ('ready','partial') AND e.segments<>'[]' AND NOT EXISTS "
+    "(SELECT 1 FROM fragments f INDEXED BY fragments_issue "
+    "WHERE f.issue_id=e.issue_id AND f.file_id=e.file_id AND f.kind='attachment_content') LIMIT 1")
 
 
 def is_link(path):
@@ -446,10 +451,7 @@ class State:
                 self.changed()
 
     def rehydrate_attachment(self):
-        row = self.one("SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
-                       "WHERE e.status IN ('ready','partial') AND e.segments<>'[]' AND NOT EXISTS "
-                       "(SELECT 1 FROM fragments f WHERE f.issue_id=e.issue_id AND f.file_id=e.file_id "
-                       "AND f.kind='attachment_content') LIMIT 1")
+        row = self.one(REHYDRATE_ATTACHMENT_QUERY)
         if not row:
             return False
         info = file_descriptors(json.loads(row["data"])).get(row["file_id"])

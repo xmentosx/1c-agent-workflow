@@ -18,7 +18,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from mantis_api import Api, ApiError
 from mantis_index import Index
-from mantis_state import SearchReader, State, digest, timestamp, file_descriptors
+from mantis_state import (REHYDRATE_ATTACHMENT_QUERY, SearchReader, State, digest,
+                          timestamp, file_descriptors)
 from mantis_write import Writer, ACTIONS
 
 
@@ -1001,6 +1002,13 @@ class IndexTests(unittest.TestCase):
             self.state.changed()
         self.assertTrue(self.state.rehydrate_attachment())
         self.assertTrue(self.search("текстизвлечённогофайла", mode="attachment_contents")["issues"])
+
+    def test_attachment_rehydration_uses_issue_index(self):
+        # A global kind scan is repeated for every ready attachment and held
+        # the state lock for minutes on the production corpus.
+        plan = self.state.all("EXPLAIN QUERY PLAN " + REHYDRATE_ATTACHMENT_QUERY)
+        self.assertTrue(any("SEARCH f USING INDEX fragments_issue" in row["detail"]
+                            for row in plan), plan)
 
     def test_missing_mantis_file_bytes_are_visible_and_retried_after_recovery(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "old.docx", "size": 12}]
