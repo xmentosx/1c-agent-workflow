@@ -123,6 +123,26 @@ class Service:
                     reasons[object_id].add("exact")
             tokens = re.findall(r"\w+", query, flags=re.UNICODE)[:40]
             if tokens:
+                distinct = list(dict.fromkeys(tokens))
+                if len(distinct) > 1:
+                    # An object containing every requested word in one indexed
+                    # fragment must outrank partial OR/semantic matches. Keep
+                    # the loose pass below for related and synonym results.
+                    strict = " AND ".join('"' + t + '"' for t in distinct)
+                    boosted = set()
+                    examined = 0
+                    for row in db.execute("SELECT f.*,bm25(search_text) AS rank FROM search_text JOIN fragments f ON f.id=search_text.rowid WHERE search_text MATCH ? ORDER BY rank,f.id", (strict,)):
+                        oid = owner(row)
+                        if oid is None:
+                            continue
+                        examined += 1
+                        if oid not in boosted:
+                            scores[oid] += 0.2
+                            boosted.add(oid)
+                            reasons[oid].add("lexical")
+                            excerpts.setdefault(oid, self.excerpt(row))
+                        if examined >= 500:
+                            break
                 expression = " OR ".join('"' + t + '"' for t in tokens)
                 rank = 0
                 for row in db.execute("SELECT f.*,bm25(search_text) AS rank FROM search_text JOIN fragments f ON f.id=search_text.rowid WHERE search_text MATCH ? ORDER BY rank,f.id", (expression,)):

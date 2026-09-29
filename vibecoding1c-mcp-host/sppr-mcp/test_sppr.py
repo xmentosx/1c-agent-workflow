@@ -1229,6 +1229,16 @@ class SpprTests(unittest.TestCase):
                              (self.settings.state / vector_file.name).read_bytes())
             self.assertEqual(service.search("Карточка")["search_mode"], "hybrid")
 
+    def test_all_query_terms_outrank_partial_semantic_matches(self):
+        self.source.add(IDEA, 10, Description="Загрузка из MSP")
+        self.source.add(IDEA, 11, Description="Загрузка данных из MS Excel")
+        self.publish()
+        result = Service(self.settings, self.provider).search("загрузка из excel", limit=20)
+        ids = [hit["id"] for hit in result["hits"]]
+        self.assertEqual(result["search_mode"], "hybrid")
+        self.assertEqual(ids[0], key(IDEA, uuid(11)))
+        self.assertIn(key(IDEA, uuid(10)), ids)
+
     def test_failed_batch_resumes_without_resending_committed_vectors(self):
         self.publish(embed=False)
         count = 0
