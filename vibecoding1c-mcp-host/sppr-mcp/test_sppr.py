@@ -827,13 +827,17 @@ class SpprTests(unittest.TestCase):
         service = Service(self.settings, self.provider)
         first = service.search("54321")
         self.assertEqual(first["hits"][0]["id"], key(TP, uuid(1)))
+        self.assertFalse(first["vector_cache_hit"])
         calls = len(self.provider.calls)
-        self.assertTrue(service.search("54321")["query_vector_cached"])
+        repeated = service.search("54321")
+        self.assertTrue(repeated["query_vector_cached"])
+        self.assertTrue(repeated["vector_cache_hit"])
         self.assertEqual(calls, len(self.provider.calls))
         self.source.data[key(TP, uuid(1))].update(Description="Новый заголовок", DataVersion="v2")
         self.publish()
         result = service.search("54321")
         self.assertTrue(result["query_vector_cached"])
+        self.assertFalse(result["vector_cache_hit"])
         self.assertEqual(result["hits"][0]["title"], "Новый заголовок")
         service.search("второй")
         service.search("третий")
@@ -848,6 +852,8 @@ class SpprTests(unittest.TestCase):
         self.assertEqual(first["search_mode"], "hybrid")
         self.assertIsNone(first["degradation_kind"])
         self.assertGreaterEqual(first["timing_ms"]["query_vector"], 0)
+        for phase in ("setup", "lexical", "vector_prepare", "vector_score", "fragment_rank"):
+            self.assertGreaterEqual(first["timing_ms"][phase], 0)
         self.provider.fail = True
         cached = service.search("54321")
         self.assertEqual(cached["search_mode"], "hybrid")
@@ -1235,6 +1241,9 @@ class SpprTests(unittest.TestCase):
         first_file = self.settings.state / ("vectors-" + first["generation"] + ".sqlite")
         first_size = first_file.stat().st_size
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], 1)
+        service = Service(self.settings, self.provider)
+        self.assertFalse(service.search("Карточка")["vector_cache_hit"])
+        self.assertTrue(service.search("Карточка")["vector_cache_hit"])
         self.store.vectors.insert(self.settings.profile, [(pending[1]["hash"], value)])
         self.assertEqual(first_file.stat().st_size, first_size)
         self.assertEqual(self.store.vectors.snapshot()[0]["generation"], first["generation"])
@@ -1244,6 +1253,7 @@ class SpprTests(unittest.TestCase):
         self.store.vectors.publish_snapshot(force=True)
         self.assertGreater(ready, 1)
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], ready)
+        self.assertFalse(service.search("Карточка")["vector_cache_hit"])
 
     def test_reader_caches_immutable_corpus_and_vector_snapshots(self):
         published = self.publish(embed=False)

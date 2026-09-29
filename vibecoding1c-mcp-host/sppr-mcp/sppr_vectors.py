@@ -10,6 +10,7 @@ import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from uuid import uuid4
 
 import numpy as np
@@ -26,6 +27,35 @@ CREATE TABLE IF NOT EXISTS vectors(
     PRIMARY KEY(profile, hash)
 ) WITHOUT ROWID;
 """
+
+
+class VectorSearchCache:
+    """One process-local matrix for the immutable corpus and vector files in a reader."""
+
+    def __init__(self):
+        self.lock = Lock()
+        self.key = None
+        self.hashes = ()
+        self.matrix = None
+
+    def get(self, db, manifest, dimension):
+        files = {row["name"]: row["file"] for row in db.execute("PRAGMA database_list")}
+        key = (manifest["generation"], manifest["profile"], files.get("main"), files.get("vec"))
+        with self.lock:
+            if key == self.key:
+                return self.hashes, self.matrix, True
+            vectors = {row["hash"]: row["vector"] for row in db.execute(
+                "SELECT hash,vector FROM vec.vectors WHERE profile=?", (manifest["profile"],))}
+            for row in db.execute("SELECT hash,vector FROM fragments WHERE vector IS NOT NULL"):
+                vectors.setdefault(row["hash"], row["vector"])
+            hashes = tuple(vectors)
+            matrix = (np.stack([np.frombuffer(vectors[hashed], dtype=np.float32) for hashed in hashes])
+                      if hashes else np.empty((0, dimension), dtype=np.float32))
+            if matrix.shape[1] != dimension:
+                raise SpprError("Stored vector dimension does not match the profile; rebuild semantic coverage.")
+            matrix.flags.writeable = False
+            self.key, self.hashes, self.matrix = key, hashes, matrix
+            return hashes, matrix, False
 
 
 def cached_reader_file(path, *, keep):

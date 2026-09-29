@@ -11,14 +11,13 @@ import time
 from collections import Counter, defaultdict, deque
 from threading import Lock
 
-import numpy as np
-
 from sppr_core import KINDS, Policy, SpprError, canonical, digest, navigation, split_key
 from sppr_embeddings import QueryCache, QueryWaitTimeout
 from sppr_links import IDEA, MEMBERSHIP, PARENT, development_context
 from sppr_odata import HttpNetworkError, HttpStatusError
 from sppr_store import Store
 from sppr_retrieval import Graph, field_matches, field_units, identifiers, integer, page_items, select, strings
+from sppr_vectors import VectorSearchCache
 
 
 class SearchDiagnostics:
@@ -65,6 +64,7 @@ class Service:
         self.settings = settings
         self.store = Store(settings)
         self.queries = QueryCache(settings, provider)
+        self.vector_search = VectorSearchCache()
         self.search_diagnostics = SearchDiagnostics()
         self.cursor_key = secrets.token_bytes(32)
 
@@ -165,6 +165,8 @@ class Service:
                 if normalized in {x.casefold() for x in exact if x}:
                     scores[object_id] += 10
                     reasons[object_id].add("exact")
+            setup_ms = (time.monotonic_ns() - started) // 1_000_000
+            lexical_started = time.monotonic_ns()
             tokens = re.findall(r"\w+", query, flags=re.UNICODE)[:40]
             if tokens:
                 distinct = list(dict.fromkeys(tokens))
@@ -199,8 +201,12 @@ class Service:
                     excerpts.setdefault(oid, self.excerpt(row))
                     if rank >= 500:
                         break
+            lexical_ms = (time.monotonic_ns() - lexical_started) // 1_000_000
             mode, cached, degradation = "lexical_exact", False, None
             query_ms, degradation_kind = None, None
+            vector_cache_hit = None
+            vector_prepare_ms = vector_score_ms = fragment_rank_ms = 0
+            prepare_started = time.monotonic_ns()
             scope_sql, scope_args = "", []
             if 0 < len(candidates) + len(row_owners) <= 400:
                 parts = []
@@ -211,15 +217,18 @@ class Service:
                     parts.append("f.edge_id IN (" + ",".join("?" for _ in row_owners) + ")")
                     scope_args.extend(row_owners)
                 scope_sql = " AND (" + " OR ".join(parts) + ")"
-            vectors = {row["hash"]: row["vector"] for row in db.execute(
-                "SELECT hash,vector FROM vec.vectors WHERE profile=?", (manifest["profile"],))}
-            for row in db.execute("SELECT hash,vector FROM fragments WHERE vector IS NOT NULL"):
-                vectors.setdefault(row["hash"], row["vector"])
+            try:
+                hashes, matrix, vector_cache_hit = self.vector_search.get(db, manifest, self.settings.dimension)
+            except SpprError as exc:
+                hashes, matrix = (), None
+                degradation, degradation_kind = str(exc), "local_vector_index"
+            available = set(hashes)
             fragment_sql = ("SELECT f.id,f.object_id,f.edge_id,f.field,f.offset,f.text,f.hash "
                             "FROM fragments f WHERE 1=1" + scope_sql + " ORDER BY f.id")
-            has_vectors = bool(vectors) and any(
-                row["hash"] in vectors and owner(row) is not None
+            has_vectors = bool(hashes) and any(
+                row["hash"] in available and owner(row) is not None
                 for row in db.execute(fragment_sql, scope_args))
+            vector_prepare_ms = (time.monotonic_ns() - prepare_started) // 1_000_000
             if manifest["profile"] == self.settings.profile and candidates and has_vectors:
                 phase = "embedding"
                 try:
@@ -229,12 +238,10 @@ class Service:
                     finally:
                         query_ms = (time.monotonic_ns() - embedding_started) // 1_000_000
                     phase = "ranking"
-                    hashes = list(vectors)
-                    matrix = np.stack([np.frombuffer(vectors[hashed], dtype=np.float32) for hashed in hashes])
-                    if matrix.shape[1] != self.settings.dimension:
-                        raise SpprError("Stored vector dimension does not match the profile; rebuild semantic coverage.")
+                    score_started = time.monotonic_ns()
                     similarities = dict(zip(hashes, (float(score) for score in matrix @ qv)))
-                    del matrix, vectors
+                    vector_score_ms = (time.monotonic_ns() - score_started) // 1_000_000
+                    rank_started = time.monotonic_ns()
                     semantic = []
                     for row in db.execute(fragment_sql, scope_args):
                         similarity = similarities.get(row["hash"])
@@ -251,6 +258,7 @@ class Service:
                         scores[oid] += 1 / (60 + rank)
                         reasons[oid].add("semantic")
                         excerpts.setdefault(oid, self.excerpt(row))
+                    fragment_rank_ms = (time.monotonic_ns() - rank_started) // 1_000_000
                     mode = "hybrid"
                 except SpprError as exc:
                     degradation = str(exc)
@@ -279,7 +287,11 @@ class Service:
             result = self.checked({**self.envelope(manifest, policy), "search_mode": mode,
                                    "query_vector_cached": cached, "degradation": degradation,
                                    "degradation_kind": degradation_kind,
-                                   "timing_ms": {"query_vector": query_ms, "local_search": local_ms, "total": total_ms},
+                                   "timing_ms": {"query_vector": query_ms, "local_search": local_ms, "total": total_ms,
+                                                 "setup": setup_ms, "lexical": lexical_ms,
+                                                 "vector_prepare": vector_prepare_ms,
+                                                 "vector_score": vector_score_ms, "fragment_rank": fragment_rank_ms},
+                                   "vector_cache_hit": vector_cache_hit,
                                    "hits": hits, "object_ids": object_ids, "fields": fields,
                                    "exhaustive": False, "note": "Top-k search; use list_sppr_relations for stored relationships."}, policy)
             self.search_diagnostics.record(mode, cached, query_ms, local_ms, degradation_kind)
