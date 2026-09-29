@@ -1209,6 +1209,26 @@ class SpprTests(unittest.TestCase):
         self.assertGreater(ready, 1)
         self.assertEqual(Service(self.settings, self.provider).status()["semantic_progress"]["vectors"], ready)
 
+    def test_reader_caches_immutable_corpus_and_vector_snapshots(self):
+        published = self.publish(embed=False)
+        cache = Path(self.temp.name) / "локальный кеш с пробелом"
+        with patch.dict("os.environ", {"SPPR_READER_CACHE_DIR": str(cache)}):
+            service = Service(self.settings, self.provider)
+            self.assertEqual(service.status()["visible_objects"], published["objects"])
+            corpus = cache / (published["generation"] + ".sqlite")
+            self.assertEqual(corpus.read_bytes(),
+                             (self.settings.state / corpus.name).read_bytes())
+            with self.store.reader(live_vectors=True) as (db, _):
+                pending = self.store.pending_page(db, self.policy, self.settings.profile, 0, 1)
+            self.store.vectors.insert(self.settings.profile,
+                                      [(pending[0]["hash"], vector([1, 2, 3, 4], self.settings.dimension))])
+            snapshot = self.store.vectors.publish_snapshot(force=True)
+            self.assertEqual(service.status()["semantic_progress"]["vectors"], 1)
+            vector_file = cache / ("vectors-" + snapshot["generation"] + ".sqlite")
+            self.assertEqual(vector_file.read_bytes(),
+                             (self.settings.state / vector_file.name).read_bytes())
+            self.assertEqual(service.search("Карточка")["search_mode"], "hybrid")
+
     def test_failed_batch_resumes_without_resending_committed_vectors(self):
         self.publish(embed=False)
         count = 0

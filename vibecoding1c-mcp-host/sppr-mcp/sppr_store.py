@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from sppr_core import Policy, SpprError, atomic_json, canonical, digest, fragments, now
-from sppr_vectors import VectorJournal, coverage as vector_coverage
+from sppr_vectors import VectorJournal, cached_reader_file, coverage as vector_coverage
 
 
 @contextmanager
@@ -70,7 +70,7 @@ class Store:
     @contextmanager
     def reader(self, *, live_vectors=False):
         manifest = self.manifest()
-        path = self.state / (manifest["generation"] + ".sqlite")
+        path = cached_reader_file(self.state / (manifest["generation"] + ".sqlite"), keep=3)
         connection = None
         try:
             connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)

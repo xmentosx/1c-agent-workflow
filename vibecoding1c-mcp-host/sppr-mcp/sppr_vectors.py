@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sqlite3
 import time
 from contextlib import closing
@@ -25,6 +26,36 @@ CREATE TABLE IF NOT EXISTS vectors(
     PRIMARY KEY(profile, hash)
 ) WITHOUT ROWID;
 """
+
+
+def cached_reader_file(path, *, keep):
+    """Copy immutable publications off slow host mounts before random SQLite reads."""
+    location = os.environ.get("SPPR_READER_CACHE_DIR")
+    if not location:
+        return path
+    cache = Path(location)
+    if not cache.is_absolute():
+        raise SpprError("SPPR reader cache directory must be absolute.")
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        target = cache / path.name
+        if not target.is_file() or target.stat().st_size != path.stat().st_size:
+            staging = cache / (path.name + "." + uuid4().hex + ".tmp")
+            try:
+                shutil.copyfile(path, staging)
+                os.replace(staging, target)
+            finally:
+                staging.unlink(missing_ok=True)
+        pattern = (r"vectors-[0-9a-f]{32}\.sqlite" if path.name.startswith("vectors-")
+                   else r"[0-9a-f]{32}\.sqlite")
+        old = sorted((item for item in cache.iterdir() if re.fullmatch(pattern, item.name)),
+                     key=lambda item: item.stat().st_mtime, reverse=True)
+        for item in old[keep:]:
+            if item != target:
+                item.unlink(missing_ok=True)
+        return target
+    except OSError:
+        raise SpprError("SPPR reader cache is unavailable; check free space and permissions.") from None
 
 
 class VectorJournal:
@@ -79,6 +110,8 @@ class VectorJournal:
         else:
             path = None
         if path is not None:
+            if not live:
+                path = cached_reader_file(path, keep=2)
             db.execute("ATTACH DATABASE ? AS vec", (path.resolve().as_uri() + query,))
         else:
             # Legacy snapshots and lexical-only corpora have no published vectors.
@@ -175,9 +208,11 @@ class VectorJournal:
 
 
 def coverage(db, profile):
-    row = db.execute("""
-        SELECT COUNT(*) AS fragments,
-               COALESCE(SUM(CASE WHEN f.vector IS NOT NULL OR v.vector IS NOT NULL THEN 1 ELSE 0 END),0) AS vectors
-        FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
-    """, (profile,)).fetchone()
-    return {"fragments": row[0], "vectors": row[1], "pending": row[0] - row[1]}
+    # Two sequential scans avoid one random lookup into the vector file per
+    # fragment, which is prohibitively slow on Docker Desktop bind mounts.
+    hashes = {row[0] for row in db.execute("SELECT hash FROM vec.vectors WHERE profile=?", (profile,))}
+    fragments = ready = 0
+    for hashed, embedded in db.execute("SELECT hash,vector IS NOT NULL FROM fragments"):
+        fragments += 1
+        ready += embedded or hashed in hashes
+    return {"fragments": fragments, "vectors": ready, "pending": fragments - ready}

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hmac
+import heapq
 import json
 import re
 import secrets
@@ -145,31 +146,36 @@ class Service:
                     parts.append("f.edge_id IN (" + ",".join("?" for _ in row_owners) + ")")
                     scope_args.extend(row_owners)
                 scope_sql = " AND (" + " OR ".join(parts) + ")"
-            has_vectors = db.execute("""
-                SELECT 1 FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
-                WHERE (f.vector IS NOT NULL OR v.vector IS NOT NULL)""" + scope_sql + " LIMIT 1",
-                                     (manifest["profile"], *scope_args)).fetchone() is not None
+            vectors = {row["hash"]: row["vector"] for row in db.execute(
+                "SELECT hash,vector FROM vec.vectors WHERE profile=?", (manifest["profile"],))}
+            for row in db.execute("SELECT hash,vector FROM fragments WHERE vector IS NOT NULL"):
+                vectors.setdefault(row["hash"], row["vector"])
+            fragment_sql = ("SELECT f.id,f.object_id,f.edge_id,f.field,f.offset,f.text,f.hash "
+                            "FROM fragments f WHERE 1=1" + scope_sql + " ORDER BY f.id")
+            has_vectors = bool(vectors) and any(
+                row["hash"] in vectors and owner(row) is not None
+                for row in db.execute(fragment_sql, scope_args))
             if manifest["profile"] == self.settings.profile and candidates and has_vectors:
                 try:
                     qv, cached = self.queries.get(query)
+                    hashes = list(vectors)
+                    matrix = np.stack([np.frombuffer(vectors[hashed], dtype=np.float32) for hashed in hashes])
+                    if matrix.shape[1] != self.settings.dimension:
+                        raise SpprError("Stored vector dimension does not match the profile; rebuild semantic coverage.")
+                    similarities = dict(zip(hashes, (float(score) for score in matrix @ qv)))
+                    del matrix, vectors
                     semantic = []
-                    cursor = db.execute("""
-                        SELECT f.*,COALESCE(v.vector,f.vector) AS active_vector
-                        FROM fragments f LEFT JOIN vec.vectors v ON v.profile=? AND v.hash=f.hash
-                        WHERE (f.vector IS NOT NULL OR v.vector IS NOT NULL)""" + scope_sql + " ORDER BY f.id",
-                                        (manifest["profile"], *scope_args))
-                    while rows := cursor.fetchmany(256):
-                        rows = [r for r in rows if owner(r) is not None]
-                        if not rows:
+                    for row in db.execute(fragment_sql, scope_args):
+                        similarity = similarities.get(row["hash"])
+                        if similarity is None or owner(row) is None:
                             continue
-                        matrix = np.stack([np.frombuffer(r["active_vector"], dtype=np.float32) for r in rows])
-                        if matrix.shape[1] != self.settings.dimension:
-                            raise SpprError("Stored vector dimension does not match the profile; rebuild semantic coverage.")
-                        for score, row in zip(matrix @ qv, rows):
-                            semantic.append((float(score), row))
-                        semantic.sort(key=lambda pair: (-pair[0], pair[1]["id"]))
-                        del semantic[500:]
-                    for rank, (similarity, row) in enumerate(semantic, 1):
+                        entry = (similarity, -row["id"], row)
+                        if len(semantic) < 500:
+                            heapq.heappush(semantic, entry)
+                        elif entry[:2] > semantic[0][:2]:
+                            heapq.heapreplace(semantic, entry)
+                    for rank, (similarity, _, row) in enumerate(
+                            sorted(semantic, key=lambda item: (-item[0], -item[1])), 1):
                         oid = owner(row)
                         scores[oid] += 1 / (60 + rank)
                         reasons[oid].add("semantic")
