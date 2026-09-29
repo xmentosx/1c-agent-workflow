@@ -1290,18 +1290,6 @@ class Index:
                 if field + "_before" in filters and value > timestamp(filters[field + "_before"]):
                     return False
             return True
-        def source_rows():
-            records = {}
-            keys = list(ranks)
-            for start in range(0, len(keys), 400):
-                batch = keys[start:start + 400]
-                placeholders = ",".join("?" for _ in batch)
-                records.update((row["id"], row) for row in self.state.all(
-                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
-                    "f.source,f.text,f.version"
-                    " FROM fragments f JOIN issues i ON i.id=f.issue_id "
-                    f"WHERE f.id IN ({placeholders})", batch))
-            return records
         def source_version(records, tags):
             # put_issue commits the issue hash and all source fragments in one
             # transaction; vector-only progress does not change source content.
@@ -1310,58 +1298,81 @@ class Index:
         def grouped():
             groups = {}
             attachment_sources = {}
-            records = source_rows()
+            records = {}
             # Read only card/filter fields, once per issue. Joining the entire
             # issue (including every comment) to each fragment multiplies I/O.
             fields = ("summary", "project", "status", "tags", "custom_fields", "created_at", "updated_at",
                       "handler", "reporter", "priority", "severity", "version", "target_version", "fixed_in_version")
             paths = ",".join("'$." + field + "'" for field in fields)
-            issue_ids = list({row["issue_id"] for row in records.values()})
+            issue_ids = set()
             parsed = {}
-            for start in range(0, len(issue_ids), 400):
-                batch = issue_ids[start:start + 400]
-                placeholders = ",".join("?" for _ in batch)
-                for row in self.state.all(f"SELECT id,json_extract(data,{paths}) AS card FROM issues WHERE id IN ({placeholders})", batch):
-                    parsed[row["id"]] = {key: value for key, value in zip(fields, json.loads(row["card"])) if value is not None}
             known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
             tags = known_tags["data"] if known_tags else "[]"
             names = {object_id(t): t.get("name", "") for t in json.loads(tags)}
-            for key, rank in sorted(ranks.items(), key=lambda item: -item[1]):
-                row = records.get(key)
-                if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
-                        "comments": "comment", "filenames": "filename",
-                        "attachment_contents": "attachment_content"}[mode]):
-                    continue
-                issue = parsed.get(row["issue_id"])
-                if not issue or not matches(issue, names):
-                    continue
-                if row["kind"] == "attachment_content":
-                    attachment_sources[key] = (row["version"], row["source"])
-                entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
-                    "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
-                    "status": issue.get("status"), "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
-                    "handler": issue.get("handler"), "score": 0, "matches": [],
-                    "last_verified": row["verified"], "url": self.api.settings.base_url + f"/view.php?id={row['issue_id']}"})
-                entry["score"] = max(entry["score"], rank)
-                if len(entry["matches"]) < 3:
-                    position = next((row["text"].casefold().find(t.casefold()) for t in tokens if t.casefold() in row["text"].casefold()), 0)
-                    attachment = json.loads(row["source"]) if row["kind"] == "attachment_content" else {}
-                    filename = (attachment.get("filename", "") if attachment else row["source"]
-                                if row["kind"] == "filename" else "")
-                    match = {"type": row["kind"], "note_id": row["note_id"], "file_id": row["file_id"],
-                        "filename": filename[:1000], "filename_truncated": len(filename) > 1000,
-                        "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
-                        "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")}
-                    if attachment:
-                        match["location"] = attachment.get("location", {})
-                        match["file_url"] = self.api.settings.base_url + \
-                            f"/file_download.php?file_id={int(row['file_id'])}&type=bug"
-                    entry["matches"].append(match)
+            ranked = sorted(ranks.items(), key=lambda item: -item[1])
+            for start in range(0, len(ranked), 400):
+                batch = ranked[start:start + 400]
+                keys = [key for key, _ in batch]
+                placeholders = ",".join("?" for _ in keys)
+                rows = {row["id"]: row for row in self.state.all(
+                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
+                    "f.source,f.text,f.version FROM fragments f JOIN issues i ON i.id=f.issue_id "
+                    f"WHERE f.id IN ({placeholders})", keys)}
+                records.update(rows)
+                new_issues = {row["issue_id"] for row in rows.values()} - issue_ids
+                issue_ids.update(new_issues)
+                if new_issues:
+                    ids = list(new_issues)
+                    for begin in range(0, len(ids), 400):
+                        slice_ids = ids[begin:begin + 400]
+                        holders = ",".join("?" for _ in slice_ids)
+                        for item in self.state.all(
+                                f"SELECT id,json_extract(data,{paths}) AS card FROM issues WHERE id IN ({holders})", slice_ids):
+                            parsed[item["id"]] = {field: value for field, value in zip(fields, json.loads(item["card"]))
+                                                  if value is not None}
+                for key, rank in batch:
+                    row = rows.get(key)
+                    if not row or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
+                            "comments": "comment", "filenames": "filename",
+                            "attachment_contents": "attachment_content"}[mode]):
+                        continue
+                    issue = parsed.get(row["issue_id"])
+                    if not issue or not matches(issue, names):
+                        continue
+                    if row["kind"] == "attachment_content":
+                        attachment_sources[key] = (row["version"], row["source"])
+                    entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
+                        "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
+                        "status": issue.get("status"), "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
+                        "handler": issue.get("handler"), "score": 0, "matches": [],
+                        "last_verified": row["verified"], "url": self.api.settings.base_url + f"/view.php?id={row['issue_id']}"})
+                    entry["score"] = max(entry["score"], rank)
+                    if len(entry["matches"]) < 3:
+                        position = next((row["text"].casefold().find(t.casefold()) for t in tokens if t.casefold() in row["text"].casefold()), 0)
+                        attachment = json.loads(row["source"]) if row["kind"] == "attachment_content" else {}
+                        filename = (attachment.get("filename", "") if attachment else row["source"]
+                                    if row["kind"] == "filename" else "")
+                        match = {"type": row["kind"], "note_id": row["note_id"], "file_id": row["file_id"],
+                            "filename": filename[:1000], "filename_truncated": len(filename) > 1000,
+                            "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
+                            "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")}
+                        if attachment:
+                            match["location"] = attachment.get("location", {})
+                            match["file_url"] = self.api.settings.base_url + \
+                                f"/file_download.php?file_id={int(row['file_id'])}&type=bug"
+                        entry["matches"].append(match)
+                # A relevance page needs one more card to prove continuation.
+                # Continue through ties so the stable issue-ID tiebreaker is
+                # unaffected by where a 400-fragment disk batch ended.
+                if sort_by == "relevance" and len(groups) > offset + limit:
+                    cutoff = sorted((entry["score"] for entry in groups.values()), reverse=True)[offset + limit]
+                    if start + len(batch) == len(ranked) or ranked[start + len(batch)][1] < cutoff:
+                        break
             if sort_by == "relevance":
                 ordered = sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
             else:
                 ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
-            return ordered, source_version(records, tags), issue_ids, attachment_sources
+            return ordered, source_version(records, tags), list(issue_ids), attachment_sources
         revision = self.state.revision()
         initial, initial_version, issue_ids, attachment_sources = grouped()
         refresh_deadline = time.monotonic() + 10

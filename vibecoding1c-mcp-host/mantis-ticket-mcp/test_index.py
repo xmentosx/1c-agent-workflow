@@ -1615,6 +1615,28 @@ class IndexTests(unittest.TestCase):
         self.assertIn("broad_candidate_window", result["semantic_query"])
         self.assertEqual(result["query_embedding_cache"], "not_requested")
 
+    def test_relevance_pages_read_only_the_needed_broad_candidates(self):
+        for issue_id in range(1, 651):
+            self.state.put_issue(ticket(issue_id, text="needle"))
+        self.api.down = True
+        read = self.state.all
+        fetched = []
+        def counted(sql, args=()):
+            if "FROM fragments f JOIN issues i" in sql:
+                fetched.append(len(args))
+            return read(sql, args)
+        with patch.object(self.state, "all", side_effect=counted):
+            first = self.index.search("needle", semantic=False, limit=10)
+            first_reads = sum(fetched)
+            fetched.clear()
+            second = self.index.search("needle", semantic=False, limit=10, cursor=first["next_cursor"])
+            second_reads = sum(fetched)
+        self.assertEqual(len(first["issues"]), 10)
+        self.assertEqual(len(second["issues"]), 10)
+        self.assertFalse({issue["id"] for issue in first["issues"]} & {issue["id"] for issue in second["issues"]})
+        self.assertLessEqual(first_reads, 400, "First page must not load the full lexical window")
+        self.assertLessEqual(second_reads, 400, "Second page should retain bounded source reads")
+
     def test_custom_field_requirements_and_regex_are_checked_before_post(self):
         self.api.definitions = [{"field": {"id": 5}, "require_report": 1, "access_level_rw": 25,
                                  "length_min": 2, "length_max": 5, "valid_regexp": "^[A-Z]+$"}]
