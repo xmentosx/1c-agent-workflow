@@ -48,6 +48,8 @@ EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
 EMBEDDING_REQUEST_BATCH = 32
 MAX_EMBEDDING_RESPONSE_BYTES = 16 << 20
+HNSW_CANDIDATES = 500
+HNSW_EF = 1000
 
 
 class EmbeddingError(RuntimeError):
@@ -85,13 +87,25 @@ class Vectors:
                 state.changed(source=False)
         self._remove_old()
 
-    def _create(self, path):
+    def _create(self, path, flat=False):
+        index = (self.z.FlatIndexParam(metric_type=self.z.MetricType.IP) if flat else
+                 self.z.HnswIndexParam(metric_type=self.z.MetricType.IP, m=16,
+                    ef_construction=100, quantize_type=self.z.QuantizeType.INT8))
         return self.z.create_and_open(str(path), self.z.CollectionSchema(name="mantis",
-            vectors=self.z.VectorSchema("embedding", self.z.DataType.VECTOR_FP32, self.dimension)))
+            vectors=self.z.VectorSchema("embedding", self.z.DataType.VECTOR_FP32, self.dimension,
+                index_param=index)))
+
+    def _hnsw(self, collection=None):
+        collection = collection or self.collection
+        return isinstance(collection.schema.vectors[0].index_param, self.z.HnswIndexParam)
 
     def _remove_old(self):
+        row = self.state.one("SELECT value FROM meta WHERE key='vector_rollback_generation'")
+        retained = row["value"] if row else None
+        if retained and not re.fullmatch(r"[a-f0-9]{32}", retained):
+            raise RuntimeError("Invalid Mantis rollback generation")
         for path in self.root.iterdir():
-            if path.name != self.generation:
+            if path.name not in (self.generation, retained):
                 if is_link(path) or not re.fullmatch(r"[a-f0-9]{32}", path.name):
                     raise RuntimeError("Unexpected Mantis vector generation; inspect the owned volume")
                 shutil.rmtree(path)
@@ -115,6 +129,13 @@ class Vectors:
             except BaseException:
                 self.failed = True
                 raise
+        # A successful write makes the frozen Flat generation stale. Retire it
+        # with the established state -> vectors lock order before another write.
+        with self.state.lock, self.lock:
+            if self.state.one("SELECT value FROM meta WHERE key='vector_rollback_generation'"):
+                with self.state.transaction():
+                    self.state.run("DELETE FROM meta WHERE key='vector_rollback_generation'")
+                self._remove_old()
 
     def storage(self):
         """On-demand disk diagnostic; never scan files in a search call."""
@@ -137,7 +158,9 @@ class Vectors:
             if shutil.disk_usage(self.root).free < max(1 << 30, len(ids) * self.dimension * 4 * 2):
                 raise RuntimeError("Not enough free space for a second Mantis vector generation")
             generation = uuid.uuid4().hex
-            new = self._create(self.root / generation)
+            # Bulk copy uses Flat and one HNSW construction, avoiding hundreds
+            # of incremental graph segments during a full revocation rebuild.
+            new = self._create(self.root / generation, flat=True)
             published = False
             try:
                 for start in range(0, len(ids), batch):
@@ -149,13 +172,21 @@ class Vectors:
                     if not all(item.ok() for item in result):
                         raise RuntimeError("Zvec rejected a copied Mantis vector")
                     new.flush()
+                new.optimize()
+                new.create_index("embedding", self.z.HnswIndexParam(
+                    metric_type=self.z.MetricType.IP, m=16, ef_construction=100,
+                    quantize_type=self.z.QuantizeType.INT8))
                 new.close()
                 new = self.z.open(str(self.root / generation))
+                if not self._hnsw(new):
+                    raise RuntimeError("Compacted Mantis generation is not HNSW")
                 for start in range(0, len(ids), batch):
                     keys = ids[start:start + batch]
                     if len(new.fetch(keys, include_vector=False)) != len(keys):
                         raise RuntimeError("Copied Mantis vector generation failed reopen verification")
-                self.state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (generation,))
+                with self.state.transaction():
+                    self.state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (generation,))
+                    self.state.run("DELETE FROM meta WHERE key='vector_rollback_generation'")
                 published = True
                 old = self.collection
                 self.collection, self.generation = new, generation
@@ -173,7 +204,19 @@ class Vectors:
 
     def query(self, vector, limit=200):
         with self.lock:
-            return [doc.id for doc in self.collection.query(self.z.Query(field_name="embedding", vector=vector), topk=limit)]
+            if not self._hnsw():
+                return [doc.id for doc in self.collection.query(
+                    self.z.Query(field_name="embedding", vector=vector), topk=limit)]
+            # INT8 ANN keeps lookup fast; exact FP32 reranking preserves the
+            # existing hybrid search's score order and broad candidate window.
+            hits = self.collection.query(self.z.Query(field_name="embedding", vector=vector,
+                param=self.z.HnswQueryParam(ef=HNSW_EF)), topk=max(limit, HNSW_CANDIDATES))
+            docs = self.collection.fetch([doc.id for doc in hits])
+            if len(docs) != len(hits):
+                raise RuntimeError("HNSW candidate vanished during exact reranking")
+            return [key for _, key in sorted(
+                ((sum(a * b for a, b in zip(vector, docs[doc.id].vector("embedding"))), doc.id)
+                 for doc in hits), reverse=True)[:limit]]
 
     def existing(self, keys):
         with self.lock:
@@ -193,6 +236,9 @@ class Vectors:
             if not pending and not tombstone:
                 self._remove_old()
                 return
+            # A frozen rollback copy may contain a newly revoked vector even
+            # when that ID is already absent from the active HNSW generation.
+            self.state.run("DELETE FROM meta WHERE key='vector_rollback_generation'")
             # A revoked spool row may never have reached Zvec. After a crash
             # its deterministic ID still has to be checked before retiring
             # the delete intent, but absent IDs need no full generation copy.

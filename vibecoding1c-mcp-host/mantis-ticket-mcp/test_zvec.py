@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mantis_state import State, digest
 from mantis_index import Index, Vectors
+from mantis_vector_migration import build as build_hnsw, switch as switch_generation, is_hnsw
 from test_index import FakeApi, ticket
 
 
@@ -31,6 +32,63 @@ def pump(index, batch=32, flush=False):
 
 
 class ZvecTests(unittest.TestCase):
+    def test_flat_to_hnsw_switch_and_rollback_preserve_paid_vectors(self):
+        import zvec
+        with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+            root = Path(directory)
+            state_path, files = root / "state", root / "files"
+            state = State(state_path, files)
+            (state_path / "vectors").mkdir()
+            old, candidate = uuid.uuid4().hex, uuid.uuid4().hex
+            flat = zvec.create_and_open(str(state_path / "vectors" / old),
+                zvec.CollectionSchema(name="mantis", vectors=zvec.VectorSchema(
+                    "embedding", zvec.DataType.VECTOR_FP32, 4096)))
+            vector = [1.0] + [0.0] * 4095
+            self.assertTrue(flat.upsert([zvec.Doc(id="paid-vector", vectors={"embedding": vector})])[0].ok())
+            flat.flush()
+            flat.close()
+            state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (old,))
+            state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
+            state.run("INSERT INTO fragments(id,issue_id,kind,note_id,file_id,source,text,folded,version,vector_version,vector_id) "
+                      "VALUES('fragment',1,'summary',0,0,'fragment','text','text','v1','v1','paid-vector')")
+            state.close()
+
+            built = build_hnsw(state_path, old, candidate)
+            self.assertEqual(built["vectors"], 1)
+            state = State(state_path, files)
+            with self.assertRaisesRegex(RuntimeError, "owner"):
+                switch_generation(state_path, files, old, candidate)
+            state.close()
+            switched = switch_generation(state_path, files, old, candidate)
+            self.assertEqual(switched["verified_current_vectors"], 1)
+            state = State(state_path, files)
+            vectors = Vectors(state)
+            self.assertTrue(is_hnsw(vectors.collection))
+            self.assertEqual(vectors.query(vector, limit=1), ["paid-vector"])
+            self.assertTrue((state_path / "vectors" / old).exists())
+            vectors.close()
+            state.close()
+            switch_generation(state_path, files, candidate, old, rollback=True)
+            state = State(state_path, files)
+            vectors = Vectors(state)
+            self.assertFalse(is_hnsw(vectors.collection))
+            self.assertEqual(vectors.query(vector, limit=1), ["paid-vector"])
+            self.assertFalse((state_path / "vectors" / candidate).exists())
+            vectors.close()
+            state.close()
+            replacement = uuid.uuid4().hex
+            build_hnsw(state_path, old, replacement)
+            switch_generation(state_path, files, old, replacement)
+            state = State(state_path, files)
+            vectors = Vectors(state)
+            vectors.upsert_batch([("new-vector", [0.0, 1.0] + [0.0] * 4094)])
+            self.assertFalse((state_path / "vectors" / old).exists(),
+                             "A stale Flat rollback must retire after the first HNSW write")
+            self.assertEqual(vectors.existing(["paid-vector", "new-vector"]),
+                             {"paid-vector", "new-vector"})
+            vectors.close()
+            state.close()
+
     def test_legacy_state_migrates_to_safe_pause(self):
         with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
             root = Path(directory)
