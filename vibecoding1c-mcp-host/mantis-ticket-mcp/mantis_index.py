@@ -1352,10 +1352,7 @@ class Index:
             query_semantics = "unavailable"
             query_cache = "unavailable"
             if self.vectors and self.embeddings and query.strip():
-                if len(ranks) >= SEARCH_CANDIDATE_LIMIT:
-                    query_semantics = "skipped:broad_candidate_window; narrow the query or filters"
-                    query_cache = "not_requested"
-                elif not self.search_semantic_slots.acquire(blocking=False):
+                if not self.search_semantic_slots.acquire(blocking=False):
                     query_semantics = "busy:semantic_search_capacity"
                 else:
                     def semantic_matches():

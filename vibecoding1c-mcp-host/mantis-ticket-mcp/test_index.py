@@ -1696,19 +1696,22 @@ class IndexTests(unittest.TestCase):
         self.assertIn("timeout", result["semantic_query"])
         self.assertEqual(calls, [(["решения"], {"timeout": 25, "retries": 0})])
 
-    def test_broad_candidate_window_skips_semantics_and_reports_limit(self):
+    def test_broad_candidate_window_still_uses_semantics_and_reports_limit(self):
         self.index.refresh(1)
-        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
-        def unexpected_embed(texts, **kwargs):
-            self.fail("A saturated lexical window must not wait for OpenRouter")
-        self.index.embeddings = SimpleNamespace(embed=unexpected_embed)
+        calls = []
+        self.index.vectors = SimpleNamespace(query=lambda vector: calls.append("vector") or [], purge=lambda: None)
+        def embed(texts, **kwargs):
+            calls.append("embedding")
+            return [[1.0] + [0.0] * 4095]
+        self.index.embeddings = SimpleNamespace(embed=embed)
         with patch("mantis_index.SEARCH_CANDIDATE_LIMIT", 1):
             result = self.index.search("решения", semantic=True, limit=1)
         self.assertEqual(result["issues"][0]["id"], 1)
         self.assertEqual(result["candidate_limit"], 1)
         self.assertTrue(result["candidate_window_limited"])
-        self.assertIn("broad_candidate_window", result["semantic_query"])
-        self.assertEqual(result["query_embedding_cache"], "not_requested")
+        self.assertEqual(result["semantic_query"], "available")
+        self.assertEqual(result["query_embedding_cache"], "miss")
+        self.assertEqual(calls, ["embedding", "vector"])
 
     def test_slow_semantic_query_falls_back_within_interactive_budget(self):
         self.index.refresh(1)
