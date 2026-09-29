@@ -159,6 +159,7 @@ class Index:
         self.paused = threading.Event()
         self.worker = None
         self.work_lock = threading.Lock()
+        self._initial_progress = {}
         self._query_cache = OrderedDict()
         self._query_pending = {}
         self._query_lock = threading.Lock()
@@ -301,10 +302,23 @@ class Index:
             if not project["import_start"] and dates:
                 self.state.run("UPDATE projects SET import_start=? WHERE id=?",
                                (max(dates), project_id))
-            for row in rows:
+            # Resume a bounded slice of this exact visible page. No persistent
+            # format changes: after a restart the page is safely replayed.
+            identity = digest([page, verifying, rows])
+            progress = self._initial_progress.get(project_id)
+            if not progress or progress[0] != identity:
+                progress = [identity, 0]
+                self._initial_progress[project_id] = progress
+            processed = False
+            for position, row in enumerate(rows):
+                if position < progress[1]:
+                    continue
                 if self.stop.is_set() or self.paused.is_set():
                     return
+                if processed and time.monotonic() >= deadline:
+                    return
                 if row.get("skipped_id") or (verifying and object_id(row["project"]) != project_id):
+                    progress[1] = position + 1
                     continue
                 if verifying:
                     stored = self.state.one("SELECT modified FROM issues WHERE id=?", (int(row["id"]),))
@@ -320,6 +334,9 @@ class Index:
                 else:
                     self.cleanup()
                     self.state.put_issue(row["issue"], observed_at=observed_at)
+                progress[1] = position + 1
+                processed = True
+            self._initial_progress.pop(project_id, None)
             fingerprint = digest([project["import_digest"], signature])
             if len(rows) < 100:
                 if verifying and fingerprint == project["previous_digest"]:
@@ -425,6 +442,7 @@ class Index:
                 self.remote_status = "available"
             except Exception:
                 self.remote_status = "unavailable"
+            next_embeddings = time.monotonic()
             for project in self.state.all("SELECT id,status FROM projects WHERE status<>'access_removed'"):
                 if self.sync_projects and project["id"] not in self.sync_projects:
                     continue
@@ -434,6 +452,13 @@ class Index:
                     self.sync_project(project["id"])
                 except Exception as exc:
                     self.state.run("UPDATE projects SET error=?,status=CASE WHEN status='initializing' THEN status ELSE 'retrying' END WHERE id=?", (str(exc)[:300], project["id"]))
+                # Do not defer all vectors until the last project's import.
+                if not self.paused.is_set() and not self.stop.is_set() and time.monotonic() >= next_embeddings:
+                    try:
+                        self.embed_pending()
+                    except Exception as exc:
+                        self.semantic_status = str(exc)[:200]
+                    next_embeddings = time.monotonic() + 5
             try:
                 self.cleanup()
                 until = time.monotonic() + 5
@@ -546,14 +571,12 @@ class Index:
                     query_semantics = "available"
                 except Exception as exc:
                     query_semantics = str(exc)[:180]
-        def matches(issue):
+        def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
             if "status" in filters and object_id(issue.get("status")) != int(filters["status"]):
                 return False
             tags = issue.get("tags", [])
-            known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
-            names = {object_id(t): t.get("name", "") for t in json.loads(known_tags["data"])} if known_tags else {}
             available = {str(object_id(t)) for t in tags} | {names.get(object_id(t), t.get("name", "")) for t in tags}
             if not set(map(str, filters.get("tags", []))) <= available:
                 return False
@@ -569,13 +592,29 @@ class Index:
             return True
         def grouped():
             groups = {}
+            versions = []
+            records = {}
+            keys = list(ranks)
+            for start in range(0, len(keys), 400):
+                batch = keys[start:start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                records.update((row["id"], row) for row in self.state.all(
+                    "SELECT f.*,i.data,i.verified,i.hash AS issue_hash FROM fragments f JOIN issues i ON i.id=f.issue_id "
+                    f"WHERE f.id IN ({placeholders})", batch))
+            known_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'")
+            names = {object_id(t): t.get("name", "") for t in json.loads(known_tags["data"])} if known_tags else {}
+            parsed = {}
             for key, rank in sorted(ranks.items(), key=lambda item: -item[1]):
-                row = self.state.one("SELECT f.*,i.data,i.verified FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE f.id=?", (key,))
+                row = records.get(key)
                 if not row or (mode != "all" and row["kind"] != {"comments": "comment", "filenames": "filename"}[mode]):
                     continue
-                issue = json.loads(row["data"])
-                if not matches(issue):
+                version = (row["issue_id"], row["issue_hash"])
+                if version not in parsed:
+                    parsed[version] = json.loads(row["data"])
+                issue = parsed[version]
+                if not matches(issue, names):
                     continue
+                versions.append((key, row["version"], row["issue_hash"]))
                 entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
                     "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
                     "status": issue.get("status"), "score": 0, "matches": [],
@@ -588,8 +627,8 @@ class Index:
                         "filename_truncated": row["kind"] == "filename" and len(row["source"]) > 1000,
                         "snippet": row["text"][max(0, position - 70):max(0, position - 70) + 280],
                         "url": entry["url"] + (f"#c{row['note_id']}" if row["note_id"] else "")})
-            return sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
-        initial = grouped()
+            return sorted(groups.values(), key=lambda r: (-r["score"], r["id"])), digest(versions)
+        initial, initial_version = grouped()
         revision = self.state.revision()
         refresh_deadline = time.monotonic() + 10
         checked = set()
@@ -604,10 +643,10 @@ class Index:
                     break
             except ApiError:
                 pass
-        if self.state.revision() != revision:
+        groups, final_version = grouped()
+        if final_version != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
-        groups = grouped()
         for entry in groups:
             entry["access_check"] = "fresh" if entry["id"] in checked else "cached"
         snapshot = self.state.health()

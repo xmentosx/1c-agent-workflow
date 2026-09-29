@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 import tempfile
 import unittest
@@ -15,6 +17,40 @@ from test_server import FakeClient
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_waiting_for_index_writer_does_not_block_mcp_protocol(self):
+        async def run():
+            with tempfile.TemporaryDirectory(prefix="mantis concurrent ") as directory:
+                env = {"MANTIS_BASE_URL": "https://mantis.test", "MANTIS_API_TOKEN": "fixture",
+                       "MANTIS_INDEX_ENABLED": "true", "MANTIS_STATE_PATH": str(Path(directory) / "state"),
+                       "MANTIS_ATTACHMENT_CACHE_PATH": str(Path(directory) / "attachments")}
+                with patch.dict(os.environ, env), patch("mantis_runtime.Api", return_value=FakeApi()), patch("mantis_index.Index.start"):
+                    mcp, service = server.create_mcp()
+                    state = service.client.index.state
+                    entered, release = threading.Event(), threading.Event()
+                    def writer():
+                        with state.lock:
+                            entered.set()
+                            release.wait(3)  # Watchdog lets a broken implementation fail instead of hanging the test.
+                    async with Client(mcp) as client:
+                        thread = threading.Thread(target=writer)
+                        thread.start()
+                        await asyncio.to_thread(entered.wait, 1)
+                        pending = asyncio.create_task(client.call_tool("health", {}))
+                        start = time.monotonic()
+                        try:
+                            await asyncio.sleep(0.05)
+                            tools = await asyncio.wait_for(client.list_tools(), 1)
+                            self.assertEqual(len(tools), 8)
+                            self.assertLess(time.monotonic() - start, 1,
+                                            "A database writer must not freeze the MCP HTTP event loop")
+                            self.assertFalse(pending.done(), "The read still waits for the writer")
+                        finally:
+                            release.set()
+                            await asyncio.to_thread(thread.join, 1)
+                            health = await pending
+                        self.assertTrue(health.structured_content["ok"])
+        asyncio.run(run())
+
     def test_real_protocol_preserves_images_and_exposes_search(self):
         async def run():
             with tempfile.TemporaryDirectory(prefix="mantis MCP ") as directory:

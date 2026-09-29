@@ -136,6 +136,8 @@ class State:
                     source TEXT NOT NULL, text TEXT NOT NULL, folded TEXT NOT NULL, version TEXT NOT NULL,
                     vector_version TEXT NOT NULL DEFAULT '', vector_id TEXT NOT NULL DEFAULT '');
                 CREATE INDEX IF NOT EXISTS fragments_issue ON fragments(issue_id);
+                CREATE INDEX IF NOT EXISTS fragments_kind ON fragments(kind);
+                CREATE INDEX IF NOT EXISTS fragments_vector ON fragments(vector_id);
                 CREATE VIRTUAL TABLE IF NOT EXISTS search_text USING fts5(id UNINDEXED, text, tokenize='unicode61');
                 CREATE TABLE IF NOT EXISTS vector_deletes(id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS cache_deletes(issue_id INTEGER NOT NULL, file_id INTEGER NOT NULL,
@@ -228,6 +230,8 @@ class State:
                 return False
             old = {row["id"]: row for row in self.all("SELECT * FROM fragments WHERE issue_id=?", (issue_id,))}
             keep = set()
+            replacements = []
+            removed = set()
             for source, kind, note, file, text in sources(issue):
                 plain = text if kind == "filename" else html.unescape(text)
                 for index, start in enumerate(range(0, len(plain), 1620)):
@@ -237,14 +241,18 @@ class State:
                     fragment_version = digest([PROFILE, fragment])
                     if key in old and old[key]["version"] == fragment_version:
                         continue
-                    self._remove_fragment(key, old.get(key))
-                    self.run("INSERT INTO fragments(id,issue_id,kind,note_id,file_id,source,text,folded,version) VALUES(?,?,?,?,?,?,?,?,?)",
-                             (key, issue_id, kind, note, file, text if kind == "filename" else source, fragment, fragment.casefold(), fragment_version))
-                    self.run("INSERT INTO search_text(id,text) VALUES(?,?)", (key, fragment))
+                    if key in old:
+                        removed.add(key)
+                    replacements.append((key, issue_id, kind, note, file, text if kind == "filename" else source,
+                                         fragment, fragment.casefold(), fragment_version))
             for key in old.keys() - keep:
                 if old[key]["file_id"]:
                     self.run("INSERT OR IGNORE INTO cache_deletes VALUES(?,?)", (issue_id, old[key]["file_id"]))
-                self._remove_fragment(key, old[key])
+                removed.add(key)
+            self._remove_fragments([old[key] for key in removed])
+            for row in replacements:
+                self.run("INSERT INTO fragments(id,issue_id,kind,note_id,file_id,source,text,folded,version) VALUES(?,?,?,?,?,?,?,?,?)", row)
+                self.run("INSERT INTO search_text(id,text) VALUES(?,?)", (row[0], row[6]))
             visible_notes = {int(note["id"]) for note in issue.get("notes", [])}
             visible_files = {file_id for _, _, _, file_id, _ in sources(issue) if file_id}
             if any((row["note_id"] and row["note_id"] not in visible_notes) or
@@ -254,11 +262,20 @@ class State:
             self.changed()
         return True
 
-    def _remove_fragment(self, key, old):
-        if old and old["vector_id"]:
-            self.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (old["vector_id"],))
-        self.run("DELETE FROM search_text WHERE id=?", (key,))
-        self.run("DELETE FROM fragments WHERE id=?", (key,))
+    def _remove_fragments(self, rows):
+        # FTS5's UNINDEXED id is not an ordinary indexed column. Resolve old
+        # rowids once per batch, then delete by rowid. A new fragment never
+        # scans the existing corpus. Existing v1 databases need no rebuild.
+        for start in range(0, len(rows), 400):
+            batch = rows[start:start + 400]
+            ids = [row["id"] for row in batch]
+            placeholders = ",".join("?" for _ in ids)
+            for row in self.all(f"SELECT rowid FROM search_text WHERE id IN ({placeholders})", ids):
+                self.run("DELETE FROM search_text WHERE rowid=?", (row["rowid"],))
+            for row in batch:
+                if row["vector_id"]:
+                    self.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (row["vector_id"],))
+                self.run("DELETE FROM fragments WHERE id=?", (row["id"],))
 
     def purge_issue(self, issue_id, project_id=0):
         with self.transaction():
@@ -277,8 +294,7 @@ class State:
         previous = self.one("SELECT project_id FROM issues WHERE id=?", (issue_id,))
         project_id = previous["project_id"] if previous else project_id
         self.run("INSERT OR REPLACE INTO tombstones VALUES(?,?,?,1)", (issue_id, project_id, self.clock()))
-        for row in self.all("SELECT * FROM fragments WHERE issue_id=?", (issue_id,)):
-            self._remove_fragment(row["id"], row)
+        self._remove_fragments(self.all("SELECT * FROM fragments WHERE issue_id=?", (issue_id,)))
         self.run("DELETE FROM issues WHERE id=?", (issue_id,))
         self._redact_operations("issue_id", issue_id)
         self.changed()

@@ -17,6 +17,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from urllib.request import Request, urlopen
+from mantis_tools import worker_tool
 
 
 OCR_NOTICE = (
@@ -1149,6 +1150,7 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
         )
 
     @mcp.tool(output_schema=output_schema)
+    @worker_tool
     def read_ticket(
         url_or_id: str,
         include_comments: bool = True,
@@ -1176,6 +1178,7 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
             return error_tool_result(exc)
 
     @mcp.tool(output_schema=output_schema)
+    @worker_tool
     def get_attachment(issue_id: int, file_id: int, include_content: bool = True) -> Any:
         """Return an original Mantis image as visual content and preserve structured attachment metadata."""
         try:
@@ -1187,6 +1190,7 @@ def create_mcp() -> Tuple[Any, MantisTicketService]:
             return error_tool_result(exc)
 
     @mcp.tool
+    @worker_tool
     def health() -> Dict[str, Any]:
         """Return basic Mantis ticket MCP configuration health without contacting Mantis."""
         return {

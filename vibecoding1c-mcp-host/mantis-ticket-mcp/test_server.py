@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import sys
@@ -183,7 +184,7 @@ class MantisTicketServerTests(unittest.TestCase):
             with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, fake_fastmcp_module()):
                 mcp, service = server.create_mcp()
                 service.client = FakeClient()
-                result = mcp.tools["read_ticket"]("1")
+                result = asyncio.run(mcp.tools["read_ticket"]("1"))
 
         self.assertIsInstance(result, FakeToolResult)
         self.assertTrue(result.structured_content["ok"])
@@ -213,7 +214,7 @@ class MantisTicketServerTests(unittest.TestCase):
             ):
                 mcp, service = server.create_mcp()
                 service.client = FakeClient()
-                result = mcp.tools["read_ticket"]("1", image_ocr=True)
+                result = asyncio.run(mcp.tools["read_ticket"]("1", image_ocr=True))
 
         self.assertEqual(result.content[-1].type, "image")
         self.assertIn("recognized fallback text", result.content[0].text)
@@ -229,7 +230,7 @@ class MantisTicketServerTests(unittest.TestCase):
             with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, fake_fastmcp_module()):
                 mcp, service = server.create_mcp()
                 service.client = FakeClientWithCommentImage()
-                result = mcp.tools["read_ticket"]("1")
+                result = asyncio.run(mcp.tools["read_ticket"]("1"))
 
         self.assertEqual([item.type for item in result.content], ["text", "text", "image", "text", "image"])
         self.assertIn("comment 100: comment.png", result.content[-2].text)
@@ -245,7 +246,7 @@ class MantisTicketServerTests(unittest.TestCase):
             with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, fake_fastmcp_module()):
                 mcp, service = server.create_mcp()
                 service.client = FakeClient()
-                result = mcp.tools["get_attachment"](issue_id=1, file_id=10)
+                result = asyncio.run(mcp.tools["get_attachment"](issue_id=1, file_id=10))
 
         self.assertEqual([item.type for item in result.content], ["text", "image"])
         self.assertNotIn("content_base64", result.content[0].text)

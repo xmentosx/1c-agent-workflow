@@ -13,6 +13,7 @@ from mantis_api import Api, ApiError
 from mantis_index import Embeddings, Index, Vectors
 from mantis_state import State, digest, object_id, sources, is_link, clean_issue
 from mantis_write import ACTIONS, Writer
+from mantis_tools import worker_tool
 
 
 def actor_name(explicit=""):
@@ -100,6 +101,7 @@ class Runtime:
 
     def register(self, mcp):
         @mcp.tool
+        @worker_tool
         def search_tickets(query: str, actor: str = "", filters: dict | None = None,
                            mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True) -> dict:
             """Paged compact search (10 default, max 20, 12000 output chars). Follow next_cursor. Modes: all/comments/filenames; filters via mantis_metadata."""
@@ -112,6 +114,7 @@ class Runtime:
             return ToolResult(content=[TextContent(type="text", text=summary)], structured_content=result)
 
         @mcp.tool
+        @worker_tool
         def mantis_metadata(project_id: int = 0, actor: str = "") -> dict:
             """Discover projects, filter names and write actions; specify a project for its field and permission definitions."""
             person = actor_name(actor)
@@ -132,12 +135,14 @@ class Runtime:
                     "concurrency": "Pre/post-read and MCP serialization; residual race with other Mantis clients remains"}
 
         @mcp.tool
+        @worker_tool
         def execute_write(operation_id: str, actor: str, steps: list[dict]) -> dict:
             """Execute an explicit user instruction, never a draft. Reuse operation_id unchanged after interruption; unknown steps are not reposted."""
             self.require()
             return self.writer.execute(operation_id, actor_name(actor), steps)
 
         @mcp.tool
+        @worker_tool
         def write_operation(action: str, actor: str = "", operation_id: str = "", issue_id: int = 0,
                             step_number: int = 0, outcome: str = "", server_id: int = 0) -> dict:
             """inspect: get edit version; status/cancel: journal; resolve: explicit user outcome applied/not_applied for an unknown step."""
@@ -159,6 +164,7 @@ class Runtime:
             raise ValueError("action must be inspect, status, cancel or resolve")
 
         @mcp.tool
+        @worker_tool
         def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None) -> dict:
             """Index status/pause/resume/rebuild_vectors. Rebuild may buy embeddings within budget. settle_charge needs explicit confirmation of actual billing."""
             person = actor_name(actor)

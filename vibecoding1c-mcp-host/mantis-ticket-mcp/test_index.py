@@ -450,6 +450,69 @@ class IndexTests(unittest.TestCase):
         self.index.refresh(1)
         self.assertEqual(self.state.health()["embedding_backlog"], 1)
 
+    def test_new_fragment_write_cost_does_not_scan_the_existing_corpus(self):
+        def measured(issue):
+            steps = [0]
+            def progress():
+                steps[0] += 100
+                return 0
+            self.state.db.set_progress_handler(progress, 100)
+            try:
+                self.state.put_issue(issue)
+            finally:
+                self.state.db.set_progress_handler(None, 0)
+            return steps[0]
+        baseline = measured(ticket(10001, text="new marker " * 400))
+        for issue_id in range(10, 510):
+            self.state.put_issue(ticket(issue_id, text="background content"))
+        populated = measured(ticket(10002, text="new marker " * 400))
+        self.assertLess(populated, baseline * 4 + 2000,
+                        "A new issue must not scan every existing FTS row for each fragment")
+        self.assertEqual(len(self.state.all('SELECT id FROM search_text WHERE search_text MATCH ?', ('"marker"',))), 6)
+        self.assertEqual(self.state.health()["issues"], 502)
+
+    def test_bulk_fragment_edit_preserves_other_issues_and_revokes_old_vectors(self):
+        self.index.refresh(1)
+        changed = ticket(2, text="oldmarker " * 1800)
+        self.state.put_issue(changed)
+        self.state.run("UPDATE fragments SET vector_id=id,vector_version=version WHERE issue_id=2")
+        old = self.state.all("SELECT * FROM fragments WHERE issue_id=2 AND kind='description'")
+        changed["description"] = "newmarker " * 1800
+        self.state.put_issue(changed)
+        self.assertFalse(self.state.all('SELECT id FROM search_text WHERE search_text MATCH ?', ('"oldmarker"',)))
+        self.assertTrue(self.state.all('SELECT id FROM search_text WHERE search_text MATCH ?', ('"newmarker"',)))
+        self.assertEqual(len(self.state.all("SELECT * FROM vector_deletes")), len(old))
+        self.assertEqual(self.search("решения")["issues"][0]["id"], 1)
+
+    def test_initial_import_budget_resumes_without_advancing_an_incomplete_page(self):
+        self.api.items = {n: ticket(n) for n in range(1, 5)}
+        original = self.state.put_issue
+        written, now = [], [0]
+        def slow_put(issue, *args, **kwargs):
+            result = original(issue, *args, **kwargs)
+            written.append(issue["id"])
+            now[0] += 11
+            return result
+        with patch("mantis_index.time.monotonic", side_effect=lambda: now[0]), patch.object(self.state, "put_issue", side_effect=slow_put):
+            for expected in range(1, 5):
+                self.index.sync_project(1)
+                self.assertEqual(len(written), expected)
+                if expected < 4:
+                    self.assertEqual(self.state.one("SELECT import_verify FROM projects WHERE id=1")["import_verify"], 0)
+        self.assertEqual(len(set(written)), 4, "Do not starve behind the already imported prefix")
+        self.assertEqual(self.state.one("SELECT import_verify FROM projects WHERE id=1")["import_verify"], 1)
+
+    def test_unrelated_import_does_not_invalidate_a_completed_search(self):
+        self.index.refresh(1)
+        original = self.index.refresh
+        def concurrent_import(issue_id, *args, **kwargs):
+            self.state.put_issue(ticket(99, text="unrelated corpus addition"))
+            return original(issue_id, *args, **kwargs)
+        with patch.object(self.index, "refresh", side_effect=concurrent_import):
+            result = self.index.search("решения", semantic=False)
+        self.assertTrue(result["ok"])
+        self.assertEqual([issue["id"] for issue in result["issues"]], [1])
+
     def test_outage_has_no_ttl_and_partial_page_no_tombstone(self):
         self.index.refresh(1)
         self.api.down = True
