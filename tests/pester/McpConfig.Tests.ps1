@@ -19,7 +19,7 @@
         New-Item -ItemType Directory -Path $root -Force | Out-Null
         $registryRoot = Join-Path $root 'registry'
         New-Item -ItemType Directory -Path $registryRoot -Force | Out-Null
-        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:22007/mcp'; health = 'running' }
+        $endpoint = @{ id = 'sppr'; scope = 'global'; family = 'vibecoding1c'; provider = 'remote'; name = 'sppr-knowledge'; hostId = 'dev-ermakov'; url = 'http://dev-ermakov:18007/mcp'; endpointMode = 'direct'; health = 'running' }
         @{ schemaVersion = 1; host = @{ hostId = 'dev-ermakov' }; configurations = @(); servers = @($endpoint) } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registryRoot 'registry.json') -Encoding UTF8
         & {
             . $HelperPath -ProjectRoot $root -Action help -McpServerId sppr -McpProvider local *> $null
@@ -43,7 +43,8 @@
             Write-Vibecoding1cMcpCodexConfig -Path $path -BlockId 'fixture-sppr' -Endpoints @($runtime)
             $text = Get-Content -LiteralPath $path -Raw -Encoding UTF8
             $text | Should -Match 'mcp_servers."sppr-knowledge"'
-            $text | Should -Match 'http://dev-ermakov:22007/mcp'
+            $text | Should -Match 'http://dev-ermakov:18007/mcp'
+            $text | Should -Not -Match ':22007/'
             $text | Should -Match 'http://external.test/mcp'
             $text | Should -Not -Match 'password|credential|collector|odata'
         }

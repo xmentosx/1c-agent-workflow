@@ -309,36 +309,40 @@
         }
     }
 
-    It "uses direct BookStack for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect {
+    It "uses direct BookStack and SPPR for fresh and previously proxied runtimes without creating a proxy" -Tag BookStackDirect,Sppr {
         $configPath = Join-Path $TestDrive 'bookstack direct кириллица.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $state = @{ servers = @() }
             function Read-HostState { return $state }
-            function Get-HostPort { return 18005 }
+            function Get-HostPort { return $directPort }
             function Get-HostLocalValues { return @{} }
             function Test-HostServerNeedsEmbedding { return $false }
             function Invoke-DockerCommandChecked { throw 'unexpected Docker mutation' }
             function Ensure-ToolsListProxyImage { throw 'unexpected proxy build' }
-            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'mantis') } }
-            $definition = @{ id = 'bookstack'; scope = 'global'; image = 'pinned'; containerNameTemplate = 'itl-bookstack' }
-            foreach ($legacy in @($false, $true)) {
-                if ($legacy) { $state.servers = @(@{ id = 'bookstack'; scope = 'global'; configId = ''; url = 'http://host:22005/mcp'; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
-                $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
-                Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
-                $runtime.endpointMode | Should -Be 'direct'
-                $runtime.url | Should -Be 'http://host:18005/mcp'
-                $runtime.directUrl | Should -Be $runtime.url
-                $runtime.proxyPort | Should -Be 0
-                $runtime.proxyContainerName | Should -BeNullOrEmpty
-                $runtime.proxyContractPath | Should -BeNullOrEmpty
+            $config = @{ stateRoot = $TestDrive; baseUrl = 'http://host'; toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr', 'mantis') } }
+            foreach ($nativeId in @('bookstack','sppr')) {
+                $directPort = if ($nativeId -eq 'sppr') { 18007 } else { 18005 }
+                $definition = @{ id = $nativeId; scope = 'global'; image = 'pinned'; containerNameTemplate = "itl-$nativeId" }
+                $state.servers = @()
+                foreach ($legacy in @($false, $true)) {
+                    if ($legacy) { $state.servers = @(@{ id = $nativeId; scope = 'global'; configId = ''; url = "http://host:$($directPort+4000)/mcp"; proxyContainerName = 'old-proxy'; proxyContractPath = 'old-contract' }) }
+                    $runtime = New-ServerRuntime -Config $config -Server $definition -Index 0
+                    Enable-ToolsListProxyForRuntime -Config $config -Runtime $runtime
+                    $runtime.endpointMode | Should -Be 'direct'
+                    $runtime.url | Should -Be "http://host:$directPort/mcp"
+                    $runtime.directUrl | Should -Be $runtime.url
+                    $runtime.proxyPort | Should -Be 0
+                    $runtime.proxyContainerName | Should -BeNullOrEmpty
+                    $runtime.proxyContractPath | Should -BeNullOrEmpty
+                }
+                $state.servers = @($runtime)
+                '{}' | Set-Content (Get-HostStatePath -Config $config)
+                Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId $nativeId
             }
             $definition.id = 'mantis'
             (New-ServerRuntime -Config $config -Server $definition -Index 0).endpointMode | Should -Be 'proxy'
-            $state.servers = @($runtime)
-            '{}' | Set-Content (Get-HostStatePath -Config $config)
-            Enable-TrackedToolsListProxiesAndPublish -Config $config -TargetServerId bookstack
         }
     }
 

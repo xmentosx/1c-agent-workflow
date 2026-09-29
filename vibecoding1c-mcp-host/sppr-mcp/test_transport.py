@@ -3,7 +3,6 @@ import asyncio
 import base64
 import json
 import socket
-import subprocess
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -125,17 +124,6 @@ def test_mcp_over_real_http_two_clients(self):
                 # keep the always-on schema below this measured explicit budget.
                 self.assertLess(len(json.dumps([t.model_dump(mode="json", exclude_none=True) for t in tools],
                                                ensure_ascii=False, separators=(",", ":")).encode("utf-8")), 8000)
-                proxy_root = Path(__file__).resolve().parent.parent / "tools-list-proxy"
-                # Feed actual FastMCP schemas into the production proxy boundary;
-                # changing a tool without its deployed contract must fail here.
-                checked = subprocess.run(["node", "-e",
-                    "const fs=require('fs'),p=require('./mcp-tools-list-proxy.js');"
-                    "const c=JSON.parse(fs.readFileSync('tools-contract.json','utf8')).servers.sppr;"
-                    "p.transformToolsListResponse(fs.readFileSync(0),'application/json',c);"],
-                    cwd=proxy_root, input=json.dumps({"jsonrpc": "2.0", "id": 1, "result": {
-                        "tools": [t.model_dump(mode="json", exclude_none=True) for t in tools]}}),
-                    encoding="utf-8", capture_output=True, timeout=10)
-                self.assertEqual(checked.returncode, 0, checked.stderr)
                 for tool in tools:
                     self.assertTrue(tool.annotations.readOnlyHint)
                 hit = await client.call_tool("search_sppr", {"query": "54321"})

@@ -6,6 +6,9 @@
 Поиск объединяет точные совпадения, FTS5 и Qwen3 vectors. Реальные связи
 читаются отдельными страницами; top-k поиска не является полным обходом графа.
 Ответ содержит поколение, время наблюдения, покрытие и native/web ссылки.
+Клиенты подключаются напрямую к `http://dev-ermakov.itland.local:18007/mcp`.
+SPPR не использует tools-list proxy; `endpointMode=direct` сохраняется при
+повторном setup/start даже со старым списком proxy-целей в конфигурации хоста.
 
 ## Сбор контекста и пакетные запросы
 
@@ -134,7 +137,8 @@
    Секреты не передаются аргументами процесса.
 3. В локальном `host.config.json` задать `spprServer.configPath` и
    `spprServer.credentialPath`; добавить `sppr` в `enabledServers.global`
-   и `toolsListProxy.serverIds`. Задать `secrets.SPPR_EMBEDDING_KEY` для
+   и `toolsListProxy.serverIds` (этот список также выбирает watchdog-цели;
+   режим direct исключает создание прокси). Задать `secrets.SPPR_EMBEDDING_KEY` для
    векторов запросов контейнера. Используется отдельный embedding-профиль
    компонента; общую настройку `embedding` других MCP менять не требуется.
 4. В каталоге MCP Host выполнить:

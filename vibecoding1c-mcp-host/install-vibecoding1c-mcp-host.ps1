@@ -4581,7 +4581,7 @@ function New-ServerRuntime {
     $tracked = Get-TrackedHostServerForIdentity -Config $Config -ServerId $id -Scope $scope -ConfigId $configId
     $endpointMode = [string](Get-ObjectValue -Object $tracked -Name "endpointMode" -Default "proxy")
     $reuseNative = $endpointMode -eq "direct"
-    if ($id -eq "bookstack") { $endpointMode = "direct" }
+    if ($id -in @("bookstack", "sppr")) { $endpointMode = "direct" }
     $indexGeneration = [string](Get-ObjectValue -Object $Server -Name "indexGeneration" -Default "")
     if ($reuseNative) {
         $hostPort = [int]$tracked.hostPort
