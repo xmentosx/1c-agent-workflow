@@ -1696,6 +1696,35 @@ class IndexTests(unittest.TestCase):
         self.assertIn("timeout", result["semantic_query"])
         self.assertEqual(calls, [(["решения"], {"timeout": 25, "retries": 0})])
 
+    def test_vector_write_does_not_hold_the_search_for_its_full_flush(self):
+        from mantis_index import Vectors
+        self.index.refresh(1)
+        vectors = Vectors.__new__(Vectors)
+        vectors.lock = threading.RLock()
+        vectors.purge = lambda: None
+        self.index.vectors = vectors
+        self.index.embeddings = SimpleNamespace()
+        held, release = threading.Event(), threading.Event()
+        def write():
+            with vectors.lock:
+                held.set()
+                release.wait(2)
+        thread = threading.Thread(target=write)
+        thread.start()
+        try:
+            self.assertTrue(held.wait(1))
+            with patch("mantis_index.VECTOR_QUERY_LOCK_WAIT_SECONDS", 0.02):
+                with self.assertRaisesRegex(RuntimeError, "busy:vector_index_writer"):
+                    vectors.query([0.0])
+            with patch.object(self.index, "query_vector", side_effect=AssertionError("unnecessary OpenRouter call")):
+                result = self.index.search("решения", semantic=True)
+            self.assertEqual(result["issues"][0]["id"], 1)
+            self.assertEqual(result["semantic_query"], "busy:vector_index_writer")
+            self.assertEqual(result["query_embedding_cache"], "not_requested")
+        finally:
+            release.set()
+            thread.join(timeout=2)
+
     def test_broad_candidate_window_skips_semantics_and_reports_limit(self):
         self.index.refresh(1)
         self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)

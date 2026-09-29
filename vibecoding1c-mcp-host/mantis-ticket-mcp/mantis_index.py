@@ -36,6 +36,7 @@ from mantis_extract import MAX_INPUT
 QUERY_EMBEDDING_CACHE_SIZE = 256
 QUERY_EMBEDDING_TIMEOUT_SECONDS = 25
 QUERY_EMBEDDING_WAIT_SECONDS = 65
+VECTOR_QUERY_LOCK_WAIT_SECONDS = 2
 SEARCH_CANDIDATE_LIMIT = 10000
 SEARCH_REFRESH_LIMIT = 10
 SEARCH_REFRESH_WORKERS = 4
@@ -172,8 +173,18 @@ class Vectors:
                 raise
 
     def query(self, vector, limit=200):
-        with self.lock:
+        if not self.lock.acquire(timeout=VECTOR_QUERY_LOCK_WAIT_SECONDS):
+            raise RuntimeError("busy:vector_index_writer")
+        try:
             return [doc.id for doc in self.collection.query(self.z.Query(field_name="embedding", vector=vector), topk=limit)]
+        finally:
+            self.lock.release()
+
+    def busy(self):
+        if not self.lock.acquire(blocking=False):
+            return True
+        self.lock.release()
+        return False
 
     def existing(self, keys):
         with self.lock:
@@ -1308,6 +1319,9 @@ class Index:
             if self.vectors and self.embeddings and query.strip():
                 if len(ranks) >= SEARCH_CANDIDATE_LIMIT:
                     query_semantics = "skipped:broad_candidate_window; narrow the query or filters"
+                    query_cache = "not_requested"
+                elif isinstance(self.vectors, Vectors) and self.vectors.busy():
+                    query_semantics = "busy:vector_index_writer"
                     query_cache = "not_requested"
                 elif not self.search_semantic_slots.acquire(blocking=False):
                     query_semantics = "busy:semantic_search_capacity"
