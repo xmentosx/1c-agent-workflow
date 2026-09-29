@@ -119,7 +119,7 @@ class Api:
 
     @staticmethod
     def normalize_lists(issue):
-        for name in ("notes", "attachments", "files", "tags", "custom_fields"):
+        for name in ("notes", "attachments", "files", "tags", "custom_fields", "relationships"):
             issue[name] = issue.get(name) or []
         for note in issue["notes"]:
             for name in ("attachments", "files"):

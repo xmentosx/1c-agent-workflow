@@ -25,7 +25,7 @@ def ticket(issue_id=1, project=1, text="Описание решения", update
     return {"id": issue_id, "project": {"id": project}, "summary": "Решение проблемы",
             "description": text, "status": {"id": 90}, "reporter": {"id": 3025},
             "created_at": "2000-01-01T00:00:00+03:00", "updated_at": updated,
-            "notes": [], "attachments": [], "tags": [], "custom_fields": []}
+            "notes": [], "attachments": [], "tags": [], "relationships": [], "custom_fields": []}
 
 
 class FakeApi:
@@ -42,6 +42,7 @@ class FakeApi:
         self.scans = 0
         self.page_hook = None
         self.level = 70
+        self.block_upload = False
         self.definitions = []
 
     def me(self):
@@ -90,6 +91,8 @@ class FakeApi:
         return not self.down and error.status == 404 and issue_id not in self.items
 
     def context(self, project_id):
+        if int(project_id) not in {int(project["id"]) for project in self.project_list}:
+            raise ApiError("Project is not accessible", 403)
         config = {key: 25 for key in ["report_bug_threshold", "update_bug_threshold", "add_bugnote_threshold",
             "bugnote_user_edit_threshold", "upload_bug_file_threshold", "change_view_status_threshold",
             "change_view_status_bug_threshold", "tag_attach_threshold", "tag_detach_threshold", "reopen_bug_threshold", "update_bug_assign_threshold"]}
@@ -97,6 +100,8 @@ class FakeApi:
                       bug_readonly_status_threshold=90, update_readonly_bug_threshold=70, bug_resolved_status_threshold=80,
                       set_status_threshold={"10": 25, "50": 40, "90": 25}, status_enum_workflow={}, max_file_size=100000,
                       allowed_files="", disallowed_files="exe")
+        if self.block_upload:
+            config["upload_bug_file_threshold"] = 80
         return {"user": self.me(), "project": {"id": project_id}, "level": self.level, "config": config}
 
     def metadata(self, project_id):
@@ -128,6 +133,15 @@ class FakeApi:
             self.files[fid] = {**file, "id": fid}
             self.items[int(parts[1])]["attachments"].append({"id": fid, "filename": file["name"]})
             result = {}
+        elif parts[-1] == "relationships" and method == "POST":
+            issue = self.items[int(parts[1])]
+            rid = 100 + len(issue["relationships"])
+            issue["relationships"].append({"id": rid, "issue": payload["issue"], "type": payload["type"]})
+            result = {"issue": issue}
+        elif len(parts) == 4 and parts[2] == "relationships" and method == "DELETE":
+            issue = self.items[int(parts[1])]
+            issue["relationships"] = [r for r in issue["relationships"] if int(r["id"]) != int(parts[3])]
+            result = {"issue": issue}
         elif method == "PATCH":
             if not self.ignore:
                 self.items[int(parts[1])].update(copy.deepcopy(payload))
@@ -163,7 +177,7 @@ class IndexTests(unittest.TestCase):
         self.state = State(self.root / "state", self.root / "files")
         self.api = FakeApi()
         self.index = Index(self.state, self.api)
-        self.writer = Writer(self.index, ACTIONS, [1])
+        self.writer = Writer(self.index, True)
         self.index.catalogs()
 
     def tearDown(self):
@@ -832,11 +846,45 @@ class IndexTests(unittest.TestCase):
         db.close()
         self.state = State(self.root / "state", self.root / "files")
 
-    def test_new_project_cannot_inherit_write_qualification(self):
+    def test_new_accessible_project_uses_current_permissions_without_config_list(self):
         self.api.items[2] = ticket(2, project=2)
+        self.api.project_list.append({"id": 2, "access_level": {"id": 70}})
         result = self.writer.execute("operation01", "analyst", [{"action": "add_comment", "issue_id": 2, "fields": {"text": "publish"}}])
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(len(self.api.sent), 1)
+
+    def test_write_switch_and_revoked_project_access_block_before_dispatch(self):
+        self.writer.write_enabled = False
+        with self.assertRaisesRegex(PermissionError, "maintenance switch"):
+            self.writer.execute("operation01", "analyst", [{"action": "add_comment", "issue_id": 1, "fields": {"text": "no"}}])
+        self.assertEqual(self.api.sent, [])
+        self.writer.write_enabled = True
+        self.api.project_list = []
+        result = self.writer.execute("operation02", "analyst", [{"action": "add_comment", "issue_id": 1, "fields": {"text": "no"}}])
         self.assertEqual(result["status"], "failed")
-        self.assertIn("MANTIS_WRITE_PROJECT_IDS", result["steps"][0]["error"])
+        self.assertEqual(self.api.sent, [])
+
+    def test_relationship_attach_and_detach_confirmed_by_readback(self):
+        self.api.items[1]["status"] = {"id": 10}
+        self.api.items[2] = ticket(2)
+        _, version = self.api.visible_issue(1)
+        attached = self.writer.execute("relation01", "analyst", [{"action": "attach_relationship", "issue_id": 1,
+            "related_issue_id": 2, "relationship_type": "parent-of", "expected_version": version}])
+        self.assertEqual(attached["status"], "succeeded")
+        relation_id = attached["steps"][0]["result"]["relationship_id"]
+        self.assertEqual(self.api.items[1]["relationships"][0]["type"]["name"], "parent-of")
+        _, version = self.api.visible_issue(1)
+        detached = self.writer.execute("relation02", "analyst", [{"action": "detach_relationship", "issue_id": 1,
+            "related_issue_id": 2, "relationship_id": relation_id, "expected_version": version}])
+        self.assertEqual(detached["status"], "succeeded")
+        self.assertEqual(self.api.items[1]["relationships"], [])
+
+    def test_relationship_target_must_be_visible_before_write(self):
+        self.api.items[1]["status"] = {"id": 10}
+        _, version = self.api.visible_issue(1)
+        result = self.writer.execute("relation03", "analyst", [{"action": "attach_relationship", "issue_id": 1,
+            "related_issue_id": 999, "relationship_type": "related-to", "expected_version": version}])
+        self.assertEqual(result["status"], "failed")
         self.assertEqual(self.api.sent, [])
 
     def test_concrete_write_signature_and_idempotent_repeat(self):
@@ -871,7 +919,7 @@ class IndexTests(unittest.TestCase):
         self.state.close()
         self.state = State(self.root / "state", self.root / "files")
         self.index = Index(self.state, self.api)
-        self.writer = Writer(self.index, ACTIONS, [1])
+        self.writer = Writer(self.index, True)
         self.assertEqual(self.writer.execute("operation01", "analyst", steps)["status"], "succeeded")
         self.assertEqual(len(self.api.sent), 1)
 
@@ -888,11 +936,11 @@ class IndexTests(unittest.TestCase):
         steps = [{"action": "create_issue", "project_id": 1, "fields": {"summary": "new", "description": "detail"}},
                  {"action": "add_comment", "fields": {"text": "comment"}},
                  {"action": "upload_file", "file": {"name": "file.txt", "content": base64.b64encode(b"payload").decode()}}]
-        self.writer.enabled.remove("upload_file")
+        self.api.block_upload = True
         result = self.writer.execute("operation01", "analyst", steps)
         self.assertEqual(result["status"], "failed")
         self.assertEqual(len(self.api.sent), 2)
-        self.writer.enabled.add("upload_file")
+        self.api.block_upload = False
         result = self.writer.execute("operation01", "analyst", steps)
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(len(self.api.sent), 3)

@@ -11,7 +11,9 @@ from mantis_api import ApiError
 from mantis_state import digest, encode, object_id, timestamp
 
 
-ACTIONS = {"create_issue", "update_issue", "add_comment", "update_comment", "upload_file", "attach_tag", "detach_tag"}
+ACTIONS = {"create_issue", "update_issue", "add_comment", "update_comment", "upload_file", "attach_tag", "detach_tag",
+           "attach_relationship", "detach_relationship"}
+RELATION_TYPES = {"related-to", "duplicate-of", "parent-of", "child-of"}
 ISSUE_FIELDS = {"summary", "description", "steps_to_reproduce", "additional_information", "category", "status",
                 "priority", "severity", "reproducibility", "resolution", "view_state", "handler", "version", "build",
                 "platform", "os", "os_build", "target_version", "fixed_in_version", "due_date", "custom_fields"}
@@ -42,12 +44,11 @@ def fields_match(actual, desired):
 
 
 class Writer:
-    def __init__(self, index, enabled_actions=(), enabled_projects=()):
+    def __init__(self, index, write_enabled=False):
         self.index, self.state, self.api = index, index.state, index.api
-        # Qualification is configured by the operator per action, never inferred
-        # from a successful HTTP response on a vulnerable server version.
-        self.enabled = set(enabled_actions) & ACTIONS
-        self.enabled_projects = {int(project) for project in enabled_projects}
+        # One maintenance switch. Each step independently checks current Mantis
+        # account/project permissions; successful HTTP alone is not authorization.
+        self.write_enabled = bool(write_enabled)
         self.lock = threading.Lock()  # Serializes all writes of this owner (and each issue).
 
     def status(self, operation_id):
@@ -87,7 +88,8 @@ class Writer:
         for number, step in enumerate(prepared):
             if step.get("action") not in ACTIONS:
                 raise ValueError("Unsupported write action; call mantis_metadata")
-            unexpected = set(step) - {"action", "issue_id", "project_id", "note_id", "fields", "expected_version", "file", "tag_id"}
+            unexpected = set(step) - {"action", "issue_id", "project_id", "note_id", "fields", "expected_version", "file", "tag_id",
+                                      "related_issue_id", "relationship_id", "relationship_type"}
             if unexpected:
                 raise ValueError("Unknown step fields: " + ", ".join(sorted(unexpected)))
             fields = step.setdefault("fields", {})
@@ -108,11 +110,9 @@ class Writer:
 
     def validate(self, step, issue):
         action, fields = step["action"], step.get("fields", {})
-        if action not in self.enabled:
-            raise PermissionError(f"{action} is not qualified/enabled on this Mantis deployment; enable it only after the documented test-contour checks")
+        if not self.write_enabled:
+            raise PermissionError("Mantis write is disabled by its maintenance switch")
         project_id = int(step.get("project_id") or object_id((issue or {}).get("project")))
-        if project_id not in self.enabled_projects:
-            raise PermissionError(f"Project {project_id} is not qualified for writes; qualify its configured actions and add its ID to MANTIS_WRITE_PROJECT_IDS")
         if issue and step.get("project_id") and object_id(issue["project"]) != project_id:
             raise ValueError("Issue does not belong to the requested project")
         context = self.api.context(project_id)
@@ -227,6 +227,24 @@ class Writer:
                 raise ValueError("Choose a known tag ID from metadata")
         elif action == "detach_tag":
             require_level(context, "tag_detach_threshold")
+        elif action in {"attach_relationship", "detach_relationship"}:
+            if fields:
+                raise ValueError("Relationship steps use related_issue_id and relationship_type or relationship_id")
+            require_level(context, "update_bug_threshold")
+            if object_id(issue.get("status")) >= int(config.get("bug_readonly_status_threshold", 0)):
+                raise PermissionError("Mantis does not allow relationship changes on a read-only issue")
+            related_id = int(step.get("related_issue_id") or 0)
+            if related_id <= 0 or related_id == int(issue["id"]):
+                raise ValueError("Choose a different, visible related_issue_id")
+            self.api.visible_issue(related_id)
+            if action == "attach_relationship":
+                if step.get("relationship_type") not in RELATION_TYPES:
+                    raise ValueError("relationship_type must be related-to, duplicate-of, parent-of or child-of")
+            else:
+                relation_id = int(step.get("relationship_id") or 0)
+                if relation_id <= 0 or not any(int(r.get("id", 0)) == relation_id and
+                        object_id(r.get("issue")) == related_id for r in issue.get("relationships", [])):
+                    raise ValueError("The selected relationship is not visible on this issue")
         return context
 
     def dispatch(self, step, issue_id, etag):
@@ -243,7 +261,12 @@ class Writer:
             return self.api.request(f"issues/{issue_id}/files", "POST", {"files": [step["file"]]})[0]
         if action == "attach_tag":
             return self.api.request(f"issues/{issue_id}/tags", "POST", {"tags": [{"id": int(step["tag_id"])}]})[0]
-        return self.api.request(f"issues/{issue_id}/tags/{int(step['tag_id'])}", "DELETE")[0]
+        if action == "detach_tag":
+            return self.api.request(f"issues/{issue_id}/tags/{int(step['tag_id'])}", "DELETE")[0]
+        if action == "attach_relationship":
+            return self.api.request(f"issues/{issue_id}/relationships", "POST", {"issue": {"id": int(step["related_issue_id"])},
+                "type": {"name": step["relationship_type"]}})[0]
+        return self.api.request(f"issues/{issue_id}/relationships/{int(step['relationship_id'])}", "DELETE")[0]
 
     def reconcile(self, step, record, issue_id):
         action, fields = step["action"], step.get("fields", {})
@@ -301,10 +324,21 @@ class Writer:
             if record.get("resolved_server_id"):
                 matches = [fid for fid in matches if fid == record["resolved_server_id"]]
             return {"issue_id": issue_id, "file_id": matches[0]} if len(matches) == 1 else None
+        if action in {"attach_relationship", "detach_relationship"}:
+            relation_id = int(step.get("relationship_id") or 0)
+            matches = [r for r in issue.get("relationships", []) if object_id(r.get("issue")) == int(step["related_issue_id"])
+                       and (not relation_id or int(r.get("id", 0)) == relation_id)
+                       and (action == "detach_relationship" or str((r.get("type") or {}).get("name")) == step["relationship_type"])]
+            if action == "detach_relationship":
+                return {"issue_id": issue_id, "relationship_id": relation_id} if not matches else None
+            record["candidates"] = [int(r["id"]) for r in matches]
+            return {"issue_id": issue_id, "relationship_id": int(matches[0]["id"])} if len(matches) == 1 else None
         attached = int(step["tag_id"]) in {object_id(t) for t in issue.get("tags", [])}
         return {"issue_id": issue_id, "tag_id": int(step["tag_id"])} if attached == (action == "attach_tag") else None
 
     def execute(self, operation_id, actor, steps):
+        if not self.write_enabled:
+            raise PermissionError("Mantis write is disabled by its maintenance switch")
         if not self.lock.acquire(timeout=1):
             return {"status": "busy", "continuation": "Retry the same operation_id; another Mantis write is finishing"}
         try:
@@ -353,7 +387,7 @@ class Writer:
                     if self.status(operation_id)["cancel_requested"]:
                         self.save(operation_id, records, "cancelled", issue_id)
                         return self.status(operation_id)
-                    if issue and step["action"] in {"update_issue", "update_comment"}:
+                    if issue and step["action"] in {"update_issue", "update_comment", "attach_relationship", "detach_relationship"}:
                         expected = step.get("expected_version")
                         if not expected:
                             raise ValueError("An expected_version from write_operation(action=inspect) is required for editing existing content")

@@ -2819,15 +2819,14 @@ services:
                 @($mantisVolumes | Where-Object { $_.container -eq "/data/mantis" }).Count | Should -Be 1
                 $mantisEnv["MANTIS_INDEX_ENABLED"] | Should -Be "false"
                 $mantisEnv["MANTIS_MONTHLY_BUDGET_USD"] | Should -Be "5"
-                $mantisEnv["MANTIS_WRITE_ACTIONS"] | Should -BeNullOrEmpty
-                $mantisEnv["MANTIS_WRITE_PROJECT_IDS"] | Should -BeNullOrEmpty
+                $mantisEnv["MANTIS_WRITE_ENABLED"] | Should -Be "false"
+                $mantisEnv.Contains("MANTIS_WRITE_ACTIONS") | Should -Be $false
+                $mantisEnv.Contains("MANTIS_WRITE_PROJECT_IDS") | Should -Be $false
                 $hostConfig.mantisTicketServer | Add-Member -NotePropertyName syncProjectIds -NotePropertyValue @(17)
-                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeActions -NotePropertyValue @('add_comment')
-                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeProjectIds -NotePropertyValue @(17)
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeEnabled -NotePropertyValue $true
                 $selectedMantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
                 $selectedMantisEnv['MANTIS_SYNC_PROJECT_IDS'] | Should -Be '17'
-                $selectedMantisEnv['MANTIS_WRITE_ACTIONS'] | Should -Be 'add_comment'
-                $selectedMantisEnv['MANTIS_WRITE_PROJECT_IDS'] | Should -Be '17'
+                $selectedMantisEnv['MANTIS_WRITE_ENABLED'] | Should -Be 'true'
                 (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {

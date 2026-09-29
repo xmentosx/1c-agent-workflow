@@ -51,8 +51,7 @@ class Runtime:
         self.index = Index(state, Api(settings), vectors, provider,
                            interval=int(os.environ.get("MANTIS_SYNC_INTERVAL_SECONDS", "30")),
                            sync_projects=[int(p) for p in os.environ.get("MANTIS_SYNC_PROJECT_IDS", "").split(",") if p.strip()])
-        self.writer = Writer(self.index, os.environ.get("MANTIS_WRITE_ACTIONS", "").split(","),
-                             [int(p) for p in os.environ.get("MANTIS_WRITE_PROJECT_IDS", "").split(",") if p.strip()])
+        self.writer = Writer(self.index, os.environ.get("MANTIS_WRITE_ENABLED", "false").lower() in {"true", "1", "yes"})
         if vectors:
             self.error = ""
 
@@ -133,14 +132,15 @@ class Runtime:
             projects = index.state.all("SELECT data,verified FROM projects WHERE status<>'access_removed'")
             return {"projects": [json.loads(p["data"]) for p in projects], "catalog_source": "local; status via index_control",
                     "write_actions": sorted(ACTIONS),
-                    "enabled_write_actions": sorted(self.writer.enabled),
-                    "enabled_write_projects": sorted(self.writer.enabled_projects),
+                    "write_enabled": self.writer.write_enabled,
                     "filters": ["project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
                                 "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"],
                     "sort_by": ["relevance", "updated_at", "created_at"],
                     "write_steps": {"action": "required", "issue_id": "existing target or previous create result",
                                     "project_id": "required for create", "fields": "API field values", "expected_version": "required for editing: inspect via write_operation",
-                                    "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach"},
+                                    "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach",
+                                    "related_issue_id": "relationship target", "relationship_type": "attach: related-to, duplicate-of, parent-of, child-of",
+                                    "relationship_id": "detach: read_ticket relationship ID"},
                     "identity": "Claimed client identity; all users share the service account's visibility",
                     "concurrency": "Pre/post-read and MCP serialization; residual race with other Mantis clients remains"}
 
@@ -231,4 +231,4 @@ class Runtime:
                 **({"state": self.index.state.health(), "semantic": self.index.semantic_status,
                     "query_embedding_cache": self.index.query_cache_status(),
                     "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
-                    "mantis": self.index.remote_status, "write_actions": sorted(self.writer.enabled)} if self.index else {})}
+                    "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled} if self.index else {})}

@@ -22,8 +22,7 @@ Docker-образа, прав на тестовом Mantis и canary с реал
 | `syncIntervalSeconds` | `MANTIS_SYNC_INTERVAL_SECONDS` | `30`; пауза между проходами работника |
 | `syncProjectIds` | `MANTIS_SYNC_PROJECT_IDS` | `[]` означает все доступные; для canary задать ID одного проекта |
 | `monthlyBudgetUsd` | `MANTIS_MONTHLY_BUDGET_USD` | `5`; календарный месяц UTC, включая поисковые эмбеддинги |
-| `writeActions` | `MANTIS_WRITE_ACTIONS` | `[]`; имена квалифицированных действий, через запятую в env |
-| `writeProjectIds` | `MANTIS_WRITE_PROJECT_IDS` | `[]`; проекты, на которых квалифицирован весь включённый набор действий |
+| `writeEnabled` | `MANTIS_WRITE_ENABLED` | `false`; общий выключатель записи на время обслуживания |
 | `secrets.MANTIS_API_TOKEN` | `MANTIS_API_TOKEN` | Общая служебная учётная запись |
 | `secrets.MANTIS_OPENROUTER_API_KEY` | `MANTIS_OPENROUTER_API_KEY` | Необязательный отдельный ключ; без него доступен текстовый поиск |
 
@@ -164,9 +163,10 @@ Timeout, 5xx и ошибка аутентификации не удаляют д
 
 ## Матрица записи на 2.28.1
 
-Все маршруты сейчас выключены в поставляемой конфигурации. Разрешить действие
-и проект можно после проверки на отдельно согласованном тестовом контуре.
-Права считываются заново перед каждым шагом; HTTP 200 не заменяет проверку.
+Все маршруты сейчас выключены общим выключателем в поставляемой конфигурации.
+После проверки на тестовом контуре его можно включить один раз; списков действий
+и проектов в конфигурации больше нет. Права считываются заново перед каждым шагом;
+HTTP 200 не заменяет проверку.
 
 | Действие | Маршрут | Независимые проверки |
 | --- | --- | --- |
@@ -176,6 +176,7 @@ Timeout, 5xx и ошибка аутентификации не удаляют д
 | `update_comment` | SOAP `mc_issue_note_update` | числовой own-note либо other-note threshold; видимый note, текст и privacy |
 | `upload_file` | REST POST issue files | доступный parent, upload threshold, размер/расширение, сверка байтов |
 | `attach_tag` / `detach_tag` | REST issue tags | существующий ID; attach/full detach threshold; результат перечитывается |
+| `attach_relationship` / `detach_relationship` | REST issue relationships | обновление исходного обращения, видимость обоих обращений, точный ID и тип связи, версия и обратное чтение |
 
 Для всех действий требуется как минимум reporter и применимые проектные пороги,
 включая readonly. Поддерживаемые поля issue перечислены в `mantis_write.ISSUE_FIELDS`;
@@ -202,6 +203,10 @@ threshold пока не поддерживается: нужен полный `t
 комментариев. MCP сериализует все собственные записи; pre/post-read
 и If-Match, где доступен, обнаруживают известные конфликты. Окно гонки с UI Mantis
 остаётся. Ни SOAP, ни REST 2.28.1 не объявляются атомарным CAS.
+Связи используют `related_issue_id` и `relationship_type` со значениями
+`related-to`, `duplicate-of`, `parent-of`, `child-of`; удаление требует
+`relationship_id` из `read_ticket` и того же `related_issue_id`. Изменение
+существующей связи также требует `expected_version`.
 
 ## Прерывания, расходы и восстановление
 
