@@ -11,6 +11,10 @@ Mantis MCP SHALL extract text from visible PDF text layers, DOCX and XLSX files 
 - **WHEN** a file has no supported text layer, uses an unsupported format or exceeds a limit
 - **THEN** the service records a bounded, explicit outcome and does not claim full searchable coverage
 
+#### Scenario: Attachment metadata without backing bytes
+- **WHEN** Mantis returns a visible file's metadata but omits its bytes
+- **THEN** the service reports `source_unavailable`, does not claim searchable coverage, and retries later if the backing file is restored
+
 ### Requirement: Source-specific search results
 The existing `search_tickets` tool SHALL support an attachment-content-only mode and include content matches in `all` mode. Each content match MUST name the file and coordinate, retain issue-card grouping and obey the established page and output limits. Filename-only mode MUST remain separate.
 

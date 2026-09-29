@@ -912,6 +912,9 @@ class MantisTicketService:
         data = self.client.get_issue_file(int(issue_id), int(file_id))
         meta = self.normalize_attachment_meta(int(issue_id), data, scope="unknown", note_id=0)
         content = decode_file_content(data)
+        if not content and meta["size"] > 0:
+            meta["original_available"] = False
+            meta["source_status"] = "missing_source_bytes"
         if content:
             meta.update(self.cache_attachment(int(issue_id), int(file_id), meta["filename"], content))
             meta["sha256"] = hashlib.sha256(content).hexdigest()

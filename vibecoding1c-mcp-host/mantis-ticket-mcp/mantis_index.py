@@ -680,8 +680,12 @@ class Index:
                                                    max_response_bytes=8 * 1024 * 1024)
                     files = response.get("files") or []
                     source = next((file for file in files if object_id(file) == file_id), None)
-                    if not source or not isinstance(source.get("content"), str):
-                        raise ApiError("Mantis did not provide the verified file bytes")
+                    if not source or not isinstance(source.get("content"), str) or \
+                            (not source["content"] and info["size"] > 0):
+                        self.state.defer_missing_attachment(issue_id, file_id)
+                        self.attachment_error = "source_bytes_missing"
+                        completed += 1
+                        continue
                     payload = base64.b64decode(source["content"], validate=True)
                     if len(payload) > MAX_INPUT:
                         result = {"status":"too_large","reason":"input_bytes","segments":[]}

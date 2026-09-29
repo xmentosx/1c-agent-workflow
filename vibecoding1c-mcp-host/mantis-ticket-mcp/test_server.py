@@ -302,6 +302,23 @@ class MantisTicketServerTests(unittest.TestCase):
             b"not-a-real-png",
         )
 
+    def test_get_attachment_reports_missing_backing_bytes(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            environment = {
+                "MANTIS_BASE_URL": "http://mantis.local",
+                "MANTIS_API_TOKEN": "token",
+                "MANTIS_ATTACHMENT_CACHE_PATH": temp_root,
+            }
+            with mock.patch.dict(os.environ, environment), mock.patch.dict(sys.modules, fake_fastmcp_module()):
+                mcp, service = server.create_mcp()
+                service.client = FakeClient()
+                service.client.files[10] = {"id": 10, "filename": "missing.docx", "size": 178534}
+                result = asyncio.run(mcp.tools["get_attachment"](issue_id=1, file_id=10))
+        attachment = result.structured_content["attachment"]
+        self.assertFalse(attachment["original_available"])
+        self.assertEqual(attachment["source_status"], "missing_source_bytes")
+        self.assertEqual(attachment["content_base64"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

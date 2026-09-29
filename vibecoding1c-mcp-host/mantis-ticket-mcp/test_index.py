@@ -587,6 +587,28 @@ class IndexTests(unittest.TestCase):
         self.assertTrue(self.state.rehydrate_attachment())
         self.assertTrue(self.search("текстизвлечённогофайла", mode="attachment_contents")["issues"])
 
+    def test_missing_mantis_file_bytes_are_visible_and_retried_after_recovery(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "old.docx", "size": 12}]
+        self.api.files[91] = {"id": 91, "filename": "old.docx", "size": 12}
+        self.index.refresh(1)
+        self.index.attachment_enabled = True
+        self.assertEqual(self.index.extract_pending(), 1)
+        self.assertEqual(self.state.attachment_status()["source_unavailable"], 1)
+        self.assertEqual(self.state.attachment_status()["pending"], 0)
+        self.assertIsNone(self.state.next_attachment())
+        self.assertFalse(self.search("восстановленныйдокумент", mode="attachment_contents")["issues"])
+
+        self.api.files[91]["content"] = base64.b64encode(b"docx-fixture").decode()
+        self.state.run("UPDATE attachment_extracts SET retry_at=0 WHERE file_id=91")
+        parsed = {"status": "ready", "segments": [{"location": {"paragraph": 1},
+            "text": "восстановленныйдокумент"}]}
+        child = SimpleNamespace(returncode=0, stdout=json.dumps(parsed, ensure_ascii=False).encode(), stderr=b"")
+        with patch("mantis_index.subprocess.run", return_value=child):
+            self.assertEqual(self.index.extract_pending(), 1)
+        self.assertEqual(self.state.attachment_status()["source_unavailable"], 0)
+        self.assertEqual(self.state.attachment_status()["ready"], 1)
+        self.assertTrue(self.search("восстановленныйдокумент", mode="attachment_contents")["issues"])
+
     def test_timed_out_parser_is_bounded_and_does_not_publish_text(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 20}]
         self.api.files[91] = {"id": 91, "content": base64.b64encode(b"pdf-fixture").decode()}

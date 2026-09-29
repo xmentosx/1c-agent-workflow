@@ -1278,7 +1278,7 @@ services:
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 10 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 11 tests"
     }
 
     It "qualifies Mantis delta, recovery and write journal through UTF-8 native transport" {

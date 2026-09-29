@@ -352,7 +352,8 @@ class State:
 
     def next_attachment(self):
         return self.one("SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
-                        "WHERE e.status='pending' AND e.retry_at<=? ORDER BY e.updated DESC,e.issue_id,e.file_id LIMIT 1",
+                        "WHERE e.status IN ('pending','source_unavailable') AND e.retry_at<=? "
+                        "ORDER BY e.updated DESC,e.issue_id,e.file_id LIMIT 1",
                         (self.clock(),))
 
     def invalidate_attachment(self, issue_id, file_id, descriptor):
@@ -402,6 +403,13 @@ class State:
         self.run("UPDATE attachment_extracts SET status='pending',error=?,retry_at=?,updated=? "
                  "WHERE issue_id=? AND file_id=?", (str(error)[:80],self.clock()+delay,self.clock(),issue_id,file_id))
 
+    def defer_missing_attachment(self, issue_id, file_id):
+        # Mantis 2.28.1 omits content when the backing file is absent. Retain
+        # a visible coverage gap and retry daily in case storage is restored.
+        self.run("UPDATE attachment_extracts SET status='source_unavailable',error='missing_source_bytes',"
+                 "retry_at=?,updated=? WHERE issue_id=? AND file_id=?",
+                 (self.clock()+86400,self.clock(),issue_id,file_id))
+
     def drop_attachment(self, issue_id, file_id):
         with self.transaction():
             old = self.all("SELECT * FROM fragments WHERE issue_id=? AND file_id=? AND kind='attachment_content'",
@@ -436,6 +444,7 @@ class State:
         return {"counts": counts, "pending": counts.get("pending", 0), "ready": counts.get("ready", 0),
                 "partial": counts.get("partial", 0), "unsupported": counts.get("unsupported", 0),
                 "too_large": counts.get("too_large", 0), "failed": counts.get("failed", 0),
+                "source_unavailable": counts.get("source_unavailable", 0),
                 "backfill_complete": bool(backfill and backfill["value"] == "1")}
 
     def purge_issue(self, issue_id, project_id=0):
