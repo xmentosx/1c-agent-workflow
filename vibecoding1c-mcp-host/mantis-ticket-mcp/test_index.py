@@ -1694,7 +1694,7 @@ class IndexTests(unittest.TestCase):
         result = self.index.search("решения", semantic=True)
         self.assertEqual(result["issues"][0]["id"], 1)
         self.assertIn("timeout", result["semantic_query"])
-        self.assertEqual(calls, [(["решения"], {"timeout": 25, "retries": 0})])
+        self.assertEqual(calls, [(["решения"], {"timeout": 40, "retries": 0})])
 
     def test_broad_candidate_window_still_uses_semantics_and_reports_limit(self):
         self.index.refresh(1)
@@ -1726,7 +1726,7 @@ class IndexTests(unittest.TestCase):
                 finished.set()
         try:
             with patch.object(self.index, "query_vector", side_effect=slow_query), \
-                 patch("mantis_index.QUERY_EMBEDDING_TIMEOUT_SECONDS", 0.03):
+                 patch("mantis_index.QUERY_SEMANTIC_BUDGET_SECONDS", 0.03):
                 started = time.monotonic()
                 result = self.index.search("решения", semantic=True, limit=1)
                 elapsed = time.monotonic() - started
@@ -1740,6 +1740,20 @@ class IndexTests(unittest.TestCase):
             for thread in threading.enumerate():
                 if thread.name.startswith("mantis-search-semantic"):
                     thread.join(timeout=1)
+
+    def test_semantic_budget_allows_provider_to_finish_after_network_target(self):
+        self.index.refresh(1)
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        self.index.embeddings = SimpleNamespace()
+        def delayed_vector(query):
+            time.sleep(0.05)
+            return [1.0], "miss"
+        with patch.object(self.index, "query_vector", side_effect=delayed_vector), \
+             patch("mantis_index.QUERY_EMBEDDING_TIMEOUT_SECONDS", 0.03), \
+             patch("mantis_index.QUERY_SEMANTIC_BUDGET_SECONDS", 0.1):
+            result = self.index.search("решения", semantic=True, limit=1)
+        self.assertEqual(result["semantic_query"], "available")
+        self.assertEqual(result["query_embedding_cache"], "miss")
 
     def test_slow_access_probe_does_not_hold_search_response(self):
         from server import Settings

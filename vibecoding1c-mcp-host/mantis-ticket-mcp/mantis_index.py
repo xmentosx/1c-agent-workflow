@@ -34,7 +34,8 @@ from mantis_extract import MAX_INPUT
 
 
 QUERY_EMBEDDING_CACHE_SIZE = 256
-QUERY_EMBEDDING_TIMEOUT_SECONDS = 25
+QUERY_EMBEDDING_TIMEOUT_SECONDS = 40
+QUERY_SEMANTIC_BUDGET_SECONDS = 50
 QUERY_EMBEDDING_WAIT_SECONDS = 65
 SEARCH_CANDIDATE_LIMIT = 10000
 SEARCH_REFRESH_LIMIT = 10
@@ -1383,7 +1384,7 @@ class Index:
                         future = pool.submit(semantic_matches)
                         submitted = True
                         matches, query_cache = future.result(
-                            timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS)
+                            timeout=QUERY_SEMANTIC_BUDGET_SECONDS)
                         for key, rank in matches:
                             ranks[key] = ranks.get(key, 0) + 1 / (60 + rank)
                         query_semantics = "available"
