@@ -138,6 +138,40 @@ class ZvecTests(unittest.TestCase):
                 vectors.close()
                 state.close()
 
+    def test_revoked_spool_is_reconciled_with_or_without_a_durable_vector(self):
+        from array import array
+        for flushed in (False, True):
+            with self.subTest(flushed=flushed), tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
+                root = Path(directory)
+                state = State(root / "state", root / "files")
+                vectors = Vectors(state)
+                index = Index(state, FakeApi(), vectors, FixedEmbeddings())
+                index.refresh(1)
+                pump(index, batch=1)
+                paid = state.one("SELECT fragment_id,version,vector FROM embedding_spool")
+                key = digest([paid["fragment_id"], paid["version"]])
+                original_generation = vectors.generation
+                if flushed:
+                    vector = array("f")
+                    vector.frombytes(paid["vector"])
+                    vectors.upsert_batch([(key, vector)])
+                state.purge_issue(1)
+                self.assertIsNotNone(state.one("SELECT id FROM vector_deletes WHERE id=?", (key,)))
+                vectors.close()
+                state.close()
+                state = State(root / "state", root / "files")
+                vectors = Vectors(state)
+                index = Index(state, FakeApi(), vectors, FixedEmbeddings())
+                try:
+                    self.assertFalse(vectors.existing([key]))
+                    self.assertEqual(state.health()["cleanup_pending"], 0)
+                    self.assertEqual(state.health()["vector_deletes_pending"], 0)
+                    self.assertEqual(vectors.generation == original_generation, not flushed,
+                                     "Only a durable revoked vector needs generation compaction")
+                finally:
+                    vectors.close()
+                    state.close()
+
     def test_projection_crash_replay_purge_regain_and_unicode_path(self):
         with tempfile.TemporaryDirectory(prefix="mantis Векторы ") as directory:
             root = Path(directory)

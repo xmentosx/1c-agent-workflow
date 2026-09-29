@@ -6,6 +6,7 @@ import json
 import io
 import subprocess
 import threading
+from array import array
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
@@ -757,6 +758,55 @@ class IndexTests(unittest.TestCase):
         self.index._flush_due_embeddings(force=True)
         self.assertFalse(self.index.vectors.docs)
         self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM embedding_spool")["n"], 0)
+
+    def test_slow_vector_flush_does_not_block_search_or_publish_revoked_source(self):
+        self.index.refresh(1)
+        entered, release = threading.Event(), threading.Event()
+        class SlowVectors(MemoryVectors):
+            def upsert_batch(self, rows):
+                entered.set()
+                if not release.wait(3):
+                    raise TimeoutError("fixture release missing")
+                super().upsert_batch(rows)
+        self.index.vectors = SlowVectors()
+        row = self.state.one("SELECT id,version FROM fragments WHERE kind='description' LIMIT 1")
+        key = digest([row["id"], row["version"]])
+        self.state.run("INSERT INTO embedding_spool VALUES(?,?,?,?)",
+                       (row["id"], row["version"], array("f", [0.25, 0.5]).tobytes(), self.state.clock()))
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            flushed = pool.submit(self.index.flush_embedding_spool)
+            try:
+                self.assertTrue(entered.wait(1))
+                result = pool.submit(self.index.search, "решения", semantic=False).result(timeout=2)
+                self.assertEqual(result["issues"][0]["id"], 1)
+                cache = self.root / "files" / "1"
+                cache.mkdir(parents=True)
+                (cache / "9-secret.txt").write_text("revoked", encoding="utf-8")
+                self.state.purge_issue(1)
+                self.assertFalse(self.index.cleanup(), "Physical cleanup must wait for the active flush")
+                self.assertFalse(cache.exists(), "Revoked attachment cache must be erased even while Zvec flushes")
+            finally:
+                release.set()
+            self.assertEqual(flushed.result(timeout=2), 0)
+        self.assertFalse(self.state.all("SELECT * FROM fragments WHERE issue_id=1"))
+        self.assertIsNone(self.state.one("SELECT * FROM embedding_spool WHERE fragment_id=?", (row["id"],)))
+        self.assertIsNone(self.state.one("SELECT * FROM fragments WHERE vector_id=?", (key,)))
+        self.assertIsNotNone(self.state.one("SELECT * FROM vector_deletes WHERE id=?", (key,)))
+
+    def test_crash_after_vector_flush_replays_paid_spool_without_new_embedding(self):
+        self.index.refresh(1)
+        self.index.vectors = MemoryVectors()
+        row = self.state.one("SELECT id,version FROM fragments WHERE kind='description' LIMIT 1")
+        self.state.run("INSERT INTO embedding_spool VALUES(?,?,?,?)",
+                       (row["id"], row["version"], array("f", [0.25, 0.5]).tobytes(), self.state.clock()))
+        with patch.object(self.state, "transaction", side_effect=OSError("simulated crash after Zvec flush")):
+            with self.assertRaisesRegex(OSError, "simulated crash"):
+                self.index.flush_embedding_spool()
+        self.assertEqual(len(self.index.vectors.docs), 1)
+        self.assertIsNotNone(self.state.one("SELECT * FROM embedding_spool WHERE fragment_id=?", (row["id"],)))
+        self.assertEqual(self.index.flush_embedding_spool(), 1)
+        self.assertEqual(len(self.index.vectors.docs), 1)
+        self.assertEqual(self.state.one("SELECT vector_version FROM fragments WHERE id=?", (row["id"],))["vector_version"], row["version"])
 
     def test_pause_waits_for_inflight_result_and_flushes_paid_vector(self):
         self.index.refresh(1)

@@ -323,11 +323,18 @@ class State:
             batch = rows[start:start + 400]
             ids = [row["id"] for row in batch]
             placeholders = ",".join("?" for _ in ids)
+            spooled = {(row["fragment_id"], row["version"]) for row in self.all(
+                f"SELECT fragment_id,version FROM embedding_spool WHERE fragment_id IN ({placeholders})", ids)}
             for row in self.all(f"SELECT rowid FROM search_text WHERE id IN ({placeholders})", ids):
                 self.run("DELETE FROM search_text WHERE rowid=?", (row["rowid"],))
             for row in batch:
-                if row["vector_id"]:
-                    self.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (row["vector_id"],))
+                # A flush can have read a paid vector from the spool but not
+                # published its SQLite version yet. Queue its deterministic ID
+                # before removing the spool so a crash cannot leave an orphan.
+                key = row["vector_id"] or (digest([row["id"], row["version"]])
+                                            if (row["id"], row["version"]) in spooled else "")
+                if key:
+                    self.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (key,))
                 self.run("DELETE FROM embedding_spool WHERE fragment_id=?", (row["id"],))
                 self.run("DELETE FROM fragments WHERE id=?", (row["id"],))
 

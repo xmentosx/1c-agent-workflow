@@ -179,7 +179,19 @@ class Vectors:
         a copied stale generation. No embeddings are purchased for this rebuild.
         """
         with self.state.lock, self.lock:
-            if not self.state.one("SELECT id FROM vector_deletes LIMIT 1") and not self.state.one("SELECT issue_id FROM tombstones WHERE cleanup=1 LIMIT 1"):
+            pending = self.state.all("SELECT id FROM vector_deletes")
+            tombstone = self.state.one("SELECT issue_id FROM tombstones WHERE cleanup=1 LIMIT 1")
+            if not pending and not tombstone:
+                self._remove_old()
+                return
+            # A revoked spool row may never have reached Zvec. After a crash
+            # its deterministic ID still has to be checked before retiring
+            # the delete intent, but absent IDs need no full generation copy.
+            if not any(self.collection.fetch([row["id"] for row in pending[start:start + 512]],
+                                             include_vector=False)
+                       for start in range(0, len(pending), 512)):
+                self.state.run("DELETE FROM vector_deletes")
+                self.state.run("UPDATE tombstones SET cleanup=0 WHERE cleanup=1")
                 self._remove_old()
                 return
             self.compact(clear_deletions=True)
@@ -394,6 +406,9 @@ class Index:
         self.work_lock = threading.Lock()
         self.embedding_worker = None
         self.embedding_lock = threading.RLock()
+        # Serializes a Zvec flush with physical cleanup, without blocking
+        # SQLite readers and issue revocation for the duration of disk I/O.
+        self.vector_flush_lock = threading.Lock()
         self.embedding_inflight = {}
         self.embedding_claimed = set()
         self.embedding_cooldowns = {}
@@ -535,21 +550,30 @@ class Index:
                     "misses": self._query_misses, "shared": self._query_shared}
 
     def cleanup(self):
-        with self.state.lock:
-            try:
+        # Cached files must be removed as soon as access is revoked. Vector
+        # compaction can wait for an in-progress flush because SQLite has
+        # already excluded the revoked vector from search results.
+        try:
+            with self.state.lock:
                 self.state.cleanup_files()
-                if self.vectors:
-                    self.vectors.purge()
-                else:
-                    # Keep pending cleanup until the vector backend is available.
-                    if not (self.state.root / "vectors").exists():
-                        self.state.run("UPDATE tombstones SET cleanup=0")
-                return True
-            except (RuntimeError, OSError) as exc:
-                # SQLite has already excluded revoked sources. A broken vector
-                # backend must not prevent independent lexical updates/reads.
-                self.semantic_status = "cleanup pending: " + str(exc)[:160]
+            if not self.vector_flush_lock.acquire(blocking=False):
                 return False
+            try:
+                with self.state.lock:
+                    if self.vectors:
+                        self.vectors.purge()
+                    else:
+                        # Keep pending cleanup until the vector backend is available.
+                        if not (self.state.root / "vectors").exists():
+                            self.state.run("UPDATE tombstones SET cleanup=0")
+                    return True
+            finally:
+                self.vector_flush_lock.release()
+        except (RuntimeError, OSError) as exc:
+            # SQLite has already excluded revoked sources. A broken vector
+            # backend must not prevent independent lexical updates/reads.
+            self.semantic_status = "cleanup pending: " + str(exc)[:160]
+            return False
 
     def refresh(self, issue_id, allow_cache=True):
         observed_at = self.state.clock()
@@ -727,15 +751,16 @@ class Index:
         """Flush paid vectors once, then atomically mark their SQLite versions ready."""
         if not self.vectors:
             return 0
-        with self.state.lock:
-            self.state.run("""DELETE FROM embedding_spool WHERE NOT EXISTS
-                (SELECT 1 FROM fragments f WHERE f.id=embedding_spool.fragment_id
-                 AND f.version=embedding_spool.version)""")
-            rows = self.state.all("""SELECT s.fragment_id,s.version,s.vector FROM embedding_spool s
-                JOIN fragments f ON f.id=s.fragment_id AND f.version=s.version
-                ORDER BY s.created,s.fragment_id LIMIT ?""", (EMBEDDING_DISK_BATCH,))
-            if not rows:
-                return 0
+        with self.vector_flush_lock:
+            with self.state.lock:
+                self.state.run("""DELETE FROM embedding_spool WHERE NOT EXISTS
+                    (SELECT 1 FROM fragments f WHERE f.id=embedding_spool.fragment_id
+                     AND f.version=embedding_spool.version)""")
+                rows = self.state.all("""SELECT s.fragment_id,s.version,s.vector FROM embedding_spool s
+                    JOIN fragments f ON f.id=s.fragment_id AND f.version=s.version
+                    ORDER BY s.created,s.fragment_id LIMIT ?""", (EMBEDDING_DISK_BATCH,))
+                if not rows:
+                    return 0
             keys = {row["fragment_id"]: digest([row["fragment_id"], row["version"]]) for row in rows}
             present = self.vectors.existing(list(keys.values()))
             missing = []
@@ -747,13 +772,22 @@ class Index:
                     missing.append((key, vector))
             self.vectors.upsert_batch(missing)
             with self.state.transaction():
+                ready = 0
                 for row in rows:
-                    self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
-                                   (keys[row["fragment_id"]], row["version"], row["fragment_id"], row["version"]))
-                    self.state.run("DELETE FROM embedding_spool WHERE fragment_id=? AND version=?",
-                                   (row["fragment_id"], row["version"]))
-                self.state.changed()
-            return len(rows)
+                    key = keys[row["fragment_id"]]
+                    current = self.state.one("SELECT version FROM embedding_spool WHERE fragment_id=?",
+                                             (row["fragment_id"],))
+                    if current and current["version"] == row["version"]:
+                        ready += self.state.run(
+                            "UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
+                            (key, row["version"], row["fragment_id"], row["version"])).rowcount
+                        self.state.run("DELETE FROM embedding_spool WHERE fragment_id=? AND version=?",
+                                       (row["fragment_id"], row["version"]))
+                    else:
+                        self.state.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (key,))
+                if ready:
+                    self.state.changed()
+            return ready
 
     def _embedding_candidates(self, recent):
         """One recent lane protects freshness; other lanes drain the oldest backlog."""
