@@ -350,11 +350,12 @@ class State:
                      ("1" if len(rows) < limit else "0",))
             return len(rows)
 
-    def next_attachment(self):
+    def next_attachment(self, retry_first=False):
         return self.one("SELECT e.*,i.data FROM attachment_extracts e JOIN issues i ON i.id=e.issue_id "
                         "WHERE e.status IN ('pending','source_unavailable') AND e.retry_at<=? "
-                        "ORDER BY e.updated DESC,e.issue_id,e.file_id LIMIT 1",
-                        (self.clock(),))
+                        "ORDER BY CASE WHEN (e.error<>'')=? THEN 0 ELSE 1 END,"
+                        "e.updated DESC,e.issue_id,e.file_id LIMIT 1",
+                        (self.clock(),int(retry_first)))
 
     def invalidate_attachment(self, issue_id, file_id, descriptor):
         with self.transaction():

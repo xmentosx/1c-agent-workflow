@@ -13,6 +13,6 @@
 
 - [x] 3.1 Add content-only search mode, filename/coordinate matches, source links and existing cursor/output limits; share the Mantis embedding budget.
 - [x] 3.2 Test search, revocation, no-repeat extraction, semantic outage and budget behavior locally.
-- [ ] 3.3 Commit and register one coherent source change through `RegisterChange` with its owner tests.
-- [ ] 3.4 Deploy the exact image with extraction off, preserve mounts and other runtimes, then qualify marked PDF/DOCX/XLSX files in project 397.
-- [ ] 3.5 Measure throughput/disk on the live sample, enable bounded corpus extraction, and record rollback plus current coverage in `test-plan.md`.
+- [x] 3.3 Commit and register the source change and acceptance fixes through `RegisterChange` with their owner tests.
+- [x] 3.4 Deploy the exact image with extraction off, preserve mounts and other runtimes, then qualify marked PDF/DOCX/XLSX files in project 397.
+- [x] 3.5 Measure live progress/disk, enable bounded corpus extraction, and record rollback plus current coverage in `test-plan.md`.

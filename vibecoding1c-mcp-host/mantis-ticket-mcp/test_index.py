@@ -609,6 +609,16 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(self.state.attachment_status()["ready"], 1)
         self.assertTrue(self.search("восстановленныйдокумент", mode="attachment_contents")["issues"])
 
+    def test_attachment_queue_alternates_new_and_due_retry_work(self):
+        self.api.items[1]["attachments"] = [
+            {"id": 91, "filename": "old.pdf", "size": 12},
+            {"id": 92, "filename": "new.pdf", "size": 12},
+        ]
+        self.index.refresh(1)
+        self.state.retry_attachment(1, 91, "previous_failure", delay=0)
+        self.assertEqual(self.state.next_attachment()["file_id"], 92)
+        self.assertEqual(self.state.next_attachment(retry_first=True)["file_id"], 91)
+
     def test_timed_out_parser_is_bounded_and_does_not_publish_text(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 20}]
         self.api.files[91] = {"id": 91, "content": base64.b64encode(b"pdf-fixture").decode()}

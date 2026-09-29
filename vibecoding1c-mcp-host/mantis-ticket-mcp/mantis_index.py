@@ -652,10 +652,10 @@ class Index:
                 completed += 1
             if not self.state.next_attachment():
                 self.state.enqueue_existing_attachments(100)
-            for _ in range(limit):
+            for slot in range(limit):
                 if self.paused.is_set() or self.stop.is_set():
                     break
-                row = self.state.next_attachment()
+                row = self.state.next_attachment(retry_first=bool(slot % 2))
                 if not row:
                     break
                 issue_id, file_id = int(row["issue_id"]), int(row["file_id"])
