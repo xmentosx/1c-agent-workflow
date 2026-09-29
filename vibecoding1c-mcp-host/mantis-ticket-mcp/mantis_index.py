@@ -951,7 +951,8 @@ class Index:
                 batch = keys[start:start + 400]
                 placeholders = ",".join("?" for _ in batch)
                 records.update((row["id"], row) for row in self.state.all(
-                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,f.source,f.text"
+                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
+                    "f.source,f.text,f.version"
                     " FROM fragments f JOIN issues i ON i.id=f.issue_id "
                     f"WHERE f.id IN ({placeholders})", batch))
             return records
@@ -962,6 +963,7 @@ class Index:
                            tags if filters.get("tags") else ""])
         def grouped():
             groups = {}
+            attachment_sources = {}
             records = source_rows()
             # Read only card/filter fields, once per issue. Joining the entire
             # issue (including every comment) to each fragment multiplies I/O.
@@ -987,6 +989,8 @@ class Index:
                 issue = parsed.get(row["issue_id"])
                 if not issue or not matches(issue, names):
                     continue
+                if row["kind"] == "attachment_content":
+                    attachment_sources[key] = (row["version"], row["source"])
                 entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
                     "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
                     "status": issue.get("status"), "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
@@ -1011,9 +1015,9 @@ class Index:
                 ordered = sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
             else:
                 ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
-            return ordered, source_version(records, tags), issue_ids
-        initial, initial_version, issue_ids = grouped()
+            return ordered, source_version(records, tags), issue_ids, attachment_sources
         revision = self.state.revision()
+        initial, initial_version, issue_ids, attachment_sources = grouped()
         refresh_deadline = time.monotonic() + 10
         checked = set()
         for issue in initial[offset:offset + limit]:
@@ -1034,13 +1038,22 @@ class Index:
             final_records.update((row["issue_id"], row) for row in self.state.all(
                 f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
         final_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
-        if self.state.revision() != revision and (mode == "attachment_contents" or any(
-                match["type"] == "attachment_content" for issue in initial for match in issue["matches"])):
-            return {"ok": False, "status": "results_changed",
-                    "continuation": "Repeat search without cursor; attachment content changed during this page"}
+        if self.state.revision() != revision and attachment_sources:
+            current_sources = {}
+            keys = list(attachment_sources)
+            for start in range(0, len(keys), 400):
+                batch = keys[start:start + 400]
+                placeholders = ",".join("?" for _ in batch)
+                current_sources.update((row["id"], (row["version"], row["source"]))
+                    for row in self.state.all(
+                        f"SELECT id,version,source FROM fragments WHERE id IN ({placeholders})", batch))
+            if current_sources != attachment_sources:
+                return {"ok": False, "status": "results_changed",
+                        "continuation": "Repeat search without cursor; attachment content changed during this page"}
         if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
+        revision = self.state.revision()
         groups = initial
         verified = {row["issue_id"]: row["verified"] for row in final_records.values()}
         for entry in groups:

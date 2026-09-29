@@ -619,6 +619,43 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(self.state.next_attachment()["file_id"], 92)
         self.assertEqual(self.state.next_attachment(retry_first=True)["file_id"], 91)
 
+    def test_unrelated_attachment_import_does_not_invalidate_content_page(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "first.pdf", "size": 12}]
+        self.api.items[2] = ticket(2, text="Other issue")
+        self.api.items[2]["attachments"] = [{"id": 92, "filename": "second.pdf", "size": 12}]
+        self.index.refresh(1)
+        self.index.refresh(2)
+        first = file_descriptors(self.api.items[1])[91]
+        second = file_descriptors(self.api.items[2])[92]
+        self.state.publish_attachment(1, 91, first["descriptor"], "sha-first",
+            {"status": "ready", "segments": [{"location": {"page": 1}, "text": "уникальныйпервый"}]})
+        original = self.index.refresh
+        imported = [False]
+        def concurrent_import(issue_id, *args, **kwargs):
+            if not imported[0]:
+                imported[0] = True
+                self.state.publish_attachment(2, 92, second["descriptor"], "sha-second",
+                    {"status": "ready", "segments": [{"location": {"page": 1}, "text": "другойфайл"}]})
+            return original(issue_id, *args, **kwargs)
+        with patch.object(self.index, "refresh", side_effect=concurrent_import):
+            result = self.index.search("уникальныйпервый", mode="attachment_contents", semantic=False)
+        self.assertTrue(result["ok"])
+        self.assertEqual([issue["id"] for issue in result["issues"]], [1])
+
+    def test_removed_matching_attachment_invalidates_content_page(self):
+        self.api.items[1]["attachments"] = [{"id": 91, "filename": "first.pdf", "size": 12}]
+        self.index.refresh(1)
+        info = file_descriptors(self.api.items[1])[91]
+        self.state.publish_attachment(1, 91, info["descriptor"], "sha-first",
+            {"status": "ready", "segments": [{"location": {"page": 1}, "text": "уникальныйпервый"}]})
+        original = self.index.refresh
+        def revoke_during_search(issue_id, *args, **kwargs):
+            self.state.drop_attachment(1, 91)
+            return original(issue_id, *args, **kwargs)
+        with patch.object(self.index, "refresh", side_effect=revoke_during_search):
+            result = self.index.search("уникальныйпервый", mode="attachment_contents", semantic=False)
+        self.assertEqual(result["status"], "results_changed")
+
     def test_timed_out_parser_is_bounded_and_does_not_publish_text(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 20}]
         self.api.files[91] = {"id": 91, "content": base64.b64encode(b"pdf-fixture").decode()}
