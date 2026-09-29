@@ -18,6 +18,7 @@ import uuid
 from array import array
 from collections import OrderedDict, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from dataclasses import replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -25,7 +26,7 @@ from queue import Empty, Full, LifoQueue
 from urllib.parse import urlsplit
 from urllib.request import getproxies, proxy_bypass
 
-from mantis_api import ApiError
+from mantis_api import Api, ApiError
 from mantis_state import PROFILE, State, digest, encode, object_id, timestamp, is_link, file_descriptors
 from mantis_extract import MAX_INPUT
 
@@ -34,6 +35,10 @@ QUERY_EMBEDDING_CACHE_SIZE = 256
 QUERY_EMBEDDING_TIMEOUT_SECONDS = 25
 QUERY_EMBEDDING_WAIT_SECONDS = 65
 SEARCH_CANDIDATE_LIMIT = 10000
+SEARCH_REFRESH_LIMIT = 10
+SEARCH_REFRESH_WORKERS = 4
+SEARCH_REFRESH_BUDGET_SECONDS = 15
+SEARCH_API_TIMEOUT_SECONDS = 3
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
@@ -73,7 +78,7 @@ class Vectors:
             state.run("INSERT OR REPLACE INTO meta VALUES('vector_generation',?)", (self.generation,))
             if rebuild:
                 state.run("UPDATE fragments SET vector_version='',vector_id=''")
-                state.changed()
+                state.changed(source=False)
         self._remove_old()
 
     def _create(self, path):
@@ -404,6 +409,7 @@ class Index:
             self.paused.set()
         self.worker = None
         self.work_lock = threading.Lock()
+        self.search_refresh_slots = threading.BoundedSemaphore(SEARCH_REFRESH_WORKERS)
         self.embedding_worker = None
         self.embedding_lock = threading.RLock()
         # Serializes a Zvec flush with physical cleanup, without blocking
@@ -549,13 +555,15 @@ class Index:
                     "pending": len(self._query_pending), "hits": self._query_hits,
                     "misses": self._query_misses, "shared": self._query_shared}
 
-    def cleanup(self):
+    def cleanup(self, physical=True):
         # Cached files must be removed as soon as access is revoked. Vector
         # compaction can wait for an in-progress flush because SQLite has
         # already excluded the revoked vector from search results.
         try:
             with self.state.lock:
                 self.state.cleanup_files()
+            if not physical:
+                return True
             if not self.vector_flush_lock.acquire(blocking=False):
                 return False
             try:
@@ -575,22 +583,24 @@ class Index:
             self.semantic_status = "cleanup pending: " + str(exc)[:160]
             return False
 
-    def refresh(self, issue_id, allow_cache=True):
+    def refresh(self, issue_id, allow_cache=True, *, request_api=None, context_cache=None, physical_cleanup=True):
         observed_at = self.state.clock()
+        client = request_api or self.api
         try:
-            issue, etag = self.api.visible_issue(issue_id)
-            self.cleanup()
+            issue, etag = (client.visible_issue(issue_id, context_cache=context_cache)
+                           if context_cache is not None else client.visible_issue(issue_id))
+            self.cleanup(physical=physical_cleanup)
             self.state.put_issue(issue, etag, observed_at)
             self.remote_status = "available"
             return issue, etag, False
         except ApiError as exc:
             try:
-                absent = self.api.confirm_absence(issue_id, exc)
+                absent = client.confirm_absence(issue_id, exc)
             except ApiError:
                 absent = False
             if absent:
                 self.state.purge_issue(issue_id)
-                self.cleanup()
+                self.cleanup(physical=physical_cleanup)
                 raise
             self.remote_status = "unavailable"
             cached = self.state.one("SELECT * FROM issues WHERE id=?", (issue_id,)) if allow_cache else None
@@ -786,7 +796,7 @@ class Index:
                     else:
                         self.state.run("INSERT OR IGNORE INTO vector_deletes VALUES(?)", (key,))
                 if ready:
-                    self.state.changed()
+                    self.state.changed(source=False)
             return ready
 
     def _embedding_candidates(self, recent):
@@ -825,7 +835,7 @@ class Index:
                         with self.state.transaction():
                             if self.state.run("UPDATE fragments SET vector_id=?,vector_version=? WHERE id=? AND version=?",
                                               (key, row["version"], row["id"], row["version"])).rowcount:
-                                self.state.changed()
+                                self.state.changed(source=False)
                     else:
                         missing.append(row)
                 if missing:
@@ -1215,7 +1225,7 @@ class Index:
         if cursor:
             try:
                 token = json.loads(base64.urlsafe_b64decode(cursor))
-                if token["query"] != identity or token["revision"] != self.state.revision():
+                if token["query"] != identity:
                     raise ValueError()
                 offset = int(token["offset"])
                 if not 0 <= offset <= SEARCH_CANDIDATE_LIMIT:
@@ -1264,6 +1274,11 @@ class Index:
                         query_semantics = "available"
                     except Exception as exc:
                         query_semantics = str(exc)[:180]
+        cursor_mode = "semantic" if query_semantics == "available" else "lexical"
+        cursor_revision = (self.state.revision() if cursor_mode == "semantic"
+                           else self.state.source_revision())
+        if cursor and (token.get("mode") != cursor_mode or token.get("revision") != cursor_revision):
+            raise ValueError("Search changed or cursor is invalid; restart without cursor")
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1373,21 +1388,49 @@ class Index:
             else:
                 ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
             return ordered, source_version(records, tags), list(issue_ids), attachment_sources
-        revision = self.state.revision()
+        revision = self.state.source_revision()
         initial, initial_version, issue_ids, attachment_sources = grouped()
-        refresh_deadline = time.monotonic() + 10
+        refresh_deadline = time.monotonic() + SEARCH_REFRESH_BUDGET_SECONDS
         checked = set()
-        for issue in initial[offset:offset + limit]:
-            if time.monotonic() > refresh_deadline:
-                break
-            try:
-                _, _, stale = self.refresh(issue["id"])
-                if not stale:
-                    checked.add(issue["id"])
-                else:
+        page_ids = [issue["id"] for issue in initial[offset:offset + min(limit, SEARCH_REFRESH_LIMIT)]]
+        if isinstance(self.api, Api) and page_ids:
+            # Four short-lived readers check displayed cards concurrently.
+            # A server-wide semaphore bounds load when searches overlap; an
+            # unavailable slot leaves that card explicitly marked cached.
+            local = threading.local()
+            def probe(issue_id):
+                if not self.search_refresh_slots.acquire(blocking=False):
+                    return False
+                try:
+                    if not hasattr(local, "api"):
+                        local.api = Api(replace(self.api.settings, timeout_seconds=min(
+                            SEARCH_API_TIMEOUT_SECONDS, self.api.settings.timeout_seconds)))
+                        local.context_cache = {}
+                    _, _, stale = self.refresh(issue_id, request_api=local.api,
+                                               context_cache=local.context_cache, physical_cleanup=False)
+                    return not stale
+                except ApiError:
+                    return False
+                finally:
+                    self.search_refresh_slots.release()
+            with ThreadPoolExecutor(max_workers=min(SEARCH_REFRESH_WORKERS, len(page_ids)),
+                                    thread_name_prefix="mantis-search-access") as pool:
+                futures = [pool.submit(probe, issue_id) for issue_id in page_ids]
+                for issue_id, future in zip(page_ids, futures):
+                    if future.result():
+                        checked.add(issue_id)
+        else:
+            for issue_id in page_ids:
+                if time.monotonic() > refresh_deadline:
                     break
-            except ApiError:
-                pass
+                try:
+                    _, _, stale = self.refresh(issue_id)
+                    if not stale:
+                        checked.add(issue_id)
+                    else:
+                        break
+                except ApiError:
+                    pass
         final_records = {}
         for start in range(0, len(issue_ids), 400):
             batch = issue_ids[start:start + 400]
@@ -1395,7 +1438,7 @@ class Index:
             final_records.update((row["issue_id"], row) for row in self.state.all(
                 f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
         final_tags = self.state.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
-        if self.state.revision() != revision and attachment_sources:
+        if self.state.source_revision() != revision and attachment_sources:
             current_sources = {}
             keys = list(attachment_sources)
             for start in range(0, len(keys), 400):
@@ -1410,7 +1453,8 @@ class Index:
         if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
             # A refresh can invalidate the matching text, not just pagination.
             return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
-        revision = self.state.revision()
+        cursor_revision = (self.state.revision() if cursor_mode == "semantic"
+                           else self.state.source_revision())
         groups = initial
         verified = {row["issue_id"]: row["verified"] for row in final_records.values()}
         for entry in groups:
@@ -1440,5 +1484,6 @@ class Index:
                 break
         emitted = len(result["issues"])
         if len(groups) > offset + emitted:
-            result["next_cursor"] = base64.urlsafe_b64encode(encode({"query": identity, "revision": revision, "offset": offset + emitted}).encode()).decode()
+            result["next_cursor"] = base64.urlsafe_b64encode(encode({"query": identity, "mode": cursor_mode,
+                "revision": cursor_revision, "offset": offset + emitted}).encode()).decode()
         return result

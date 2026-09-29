@@ -143,6 +143,10 @@ class State:
                 PRAGMA foreign_keys=ON;
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 INSERT OR IGNORE INTO meta VALUES('revision','0');
+                INSERT OR IGNORE INTO meta(key,value) SELECT 'source_revision',value FROM meta WHERE key='revision';
+                UPDATE meta SET value=(SELECT value FROM meta WHERE key='revision')
+                    WHERE key='source_revision' AND CAST(value AS INTEGER)<
+                        (SELECT CAST(value AS INTEGER) FROM meta WHERE key='revision');
                 CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY, data TEXT NOT NULL,
                     checkpoint REAL NOT NULL DEFAULT 0, import_page INTEGER NOT NULL DEFAULT 1,
                     import_start REAL NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'initializing',
@@ -236,8 +240,12 @@ class State:
     def revision(self):
         return int(self.one("SELECT value FROM meta WHERE key='revision'")["value"])
 
-    def changed(self):
-        self.run("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
+    def source_revision(self):
+        return int(self.one("SELECT value FROM meta WHERE key='source_revision'")["value"])
+
+    def changed(self, *, source=True):
+        self.run("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key IN ('revision','source_revision')"
+                 if source else "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
 
     def audit(self, actor, action, target, outcome):
         self.run("INSERT INTO audit(actor,action,object_id,outcome,created) VALUES(?,?,?,?,?)",

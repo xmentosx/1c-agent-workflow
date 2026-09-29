@@ -92,13 +92,18 @@ class Api:
             return configs
         return {item["option"]: item.get("value") for item in configs if "option" in item}
 
-    def context(self, project_id):
+    def context(self, project_id, cache=None):
+        if cache is not None and int(project_id) in cache:
+            return cache[int(project_id)]
         me, projects = self.me(), self.projects()
         project = next((p for p in projects if int(p["id"]) == int(project_id)), None)
         if not project:
             raise ApiError("Project is not accessible to the service account", 403)
-        return {"user": me, "project": project, "level": object_id(project.get("access_level")),
-                "config": self.config(project_id)}
+        context = {"user": me, "project": project, "level": object_id(project.get("access_level")),
+                   "config": self.config(project_id)}
+        if cache is not None:
+            cache[int(project_id)] = context
+        return context
 
     def headers(self, project_id, page, size):
         data, _ = self.request("issues?" + urlencode({"project_id": int(project_id), "filter_id": "any",
@@ -149,9 +154,9 @@ class Api:
                 result.append({"denied_id": int(row["id"]), "updated_at": row["updated_at"]})
         return result
 
-    def visible_issue(self, issue_id):
+    def visible_issue(self, issue_id, context_cache=None):
         issue, etag = self.issue(issue_id)
-        context = self.context(object_id(issue["project"]))
+        context = self.context(object_id(issue["project"]), cache=context_cache)
         return self.filter_visible(issue, context), etag
 
     @staticmethod
@@ -180,6 +185,8 @@ class Api:
             return False
         self.me()  # A broken credential/session is not a deletion proof.
         try:
+            # A denial must be checked against current project permissions,
+            # not the short-lived context reused for ordinary search probes.
             self.visible_issue(issue_id)
         except ApiError as second:
             return second.status in (403, 404)

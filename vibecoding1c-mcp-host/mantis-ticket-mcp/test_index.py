@@ -1387,6 +1387,40 @@ class IndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "restart"):
             self.search("решения", cursor=first["next_cursor"])
 
+    def test_lexical_cursor_survives_vector_progress_but_semantic_cursor_does_not(self):
+        for issue_id in range(1, 4):
+            self.api.items[issue_id] = ticket(issue_id, text="needle")
+            self.index.refresh(issue_id)
+        lexical = self.index.search("needle", semantic=False, limit=1)
+        self.assertTrue(lexical["next_cursor"])
+        source_revision = self.state.source_revision()
+        self.state.changed(source=False)
+        self.assertEqual(self.state.source_revision(), source_revision)
+        following = self.index.search("needle", semantic=False, limit=1, cursor=lexical["next_cursor"])
+        self.assertTrue(following["ok"])
+        self.assertNotEqual(following["issues"][0]["id"], lexical["issues"][0]["id"])
+
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        self.index.embeddings = SimpleNamespace()
+        with patch.object(self.index, "query_vector", return_value=([0], "hit")):
+            semantic = self.index.search("needle", semantic=True, limit=1)
+            self.assertEqual(semantic["semantic_query"], "available")
+            self.state.changed(source=False)
+            with self.assertRaisesRegex(ValueError, "restart"):
+                self.index.search("needle", semantic=True, limit=1, cursor=semantic["next_cursor"])
+
+    def test_source_revision_catches_up_after_legacy_runtime_restart(self):
+        self.index.refresh(1)
+        old_revision = self.state.revision()
+        self.state.close()
+        import sqlite3
+        from contextlib import closing
+        with closing(sqlite3.connect(self.root / "state" / "mantis.sqlite")) as db:
+            db.execute("UPDATE meta SET value=? WHERE key='revision'", (str(old_revision + 3),))
+            db.commit()
+        self.state = State(self.root / "state", self.root / "files")
+        self.assertEqual(self.state.source_revision(), old_revision + 3)
+
     def test_single_owner_and_schema_guard(self):
         with self.assertRaisesRegex(RuntimeError, "owner"):
             State(self.root / "state", self.root / "files")
@@ -1636,6 +1670,45 @@ class IndexTests(unittest.TestCase):
         self.assertFalse({issue["id"] for issue in first["issues"]} & {issue["id"] for issue in second["issues"]})
         self.assertLessEqual(first_reads, 400, "First page must not load the full lexical window")
         self.assertLessEqual(second_reads, 400, "Second page should retain bounded source reads")
+
+    def test_search_limits_fresh_access_probes_and_reuses_project_context(self):
+        from server import Settings
+        real = Api(Settings("https://mantis.test", "fixture", self.root / "files"))
+        for issue_id in range(1, 11):
+            self.api.items[issue_id] = ticket(issue_id, text="needle")
+            visible = real.filter_visible(real.normalize_lists(copy.deepcopy(self.api.items[issue_id])),
+                                          {"config": {}, "level": 70, "user": {"id": 3025}})
+            self.state.put_issue(visible)
+        requested = []
+        threads = set()
+        calls_lock = threading.Lock()
+        def respond(client, path, **kwargs):
+            with calls_lock:
+                requested.append((path, client.settings.timeout_seconds))
+            if path.startswith("issues/"):
+                with calls_lock:
+                    threads.add(threading.get_ident())
+                time.sleep(0.02)
+                return {"issues": [copy.deepcopy(self.api.items[int(path.split("/")[1])])]}, "fixture-etag"
+            if path == "users/me":
+                return {"user": {"id": 3025, "name": "service"}}, ""
+            if path == "projects":
+                return {"projects": [{"id": 1, "access_level": {"id": 70}}]}, ""
+            if path.startswith("config?"):
+                return {"configs": []}, ""
+            self.fail("Unexpected Mantis endpoint: " + path)
+        self.index.api = real
+        with patch.object(Api, "request", autospec=True, side_effect=respond):
+            result = self.index.search("needle", semantic=False, limit=10)
+        self.assertEqual(len(result["issues"]), 10)
+        self.assertEqual(sum(path.startswith("issues/") for path, _ in requested), 10)
+        self.assertGreater(len(threads), 1)
+        self.assertLessEqual(len(threads), 4)
+        self.assertLessEqual(sum(path == "users/me" for path, _ in requested), 4)
+        self.assertLessEqual(sum(path == "projects" for path, _ in requested), 4)
+        self.assertLessEqual(sum(path.startswith("config?") for path, _ in requested), 4)
+        self.assertTrue(all(timeout == 3 for _, timeout in requested))
+        self.assertEqual(sum(card["access_check"] == "fresh" for card in result["issues"]), 10)
 
     def test_custom_field_requirements_and_regex_are_checked_before_post(self):
         self.api.definitions = [{"field": {"id": 5}, "require_report": 1, "access_level_rw": 25,
