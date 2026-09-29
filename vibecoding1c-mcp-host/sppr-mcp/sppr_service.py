@@ -66,6 +66,9 @@ class Service:
         self.queries = QueryCache(settings, provider)
         self.vector_search = VectorSearchCache()
         self.search_diagnostics = SearchDiagnostics()
+        self.objects_lock = Lock()
+        self.objects_key = None
+        self.objects_data = None
         self.cursor_key = secrets.token_bytes(32)
 
     @staticmethod
@@ -103,11 +106,19 @@ class Service:
                 "current_policy": policy.token}
 
     def objects(self, db, policy):
-        if not policy.projects:
-            return {}
-        placeholders = ",".join("?" for _ in policy.projects)
-        sql = f"SELECT DISTINCT o.id,o.data FROM objects o JOIN roots r ON r.object_id=o.id WHERE r.project IN ({placeholders})"
-        return {row["id"]: json.loads(row["data"]) for row in db.execute(sql, sorted(policy.projects))}
+        corpus = next(row["file"] for row in db.execute("PRAGMA database_list") if row["name"] == "main")
+        key = (corpus, policy.token)
+        with self.objects_lock:
+            if key == self.objects_key:
+                return self.objects_data
+            if policy.projects:
+                placeholders = ",".join("?" for _ in policy.projects)
+                sql = f"SELECT DISTINCT o.id,o.data FROM objects o JOIN roots r ON r.object_id=o.id WHERE r.project IN ({placeholders})"
+                objects = {row["id"]: json.loads(row["data"]) for row in db.execute(sql, sorted(policy.projects))}
+            else:
+                objects = {}
+            self.objects_key, self.objects_data = key, objects
+            return objects
 
     def summary(self, obj, policy):
         # Never return obsolete provenance paths for a revoked project.
