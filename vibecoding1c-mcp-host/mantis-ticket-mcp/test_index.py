@@ -372,7 +372,7 @@ class IndexTests(unittest.TestCase):
     def test_parallel_query_embeddings_share_one_provider_call(self):
         started, release = threading.Event(), threading.Event()
         calls = []
-        def embed(texts):
+        def embed(texts, **kwargs):
             calls.append(texts)
             started.set()
             if not release.wait(3):
@@ -397,7 +397,7 @@ class IndexTests(unittest.TestCase):
 
     def test_failed_query_embedding_releases_waiters_and_is_retried(self):
         started, release = threading.Event(), threading.Event()
-        def fail(texts):
+        def fail(texts, **kwargs):
             started.set()
             release.wait(3)
             raise RuntimeError("provider unavailable")
@@ -415,12 +415,12 @@ class IndexTests(unittest.TestCase):
                     future.result(timeout=2)
         self.assertEqual(self.index.query_cache_status()["pending"], 0)
         self.assertEqual(self.index.query_cache_status()["entries"], 0)
-        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.5]])
+        self.index.embeddings = SimpleNamespace(embed=lambda texts, **kwargs: [[0.5]])
         self.assertEqual(self.index.query_vector("retry me"), ([0.5], "miss"))
 
     def test_query_cache_is_bounded_profile_scoped_and_not_persistent(self):
         calls = []
-        def embed(texts):
+        def embed(texts, **kwargs):
             calls.append(texts)
             return [[0.125] * 4096]
         self.index.embeddings = SimpleNamespace(embed=embed)
@@ -566,6 +566,24 @@ class IndexTests(unittest.TestCase):
         finally:
             provider.close()
 
+    def test_interactive_embedding_uses_one_short_network_attempt(self):
+        from mantis_index import Embeddings, EmbeddingError
+        connections = []
+        def factory():
+            connection = FakeEmbeddingConnection(lambda request: (_ for _ in ()).throw(TimeoutError("slow provider")))
+            connections.append(connection)
+            return connection
+        provider = Embeddings(self.state, "fixture", retries=2, connection_factory=factory)
+        try:
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["interactive query"], timeout=25, retries=0)
+            self.assertEqual(caught.exception.category, "timeout")
+            self.assertEqual(len(connections), 1)
+            self.assertEqual(connections[0].timeouts, [25, 25])
+            self.assertEqual(provider.diagnostics()["attempts_5m"], 1)
+        finally:
+            provider.close()
+
     def test_embedding_provider_error_retries_but_invalid_response_does_not(self):
         from mantis_index import Embeddings, EmbeddingError
         calls = []
@@ -645,7 +663,7 @@ class IndexTests(unittest.TestCase):
             self.index._embedding_failure(EmbeddingError("network"))
         self.assertLessEqual(self.index.embedding_retry_at - self.state.clock(), 61)
         self.assertEqual(self.index.embedding_attempts, 5)
-        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.25, 0.5]])
+        self.index.embeddings = SimpleNamespace(embed=lambda texts, **kwargs: [[0.25, 0.5]])
         self.assertEqual(self.index.query_vector("provider recovered"), ([0.25, 0.5], "miss"))
         self.assertEqual(self.index.embedding_attempts, 0)
         self.assertEqual(self.index.embedding_retry_at, 0)
@@ -660,7 +678,7 @@ class IndexTests(unittest.TestCase):
         started, release = threading.Event(), threading.Event()
         calls = []
         lock = threading.Lock()
-        def embed(texts):
+        def embed(texts, **kwargs):
             with lock:
                 calls.append(list(texts))
                 if len(calls) == 4:
@@ -694,7 +712,7 @@ class IndexTests(unittest.TestCase):
     def test_embedding_continues_while_mantis_page_is_slow(self):
         self.index.refresh(1)
         self.index.vectors = MemoryVectors()
-        self.index.embeddings = SimpleNamespace(embed=lambda texts: [[0.25, 0.5] for _ in texts], timeout=1)
+        self.index.embeddings = SimpleNamespace(embed=lambda texts, **kwargs: [[0.25, 0.5] for _ in texts], timeout=1)
         entered, release = threading.Event(), threading.Event()
         original = self.api.initial_page
         def slow_page(*args):
@@ -723,7 +741,7 @@ class IndexTests(unittest.TestCase):
         self.index.refresh(1)
         self.index.vectors = MemoryVectors()
         entered, release = threading.Event(), threading.Event()
-        def embed(texts):
+        def embed(texts, **kwargs):
             entered.set()
             if not release.wait(3):
                 raise TimeoutError("fixture release missing")
@@ -745,7 +763,7 @@ class IndexTests(unittest.TestCase):
         self.index.vectors = MemoryVectors()
         entered, release = threading.Event(), threading.Event()
         calls = []
-        def embed(texts):
+        def embed(texts, **kwargs):
             calls.append(texts)
             entered.set()
             if not release.wait(3):
@@ -782,7 +800,7 @@ class IndexTests(unittest.TestCase):
         self.index.embedding_batch = 1
         calls = []
         lock = threading.Lock()
-        def embed(texts):
+        def embed(texts, **kwargs):
             with lock:
                 calls.append(texts)
                 first = len(calls) == 1
@@ -1512,12 +1530,26 @@ class IndexTests(unittest.TestCase):
     def test_embedding_outage_keeps_lexical_and_marks_incomplete_corpus(self):
         self.index.refresh(1)
         self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
-        self.index.embeddings = SimpleNamespace(embed=lambda texts: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
+        self.index.embeddings = SimpleNamespace(embed=lambda texts, **kwargs: (_ for _ in ()).throw(RuntimeError("provider unavailable")))
         self.index.semantic_status = "ready"
         result = self.index.search("решения", semantic=True)
         self.assertEqual(result["issues"][0]["id"], 1)
         self.assertIn("unavailable", result["semantic_query"])
         self.assertEqual(result["semantic_corpus"], "partial")
+
+    def test_slow_interactive_embedding_returns_lexical_results(self):
+        from mantis_index import EmbeddingError
+        self.index.refresh(1)
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        calls = []
+        def slow(texts, **kwargs):
+            calls.append((texts, kwargs))
+            raise EmbeddingError("timeout")
+        self.index.embeddings = SimpleNamespace(embed=slow)
+        result = self.index.search("решения", semantic=True)
+        self.assertEqual(result["issues"][0]["id"], 1)
+        self.assertIn("timeout", result["semantic_query"])
+        self.assertEqual(calls, [(["решения"], {"timeout": 25, "retries": 0})])
 
     def test_custom_field_requirements_and_regex_are_checked_before_post(self):
         self.api.definitions = [{"field": {"id": 5}, "require_report": 1, "access_level_rw": 25,

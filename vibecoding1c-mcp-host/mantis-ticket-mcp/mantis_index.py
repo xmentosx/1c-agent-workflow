@@ -31,6 +31,8 @@ from mantis_extract import MAX_INPUT
 
 
 QUERY_EMBEDDING_CACHE_SIZE = 256
+QUERY_EMBEDDING_TIMEOUT_SECONDS = 25
+QUERY_EMBEDDING_WAIT_SECONDS = 65
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
@@ -296,16 +298,21 @@ class Embeddings:
                 "seconds_p50": percentile(durations, 0.5), "seconds_p95": percentile(durations, 0.95),
                 "last_attempt": dict(events[-1]) if events else None}
 
-    def embed(self, texts):
+    def embed(self, texts, *, timeout=None, retries=None):
         if not self.key:
             raise EmbeddingError("not_configured")
+        request_timeout = self.timeout if timeout is None else timeout
+        request_retries = self.retries if retries is None else retries
+        if (not math.isfinite(request_timeout) or request_timeout <= 0 or
+                not isinstance(request_retries, int) or request_retries < 0 or request_retries > 5):
+            raise ValueError("Invalid embedding request timeout or retry count")
         # UTF-8 byte count is a conservative input-token bound for this tokenizer.
         reserve = (sum(len(text.encode("utf-8")) + 32 for text in texts)) * self.max_price / 1_000_000
         body = {"model": "qwen/qwen3-embedding-8b", "input": texts, "dimensions": 4096,
                 "encoding_format": "float", "provider": {"max_price": {"prompt": self.max_price}}}
         request_bytes = encode(body).encode("utf-8")
         headers = {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"}
-        for attempt in range(1, self.retries + 2):
+        for attempt in range(1, request_retries + 2):
             # Every network attempt may be billed even when its response is lost.
             try:
                 charge = self.state.reserve(reserve, self.cap)
@@ -317,9 +324,9 @@ class Embeddings:
                 connection = self._borrow_connection()
                 if connection.sock is None:
                     connection.connect()
-                connection.sock.settimeout(30)
+                connection.sock.settimeout(min(30, request_timeout))
                 connection.request("POST", "/api/v1/embeddings", body=request_bytes, headers=headers)
-                connection.sock.settimeout(self.timeout)
+                connection.sock.settimeout(request_timeout)
                 response = connection.getresponse()
                 status = response.status
                 if status >= 400:
@@ -364,7 +371,7 @@ class Embeddings:
             finally:
                 if connection is not None:
                     connection.close()
-            if attempt > self.retries or error.category not in {"timeout", "network", "rate_limited", "provider_unavailable"}:
+            if attempt > request_retries or error.category not in {"timeout", "network", "rate_limited", "provider_unavailable"}:
                 raise error
             # Respect long Retry-After by returning control to the index scheduler.
             if error.retry_after > 60:
@@ -497,9 +504,13 @@ class Index:
             else:
                 self._query_shared += 1
         if not owner:
-            return list(pending.result(timeout=self.api.settings.timeout_seconds + 1)), "shared"
+            return list(pending.result(timeout=QUERY_EMBEDDING_WAIT_SECONDS)), "shared"
         try:
-            vector = array("d", self.embeddings.embed([query])[0])
+            # Keep interactive search inside the MCP call budget even when bulk
+            # indexing uses long reads and retries. A timeout degrades to the
+            # lexical result in search(), leaving the index worker unaffected.
+            vector = array("d", self.embeddings.embed(
+                [query], timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS, retries=0)[0])
             if not vector:
                 raise ValueError("Empty query embedding")
             self._embedding_success()
