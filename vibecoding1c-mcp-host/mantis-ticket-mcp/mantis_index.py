@@ -33,6 +33,7 @@ from mantis_extract import MAX_INPUT
 QUERY_EMBEDDING_CACHE_SIZE = 256
 QUERY_EMBEDDING_TIMEOUT_SECONDS = 25
 QUERY_EMBEDDING_WAIT_SECONDS = 65
+SEARCH_CANDIDATE_LIMIT = 10000
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
@@ -1183,7 +1184,7 @@ class Index:
                 if token["query"] != identity or token["revision"] != self.state.revision():
                     raise ValueError()
                 offset = int(token["offset"])
-                if not 0 <= offset <= 10000:
+                if not 0 <= offset <= SEARCH_CANDIDATE_LIMIT:
                     raise ValueError()
             except Exception as exc:
                 raise ValueError("Search changed or cursor is invalid; restart without cursor") from exc
@@ -1197,15 +1198,15 @@ class Index:
         tokens = re.findall(r"\w+", query, re.UNICODE)
         if tokens:
             expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
-            for rank, row in enumerate(self.state.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT 10000", (expression,))):
+            for rank, row in enumerate(self.state.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
                 ranks[row["id"]] = 1 / (60 + rank)
         if query.strip():
-            for row in self.state.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT 10000", (query.casefold(),)):
+            for row in self.state.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?", (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
         else:
             source_kind = {"comments": "comment", "filenames": "filename",
                            "attachment_contents": "attachment_content"}.get(mode)
-            rows = self.state.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT 10000", (source_kind, source_kind))
+            rows = self.state.all("SELECT MIN(f.id) AS id FROM fragments f JOIN issues i ON i.id=f.issue_id WHERE (? IS NULL OR f.kind=?) GROUP BY i.id ORDER BY i.modified DESC,i.id LIMIT ?", (source_kind, source_kind, SEARCH_CANDIDATE_LIMIT))
             ranks.update({row["id"]: 1 / (60 + rank) for rank, row in enumerate(rows)})
         if exact:
             for row in self.state.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
@@ -1216,15 +1217,19 @@ class Index:
             query_semantics = "unavailable"
             query_cache = "unavailable"
             if self.vectors and self.embeddings and query.strip():
-                try:
-                    vector, query_cache = self.query_vector(query)
-                    for rank, key in enumerate(self.vectors.query(vector)):
-                        row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
-                        if row:
-                            ranks[row["id"]] = ranks.get(row["id"], 0) + 1 / (60 + rank)
-                    query_semantics = "available"
-                except Exception as exc:
-                    query_semantics = str(exc)[:180]
+                if len(ranks) >= SEARCH_CANDIDATE_LIMIT:
+                    query_semantics = "skipped:broad_candidate_window; narrow the query or filters"
+                    query_cache = "not_requested"
+                else:
+                    try:
+                        vector, query_cache = self.query_vector(query)
+                        for rank, key in enumerate(self.vectors.query(vector)):
+                            row = self.state.one("SELECT id FROM fragments WHERE vector_id=? AND version=vector_version", (key,))
+                            if row:
+                                ranks[row["id"]] = ranks.get(row["id"], 0) + 1 / (60 + rank)
+                        query_semantics = "available"
+                    except Exception as exc:
+                        query_semantics = str(exc)[:180]
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1370,7 +1375,7 @@ class Index:
         corpus_status = "partial" if self.semantic_status == "ready" and snapshot["embedding_backlog"] else self.semantic_status
         result = {"ok": True, "issues": [], "next_cursor": "", "similar_to": similar_to or None,
                 "similarity_mode": ("semantic" if query_semantics == "available" else "lexical_fallback") if similar_to else None,
-                "candidate_limit": 10000, "candidate_window_limited": len(ranks) >= 10000,
+                 "candidate_limit": SEARCH_CANDIDATE_LIMIT, "candidate_window_limited": len(ranks) >= SEARCH_CANDIDATE_LIMIT,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
                 "attachment_extraction": {"enabled": self.attachment_enabled,

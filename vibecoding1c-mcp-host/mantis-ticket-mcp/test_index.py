@@ -1551,6 +1551,20 @@ class IndexTests(unittest.TestCase):
         self.assertIn("timeout", result["semantic_query"])
         self.assertEqual(calls, [(["решения"], {"timeout": 25, "retries": 0})])
 
+    def test_broad_candidate_window_skips_semantics_and_reports_limit(self):
+        self.index.refresh(1)
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        def unexpected_embed(texts, **kwargs):
+            self.fail("A saturated lexical window must not wait for OpenRouter")
+        self.index.embeddings = SimpleNamespace(embed=unexpected_embed)
+        with patch("mantis_index.SEARCH_CANDIDATE_LIMIT", 1):
+            result = self.index.search("решения", semantic=True, limit=1)
+        self.assertEqual(result["issues"][0]["id"], 1)
+        self.assertEqual(result["candidate_limit"], 1)
+        self.assertTrue(result["candidate_window_limited"])
+        self.assertIn("broad_candidate_window", result["semantic_query"])
+        self.assertEqual(result["query_embedding_cache"], "not_requested")
+
     def test_custom_field_requirements_and_regex_are_checked_before_post(self):
         self.api.definitions = [{"field": {"id": 5}, "require_report": 1, "access_level_rw": 25,
                                  "length_min": 2, "length_max": 5, "valid_regexp": "^[A-Z]+$"}]
