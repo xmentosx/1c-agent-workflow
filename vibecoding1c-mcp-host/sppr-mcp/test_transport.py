@@ -47,6 +47,10 @@ def test_odata_projection_utf8_no_redirect(self):
             if self.path.endswith("$metadata"):
                 body = fixture_schema()
             else:
+                if "+" in urlsplit(self.path).query:
+                    self.send_response(500)  # 1C treats form-encoded spaces as literal plus signs.
+                    self.end_headers()
+                    return
                 query = parse_qs(urlsplit(self.path).query)
                 select = query["$select"][0].split(",")
                 value = {k: v for k, v in row.items() if k in select}
@@ -73,6 +77,8 @@ def test_odata_projection_utf8_no_redirect(self):
         auth = base64.b64decode(observed[-1][1][6:]).decode("utf-8")
         self.assertEqual(auth, "Ермаков тест:пароль-фикстура")
         query = parse_qs(urlsplit(observed[-1][0]).query)
+        self.assertIn("%20", observed[-1][0])
+        self.assertNotIn("+", urlsplit(observed[-1][0]).query)
         self.assertIn("Owner_Key eq guid'" + A + "'", query["$filter"][0])
         mode["bad"] = True
         with self.assertRaisesRegex(SpprError, "ownership/version"):

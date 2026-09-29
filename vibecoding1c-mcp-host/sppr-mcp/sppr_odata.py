@@ -118,7 +118,7 @@ class OData:
         path = quote(entity, safe="_")
         if identifier:
             path += "(guid'" + guid(identifier) + "')"
-        url = self.settings.odata_url + path + "?" + urlencode({"$format": "json", **params})
+        url = self.settings.odata_url + path + "?" + urlencode({"$format": "json", **params}, quote_via=quote)
         try:
             return json.loads(self.http.request(url, headers=self.headers).decode("utf-8-sig"))
         except (ValueError, UnicodeError):
