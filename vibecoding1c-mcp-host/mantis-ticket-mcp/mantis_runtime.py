@@ -13,7 +13,7 @@ from pathlib import Path
 
 from mantis_api import Api, ApiError
 from mantis_index import Embeddings, Index, Vectors
-from mantis_state import State, digest, object_id, sources, is_link, clean_issue
+from mantis_state import SearchReader, State, digest, object_id, sources, is_link, clean_issue
 from mantis_write import ACTIONS, Writer
 from mantis_tools import worker_tool
 
@@ -240,11 +240,16 @@ class Runtime:
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
 
     def health(self):
-        return {"enabled": bool(self.index), "error": self.error,
-                **({"state": self.index.state.health(), "semantic": self.index.semantic_status,
-                    "query_embedding_cache": self.index.query_cache_status(),
-                    "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
-                    "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled,
-                    "attachment_extraction": {"enabled": self.index.attachment_enabled,
-                        "stage": self.index.attachment_stage, "error": self.index.attachment_error,
-                        **self.index.state.attachment_status()}} if self.index else {})}
+        result = {"enabled": bool(self.index), "error": self.error}
+        if self.index:
+            # Vector compaction may hold State.lock for minutes. Health uses the
+            # same independent SQLite reader as search, so watchdog calls stay live.
+            with SearchReader(self.index.state) as reader:
+                result.update({"state": reader.health(), "semantic": self.index.semantic_status,
+                               "query_embedding_cache": self.index.query_cache_status(),
+                               "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
+                               "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled,
+                               "attachment_extraction": {"enabled": self.index.attachment_enabled,
+                                   "stage": self.index.attachment_stage, "error": self.index.attachment_error,
+                                   **reader.attachment_status()}})
+        return result

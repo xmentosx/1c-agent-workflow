@@ -43,12 +43,12 @@ class ProtocolTests(unittest.TestCase):
                             self.assertEqual(len(tools), 10)
                             self.assertLess(time.monotonic() - start, 1,
                                             "A database writer must not freeze the MCP HTTP event loop")
-                            self.assertFalse(pending.done(), "The read still waits for the writer")
+                            health = await asyncio.wait_for(pending, 1)
+                            self.assertTrue(health.structured_content["ok"])
+                            self.assertTrue(health.structured_content["index"]["enabled"])
                         finally:
                             release.set()
                             await asyncio.to_thread(thread.join, 1)
-                            health = await pending
-                        self.assertTrue(health.structured_content["ok"])
         asyncio.run(run())
 
     def test_real_protocol_preserves_images_and_exposes_search(self):
