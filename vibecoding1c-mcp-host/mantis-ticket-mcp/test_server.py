@@ -3,10 +3,12 @@ import base64
 import os
 import sys
 import tempfile
+import threading
 import types
 import typing
 import unittest
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -122,6 +124,45 @@ class FakeClientWithCommentImage(FakeClient):
 
 
 class MantisTicketServerTests(unittest.TestCase):
+    def test_search_reports_audit_timing_and_keeps_structured_output(self):
+        from mantis_runtime import Runtime
+        runtime = Runtime.__new__(Runtime)
+        result = {"ok": True, "issues": [{"id": 1}], "next_cursor": "", "timing_ms": {"total": 5}}
+        index = mock.Mock()
+        index.search.return_value = result
+        index.state.audit.return_value = {"audit_lock_wait": 3, "audit_write": 2}
+        runtime.index = index
+        mcp = FakeFastMCP("fixture")
+        async def queued_search():
+            loop = asyncio.get_running_loop()
+            loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+            held, release = threading.Event(), threading.Event()
+            def occupy():
+                held.set()
+                release.wait(2)
+            occupied = loop.run_in_executor(None, occupy)
+            self.assertTrue(held.wait(2))
+            timer = threading.Timer(0.08, release.set)
+            timer.start()
+            try:
+                return await mcp.tools["search_tickets"]("atlas")
+            finally:
+                release.set()
+                timer.cancel()
+                await occupied
+        with mock.patch.dict(sys.modules, fake_fastmcp_module()):
+            runtime.register(mcp)
+            response = asyncio.run(queued_search())
+        self.assertIs(response.structured_content, result)
+        self.assertEqual(5, result["timing_ms"]["total"])
+        self.assertEqual(3, result["timing_ms"]["audit_lock_wait"])
+        self.assertGreaterEqual(result["timing_ms"]["handler_total"], result["timing_ms"]["audit"])
+        self.assertGreater(result["timing_ms"]["worker_queue"], 30)
+        self.assertGreaterEqual(result["timing_ms"]["dispatch_total"], result["timing_ms"]["worker_queue"])
+        self.assertEqual(["text"], [item.type for item in response.content])
+        index.state.audit.assert_called_once()
+        self.assertEqual("search", index.state.audit.call_args.args[1])
+
     def test_create_mcp_enables_stateless_http(self):
         with tempfile.TemporaryDirectory() as temp_root:
             environment = {

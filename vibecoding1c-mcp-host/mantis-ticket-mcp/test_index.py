@@ -246,6 +246,114 @@ class IndexTests(unittest.TestCase):
     def search(self, query, **kwargs):
         return self.index.search(query, semantic=False, **kwargs)
 
+    def test_local_cache_reuses_candidates_across_filters_and_pages(self):
+        for issue_id in range(1, 8):
+            self.state.put_issue(ticket(issue_id, project=1 if issue_id < 5 else 2, text="Загрузка Excel"))
+        first = self.search("загрузка excel", limit=2)
+        original = SearchReader.all
+        def cached_reads(reader, sql, args=()):
+            self.assertNotIn("FROM search_text", sql, "Warm searches must avoid FTS ranking")
+            self.assertNotIn("AS card FROM issues", sql, "Warm cards must avoid reading issue bodies")
+            return original(reader, sql, args)
+        with patch.object(SearchReader, "all", cached_reads), patch.object(self.api, "issue", side_effect=AssertionError("No live check")):
+            second = self.search("загрузка excel", limit=2, cursor=first["next_cursor"])
+            filtered = self.search("загрузка excel", filters={"project_id": 2})
+        self.assertFalse({i["id"] for i in first["issues"]} & {i["id"] for i in second["issues"]})
+        self.assertEqual([5, 6, 7], [i["id"] for i in filtered["issues"]])
+        self.assertEqual(2, second["local_cache"]["text_hits"])
+        self.assertGreater(second["local_cache"]["card_hits"], 0)
+
+    def test_cached_candidates_follow_source_changes_and_revocation(self):
+        self.state.put_issue(ticket(text="atlas"))
+        self.assertFalse(self.search("новый маркер")["issues"])
+        self.assertEqual(2, self.search("новый маркер")["local_cache"]["text_hits"])
+        changed = ticket(text="новый маркер")
+        changed["summary"] = "Обновлённое обращение"
+        self.state.put_issue(changed)  # unchanged updated_at must still invalidate
+        found = self.search("новый маркер")
+        self.assertEqual("Обновлённое обращение", found["issues"][0]["summary"])
+        self.assertEqual(2, found["local_cache"]["text_misses"])
+        self.state.purge_issue(1)
+        self.assertFalse(self.search("новый маркер")["issues"])
+
+    def test_card_cache_is_versioned_and_nested_results_are_isolated(self):
+        original = ticket(text="atlas")
+        original["status"] = {"id": 90, "name": "closed"}
+        self.state.put_issue(original)
+        found = self.search("atlas")
+        found["issues"][0]["status"]["id"] = 10
+        self.assertEqual(90, self.search("atlas")["issues"][0]["status"]["id"])
+        revision = self.state.source_revision()
+        self.state.put_issue(original)  # verification only; candidate/card reuse
+        self.assertEqual(revision, self.state.source_revision())
+        self.assertEqual(1, self.search("atlas")["local_cache"]["text_hits"])
+        changed = copy.deepcopy(original)
+        changed["status"] = {"id": 10, "name": "new"}
+        changed["handler"] = {"id": 5}
+        self.state.put_issue(changed)
+        self.assertFalse(self.search("atlas", filters={"status": 90})["issues"])
+        result = self.search("atlas", filters={"status": 10, "handler_id": 5})
+        self.assertEqual(10, result["issues"][0]["status"]["id"])
+
+    def test_local_cache_keeps_concurrent_snapshot_version(self):
+        self.state.put_issue(ticket(text="atlas"))
+        self.search("atlas")  # warm both caches before a concurrent writer
+        changed = ticket(text="atlas next")
+        changed["summary"] = "Следующая версия"
+        old = self.search_with_concurrent_index_write("atlas", lambda: self.state.put_issue(changed), owns_transaction=True)
+        self.assertEqual("Решение проблемы", old["issues"][0]["summary"])
+        fresh = self.search("atlas")
+        self.assertEqual("Следующая версия", fresh["issues"][0]["summary"])
+        self.assertEqual(1, fresh["local_cache"]["text_misses"])
+
+    def test_local_cache_memory_eviction_and_oversize_do_not_limit_results(self):
+        from mantis_index import SearchCache
+        cache = SearchCache(2, 2048, 1024)
+        cache.put((1,), ("a",))
+        cache.put((2,), ("b",))
+        cache.get((1,))
+        cache.put((3,), ("c",))
+        self.assertIsNone(cache.get((2,)))
+        cache.put((4,), "x" * 2048)
+        self.assertIsNone(cache.get((4,)))
+        self.assertLessEqual(cache.bytes, 2048)
+        self.assertLessEqual(len(cache.values), 2)
+        self.state.put_issue(ticket(text="atlas"))
+        self.index.text_cache.entry_limit = self.index.card_cache.entry_limit = 1
+        cold = self.search("atlas")
+        uncached = self.search("atlas")
+        self.assertEqual(cold["issues"], uncached["issues"])
+        self.assertEqual(1, uncached["local_cache"]["text_misses"])
+
+    def test_native_fts_rank_preserves_legacy_candidate_window_and_ties(self):
+        for issue_id in range(1, 18):
+            self.state.put_issue(ticket(issue_id, text="atlas marker " * (issue_id % 4 + 1)))
+        for expression in ('"atlas"', '"atlas" AND "marker"', '"atlas" OR "marker"'):
+            old = self.state.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, 7))
+            new = self.state.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY rank LIMIT ?", (expression, 7))
+            self.assertEqual([r["id"] for r in old], [r["id"] for r in new])
+
+    def test_audit_reports_lock_wait_without_losing_durable_entry(self):
+        held, release = threading.Event(), threading.Event()
+        def holder():
+            with self.state.lock:
+                held.set()
+                release.wait(2)
+        thread = threading.Thread(target=holder)
+        thread.start()
+        self.assertTrue(held.wait(2))
+        timer = threading.Timer(0.08, release.set)
+        timer.start()
+        try:
+            timings = self.state.audit("tester", "search", "", "succeeded")
+        finally:
+            release.set()
+            thread.join(2)
+            timer.cancel()
+        self.assertGreater(timings["audit_lock_wait"], 30)
+        self.assertGreaterEqual(timings["audit_write"], 0)
+        self.assertEqual("tester", self.state.one("SELECT actor FROM audit WHERE action='search'")["actor"])
+
     def search_with_concurrent_index_write(self, query, update, owns_transaction=False, **kwargs):
         applied = threading.Event()
         errors = []

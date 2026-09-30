@@ -263,8 +263,14 @@ class State:
                  if source else "UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
 
     def audit(self, actor, action, target, outcome):
-        self.run("INSERT INTO audit(actor,action,object_id,outcome,created) VALUES(?,?,?,?,?)",
-                 (actor or "system", action, str(target), outcome, self.clock()))
+        started = time.monotonic()
+        with self.lock:
+            acquired = time.monotonic()
+            self.run("INSERT INTO audit(actor,action,object_id,outcome,created) VALUES(?,?,?,?,?)",
+                     (actor or "system", action, str(target), outcome, self.clock()))
+            finished = time.monotonic()
+        return {"audit_lock_wait": round((acquired - started) * 1000, 2),
+                "audit_write": round((finished - acquired) * 1000, 2)}
 
     def put_catalog(self, key, data):
         self.run("INSERT OR REPLACE INTO catalog VALUES(?,?,?)", (key, encode(data), self.clock()))

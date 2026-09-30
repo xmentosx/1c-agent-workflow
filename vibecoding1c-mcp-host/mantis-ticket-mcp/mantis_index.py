@@ -40,6 +40,10 @@ QUERY_EMBEDDING_WAIT_SECONDS = 65
 SEARCH_CANDIDATE_LIMIT = 10000
 SEARCH_CURSOR_TTL_SECONDS = 900
 SEARCH_CURSOR_CAPACITY = 128
+TEXT_CACHE_ENTRIES = 32
+TEXT_CACHE_BYTES = 16 << 20
+CARD_CACHE_ENTRIES = 2048
+CARD_CACHE_BYTES = 4 << 20
 EMBEDDING_DISK_BATCH = 512
 EMBEDDING_FLUSH_MAX_AGE = 60
 EMBEDDING_WORKERS = 4
@@ -478,6 +482,44 @@ class Embeddings:
         raise RuntimeError("Unreachable embedding retry state")
 
 
+class SearchCache:
+    """Bounded process-local derived data; callers own snapshot/version keys."""
+
+    def __init__(self, entries, byte_limit, entry_limit):
+        self.entries, self.byte_limit, self.entry_limit = entries, byte_limit, entry_limit
+        self.values = OrderedDict()
+        self.bytes = 0
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def size(value):
+        return sys.getsizeof(value) + (sum(SearchCache.size(item) for item in value)
+                                     if isinstance(value, tuple) else 0)
+
+    def get(self, key):
+        with self.lock:
+            item = self.values.get(key)
+            if item is None:
+                return None
+            self.values.move_to_end(key)
+            return item[0]
+
+    def put(self, key, value):
+        # Include conservative per-entry bookkeeping as well as Python strings,
+        # tuples and keys. Oversize cards/candidate sets remain fully searchable.
+        size = self.size(key) + self.size(value) + 256
+        if size > min(self.entry_limit, self.byte_limit):
+            return
+        with self.lock:
+            previous = self.values.pop(key, None)
+            if previous is not None:
+                self.bytes -= previous[1]
+            self.values[key] = (value, size)
+            self.bytes += size
+            while len(self.values) > self.entries or self.bytes > self.byte_limit:
+                self.bytes -= self.values.popitem(last=False)[1][1]
+
+
 class Index:
     def __init__(self, state, api, vectors=None, embeddings=None, interval=30, overlap=300, sync_projects=()):
         self.state, self.api, self.vectors, self.embeddings = state, api, vectors, embeddings
@@ -492,6 +534,8 @@ class Index:
         self.search_semantic_slots = threading.BoundedSemaphore(2)
         self.search_cursor_lock = threading.Lock()
         self.search_cursors = OrderedDict()
+        self.text_cache = SearchCache(TEXT_CACHE_ENTRIES, TEXT_CACHE_BYTES, 4 << 20)
+        self.card_cache = SearchCache(CARD_CACHE_ENTRIES, CARD_CACHE_BYTES, 64 << 10)
         self.embedding_worker = None
         self.embedding_lock = threading.RLock()
         # Serializes a Zvec flush with physical cleanup, without blocking
@@ -1409,16 +1453,29 @@ class Index:
         snapshot_at = reader.begin_snapshot()
         ranks = {}
         tokens = re.findall(r"\w+", query, re.UNICODE)
+        text_hits = text_misses = card_hits = card_misses = 0
+        source_revision = reader.source_revision()
+        def text_candidates(expression):
+            nonlocal text_hits, text_misses
+            key = (source_revision, expression, SEARCH_CANDIDATE_LIMIT)
+            candidates = self.text_cache.get(key)
+            if candidates is not None:
+                text_hits += 1
+                return candidates
+            text_misses += 1
+            candidates = tuple(row["id"] for row in reader.all(
+                "SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY rank LIMIT ?",
+                (expression, SEARCH_CANDIDATE_LIMIT)))
+            self.text_cache.put(key, candidates)
+            return candidates
         if tokens:
             expression = " OR ".join('"' + t.replace('"', '""') + '"' for t in tokens)
             if len(tokens) > 1:
                 all_terms = " AND ".join('"' + t.replace('"', '""') + '"' for t in tokens)
-                for rank, row in enumerate(reader.all(
-                        "SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?",
-                        (all_terms, SEARCH_CANDIDATE_LIMIT))):
-                    ranks[row["id"]] = 2 + 1 / (60 + rank)
-            for rank, row in enumerate(reader.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
-                ranks.setdefault(row["id"], 1 / (60 + rank))
+                for rank, key in enumerate(text_candidates(all_terms)):
+                    ranks[key] = 2 + 1 / (60 + rank)
+            for rank, key in enumerate(text_candidates(expression)):
+                ranks.setdefault(key, 1 / (60 + rank))
         if query.strip():
             filename_started = time.monotonic()
             # The covering partial index avoids random reads of fragment bodies.
@@ -1473,6 +1530,7 @@ class Index:
                     return False
             return True
         def grouped():
+            nonlocal card_hits, card_misses
             groups = {}
             # Read only card/filter fields, once per issue. Joining the entire
             # issue (including every comment) to each fragment multiplies I/O.
@@ -1490,20 +1548,35 @@ class Index:
                 keys = [key for key, _ in batch]
                 placeholders = ",".join("?" for _ in keys)
                 rows = {row["id"]: row for row in reader.all(
-                    "SELECT f.id,f.issue_id,i.verified,f.kind,f.note_id,f.file_id,"
+                    "SELECT f.id,f.issue_id,i.verified,i.hash,f.kind,f.note_id,f.file_id,"
                     "f.source,f.text FROM fragments f JOIN issues i ON i.id=f.issue_id "
                     f"WHERE f.id IN ({placeholders})", keys) if row["issue_id"] not in seen}
                 new_issues = {row["issue_id"] for row in rows.values()} - issue_ids
                 issue_ids.update(new_issues)
                 if new_issues:
-                    ids = list(new_issues)
+                    versions = {row["issue_id"]: row["hash"] for row in rows.values()}
+                    cards = {}
+                    ids = []
+                    for issue_id in new_issues:
+                        card = self.card_cache.get((issue_id, versions[issue_id]))
+                        if card is None:
+                            card_misses += 1
+                            ids.append(issue_id)
+                        else:
+                            card_hits += 1
+                            cards[issue_id] = card
                     for begin in range(0, len(ids), 400):
                         slice_ids = ids[begin:begin + 400]
                         holders = ",".join("?" for _ in slice_ids)
                         for item in reader.all(
                                 f"SELECT id,json_extract(data,{paths}) AS card FROM issues WHERE id IN ({holders})", slice_ids):
-                            parsed[item["id"]] = {field: value for field, value in zip(fields, json.loads(item["card"]))
-                                                  if value is not None}
+                            cards[item["id"]] = item["card"]
+                            self.card_cache.put((item["id"], versions[item["id"]]), item["card"])
+                    # Cache immutable JSON only: nested response/filter objects
+                    # must not let a caller mutate another search's compact card.
+                    for issue_id, card in cards.items():
+                        parsed[issue_id] = {field: value for field, value in zip(fields, json.loads(card))
+                                            if value is not None}
                 for key, rank in batch:
                     row = rows.get(key)
                     if not row or row["issue_id"] in seen or row["issue_id"] == similar_to or (mode != "all" and row["kind"] != {
@@ -1557,6 +1630,8 @@ class Index:
                  "candidate_limit": SEARCH_CANDIDATE_LIMIT, "candidate_window_limited": len(ranks) >= SEARCH_CANDIDATE_LIMIT,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
                 "query_embedding_cache": query_cache,
+                "local_cache": {"text_hits": text_hits, "text_misses": text_misses,
+                                "card_hits": card_hits, "card_misses": card_misses},
                 "attachment_extraction": {"enabled": self.attachment_enabled,
                                            **reader.attachment_status()},
                 "mantis": self.remote_status, "silent_changes": "Newly visible sources without updated_at require an issue refresh",

@@ -64,7 +64,7 @@ class Runtime:
         return self.index
 
     def audit(self, actor, action, target, outcome="succeeded"):
-        self.require().state.audit(actor_name(actor), action, target, outcome)
+        return self.require().state.audit(actor_name(actor), action, target, outcome)
 
     def get_issue(self, issue_id):
         issue, _, stale = self.require().refresh(int(issue_id))
@@ -112,8 +112,12 @@ class Runtime:
             started = time.monotonic()
             result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to)
             search_seconds = time.monotonic() - started
-            self.audit(person, "search", "", result.get("status", "succeeded"))
+            audit_timings = self.audit(person, "search", "", result.get("status", "succeeded"))
             audit_seconds = time.monotonic() - started - search_seconds
+            timings = result.setdefault("timing_ms", {})
+            timings.update(audit_timings or {})
+            timings["audit"] = round(audit_seconds * 1000, 2)
+            timings["handler_total"] = round((time.monotonic() - started) * 1000, 2)
             if search_seconds > 10 or audit_seconds > 10:
                 logging.getLogger(__name__).warning(
                     "Mantis search latency: compute=%.3fs audit=%.3fs", search_seconds, audit_seconds)
