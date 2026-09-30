@@ -5,6 +5,7 @@
         $RepoRoot = $context.RepoRoot
         $modulePath = Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.yaxunit.ps1"
         . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.vanessa.ps1")
+        . (Join-Path $RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.verification-selection.ps1")
         . $modulePath
 
         function ConvertTo-IntOrDefault {
@@ -37,7 +38,8 @@
         $update = [regex]::Match($lifecycle, '(?s)function Update-WorkflowPackage \{(?<body>.*?)(?=\nfunction )').Groups['body'].Value
 
         $init | Should -Match 'Ensure-YAxUnitForInit'
-        $update | Should -Match 'Sync-WorkflowManagedDependencyLockEntries \| Out-Null\s+Install-YAxUnit \| Out-Null'
+        $postCopy = [regex]::Match($lifecycle, '(?s)function Invoke-WorkflowPackageFilePostCopy \{(?<body>.*?)(?=\nfunction )').Groups['body'].Value
+        $postCopy | Should -Match 'Sync-WorkflowManagedDependencyLockEntries \| Out-Null\s+Install-YAxUnit \| Out-Null'
     }
 
     It "runs YAxUnit before Vanessa and includes unit-test inputs in freshness" {
@@ -83,7 +85,8 @@
 
     It "loads a separate test extension and requests the official command-line runner" {
         $text = Get-Content -LiteralPath $modulePath -Raw -Encoding UTF8
-        $text | Should -Match '"/LoadCfg".+"-Extension".+\$extensionName.+"/UpdateDBCfg"'
+        $text | Should -Match 'Invoke-GuardedCfeExtensionApply.+-InfoBasePath'
+        $text | Should -Match '-CfePath \$cfePath -ExtensionName \$extensionName'
         $text | Should -Match '"/LoadConfigFromFiles".+"-Extension".+\$testsExtensionName.+"-Format".+"Hierarchical"'
         $text | Should -Match 'Set-RunStage -Stage "yaxunit\.run"'
         $text | Should -Match 'Set-RunStage -Stage "yaxunit\.postprocess"'
@@ -173,6 +176,28 @@
         $result.missing.assignments[0].groupId | Should -Be '__unclassified__'
         $result.classified.classificationComplete | Should -BeTrue
         $result.classified.assignments[0].groupId | Should -Be 'plan'
+    }
+
+    It "reads schema-2 YAxUnit obligations while preserving the legacy default-fast selection" {
+        $tempRoot = Join-Path $TestDrive 'schema-two-yaxunit'
+        $moduleRoot = Join-Path $tempRoot 'tests\yaxunit\CommonModules\PlanCalculation\Ext'
+        New-Item -ItemType Directory -Force -Path $moduleRoot | Out-Null
+        $modulePathValue = Join-Path $moduleRoot 'Module.bsl'
+        [IO.File]::WriteAllText($modulePathValue, 'Procedure Test() Export', [Text.UTF8Encoding]::new($false))
+        $catalogPath = Join-Path $tempRoot 'tests\yaxunit-suites.branch.json'
+        [IO.File]::WriteAllText($catalogPath, '{"schemaVersion":2,"groups":[{"id":"plan","purpose":"default-fast","modulePaths":["tests/yaxunit/CommonModules/PlanCalculation/Ext/Module.bsl"],"ownerPaths":["src/cf/CommonModules/PlanCalculation/**"]}],"obligations":[{"id":"plan-result","expectedResult":"Plan amount is correct","inputPaths":["src/cf/CommonModules/PlanCalculation/**"],"admissibleProof":["yaxunit-junit"],"retention":"retained","cadence":"affected","groupId":"plan"}]}', [Text.UTF8Encoding]::new($false))
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Get-Setting { param([string]$Default) return $Default }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Get-VerificationRepoRelativePath { param([string]$Path) $root = [IO.Path]::GetFullPath($script:ProjectRoot).TrimEnd('\'); $full = [IO.Path]::GetFullPath($Path); ($full.Substring($root.Length + 1) -replace '\\', '/') }
+            function Test-VerificationRepoPathPattern { param([string]$Path, [string]$Pattern) [Management.Automation.WildcardPattern]::new($Pattern, [Management.Automation.WildcardOptions]::IgnoreCase).IsMatch($Path) }
+            Read-YAxUnitSuiteCatalog -ModuleFiles @(Get-YAxUnitModuleFiles)
+        }
+        $result.classificationComplete | Should -BeTrue
+        $result.obligations[0].id | Should -Be 'plan-result'
+        $result.obligations[0].cadence | Should -Be 'affected'
     }
 
     It "rejects an explicit benchmark referenced by ordinary registration" {

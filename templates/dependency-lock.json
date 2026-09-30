@@ -30,6 +30,17 @@
       "compatibilityStatus": "passed",
       "compatibilityCheckedAt": "2026-09-23T01:33:44Z"
     },
+    "openSpecCli": {
+      "version": "1.13.1",
+      "source": "npm:@fission-ai/openspec@1.13.1",
+      "tarball": "https://registry.npmjs.org/@fission-ai/openspec/-/openspec-1.13.1.tgz",
+      "integrity": "sha512-UHJSV2n6ohjfRaJLvi526avOohFS/orCjM+7JPgvDzuEJbCCkykKfP2fp3gcsvthDLeWolMRT5JAE08MSPnr8Q==",
+      "packageLockSha256": "7fa9c50d3a7e194687346641755beffadb33c03486411e92fc3f84c09a5e06d4",
+      "scope": "project-versioned",
+      "minimumNode": "20.19.0",
+      "sourceRegistry": "https://registry.npmjs.org/",
+      "compatibilityStatus": "pending"
+    },
     "agentBrowser": {
       "version": "0.33.1",
       "source": "npm:agent-browser@0.33.1",

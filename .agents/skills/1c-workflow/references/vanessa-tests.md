@@ -16,17 +16,21 @@ or long regressions only when explicitly requested.
    When a concrete pattern is needed, open only the matching recipe in
    `vanessa-recipes.md`; its companion files are under
    `assets/vanessa-authoring-examples`.
-4. For OpenSpec, write 1-2 representative integration/UI scenarios. Put
-   algorithmic boundary and negative cases in parameterized YAxUnit tests. A
-   quick-fix starts with one focused regression and adds another only for a
-   separate integration/UI boundary.
-5. Keep one selectable file per behavior, cadence, and narrow owner set.
+4. For OpenSpec and quick fixes, first identify sufficient current proof and
+   reuse existing coverage. Retain a new regression when future reuse justifies
+   it; a reliable one-off result can satisfy the current obligation without a
+   new feature file. When adding retained coverage, start with 1-2 representative
+   integration/UI scenarios and put algorithmic boundaries and negative cases in
+   parameterized YAxUnit tests. For a quick fix, start with one focused regression
+   and add another only for a separate integration/UI boundary.
+5. For retained Vanessa coverage, keep one selectable file per behavior,
+   cadence, and narrow owner set.
    Acceptance suites have at most eight scenarios; keep explicit diagnostics
    and measurements separate.
 6. In the same edit, classify each added or changed feature with its
    `acceptance|explicit` purpose and production `ownerPaths`; follow
    `verification-suite-selection.md`.
-7. Run the final ITL check flow. Vanessa UI MCP may aid test development but is not the test runner.
+7. Run the final ITL assessment for applicable obligations. Vanessa UI MCP may aid test development but is not the saved test runner.
 
 ## Development And Verification
 
@@ -92,7 +96,7 @@ Minimal structure:
 
 Rules:
 
-- Store application scenarios in `tests/features`.
+- Store retained application scenarios in `tests/features`. For transient `/test-fix-loop` scenarios, follow `verification-result.md`; retain the ignored feature through referenced proof.
 - Store `.feature` files as strict UTF-8. One leading UTF-8 BOM is accepted for compatibility with existing Windows text writers; invalid UTF-8, NUL, and C0/C1 controls other than TAB/CR/LF fail the preflight at a zero-based byte offset. This byte check does not infer Gherkin semantics; the existing parser/application-scenario preflight remains their owner.
 - Name scenarios by checked behavior, not by internal task number.
 - Keep independent acceptance scenarios flat so each produces its own JUnit verdict. Do not use `@tree` to group them; reserve it for deliberately aggregated non-acceptance output.
@@ -138,5 +142,5 @@ prove the changed behavior.
 - Do not write a "smoke test for the whole configuration" for one feature.
 - Do not go through menus and forms when server code and assertions can prove the result.
 - Do not copy large scenarios from external repositories.
-- Do not create more than 4 feature checks without explaining why in `test-plan.md`.
+- Over four feature checks: justify risks in `tasks.md` or an existing approved plan.
 - Do not replace the final ITL check flow with Vanessa UI MCP, a headless EPF launch, or `/deploy-and-test`.

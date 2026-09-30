@@ -128,6 +128,6 @@ ChatGPT -> Remote Desktop Commander -> PROJECT_ROOT
 
 ## После обновления workflow
 
-`itl-update-workflow` обновляет managed workflow в master. Существующие dev-worktree получают новую версию штатным `itl-refresh`, `itl-refresh-lite` или `itl-refresh-all`. Путь ChatGPT Project при этом не меняется: sidecar обновляется внутри той же worktree вместе с `.agents/skills/1c-workflow`.
+itl-update-workflow обновляет managed workflow в master и доступных зарегистрированных dev-worktree. Занятые или конфликтующие ветки получают deferred/blocked с причиной; после устранения препятствия повторите update-workflow из master без обязательного refresh. Остановленные операции в ветках продолжаются отдельно исходной командой. Путь ChatGPT Project не меняется: sidecar обновляется внутри той же worktree вместе с .agents/skills/1c-workflow.
 
 Не храните в Project Instructions пароли, ключи, токены и другие секреты. Они остаются в предусмотренном локальном runtime/credential storage проекта.

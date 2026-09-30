@@ -649,6 +649,7 @@ function Test-Agent1cActionRequiresLifecycleLock {
         "list-platforms",
         "detect-web-publication",
         "detect-apache",
+        "openspec-context",
         "vibecoding1c-mcp-status",
         "status-vanessa-profile"
     )
@@ -665,6 +666,8 @@ function Test-Agent1cActionRequiresLifecycleLock {
     )
     if ($readOnlyActions -contains $RequestedAction) { return $false }
     if ($facadeExecutionActions -contains $RequestedAction) { return $false }
+    # These writes are admitted by the selected store's scoped file leases;
+    # a project lifecycle lock would serialize unrelated external changes.
     return $true
 }
 
@@ -707,6 +710,8 @@ function Ensure-Agent1cLifecycleLocksIgnored {
         ".agent-1c/runtime/",
         ".agent-1c/event-log-cursors/",
         ".agent-1c/execution-checkpoints/",
+        ".agent-1c/execution-guard-generation.json",
+        ".agent-1c/tools/openspec-cli/",
         ".agent-1c/execution-guard-generation.json.*"
     )
     $existingLines = @()
@@ -2195,7 +2200,21 @@ function Invoke-InProjectContext {
     $previousConfigPath = $script:ConfigPath
     $previousDependencyLockPath = $script:DependencyLockPath
     $previousConfig = $script:Config
+    $previousBranchEnvironment = @{}
     try {
+        $branchEnvPath = Join-Path (Resolve-Agent1cFullPath -Path $Root) '.dev.env'
+        if (Test-Path -LiteralPath $branchEnvPath -PathType Leaf) {
+            foreach ($line in @(Read-Utf8Lines -Path $branchEnvPath)) {
+                $trimmed = ([string]$line).Trim()
+                if (-not $trimmed -or $trimmed.StartsWith('#')) { continue }
+                $separator = $trimmed.IndexOf('=')
+                if ($separator -lt 1) { continue }
+                $name = $trimmed.Substring(0, $separator).Trim()
+                if (-not $previousBranchEnvironment.ContainsKey($name)) {
+                    $previousBranchEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+                }
+            }
+        }
         Set-ProjectContext -Root $Root
         & $ScriptBlock
     } finally {
@@ -2203,6 +2222,9 @@ function Invoke-InProjectContext {
         $script:ConfigPath = $previousConfigPath
         $script:DependencyLockPath = $previousDependencyLockPath
         $script:Config = $previousConfig
+        foreach ($name in @($previousBranchEnvironment.Keys)) {
+            [Environment]::SetEnvironmentVariable([string]$name, $previousBranchEnvironment[$name], 'Process')
+        }
         Import-DotEnv -Path (Join-Path $script:ProjectRoot ".dev.env") -Overwrite
     }
 }
@@ -2437,8 +2459,14 @@ function Test-GitCommitExists {
         return $false
     }
 
-    & git -C $script:ProjectRoot cat-file -e "$Commit^{commit}" *> $null
-    return ($LASTEXITCODE -eq 0)
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & git -C $script:ProjectRoot cat-file -e "$Commit^{commit}" *> $null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Test-GitHasAnyCommit {
@@ -2572,22 +2600,12 @@ function Get-FullPathNormalized {
 }
 
 function Get-GitWorktrees {
-    $output = & git -C $script:ProjectRoot worktree list --porcelain
-    if ($LASTEXITCODE -ne 0) {
-        return @()
-    }
+    try { $output = @(Get-GitPathList -Arguments @('worktree', 'list', '--porcelain', '-z')) }
+    catch { return @() }
 
     $items = @()
     $current = $null
     foreach ($line in @($output)) {
-        if (-not $line) {
-            if ($null -ne $current) {
-                $items += [pscustomobject]$current
-                $current = $null
-            }
-            continue
-        }
-
         if ($line -like "worktree *") {
             if ($null -ne $current) {
                 $items += [pscustomobject]$current
@@ -2831,6 +2849,7 @@ function Ensure-GitIgnore {
         ".agent-1c/extension-dump/",
         ".agent-1c/extension-init/",
         ".agent-1c/snapshots/",
+        ".agent-1c/migrations/",
         ".agent-1c/restoration-state/",
         ".agent-1c/release-e2e-roundtrip/",
         ".agent-1c/release-e2e-extension/",
@@ -2844,6 +2863,7 @@ function Ensure-GitIgnore {
         ".agent-1c/tools/vanessa-automation/",
         ".agent-1c/tools/vanessa-mcp/",
         ".agent-1c/tools/roctup-mcp-toolkit/",
+        ".agent-1c/tools/openspec-cli/",
         ".agent-1c/mcp/",
         "build/data-mcp-tools-loader/",
         "build/test-results/",
@@ -2872,7 +2892,7 @@ function Ensure-GitIgnore {
     # Keep crash dumps and tooling probe runtime mandatory in code and template. A refreshed
     # master helper can checkpoint an older branch before that branch receives
     # the updated template through its master merge.
-    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
+    $required = @($required + @("*.mdmp", ".agent-1c/tools/tooling-probe/", ".agent-1c/tools/openspec-cli/", "build/tooling-probe/") + @(Get-ItlGeneratedCodexSkillIgnorePaths) | Select-Object -Unique)
 
     if (Test-Path -LiteralPath $gitignorePath) {
         $current = Read-Utf8Lines -Path $gitignorePath
@@ -2890,6 +2910,42 @@ function Ensure-GitIgnore {
     if ($linesToAdd.Count -gt 0) {
         Add-Utf8Text -Path $gitignorePath -Value (($linesToAdd -join [Environment]::NewLine) + [Environment]::NewLine)
     }
+}
+
+function Ensure-ItlPinnedOpenSpecGitAttributes {
+    $relative = '.agents/skills/1c-workflow/resources/openspec-cli/package-lock.json'
+    $required = "$relative -text"
+    $path = Join-Path $script:ProjectRoot '.gitattributes'
+    $text = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-Utf8Text -Path $path } else { '' }
+    $lines = @($text -split "`r?`n")
+    $present = @($lines | Where-Object { $_ -ceq $required })
+    if ($present.Count -gt 1) {
+        throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: '$path' repeats the pinned package-lock attribute. Keep one exact '$required' line and repeat the operation."
+    }
+    $explicitPattern = '^' + [regex]::Escape($relative) + '\s+'
+    $conflicts = @($lines | Where-Object { $_ -match $explicitPattern -and $_ -cne $required })
+    if ($conflicts.Count -gt 0) {
+        throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: '$path' has another attribute for the pinned package lock. Reconcile it to '$required' and repeat the operation."
+    }
+    if ($present.Count -eq 1) { return $false }
+
+    # The 1C transport contract keeps its managed block at EOF. Insert this
+    # independent byte-preservation rule before that block, preserving all
+    # existing user text and its line-ending style.
+    $newline = if ($text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $marker = '# BEGIN ITL MANAGED: preserve 1C source bytes'
+    $markerAt = $text.IndexOf($marker, [StringComparison]::Ordinal)
+    if ($markerAt -ge 0) {
+        if ($markerAt -gt 0 -and $text[$markerAt - 1] -ne "`n") {
+            throw "OPEN_SPEC_CLI_GIT_ATTRIBUTES_CONFLICT: the 1C managed block in '$path' is not at a line boundary. Reconcile it and repeat the operation."
+        }
+        $updated = $text.Insert($markerAt, ($required + $newline))
+    } else {
+        $separator = if (-not $text -or $text.EndsWith("`n")) { '' } else { $newline }
+        $updated = $text + $separator + $required + $newline
+    }
+    Write-Utf8TextAtomic -Path $path -Value $updated
+    return $true
 }
 
 function Get-OneCSourceGitAttributesManagedLines {
@@ -4033,8 +4089,10 @@ function Sync-WorkflowManagedDependencyLockEntries {
 
     if ($mode -eq "locked") {
         $missing = [System.Collections.Generic.List[string]]::new()
+        $addOpenSpecCli = -not $dependencies.Contains('openSpecCli') -and $templateDependencies.Contains('openSpecCli')
         foreach ($name in $managedNames) {
             if (-not $dependencies.Contains($name)) {
+                if ($name -eq 'openSpecCli' -and $addOpenSpecCli) { continue }
                 $missing.Add("dependencies.$name") | Out-Null
                 continue
             }
@@ -4045,7 +4103,16 @@ function Sync-WorkflowManagedDependencyLockEntries {
         if ($missing.Count -gt 0) {
             throw "DEPENDENCY_LOCK_UPGRADE_REQUIRED: dependency mode is locked and the workflow dependency lock is incomplete. Missing: $($missing -join ', ')."
         }
-        return [pscustomobject]@{ mode = "locked"; changed = $false; entries = @() }
+        if ($addOpenSpecCli) {
+            # The new CLI is a versioned workflow component. Add only its exact
+            # template pin; never flip a locked project's dependency mode or
+            # refresh any of its existing dependency choices.
+            $dependencies['openSpecCli'] = ConvertTo-Agent1cHashtable -Object $templateDependencies['openSpecCli']
+            $manifest['dependencies'] = $dependencies
+            Write-DependencyLockManifest -Manifest $manifest
+            Write-Host 'Added the pinned OpenSpec CLI component to the existing locked dependency manifest.'
+        }
+        return [pscustomobject]@{ mode = "locked"; changed = [bool]$addOpenSpecCli; entries = $(if ($addOpenSpecCli) { @('openSpecCli') } else { @() }) }
     }
 
     $changedEntries = [System.Collections.Generic.List[string]]::new()
@@ -5130,7 +5197,7 @@ function ConvertTo-AgentToolList {
 }
 
 function Get-SupportedAgentTargets {
-    return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "pi")
+    return @("codex", "kilocode", "claude-code", "cursor", "opencode", "kimi", "qwen", "command-code", "cline", "zcode", "mimocode", "pi")
 }
 
 function Get-InitAgentExecutionEnvironment {
@@ -5220,6 +5287,8 @@ function Resolve-InitAgentTargetFromExecutionContext {
         qwen = @("qwen", "qwen-code")
         "command-code" = @("command-code", "commandcode")
         cline = @("cline")
+        zcode = @("zcode")
+        mimocode = @("mimocode")
         pi = @("pi")
     }
     $commandMarkers = [ordered]@{
@@ -5231,6 +5300,8 @@ function Resolve-InitAgentTargetFromExecutionContext {
         qwen = @("@qwen-code/qwen-code", "@qwen-code\\qwen-code")
         "command-code" = @("command-code", "commandcode")
         cline = @("cline.bot", "cline-cli")
+        zcode = @("zcode")
+        mimocode = @("mimocode", "@mimo/code")
         pi = @("@mariozechner/pi-coding-agent", "pi-coding-agent")
     }
 
@@ -5309,9 +5380,15 @@ function Read-InitAgentTarget {
 function Set-ProjectAiRulesClient {
     param([Parameter(Mandatory = $true)][string]$Client)
 
-    $normalized = @(ConvertTo-AgentToolList -Value $Client)
-    if ($normalized.Count -ne 1 -or $normalized[0] -notin (Get-SupportedAgentTargets)) {
-        throw "Exactly one supported agent client is required: $((Get-SupportedAgentTargets) -join ', ')."
+    Set-ProjectAiRulesClients -Clients @($Client)
+}
+
+function Set-ProjectAiRulesClients {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Clients)
+
+    $normalized = @(ConvertTo-AgentToolList -Value $Clients)
+    if (@($normalized | Where-Object { $_ -notin (Get-SupportedAgentTargets) }).Count -gt 0) {
+        throw "Unsupported agent client; choose from: $((Get-SupportedAgentTargets) -join ', ')."
     }
     $config = if (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf -ErrorAction SilentlyContinue) {
         ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
@@ -5323,30 +5400,79 @@ function Set-ProjectAiRulesClient {
     } else {
         [ordered]@{}
     }
-    $aiRules["tools"] = @($normalized[0])
+    $aiRules["tools"] = @($normalized)
     $config["aiRules"] = $aiRules
     Write-Utf8Text -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
 }
 
+function Initialize-ItlClientModelTiers {
+    # Bind legacy project-wide model ids to the sole original client before
+    # an attach changes the desired set. The fork renderer reads this map and
+    # never applies those ids to another client's agent files.
+    if (-not (Test-Path -LiteralPath $script:ConfigPath -PathType Leaf)) { return $false }
+    $config = ConvertTo-Agent1cHashtable -Object (Read-Utf8Text -Path $script:ConfigPath | ConvertFrom-Json)
+    if (-not $config.Contains('aiRules')) { return $false }
+    $aiRules = ConvertTo-Agent1cHashtable -Object $config['aiRules']
+    if ($aiRules.Contains('modelTiersByClient')) { return $false }
+    $clients = @(ConvertTo-AgentToolList -Value $aiRules['tools'])
+    $models = [ordered]@{ coding = ''; analysis = ''; light = '' }
+    $envPath = Join-Path $script:ProjectRoot '.dev.env'
+    if (Test-Path -LiteralPath $envPath -PathType Leaf) {
+        $envText = Read-Utf8Text -Path $envPath
+        foreach ($tier in @($models.Keys)) {
+            $key = 'SUBAGENT_MODEL_' + $tier.ToUpperInvariant()
+            $match = [regex]::Match($envText, '(?m)^\s*' + [regex]::Escape($key) + '\s*=\s*([^\r\n]*)')
+            if ($match.Success) { $models[$tier] = $match.Groups[1].Value.Trim() }
+        }
+        if ($models['coding'] -and -not [regex]::IsMatch($envText, '(?m)^\s*SUBAGENT_MODEL_ANALYSIS\s*=')) {
+            $models['analysis'] = $models['coding']
+            $models['analysisExplicit'] = $false
+        }
+    }
+    $hasLegacyValues = @($models.Values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0
+    if ($clients.Count -ne 1) {
+        $priorOwners = @(Get-AiRules1cManifestToolNames)
+        $originalClient = if ($priorOwners.Count -eq 1 -and $priorOwners[0] -in $clients) { [string]$priorOwners[0] } else { '' }
+        if ($hasLegacyValues -and -not $originalClient) {
+            throw "ITL_CLIENT_MODEL_AMBIGUOUS: legacy SUBAGENT_MODEL_* values cannot be assigned across $($clients.Count) clients without a sole installed owner. Set aiRules.modelTiersByClient explicitly."
+        }
+        $modelMap = [ordered]@{}
+        if ($hasLegacyValues) { $modelMap[$originalClient] = $models }
+        $aiRules['modelTiersByClient'] = $modelMap
+    } else {
+        $modelMap = [ordered]@{}
+        $modelMap[[string]$clients[0]] = $models
+        $aiRules['modelTiersByClient'] = $modelMap
+    }
+    $config['aiRules'] = $aiRules
+    Write-Utf8TextAtomic -Path $script:ConfigPath -Value (($config | ConvertTo-Json -Depth 12) + [Environment]::NewLine)
+    Read-ProjectConfig
+    return $true
+}
+
 function Get-AgentTargets {
-    $target = $AgentTarget
-    if ($null -eq $target -or ($target -is [string] -and [string]::IsNullOrWhiteSpace($target))) {
-        $target = Get-Setting -EnvName "AGENT_TOOLS" -ConfigName "aiRules.tools" -Default @()
+    # The configured set belongs to the project; -AgentTarget selects the
+    # executing client and must not silently replace the desired installation.
+    $target = Get-ConfigValue -Path "aiRules.tools" -Default @()
+    $hasExplicitSet = $null -ne $script:Config -and
+        $null -ne $script:Config.PSObject.Properties['aiRules'] -and
+        $null -ne $script:Config.aiRules -and
+        $null -ne $script:Config.aiRules.PSObject.Properties['tools']
+    if (-not $hasExplicitSet -and @(ConvertTo-AgentToolList -Value $target).Count -eq 0) {
+        $target = [Environment]::GetEnvironmentVariable("AGENT_TOOLS", "Process")
+    }
+    if (-not $hasExplicitSet -and @(ConvertTo-AgentToolList -Value $target).Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$AgentTarget)) {
+        $target = $AgentTarget
     }
 
     $items = @(ConvertTo-AgentToolList -Value $target)
-    if ($items.Count -eq 2 -and $items -contains "codex" -and $items -contains "kilocode") {
-        Write-Host "Migrating legacy aiRules.tools [codex,kilocode] to the single active client [kilocode]."
-        $items = @("kilocode")
-    }
     if ($items.Count -eq 0) {
-        throw "No active agent client is configured. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', ')."
+        if ($hasExplicitSet) { return @() }
+        throw "No agent client is configured. Choose at least one of: $((Get-SupportedAgentTargets) -join ', ')."
     }
-    if ($items.Count -ne 1) {
-        throw "Multiple active agent clients are not supported. Choose exactly one of: $((Get-SupportedAgentTargets) -join ', '). Configured: $($items -join ', ')."
-    }
-    if ($items[0] -notin (Get-SupportedAgentTargets)) {
-        throw "Unsupported agent client '$($items[0])'. Supported clients: $((Get-SupportedAgentTargets) -join ', ')."
+    $unsupported = @($items | Where-Object { $_ -notin (Get-SupportedAgentTargets) })
+    if ($unsupported.Count -gt 0) {
+        throw "Unsupported agent client(s) '$($unsupported -join ', ')'. Supported clients: $((Get-SupportedAgentTargets) -join ', ')."
     }
 
     return $items
@@ -7363,6 +7489,65 @@ function Start-NativeProcessBackground {
     }
 
     return $process
+}
+
+function Read-DesignerBatchStrictUtf8Text {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $text = ([Text.UTF8Encoding]::new($false, $true)).GetString([IO.File]::ReadAllBytes($Path))
+    return $text.TrimStart([char]0xFEFF)
+}
+
+function Get-DesignerBatchCheckVerdict {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [Parameter(Mandatory = $true)][string]$ResultPath,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $resultCode = $null
+    $reasons = [System.Collections.Generic.List[string]]::new()
+    if ($ExitCode -ne 0) { $reasons.Add("process exit=$ExitCode") }
+    if (-not (Test-Path -LiteralPath $ResultPath -PathType Leaf)) {
+        $reasons.Add('/DumpResult was not written')
+    } else {
+        try {
+            $rawResult = (Read-DesignerBatchStrictUtf8Text -Path $ResultPath).Trim()
+            if ($rawResult -notmatch '^-?[0-9]+$') { throw 'expected one numeric result' }
+            $resultCode = [int]::Parse($rawResult, [Globalization.CultureInfo]::InvariantCulture)
+            if ($resultCode -ne 0) { $reasons.Add("/DumpResult=$resultCode") }
+        } catch { $reasons.Add("/DumpResult is invalid: $($_.Exception.Message)") }
+    }
+
+    $diagnostics = [System.Collections.Generic.List[string]]::new()
+    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        $reasons.Add('/Out log was not written')
+    } else {
+        try {
+            foreach ($line in @((Read-DesignerBatchStrictUtf8Text -Path $LogPath) -split '\r?\n')) {
+                $remaining = [string]$line
+                foreach ($success in @(
+                    '(?i)\bошибок\s+не\s+обнаружено\b',
+                    '(?i)\bпредупреждений\s+не\s+обнаружено\b',
+                    '(?i)\b(?:ошибок|предупреждений)\s*:\s*0(?![0-9])',
+                    '(?i)\b(?:errors?|warnings?)\s*(?::|=)\s*0(?![0-9])',
+                    '(?i)\b(?:0\s+errors?|0\s+warnings?|no\s+errors?|no\s+warnings?|errors?\s+were\s+not\s+found)\b'
+                )) { $remaining = [regex]::Replace($remaining, $success, '') }
+                if ($remaining -match '(?i)ошибк\p{L}*|предупреждени\p{L}*|не\s+найден\s+метод|не\s+может\s+быть\s+применен\p{L}*|невозможно|\b(?:error|fatal|failed|failure|exception|warning)\b') {
+                    $diagnostics.Add($line.Trim())
+                }
+            }
+            if ($diagnostics.Count -gt 0) { $reasons.Add("/Out has $($diagnostics.Count) warning/error diagnostic(s)") }
+        } catch { $reasons.Add("/Out cannot be decoded: $($_.Exception.Message)") }
+    }
+    return [pscustomobject]@{
+        passed = ($reasons.Count -eq 0)
+        exitCode = $ExitCode
+        resultCode = $resultCode
+        resultPath = $ResultPath
+        logPath = $LogPath
+        diagnostics = @($diagnostics.ToArray())
+        reasons = @($reasons.ToArray())
+    }
 }
 
 function Invoke-Designer {

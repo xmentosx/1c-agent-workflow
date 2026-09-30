@@ -20,6 +20,8 @@
 | `$openspec-explore` | Исследование перед постановкой или уточнение существующего change |
 | `$openspec-propose` | Требования, дизайн и задачи выбранного изменения |
 | `$openspec-apply-change` | Реализация согласованного change в пределах разрешения пользователя |
+| `$openspec-update-change` | Согласованное уточнение уже существующих артефактов change |
+| `$openspec-sync-specs` | Перенос delta-требований в основную спецификацию без архивации |
 | `$openspec-archive-change` | Архив завершённого и проверенного change |
 
 Навыки находятся в `.agents/skills`; invocation metadata отключает неявное
@@ -28,12 +30,15 @@ entrypoints. Generic OpenSpec подсказки `/opsx:*` и дополните
 полного upstream каталога не являются установленными здесь командами: используйте
 точки входа таблицы и `openspec status/instructions` для продолжения артефактов.
 
-OpenSpec требует доступного CLI; проверенная версия — `1.4.1`. Проверьте
-`openspec --version` перед первой CLI-операцией в выбранном этапе. Если CLI
-отсутствует, сообщите предпосылку и сохраните артефакты: не заявляйте валидацию
-и не устанавливайте инструменты автоматически. Grill работает независимо.
-CLI должен быть доступен из среды выполнения Codex; установка в другом
-терминале сама по себе не доказывает доступность из sandbox.
+Source-only фазы используют точный CLI `1.13.1` из закреплённого lock.
+Перед первой операцией проверьте `scripts/source-openspec.ps1 --version`.
+Вызовы `openspec ...` внутри импортированных навыков означают
+`scripts/source-openspec.ps1 ...` из корня этого checkout; wrapper проверяет
+пару абсолютных Node/CLI путей и их hashes. Если runtime отсутствует, только
+явное `scripts/source-openspec.ps1 -Provision` устанавливает его в ignored
+versioned каталог этого checkout. Отсутствие CLI не доказывает отсутствие
+артефактов и не разрешает автоматическую установку. Grill работает независимо.
+`status.isComplete` описывает постановку, а не завершение реализации.
 
 ## Достаточная постановка
 
@@ -77,7 +82,7 @@ checkpoint. Существенные решения о поведении, от�
 | Содержимое | Авторитетный источник |
 |---|---|
 | Четыре grill навыка, `ADR-FORMAT.md`, `CONTEXT-FORMAT.md` | [controlled fork](https://github.com/xmentosx/itl_ai_rules_1c/tree/451c5a52e5b614c67406445d4af4b636da043aec/content/skills), commit `451c5a52e5b614c67406445d4af4b636da043aec`, tag `itl-main-410951e7-r36` |
-| Четыре generic OpenSpec навыка | `@fission-ai/openspec@1.4.1`, `dist/core/shared/skill-generation.js` |
+| Шесть generic OpenSpec навыков | `@fission-ai/openspec@1.13.1`, `dist/core/shared/skill-generation.js`; exact npm integrity и transitive lock — в versioned resource |
 | Invocation metadata и source routing | Этот исходный репозиторий |
 
 Grill — адаптация [mattpocock/skills](https://github.com/mattpocock/skills/tree/0ab1b63a410a03d3627979a109c8695de27af954), MIT.
@@ -91,10 +96,11 @@ Grill — адаптация [mattpocock/skills](https://github.com/mattpocock/s
 тексты с источником; сохраните в `agents/openai.yaml` каждого навыка
 `policy.allow_implicit_invocation: false`, не удаляя существующие UI fields.
 
-Для воспроизведения OpenSpec получите путь к уже установленному пакету 1.4.1
-(например, каталог `@fission-ai/openspec` под результатом `npm root -g`).
-Из корня репозитория передайте его вторым аргументом следующему Node ES module;
-тело можно передать через stdin с `node --input-type=module - <package-root>`:
+Для воспроизведения навыков распакуйте exact npm tarball `1.13.1` с integrity
+из `templates/dependency-lock.json` в отдельный каталог без изменения global npm.
+Из корня репозитория передайте каталог `package` вторым аргументом следующему
+Node ES module; тело можно передать через stdin с
+`node --input-type=module - <package-root>`:
 
 ```javascript
 import fs from 'node:fs';
@@ -102,10 +108,11 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 const root = process.argv[2];
 const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-if (version !== '1.4.1') throw new Error(`Expected 1.4.1, found ${version}`);
+if (version !== '1.13.1') throw new Error(`Expected 1.13.1, found ${version}`);
 const { getSkillTemplates, generateSkillContent } = await import(
   pathToFileURL(path.join(root, 'dist/core/shared/skill-generation.js')));
-for (const { template, dirName } of getSkillTemplates(['explore', 'propose', 'apply', 'archive'])) {
+for (const { template, dirName } of getSkillTemplates(
+  ['explore', 'propose', 'apply', 'archive', 'update', 'sync'])) {
   const target = path.join('.agents/skills', dirName);
   fs.mkdirSync(path.join(target, 'agents'), { recursive: true });
   fs.writeFileSync(path.join(target, 'SKILL.md'), generateSkillContent(template, version));
@@ -116,9 +123,11 @@ for (const { template, dirName } of getSkillTemplates(['explore', 'propose', 'ap
 
 Это рецепт явного обновления проверенной зависимости, а не шаг обычной задачи.
 Не запускайте здесь `openspec init --tools codex` или автоматический
-`openspec update`: adapter 1.4.1 может менять глобальные prompts.
+`openspec update`: они могут менять глобальные prompts. Skill
+`openspec-update-change` обновляет артефакты конкретного change, а не adapter.
 Не добавляйте эти навыки, `openspec/` и source-planning docs в bootstrap или
-update-workflow managed-copy. Одноимённые навыки установленного проекта
+update-workflow managed-copy. Source launcher `scripts/source-openspec.ps1`
+также остаётся вне managed-copy. Одноимённые навыки установленного проекта
 принадлежат controlled fork и не заменяются исходным набором.
 
 При обновлении проверьте metadata и ссылки, измерьте bytes router/skill metadata,

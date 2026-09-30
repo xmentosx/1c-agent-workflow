@@ -78,13 +78,12 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
 | `AGENT_MODEL` | Профиль правил для точной модели головного агента | `opus5`/`sonnet5`/`fable5`/`gpt56`; пусто = `auto`, управление через `/rulesmodel` | bootstrap/user |
 | `SUPPORT_GUARD` | Реакция upstream-инструментов на изменение заблокированного объекта типовой конфигурации на поддержке | `deny`/`warn`/`off`, default `deny` | user/`support-edit` |
-| `SUBAGENT_MODEL_CODING` | Модель coding tier | model id; пусто = модель клиента | user/installer |
-| `SUBAGENT_MODEL_ANALYSIS` | Модель analysis tier | model id; пусто = модель клиента | user/installer |
-| `SUBAGENT_MODEL_LIGHT` | Модель light tier | model id; пусто = модель клиента | user/installer |
-| `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` требуют явный `SUBAGENT_MODEL_LIGHT` для делегирования; `/itl-result` всегда direct для итоговой композиции текущей задачи | user |
+| `SUBAGENT_MODEL_CODING` | Прежнее значение coding tier; при upgrade однократно привязывается к исходному клиенту | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `SUBAGENT_MODEL_ANALYSIS` | Прежнее значение analysis tier | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `SUBAGENT_MODEL_LIGHT` | Прежнее значение light tier | model id; после миграции менять `aiRules.modelTiersByClient` | migration |
+| `ITL_ROUTINE_MODE` | Делегирование `/itl*` в Kilo/OpenCode routine | `off`/`auto`/`on`, default `off`; `auto` и `on` используют явный `modelTiersByClient.<client>.light`; `/itl-result` всегда direct для итоговой композиции текущей задачи | user |
 | `OPENCODE_EXPERIMENTAL_WORKSPACES` | Native worktree workspace API OpenCode | workflow идемпотентно задаёт `true` на уровне пользователя после успешного init/update/switch на OpenCode; требуется перезапуск OpenCode | user |
-| `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `on` | user/`/caveman` |
-| `CAVEMAN_LEVEL` | Постоянный уровень краткого стиля | `lite`/`full`/`ultra`, default/invalid `full`; session override имеет приоритет | user/`/caveman persist` |
+| `CAVEMAN` | Автоактивация краткого стиля | `on`/`auto`/`off`, default `auto` | user/`/caveman` |
 
 Для native workspace OpenCode workflow также готовит игнорируемый project-local runtime `.opencode/node_modules` из записи `opencodePlugin` в `.agent-1c/dependency-lock.json`. Требуются Node.js 22+ и npm; после init/update/switch OpenCode Desktop нужно полностью перезапустить, чтобы зарегистрировать ITL workspace tools.
 

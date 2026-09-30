@@ -1012,7 +1012,8 @@ Describe "Pester worker execution guard isolation" {
         $installedSkillIds = @("1c-workflow", "1c-workflow-fast", "itl-roctup-1c-data", "itl-vanessa-ui-mcp", "itl-performance", "itl-remote-runner", "itl-remote-agent", "product-docs")
         $sourcePlanningSkillIds = @(
             'grill-me', 'grill-with-docs', 'grilling', 'domain-modeling',
-            'openspec-explore', 'openspec-propose', 'openspec-apply-change', 'openspec-archive-change'
+            'openspec-explore', 'openspec-propose', 'openspec-apply-change',
+            'openspec-update-change', 'openspec-sync-specs', 'openspec-archive-change'
         )
         # BootstrapUpdate covers actual installed output and update copy boundaries.
         $expected = @($installedSkillIds + $sourcePlanningSkillIds | Sort-Object)

@@ -1,12 +1,12 @@
 ---
-description: Транзакционно переключить единственный активный агент-клиент проекта
+description: Проверить или выбрать клиент вызова, подключить или отключить клиента проекта через ITL
 agent: code
 ---
 
-Use only from the clean `master` worktree. Require one explicit target from `codex`, `kilocode`, `claude-code`, `cursor`, or `opencode`, then run:
+For `attach`, `detach`, or `reconcile`, use the clean `master` worktree. `attach` adds one explicit client and `detach` removes one, including the last client without deleting the project. `reconcile` reapplies the configured set. `switch` selects an already attached client for this invocation only and does not change project membership; later calls identify their client again or pass `-AgentTarget`. `status` reads the configured set. Then run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action itl-switch-client -Client <client>
+powershell -ExecutionPolicy Bypass -File .\.agents\skills\1c-workflow\scripts\run-itl-command.ps1 -- -Action itl-switch-client -Mode <status|switch|attach|detach|reconcile> [-Client <client>]
 ```
 
-The helper owns snapshot, guards, cleanup, pinned rules installation, model reset, rollback, and reload instructions. Use the bounded JSON summary as the result; read only the last 80 lines of its `logPath` on failure. Do not update development worktrees or remove RTK integration manually.
+The helper owns snapshot, guards, scoped cleanup, pinned rules installation, and reload instructions. Existing client model settings remain intact. Use the bounded JSON summary as the result; read only the last 80 lines of its `logPath` on failure. Do not update development worktrees or remove RTK integration manually.

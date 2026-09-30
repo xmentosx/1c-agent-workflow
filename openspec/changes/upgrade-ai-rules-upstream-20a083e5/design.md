@@ -104,7 +104,7 @@ scope write-set ограничен исходниками запрошенной
 
 Evidence содержит actual/expected, тип проверки, точный source/fragment hash,
 область применимости, identity тестовой ИБ и загруженного состояния, runner/tool
-identity, revisions применимых требований (включая external store), артефакты
+identity, revisions применимых требований (включая локальные OpenSpec артефакты), артефакты
 результата и ограничения. Ключ свежести включает также версию схемы evidence и
 применимые требования к достаточности результата. Разрешение нового запуска
 отделено от этих требований: invocation override сохраняется как provenance,
@@ -252,73 +252,22 @@ local/project/global/explicit store и invalid pointer, archive/sync. CLI не
 Source-pilot использует тот же resolver с source pin, сохраняя source-only
 routing и invocation metadata; установленный bundle принадлежит fork.
 
-### D7. Store resolver и защита записей
+### D7. Локальный OpenSpec в этом выпуске
 
-CLI остаётся единственным resolver store registry/precedence/schema/path.
-Задача фиксирует canonical physical root, selector, change ID, CLI identity и
-связь с checkout/branch. Настройки пользователя разрешают последующую смену,
-но не переносят документы. Без выбора внешнего store локальный default сохраняется
-для старых и новых проектов. Broken binding не инициализирует локальную замену.
+Текущий релиз принимает совместимый закреплённый CLI и шесть OpenSpec фаз
+для локального `openspec/` workspace старых и новых проектов. CLI остаётся
+источником схемы, scaffold, context и путей. Host проверяет выбор до записи:
+если CLI разрешил registered, declared или global-default внешний store,
+зависимая операция возвращает `OPEN_SPEC_EXTERNAL_STORE_DEFERRED`, сообщает
+выбранный root и продолжение через осознанный выбор локального workspace либо
+будущий релиз. Ни прямой upstream bundle route, ни host helper не записывают
+внешний store и не создают локальную замену молча.
 
-Для записи агент читает документы и hashes, готовит candidate batch отдельно.
-Небольшой host operation helper принимает readSet зависимых входов и writeSet
-целевых файлов, canonical paths/root identity, expected hashes и кандидат.
-При archive вход включает состав дерева change: новая delta/metadata также
-меняет revision. Он не является вторым resolver, registry или демоном.
-На короткое окно compare/write helper берёт упорядоченные shared read locks
-и exclusive write locks, включая namespace membership при создании/перемещении
-дерева. Все изменяющие store маршруты участвуют в одном протоколе. Read/write
-пересечение конфликтует; общие read-only inputs не сериализуют независимые writes.
-Locks не удерживаются во время рассуждений. Ожидание ограничено 30 секундами с диагностикой владельца;
-по timeout никакого принудительного удаления lock, продолжение — повтор исходной
-операции после завершения владельца. Независимые write-sets работают параллельно.
-
-Native CLI mutations проходят тот же owner через staging, а не напрямую в live
-store. Из согласованных readSet/tree membership готовится ограниченный временный
-planning context; закреплённый CLI выполняет там `new change` и другие штатные
-генерирующие операции, включая `.openspec.yaml`. CLI сохраняет владение schema,
-scaffold и разрешением путей; адаптер не переписывает его генератор. Изолированный
-контекст не меняет живой store, project binding, user registry или global prompts.
-После проверки полноты вывода и соответствия целевому root diff переводится
-в существующий batch, включая новые файлы и namespace membership. Staging paths
-не остаются ссылками в установленных artifacts. Возможность такой изоляции
-квалифицируется для выбранного CLI; её отсутствие не разрешает live-write bypass.
-Операции sync/archive готовят candidate таким же образом; прямые `mkdir/mv`
-в live root из bundle заменяются вызовом owner. Crash до commit оставляет только
-временную подготовку, после начала batch используется тот же journal recovery.
-При concurrent `new change` с одинаковым именем проходит один writer; второй
-сохраняет candidate для reconciliation. Неполный scaffold не считается готовым change.
-
-Lock и краткий operation journal находятся в runtime области выбранного store
-(Git common runtime при наличии Git). Lease — OS/file handle с проверенной
-shared/exclusive семантикой, а не сам факт существования lock-файла. После crash
-handle освобождается; recovery получает его обычным способом, не удаляя чужой
-lock. Owner identity служит диагностике. Файловая система должна обеспечивать
-эту семантику участвующим клиентам/машинам;
-если shared transport её не обеспечивает, зависимая concurrent write операция
-не объявляется безопасной, предлагается локальный store или сериализованный
-единственный writer. Никакой новый удалённый сервис не устанавливается.
-Обычный внешний редактор может не участвовать в lock: повторная сверка хешей
-обнаруживает наблюдаемый drift; эксклюзивная запись охватывает заменяемый файл,
-а не обещает защиту от произвольного обхода протокола другим процессом.
-
-Journal содержит собственные prepared/before/after bytes и состояние batch.
-При recovery откатываются только записи, чьи текущие hashes совпадают с after
-данной операции; иначе оставляются обе версии и точное reconciliation.
-Scope не допускает symlink/junction escape, весь store не reset/rollback.
-Разные changes, пишущие один main spec, конфликтуют по target path. Sync,
-validation и archive выполняются последовательно одним operation owner; archive
-не удаляет активный change до успешного sync/validation и повторной проверки
-той же change/delta revision. Drift оставляет новый delta активным; старый sync
-не разрешает archive изменившегося change. Смена alias/root перед
-записью останавливает её. Ошибка/параллельное изменение не требует повторного
-пользовательского разрешения на техническое перечитывание в прежней области.
-
-Local Git versioning остаётся прежним. Lifecycle snapshot включает binding и
-инструкции проекта, но не содержимое external store. Reset/refresh/close/update
-не архивируют и не откатывают его документы. Повторное продолжение сверяет
-актуальные требования с кодом и proof identity из D3.
-
+Для локального workspace остаются Git versioning и обычные OpenSpec операции;
+новая межпроектная store-write authority, lease и journal в этот релиз не входят.
+Полный ранее согласованный D7 и его OS1–OS3 требования перенесены в отдельный
+`add-external-openspec-store` по решению пользователя 2026-09-29. Прототип
+сохранён отдельно и не считается квалифицированной частью текущего пакета.
 ### D8. Установленный набор клиентов и контекст вызова
 
 Один источник desired state — `.agent-1c/project.json:aiRules.tools`; результат
@@ -411,6 +360,13 @@ CLI cache не откатываются вместе с проектом. Отм
 восстанавливает owned state и выдаёт existing recovery continuation.
 Граница одной root-транзакции начинается до замены host package и продолжается
 через fresh-process post-copy, rules/client migration, commit и terminal outcome.
+Для первого перехода с опубликованного r33 старый установленный helper нельзя
+считать владельцем этой границы: он исполняет свой pre-copy до загрузки нового
+кода. Первый update запускается через узкий source-side handoff, который вызывает
+новый `update-workflow` из проверенного exact package checkout с `ProjectRoot`
+старой установки и не копирует файлы сам. Это тот же lifecycle/update owner,
+не отдельный hotfix updater. Canary обязан подтвердить, что старый helper не
+исполняется до snapshot, а прямой старый маршрут не объявляется атомарным.
 Pre-copy snapshot/receipt нельзя удалять сразу после копирования: новое поколение
 helper должно уметь возобновить/откатить это состояние. Target eligibility и
 переход lock планируются до первой замены; добавление OpenSpec dependency в locked
@@ -537,16 +493,11 @@ atomic push, что immutable component branch/tag, с прежним ancestry p
 
 ### Architecture checkpoint for the implementation
 
-**Согласовано пользователем 2026-09-28.** Принят предложенный в D7 механизм
-безопасной записи внешних спецификаций: проверка исходных revisions, краткие
-блокировки затронутых документов, reconciliation при конфликте и восстановление
-собственных записей после аварии. Согласование закрывает эту архитектурную
-развилку в описанных ниже границах. Пользователь отдельно указал:
-«реализацию пока не начинай». Apply не разрешён до нового прямого поручения;
-повторно согласовывать уже принятое решение без изменения его границ не нужно.
-Прямое поручение «Начинай реализацию по спеке» получено 2026-09-29; оно снимает
-этот hold для реализации в согласованных границах. Публикация и установка в
-реальные проекты остаются отдельными этапами с собственными задачами.
+**Обновление границ 2026-09-29.** Принятый ранее механизм D7 для внешнего
+OpenSpec store вынесен по прямому решению пользователя в отдельный change
+`add-external-openspec-store` и отдельный чат. Этот выпуск квалифицирует только
+локальный OpenSpec. Публикация и установка в реальные проекты остаются
+отдельными этапами с собственными задачами.
 
 Q1–Q21 фиксируют продуктовые решения; этот раздел задаёт конкретные границы для
 принятого checkpoint по docs/package-architecture.md. Новые изменения installed
@@ -554,12 +505,10 @@ state — multi-owner client membership, evidence schema, Caveman receipt и pin
 CLI selection — мигрируются существующими host owners. Plugin — вызывающая
 сторона, без своей очереди/repair. Source/fork ownership остаётся прежним.
 
-Новая узкая runtime authority для внешних документов — store write batch D7. Минимальный
-reproducer: два changes читают один main spec, первый пишет, второй теряет его
-добавление. Prompt-only предупреждение и проверка hash без эксклюзивной записи
-не закрывают race. Выбран scoped file operation с ограниченным ожиданием и
-compare/write/recovery; машинный демон, глобальный lock registry и перенос store
-под lifecycle отвергнуты как избыточные. Непересекающиеся записи не блокируются.
+Store write batch D7 и его cross-project runtime authority не включаются в этот
+релиз. В текущем пакете host и managed rules останавливают внешний store до
+записи с точным продолжением, а локальные OpenSpec операции используют
+закреплённый CLI и прежний Git ownership.
 
 Q21.1 и упрощение Q21.2 согласованы в последующем обсуждении: существующий
 update owner распространяет файловую миграцию на зарегистрированные worktrees,
@@ -576,12 +525,12 @@ update owner распространяет файловую миграцию на
 Windows/terminal и модель прав не ослабляются. Это согласование постановки,
 не разрешение apply; подробности внутри этих границ агент прорабатывает сам.
 
-Ресурсы: project/client write-set и точные store paths. Windows/privilege/terminal
-support не сужается. Cancellation идёт через существующего operation owner;
-store cancellation до write сохраняет targets, после частичного write — scoped
-recovery D7. Нет бесконечного ожидания и автоматического убийства чужих процессов.
+Ресурсы текущего выпуска: project/client write-set и локальные OpenSpec paths.
+Windows/privilege/terminal support не сужается. Cancellation идёт через
+существующего operation owner. Нет бесконечного ожидания и автоматического
+убийства чужих процессов.
 Canary: existing single-client upgrade/rollback; add/remove двух клиентов;
-параллельный shared-spec sync; one-off proof→block export. Client hooks ограничены
+локальный new-change/sync/archive; one-off proof→block export. Client hooks ограничены
 коротким read-only discovery, дополнительные инструкции on demand. Измеряются
 контекст до/после, init/update duration и unchanged-operation overhead по текущей
 базовой версии; не вводится always-on network probing.

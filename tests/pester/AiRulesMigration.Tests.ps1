@@ -72,6 +72,34 @@
 }
 
 Describe "ai_rules_1c migration planning" {
+    It 'reports legacy migration without rewriting stale ownership markers' {
+        $root = Join-Path $TestDrive 'Диагностика проекта с пробелом'
+        New-AiRulesMigrationFixture -Root $root
+        $relative = '.codex/rules/diagnostic.md'
+        $rulePath = Join-Path $root $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $rulePath) -Force | Out-Null
+        [IO.File]::WriteAllText($rulePath, "Preserve this rule.`n", [Text.UTF8Encoding]::new($false))
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.files | Add-Member -NotePropertyName $relative -NotePropertyValue ([pscustomobject]@{
+            source='content/rules/diagnostic.md'; installedHash=(Get-FileHash -LiteralPath $rulePath).Hash.ToLowerInvariant(); userModified=$true
+        })
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+        $before = (Get-FileHash -LiteralPath $manifestPath).Hash
+        $result = & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            Write-AiRules1cStatusLines 6> $null
+            $afterReport=(Get-FileHash -LiteralPath $manifestPath).Hash
+            $plan=Get-AiRulesMigrationPlan
+            $afterUpdatePlan=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            [pscustomobject]@{afterReport=$afterReport;updatePlanStatus=$plan.status;markerAfterUpdatePlan=$afterUpdatePlan.files.PSObject.Properties[$relative].Value.userModified}
+        }
+        $result.afterReport | Should -Be $before
+        $result.updatePlanStatus | Should -Be eligible
+        $result.markerAfterUpdatePlan | Should -BeFalse
+        (Get-FileHash -LiteralPath $rulePath).Hash.ToLowerInvariant() | Should -Be $manifest.files.PSObject.Properties[$relative].Value.installedHash
+    }
+
     It "stays dormant until a verified fork baseline is configured" {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-dormant-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -108,6 +136,32 @@ Describe "ai_rules_1c migration planning" {
             $controlledModifiedPlan.status | Should -Be "user-modified"
         } finally {
             Remove-Item -LiteralPath $customRoot, $modifiedRoot, $controlledModifiedRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "blocks an edited legacy AGENTS.md even before the installer marks it userModified" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-root-drift-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-AiRulesMigrationFixture -Root $tempRoot
+            $rootPath = Join-Path $tempRoot 'AGENTS.md'
+            [IO.File]::WriteAllText($rootPath, "Original managed root`n", [Text.UTF8Encoding]::new($false))
+            $manifestPath = Join-Path $tempRoot '.ai-rules.json'
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $manifest.files | Add-Member -NotePropertyName 'AGENTS.md' -NotePropertyValue ([pscustomobject][ordered]@{
+                source = 'AGENTS.md'
+                installedHash = (Get-FileHash -LiteralPath $rootPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            })
+            Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
+            [IO.File]::AppendAllText($rootPath, "User addition`n", [Text.UTF8Encoding]::new($false))
+
+            $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
+            $plan.status | Should -Be 'user-modified'
+            $plan.eligible | Should -BeFalse
+            $changedPaths = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; @(Get-AiRulesManifestUserModifiedPaths) }
+            $changedPaths | Should -Contain 'AGENTS.md'
+            [IO.File]::ReadAllText($rootPath) | Should -Match 'User addition'
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 
@@ -155,6 +209,12 @@ Describe "ai_rules_1c migration planning" {
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
+            $beforeManifest = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash
+            $marked = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; @(Get-AiRulesManifestUserModifiedPaths) }
+            @($marked) | Should -Not -Contain 'USER-RULES.md'
+            (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash | Should -Be $beforeManifest
+            (Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json).files.'USER-RULES.md'.userModified | Should -BeTrue
+
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
             $plan.status | Should -Be "eligible"
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -164,7 +224,10 @@ Describe "ai_rules_1c migration planning" {
         }
     }
 
-    It "keeps USER-RULES blocking when content outside the ITL overlay changed" {
+    It "preserves user policy in declared templates while protecting undeclared managed USER-RULES" -ForEach @(
+        @{PlacedOnce=$true;ExpectedStatus='eligible'},
+        @{PlacedOnce=$false;ExpectedStatus='user-modified'}
+    ) {
         $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-ai-migration-user-rules-custom-" + [guid]::NewGuid().ToString("N"))
         try {
             New-AiRulesMigrationFixture -Root $tempRoot `
@@ -182,16 +245,21 @@ Describe "ai_rules_1c migration planning" {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $manifest.files | Add-Member -NotePropertyName "USER-RULES.md" -NotePropertyValue ([pscustomobject]@{
                 source = "USER-RULES.md"
-                template = $true
+                template = $PlacedOnce
                 installedHash = $installedHash
                 userModified = $true
             })
             Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value ($manifest | ConvertTo-Json -Depth 10)
 
+            $manifestHash = (Get-FileHash -LiteralPath $manifestPath).Hash
+            $policyHash = (Get-FileHash -LiteralPath $userRulesPath).Hash
+
             $plan = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Get-AiRulesMigrationPlan }
-            $plan.status | Should -Be "user-modified"
+            $plan.status | Should -Be $ExpectedStatus
             $updatedManifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $updatedManifest.files.'USER-RULES.md'.userModified | Should -BeTrue
+            (Get-FileHash -LiteralPath $manifestPath).Hash | Should -Be $manifestHash
+            (Get-FileHash -LiteralPath $userRulesPath).Hash | Should -Be $policyHash
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

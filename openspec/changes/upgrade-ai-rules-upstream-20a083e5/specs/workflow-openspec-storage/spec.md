@@ -1,69 +1,24 @@
 ## ADDED Requirements
 
-### Requirement: OS1 Explicit and stable planning home
-OpenSpec CLI SHALL resolve explicit store, project binding and user global default
-using its own precedence. With no external selection, local storage SHALL remain
-the default for new and existing projects. The resolved root and change SHALL be
-retained for the task; selection changes do not move documents automatically.
+### Requirement: OS0 Local planning home remains usable
+The current release SHALL keep a local `openspec/` planning home for both new
+and existing managed projects. Its pinned CLI and six supported phases SHALL
+work without an external store. If the CLI selects a registered, declared or
+global-default external store, the managed workflow SHALL report that this
+release does not support that selection and stop the dependent OpenSpec action;
+it MUST NOT create or use a local substitute or write to the external store.
+Changing the selection is an explicit project/user choice, not an upgrade side
+effect. External store support is specified separately in
+`add-external-openspec-store`.
 
-#### Scenario: Unreachable or malformed selected store
-- **WHEN** resolution fails for a declared external store
-- **THEN** no local substitute is initialized and the diagnostic distinguishes missing CLI, invalid binding and unreachable storage
-
-### Requirement: OS2 External documents are independent of branch lifecycle
-Refresh, reset, close, update and migration rollback SHALL not delete, revert or
-archive external planning documents. The task SHALL retain its change/root binding
-and observed revision; subsequent work reconciles current requirements with code.
-
-#### Scenario: Rollback after another task edits the external store
-- **WHEN** installed-project migration rolls back its local snapshot
-- **THEN** the external edit survives and only owned project instructions/binding are restored
-
-### Requirement: OS3 Shared spec writes detect concurrent changes
-Writes SHALL validate physical store identity, intended paths and the read
-revisions under the store-write operation owner. Different changes writing the
-same main spec are conflicting writers. No broad git reset or store rollback is
-permitted. Conflict preserves both current content and the candidate contribution.
-Read dependencies and change-tree membership SHALL remain protected during the
-apply window; archive MUST verify the revision that was successfully synced.
-Process death SHALL release the lock lease without manual lock-file deletion.
-Native CLI-generated writes, including new-change metadata and archive moves,
-SHALL use an isolated staging context and then the same protected batch/journal.
-The pinned CLI remains the schema/scaffold authority; staging MUST NOT write to
-the live store, user registry, global prompts or project binding. Candidate
-completeness, target path mapping, read revisions and namespace membership SHALL
-be validated before live replacement. No bundle route may bypass the owner with
-direct live CLI writes or directory moves. Unsupported staging capability SHALL
-report its limitation instead of falling back to an unprotected write.
-
-#### Scenario: Two changes update one capability
-- **WHEN** one writer commits after the other read the main spec
-- **THEN** the second detects drift before replacement, re-reads and reconciles instead of overwriting the first contribution
-
-#### Scenario: Store alias is retargeted mid-task
-- **WHEN** the alias resolves to a different physical root before writing
-- **THEN** the write stops with both locations reported rather than silently redirecting the task
-
-#### Scenario: Writer crashes after the first replacement
-- **WHEN** the writer process dies partway through its batch
-- **THEN** a subsequent operation acquires the released lease and recovers its own journal without deleting a live owner's lock or reverting another writer's changes
-
-#### Scenario: Delta changes before archive
-- **WHEN** a delta or change-tree input changes after sync preparation or before archive
-- **THEN** revision mismatch stops the stale operation and preserves the changed active delta for reconciliation rather than archiving it using earlier sync evidence
-
-#### Scenario: Two native new-change commands choose the same name
-- **WHEN** both CLI preparations read the same absent destination
-- **THEN** one complete batch may create it and the other detects namespace drift before replacement, preserving its candidate without corrupting metadata
-
-#### Scenario: CLI stops after creating metadata in staging
-- **WHEN** generation fails after writing .openspec.yaml but before a complete candidate is accepted
-- **THEN** the live store is unchanged and no partial scaffold is reported as a ready change; a crash during subsequent live writes uses the existing journal recovery
+#### Scenario: External store is selected before the later feature release
+- **WHEN** a managed OpenSpec phase resolves to an external store
+- **THEN** it stops before writes and reports the selected root and local-only continuation
 
 ### Requirement: OS4 Compatible executable and intact bundles are separate
 The integration SHALL resolve an exact compatible CLI executable without changing
 global npm or PATH for old projects. Native/natural/unavailable bundle state,
-executable compatibility and store accessibility SHALL be diagnosed independently.
+executable compatibility and local planning-home accessibility SHALL be diagnosed independently.
 Native applies only to an intact managed bundle; natural is intentional absence.
 The resolved executable identity SHALL include the absolute Node executable and
 OpenSpec JS entrypoint; changing PATH MUST NOT silently replace that runtime pair.
@@ -83,9 +38,9 @@ OpenSpec JS entrypoint; changing PATH MUST NOT silently replace that runtime pai
 ### Requirement: OS5 Source pilot and every phase honor accepted policy
 Installed native phases, natural flows and the source-only pilot SHALL preserve
 planning choice, accepted authorization, required context sources, current proof,
-style/report integrity and store selection. Source-only instructions MUST NOT be
+style/report integrity and the local planning root. Source-only instructions MUST NOT be
 copied into installed projects. Bundle refresh MUST reapply reviewed adaptations.
 
 #### Scenario: Propose, update, sync and archive
-- **WHEN** any supported phase acts on an external change
-- **THEN** it uses resolved paths, preserves artifact substance and existing approved plans, and cannot claim archive readiness from checked task boxes alone
+- **WHEN** any supported phase acts on a local change
+- **THEN** it uses CLI-resolved paths, preserves artifact substance and existing approved plans, and cannot claim archive readiness from checked task boxes alone

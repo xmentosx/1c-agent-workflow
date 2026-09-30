@@ -38,6 +38,7 @@ logs/
 .agent-1c/extension-dump/
 .agent-1c/extension-init/
 .agent-1c/snapshots/
+.agent-1c/migrations/
 .agent-1c/restoration-state/
 .agent-1c/release-e2e-roundtrip/
 .agent-1c/release-e2e-extension/
@@ -54,6 +55,7 @@ logs/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/tools/roctup-mcp-toolkit/
+.agent-1c/tools/openspec-cli/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/

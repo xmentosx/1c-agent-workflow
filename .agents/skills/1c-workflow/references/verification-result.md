@@ -10,19 +10,21 @@ Use targeted/static checks while implementing. Use `/itl-check` or helper action
 
 Invoke `check-dev-branch` through `.agents/skills/1c-workflow/scripts/run-itl-command.ps1`, as the generated `/itl-check` command does. That parent runner owns the helper Job Object (`KILL_ON_JOB_CLOSE`), abrupt helper-exit detection, stale-status watchdog even when `liveness` is empty, and the `ITL_RUNNER_OPERATION_TIMEOUT_SECONDS` ceiling (default 3600). Long native waits publish a generic helper heartbeat; Designer and Vanessa add operation-specific progress/stall evidence, so the generic stale watchdog does not preempt a live operation that is still within its published stall budget. After an abrupt helper exit, the runner first uses the exact persisted database/native recovery ticket and retained `ownedProcessScopes`; legacy exact Vanessa evidence remains only a fallback. A verified recovery releases the database, reports stopped owned PIDs with `foreignProcessesStopped=[]`, and returns `retry-original-command` rather than asking for manual process cleanup. Direct `agent-1c.ps1` invocation is an internal debugging path and cannot recover from termination of its own PowerShell process.
 
-`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing classification or failed unfiltered verification routes to `/itl-verify-fix`. A filtered diagnostic failure instead routes to fixing the cause and repeating the same filtered check; it never starts a repair session. Recovery first separates runner, fixture, and product causes; a proven product defect then uses sufficient existing YAxUnit/Vanessa coverage or the smallest missing regression. It uses one helper-owned repair session bounded by `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`). The agent resolves the classification and repair route without asking the user to choose tests or catalogs.
+`/itl-check` remains a single mechanical helper run: it does not author tests or start an agent repair loop. Its cheap preflight checks the suite and reports bounded source-only feature warnings without executing a second authoring run. Missing classification or failed unfiltered verification routes to `/itl-verify-fix`. An ordinary filtered diagnostic failure routes to fixing the cause and repeating that scope without a repair session. An explicitly requested `/test-fix-loop` instead starts one `scenario-loop` repair session pinned to the named Vanessa feature/tag scope. If no retained feature covers the requested behavior, the agent may author a minimal transient `.feature` under ignored `.agent-1c/verification/scenario-loop/`, with explicit expected outcomes and the normal Vanessa authoring checks, then pass that exact path to the same helper. Preserve the file through the session and any evidence/diagnosis that references it; do not count it as retained regression coverage or silently change an expectation to pass. If the requested behavior cannot be made into a reliable executable scenario, report the missing prerequisite before starting the loop. Its default limit is three rounds; `-VerificationRepairMaxAttempts N` sets the limit only when creating a new session, while repeat `begin-verification-repair` resumes the existing budget. Canonical repair keeps `ITL_VERIFICATION_REPAIR_MAX_ATTEMPTS` (default `5`). Recovery first separates runner, fixture, and product causes; a proven product defect then uses sufficient existing YAxUnit/Vanessa coverage or the smallest missing regression. The agent resolves classification and repair without asking the user to choose tests or catalogs.
 
 The compact result exposes `errorCategory` and `requiredAction`. Categories are `missing-suite`, `test-fixture`, `unsupported-step`, `scenario-context`, `product-assertion`, `runner`, and `event-log`. They are routing hints, not automatic proof that the test or product is wrong. Follow the structured action; read the last 80 log lines only for an unclassified runner failure.
 
 Long Designer work publishes structured liveness from its own bounded completion probe: current stage, elapsed time, seconds without CPU/log/process progress, timeout remaining, exact owned PIDs, CPU/log deltas, and working set. `stalled-suspected` begins after `DESIGNER_STALL_WARNING_SECONDS` (default 300); `DESIGNER_STALL_TIMEOUT_SECONDS` (default 600) fails the operation. Vanessa uses the same principle against the exact current run: `vanessa.log` growth, owned TestManager/TestClient process-set changes and CPU activity reset its no-progress budget; a normal 1800-second run gets a 300-second warning and 600-second stall bound while still emitting a helper heartbeat well inside the generic 120-second stale threshold. YAxUnit and other native waits also emit the generic heartbeat even when they have no richer progress probe. The independent hard operation/native timeout remains fail-closed. Never kill 1C manually from a stale-looking heartbeat.
 
-Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. The helper rejects those filters with `VerificationTrigger=repair` before launching 1C. Only an unfiltered full canonical check after its owned update-base supplies fresh passed evidence or completes a repair session; unverified export follows the policy below. A passed repair id means resume the original task; an exhausted id preserves the blocker and routes suspected workflow defects to `workflow-incidents.md`. Neither state starts another repair. Do not replace executable evidence with MCP or a headless EPF.
+Do not run a separate base update first. `/deploy-and-test` and `verify-dev-branch` are compatibility aliases to the same canonical `check-dev-branch` path, not independent loaders. `Run-DevBranchTests` is its private Vanessa phase. A canonical check may select one feature or tag filter for repeated performance profiling, but any `VanessaFeaturePath` or `VanessaFilterTags` keeps that run diagnostic-only. `canonical-repair` rejects filters. `scenario-loop` admits only the scope recorded when its session began; a changed feature/tag scope stops before 1C. A named component override may run Vanessa for that session even when its persistent execution switch is `off`, but does not change the switch or lift a broader user no-UI instruction. One `check-dev-branch` scenario-loop call consumes one outer attempt: it checks the filtered scenario, then checks due YAxUnit/Vanessa/event-log obligations unfiltered without a second base update or attempt. The filtered phase alone cannot produce full proof. Only the unfiltered phase supplies fresh passed evidence or completes either repair kind; unverified export follows the policy below. A passed repair id means resume the original task; an exhausted id preserves the blocker and routes suspected workflow defects to `workflow-incidents.md`. Neither state starts another repair. Do not replace executable evidence with MCP or a headless EPF.
 
 ## ITL Modes
 
-Both ITL keys accept `auto|manual|off`; missing/invalid uses safe effective `auto`. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
+Both ITL keys accept `auto|manual|off`; missing uses `auto`; invalid values skip execution with a correction diagnostic. `auto` runs for implicit completion, command, repair, and direct requests. `manual` runs for command, repair, and direct requests. `off` runs only for an explicit request naming that component; generic `/itl-check` and `/itl-verify-fix` do not override it. `/itl-litemode` maps `lite/on` to `off/off`, `standard` to `auto/manual`, and `full/off` to `auto/auto`. Upstream `/litemode`, `VERIFICATION_DEPTH`, and `UI_TESTING` remain independent.
 
-When Vanessa is off, do not automatically author tests or add them to a new plan. A skipped component sets `lastVerificationStatus=partial`, clears fresh evidence, and records skipped components. `verificationPolicy=block` still requires full evidence. For result export, `warn` proceeds after a visible warning; advanced close still requires its separate explicit confirmation.
+Execution off does not prohibit authoring needed current evidence or retaining an independently justified regression; it does not itself require new tests. Preserve approved plans and decide current proof separately from future regression coverage. A skipped component records partial evidence only when no fresh complete proof already covers the current inputs; a later ordinary check reuses a fresh explicit result without resetting the persistent switch. One-off obligations need a matching passed receipt in the same readiness assessment as retained runners and event log. Classification may be ready while that receipt is pending, so retained tests can still run. `verificationPolicy=block` requires the complete result; `warn` proceeds after a visible warning, and advanced close still requires its separate explicit confirmation. The receipt format and compact helper actions are in [verification suite selection](verification-suite-selection.md).
+
+Saved Vanessa also obeys `TOOL_BROWSER=auto|off|required`; empty means `auto`, invalid blocks that runner with a correction, and `off` cannot be bypassed through another launcher. A named Vanessa invocation may override its execution and provider off switches for that invocation only; it does not authorize unrelated UI or lift a current broader no-UI instruction. `UI_TESTING` selects the separate interactive UI workflow and does not disable saved Vanessa by itself. YAxUnit and event-log checks are independent of browser policy. A required runtime still needs the existing runner's actual capability and readiness checks; configuration alone is not proof.
 
 `VANESSA_TEST_FOREIGN_WAIT_MODE=warn` is the default: foreign branch 1C test processes are diagnostic warnings, not a reason to wait, unless there is a real TestClient port/infobase conflict or the mode is set to `wait`.
 
@@ -34,7 +36,7 @@ Named or multi-client suites declare a project-owned TestClient manifest through
 
 Before TestManager starts, the helper expands profile placeholders from scenario-outline `Examples`, treats any selected `(Расширение)` arbitrary-code step as requiring the current TestClient, reports a genuinely unresolved `<Профиль>` as `test-fixture`, reports the complete set of concrete missing profile names as `runner`, checks that the selected scenarios' static per-scenario TestClient requirement does not exceed the manifest ceiling, and allocates one bounded unique port per profile. The multi-infobase admission is atomic, so ROCTUP, Vanessa UI, Designer, and project-owned guarded launches cannot consume a promised target TestClient slot during manager startup. Static analysis resets client state between scenarios. Because VA `1.2.043.42` only distinguishes one client from multiple clients, that one-versus-many mode follows the selected scenarios' actual requirement; a configured non-zero topology stops on the first scenario error and asks VA to close configured TestClients after the run. `-VanessaFilterTags` is normalized from feature syntax such as `@V28` to VA values such as `V28`; VA receives only the official `filtertags` array. A filtered run is accepted only when JUnit `tests` equals the selected scenario count calculated from the feature set. The final completion run remains unfiltered.
 
-For a quick-fix, reuse sufficient existing coverage; otherwise create or update one focused regression scenario and add a second only for a separate meaningful integration/UI boundary or negative case. For direct full-cycle, choose coverage from the actual behavior and risk rather than OpenSpec artifact count. For OpenSpec, plan 1-2 representative integration/UI scenarios and keep algorithmic boundaries in parameterized YAxUnit tests. Choose the cheapest reliable check type:
+For a quick-fix, reuse sufficient existing coverage or obtain a focused current result; retain a new regression when future reuse justifies it. For direct full-cycle and OpenSpec, choose current proof and retained coverage from the actual behavior and risk rather than artifact count. If creating retained OpenSpec tests, prefer representative integration/UI scenarios and put algorithmic boundaries in parameterized YAxUnit tests. A one-off result must be recorded against the exact obligation and checked inputs before it can establish readiness. Choose the cheapest reliable check type:
 
 - local calculation, parsing, condition, filling, or applied logic belongs in YAxUnit; keep a Vanessa `unit-like` block only when the contract itself depends on TestClient/extension runtime context;
 - `integration`: object/register/document/exchange interaction.
@@ -78,7 +80,73 @@ Result manifest schema 3 records artifact SHA256, operation, branch metadata, ma
 Verification freshness uses a versioned canonical Git tree fingerprint of configured configuration, extension, and feature paths. A temporary index materializes the effective scoped working tree without changing the user's index. Committing exactly that checked content preserves the fingerprint; staging, unstaging, or committing files outside the scope also preserves it. Any effective scoped content change makes previous evidence stale.
 
 Configuration and extension loads use a separate versioned Git-tree source fingerprint. It hashes canonical Git tree records instead of reopening every source file, includes effective staged, unstaged, untracked, and ignored source files, and excludes `ConfigDumpInfo.xml`. An existing legacy SHA256 source fingerprint is recalculated once and migrates without Designer only on an exact match; a mismatch still follows the normal partial/full load safety path.
-The `v4` rollout intentionally treats stored legacy verification evidence as stale once because YAxUnit applicability decisions now participate in proof. Run one fresh `/itl-check` after updating the workflow; the first check or refresh records a legacy baseline so unchanged old BSL does not require new tests.
+The `v5` fingerprint uses only verification-relevant dependency-lock fields. A
+passed result also records the exact target infobase and loaded configuration /
+extension identity, including the target and runner infobase generations; older
+proof without that identity is stale once. A workflow-only update does not run
+tests or automatically invalidate compatible proof; the next ordinary
+assessment runs only checks whose relevant source, loaded state, runner, checker
+or acceptance inputs changed. The first check or refresh
+records a legacy baseline so unchanged old BSL does not require new tests.
+Schema-2 obligation `inputPaths` also enter the fingerprint. A changed declared
+OpenSpec requirement selects its retained owning suite; an unrelated change
+outside those paths does not invalidate proof.
+
+One-off receipts also bind the actual functions that assess their validity.
+A changed relevant checker or an old receipt without that identity requires
+`begin-one-off-proof` and a new observed result with the current checker;
+unknown compatibility is never passed. A checker change between begin and
+complete leaves the receipt pending with the same continuation. JUnit parser
+changes affect JUnit receipts without invalidating unrelated runtime
+observations. Invocation permission and its expiry remain provenance, separate
+from proof freshness; a passed sufficient result can be reused after its named
+invocation ends while persistent execution stays off. File-only installation
+does not run the new proof automatically.
+
+For a checked source or CFE load, the ITL owner creates a native DT rollback
+snapshot before changing the editable configuration. When the enclosing
+extension-init or Release operation already owns a pending snapshot for this
+exact target, the checked load uses it without changing its completion policy.
+For an extension source load, the ITL owner loads the editable configuration,
+then runs Designer `/CheckModules`, extension applicability and `/CheckConfig`
+before `/UpdateDBCfg`. Each check needs a zero process exit, a fresh numeric
+`/DumpResult=0`, and a UTF-8 `/Out` log without remaining warnings or errors.
+For main configuration loads, changed BSL/XML or an unknown/full-load delta
+selects `/CheckModules` and `/CheckConfig` before apply; a known binary-only
+delta keeps the existing direct path. There is currently no persisted MCP
+validator proof that can exclude relevant metadata or modules from this ladder.
+`GATE6_CHECK_FAILED` stops database apply and restores the owned DT snapshot;
+correct the named source finding and repeat the original ITL operation.
+A failed applicability check does not trigger the partial-load full fallback;
+the owner also restores the byte-exact `ConfigDumpInfo.xml` cursor.
+`GATE6_SNAPSHOT_FAILED` leaves platform evidence unverified before editable
+mutation. If rollback fails, `GATE6_SNAPSHOT_RECOVERY_FAILED` retains the exact
+snapshot, its SHA and both diagnostics; recover that target through the existing
+snapshot owner before repeating the original operation. A completed apply is
+not replayed as rollback after a lost completion acknowledgement.
+The proof is recorded under
+`lastGate6Evidence` with source, editable-load arguments/log hash, target,
+modes, snapshot identity and check artifact hashes.
+Every passed ladder also writes an ignored `1c-gate6-evidence-*.json` receipt
+beside its result and log files, including tooling installs that do not update
+the source-load state.
+Empty/CFE extension initialization uses the same ladder inside its existing
+infobase snapshot; a failed check restores that snapshot before retrying the
+original initialization after a source repair.
+The owner also compares the source fingerprint or CFE SHA after editable load;
+a changed input stops before any check or database apply.
+The same owner checks CFE installs for YAxUnit, Vanessa UI MCP and Data MCP;
+their prior tooling readiness and recovery routes remain the continuation.
+
+When Gates 1–3 validators are unavailable, this same already-authorized
+load/check/apply route supplies platform syntax/context and structural evidence
+for its exact artifact and target. It does not claim semantic logic or standards
+review passed. Read-only work never grants a configuration load. Without an
+authorized matching dev/test target, record unverified evidence and the upstream
+delivery limitation; there is no new blanket delivery block or bypass of ITL
+apply requirements. For EDT-format sources, use EDT validation and its qualified
+update owner, or an explicitly selected XML export/import route; never add this
+ladder as a second deployment owner in the same run.
 
 ## Verification Policy
 

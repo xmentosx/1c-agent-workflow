@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [string]$PackageRoot = '',
@@ -29,7 +29,15 @@ function Test-CutoverOwnedProcess([object]$State, [string]$PidField, [string]$St
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -eq $process) { return $null }
     $expectedStart = [datetime]::MinValue
-    if (-not [datetime]::TryParse([string]$State.$StartField, [ref]$expectedStart) -or
+    $rawStart = $State.$StartField
+    $parsed = if ($rawStart -is [datetime]) {
+        $expectedStart = $rawStart
+        $true
+    } else {
+        [datetime]::TryParse([string]$rawStart, [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::RoundtripKind, [ref]$expectedStart)
+    }
+    if (-not $parsed -or
         [math]::Abs(($process.StartTime.ToUniversalTime() - $expectedStart.ToUniversalTime()).TotalSeconds) -gt 2) { return $false }
     $expectedExecutable = [string]$State.$ExecutableField
     try { $actualExecutable = [IO.Path]::GetFullPath($process.Path) } catch { return $false }
@@ -40,61 +48,23 @@ function Test-CutoverOwnedProcess([object]$State, [string]$PidField, [string]$St
     return $process
 }
 
-function Stop-CutoverOwnedRuntime([string]$StatePath) {
-    try { $state = Get-Content -LiteralPath $StatePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
-    catch { Write-Warning "Preserved unparseable runtime state '$StatePath'; it is not ownership evidence."; return }
-    foreach ($entry in @(
-        @{pid='testClientPid';start='testClientProcessStartTime';exe='testClientExecutablePath';markers=@($state.testClientOwnershipMarkers)},
-        @{pid='pid';start='processStartTime';exe='executablePath';markers=@($state.ownershipMarkers)}
-    )) {
-        $owned = Test-CutoverOwnedProcess -State $state -PidField $entry.pid -StartField $entry.start -ExecutableField $entry.exe -Markers $entry.markers
-        if ($owned -eq $false) {
-            Write-Warning "Preserved process recorded by '$StatePath': exact ownership could not be proven."
-            continue
-        }
-        if ($null -ne $owned) {
-            Stop-Process -Id $owned.Id -ErrorAction Stop
-            if (-not $owned.WaitForExit(5000)) { Stop-Process -Id $owned.Id -Force -ErrorAction Stop }
-        }
-    }
-}
-
-function Remove-ExecutionGuardLegacyState([string]$Root, [switch]$AllowHeldRuntimeLock) {
-    $rootFull = Get-CutoverFullPath $Root
-    $runtimeRoot = Join-Path $rootFull '.agent-1c\mcp\ondemand'
-    if (Test-Path -LiteralPath $runtimeRoot -PathType Container) {
-        foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop | Select-Object -ExpandProperty FullName)) {
-            Stop-CutoverOwnedRuntime -StatePath $statePath
-        }
-    }
-    foreach ($relative in @(
-        '.agent-1c\infobase-access',
-        '.agent-1c\database-access',
-        '.agent-1c\native-recovery',
-        '.agent-1c\recovery',
-        '.agent-1c\mcp\ondemand'
-    )) {
-        $target = Assert-CutoverChildPath -Root $rootFull -Path (Join-Path $rootFull $relative)
-        if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop }
-    }
-    foreach ($relative in @(
-        '.agent-1c\locks\runtime-mcp.lock',
-        '.agent-1c\locks\ondemand-start.lock'
-    )) {
-        $target = Assert-CutoverChildPath -Root $rootFull -Path (Join-Path $rootFull $relative)
-        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) { continue }
-        try {
-            Remove-Item -LiteralPath $target -Force -ErrorAction Stop
-        } catch [IO.IOException] {
-            if ($AllowHeldRuntimeLock -and $relative -eq '.agent-1c\locks\runtime-mcp.lock') {
-                # The pre-cutover update-workflow parent owns this exclusive
-                # legacy lease while its fresh child installs v2. The file is
-                # no longer consulted after the generation marker is enabled;
-                # a later cutover removes it once the parent has exited.
-                Write-Warning "Preserved the current operation's held legacy runtime lock '$target' during execution-guard cutover."
-                continue
+function Assert-NoActiveCutoverRuntime([string]$Root) {
+    $runtimeRoot = Join-Path (Get-CutoverFullPath $Root) '.agent-1c\mcp\ondemand'
+    if (-not (Test-Path -LiteralPath $runtimeRoot -PathType Container)) { return }
+    foreach ($statePath in @(Get-ChildItem -LiteralPath $runtimeRoot -Filter '*.json' -File -Recurse -ErrorAction Stop | Select-Object -ExpandProperty FullName)) {
+        try { $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop }
+        catch { throw "EXECUTION_GUARD_CUTOVER_RUNTIME_STATE_INVALID: '$statePath' cannot establish whether an owned runtime is active. Preserve it and inspect through the existing runtime owner before repeating update-workflow. $($_.Exception.Message)" }
+        foreach ($entry in @(
+            @{pid='testClientPid';start='testClientProcessStartTime';exe='testClientExecutablePath';markers=@($state.testClientOwnershipMarkers)},
+            @{pid='pid';start='processStartTime';exe='executablePath';markers=@($state.ownershipMarkers)}
+        )) {
+            $owned = Test-CutoverOwnedProcess -State $state -PidField $entry.pid -StartField $entry.start -ExecutableField $entry.exe -Markers $entry.markers
+            if ($owned -eq $false) {
+                throw "EXECUTION_GUARD_CUTOVER_RUNTIME_OWNERSHIP_UNCONFIRMED: '$Root' has a live PID recorded by '$statePath' but exact ownership could not be proven. Inspect it through the existing helper before repeating the workflow update."
             }
-            throw
+            if ($null -ne $owned -and $owned -ne $false) {
+                throw "EXECUTION_GUARD_CUTOVER_ACTIVE_RUNTIME: '$Root' still has an owned runtime process $($owned.Id) recorded by '$statePath'. Stop it through the existing helper, then repeat the workflow update."
+            }
         }
     }
 }
@@ -282,11 +252,12 @@ if ($PrepareManagedWorktrees) {
     foreach ($root in $roots) { Assert-CutoverWorktreeReady -WorktreeRoot $root }
 }
 
-foreach ($root in $roots) {
-    $allowHeldRuntimeLock = $PrepareManagedWorktrees -and
-        [string]::Equals($root, $projectFull, [StringComparison]::OrdinalIgnoreCase)
-    Remove-ExecutionGuardLegacyState -Root $root -AllowHeldRuntimeLock:$allowHeldRuntimeLock
-}
+foreach ($root in $roots) { Assert-NoActiveCutoverRuntime -Root $root }
+
+# A stopped lifecycle operation may need legacy recovery, native-recovery or
+# on-demand state to prove which effects completed. The v2 generation marker
+# switches new guards away from those old tickets; clearing them here would
+# destroy the very evidence required to resume a paused operation.
 
 if ($PrepareManagedWorktrees) {
     foreach ($root in @($roots | Where-Object { -not [string]::Equals($_, $projectFull, [StringComparison]::OrdinalIgnoreCase) })) {

@@ -34,7 +34,7 @@ existing plan, never a manual queue or checkpoint rewrite.
 
 Client routine files are generated from `.agents/skills/1c-workflow/kilo-command-templates`. The capability registry maps them to native commands for Kilo, Claude Code, Cursor, OpenCode, Qwen, and Command Code; to skills for Kimi and Cline; and to prompts for Pi. Generated client surfaces are installed-project runtime state, not source files.
 
-The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL does not generate client bundles, install `@fission-ai/openspec`, or run `openspec update`. See `ai-rules-fork-upgrades.md` for the release boundary.
+The controlled `ai_rules_1c` fork owns general rules, the common OpenSpec workspace, upstream-native OpenSpec bundles, agents, and its installer manifest. ITL owns bootstrap, lifecycle, local MCP configuration, executable verification, result export, the managed ITL skills, and host UX for the `native`/`natural`/`unavailable` OpenSpec states. ITL provisions the exact project-pinned OpenSpec CLI in its local cache separately from the optional global installation. It does not generate client bundles or run `openspec update`; compatible bundle rendering remains with the fork installer. See `ai-rules-fork-upgrades.md` for the release boundary.
 
 ## Architecture scope and compatibility policy
 

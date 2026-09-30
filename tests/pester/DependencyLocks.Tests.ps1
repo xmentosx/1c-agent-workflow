@@ -142,7 +142,8 @@
         $projectTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\project.json")
         $devEnvTemplate = Get-Content -Encoding UTF8 -Raw (Join-Path $RepoRoot "templates\dev.env.example")
         $lockTemplatePath = Join-Path $RepoRoot "templates\dependency-lock.json"
-        $lockTemplate = Get-Content -Encoding UTF8 -Raw $lockTemplatePath | ConvertFrom-Json
+        $lockTemplateText = Get-Content -Encoding UTF8 -Raw $lockTemplatePath
+        $lockTemplate = $lockTemplateText | ConvertFrom-Json
 
         $projectTemplate | Should -Match '"dependencyMode"\s*:\s*"fresh"'
         $projectTemplate | Should -Match '"verificationPolicy"\s*:\s*"warn"'
@@ -166,7 +167,7 @@
         if ($lockTemplate.dependencies.aiRules1c.compatibilityStatus -eq "pending") {
             $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Be ""
         } else {
-            $lockTemplate.dependencies.aiRules1c.compatibilityCheckedAt | Should -Match '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'
+            $lockTemplateText | Should -Match '"compatibilityCheckedAt"\s*:\s*"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"'
         }
         $lockTemplate.dependencies.agentBrowser.version | Should -Be "0.33.1"
         $lockTemplate.dependencies.agentBrowser.profile | Should -Be "core"
@@ -340,10 +341,38 @@
             }
 
             $result.error | Should -Match "DEPENDENCY_LOCK_UPGRADE_REQUIRED"
-            foreach ($name in $result.names) {
+            foreach ($name in @($result.names | Where-Object { $_ -ne 'openSpecCli' })) {
                 $result.error | Should -Match ([regex]::Escape("dependencies.$name"))
             }
             (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $before
+        } finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "adds only the new OpenSpec pin to a complete locked project without changing its mode or other pins" {
+        $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("itl-lock-openspec-upgrade-" + [guid]::NewGuid().ToString("N"))
+        try {
+            New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot '.agent-1c') | Out-Null
+            Set-Content -LiteralPath (Join-Path $tempRoot '.agent-1c\project.json') -Encoding UTF8 -Value '{"dependencyMode":"locked"}'
+            $lockPath = Join-Path $tempRoot '.agent-1c\dependency-lock.json'
+            $template = Get-Content -LiteralPath (Join-Path $RepoRoot 'templates\dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            $expectedOpenSpec = $template.dependencies.openSpecCli
+            $template.mode = 'locked'
+            $template.dependencies.PSObject.Properties.Remove('openSpecCli')
+            $template.dependencies.yaxunit.version = 'project-specific-pin'
+            Set-Content -LiteralPath $lockPath -Encoding UTF8 -Value ($template | ConvertTo-Json -Depth 30)
+            $first = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-WorkflowManagedDependencyLockEntries }
+            $first.changed | Should -BeTrue
+            @($first.entries) | Should -Be @('openSpecCli')
+            $after = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $after.mode | Should -Be 'locked'
+            $after.dependencies.yaxunit.version | Should -Be 'project-specific-pin'
+            $after.dependencies.openSpecCli.packageLockSha256 | Should -Be $expectedOpenSpec.packageLockSha256
+            $beforeRepeat = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8
+            $repeat = & { . $HelperPath -ProjectRoot $tempRoot -Action help *> $null; Sync-WorkflowManagedDependencyLockEntries }
+            $repeat.changed | Should -BeFalse
+            (Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8) | Should -Be $beforeRepeat
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
         }

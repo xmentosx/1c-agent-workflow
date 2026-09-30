@@ -228,6 +228,9 @@
         $skillText | Should -Match "on-demand"
         $skillText | Should -Match "resolve_tool"
         $skillText | Should -Match "call_tool"
+        $skillText | Should -Match "TOOL_DATA"
+        $skillText | Should -Match "read access alone is not permission to load a configuration"
+        $skillText | Should -Match "explicit-request restriction above still applies"
     }
 
     It "wires vibecoding1c MCP actions, scopes, ports, registry, selection, and client config" {
@@ -1309,7 +1312,7 @@ enabled = true
                 function Get-Vibecoding1cMcpCodexHomeConfigPath {
                     return $script:TestCodexHomeConfigPath
                 }
-                Write-Vibecoding1cMcpClientConfig *> $null
+                Write-Vibecoding1cMcpClientConfig -Client kilocode *> $null
             }
 
             $updatedCodex = Get-Content -Encoding UTF8 -Raw $codexHomeConfig
@@ -1552,7 +1555,11 @@ VANESSA_MCP_VA_EXTENSION_CFE_PATH=$invalidExtensionPath
             $result.dotEnv | Should -Not -Match ([regex]::Escape($invalidExtensionPath))
         } finally {
             foreach ($name in $environmentNames) {
-                [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                if ($null -eq $previousEnvironment[$name]) {
+                    Remove-Item -Path ("Env:" + $name) -ErrorAction SilentlyContinue
+                } else {
+                    [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], "Process")
+                }
             }
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -2208,6 +2215,81 @@ enabled = true
             @($managed.owners.'kilocode/ondemand-facade').Count | Should -Be 2
         } finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It "inspects configured MCP status without changing an unattached or ambiguous invocation client (<Case>)" -TestCases @(
+        @{ Case = 'single-unattached'; Clients = @('kilocode'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-unattached'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_NOT_ATTACHED' },
+        @{ Case = 'multi-ambiguous'; Clients = @('kilocode', 'cursor'); InvocationClient = ''; IdentifiedClient = ''; ExpectedActive = @('itl-1c-docs/remote/stale', 'itl-1c-templates/remote/stale'); ExpectedInvocation = ''; ExpectedStatus = 'ITL_CLIENT_AMBIGUOUS' },
+        @{ Case = 'attached-self-only'; Clients = @('kilocode', 'cursor'); InvocationClient = 'kilocode'; IdentifiedClient = 'codex'; ExpectedActive = @('itl-1c-docs/remote/stale'); ExpectedInvocation = 'kilocode'; ExpectedStatus = 'available' }
+    ) {
+        param($Case, $Clients, $InvocationClient, $IdentifiedClient, $ExpectedActive, $ExpectedInvocation, $ExpectedStatus)
+        $root = Join-Path $TestDrive ('Статус MCP с пробелом ' + $Case)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo'), (Join-Path $root '.cursor') | Out-Null
+        $configPath = Join-Path $root '.agent-1c/project.json'
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        Set-Content -LiteralPath $configPath -Encoding UTF8 -Value (@{ aiRules = @{ tools = $Clients } } | ConvertTo-Json -Depth 5)
+        Set-Content -LiteralPath $manifestPath -Encoding UTF8 -Value (@{ tools = $Clients; files = @{} } | ConvertTo-Json -Depth 5)
+        Set-Content -LiteralPath (Join-Path $root '.kilo/kilo.json') -Encoding UTF8 -Value '{"mcp":{"1C-docs-mcp":{"type":"remote","url":"http://fixture/docs"}}}'
+        Set-Content -LiteralPath (Join-Path $root '.cursor/mcp.json') -Encoding UTF8 -Value '{"mcpServers":{"Templates":{"type":"remote","url":"http://fixture/templates"}}}'
+        $paths = @($configPath, $manifestPath, (Join-Path $root '.kilo/kilo.json'), (Join-Path $root '.cursor/mcp.json'))
+        $before = @($paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash })
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = $InvocationClient
+            function Get-InitAgentExecutionEnvironment { if ($IdentifiedClient) { return @{ CODEX_THREAD_ID = 'verified-test-executor' } }; return @{} }
+            function Get-InitAgentExecutionProcessChain { return @() }
+            $endpoints = @(
+                [pscustomobject]@{ id = 'docs'; scope = 'global'; name = 'itl-1c-docs'; url = 'http://fixture/docs'; provider = 'remote'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = '1C-docs-mcp' } },
+                [pscustomobject]@{ id = 'templates'; scope = 'global'; name = 'itl-1c-templates'; url = 'http://fixture/templates'; provider = 'remote'; family = 'vibecoding1c'; clientNames = [pscustomobject]@{ aiRules1c = 'Templates' } }
+            )
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { [pscustomobject]@{ allEndpoints = $endpoints } }
+            function Get-Vibecoding1cMcpCurrentStateServers { @() }
+            function Select-Vibecoding1cMcpManifestServers { $endpoints }
+            function Test-Vibecoding1cMcpServerEnabled { return $true }
+            function Get-Vibecoding1cMcpSelectedProvider { return 'remote' }
+            function Test-Vibecoding1cMcpServerNeedsRemoteConfig { return $false }
+            function Get-Vibecoding1cMcpSelectedHostId { return '' }
+            function Get-Vibecoding1cMcpEndpointFreshness { return 'stale' }
+            $summary = Get-Vibecoding1cMcpStatusSummary
+            @($summary.active | Sort-Object) | Should -Be @($ExpectedActive | Sort-Object)
+            $summary.invocationClient | Should -BeExactly $ExpectedInvocation
+            $summary.clientSelectionStatus | Should -BeExactly $ExpectedStatus
+            if ($ExpectedInvocation) { @($summary.inspectionClients) | Should -Be @($ExpectedInvocation) }
+            else {
+                @($summary.inspectionClients) | Should -Be $Clients
+                if ($ExpectedStatus -eq 'ITL_CLIENT_NOT_ATTACHED') { { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_NOT_ATTACHED*' }
+                else { { Get-ItlActiveClient } | Should -Throw '*ITL_CLIENT_AMBIGUOUS*' }
+                $summaryText = Write-Vibecoding1cMcpSummaryLines -Summary $summary 6>&1 | Out-String
+                $summaryText | Should -Match 'read-only; invocation client unavailable'
+                $summaryText | Should -Match 'membership unchanged'
+            }
+            $AgentTarget | Should -BeExactly $InvocationClient
+            @(Get-AgentTargets) | Should -Be $Clients
+        }
+        @($paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }) | Should -Be $before
+    }
+
+    It "does not inspect MCP config when installed membership disagrees with configured membership" {
+        $root = Join-Path $TestDrive 'Несогласованный MCP с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c'), (Join-Path $root '.kilo') | Out-Null
+        Set-Content -LiteralPath (Join-Path $root '.agent-1c/project.json') -Encoding UTF8 -Value '{"aiRules":{"tools":["kilocode"]}}'
+        Set-Content -LiteralPath (Join-Path $root '.ai-rules.json') -Encoding UTF8 -Value '{"tools":["codex"],"files":{}}'
+        & {
+            . $HelperPath -ProjectRoot $root -Action help *> $null
+            $AgentTarget = 'kilocode'
+            $script:inspectionCalls = 0
+            function Get-ItlClientMcpEndpointKeys { $script:inspectionCalls++; throw 'Invalid manifest must not reach config inspection' }
+            function Get-Vibecoding1cMcpClientConfigEndpointSet { [pscustomobject]@{ allEndpoints = @() } }
+            function Get-Vibecoding1cMcpCurrentStateServers { @() }
+            function Select-Vibecoding1cMcpManifestServers { @() }
+            $summary = Get-Vibecoding1cMcpStatusSummary
+            $summary.clientSelectionError | Should -Match 'Configured and installed ai_rules_1c clients disagree'
+            $summary.clientSelectionStatus | Should -BeExactly 'unavailable'
+            @($summary.inspectionClients).Count | Should -Be 0
+            $script:inspectionCalls | Should -Be 0
+            { Get-ItlActiveClient -Client kilocode } | Should -Throw '*Configured and installed ai_rules_1c clients disagree*'
         }
     }
 

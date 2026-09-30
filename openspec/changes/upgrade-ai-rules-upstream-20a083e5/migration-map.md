@@ -1,5 +1,12 @@
 # Карта решений, смыслов и проверок миграции
 
+**Обновление 2026-09-29:** пользователь перенёс внешний OpenSpec store и D7
+store-write owner в отдельный change `add-external-openspec-store` и чат.
+Строки ниже с историческими Q10.1/Q11/Q12 сохранены для provenance, но
+текущий релиз реализует только локальный OpenSpec; внешний выбор должен явно
+останавливаться до записи. Требования OS1–OS3 и их приёмка относятся к
+отложенному change.
+
 ## Что эта карта доказывает
 
 Это завершённая классификация входов для постановки, а не доказательство
@@ -43,13 +50,13 @@ result SHA-256 рассчитывает реконструктор после р
 | Q7 | Дорогая регрессия по затронутым inputs/значимой передаче | D3; EV2/EV3 |
 | Q8а–в | Authoring отдельно; named one-off отдельно; interactive UI отдельно от saved Vanessa | D4; EV4/EV5 |
 | Q9 | MCP standards upstream с реальной квалификацией; local ITL additions сохраняются | D1/D12; SM7/RQ2 |
-| Q10.1 | External OpenSpec сейчас | D7; OS1–OS3 |
+| Q10.1 | Первоначально: external OpenSpec сейчас; решением 2026-09-29 перенесён на потом | Отдельный `add-external-openspec-store`; OS1–OS3 |
 | Q10.2 | Совместимые CLI/bundle, отдельное владение | D6; OS4 |
 | Q10.3 | Новые memory providers — отдельная задача; действующая изоляция сохраняется | SM7, раздел исключений proposal |
 | Q10.4 | YAxUnit/Vanessa приоритетны; новый Playwright contour автоматически не добавляется | D4/D5; EV4–EV6 |
 | Q10.5 | Новый test-fix-loop через одного ITL owner/budget, transient proof допустим | D5; EV6/EV7 |
-| Q11 | Local default для старых и новых проектов, выбор можно менять | D6/D7; OS1 |
-| Q12 | External docs независимы от branch lifecycle; изменения согласуются перед записью | D7; OS2/OS3 |
+| Q11 | Local default для старых и новых проектов сейчас; внешний выбор доступен после отдельной задачи | D6/D7; OS0 сейчас, OS1 позже |
+| Q12 | External docs независимы от branch lifecycle; изменения согласуются перед записью | Отдельный change; OS2/OS3 |
 | Q13 | Bounded read-only queries/pure BSL в текущей test IB; ROCTUP эквивалентность доказывается | D4; EV5 |
 | Q14 | Установленные OpenSpec routes и source pilot обновляются с разделением области | D6; OS5 |
 | Q15 | Новый root, перенос всех действующих смысловых добавок | D1; SM1/SM2 |
@@ -74,7 +81,7 @@ Q21 заменяет прежний запрет обновления рабоч
 | P1 Resume зависит от движущегося master | Входы операции закреплены независимо от нового helper; ignored files из exact fork/client/render, main только проверенный cache | D11; IM6; 9.7 |
 | P1 Gate 6 не включён в ITL apply | Условная platform ladder и три сигнала внутри существующего load/check/apply, с recovery | D4; EV8; 3.6, 10.2, 10.4 |
 | P2 Истечение one-off permission обесценивает proof | Authorization provenance отдельно от достаточности; обычный check/export переиспользует proof при persistent off | D3/D4; EV3/EV4; 4.2, 4.4 |
-| P2 CLI mutations обходят store-write owner | Native CLI создаёт candidate в staging; полный diff/metadata/move проходит тот же batch/journal | D7; OS3; 6.4 |
+| P2 CLI mutations обходят store-write owner | Внешний store не включён в текущий релиз; staging/batch/journal и native archive остаются обязательными до его будущего включения | `add-external-openspec-store`; OS3 |
 | P2 Приёмка ограничена r36 | Главный baseline — реальный published master/r33 со старым helper; r36 и legacy classes дополнительно | Context/D12; RQ1; 9.4, 10.4 |
 
 Дополнение Q21 к verification: весь dependency-lock больше не является единым
@@ -111,10 +118,22 @@ Q21 заменяет прежний запрет обновления рабоч
 | ITL-MEMORY-001 / 2 | Сохранить local project corrections и shared-memory границу | project memory rule + host overlay, memory operation skill/subagents | SM7; project facts не в shared remember; templatesearch остаётся доступным; providers deferred |
 | ITL-METADATA-001 / 1 | Сохранить safety; убрать поглощённое повторение structural routing | новый metadata skill + точные host owner clauses | SM5/SM6; tool route, vendor-support refusal, preview dirty/concurrency/recovery |
 | ITL-METADATA-VALIDATOR-001 / 4 | Сохранить IncludePathList/UUID definitions и descriptors; не раздувать scope | reusable fork validator + host aggregate validator | SM5; UTF-8 contained explicit delta/no silent full scan; Form/Template/IntegrationService; payload/path у aggregate |
-| ITL-OPENSPEC-001 / 51 | Сменить 1.2.0 на 1.13.1, four на six phases; убрать mandatory test-plan/off→no-author | fork bundle/overlay; CLI resolver; host evidence/source pilot | OS1–OS5/EV2; context sources, existing plans, store errors, archive proof, style integrity |
+| ITL-OPENSPEC-001 / 51 | Сменить 1.2.0 на 1.13.1, four на six phases; убрать mandatory test-plan/off→no-author | fork bundle/overlay; pinned CLI; host evidence/source pilot | OS0/OS4/OS5/EV2 сейчас; OS1–OS3 отдельно; local context, existing plans, external refusal, archive proof, style integrity |
 | ITL-RETRY-001 / 3 | Сохранить update/dump bridges, убрать возможность второго retry owner | host lifecycle/update owner; fork thin commands | SM4/EV6; exact branch, known-PID recovery, unchanged retry forbidden, logs retained |
 | ITL-UPSTREAM-ANCHORS-001 / 4 | Новый root вместо старого; старые искусственные anchors убрать после ремонта ссылок | upstream root/index/mcp-policy + routed ITL rule | SM1–SM3; planning/execution независимы; нового root достаточно; корректные extension semantics take upstream |
 | ITL-VERIFY-001 / 1 | Адаптировать suite-only readiness/partial blanket в obligation evidence | host verification/evidence/repair; deploy/test-fix routes | EV2–EV7; one-off block export, no fake pass, one budget, parent full-cycle review |
+
+Семантическая сверка прежних изменённых путей выявила три случая, которые
+совпадением SHA не закрывались: новый `memory.md` без оговорки управляемого ITL
+проекта и прямые роли/команды со старым маршрутом Gate 2 через
+`check_1c_code`, а также `/test-fix-loop`, который останавливался без уже
+существующего `.feature` вопреки принятому transient-пути. Первый уточнён в
+placed-once root-файле; второй согласован с единым `verification-policy.md` в
+одиннадцати потребителях. Третий теперь направляет минимальный временный
+исполняемый сценарий через тот же persisted ITL owner и отдельно требует
+one-off receipt при соответствующей обязанности. Регрессии `WorkflowHardening`,
+`ValidatorExecutionPolicy` и `ToolingReadiness` проверяют эти границы; ledger
+классифицирует изменённые результаты как `resolved`, сохраняя прежние причины.
 
 ## Подинварианты функционального реестра
 
@@ -152,7 +171,7 @@ descriptor снова приводит к отказу. Поэтому это р
 | Python metadata/web tools, help/interface/support tooling | Принять applicable tools с parity и guard; external prerequisites on demand | Потеря fixes или обход ITL через другой runtime |
 | write-then-rollback preview | Адаптировать write-set/rollback к SM6 | Dirty/concurrent data loss; preview request превращается в apply |
 | business/UI test skills и test-fix-loop | Принять optional authoring; ITL runner/budget/evidence, без default Playwright contour | Nested retries и ложная полная готовность |
-| OpenSpec update/sync, external stores | Принять сейчас; ITL overlay всех шести phases | Missing preflight, wrong root, concurrent main-spec loss |
+| OpenSpec update/sync, external stores | Шесть фаз принять сейчас только для local root; внешний store явно остановить до отдельного релиза | Wrong root и прямой внешний write из bundle |
 | marketplace/plugin manifests/hooks | Optional controlled dispatcher | Floating HEAD, второй MCP writer, silent hook failure |
 | ZCode/MiMo и обновлённые tools/permissions | Добавить registry/renderer/capability qualification | Файлы есть, но host не видит tools/model/role |
 | install recovery / first source dump / installtools | Managed scope у ITL; standalone semantics сохраняются | Второй recovery/export/install owner |
@@ -193,7 +212,7 @@ descriptor снова приводит к отказу. Поэтому это р
 | Freshness one-off proof | D3: obligation + input/requirement/base identity | EV3/EV7 |
 | TOOL flags и NOT_READY recovery | D4: invocation policy, qualified ROCTUP, no implied mutation | EV4/EV5 |
 | 3×5 loops | D5: один persisted session и remaining budget | EV6 |
-| Разные changes пишут один main spec | D7: path write-set, hashes и scoped operation | OS3 |
+| Разные changes пишут один внешний main spec | Отложенный D7: path write-set, hashes и scoped operation | `add-external-openspec-store`, OS3 |
 | CLI coexistence/rollback | D6: exact side-by-side component, no global PATH rewrite | OS4 |
 | Preview/web mutations | D2: owner/guard/write-set preservation | SM4/SM6 |
 | New 1c-validate routes | D1/D4: новый consumer той же effective policy | EV1 |
@@ -206,8 +225,8 @@ descriptor снова приводит к отказу. Поэтому это р
 | Propose discards prior authority | D1/SM3: planning-only сохраняет stop, explicit combined request сохраняет scope | SM3/OS5 |
 | Agent repair/first dump bypass | D2/D11: existing bootstrap/recovery owner | IM4 |
 | Qualification omits tools/tests | D12: полный применимый inventory и точные reuse inputs | RQ1/RQ2 |
-| Crash оставляет вечный lock | D7: OS/file-handle lease освобождается при завершении процесса; journal recovery получает его заново | OS3 crash scenario |
-| Delta меняется между sync и archive | D7: readSet/writeSet, защищённая revision и состав change tree, повторная сверка перед archive | OS3 delta drift scenario |
+| Crash оставляет вечный lock внешнего store | Отложенный D7: OS/file-handle lease и journal recovery | `add-external-openspec-store`, OS3 crash scenario |
+| Внешняя delta меняется между sync и archive | Отложенный D7: защищённая revision и состав change tree | `add-external-openspec-store`, OS3 delta drift scenario |
 | Node незаметно меняется через PATH | D6: absolute Node + JS entrypoint, version/hash qualification | OS4 PATH scenario |
 | Дорогой functional test ошибочно превращён в benchmark | D3: purpose отдельно от cadence, промежуточный proof и due handoff | EV2 expensive retained coverage |
 | Loop меняет ожидаемый результат ради pass | D5: evidence и подтверждение изменения бизнес-ожидания, отдельно от исправления fixture | EV6 expectation scenario |
@@ -215,33 +234,35 @@ descriptor снова приводит к отказу. Поэтому это р
 | Session client отсутствует в installed set | D8: идентификация не attach; общие операции доступны, client action даёт continuation | CL1 Claude-only project |
 | Новая ветка повторно сбрасывает намеренное on | D11: eligibility по provenance/version, новые scopes наследуют policy receipt | IM3 inherited on |
 
-## Схема нового release ledger
+## Итоговый release ledger
 
-Новый ledger строится из зафиксированных `oldUpstream`, `baselineFork=r36` и
-`targetUpstream` этого inventory. Обязательный набор решений — 459 путей из
-объединения old→r36 и old→target; прежние 197 entries остаются частью набора.
-Каждая запись получает `path`, один первичный `requirementId`, disposition
+Schema-3 ledger построен из зафиксированных `oldUpstream`, `baselineFork=r36` и
+`targetUpstream`. Плановый inventory охватывал 459 путей из объединения
+old→r36 и old→target; итоговая реконструкция охватывает 470 решений с новыми
+путями, включая все прежние 197 entries. Каждая запись содержит `path`, один
+первичный `requirementId`, disposition
 `take-upstream|carry-forward|resolved|downstream-only` и проверяемую причину.
 Связанные смысловые требования и потребители остаются в таблицах выше: один
 первичный ID в ledger не отменяет их проверок.
 
-`AGENTS.md` собирается как точный новый upstream root плюс компактный
-`ITL-ROOT.md` и получает `resolved`. Все девять upstream `##`-разделов
-сопоставляются сами себе с disposition `upstream-root`; целевая сборка не
-принимает прежнюю полную замену. `USER-RULES.md` и пересекающиеся runtime,
-adapter, OpenSpec и verification файлы получают `resolved` только после
-поведенческого переноса. Для неизменённого downstream-owned файла допустим
-`carry-forward` после проверки зависимостей; новый чистый upstream путь —
-`take-upstream`. Удаление прежнего поведения также требует явного решения.
+`AGENTS.md` собран как точный новый upstream root плюс компактный `ITL-ROOT.md`
+с disposition `resolved`. Все девять upstream `##`-разделов сопоставлены себе
+с disposition `upstream-root`; прежняя полная замена root не возвращена.
+`USER-RULES.md` и пересекающиеся runtime, adapter, OpenSpec и verification
+файлы получили `resolved` после проверки соответствующих смысловых границ.
+`carry-forward` сохранён для неизменённых downstream-owned файлов,
+`take-upstream` — для принятых новых upstream файлов. Риски исполнения и
+доказательства, которые SHA не устанавливает, остаются в unchecked задачах.
 
-`upstreamSha256`, `baselineSha256` и `resultSha256` попадут в итоговый
-`sections.json` только после точной сборки и сверки committed result; здесь
-нет заранее угаданных result hashes. Пока кандидат не квалифицирован, старый
-ledger для установленной r36 не подменяется этим планом.
+`sections.json` содержит реальные `upstreamSha256`, `baselineSha256` и
+`resultSha256` из committed result; `Verify` сверяет их, линейное происхождение
+и installed target bytes. Source dependency lock пока остаётся на r36 до
+отдельной публикации и установки нового fork.
 
 ## Остаток доказательств
 
-Все строки описывают ожидаемый перенос. Не выполнены реализация fork/host,
-native client runs, live MCP/1С, публикация и миграция существующих проектов.
-Это отражается unchecked задачами. Автор постановки проверяет охват и связи;
-реализация подтверждает каждый сценарий реальными результатами и итоговыми hashes.
+Часть переноса уже реализована и проверена в fork/host fixtures. Native client
+execution, live MCP/1С, аварийное восстановление, публикация и миграция реальных
+проектов остаются отдельными unchecked задачами. Точные границы fixture, local
+canary и live acceptance указаны в `tasks.md` и файлах `evidence/`; один
+прошедший hash/Full не подменяет ни один из этих результатов.

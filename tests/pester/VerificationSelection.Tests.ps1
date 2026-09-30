@@ -37,6 +37,157 @@ Describe "Branch-first verification suite selection" {
         }
     }
 
+    It "classifies schema-2 one-off obligations without blocking retained runners on pending proof" {
+        $tempRoot = Join-Path $TestDrive 'schema-two'
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'tests\features') | Out-Null
+        $feature = Join-Path $tempRoot 'tests\features\Orders.feature'
+        [IO.File]::WriteAllText($feature, 'Функционал: Orders', [Text.UTF8Encoding]::new($false))
+        $catalogPath = Join-Path $tempRoot 'tests\verification-suites.branch.json'
+        $catalog = @{
+            schemaVersion = 2
+            suites = @(@{ id = 'orders'; purpose = 'acceptance'; featurePaths = @('tests/features/Orders.feature'); ownerPaths = @('src/cf/Orders/**') })
+            obligations = @(@{ id = 'orders-result'; expectedResult = 'Order total is correct'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('vanessa-junit'); retention = 'retained'; retentionReason = 'Guards a recurring business rule'; cadence = 'affected'; suiteId = 'orders' })
+        }
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            . $ModulePath
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $retained = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            $catalog.obligations += @{ id = 'orders-observed'; expectedResult = 'Order total observed'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation'); retention = 'one-off'; retentionReason = 'The scenario is too expensive to retain'; cadence = 'explicit' }
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $oneOff = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            $oneOffAssessment = Get-VerificationOneOffProofAssessment -Obligation @($oneOff.obligations | Where-Object id -eq 'orders-observed')[0] -State ([pscustomobject]@{})
+            $catalog.obligations = @($catalog.obligations | Where-Object id -eq 'orders-result')
+            $catalog.obligations[0].cadence = 'handoff'
+            $catalog | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $catalogPath -Encoding utf8
+            $handoff = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @($feature)
+            [pscustomobject]@{ retained = $retained; oneOff = $oneOff; oneOffAssessment = $oneOffAssessment; handoff = $handoff }
+        }
+        $result.retained.classificationComplete | Should -BeTrue
+        $result.retained.obligations[0].id | Should -Be 'orders-result'
+        $result.retained.obligations[0].cadence | Should -Be 'affected'
+        $result.oneOff.classificationComplete | Should -BeTrue
+        $result.oneOffAssessment.passed | Should -BeFalse
+        $result.oneOffAssessment.issue | Should -Match 'VERIFICATION_ONE_OFF_PROOF_PENDING'
+        $result.handoff.classificationComplete | Should -BeTrue
+        $result.handoff.obligations[0].cadence | Should -Be 'handoff'
+        $result.handoff.suites[0].purpose | Should -Be 'acceptance'
+    }
+
+    It 'binds an obligation to only its declared source bytes across unrelated commits' {
+        $tempRoot = Join-Path $TestDrive ('Proof inputs Кириллица ' + [guid]::NewGuid().ToString('N'))
+        $orders = Join-Path $tempRoot 'src/cf/Заказы/Ext/Module.bsl'
+        $reports = Join-Path $tempRoot 'src/cf/Отчеты/Ext/Module.bsl'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $orders), (Split-Path -Parent $reports), (Join-Path $tempRoot '.agent-1c') | Out-Null
+        [IO.File]::WriteAllText($orders, 'Функция Сумма() Возврат 1; КонецФункции', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($reports, 'Функция Итог() Возврат 1; КонецФункции', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $tempRoot '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+        & git -C $tempRoot init --quiet
+        & git -C $tempRoot config user.email 'proof-inputs@example.invalid'
+        & git -C $tempRoot config user.name 'Proof Inputs Test'
+        & git -C $tempRoot add -- src .agent-1c/project.json
+        & git -C $tempRoot commit -qm baseline
+        $result = & {
+            . $HelperPath -ProjectRoot $tempRoot -Action help *> $null
+            $obligation = [pscustomobject]@{ inputPaths = @('src/cf/Заказы/**') }
+            $before = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [IO.File]::WriteAllText($reports, 'Функция Итог() Возврат 2; КонецФункции', [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add -- src
+            & git -C $tempRoot commit -qm 'unrelated report'
+            $unrelated = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [IO.File]::WriteAllText($orders, 'Функция Сумма() Возврат 2; КонецФункции', [Text.UTF8Encoding]::new($false))
+            & git -C $tempRoot add -- src
+            & git -C $tempRoot commit -qm 'changed order'
+            $changed = Get-VerificationObligationInputIdentity -Obligation $obligation -Treeish ((& git -C $tempRoot rev-parse 'HEAD^{tree}').Trim())
+            [pscustomobject]@{ before = $before; unrelated = $unrelated; changed = $changed }
+        }
+        $result.before | Should -BeExactly $result.unrelated
+        $result.changed | Should -Not -BeExactly $result.before
+    }
+
+    It 'accepts observed one-off evidence only for the same inputs and loaded base' {
+        $tempRoot = Join-Path $TestDrive ('One off Кириллица ' + [guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempRoot 'evidence') | Out-Null
+        $result = & {
+            $script:ProjectRoot = $tempRoot
+            $DevBranchName = 'branch'
+            $script:InputIdentity = 'input-a'
+            $script:LoadedBase = 'base-a'
+            function Resolve-ProjectPath { param([string]$Path) if ([IO.Path]::IsPathRooted($Path)) { [IO.Path]::GetFullPath($Path) } else { [IO.Path]::GetFullPath((Join-Path $script:ProjectRoot $Path)) } }
+            function Resolve-Agent1cFullPath { param([string]$Path) [IO.Path]::GetFullPath($Path) }
+            function Read-Utf8Text { param([string]$Path) [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
+            function Write-Utf8TextAtomic { param([string]$Path, [string]$Value) New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null; [IO.File]::WriteAllText($Path, $Value, [Text.UTF8Encoding]::new($false)) }
+            . $ModulePath
+            function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'orders-result'; expectedResult = 'Order total is 42'; inputPaths = @('src/cf/Orders/**'); admissibleProof = @('runtime-observation', 'vanessa-junit') }) }
+            function Read-DevBranchState { [pscustomobject]@{ name = 'branch' } }
+            function Assert-DevelopmentBranchWorktreeContext { param($State, $Operation) }
+            function Get-VerificationObligationInputIdentity { param($Obligation, $Treeish) $script:InputIdentity }
+            function Get-VerificationLoadedBaseIdentity { param($State) $script:LoadedBase }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            $started = Start-VerificationOneOffProof -ObligationId 'orders-result'
+            $artifactPath = Resolve-ProjectPath 'evidence/observed.txt'
+            [IO.File]::WriteAllText($artifactPath, 'Actual total: 42', [Text.UTF8Encoding]::new($false))
+            $evidencePath = Resolve-ProjectPath 'evidence/result.json'
+            $evidence = [ordered]@{
+                obligationId = 'orders-result'; runToken = $started.runToken
+                expectedResult = 'Order total is 42'; status = 'passed'
+                proofType = 'runtime-observation'; actualResult = 'Actual total: 42'
+                providerId = 'manual-ui'; runnerVersion = '1'
+                steps = @([ordered]@{ action = 'Open order and calculate'; actual = 'Total displayed as 42' })
+                artifactPaths = @('evidence/observed.txt')
+            }
+            Write-Utf8TextAtomic -Path $evidencePath -Value ($evidence | ConvertTo-Json -Depth 8)
+            $completed = Complete-VerificationOneOffProof -EvidencePath $evidencePath
+            $obligation = @(Get-VerificationOneOffObligations)[0]
+            $passed = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $reuse = Start-VerificationOneOffProof -ObligationId 'orders-result'
+            $script:InputIdentity = 'input-b'
+            $changedInput = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $script:InputIdentity = 'input-a'
+            $script:LoadedBase = 'base-b'
+            $changedBase = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $script:LoadedBase = 'base-a'
+            [IO.File]::WriteAllText($artifactPath, 'Actual total: 41', [Text.UTF8Encoding]::new($false))
+            $changedArtifact = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState)
+            $forced = Start-VerificationOneOffProof -ObligationId 'orders-result' -Force
+            $junitPath = Resolve-ProjectPath 'evidence/junit.xml'
+            $junitEvidencePath = Resolve-ProjectPath 'evidence/junit-result.json'
+            $junitEvidence = [ordered]@{
+                obligationId = 'orders-result'; runToken = $forced.runToken
+                expectedResult = 'Order total is 42'; status = 'passed'
+                proofType = 'vanessa-junit'; actualResult = 'One testcase passed'
+                providerId = 'vanessa'; runnerVersion = '1'
+                steps = @([ordered]@{ action = 'Run order scenario'; actual = 'One testcase passed' })
+                artifactPaths = @('evidence/junit.xml')
+            }
+            Write-Utf8TextAtomic -Path $junitPath -Value '<testsuite tests="0" failures="0" errors="0"><testcase name="orders"/></testsuite>'
+            Write-Utf8TextAtomic -Path $junitEvidencePath -Value ($junitEvidence | ConvertTo-Json -Depth 8)
+            $invalidJunit = ''
+            try { Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath | Out-Null } catch { $invalidJunit = $_.Exception.Message }
+            $pendingAfterInvalid = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
+            Write-Utf8TextAtomic -Path $junitPath -Value '<testsuite tests="1" failures="0" errors="0"><testcase name="orders"/></testsuite>'
+            $validJunit = Complete-VerificationOneOffProof -EvidencePath $junitEvidencePath
+            $tampered = Read-Utf8Text -Path (Get-VerificationOneOffProofPath -ObligationId 'orders-result') | ConvertFrom-Json
+            $tampered.actualResult = 'Fabricated result'
+            $tamperedAssessment = Get-VerificationOneOffProofAssessment -Obligation $obligation -State (Read-DevBranchState) -Proof $tampered
+            [pscustomobject]@{ started = $started; completed = $completed; passed = $passed; reuse = $reuse; changedInput = $changedInput; changedBase = $changedBase; changedArtifact = $changedArtifact; invalidJunit = $invalidJunit; pendingAfterInvalid = $pendingAfterInvalid; validJunit = $validJunit; tamperedAssessment = $tamperedAssessment }
+        }
+        $result.started.status | Should -Be 'pending'
+        $result.completed.status | Should -Be 'passed'
+        $result.passed.passed | Should -BeTrue
+        $result.reuse.reused | Should -BeTrue
+        $result.changedInput.passed | Should -BeFalse
+        $result.changedBase.passed | Should -BeFalse
+        $result.changedArtifact.passed | Should -BeFalse
+        $result.invalidJunit | Should -Match 'JUnit has an invalid or nonzero tests summary'
+        $result.pendingAfterInvalid.status | Should -Be 'pending'
+        $result.validJunit.status | Should -Be 'passed'
+        $result.tamperedAssessment.passed | Should -BeFalse
+    }
+
     It "excludes explicit suites and reuses unchanged acceptance proof by owner" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-selection-owner-" + [guid]::NewGuid().ToString("N"))
         try {
@@ -542,7 +693,7 @@ Describe "Branch-first verification suite selection" {
             function Get-VerificationFingerprint { "fingerprint" }
             function Complete-VerificationSelectionProof { $script:ProofCalls++ }
             function Update-DevBranchState { param([hashtable]$Updates) $script:Updates += ,$Updates }
-            function Get-VerificationState { [pscustomobject]@{ status = "passed" } }
+            function Get-VerificationState { [pscustomobject]@{ status = "passed"; isFreshPassed = $true } }
             function Run-DevBranchTests { throw "Vanessa must not run" }
             Invoke-ItlVerificationCycle -Trigger command
             $reuseUpdateCount = @($script:Updates | Where-Object { $_.ContainsKey("lastVerificationSelectionMode") -and $_["lastVerificationSelectionMode"] -eq "reuse" }).Count
@@ -552,6 +703,41 @@ Describe "Branch-first verification suite selection" {
         $result.eventLogCalls | Should -Be 1
         $result.proofCalls | Should -Be 1
         $result.reuseUpdateCount | Should -Be 1
+    }
+
+    It 'assesses a one-off-only branch without inventing a Vanessa test run' {
+        $result = & {
+            . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null
+            $script:EventLogCalls = 0
+            $script:Updates = @()
+            $script:ActiveAuxiliaryVanessaContext = $null
+            $VanessaFeaturePath = ''
+            $VanessaFilterTags = ''
+            $DevBranchName = 'branch'
+            function Read-DevBranchState { [pscustomobject]@{ devBranchName = 'branch' } }
+            function Get-ItlVerificationExecutionDecision { param([string]$Component) [pscustomobject]@{ component = $Component; run = $true; reason = 'test' } }
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Get-VanessaFeaturesPath { 'tests/features' }
+            function Get-VanessaApplicationFeatureFiles { @() }
+            function Get-VerificationOneOffObligations { @([pscustomobject]@{ id = 'observed' }) }
+            function Read-VerificationSuiteCatalog { [pscustomobject]@{ available = $false } }
+            function Get-VerificationSelectionEffectiveTree { '1111111111111111111111111111111111111111' }
+            function Assert-VerificationClassificationReady {}
+            function Invoke-YAxUnitVerification { param($State) }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchExtensionInitialized {}
+            function Assert-DevBranchApplicationReady { param([object]$State) $State }
+            function Test-ItlEventLogCurrent { $script:EventLogCalls++ }
+            function Get-CurrentCommit { '2222222222222222222222222222222222222222' }
+            function Get-VerificationFingerprint { 'fingerprint' }
+            function Update-DevBranchState { param([hashtable]$Updates) $script:Updates += ,$Updates }
+            function Get-VerificationState { [pscustomobject]@{ status = 'passed'; isFreshPassed = $true } }
+            function Run-DevBranchTests { throw 'Vanessa must not run for one-off-only coverage' }
+            Invoke-ItlVerificationCycle -Trigger command
+            [pscustomobject]@{ eventLogCalls = $script:EventLogCalls; updates = @($script:Updates) }
+        }
+        $result.eventLogCalls | Should -Be 1
+        @($result.updates | Where-Object { $_.ContainsKey('lastVerificationSelectionMode') -and $_.lastVerificationStatus -eq 'passed' }).Count | Should -Be 1
     }
 
     It "runs classification preflight before either executable test contour" {

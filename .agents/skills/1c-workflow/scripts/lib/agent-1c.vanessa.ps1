@@ -500,6 +500,7 @@ function Get-VanessaFeatureScenarioDefinitions {
         $inBackground = $false
         $inExamples = $false
         $exampleHeaders = @()
+        $exampleIndex = 0
         $lineNumber = 0
 
         foreach ($line in @(Get-Content -LiteralPath $featureFile -Encoding UTF8)) {
@@ -538,6 +539,7 @@ function Get-VanessaFeatureScenarioDefinitions {
                     tags = @($featureTags + @($pendingTags.ToArray()))
                     steps = (New-Object System.Collections.Generic.List[string])
                     exampleRows = (New-Object System.Collections.Generic.List[object])
+                    junitNames = (New-Object System.Collections.Generic.List[string])
                 }
                 foreach ($backgroundStep in @($backgroundSteps.ToArray())) {
                     $current.steps.Add($backgroundStep)
@@ -558,6 +560,7 @@ function Get-VanessaFeatureScenarioDefinitions {
             if ($line -match '^\s*(?:Примеры|Examples|Scenarios)\s*:') {
                 $inExamples = $true
                 $exampleHeaders = @()
+                $exampleIndex = 0
                 continue
             }
             if ($inExamples -and $line -match '^\s*\|') {
@@ -570,6 +573,8 @@ function Get-VanessaFeatureScenarioDefinitions {
                         $values[[string]$exampleHeaders[$index]] = [string]$cells[$index]
                     }
                     $current.exampleRows.Add([pscustomobject]$values)
+                    $current.junitNames.Add("$($current.name) №$exampleIndex")
+                    $exampleIndex++
                 }
                 continue
             }
@@ -2192,7 +2197,16 @@ function Read-DevBranchEventLogCursorInfo {
 
     $cursor = Read-Utf8Text -Path $Path | ConvertFrom-Json
     $capturedAt = [datetime]::MinValue
-    if (-not [datetime]::TryParse([string]$cursor.capturedAt, [ref]$capturedAt)) {
+    # New PowerShell JSON readers deserialize ISO timestamps automatically.
+    # Keep that instant instead of stringifying it with a different culture
+    # before parsing; Windows PowerShell still supplies the original string.
+    if ($cursor.capturedAt -is [datetime]) {
+        $capturedAt = [datetime]$cursor.capturedAt
+    } elseif ($cursor.capturedAt -is [datetimeoffset]) {
+        $capturedAt = ([datetimeoffset]$cursor.capturedAt).UtcDateTime
+    } elseif (-not [datetime]::TryParse([string]$cursor.capturedAt,
+        [Globalization.CultureInfo]::InvariantCulture,
+        [Globalization.DateTimeStyles]::RoundtripKind, [ref]$capturedAt)) {
         throw "Event log cursor capturedAt is invalid: $Path"
     }
     return [pscustomobject]@{
@@ -4377,7 +4391,7 @@ function Test-VanessaTestClientStartupMonitor {
 }
 
 function Get-VanessaJunitSummary {
-    param([string]$RunDirectory)
+    param([string]$RunDirectory, [string[]]$ReportPaths = @())
 
     $summary = [ordered]@{
         found = $false
@@ -4389,11 +4403,13 @@ function Get-VanessaJunitSummary {
         files = @()
     }
 
-    if (-not (Test-Path -LiteralPath $RunDirectory -PathType Container -ErrorAction SilentlyContinue)) {
+    if ($ReportPaths.Count -eq 0 -and -not (Test-Path -LiteralPath $RunDirectory -PathType Container -ErrorAction SilentlyContinue)) {
         return [pscustomobject]$summary
     }
 
-    $xmlFiles = @(Get-ChildItem -LiteralPath $RunDirectory -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue)
+    $xmlFiles = @(if ($ReportPaths.Count -gt 0) {
+        $ReportPaths | Sort-Object -Unique | ForEach-Object { Get-Item -LiteralPath $_ -ErrorAction Stop }
+    } else { Get-ChildItem -LiteralPath $RunDirectory -Recurse -File -Filter "*.xml" -ErrorAction SilentlyContinue })
     foreach ($file in $xmlFiles) {
         try {
             $xml = New-Object System.Xml.XmlDocument
@@ -4716,7 +4732,7 @@ function Get-GitObjectIdForTreePath {
 }
 
 function Get-VerificationFingerprintScopePaths {
-    return @(
+    return @(@(
         (Get-ExportPath),
         (Get-ExtensionsPath),
         (Get-VanessaFeaturesPath),
@@ -4725,8 +4741,53 @@ function Get-VerificationFingerprintScopePaths {
         "tests/verification-suites.shared.json",
         "tests/verification-suites.branch.json",
         "tests/yaxunit-suites.shared.json",
-        "tests/yaxunit-suites.branch.json"
+        "tests/yaxunit-suites.branch.json",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.vanessa.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.yaxunit.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-selection.ps1",
+        ".agents/skills/1c-workflow/scripts/lib/agent-1c.verification-modes.ps1"
+    ) + @(Get-VerificationDeclaredInputScopes) | Select-Object -Unique)
+}
+
+function Get-VerificationRelevantDependencyLockFingerprint {
+    param([Parameter(Mandatory = $true)][string]$Treeish)
+
+    $path = '.agent-1c/dependency-lock.json'
+    if ((Get-GitObjectIdForTreePath -Treeish $Treeish -RepoPath $path) -eq '<missing>') {
+        return '<missing>'
+    }
+    try {
+        $lock = (Get-GitOutput @('show', "${Treeish}:$path")) | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "VERIFICATION_DEPENDENCY_LOCK_INVALID: '$Treeish`:$path' cannot be read as JSON: $($_.Exception.Message)"
+    }
+    # Only actual verification components influence proof freshness. A lock
+    # timestamp, unrelated package, or new workflow commit with these same
+    # bytes must not invalidate an otherwise identical result.
+    $fields = @(
+        'dependencies.vanessaAutomation.version',
+        'dependencies.vanessaAutomation.compatibilityVersion',
+        'dependencies.vanessaAutomation.downstreamRevision',
+        'dependencies.vanessaAutomation.sha256',
+        'dependencies.vanessaAutomation.epfSha256',
+        'dependencies.vanessaAutomation.manifestSha256',
+        'dependencies.vanessaAutomation.patchSha256',
+        'dependencies.yaxunit.version',
+        'dependencies.yaxunit.sha256',
+        'dependencies.itlOndemandMcp.version',
+        'dependencies.itlOndemandMcp.sha256',
+        'dependencies.vanessaMcp.clientMcp.version',
+        'dependencies.vanessaMcp.clientMcp.sha256',
+        'dependencies.vanessaMcp.vaExtension.version',
+        'dependencies.vanessaMcp.vaExtension.sha256',
+        'dependencies.vanessaMcp.vaExtension.protocol',
+        'dependencies.roctupMcpToolkit.version',
+        'dependencies.roctupMcpToolkit.sha256'
     )
+    $parts = foreach ($field in $fields) {
+        "$field=$(Get-ConfigValueFromObject -Object $lock -Path $field -Default '<missing>')"
+    }
+    return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
 }
 
 function Get-VerificationWorkingTreeChangePaths {
@@ -4828,14 +4889,43 @@ function Get-VerificationFingerprint {
     $paths = @(Get-VerificationFingerprintScopePaths)
     $changedPaths = @(Get-VerificationWorkingTreeChangePaths -PathSpec $paths)
     $treeish = New-VerificationEffectiveTree -ChangedPaths $changedPaths
-    $parts = @("v4")
+    $parts = @("v5")
     foreach ($path in $paths) {
         $normalized = ($path -replace "\\", "/").Trim("/")
         if ($normalized) {
-            $parts += "$normalized=$(Get-GitObjectIdForTreePath -Treeish $treeish -RepoPath $normalized)"
+            $value = if ($normalized -eq '.agent-1c/dependency-lock.json') {
+                Get-VerificationRelevantDependencyLockFingerprint -Treeish $treeish
+            } else {
+                Get-GitObjectIdForTreePath -Treeish $treeish -RepoPath $normalized
+            }
+            $parts += "$normalized=$value"
         }
     }
     return ($parts -join "|")
+}
+
+function Get-VerificationLoadedBaseIdentity {
+    param([object]$State)
+
+    # A source tree alone does not identify the infobase that a test observed.
+    # Keep timestamps and commit ids out: reloading identical bytes in the same
+    # target does not invalidate a result, whereas a different target or loaded
+    # configuration does.
+    $fields = @(
+        'stateProjectRoot',
+        'infoBaseKind',
+        'devBranchInfoBasePath',
+        'toolingInfoBaseGeneration',
+        'vanessaServiceInfoBaseGeneration',
+        'lastConfigDesignerFingerprint',
+        'lastExtensionDesignerFingerprint',
+        'configLoadStatus',
+        'extensionLoadStatus'
+    )
+    $parts = @('loaded-base-v2') + @($fields | ForEach-Object {
+        "$_=$([string](Get-StateValue -State $State -Name $_ -Default ''))"
+    })
+    return (Get-VerificationSelectionSha256 -Text ($parts -join "`n"))
 }
 
 function Get-VerificationState {
@@ -4848,6 +4938,8 @@ function Get-VerificationState {
     $status = [string](Get-StateValue -State $State -Name "lastVerificationStatus" -Default "missing")
     $commit = [string](Get-StateValue -State $State -Name "lastVerifiedCommit" -Default "")
     $fingerprint = [string](Get-StateValue -State $State -Name "lastVerifiedFingerprint" -Default "")
+    $verifiedLoadedBase = [string](Get-StateValue -State $State -Name 'lastVerifiedLoadedBaseIdentity' -Default '')
+    $currentLoadedBase = Get-VerificationLoadedBaseIdentity -State $State
     $currentCommitValue = $CurrentCommit
     $currentFingerprintValue = $CurrentFingerprint
     $isFresh = $false
@@ -4859,9 +4951,10 @@ function Get-VerificationState {
             $currentFingerprintValue = Get-VerificationFingerprint
         }
         if ($fingerprint) {
-            $isFresh = ($status -eq "passed" -and $fingerprint -eq $currentFingerprintValue)
+            $isFresh = ($status -eq "passed" -and $fingerprint -eq $currentFingerprintValue -and
+                $verifiedLoadedBase -and $verifiedLoadedBase -ceq $currentLoadedBase)
         } else {
-            $isFresh = ($status -eq "passed" -and $commit -and $commit -eq $currentCommitValue)
+            $isFresh = $false
         }
     } catch {
         $currentCommitValue = ""
@@ -4869,9 +4962,33 @@ function Get-VerificationState {
         $isFresh = $false
     }
 
+    $oneOffIssues = @()
+    $assessmentIssues = @()
+    $hasComponentReceipts = $null -ne (Get-StateValue -State $State -Name 'lastVerificationComponentEvidence' -Default $null)
+    $hasCurrentProofReceipts = $hasComponentReceipts -or @(
+        Get-VerificationCatalogValue -Value (Read-VerificationSelectionProof) -Name 'suiteEvidence' -Default @()
+    ).Count -gt 0
+    if ($hasCurrentProofReceipts -and $currentFingerprintValue) {
+        $assessment = Get-VerificationCurrentProofAssessment -State $State -Fingerprint $currentFingerprintValue
+        $oneOffIssues = @($assessment.oneOffIssues)
+        $assessmentIssues = @($assessment.issues)
+        $isFresh = [bool]$assessment.passed
+        if ($isFresh) { $status = 'passed' }
+    } elseif ($isFresh) {
+        try {
+            $oneOffIssues = @(Get-VerificationOneOffObligations | ForEach-Object {
+                $assessment = Get-VerificationOneOffProofAssessment -Obligation $_ -State $State
+                if (-not $assessment.passed) { [string]$assessment.issue }
+            })
+        } catch {
+            $oneOffIssues = @("VERIFICATION_ONE_OFF_ASSESSMENT_FAILED: $($_.Exception.Message)")
+        }
+        if ($oneOffIssues.Count -gt 0) { $isFresh = $false }
+    }
+
     $effectiveStatus = $status
     if ($status -eq "passed" -and -not $isFresh) {
-        $effectiveStatus = "stale"
+        $effectiveStatus = $(if ($oneOffIssues.Count -gt 0 -or $assessmentIssues.Count -gt 0) { 'partial' } else { 'stale' })
     }
 
     return [pscustomobject]@{
@@ -4881,11 +4998,16 @@ function Get-VerificationState {
         verifiedCommit = $commit
         currentCommit = $currentCommitValue
         verifiedFingerprint = $fingerprint
+        verifiedLoadedBaseIdentity = $verifiedLoadedBase
+        currentLoadedBaseIdentity = $currentLoadedBase
         currentFingerprint = $currentFingerprintValue
         verifiedAt = [string](Get-StateValue -State $State -Name "lastVerifiedAt" -Default "")
         reportPath = [string](Get-StateValue -State $State -Name "lastVerifiedReportPath" -Default "")
         logPath = [string](Get-StateValue -State $State -Name "lastVerificationLogPath" -Default "")
-        reason = [string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")
+        reason = ((@([string](Get-StateValue -State $State -Name "lastVerificationReason" -Default "")) + @($oneOffIssues) + @($assessmentIssues) | Where-Object { $_ }) -join '; ')
+        oneOffIssues = @($oneOffIssues)
+        assessmentIssues = @($assessmentIssues)
+        assessmentKind = $(if ($hasCurrentProofReceipts) { 'current-obligations' } else { 'legacy-full' })
     }
 }
 
@@ -4922,11 +5044,19 @@ function Confirm-UnverifiedProceed {
     }
 
     $policy = Get-VerificationPolicy
+    $oneOffIssues = @(Get-StateValue -State $verification -Name 'oneOffIssues' -Default @())
+    $assessmentIssues = @(Get-StateValue -State $verification -Name 'assessmentIssues' -Default @())
     if ($policy -eq "block") {
+        if ($oneOffIssues.Count -gt 0) {
+            throw "$Operation stopped because verificationPolicy=block and one-off proof is pending or stale: $($oneOffIssues -join '; '). Capture the named check with begin-one-off-proof and complete-one-off-proof after the current loaded-base check; repeat the original export/close action."
+        }
+        if ($assessmentIssues.Count -gt 0) {
+            throw "$Operation stopped because verificationPolicy=block and current obligations are incomplete: $($assessmentIssues -join '; '). Preserve current receipts, satisfy only the missing obligation through its permitted named runner or existing loaded-base/classification owner, then repeat the original action. Persistent off is not overridden by this assessment."
+        }
         throw "$Operation stopped because verificationPolicy=block and fresh passed full executable verification is missing. Run verify-dev-branch before exporting or closing the branch."
     }
 
-    Write-Host "[WARN] Current development branch has no fresh successful Vanessa verification."
+    Write-Host "[WARN] Current development branch has no fresh complete verification."
     Write-Host "Verification status: $($verification.effectiveStatus)"
     if ($verification.reason) {
         Write-Host "Verification reason: $($verification.reason)"
@@ -4946,7 +5076,7 @@ function Confirm-UnverifiedProceed {
 
     if ($Allow) {
         Write-Host "Explicit unverified override accepted for $Operation."
-        if ($verification.status -eq "partial") {
+        if ($verification.effectiveStatus -eq "partial") {
             Write-Host "Result wording is restricted to: implemented; executable verification skipped. Do not report verified/done."
         }
         return $true
@@ -4957,12 +5087,13 @@ function Confirm-UnverifiedProceed {
         return $false
     }
 
-    throw "$Operation stopped because fresh passed Vanessa verification is missing. Run verify-dev-branch or rerun with explicit unverified override."
+    throw "$Operation stopped because fresh complete verification is missing. Resolve the reported pending obligation, run verify-dev-branch if needed, or use the existing explicit unverified override."
 }
 
 function Add-VanessaVerificationEvidenceUpdates {
     param(
         [hashtable]$Updates,
+        [object]$State = $null,
         [string]$Status,
         [string]$Reason,
         [string]$Commit,
@@ -4976,6 +5107,9 @@ function Add-VanessaVerificationEvidenceUpdates {
         $Updates["lastVerificationStatus"] = $Status
         $Updates["lastVerifiedCommit"] = $Commit
         $Updates["lastVerifiedFingerprint"] = $Fingerprint
+        if ($null -ne $State) {
+            $Updates['lastVerifiedLoadedBaseIdentity'] = Get-VerificationLoadedBaseIdentity -State $State
+        }
         $Updates["lastVerifiedAt"] = (Get-Date).ToString("o")
         $Updates["lastVerifiedReportPath"] = $ReportPath
         $Updates["lastVerificationLogPath"] = $LogPath
@@ -5050,11 +5184,11 @@ function Run-DevBranchTests {
     }
     $applicationFeatureFiles = @(Get-VanessaApplicationFeatureFiles -FeaturePath $featuresPath)
     $selectionPlan = $null
-    if ($RecordFullVerificationEvidence -and -not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
+    if (-not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
         $selectionPlan = if ($null -ne $script:ActiveVerificationSelectionPlan) {
             $script:ActiveVerificationSelectionPlan
         } else {
-            New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles
+            New-VerificationSelectionPlan -ApplicationFeatureFiles $applicationFeatureFiles -RequireObservedReceipts
         }
         $applicationFeatureFiles = @($selectionPlan.selectedFeatureFiles)
         $script:ActiveVerificationSelectionPlan = $selectionPlan
@@ -5277,7 +5411,7 @@ function Run-DevBranchTests {
             lastVanessaTimedOut = $script:LastProcessTimedOut
             lastVanessaTimeoutSeconds = $timeoutSeconds
         }
-        Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+        Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status "failed" -Reason $failureReason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
         if ($null -ne $eventLogVerification) {
             $updates["lastVanessaEventLogReader"] = $eventLogVerification.reader
             $updates["lastVanessaEventLogBaselinePath"] = $eventLogVerification.baselinePath
@@ -5298,6 +5432,10 @@ function Run-DevBranchTests {
         $updates["lastVanessaCleanupDurationMs"] = $cleanupDurationMs
         $updates["lastVanessaEventLogDurationMs"] = $eventLogDurationMs
         $updates["lastVanessaPostProcessDurationMs"] = [int64]$postProcessStopwatch.ElapsedMilliseconds
+        if ($null -ne $selectionPlan -and -not $auxiliaryVerification -and -not (Test-ItlDiagnosticVerificationScope)) {
+            try { Complete-VerificationSelectionProof -Plan $selectionPlan -State $state -RunDirectory $runDirectory -Status 'failed' }
+            catch { Write-Warning "Could not persist the failed retained receipt: $($_.Exception.Message). The original native failure remains primary." }
+        }
         Update-ActiveVanessaVerificationState -State $state -Updates $updates
         $script:ActiveVerificationSelectionPlan = $null
         throw
@@ -5416,10 +5554,15 @@ function Run-DevBranchTests {
         $updates["lastVerificationSelectedSuites"] = @($selectionPlan.selectedSuiteIds)
         $updates["lastVerificationSelectionReason"] = [string]$selectionPlan.reason
     }
-    if ($verification.status -eq "passed" -and $RecordFullVerificationEvidence -and $null -ne $selectionPlan) {
-        Complete-VerificationSelectionProof -Plan $selectionPlan
+    if (-not $script:ActiveAuxiliaryVanessaContext -and -not (Test-ItlDiagnosticVerificationScope)) {
+        if ($null -ne $selectionPlan) {
+            Complete-VerificationSelectionProof -Plan $selectionPlan -State $state -RunDirectory $runDirectory -Status $verification.status
+        }
+        if ($eventLogVerification.status -ne 'skipped') {
+            Add-VerificationComponentEvidenceUpdates -Updates $updates -State $state -Component 'event-log' -Status $eventLogVerification.status -EventLogObservation $eventLogVerification -RunDirectory $runDirectory
+        }
     }
-    Add-VanessaVerificationEvidenceUpdates -Updates $updates -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
+    Add-VanessaVerificationEvidenceUpdates -Updates $updates -State $state -Status $verification.status -Reason $verification.reason -Commit $currentCommit -Fingerprint $currentFingerprint -ReportPath $runDirectory -LogPath $logPath -RecordFullVerificationEvidence:$RecordFullVerificationEvidence
     Update-ActiveVanessaVerificationState -State $state -Updates $updates
     $script:ActiveVerificationSelectionPlan = $null
 
@@ -6572,13 +6715,16 @@ function Publish-VanessaInteractiveProfileUserReport {
 function Invoke-ItlNativeProcessCapture {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [string[]]$Arguments = @()
+        [string[]]$Arguments = @(),
+        [string]$WorkingDirectory = $script:ProjectRoot,
+        [ValidateRange(0, 86400)][int]$TimeoutSeconds = 0,
+        [scriptblock]$OnTimeout = $null
     )
 
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $FilePath
     $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments $Arguments
-    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.WorkingDirectory = $WorkingDirectory
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
@@ -6594,7 +6740,21 @@ function Invoke-ItlNativeProcessCapture {
         }
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        $process.WaitForExit()
+        if ($TimeoutSeconds -eq 0) {
+            $process.WaitForExit()
+        } else {
+            $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+            $exited = $process.WaitForExit($TimeoutSeconds * 1000)
+            $remaining = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            $drained = $exited -and $stdoutTask.Wait($remaining)
+            $remaining = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            $drained = $drained -and $stderrTask.Wait($remaining)
+            if (-not $drained) {
+                $cleanup = if ($null -ne $OnTimeout) { & $OnTimeout $process } else { Stop-NativeProcessForSafety -Process $process }
+                $cleanupConfirmed = [bool](Get-StateValue -State $cleanup -Name 'confirmed' -Default $false)
+                throw "NATIVE_PROCESS_TIMEOUT: PID $($process.Id) exceeded ${TimeoutSeconds}s or left its output pipe open; owned cleanup confirmed=$cleanupConfirmed. Repeat the original operation after fixing its native prerequisite."
+            }
+        }
         return [pscustomobject]@{
             exitCode = $process.ExitCode
             stdout = [string]$stdoutTask.Result
@@ -7503,14 +7663,14 @@ function Install-VanessaMcpExtensionCfe {
     }
 
     Write-Host "Installing 1C extension '$ExtensionName' from: $CfePath"
-    Invoke-Designer `
+    $installation = Invoke-GuardedCfeExtensionApply `
         -InfoBasePath $InfoBasePath `
         -InfoBaseKind $InfoBaseKind `
         -User $User `
         -Password $Password `
-        -DesignerArgs @("/LoadCfg", $CfePath, "-Extension", $ExtensionName, "/UpdateDBCfg") | Out-Null
+        -CfePath $CfePath -ExtensionName $ExtensionName
 
-    return $script:LastLogPath
+    return $installation.logPath
 }
 
 function Get-VanessaDesignerAgentPortRange {

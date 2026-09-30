@@ -50,6 +50,7 @@ temp/
 .agent-1c/tools/vanessa-automation/
 .agent-1c/tools/vanessa-mcp/
 .agent-1c/tools/roctup-mcp-toolkit/
+.agent-1c/tools/openspec-cli/
 .agent-1c/mcp/
 .agent-1c/client-surface.json
 build/data-mcp-tools-loader/

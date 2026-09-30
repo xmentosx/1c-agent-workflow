@@ -29,7 +29,8 @@ Use this skill when the agent needs to inspect data in the current `itldev/*` br
 - Do not pass `execute_code` or `restart_1c_session` to `call_tool` unless the user explicitly requests that exact operation. `close_1c_session` may be used without separate confirmation when releasing the current managed dev-branch session for lifecycle recovery; never use it against the source infobase or another branch.
 - Do not pass a 1C password through ROCTUP startup parameters.
 - Treat ROCTUP and Vanessa artifacts as runtime tooling; they must not be exported as product CF/CFE artifacts.
-- Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, run the supported `update-dev-branch-base` helper once and repeat the original call once. Report any other structured facade, catalog, or broker error.
+- Never start, stop, or call the backend through raw HTTP. If a call returns `ITL_INFOBASE_APPLICATION_NOT_READY`, report the dependent read as unverified and give the supported `update-dev-branch-base` continuation. Run that helper and repeat the original call only when updating this exact branch infobase is already authorized by the task; read access alone is not permission to load a configuration. Report any other structured facade, catalog, or broker error.
+- For Gate 3a, use `get_metadata` and a bounded read-only `execute_query` only when `TOOL_DATA` permits the provider and the facade identifies the current dev/test branch infobase. Record the branch/infobase identity, ROCTUP provider identity, query and parameter scope, expected result and observed result. Metadata lookup alone cannot prove query execution or result correctness. `execute_code` is not an automatic substitute for a read-only query; the explicit-request restriction above still applies.
 
 ## Database Access Handoff
 

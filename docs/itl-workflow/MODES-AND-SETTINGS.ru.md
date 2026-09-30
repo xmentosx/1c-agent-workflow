@@ -16,7 +16,7 @@
   └─ непроверенный результат: VERIFICATION_POLICY=warn
 ```
 
-Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=on`, `CAVEMAN_LEVEL=full`, `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_YAXUNIT_TESTING=auto`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=auto` (уровень `full` в текущей сессии), `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_YAXUNIT_TESTING=auto`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
@@ -25,6 +25,8 @@
 После инициализации, создания ветки и в `/itl-status` workflow показывает определённое состояние Kilo Browser Automation. Если `kilo-code.new.browserAutomation.enabled=true`, workflow рекомендует отключить этот скрытый Playwright MCP: он заметно увеличивает набор tools, контекст и расход токенов. Для веб-задач используйте workflow `agent-browser`; если он отсутствует, статус сразу показывает helper-команду установки. При `false` выводится только нормальный статус, при неизвестном состоянии — просьба проверить Kilo Settings. Workflow сам настройку Kilo не меняет.
 
 `agent-browser` и Windows-MCP регистрируются напрямую через `stdio`: первый предпочтителен для веб-клиента 1С, второй нужен только для неизбежной автоматизации desktop/thick-client UI. Оба процесса запускает сам MCP-клиент; on-demand facade, фиксированные UI-порты и desktop lock не используются.
+
+В проекте можно подключить несколько клиентов через `aiRules.tools`; выбор клиента текущего вызова не меняет этот набор. ITL формирует ZCode MCP в `.zcode/config.json` → `mcp.servers`, MiMo Code — в `.mimocode/mimocode.json` → `mcp`, сохраняя соседние пользовательские поля и серверы. Если у MiMo Code уже есть `.mimocode/mimocode.jsonc`, helper сохраняет его и просит явно объединить настройки в JSON перед записью: параллельные JSON/JSONC не выдаются за проверенную конфигурацию. `itl-doctor` показывает настроенные клиенты и отдельно указывает, что наличие файла не доказывает подключение сервера, доступность инструмента в текущем чате или загрузку native-команды. Для Cline отдельно проверяйте вариант и версию CLI/editor, в котором открыт проект.
 
 ITL не включает и не выключает Browser Automation и не создаёт для этого `.vscode/settings.json`. Если состояние нельзя однозначно определить из workspace, пользовательских настроек и default установленного Kilo, выводится `unknown`.
 
@@ -41,10 +43,10 @@ ITL не включает и не выключает Browser Automation и не 
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | Обновление source из хранилища 1С | `/itl-repository-mode`, `SOURCE_REPOSITORY_UPDATE_MODE` | `workflow`, `external` | `workflow` | основной `master` |
 | Оркестрация | `/economymode`, `ORCHESTRATION` | `standard`, `economy` | `standard` | проект |
-| Модели субагентов | `SUBAGENT_MODEL_CODING`, `SUBAGENT_MODEL_ANALYSIS`, `SUBAGENT_MODEL_LIGHT` | model id клиента или пусто | модель клиента | после re-render/restart |
+| Модели субагентов | `aiRules.modelTiersByClient.<client>.<tier>` в `.agent-1c/project.json` | model id данного клиента или пусто | модель данного клиента | после re-render/restart |
 | Профиль головной модели | `/rulesmodel`, `AGENT_MODEL` | `opus5`, `sonnet5`, `fable5`, `gpt56`, `auto` | `auto` | новый чат после смены |
 | Защита объектов на поддержке | `SUPPORT_GUARD` | `deny`, `warn`, `off` | `deny` | сразу |
-| Стиль ответов | `/caveman`, `CAVEMAN`, `CAVEMAN_LEVEL` | mode: `on`, `auto`, `off`; level: `lite`, `full`, `ultra` | `on/full` | проект; явный session override приоритетнее |
+| Стиль ответов | `/caveman`, `CAVEMAN` | mode: `on`, `auto`, `off`; session level: `lite`, `full`, `ultra` | `auto/full` | режим — проект, уровень — сессия |
 | Лимит quick-fix | `QUICKFIX_MAX_LINES` | положительное число | `40` | проект |
 | Быстрый путь отладки | `DEBUG_FAST_PATH` | `standard`, `extended`, `off` | `standard` | проект |
 | Зависимости | `DEPENDENCY_MODE` | `fresh`, `locked` | `fresh` | проект |
@@ -83,11 +85,11 @@ ITL не включает и не выключает Browser Automation и не 
 | `/itl-litemode full` или `off` | `auto` | `auto` |
 | `/itl-litemode status` | без изменения | без изменения |
 
-Обычные agent-facing маршруты используют `command` для `/itl-check` и `repair` для `/itl-verify-fix`, поэтому в них `auto` и `manual` запускают компонент одинаково. `implicit` зарезервирован для script-owned completion и сейчас не имеет production-caller. `off` запускается только при отдельном advanced-запросе именно этого компонента; обычные `/itl-check` и `/itl-verify-fix` его не переопределяют. Поэтому `standard` и `full` сейчас эквивалентны для обычного `/itl-check`. Пропуск дает partial evidence и не считается fresh pass; при `VERIFICATION_POLICY=block` после `lite` потребуется явная полная проверка до result/close.
+Обычные agent-facing маршруты используют `command` для `/itl-check` и `repair` для `/itl-verify-fix`, поэтому в них `auto` и `manual` запускают компонент одинаково. `implicit` зарезервирован для script-owned completion и сейчас не имеет production-caller. `off` запускается только при отдельном advanced-запросе именно этого компонента; обычные `/itl-check` и `/itl-verify-fix` его не переопределяют. Явно запрошенный `/test-fix-loop` может на время своей `scenario-loop` сессии выполнить названную Vanessa-проверку при постоянном `off`, не записывая новое значение в `.dev.env`; широкий запрет UI и требования к целевой базе сохраняются. Сессия ограничена тремя раундами по умолчанию либо явно заданным N; после успешной проверки названного сценария тот же раунд выполняет нефильтрованную проверку всех разрешённых компонентов. Поэтому `standard` и `full` сейчас эквивалентны для обычного `/itl-check`. Пропуск дает partial evidence и не считается fresh pass; при `VERIFICATION_POLICY=block` после `lite` потребуется явная полная проверка до result/close.
 
 ## `/economymode` и модели
 
-`ITL_ROUTINE_MODE=off` выполняет все `/itl*` в основном агенте и не создает управляемый `itl-routine`. `auto` оставляет `/itl`, `/itl-status`, `/itl-litemode` и `/itl-result` прямыми, а остальные подходящие длинные команды делегирует только при явно заданном `SUBAGENT_MODEL_LIGHT`. `on` делегирует все подходящие команды, кроме `/itl-result`, и требует явную light-модель. `/itl-result` всегда остаётся в агенте текущего диалога: после неизменённого отчёта экспорта он добавляет итог уже выполненной задачи только из известного контекста, а без такого контекста возвращает один отчёт. Пустое или неизвестное значение безопасно означает `off`; routine никогда не наследует модель родительского агента.
+`ITL_ROUTINE_MODE=off` выполняет все `/itl*` в основном агенте и не создает управляемый `itl-routine`. `auto` оставляет `/itl`, `/itl-status`, `/itl-litemode` и `/itl-result` прямыми, а остальные подходящие длинные команды делегирует только при явно заданном `light` в карте соответствующего клиента. `on` делегирует все подходящие команды, кроме `/itl-result`, и требует явную light-модель для Kilo/OpenCode. `/itl-result` всегда остаётся в агенте текущего диалога: после неизменённого отчёта экспорта он добавляет итог уже выполненной задачи только из известного контекста, а без такого контекста возвращает один отчёт. Пустое или неизвестное значение безопасно означает `off`; routine никогда не наследует модель родительского агента.
 
 `ORCHESTRATION=standard` оставляет обычную политику делегирования. `ORCHESTRATION=economy` передает больше исполнения субагентам, а решения, спецификации и финальная проверка остаются у головного агента.
 
@@ -97,7 +99,7 @@ ITL не включает и не выключает Browser Automation и не 
 - `analysis` — планирование, анализ, review, тесты и документация;
 - `light` — поиск, scouting и небольшие механические задачи.
 
-Пустой `SUBAGENT_MODEL_*` означает наследование модели AI-клиента. После изменения model id нужно перерендерить правила и перезапустить клиент; изменение `ORCHESTRATION` применяется без re-render.
+Прежние `SUBAGENT_MODEL_*` из `.dev.env` однократно закрепляются за исходным клиентом в `aiRules.modelTiersByClient`. Для нового клиента задайте его собственные `coding`, `analysis`, `light` или оставьте пустые значения: это наследование модели этого клиента. `itl-routine` в Kilo/OpenCode использует `light` именно своего клиента; режим `on` требует явного значения для каждого подключённого такого клиента. После изменения model id нужно перерендерить правила и перезапустить соответствующий клиент; изменение `ORCHESTRATION` применяется без re-render.
 
 ### RTK
 
@@ -113,9 +115,17 @@ ITL не включает и не выключает Browser Automation и не 
 - `auto` — краткий стиль для разработки, обычный для анализа, review и документации;
 - `off` — автоматическая активация выключена.
 
-Постоянный уровень хранится отдельно в `CAVEMAN_LEVEL=lite|full|ultra`; отсутствующее или невалидное значение означает `full`. `/caveman persist <level>` меняет только `CAVEMAN_LEVEL` и не включает `CAVEMAN`.
+Уровень не хранится в `.dev.env`: `/caveman lite|full|ultra` меняет его только для текущей сессии, по умолчанию `full`. Прежний `CAVEMAN_LEVEL` игнорируется. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате. Приоритет: session override → `CAVEMAN` проекта → `auto/full`. При `auto` исполняющие `itl-*` и `opsx-apply` используют Caveman, а исследование, обсуждение, документация и остальные planning-фазы — обычный стиль. Режим не сокращает `userReport`, OpenSpec-артефакты, проверки, safety-контракты или обязательные отчеты.
 
-`/caveman lite|full|ultra` меняет только уровень текущей сессии и не пишет `.dev.env`. Фразы `caveman please` и `stop caveman` также действуют только в текущем чате. Приоритет: session override → `CAVEMAN`/`CAVEMAN_LEVEL` проекта → `on/full`. При `auto` все `itl-*` и `opsx-apply` используют Caveman, а `opsx-explore`, `opsx-propose` и `opsx-archive` — обычный стиль. Режим влияет на форму рабочего ответа и heartbeat, но не сокращает `userReport`, OpenSpec-артефакты, проверки, safety-контракты или обязательные отчеты.
+## Хранилище OpenSpec
+
+По умолчанию существующий и новый проект хранит `openspec/specs` и `openspec/changes` внутри своего checkout. Закреплённый OpenSpec CLI выбирается по `.agent-1c/dependency-lock.json`; глобальная команда `openspec` не определяет версию проекта. Если CLI ещё не подготовлен, выполните `agent-1c.ps1 -Action provision-openspec-cli` для этого checkout.
+
+В этом выпуске ITL работает только с локальным `openspec/` текущего checkout. Значение `openSpec.storeId` в `.agent-1c/project.json`, `store:` в `openspec/config.yaml` и пользовательский `defaultStore` понимаются закреплённым CLI, но выбранное через них внешнее хранилище останавливает managed OpenSpec-маршрут с `OPEN_SPEC_EXTERNAL_STORE_DEFERRED` до записи. ITL сохраняет привязку и не создаёт локальную замену. Если нужно продолжить сейчас, явно выберите локальный workspace для этого проекта и решите, какие документы должны в нём находиться; само изменение выбора ничего не переносит. Поддержка внешнего store готовится отдельной задачей `add-external-openspec-store`.
+
+Перед записью или работой с существующим change вызовите `agent-1c.ps1 -Action openspec-context -OpenSpecChangeId <change-id>`: ответ JSON связывает checkout, локальный root, CLI, change root и hash `.openspec.yaml`. Ошибка выбора внешнего store запрещает прямой обход через upstream CLI или bundle.
+
+Read-only `doctor` показывает известные устаревшие директивы вне управляемого блока `USER-RULES.md` и в `LLM-RULES.md` с точной строкой и затронутой операцией. Он сохраняет пользовательский текст; обязательный `test-plan.md`, противоречащий согласованному OpenSpec-маршруту, останавливает только этот маршрут до адресного согласования. Старый `CAVEMAN_LEVEL` диагностируется, но не задаёт session level.
 
 ## Настройка процесса
 

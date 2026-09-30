@@ -309,13 +309,18 @@ exit $LASTEXITCODE
 }
 
 function Write-ItlOnDemandMcpClientConfig {
-    param([string]$Client = "")
+    param([string]$Client = "", [switch]$PlanOnly)
     $executable = Get-ItlOnDemandMcpExecutablePath -AllowMissing
     if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        if ($PlanOnly) { return }
         Write-Warning "ITL on-demand MCP executable is missing; client facade entries were not written: $executable"
         return ""
     }
     $endpoints = Get-ItlOnDemandMcpEndpointDescriptors
+    if ($PlanOnly) {
+        if (-not $Client) { $Client = Get-ItlActiveClient }
+        return [pscustomobject]@{client=$Client;owner='ondemand-facade';endpoints=@($endpoints)}
+    }
     return (Write-ItlClientMcpEndpoints -Endpoints $endpoints -Owner "ondemand-facade" -Client $Client)
 }
 
@@ -502,7 +507,12 @@ function Get-ItlOnDemandProcessOwnershipProof {
     $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
     if ($null -eq $process) { return [pscustomobject]@{ owned = $false; failedPredicate = "process-present"; expected = "running"; actual = "missing" } }
     try {
-        $expected = [DateTimeOffset]::Parse([string]$RuntimeState.processStartTime).UtcDateTime
+        $recordedStart = $RuntimeState.processStartTime
+        $expected = if ($recordedStart -is [datetime]) {
+            $recordedStart.ToUniversalTime()
+        } else {
+            [DateTimeOffset]::Parse([string]$recordedStart, [Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+        }
         $actualStart = $process.StartTime.ToUniversalTime()
         if ([Math]::Abs(($actualStart - $expected).TotalSeconds) -ge 2) {
             return [pscustomobject]@{ owned = $false; failedPredicate = "processStartTime"; expected = $expected.ToString("o"); actual = $actualStart.ToString("o") }

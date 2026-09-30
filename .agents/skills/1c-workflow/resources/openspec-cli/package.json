@@ -1,0 +1,9 @@
+{
+  "name": "@itl-workflow/openspec-cli-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Versioned OpenSpec CLI runtime for ITL project workflows",
+  "dependencies": {
+    "@fission-ai/openspec": "1.13.1"
+  }
+}

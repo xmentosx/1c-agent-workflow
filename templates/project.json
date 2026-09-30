@@ -37,6 +37,9 @@
     "ref": "itl-main-410951e7-r36",
     "tools": []
   },
+  "openSpec": {
+    "storeId": ""
+  },
   "vibecoding1cMcp": {
     "registryRepo": "http://gitlabserv01.itland.local/root/MCP-vibecoding1c-registry.git",
     "providerDefault": "remote",

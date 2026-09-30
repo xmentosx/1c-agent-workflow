@@ -1081,7 +1081,8 @@ Describe "ITL on-demand MCP facade" {
                     executablePath = [string]$native.ExecutablePath
                     ownershipMarkers = @('itl-marker-that-is-not-in-the-command-line')
                 }
-                Get-ItlOnDemandProcessOwnershipProof -RuntimeState $state
+                $fromJson = ($state | ConvertTo-Json -Depth 4 | ConvertFrom-Json)
+                Get-ItlOnDemandProcessOwnershipProof -RuntimeState $fromJson
             }
             $proof.owned | Should -BeFalse
             $proof.failedPredicate | Should -Be "ownershipMarker"
