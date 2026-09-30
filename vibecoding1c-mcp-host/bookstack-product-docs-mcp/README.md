@@ -22,7 +22,8 @@ Latin tokens, numbers and identifiers remain exact. This is suffix stemming, not
 a synonym dictionary or complete linguistic lemmatization. BM25 weights are
 4 for titles, 1 for content and 2 for tags. Hybrid ranking combines the lexical
 and cosine result positions using reciprocal rank fusion (constant 60), retaining
-the existing exact-phrase priority. Semantic mode keeps cosine order. There are
+the existing exact-phrase priority. Semantic mode contributes cosine positions
+without a lexical rank. There are
 no topic-specific query rules, page boosts or corpus schema changes.
 
 The embedding client keeps the last 256 successful query vectors in an in-memory LRU
