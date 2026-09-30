@@ -17,6 +17,49 @@ from test_server import FakeClient
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_client_without_identity_can_read_and_write_with_explicit_audit_fallback(self):
+        async def run():
+            with tempfile.TemporaryDirectory(prefix="mantis optional identity ") as directory:
+                api = FakeApi()
+                env = {"MANTIS_BASE_URL": "https://mantis.test", "MANTIS_API_TOKEN": "fixture",
+                       "MANTIS_INDEX_ENABLED": "true", "MANTIS_WRITE_ENABLED": "true",
+                       "MANTIS_STATE_PATH": str(Path(directory) / "state"),
+                       "MANTIS_ATTACHMENT_CACHE_PATH": str(Path(directory) / "attachments")}
+                with patch.dict(os.environ, env), patch("mantis_runtime.Api", return_value=api), patch("server.MantisClient", return_value=FakeClient()), patch("mantis_index.Index.start"), patch("fastmcp.server.dependencies.get_http_headers", return_value={}):
+                    mcp, service = server.create_mcp()
+                    index = service.client.index
+                    index.refresh(1)
+                    async with Client(mcp) as client:
+                        tools = await client.list_tools()
+                        write_schema = next(t.inputSchema for t in tools if t.name == "execute_write")
+                        self.assertNotIn("actor", write_schema["required"])
+                        self.assertEqual(write_schema["properties"]["actor"]["default"], "")
+                        for name, arguments in (
+                            ("search_tickets", {"query": "решения", "semantic": False}),
+                            ("read_ticket", {"url_or_id": "1", "include_attachments": False}),
+                            ("read_comments", {"url_or_id": "1"}),
+                            ("ticket_history", {"url_or_id": "1"}),
+                            ("mantis_metadata", {"project_id": 1}),
+                            ("index_control", {"action": "status"}),
+                            ("write_operation", {"action": "inspect", "issue_id": 1}),
+                        ):
+                            result = await client.call_tool(name, arguments)
+                            self.assertFalse(result.is_error, name)
+                            self.assertNotEqual(result.structured_content.get("ok"), False, name)
+                        arguments = {"operation_id": "anonymous-operation01", "steps": [
+                            {"action": "add_comment", "issue_id": 1, "fields": {"text": "Без профиля"}}]}
+                        for _ in range(2):
+                            written = await client.call_tool("execute_write", arguments)
+                            self.assertEqual(written.structured_content["status"], "succeeded")
+                        self.assertEqual(len(api.items[1]["notes"]), 1, "Anonymous retry must not duplicate the write")
+                        self.assertIn("инициатор не указан", api.items[1]["notes"][0]["text"])
+                        self.assertEqual(index.state.one("SELECT actor FROM operations WHERE id=?", (arguments["operation_id"],))["actor"], "не указан")
+                        self.assertEqual(index.state.one("SELECT actor FROM audit WHERE action='read_ticket'")["actor"], "не указан")
+                        named = await client.call_tool("search_tickets", {"query": "решения", "semantic": False, "actor": "named analyst"})
+                        self.assertFalse(named.is_error)
+                        self.assertEqual(index.state.one("SELECT actor FROM audit WHERE action='search' ORDER BY id DESC LIMIT 1")["actor"], "named analyst")
+        asyncio.run(run())
+
     def test_waiting_for_index_writer_does_not_block_mcp_protocol(self):
         async def run():
             with tempfile.TemporaryDirectory(prefix="mantis concurrent ") as directory:
@@ -76,6 +119,7 @@ class ProtocolTests(unittest.TestCase):
                         read = await client.call_tool("read_ticket", {"url_or_id": "1"})
                         self.assertTrue(any(b.type == "image" for b in read.content))
                         self.assertIn("freshness", read.structured_content)
+                        self.assertEqual(service.client.index.state.one("SELECT actor FROM audit WHERE action='read_ticket'")["actor"], "fixture analyst")
                         history = await client.call_tool("ticket_history", {"url_or_id": "1"})
                         self.assertTrue(history.structured_content["ok"])
                         self.assertLess(len(history.content[0].text), 200)
