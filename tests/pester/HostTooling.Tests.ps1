@@ -1290,7 +1290,7 @@ services:
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 8 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 12 tests"
     }
 
     It "qualifies Mantis delta, recovery and write journal through UTF-8 native transport" {
@@ -2822,6 +2822,9 @@ services:
                 $mantisEnv["MANTIS_BASE_URL"] | Should -Be "http://mantis.test"
                 $mantisEnv["MANTIS_API_TOKEN"] | Should -Be "fixture-mantis-token"
                 $mantisEnv["MANTIS_TIMEOUT_SECONDS"] | Should -Be "25"
+                $mantisEnv["MANTIS_EMBEDDING_TIMEOUT_SECONDS"] | Should -Be "120"
+                $mantisEnv["MANTIS_EMBEDDING_WORKERS"] | Should -Be "4"
+                $mantisEnv["MANTIS_EMBEDDING_BATCH_SIZE"] | Should -Be "32"
                 $mantisEnv["MANTIS_MAX_ATTACHMENT_BYTES"] | Should -Be "12345"
                 $mantisEnv["MANTIS_MAX_INLINE_TEXT_CHARS"] | Should -Be "2345"
                 $mantisEnv["MANTIS_OCR_ENABLED"] | Should -Be $true
@@ -2831,15 +2834,23 @@ services:
                 @($mantisVolumes | Where-Object { $_.container -eq "/data/mantis" }).Count | Should -Be 1
                 $mantisEnv["MANTIS_INDEX_ENABLED"] | Should -Be "false"
                 $mantisEnv["MANTIS_MONTHLY_BUDGET_USD"] | Should -Be "5"
-                $mantisEnv["MANTIS_WRITE_ACTIONS"] | Should -BeNullOrEmpty
-                $mantisEnv["MANTIS_WRITE_PROJECT_IDS"] | Should -BeNullOrEmpty
+                $mantisEnv["MANTIS_WRITE_ENABLED"] | Should -Be "false"
+                $mantisEnv["MANTIS_ATTACHMENT_EXTRACT_ENABLED"] | Should -Be "false"
+                $mantisEnv.Contains("MANTIS_WRITE_ACTIONS") | Should -Be $false
+                $mantisEnv.Contains("MANTIS_WRITE_PROJECT_IDS") | Should -Be $false
                 $hostConfig.mantisTicketServer | Add-Member -NotePropertyName syncProjectIds -NotePropertyValue @(17)
-                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeActions -NotePropertyValue @('add_comment')
-                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeProjectIds -NotePropertyValue @(17)
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName writeEnabled -NotePropertyValue $true
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName attachmentExtractEnabled -NotePropertyValue $true
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingWorkers -NotePropertyValue 2
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingBatchSize -NotePropertyValue 48
+                $hostConfig.mantisTicketServer | Add-Member -NotePropertyName embeddingTimeoutSeconds -NotePropertyValue 60
                 $selectedMantisEnv = Resolve-ServerEnv -Config $hostConfig -Server $mantisServer
                 $selectedMantisEnv['MANTIS_SYNC_PROJECT_IDS'] | Should -Be '17'
-                $selectedMantisEnv['MANTIS_WRITE_ACTIONS'] | Should -Be 'add_comment'
-                $selectedMantisEnv['MANTIS_WRITE_PROJECT_IDS'] | Should -Be '17'
+                $selectedMantisEnv['MANTIS_WRITE_ENABLED'] | Should -Be 'true'
+                $selectedMantisEnv['MANTIS_ATTACHMENT_EXTRACT_ENABLED'] | Should -Be 'true'
+                $selectedMantisEnv['MANTIS_EMBEDDING_WORKERS'] | Should -Be '2'
+                $selectedMantisEnv['MANTIS_EMBEDDING_BATCH_SIZE'] | Should -Be '48'
+                $selectedMantisEnv['MANTIS_EMBEDDING_TIMEOUT_SECONDS'] | Should -Be '60'
                 (Test-Path -LiteralPath (Join-Path $tempRoot "mantis-attachments") -PathType Container) | Should -Be $true
             }
         } finally {

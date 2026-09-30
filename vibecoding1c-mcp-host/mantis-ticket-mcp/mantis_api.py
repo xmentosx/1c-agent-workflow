@@ -42,7 +42,7 @@ class Api:
         self.opener = build_opener(NoRedirect())
         self.server_time = 0
 
-    def request(self, path, method="GET", payload=None, etag=""):
+    def request(self, path, method="GET", payload=None, etag="", max_response_bytes=0):
         headers = {"Authorization": self.settings.api_token, "Accept": "application/json",
                    "Content-Type": "application/json", "User-Agent": "mantis-ticket-mcp/2"}
         if etag:
@@ -51,7 +51,9 @@ class Api:
         request = Request(self.settings.base_url + "/api/rest/" + path.lstrip("/"), body, headers, method=method)
         try:
             with self.opener.open(request, timeout=self.settings.timeout_seconds) as response:
-                raw = response.read()
+                raw = response.read(max_response_bytes + 1) if max_response_bytes else response.read()
+                if max_response_bytes and len(raw) > max_response_bytes:
+                    raise ApiError("Mantis file response exceeds the extraction limit", 413)
                 if response.headers.get("Date"):
                     self.server_time = parsedate_to_datetime(response.headers["Date"]).timestamp()
                 return (json.loads(raw.decode("utf-8")) if raw else {}), response.headers.get("ETag", "")
@@ -74,6 +76,14 @@ class Api:
             raise ApiError("Incomplete Mantis project catalog")
         return data["projects"]
 
+    def project_users(self, project_id, page, size=100, handlers_only=False):
+        endpoint = "handlers" if handlers_only else "users"
+        data, _ = self.request(f"projects/{int(project_id)}/{endpoint}?" + urlencode({
+            "page": int(page), "page_size": int(size), "include_access_levels": 1}))
+        if not isinstance(data.get("users"), list):
+            raise ApiError("Incomplete Mantis project user page")
+        return data["users"]
+
     def config(self, project_id):
         query = urlencode([("project_id", int(project_id))] + [("option[]", key) for key in CONFIG_KEYS])
         data, _ = self.request("config?" + query)
@@ -82,13 +92,18 @@ class Api:
             return configs
         return {item["option"]: item.get("value") for item in configs if "option" in item}
 
-    def context(self, project_id):
+    def context(self, project_id, cache=None):
+        if cache is not None and int(project_id) in cache:
+            return cache[int(project_id)]
         me, projects = self.me(), self.projects()
         project = next((p for p in projects if int(p["id"]) == int(project_id)), None)
         if not project:
             raise ApiError("Project is not accessible to the service account", 403)
-        return {"user": me, "project": project, "level": object_id(project.get("access_level")),
-                "config": self.config(project_id)}
+        context = {"user": me, "project": project, "level": object_id(project.get("access_level")),
+                   "config": self.config(project_id)}
+        if cache is not None:
+            cache[int(project_id)] = context
+        return context
 
     def headers(self, project_id, page, size):
         data, _ = self.request("issues?" + urlencode({"project_id": int(project_id), "filter_id": "any",
@@ -111,7 +126,7 @@ class Api:
 
     @staticmethod
     def normalize_lists(issue):
-        for name in ("notes", "attachments", "files", "tags", "custom_fields"):
+        for name in ("notes", "attachments", "files", "tags", "custom_fields", "relationships"):
             issue[name] = issue.get(name) or []
         for note in issue["notes"]:
             for name in ("attachments", "files"):
@@ -139,9 +154,9 @@ class Api:
                 result.append({"denied_id": int(row["id"]), "updated_at": row["updated_at"]})
         return result
 
-    def visible_issue(self, issue_id):
+    def visible_issue(self, issue_id, context_cache=None):
         issue, etag = self.issue(issue_id)
-        context = self.context(object_id(issue["project"]))
+        context = self.context(object_id(issue["project"]), cache=context_cache)
         return self.filter_visible(issue, context), etag
 
     @staticmethod
@@ -170,6 +185,8 @@ class Api:
             return False
         self.me()  # A broken credential/session is not a deletion proof.
         try:
+            # A denial must be checked against current project permissions,
+            # not the short-lived context reused for ordinary search probes.
             self.visible_issue(issue_id)
         except ApiError as second:
             return second.status in (403, 404)

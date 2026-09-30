@@ -5,14 +5,17 @@ import base64
 import json
 import os
 import math
+import logging
 import sqlite3
+import time
 from contextlib import contextmanager
 from pathlib import Path
 
 from mantis_api import Api, ApiError
 from mantis_index import Embeddings, Index, Vectors
-from mantis_state import State, digest, object_id, sources, is_link, clean_issue
+from mantis_state import SearchReader, State, digest, object_id, sources, is_link, clean_issue
 from mantis_write import ACTIONS, Writer
+from mantis_tools import worker_tool
 
 
 def actor_name(explicit=""):
@@ -23,9 +26,9 @@ def actor_name(explicit=""):
             actor = get_http_headers().get("x-mantis-actor", "").strip()
         except (ImportError, RuntimeError):
             pass
-    if not actor or len(actor) > 120 or any(c in actor for c in "\r\n"):
-        raise ValueError("Set X-Mantis-Actor in the client profile or pass actor (claimed name/login in the trusted group)")
-    return actor
+    if len(actor) > 120 or any(c in actor for c in "\r\n"):
+        raise ValueError("Initiator name/login must be a single line of at most 120 characters")
+    return actor or "не указан"
 
 
 class Runtime:
@@ -46,12 +49,12 @@ class Runtime:
         except (ImportError, RuntimeError, OSError, ValueError) as exc:
             self.error = "Vector backend unavailable: " + str(exc)[:160]
         key = os.environ.get("MANTIS_OPENROUTER_API_KEY", "")
-        provider = Embeddings(state, key, cap=float(os.environ.get("MANTIS_MONTHLY_BUDGET_USD", "5")), timeout=settings.timeout_seconds) if key else None
+        provider = Embeddings(state, key, cap=float(os.environ.get("MANTIS_MONTHLY_BUDGET_USD", "5")),
+                              timeout=int(os.environ.get("MANTIS_EMBEDDING_TIMEOUT_SECONDS", "120"))) if key else None
         self.index = Index(state, Api(settings), vectors, provider,
                            interval=int(os.environ.get("MANTIS_SYNC_INTERVAL_SECONDS", "30")),
                            sync_projects=[int(p) for p in os.environ.get("MANTIS_SYNC_PROJECT_IDS", "").split(",") if p.strip()])
-        self.writer = Writer(self.index, os.environ.get("MANTIS_WRITE_ACTIONS", "").split(","),
-                             [int(p) for p in os.environ.get("MANTIS_WRITE_PROJECT_IDS", "").split(",") if p.strip()])
+        self.writer = Writer(self.index, os.environ.get("MANTIS_WRITE_ENABLED", "false").lower() in {"true", "1", "yes"})
         if vectors:
             self.error = ""
 
@@ -61,7 +64,7 @@ class Runtime:
         return self.index
 
     def audit(self, actor, action, target, outcome="succeeded"):
-        self.require().state.audit(actor_name(actor), action, target, outcome)
+        return self.require().state.audit(actor_name(actor), action, target, outcome)
 
     def get_issue(self, issue_id):
         issue, _, stale = self.require().refresh(int(issue_id))
@@ -100,44 +103,69 @@ class Runtime:
 
     def register(self, mcp):
         @mcp.tool
-        def search_tickets(query: str, actor: str = "", filters: dict | None = None,
-                           mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True) -> dict:
-            """Paged compact search (10 default, max 20, 12000 output chars). Follow next_cursor. Modes: all/comments/filenames; filters via mantis_metadata."""
+        @worker_tool
+        def search_tickets(query: str = "", actor: str = "", filters: dict | None = None,
+                           mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True,
+                           sort_by: str = "relevance", similar_to: int = 0) -> dict:
+            """Paged index snapshot search (10 default, max 20, 12000 chars), without live Mantis checks. Continue with next_cursor within 15 minutes; use query or similar_to and filter/sort via mantis_metadata."""
             person = actor_name(actor)
-            result = self.require().search(query, filters, mode, limit, cursor, semantic)
-            self.audit(person, "search", "", result.get("status", "succeeded"))
+            started = time.monotonic()
+            result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to)
+            search_seconds = time.monotonic() - started
+            audit_timings = self.audit(person, "search", "", result.get("status", "succeeded"))
+            audit_seconds = time.monotonic() - started - search_seconds
+            timings = result.setdefault("timing_ms", {})
+            timings.update(audit_timings or {})
+            timings["audit"] = round(audit_seconds * 1000, 2)
+            timings["handler_total"] = round((time.monotonic() - started) * 1000, 2)
+            if search_seconds > 10 or audit_seconds > 10:
+                logging.getLogger(__name__).warning(
+                    "Mantis search latency: compute=%.3fs audit=%.3fs", search_seconds, audit_seconds)
             from fastmcp.tools.tool import ToolResult
             from mcp.types import TextContent
             summary = f"Mantis search: {len(result.get('issues', []))} issue(s); next page: {bool(result.get('next_cursor'))}; status: {result.get('status', 'ok')}. Results are in structuredContent."
             return ToolResult(content=[TextContent(type="text", text=summary)], structured_content=result)
 
         @mcp.tool
-        def mantis_metadata(project_id: int = 0, actor: str = "") -> dict:
-            """Discover projects, filter names and write actions; specify a project for its field and permission definitions."""
+        @worker_tool
+        def mantis_metadata(project_id: int = 0, actor: str = "", participants_query: str = "",
+                            participant_cursor: str = "", participant_limit: int = 10,
+                            handlers_only: bool = False) -> dict:
+            """Discover projects, filters and field definitions; participants_query searches project users in bounded pages."""
             person = actor_name(actor)
             index = self.require()
             self.audit(person, "metadata", project_id)
+            if participants_query or participant_cursor or handlers_only:
+                if not project_id:
+                    raise ValueError("project_id is required for participant lookup")
+                return index.project_participants(project_id, participants_query, participant_limit,
+                                                  participant_cursor, handlers_only)
             if project_id:
                 return index.metadata(project_id)
             projects = index.state.all("SELECT data,verified FROM projects WHERE status<>'access_removed'")
             return {"projects": [json.loads(p["data"]) for p in projects], "catalog_source": "local; status via index_control",
                     "write_actions": sorted(ACTIONS),
-                    "enabled_write_actions": sorted(self.writer.enabled),
-                    "enabled_write_projects": sorted(self.writer.enabled_projects),
-                    "filters": ["project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before"],
+                    "write_enabled": self.writer.write_enabled,
+                    "filters": ["project_id", "status", "tags", "custom_fields", "created_after", "created_before", "updated_after", "updated_before",
+                                "handler_id", "reporter_id", "priority", "severity", "version", "target_version", "fixed_in_version"],
+                    "sort_by": ["relevance", "updated_at", "created_at"],
                     "write_steps": {"action": "required", "issue_id": "existing target or previous create result",
                                     "project_id": "required for create", "fields": "API field values", "expected_version": "required for editing: inspect via write_operation",
-                                    "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach"},
-                    "identity": "Claimed client identity; all users share the service account's visibility",
+                                    "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach",
+                                    "related_issue_id": "relationship target", "relationship_type": "attach: related-to, duplicate-of, parent-of, child-of",
+                                    "relationship_id": "detach: read_ticket relationship ID"},
+                    "identity": "Optional claimed client identity; absent names are recorded as unspecified. All users share the service account's visibility",
                     "concurrency": "Pre/post-read and MCP serialization; residual race with other Mantis clients remains"}
 
         @mcp.tool
-        def execute_write(operation_id: str, actor: str, steps: list[dict]) -> dict:
+        @worker_tool
+        def execute_write(operation_id: str, steps: list[dict], actor: str = "") -> dict:
             """Execute an explicit user instruction, never a draft. Reuse operation_id unchanged after interruption; unknown steps are not reposted."""
             self.require()
             return self.writer.execute(operation_id, actor_name(actor), steps)
 
         @mcp.tool
+        @worker_tool
         def write_operation(action: str, actor: str = "", operation_id: str = "", issue_id: int = 0,
                             step_number: int = 0, outcome: str = "", server_id: int = 0) -> dict:
             """inspect: get edit version; status/cancel: journal; resolve: explicit user outcome applied/not_applied for an unknown step."""
@@ -159,14 +187,20 @@ class Runtime:
             raise ValueError("action must be inspect, status, cancel or resolve")
 
         @mcp.tool
-        def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None) -> dict:
-            """Index status/pause/resume/rebuild_vectors. Rebuild may buy embeddings within budget. settle_charge needs explicit confirmation of actual billing."""
+        @worker_tool
+        def index_control(action: str = "status", actor: str = "", charge_id: str = "", actual_cost_usd: float | None = None,
+                          detail: bool = False) -> dict:
+            """Index status/pause/resume/storage/compact_vectors/rebuild_vectors. Use detail for safe error diagnostics."""
             person = actor_name(actor)
             index = self.require()
             if action == "pause":
-                index.paused.set()
+                with index.embedding_lock:
+                    index.state.run("UPDATE meta SET value='1' WHERE key='index_paused'")
+                    index.paused.set()
             elif action == "resume":
-                index.paused.clear()
+                with index.embedding_lock:
+                    index.state.run("UPDATE meta SET value='0' WHERE key='index_paused'")
+                    index.paused.clear()
             elif action == "settle_charge":
                 if actual_cost_usd is None or not math.isfinite(actual_cost_usd) or actual_cost_usd < 0:
                     raise ValueError("Provide the confirmed non-negative actual_cost_usd")
@@ -174,10 +208,10 @@ class Runtime:
                     raise ValueError("Unknown or already reconciled reservation")
                 index.state.settle(charge_id, actual_cost_usd)
             elif action == "rebuild_vectors":
-                if not index.work_lock.acquire(blocking=False):
+                if not index.paused.is_set() or index.embedding_active() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
                     raise RuntimeError("Index work is still finishing; pause it and retry rebuild_vectors")
                 try:
-                    with index.state.lock:
+                    with index.embedding_lock, index.state.lock:
                         if index.vectors:
                             with index.vectors.lock:
                                 index.vectors.close()
@@ -188,15 +222,38 @@ class Runtime:
                         index.cleanup()
                 finally:
                     index.work_lock.release()
+            elif action == "compact_vectors":
+                if not index.paused.is_set() or index.embedding_active() or index.attachment_work_lock.locked() or not index.work_lock.acquire(blocking=False):
+                    raise RuntimeError("Pause indexing and wait for work_in_progress=false before compact_vectors")
+                try:
+                    with index.embedding_lock:
+                        if not index.vectors:
+                            raise RuntimeError("Vector backend is unavailable")
+                        storage = index.vectors.compact(clear_deletions=True)
+                finally:
+                    index.work_lock.release()
+            elif action == "storage":
+                storage = index.vectors.storage() if index.vectors else {"error": "Vector backend unavailable"}
             elif action != "status":
-                raise ValueError("action must be status, pause, resume, rebuild_vectors or settle_charge")
+                raise ValueError("action must be status, pause, resume, storage, compact_vectors, rebuild_vectors or settle_charge")
             self.audit(person, "index_" + action, charge_id)
-            return {**self.health(), "paused": index.paused.is_set(), "work_in_progress": index.work_lock.locked(),
+            return {**self.health(), "paused": index.paused.is_set(),
+                    "work_in_progress": index.work_lock.locked() or index.attachment_work_lock.locked() or index.embedding_active(),
+                    "index_diagnostics": index.embedding_diagnostics(detail),
+                    **({"storage": storage} if action in {"storage", "compact_vectors"} else {}),
                     "unresolved_charges": index.state.all("SELECT id,month,reserved,created FROM charges WHERE status='unknown' ORDER BY created LIMIT 50")}
 
     def health(self):
-        return {"enabled": bool(self.index), "error": self.error,
-                **({"state": self.index.state.health(), "semantic": self.index.semantic_status,
-                    "query_embedding_cache": self.index.query_cache_status(),
-                    "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
-                    "mantis": self.index.remote_status, "write_actions": sorted(self.writer.enabled)} if self.index else {})}
+        result = {"enabled": bool(self.index), "error": self.error}
+        if self.index:
+            # Vector compaction may hold State.lock for minutes. Health uses the
+            # same independent SQLite reader as search, so watchdog calls stay live.
+            with SearchReader(self.index.state) as reader:
+                result.update({"state": reader.health(), "semantic": self.index.semantic_status,
+                               "query_embedding_cache": self.index.query_cache_status(),
+                               "sync_projects": sorted(self.index.sync_projects) or "all_accessible",
+                               "mantis": self.index.remote_status, "write_enabled": self.writer.write_enabled,
+                               "attachment_extraction": {"enabled": self.index.attachment_enabled,
+                                   "stage": self.index.attachment_stage, "error": self.index.attachment_error,
+                                   **reader.attachment_status()}})
+        return result
