@@ -35,6 +35,12 @@ model/profile cannot reuse incompatible entries; restarting the process empties 
 cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
 SQLite schema migration and requires no reindexing.
 
+Requests to the official OpenRouter hostname set `provider.sort=latency`, retaining
+its default provider fallback. This selects a serving provider for the same model;
+it does not change the embedding input, profile, dimension, index or result coverage.
+Other embedding API endpoints retain their existing request body. External latency
+and availability can still vary; full hybrid search waits for the query vector.
+
 For a slow query, call `search_docs` with `diagnostics=true`. The optional response
 reports server-side milliseconds for local text search, query embedding, vector
 scoring, result ranking, live BookStack fallback, and the full search. It also reports

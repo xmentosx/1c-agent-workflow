@@ -355,6 +355,30 @@ class EmbeddingClientTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         client.embed_remote("query")
 
+    def test_openrouter_latency_routing_preserves_model_input_and_other_backends(self):
+        model = "qwen/qwen3-embedding-8b"
+        with tempfile.TemporaryDirectory() as root:
+            for base in ("https://openrouter.ai/api/v1", "https://example.test/v1",
+                         "https://openrouter.ai.example.test/v1"):
+                with self.subTest(base=base):
+                    settings = replace(make_settings(Path(root)/"cache.sqlite", model), embedding_api_base=base)
+                    client = server.EmbeddingClient(settings)
+                    response = mock.MagicMock()
+                    response.__enter__.return_value = response
+                    response.read.return_value = json.dumps({"model": model, "data": [
+                        {"index": 0, "embedding": [1.0] + [0.0] * 4095}]}).encode()
+                    text = "Instruct: retrieval\nQuery:права пользователя"
+                    with mock.patch.object(server.request, "urlopen", return_value=response) as call:
+                        self.assertEqual(len(client.embed_remote(text)), 4096)
+                        body = json.loads(call.call_args.args[0].data)
+                    self.assertEqual(body["model"], model)
+                    self.assertEqual(body["input"], text)
+                    self.assertEqual(body["encoding_format"], "float")
+                    if base == "https://openrouter.ai/api/v1":
+                        self.assertEqual(body["provider"], {"sort": "latency"})
+                    else:
+                        self.assertNotIn("provider", body)
+
     def test_qwen_dimension_and_default_threshold(self):
         with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b", "BOOKSTACK_SEMANTIC_MIN_SCORE": ""}):
             self.assertEqual(server.Settings.from_env().semantic_min_score, server.QWEN_MIN_SCORE)

@@ -450,7 +450,10 @@ class EmbeddingClient:
         return self._remote_batch(inputs)
 
     def _remote_batch(self, texts: List[str]) -> List[List[float]]:
-        payload = json.dumps({"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}).encode("utf-8")
+        body = {"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}
+        if parse.urlsplit(self.api_base).hostname == "openrouter.ai":
+            body["provider"] = {"sort": "latency"}
+        payload = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
