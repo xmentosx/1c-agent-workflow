@@ -246,8 +246,12 @@ class EmbeddingClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "QUERY_EMBEDDING_CACHE_SIZE", 2):
             client = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "remote-model"))
             client.embed = mock.Mock(return_value=[1.0, 0.0])
-            client.embed_query("Заказ")[0] = 99
-            self.assertEqual(client.embed_query("Заказ"), [1.0, 0.0])
+            telemetry = {}
+            client.embed_query("Заказ", telemetry=telemetry)[0] = 99
+            self.assertEqual(telemetry["query_embedding_cache"], "miss")
+            telemetry = {}
+            self.assertEqual(client.embed_query("Заказ", telemetry=telemetry), [1.0, 0.0])
+            self.assertEqual(telemetry["query_embedding_cache"], "hit")
             client.embed_query("договор")
             client.embed_query("Заказ")  # Most recently used, survives the next insertion.
             client.embed_query("проект")
@@ -527,6 +531,20 @@ class FragmentIndexTests(unittest.TestCase):
             self.assertFalse(service.index_status()["semantic_ready"])
 
 
+class CosineScoreTests(unittest.TestCase):
+    def test_batch_scores_preserve_cosine_including_zero_and_mismatched_vectors(self):
+        query = [0.6, 0.8]
+        vectors = [[0.6, 0.8], [0.8, -0.6], [0.0, 0.0], [0.6], [-0.6, -0.8]]
+        expected = [server.cosine_similarity(query, vector) for vector in vectors]
+        if server.np is not None:
+            with mock.patch.object(server, "cosine_similarity", side_effect=AssertionError("batch path expected")):
+                actual = server.cosine_scores(query, vectors)
+            for score, old_score in zip(actual, expected):
+                self.assertAlmostEqual(score, old_score, places=12)
+        with mock.patch.object(server, "np", None):
+            self.assertEqual(server.cosine_scores(query, vectors), expected)
+
+
 class ProductDocsServiceTests(unittest.TestCase):
     def make_service(self, temp_root, pages):
         service = server.ProductDocsService(make_settings(Path(temp_root) / "cache.sqlite"))
@@ -555,6 +573,50 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertLessEqual(len(result["results"][0]["preview"]), server.SEARCH_PREVIEW_CHARS + 6)
         self.assertLess(len(json.dumps(result, ensure_ascii=False)), 6000)
         self.assertIn("next_cursor=5", server.tool_result_summary("search", result))
+
+    def test_search_diagnostics_report_stages_and_query_cache_only_on_request(self):
+        pages = [page(1, "Architecture decision."), page(2, "Architecture detail.")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, pages)
+            service.embeddings = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "fake-model"))
+            service.embeddings._tokenizer = WordTokenizer()
+            service.embeddings.embed = mock.Mock(return_value=[1.0, 0.0])
+            for item in pages:
+                service.index_page(item)
+            service.embeddings.embed.reset_mock()
+            first = service.search_docs("Architecture", None, 5, diagnostics=True)
+            second = service.search_docs("Architecture", None, 5, diagnostics=True)
+            plain = service.search_docs("Architecture", None, 5)
+            text = service.search_docs("Architecture", None, 5, mode="text", diagnostics=True)
+
+        self.assertEqual(service.embeddings.embed.call_count, 1)
+        self.assertEqual([item["id"] for item in first["results"]], [item["id"] for item in plain["results"]])
+        self.assertNotIn("diagnostics", plain)
+        self.assertEqual(first["diagnostics"]["query_embedding_cache"], "miss")
+        self.assertEqual(second["diagnostics"]["query_embedding_cache"], "hit")
+        self.assertEqual(first["diagnostics"]["scored_fragments"], 2)
+        for field in ("text_ms", "query_embedding_ms", "vector_scoring_ms", "ranking_ms", "total_ms"):
+            self.assertGreaterEqual(first["diagnostics"][field], 0)
+        self.assertEqual(text["diagnostics"]["query_embedding_cache"], "not_requested")
+        self.assertEqual(text["diagnostics"]["vector_scoring_ms"], 0.0)
+
+    def test_embedding_failure_reports_query_degradation_without_marking_index_incomplete(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, [page(1, "Architecture decision.")])
+            service.embeddings = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "fake-model"))
+            service.embeddings._tokenizer = WordTokenizer()
+            service.embeddings.embed = mock.Mock(return_value=[1.0, 0.0])
+            service.reindex_docs()
+            service.embeddings.embed = mock.Mock(side_effect=server.BookStackApiError("Embedding request failed (HTTP 429)"))
+            result = service.search_docs("Architecture", None, 5, diagnostics=True)
+            status = service.index_status()
+
+        self.assertEqual(result["semantic_status"], "degraded")
+        self.assertIn("provider recovers", result["semantic_continuation"])
+        self.assertIn("HTTP 429", result["diagnostics"]["embedding_error"])
+        self.assertIn("query_embedding_ms", result["diagnostics"])
+        self.assertEqual([row["id"] for row in result["results"]], [1])
+        self.assertTrue(status["semantic_ready"])
 
     def test_text_search_works_without_embeddings_including_live_fallback_and_pagination(self):
         pages = [page(index, "Точный термин в середине документа.") for index in range(1, 8)]

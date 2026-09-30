@@ -1,7 +1,8 @@
 # BookStack semantic indexing
 
 BookStack owns its SQLite cache, fragment vectors, inventory reconciliation and recovery.
-Public MCP tools retain their existing arguments; `search_docs` adds optional `mode`.
+Public MCP tools retain their existing arguments; `search_docs` adds optional `mode`
+and `diagnostics` arguments.
 Exact/FTS search remains available
 when semantic indexing is incomplete; `search_docs` discloses that state. `read_page`
 continues returning the document during a provider failure.
@@ -24,6 +25,16 @@ against current page revisions, so edits and reindexing remain visible. Changing
 model/profile cannot reuse incompatible entries; restarting the process empties the
 cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
 SQLite schema migration and requires no reindexing.
+
+For a slow query, call `search_docs` with `diagnostics=true`. The optional response
+reports server-side milliseconds for local text search, query embedding, vector
+scoring, result ranking, live BookStack fallback, and the full search. It also reports
+`hit`, `miss`, or `shared` for the query-vector cache and the number of scored
+fragments. An embedding failure includes a bounded error in diagnostics and marks
+that response `semantic_status=degraded`; index readiness remains a separate state.
+Normal search responses omit diagnostics. Vector scoring uses NumPy when the server
+requirements are installed and retains the same revision-aware fragment cache; no
+index rebuild is required.
 
 ## Configuration
 

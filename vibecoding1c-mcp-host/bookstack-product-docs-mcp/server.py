@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
 
+try:
+    import numpy as np
+except ImportError:  # Source tests can run before the server requirements are installed.
+    np = None
+
 from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
 
 
@@ -375,7 +380,7 @@ class EmbeddingClient:
     def split_page(self, title: str, text: str):
         return fragments(text, title, self.tokenizer(), self.fragment_limit(), self.chunk_overlap)
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str, telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
         prefix = "query: " if self.uses_e5_retrieval_prefixes() else ""
         if self.is_qwen():
             prefix = f"Instruct: {QWEN_INSTRUCTION}\nQuery:"
@@ -384,12 +389,16 @@ class EmbeddingClient:
         with self._query_lock:
             if key in self._query_cache:
                 self._query_cache.move_to_end(key)
+                if telemetry is not None:
+                    telemetry["query_embedding_cache"] = "hit"
                 return list(self._query_cache[key])
             pending = self._query_pending.get(key)
             owner = pending is None
             if owner:
                 pending = Future()
                 self._query_pending[key] = pending
+            if telemetry is not None:
+                telemetry["query_embedding_cache"] = "miss" if owner else "shared"
         if not owner:
             return list(pending.result())
         try:
@@ -785,6 +794,7 @@ class ProductDocsService:
         limit: int,
         cursor: int = 0,
         mode: str = "hybrid",
+        diagnostics: bool = False,
     ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
@@ -795,20 +805,31 @@ class ProductDocsService:
             return {"ok": False, "error": "cursor must be zero or greater", "results": []}
         if mode not in ("hybrid", "text", "semantic"):
             return {"ok": False, "error": "mode must be hybrid, text or semantic", "results": []}
+        started = time.perf_counter()
+        text_started = time.perf_counter()
         cache_pages = self.cache.count_pages()
         results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 and mode != "semantic" else []
-        semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters) if mode != "text" else []
+        text_ms = round((time.perf_counter() - text_started) * 1000, 1)
+        semantic_trace: Dict[str, Any] = {}
+        semantic = (self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES),
+                                          effective_filters, semantic_trace, diagnostics)
+                    if mode != "text" else [])
+        rank_started = time.perf_counter()
         results = rank_search_results(merge_results(results, semantic), query)
+        ranking_ms = round((time.perf_counter() - rank_started) * 1000, 1)
         live_used = False
+        live_ms = 0.0
         requested_end = cursor + limit
         if mode != "semantic" and (not results or truthy(str(effective_filters.get("live", "false")))):
             live_used = True
+            live_started = time.perf_counter()
             live_query = build_bookstack_search_query(query, effective_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
             results = rank_search_results(
                 merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)]),
                 query,
             )
+            live_ms = round((time.perf_counter() - live_started) * 1000, 1)
         total_matches = len(results)
         page_results = results[cursor:requested_end]
         next_cursor = cursor + len(page_results) if requested_end < total_matches else None
@@ -827,25 +848,56 @@ class ProductDocsService:
         }
         if mode != "text" and self.embeddings.enabled():
             coverage = self.fragment_index.status(self.embeddings.storage_model())
-            if not coverage["semantic_ready"] or self.last_embedding_error:
-                result["semantic_status"] = "degraded" if self.last_embedding_error else "incomplete"
+            if semantic_trace.get("embedding_error"):
+                result["semantic_status"] = "degraded"
+                result["semantic_continuation"] = "retry the query after the embedding provider recovers; index_status shows corpus readiness"
+            elif not coverage["semantic_ready"]:
+                result["semantic_status"] = "incomplete"
                 result["semantic_continuation"] = "index_status; reindex_docs resumes incomplete indexing"
+        if diagnostics:
+            result["diagnostics"] = {
+                "text_ms": text_ms if mode != "semantic" else 0.0,
+                "query_embedding_ms": semantic_trace.get("query_embedding_ms", 0.0),
+                "vector_scoring_ms": semantic_trace.get("vector_scoring_ms", 0.0),
+                "ranking_ms": ranking_ms,
+                "live_fallback_ms": live_ms,
+                "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                "query_embedding_cache": semantic_trace.get("query_embedding_cache", "not_requested"),
+                "scored_fragments": semantic_trace.get("scored_fragments", 0),
+            }
+            if semantic_trace.get("embedding_error"):
+                result["diagnostics"]["embedding_error"] = semantic_trace["embedding_error"]
         return result
 
-    def semantic_results(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def semantic_results(self, query: str, limit: int, filters: Dict[str, Any],
+                         trace: Optional[Dict[str, Any]] = None, diagnostics: bool = False) -> List[Dict[str, Any]]:
         if not self.embeddings.enabled() or self.cache.count_pages() == 0:
             return []
+        trace = trace if trace is not None else {}
+        embedding_started = time.perf_counter()
         try:
-            query_vector = self.embeddings.embed_query(query)
+            if diagnostics and isinstance(self.embeddings, EmbeddingClient):
+                query_vector = self.embeddings.embed_query(query, telemetry=trace)
+            else:
+                query_vector = self.embeddings.embed_query(query)
             self.last_embedding_error = ""
         except Exception as exc:
             self.last_embedding_error = str(exc)
+            trace["embedding_error"] = str(exc)[:180] if isinstance(exc, BookStackApiError) else type(exc).__name__
+            if diagnostics:
+                trace["query_embedding_ms"] = round((time.perf_counter() - embedding_started) * 1000, 1)
             return []
+        if diagnostics:
+            trace["query_embedding_ms"] = round((time.perf_counter() - embedding_started) * 1000, 1)
+        scoring_started = time.perf_counter()
+        candidates = [(page, vector) for page, vector in self.fragment_index.all_vectors(self.embeddings.storage_model())
+                      if matches_filters(page, filters)]
+        scores = cosine_scores(query_vector, [vector for _, vector in candidates])
+        if diagnostics:
+            trace["vector_scoring_ms"] = round((time.perf_counter() - scoring_started) * 1000, 1)
+            trace["scored_fragments"] = len(candidates)
         best = {}
-        for page, vector in self.fragment_index.all_vectors(self.embeddings.storage_model()):
-            if not matches_filters(page, filters):
-                continue
-            score = cosine_similarity(query_vector, vector)
+        for (page, _), score in zip(candidates, scores):
             if score >= self.settings.semantic_min_score:
                 page["semantic_score"] = score
                 page["source"] = "cache-semantic"
@@ -1383,6 +1435,26 @@ def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[
     return [page for _, page in sorted(indexed_results, key=rank)]
 
 
+def cosine_scores(left: List[float], rights: List[List[float]]) -> List[float]:
+    if np is None or not rights:
+        return [cosine_similarity(left, right) for right in rights]
+    scores = [0.0] * len(rights)
+    if not left:
+        return scores
+    matching = [index for index, right in enumerate(rights) if len(right) == len(left)]
+    if not matching:
+        return scores
+    query = np.asarray(left, dtype=np.float64)
+    matrix = np.asarray([rights[index] for index in matching], dtype=np.float64)
+    denominators = np.linalg.norm(matrix, axis=1) * np.linalg.norm(query)
+    values = matrix @ query
+    np.divide(values, denominators, out=values, where=denominators != 0)
+    for index, value, denominator in zip(matching, values, denominators):
+        if denominator:
+            scores[index] = float(value)
+    return scores
+
+
 def cosine_similarity(left: List[float], right: List[float]) -> float:
     if not left or not right or len(left) != len(right):
         return 0.0
@@ -1412,10 +1484,12 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         limit: int = DEFAULT_SEARCH_LIMIT,
         cursor: int = 0,
         mode: str = "hybrid",
+        diagnostics: bool = False,
     ):
-        """Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode."""
+        """Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode. Set diagnostics=true for stage timings."""
         try:
-            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor, mode=mode)
+            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor,
+                                         mode=mode, diagnostics=diagnostics)
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "results": []}
         return wrap_result("search", result)
