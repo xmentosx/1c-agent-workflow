@@ -26,9 +26,9 @@ def actor_name(explicit=""):
             actor = get_http_headers().get("x-mantis-actor", "").strip()
         except (ImportError, RuntimeError):
             pass
-    if not actor or len(actor) > 120 or any(c in actor for c in "\r\n"):
-        raise ValueError("Set X-Mantis-Actor in the client profile or pass actor (claimed name/login in the trusted group)")
-    return actor
+    if len(actor) > 120 or any(c in actor for c in "\r\n"):
+        raise ValueError("Initiator name/login must be a single line of at most 120 characters")
+    return actor or "не указан"
 
 
 class Runtime:
@@ -150,12 +150,12 @@ class Runtime:
                                     "note_id": "comment edit only", "file": "upload: name, base64 content, optional type", "tag_id": "attach/detach",
                                     "related_issue_id": "relationship target", "relationship_type": "attach: related-to, duplicate-of, parent-of, child-of",
                                     "relationship_id": "detach: read_ticket relationship ID"},
-                    "identity": "Claimed client identity; all users share the service account's visibility",
+                    "identity": "Optional claimed client identity; absent names are recorded as unspecified. All users share the service account's visibility",
                     "concurrency": "Pre/post-read and MCP serialization; residual race with other Mantis clients remains"}
 
         @mcp.tool
         @worker_tool
-        def execute_write(operation_id: str, actor: str, steps: list[dict]) -> dict:
+        def execute_write(operation_id: str, steps: list[dict], actor: str = "") -> dict:
             """Execute an explicit user instruction, never a draft. Reuse operation_id unchanged after interruption; unknown steps are not reposted."""
             self.require()
             return self.writer.execute(operation_id, actor_name(actor), steps)
