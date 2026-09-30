@@ -345,11 +345,12 @@ class EmbeddingClientTests(unittest.TestCase):
             client = server.EmbeddingClient(settings)
             response = mock.MagicMock()
             response.__enter__.return_value = response
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [1, 0]}]}).encode()
             text = "полный текст " * 900
-            with mock.patch.object(server.request, "urlopen", return_value=response) as call:
+            with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
                 self.assertEqual(client.embed_remote(text), [1, 0])
-                self.assertEqual(json.loads(call.call_args.args[0].data)["input"], text)
+                self.assertEqual(call.call_args.kwargs["json"]["input"], text)
                 for vector in ([], [0, 0], [float("nan"), 1], [float("inf")]):
                     response.read.return_value = json.dumps({"data": [{"embedding": vector}]}).encode()
                     with self.assertRaises(ValueError):
@@ -365,12 +366,13 @@ class EmbeddingClientTests(unittest.TestCase):
                     client = server.EmbeddingClient(settings)
                     response = mock.MagicMock()
                     response.__enter__.return_value = response
+                    response.json.side_effect = lambda: json.loads(response.read.return_value)
                     response.read.return_value = json.dumps({"model": model, "data": [
                         {"index": 0, "embedding": [1.0] + [0.0] * 4095}]}).encode()
                     text = "Instruct: retrieval\nQuery:права пользователя"
-                    with mock.patch.object(server.request, "urlopen", return_value=response) as call:
+                    with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
                         self.assertEqual(len(client.embed_remote(text)), 4096)
-                        body = json.loads(call.call_args.args[0].data)
+                        body = call.call_args.kwargs["json"]
                     self.assertEqual(body["model"], model)
                     self.assertEqual(body["input"], text)
                     self.assertEqual(body["encoding_format"], "float")
@@ -379,6 +381,34 @@ class EmbeddingClientTests(unittest.TestCase):
                     else:
                         self.assertNotIn("provider", body)
 
+    def test_remote_reuses_client_and_retries_only_failed_connections(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                               embedding_api_base="https://example.test/v1")
+            client = server.EmbeddingClient(settings)
+            remote = mock.Mock()
+            response = mock.Mock()
+            response.json.return_value = {"data": [{"index": 0, "embedding": [1, 0]}]}
+            remote.post.side_effect = [server.httpx.ConnectError("TLS interrupted"), response, response]
+            with mock.patch.object(server.httpx, "Client", return_value=remote) as factory:
+                self.assertEqual(client.embed_remote("first complete input"), [1, 0])
+                self.assertEqual(client.embed_remote("second complete input"), [1, 0])
+                factory.assert_called_once()
+                self.assertEqual(remote.post.call_count, 3)
+                self.assertEqual([call.kwargs["json"]["input"] for call in remote.post.call_args_list],
+                                 ["first complete input", "first complete input", "second complete input"])
+                remote.post.reset_mock(side_effect=True)
+                remote.post.side_effect = [server.httpx.ConnectError("secret-marker")] * 2
+                with self.assertRaises(server.BookStackApiError) as failure:
+                    client.embed_remote("third input")
+                self.assertEqual(remote.post.call_count, 2)
+                self.assertNotIn("secret-marker", str(failure.exception))
+                remote.post.reset_mock(side_effect=True)
+                remote.post.side_effect = server.httpx.ReadTimeout("late response")
+                with self.assertRaises(server.BookStackApiError):
+                    client.embed_remote("fourth input")
+                self.assertEqual(remote.post.call_count, 1)
+
     def test_qwen_dimension_and_default_threshold(self):
         with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b", "BOOKSTACK_SEMANTIC_MIN_SCORE": ""}):
             self.assertEqual(server.Settings.from_env().semantic_min_score, server.QWEN_MIN_SCORE)
@@ -386,16 +416,18 @@ class EmbeddingClientTests(unittest.TestCase):
             client = server.EmbeddingClient(make_settings(Path(root)/"cache.sqlite", "qwen/qwen3-embedding-8b"))
             response = mock.MagicMock()
             response.__enter__.return_value = response
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.read.return_value = json.dumps({"data": [{"embedding": [1, 0]}]}).encode()
-            with mock.patch.object(server.request, "urlopen", return_value=response), self.assertRaises(ValueError):
+            with mock.patch.object(server.httpx.Client, "post", return_value=response), self.assertRaises(ValueError):
                 client.embed_remote("query")
 
     def test_batch_reorders_complete_indices_and_rejects_missing_duplicate_indices(self):
         with tempfile.TemporaryDirectory() as root:
             client = server.EmbeddingClient(replace(make_settings(Path(root)/"cache.sqlite", "remote-model"), embedding_api_base="https://example.test/v1"))
             response = mock.MagicMock()
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.__enter__.return_value = response
-            with mock.patch.object(server.request, "urlopen", return_value=response):
+            with mock.patch.object(server.httpx.Client, "post", return_value=response):
                 response.read.return_value = json.dumps({"data": [{"index": 1, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()
                 self.assertEqual(client._remote_batch(["first", "second"]), [[1, 0], [0, 1]])
                 response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()

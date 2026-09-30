@@ -20,6 +20,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
 
 import snowballstemmer
+import httpx
 
 try:
     import numpy as np
@@ -338,6 +339,8 @@ class EmbeddingClient:
         self._query_cache = OrderedDict()
         self._query_pending = {}
         self._query_lock = threading.Lock()
+        self._http_client = None
+        self._http_lock = threading.Lock()
 
     def mode(self) -> str:
         if not self.model:
@@ -449,20 +452,36 @@ class EmbeddingClient:
             raise BookStackApiError("Embedding passage exceeds model token limit; lower BOOKSTACK_CHUNK_TOKENS")
         return self._remote_batch(inputs)
 
+    def _remote_http(self) -> httpx.Client:
+        with self._http_lock:
+            if self._http_client is None:
+                self._http_client = httpx.Client(
+                    timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=10, keepalive_expiry=60.0),
+                )
+            return self._http_client
+
     def _remote_batch(self, texts: List[str]) -> List[List[float]]:
         body = {"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}
         if parse.urlsplit(self.api_base).hostname == "openrouter.ai":
             body["provider"] = {"sort": "latency"}
-        payload = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        req = request.Request(f"{self.api_base}/embeddings", headers=headers, data=payload, method="POST")
         try:
-            with request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8"))
+            client = self._remote_http()
+            for attempt in range(2):
+                try:
+                    response = client.post(f"{self.api_base}/embeddings", headers=headers, json=body)
+                    break
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    if attempt:
+                        raise
+            response.raise_for_status()
+            result = response.json()
         except Exception as exc:
-            raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {getattr(exc, 'code', 'unavailable')}); retry reindex_docs") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", "unavailable")
+            raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {status}); retry reindex_docs") from exc
         if self.on_usage is not None:
             self.on_usage(result.get("usage") or {})
         data = result.get("data", [])

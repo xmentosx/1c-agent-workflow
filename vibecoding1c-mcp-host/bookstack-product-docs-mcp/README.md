@@ -40,6 +40,12 @@ its default provider fallback. This selects a serving provider for the same mode
 it does not change the embedding input, profile, dimension, index or result coverage.
 Other embedding API endpoints retain their existing request body. External latency
 and availability can still vary; full hybrid search waits for the query vector.
+The embedding client reuses HTTP connections (up to ten idle connections, expiry
+60 seconds), with normal certificate verification and environment proxy settings.
+Connection establishment has a five-second timeout and one retry for connection
+errors/timeouts; read/write retain 30-second timeouts. HTTP status failures and
+read/write failures are not retried. It does not race semantic work against a
+deadline that returns lexical-only results.
 
 For a slow query, call `search_docs` with `diagnostics=true`. The optional response
 reports server-side milliseconds for local text search, query embedding, vector
