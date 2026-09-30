@@ -860,14 +860,19 @@ class Index:
         now = self.state.clock()
         self.embedding_cooldowns = {key: until for key, until in self.embedding_cooldowns.items() if until > now}
         window = self.embedding_batch + len(self.embedding_claimed) + len(self.embedding_cooldowns)
-        source = ("issues i INDEXED BY issues_modified CROSS JOIN fragments f INDEXED BY fragments_issue"
-                  if recent else "fragments f JOIN issues i ON i.id=f.issue_id")
-        relation = " AND f.issue_id=i.id" if recent else ""
-        order = "i.modified DESC,i.id" if recent else "f.id"
-        rows = self.state.all(f"SELECT f.* FROM {source} "
-            "WHERE f.version<>f.vector_version" + relation + " AND NOT EXISTS "
+        # Start from the pending-only index. Walking all issues in date order
+        # scanned the ready corpus while holding State.lock when the queue was
+        # empty or the remaining work belonged to an old issue. Rank compact
+        # keys first and load text only for the bounded selected batch.
+        order = "i.modified DESC,i.id,f.id" if recent else "f.id"
+        output_order = "c.modified DESC,c.issue_id,c.id" if recent else "c.id"
+        rows = self.state.all("WITH candidates AS ("
+            "SELECT f.id,f.issue_id,i.modified FROM fragments f INDEXED BY fragments_pending "
+            "JOIN issues i ON i.id=f.issue_id WHERE f.version<>f.vector_version AND NOT EXISTS "
             "(SELECT 1 FROM embedding_spool s WHERE s.fragment_id=f.id AND s.version=f.version)" + scope +
-            f" ORDER BY {order} LIMIT ?", (*selected, min(window, 2048)))
+            f" ORDER BY {order} LIMIT ?) "
+            "SELECT f.* FROM candidates c JOIN fragments f ON f.id=c.id "
+            f"ORDER BY {output_order}", (*selected, min(window, 2048)))
         return [row for row in rows if row["id"] not in self.embedding_claimed
                 and (row["id"], row["version"]) not in self.embedding_cooldowns][:self.embedding_batch]
 

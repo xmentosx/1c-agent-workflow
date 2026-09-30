@@ -739,6 +739,34 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(self.index._embedding_candidates(recent=True)[0]["issue_id"], 2)
         self.assertEqual(self.index._embedding_candidates(recent=False)[0]["issue_id"], 1)
 
+    def test_embedding_queue_does_not_scan_ready_corpus_when_empty_or_sparse(self):
+        self.state.put_issue(ticket(1, updated="2020-01-01T00:00:00Z"))
+        self.state.put_issue(ticket(2, text="ready " * 300, updated="2026-09-29T12:00:00Z"))
+        with self.state.transaction():
+            self.state.run("UPDATE fragments SET vector_version=version")
+            for number in range(3, 3003):
+                self.state.run("INSERT INTO issues SELECT ?,project_id,modified,data,hash,etag,verified "
+                               "FROM issues WHERE id=2", (number,))
+                self.state.run("INSERT INTO fragments SELECT ?,?,kind,note_id,file_id,source,text,folded,"
+                               "version,vector_version,vector_id FROM fragments "
+                               "WHERE issue_id=2 AND kind='description' LIMIT 1", (f"ready:{number}", number))
+        for pending in (False, True):
+            if pending:
+                self.state.run("UPDATE fragments SET vector_version='' WHERE issue_id=1 AND kind='description'")
+            for recent in (False, True):
+                with self.subTest(pending=pending, recent=recent):
+                    steps = 0
+                    def instruction_budget():
+                        nonlocal steps
+                        steps += 1000
+                        return int(steps > 10000)
+                    self.state.db.set_progress_handler(instruction_budget, 1000)
+                    try:
+                        rows = self.index._embedding_candidates(recent=recent)
+                    finally:
+                        self.state.db.set_progress_handler(None, 0)
+                    self.assertEqual([r["issue_id"] for r in rows], [1] if pending else [])
+
     def test_embedding_continues_while_mantis_page_is_slow(self):
         self.index.refresh(1)
         self.index.vectors = MemoryVectors()
