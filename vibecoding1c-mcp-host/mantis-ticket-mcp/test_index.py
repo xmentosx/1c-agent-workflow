@@ -653,6 +653,135 @@ class IndexTests(unittest.TestCase):
         finally:
             provider.close()
 
+    def test_search_recovers_connect_failure_and_keeps_full_semantics(self):
+        from mantis_index import Embeddings
+        self.index.refresh(1)
+        self.state.run("UPDATE fragments SET vector_id=id,vector_version=version")
+        self.index.vectors = SimpleNamespace(query=lambda vector: [r["id"] for r in self.state.all("SELECT id FROM fragments")])
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}], "usage": {"cost": 0.001}}
+        connections = []
+        def factory():
+            connection = FakeEmbeddingConnection(lambda request: FakeEmbeddingResponse(data=response))
+            if not connections:
+                connection.connect = lambda: (_ for _ in ()).throw(ConnectionError("private TLS detail"))
+            connections.append(connection)
+            return connection
+        provider = self.index.embeddings = Embeddings(self.state, "fixture", connection_factory=factory)
+        try:
+            result = self.index.search("решения")
+            self.assertEqual(result["semantic_query"], "available")
+            self.assertEqual(result["query_embedding_cache"], "miss")
+            self.assertEqual(len(connections), 2)
+            self.assertEqual(self.index.search("решения")["query_embedding_cache"], "hit")
+            self.assertEqual(len(connections), 2)
+            sent = json.loads(connections[1].body)
+            self.assertEqual(sent["provider"], {"sort": "latency", "max_price": {"prompt": 0.04}})
+            self.assertEqual((sent["model"], sent["dimensions"]), ("qwen/qwen3-embedding-8b", 4096))
+            diagnostics = provider.diagnostics()
+            self.assertEqual(diagnostics["last_failure"]["phase"], "connect")
+            self.assertEqual(diagnostics["last_attempt"]["attempt"], 2)
+            self.assertNotIn("private", json.dumps(diagnostics))
+            self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges")["n"], 2)
+            for stage in ("query_embedding", "vector_search", "filename_lookup", "total"):
+                self.assertGreaterEqual(result["timing_ms"][stage], 0)
+        finally:
+            provider.close()
+
+    def test_stale_reused_connection_recovers_on_a_fresh_connection(self):
+        from mantis_index import Embeddings
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}]}
+        connections, requests = [], []
+        def serve(request):
+            requests.append(request)
+            if len(requests) == 2:
+                raise ConnectionError("closed by peer")
+            return FakeEmbeddingResponse(data=response)
+        def factory():
+            connection = FakeEmbeddingConnection(serve)
+            connections.append(connection)
+            return connection
+        provider = Embeddings(self.state, "fixture", connection_factory=factory)
+        try:
+            provider.embed(["first"], retries=1, total_timeout=40)
+            provider.embed(["second"], retries=1, total_timeout=40)
+            self.assertEqual(requests, [connections[0], connections[0], connections[1]])
+            self.assertIsNone(connections[0].sock)
+            diagnostics = provider.diagnostics()
+            self.assertTrue(diagnostics["last_failure"]["connection_reused"])
+            self.assertEqual(diagnostics["last_failure"]["phase"], "headers")
+            self.assertFalse(diagnostics["last_attempt"]["connection_reused"])
+        finally:
+            provider.close()
+
+    def test_idle_connection_expires_and_failure_diagnostic_survives_five_minutes(self):
+        from mantis_index import Embeddings
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}]}
+        connections = []
+        def factory():
+            connection = FakeEmbeddingConnection(lambda request: FakeEmbeddingResponse(data=response))
+            connections.append(connection)
+            return connection
+        provider = Embeddings(self.state, "fixture", connection_factory=factory)
+        try:
+            with patch("mantis_index.time.monotonic", return_value=100):
+                provider.embed(["first"])
+            with patch("mantis_index.time.monotonic", return_value=161):
+                provider.embed(["second"])
+            self.assertEqual(len(connections), 2)
+            self.assertIsNone(connections[0].sock)
+            provider._record(time.monotonic(), 1, 0, 1, "network", phase="connect")
+            with patch.object(self.state, "clock", return_value=self.state.clock() + 301):
+                diagnostic = provider.diagnostics()
+            self.assertEqual(diagnostic["attempts_5m"], 0)
+            self.assertEqual(diagnostic["last_failure"]["phase"], "connect")
+        finally:
+            provider.close()
+
+    def test_retry_uses_remaining_total_budget_and_stops_when_exhausted(self):
+        from mantis_index import Embeddings, EmbeddingError
+        response = {"data": [{"index": 0, "embedding": [1.0] + [0.0] * 4095}]}
+        clock, delay, connections = [100.0], [32.0], []
+        def serve(request):
+            if len(connections) == 1:
+                clock[0] += delay[0]
+                raise ConnectionError("interrupted")
+            return FakeEmbeddingResponse(data=response)
+        def factory():
+            connection = FakeEmbeddingConnection(serve)
+            connections.append(connection)
+            return connection
+        provider = Embeddings(self.state, "fixture", connection_factory=factory)
+        try:
+            with patch("mantis_index.time.monotonic", side_effect=lambda: clock[0]):
+                provider.embed(["bounded"], timeout=40, retries=1, total_timeout=40)
+            self.assertEqual(connections[1].timeouts, [8.0, 8.0, 8.0])
+            provider.close()
+            connections.clear()
+            delay[0] = 41.0
+            with patch("mantis_index.time.monotonic", side_effect=lambda: clock[0]):
+                with self.assertRaises(EmbeddingError) as caught:
+                    provider.embed(["exhausted"], timeout=40, retries=1, total_timeout=40)
+            self.assertEqual(len(connections), 1)
+            self.assertEqual(caught.exception.category, "network")
+            self.assertEqual(self.state.one("SELECT COUNT(*) AS n FROM charges")["n"], 3)
+        finally:
+            provider.close()
+
+    def test_interactive_provider_rejection_is_not_retried(self):
+        from mantis_index import Embeddings, EmbeddingError
+        requests = []
+        def serve(request):
+            requests.append(request)
+            return FakeEmbeddingResponse(401, text="private credentials")
+        provider = Embeddings(self.state, "fixture", connection_factory=lambda: FakeEmbeddingConnection(serve))
+        try:
+            with self.assertRaises(EmbeddingError) as caught:
+                provider.embed(["test"], retries=1, total_timeout=40)
+            self.assertEqual(caught.exception.category, "authentication")
+            self.assertEqual(len(requests), 1)
+        finally:
+            provider.close()
+
     def test_embedding_provider_error_retries_but_invalid_response_does_not(self):
         from mantis_index import Embeddings, EmbeddingError
         calls = []
@@ -1052,6 +1181,30 @@ class IndexTests(unittest.TestCase):
         self.assertNotIn("SECRETBODY", self.state.one("SELECT data FROM issues")["data"])
         self.assertFalse(self.search("SECRETBODY")["issues"])
         print("Mantis UTF-8: путь с пробелом / original имя.txt")
+
+    def test_filename_covering_index_preserves_substrings_and_limited_candidates(self):
+        for number in range(1, 13):
+            item = ticket(number)
+            item["attachments"] = [{"id": number, "filename": f"Я{13-number}—ПрефиксИСКОМЫЙфрагмент_suffix.xlsx"}]
+            self.state.put_issue(item)
+        query = "скомыйфраг"
+        old_sql = "SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?"
+        new_sql = ("SELECT id FROM fragments INDEXED BY fragments_filename_lookup "
+                   "WHERE kind='filename' AND instr(folded,?)>0 ORDER BY rowid LIMIT ?")
+        self.assertEqual(self.state.all(old_sql, (query, 5)), self.state.all(new_sql, (query, 5)))
+        plan = self.state.all("EXPLAIN QUERY PLAN " + new_sql, (query, 5))
+        self.assertTrue(any("COVERING INDEX fragments_filename_lookup" in row["detail"] for row in plan))
+        first = self.search(query.upper(), mode="filenames", filters={"project_id": 1}, limit=3)
+        second = self.search(query.upper(), mode="filenames", filters={"project_id": 1}, limit=3, cursor=first["next_cursor"])
+        self.assertEqual([item["id"] for item in first["issues"]], [1, 2, 3])
+        self.assertFalse({item["id"] for item in first["issues"]} & {item["id"] for item in second["issues"]})
+        self.assertEqual(first["issues"][0]["matches"][0]["type"], "filename")
+        self.state.purge_issue(1)
+        self.assertNotIn(1, {item["id"] for item in self.search(query, mode="filenames")["issues"]})
+        item = ticket(2)
+        item["attachments"] = [{"id": 2, "filename": "переименовано.xlsx"}]
+        self.state.put_issue(item)
+        self.assertNotIn(2, {item["id"] for item in self.search(query, mode="filenames")["issues"]})
 
     def test_attachment_content_search_survives_issue_edit_and_obeys_revocation(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.xlsx", "size": 120}]
@@ -1767,7 +1920,7 @@ class IndexTests(unittest.TestCase):
         result = self.index.search("решения", semantic=True)
         self.assertEqual(result["issues"][0]["id"], 1)
         self.assertIn("timeout", result["semantic_query"])
-        self.assertEqual(calls, [(["решения"], {"timeout": 40, "retries": 0})])
+        self.assertEqual(calls, [(["решения"], {"timeout": 40, "retries": 1, "total_timeout": 40})])
 
     def test_broad_candidate_window_still_uses_semantics_and_reports_limit(self):
         self.index.refresh(1)

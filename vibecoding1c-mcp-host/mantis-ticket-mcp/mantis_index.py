@@ -34,6 +34,7 @@ from mantis_extract import MAX_INPUT
 
 QUERY_EMBEDDING_CACHE_SIZE = 256
 QUERY_EMBEDDING_TIMEOUT_SECONDS = 40
+EMBEDDING_CONNECTION_IDLE_SECONDS = 60
 QUERY_SEMANTIC_BUDGET_SECONDS = 50
 QUERY_EMBEDDING_WAIT_SECONDS = 65
 SEARCH_CANDIDATE_LIMIT = 10000
@@ -264,11 +265,12 @@ class Embeddings:
         self.connections = LifoQueue(maxsize=16)
         self.request_lock = threading.Lock()
         self.request_events = deque(maxlen=2048)
+        self.last_failure = None
 
     def close(self):
         while True:
             try:
-                self.connections.get_nowait().close()
+                self.connections.get_nowait()[1].close()
             except Empty:
                 return
 
@@ -290,15 +292,21 @@ class Embeddings:
             return connection
         return http.client.HTTPSConnection(host, timeout=self.connect_timeout)
 
-    def _borrow_connection(self):
-        try:
-            return self.connections.get_nowait()
-        except Empty:
-            return self.connection_factory()
+    def _borrow_connection(self, fresh=False):
+        if not fresh:
+            while True:
+                try:
+                    released, connection = self.connections.get_nowait()
+                except Empty:
+                    break
+                if time.monotonic() - released < EMBEDDING_CONNECTION_IDLE_SECONDS:
+                    return connection
+                connection.close()
+        return self.connection_factory()
 
     def _release_connection(self, connection):
         try:
-            self.connections.put_nowait(connection)
+            self.connections.put_nowait((time.monotonic(), connection))
         except Full:
             connection.close()
 
@@ -334,13 +342,16 @@ class Embeddings:
         return type(current).__name__, errno
 
     def _record(self, started, request_bytes, response_bytes, attempt, category, status=0,
-                error_type="", cause_type="", os_errno=None):
+                error_type="", cause_type="", os_errno=None, phase="", reused=False):
         event = {"at": self.state.clock(), "seconds": round(time.monotonic() - started, 3),
                  "request_bytes": request_bytes, "response_bytes": response_bytes,
                  "attempt": attempt, "category": category, "http_status": status,
-                 "error_type": error_type, "cause_type": cause_type, "os_errno": os_errno}
+                 "error_type": error_type, "cause_type": cause_type, "os_errno": os_errno,
+                 "phase": phase, "connection_reused": reused}
         with self.request_lock:
             self.request_events.append(event)
+            if category != "ok":
+                self.last_failure = dict(event)
 
     def diagnostics(self):
         with self.request_lock:
@@ -348,6 +359,7 @@ class Embeddings:
             while self.request_events and self.request_events[0]["at"] < cutoff:
                 self.request_events.popleft()
             events = list(self.request_events)
+            last_failure = dict(self.last_failure) if self.last_failure else None
         durations = sorted(item["seconds"] for item in events)
         sizes = sorted(item["request_bytes"] for item in events)
         failures = {}
@@ -360,23 +372,31 @@ class Embeddings:
                 "failures_5m": failures, "request_bytes_p50": percentile(sizes, 0.5),
                 "request_bytes_p95": percentile(sizes, 0.95),
                 "seconds_p50": percentile(durations, 0.5), "seconds_p95": percentile(durations, 0.95),
-                "last_attempt": dict(events[-1]) if events else None}
+                "last_attempt": dict(events[-1]) if events else None, "last_failure": last_failure}
 
-    def embed(self, texts, *, timeout=None, retries=None):
+    def embed(self, texts, *, timeout=None, retries=None, total_timeout=None):
         if not self.key:
             raise EmbeddingError("not_configured")
         request_timeout = self.timeout if timeout is None else timeout
         request_retries = self.retries if retries is None else retries
         if (not math.isfinite(request_timeout) or request_timeout <= 0 or
-                not isinstance(request_retries, int) or request_retries < 0 or request_retries > 5):
+                not isinstance(request_retries, int) or request_retries < 0 or request_retries > 5 or
+                (total_timeout is not None and (not math.isfinite(total_timeout) or total_timeout <= 0))):
             raise ValueError("Invalid embedding request timeout or retry count")
+        deadline = time.monotonic() + total_timeout if total_timeout is not None else None
+        def remaining(maximum):
+            value = min(maximum, deadline - time.monotonic()) if deadline is not None else maximum
+            if value <= 0:
+                raise EmbeddingError("timeout")
+            return value
         # UTF-8 byte count is a conservative input-token bound for this tokenizer.
         reserve = (sum(len(text.encode("utf-8")) + 32 for text in texts)) * self.max_price / 1_000_000
         body = {"model": "qwen/qwen3-embedding-8b", "input": texts, "dimensions": 4096,
-                "encoding_format": "float", "provider": {"max_price": {"prompt": self.max_price}}}
+                "encoding_format": "float", "provider": {"sort": "latency", "max_price": {"prompt": self.max_price}}}
         request_bytes = encode(body).encode("utf-8")
         headers = {"Authorization": "Bearer " + self.key, "Content-Type": "application/json"}
         for attempt in range(1, request_retries + 2):
+            remaining(request_timeout)
             # Every network attempt may be billed even when its response is lost.
             try:
                 charge = self.state.reserve(reserve, self.cap)
@@ -384,18 +404,25 @@ class Embeddings:
                 raise EmbeddingError("budget") from exc
             started, response_bytes, status = time.monotonic(), 0, 0
             connection = None
+            phase, reused = "connect", False
             try:
-                connection = self._borrow_connection()
+                connection = self._borrow_connection(fresh=attempt > 1)
+                reused = connection.sock is not None
                 if connection.sock is None:
+                    connection.timeout = remaining(self.connect_timeout)
                     connection.connect()
-                connection.sock.settimeout(min(30, request_timeout))
+                phase = "send"
+                connection.sock.settimeout(remaining(min(30, request_timeout)))
                 connection.request("POST", "/api/v1/embeddings", body=request_bytes, headers=headers)
-                connection.sock.settimeout(request_timeout)
+                phase = "headers"
+                connection.sock.settimeout(remaining(request_timeout))
                 response = connection.getresponse()
                 status = response.status
                 if status >= 400:
                     retry_after = self._retry_after(response.getheader("Retry-After"))
                     raise EmbeddingError(self._category(status), status, retry_after)
+                phase = "body"
+                connection.sock.settimeout(remaining(request_timeout))
                 payload = response.read(MAX_EMBEDDING_RESPONSE_BYTES + 1)
                 response_bytes = len(payload)
                 if response_bytes > MAX_EMBEDDING_RESPONSE_BYTES:
@@ -405,6 +432,7 @@ class Embeddings:
                 else:
                     self._release_connection(connection)
                 connection = None
+                phase = "validate"
                 data = json.loads(payload)
                 rows = sorted(data["data"], key=lambda row: row["index"])
                 if [row["index"] for row in rows] != list(range(len(texts))):
@@ -417,21 +445,22 @@ class Embeddings:
                     raise ValueError("Invalid provider cost")
                 if cost is not None:
                     self.state.settle(charge, float(cost))
-                self._record(started, len(request_bytes), response_bytes, attempt, "ok", status)
+                self._record(started, len(request_bytes), response_bytes, attempt, "ok", status,
+                             phase=phase, reused=reused)
                 return vectors
             except (OSError, http.client.HTTPException) as exc:
                 error = EmbeddingError("timeout" if isinstance(exc, TimeoutError) else "network")
                 cause_type, os_errno = self._network_cause(exc)
                 self._record(started, len(request_bytes), response_bytes, attempt, error.category,
-                             status, type(exc).__name__, cause_type, os_errno)
+                             status, type(exc).__name__, cause_type, os_errno, phase, reused)
             except EmbeddingError as exc:
                 error = exc
                 self._record(started, len(request_bytes), response_bytes, attempt, error.category,
-                             status, "HTTP" if status else "")
+                             status, "HTTP" if status else "", phase=phase, reused=reused)
             except (KeyError, TypeError, ValueError, IndexError) as exc:
                 error = EmbeddingError("invalid_response")
                 self._record(started, len(request_bytes), response_bytes, attempt, error.category,
-                             status, type(exc).__name__)
+                             status, type(exc).__name__, phase=phase, reused=reused)
             finally:
                 if connection is not None:
                     connection.close()
@@ -440,7 +469,12 @@ class Embeddings:
             # Respect long Retry-After by returning control to the index scheduler.
             if error.retry_after > 60:
                 raise error
-            time.sleep(max(error.retry_after, min(8, 2 ** (attempt - 1)) + random.random() * 0.25))
+            delay = max(error.retry_after, 0 if total_timeout is not None and error.category == "network"
+                        else min(8, 2 ** (attempt - 1)) + random.random() * 0.25)
+            if deadline is not None and delay >= deadline - time.monotonic():
+                raise error
+            if delay:
+                time.sleep(delay)
         raise RuntimeError("Unreachable embedding retry state")
 
 
@@ -576,11 +610,11 @@ class Index:
         if not owner:
             return list(pending.result(timeout=QUERY_EMBEDDING_WAIT_SECONDS)), "shared"
         try:
-            # Keep interactive search inside the MCP call budget even when bulk
-            # indexing uses long reads and retries. A timeout degrades to the
-            # lexical result in search(), leaving the index worker unaffected.
+            # One recovery attempt shares the original interactive time budget.
+            # Bulk indexing keeps its independent read/retry configuration.
             vector = array("d", self.embeddings.embed(
-                [query], timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS, retries=0)[0])
+                [query], timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS, retries=1,
+                total_timeout=QUERY_EMBEDDING_TIMEOUT_SECONDS)[0])
             if not vector:
                 raise ValueError("Empty query embedding")
             self._embedding_success()
@@ -1249,10 +1283,12 @@ class Index:
                     "continuation": "Search index is briefly busy; retry the same query and cursor"}
 
     def _search(self, query, filters, mode, limit, cursor, semantic, sort_by, similar_to, reader):
-        stage_started = time.monotonic()
+        search_started = stage_started = time.monotonic()
+        timings = {}
         def checkpoint(stage):
             nonlocal stage_started
             elapsed = time.monotonic() - stage_started
+            timings[stage] = round(elapsed * 1000, 2)
             if elapsed > 10:
                 logging.getLogger(__name__).warning(
                     "Mantis search stage latency: stage=%s elapsed=%.3fs", stage, elapsed)
@@ -1346,7 +1382,8 @@ class Index:
                                 logging.getLogger(__name__).warning(
                                     "Mantis semantic latency: embedding=%.3fs vector_query=%.3fs",
                                     embedded - started, queried - embedded)
-                            return keys, cache
+                            return keys, cache, {"query_embedding": round((embedded - started) * 1000, 2),
+                                                 "vector_search": round((queried - embedded) * 1000, 2)}
                         finally:
                             self.search_semantic_slots.release()
                     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mantis-search-semantic")
@@ -1354,8 +1391,9 @@ class Index:
                     try:
                         future = pool.submit(semantic_candidates)
                         submitted = True
-                        semantic_keys, query_cache = future.result(
+                        semantic_keys, query_cache, semantic_timings = future.result(
                             timeout=QUERY_SEMANTIC_BUDGET_SECONDS)
+                        timings.update(semantic_timings)
                         query_semantics = "available"
                     except FutureTimeoutError:
                         query_semantics = "timeout:interactive_semantic_budget"
@@ -1382,8 +1420,14 @@ class Index:
             for rank, row in enumerate(reader.all("SELECT id FROM search_text WHERE search_text MATCH ? ORDER BY bm25(search_text) LIMIT ?", (expression, SEARCH_CANDIDATE_LIMIT))):
                 ranks.setdefault(row["id"], 1 / (60 + rank))
         if query.strip():
-            for row in reader.all("SELECT id FROM fragments WHERE kind='filename' AND instr(folded,?)>0 LIMIT ?", (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
+            filename_started = time.monotonic()
+            # The covering partial index avoids random reads of fragment bodies.
+            # rowid order preserves the previous limited filename candidate set.
+            for row in reader.all("SELECT id FROM fragments INDEXED BY fragments_filename_lookup "
+                                  "WHERE kind='filename' AND instr(folded,?)>0 ORDER BY rowid LIMIT ?",
+                                  (query.casefold(), SEARCH_CANDIDATE_LIMIT)):
                 ranks[row["id"]] = ranks.get(row["id"], 0) + 1
+            timings["filename_lookup"] = round((time.monotonic() - filename_started) * 1000, 2)
         else:
             source_kind = {"comments": "comment", "filenames": "filename",
                            "attachment_contents": "attachment_content"}.get(mode)
@@ -1518,7 +1562,7 @@ class Index:
                 "mantis": self.remote_status, "silent_changes": "Newly visible sources without updated_at require an issue refresh",
                 "index": {"issues": snapshot["issues"], "embedding_backlog": snapshot["embedding_backlog"],
                           "projects": len(snapshot["projects"]), "projects_pending": sum(p["status"] not in {"current", "access_removed"} for p in snapshot["projects"])},
-                "output_char_limit": 12000}
+                "timing_ms": timings, "output_char_limit": 12000}
         for entry in groups[:limit]:
             result["issues"].append(entry)
             # Reserve space for the cursor; even an unfiltered request remains
@@ -1550,4 +1594,5 @@ class Index:
                     "session": session_id, "step": session["step"]}).encode()).decode()
             elif session_id:
                 del self.search_cursors[session_id]
+        timings["total"] = round((time.monotonic() - search_started) * 1000, 2)
         return result

@@ -169,6 +169,7 @@ class State:
                     vector_version TEXT NOT NULL DEFAULT '', vector_id TEXT NOT NULL DEFAULT '');
                 CREATE INDEX IF NOT EXISTS fragments_issue ON fragments(issue_id);
                 CREATE INDEX IF NOT EXISTS fragments_kind ON fragments(kind);
+                CREATE INDEX IF NOT EXISTS fragments_filename_lookup ON fragments(folded,id) WHERE kind='filename';
                 CREATE INDEX IF NOT EXISTS fragments_vector ON fragments(vector_id);
                 CREATE INDEX IF NOT EXISTS fragments_pending ON fragments(id) WHERE version<>vector_version;
                 CREATE INDEX IF NOT EXISTS issues_search ON issues(id,hash,verified);
