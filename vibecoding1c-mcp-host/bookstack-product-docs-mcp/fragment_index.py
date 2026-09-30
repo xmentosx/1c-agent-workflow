@@ -7,6 +7,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 from array import array
 from contextlib import closing
 from pathlib import Path
@@ -117,6 +118,7 @@ class FragmentIndex:
     def __init__(self, cache):
         self.cache = cache
         self._search_cache = (None, None)
+        self._search_lock = threading.Lock()
         with cache.connect() as conn:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='fragment_profiles'").fetchone()
             if not exists and conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]:
@@ -243,7 +245,7 @@ class FragmentIndex:
         return status
 
     def all_vectors(self, profile):
-        with self.cache.connect() as conn:
+        with self._search_lock, self.cache.connect() as conn:
             # One SQLite snapshot owns both the revision key and its data. Usage
             # writes do not invalidate this read cache; page/profile changes do.
             conn.execute("BEGIN")

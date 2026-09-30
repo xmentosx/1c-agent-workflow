@@ -16,6 +16,10 @@ retain the existing BookStack API search fallback when the local search has no m
 or `filters.live=true`; semantic mode never mixes in lexical fallback. Text search is
 independent of semantic-index readiness and provider availability. Keep the same query,
 filters and mode when following `next_cursor`.
+For plan-editor collaboration queries, local FTS expands Russian forms of
+`параллельная работа` and `многопользовательская работа` and ranks a matching
+collaboration architecture title ahead of general editor pages. The expansion
+is limited to queries that also mention the plan editor.
 
 The embedding client keeps the last 256 successful query vectors in an in-memory LRU
 cache, keyed by the exact prefixed input hash and embedding profile. Repeated queries,
@@ -95,6 +99,10 @@ SQLite WAL permits search snapshots alongside atomic index/usage writes. A dispo
 in-process vector cache avoids rereading all vectors for every query; the current
 page revisions/profile invalidate it. SQLite remains authoritative. Backups and transfers
 must use SQLite's backup API, including the WAL state.
+The service warms this cache in the background at startup and after a completed
+reindex. Searches arriving during that initial load may still wait for the cold
+SQLite read; subsequent searches reuse the loaded vectors. The warmup does not
+change the index or make remote query-embedding requests.
 
 `provider_usage` stores successful response counts, returned input tokens and reported
 cost. It is not an account invoice: a timed-out/interrupted request can be billed without

@@ -778,6 +778,42 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["id"], 30)
         self.assertIn("unique-needle", result["results"][0]["preview"])
 
+    def test_plan_editor_collaboration_vocabulary_finds_the_architecture_page(self):
+        generic = page(1, "Редактор планов поддерживает параллельную работу пользователей.")
+        generic["name"] = "Редактор планов. Возможности"
+        architecture = page(2, "Механизм параллельной работы используется в редакторе планов.")
+        architecture["name"] = "Обзор архитектуры многопользовательской работы"
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [generic, architecture])
+            service.index_page(generic)
+            service.index_page(architecture)
+            for query in ("параллельная работа редактор планов",
+                          "многопользовательская работа редактор планов"):
+                with self.subTest(query=query):
+                    result = service.search_docs(query, None, 5, mode="text")
+                    self.assertEqual(result["results"][0]["id"], 2)
+                    self.assertEqual(result["total_matches"], 2)
+
+        semantic_candidates = [
+            {"id": 1, "title": generic["name"], "content_text": generic["markdown"], "semantic_score": 0.8},
+            {"id": 2, "title": architecture["name"], "content_text": architecture["markdown"], "semantic_score": 0.6},
+        ]
+        self.assertEqual(server.rank_search_results(semantic_candidates,
+                         "параллельная работа редактор планов")[0]["id"], 2)
+
+    def test_background_warm_primes_vectors_before_first_search(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [page(1, "Product architecture detail.")])
+            service.embeddings = FakeEmbeddings()
+            service.index_page(page(1, "Product architecture detail."))
+            self.assertIsNone(service.fragment_index._search_cache[1])
+            worker = service.start_background_warm()
+            self.assertIsNotNone(worker)
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(len(service.fragment_index._search_cache[1]), 1)
+            self.assertEqual(service.search_docs("Product", None, 5)["results"][0]["id"], 1)
+
     def test_reindex_refreshes_unchanged_pages_when_embedding_profile_changes(self):
         pages = [page(1, "Architecture decision.")]
         with tempfile.TemporaryDirectory() as temp_root:

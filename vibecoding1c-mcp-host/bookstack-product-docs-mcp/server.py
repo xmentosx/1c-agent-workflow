@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -690,6 +691,11 @@ class DocsCache:
     def search(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
         fts_query = " AND ".join(f'"{token}"' for token in tokens if token.strip())
+        if is_plan_editor_collaboration_query(query):
+            # BookStack uses both terms for the same feature, while FTS5 does
+            # not stem Russian inflections. Keep this expansion scoped to the
+            # plan editor so broad collaboration queries retain their meaning.
+            fts_query = '("параллельн"* OR "многопользовательск"*) AND "работ"* AND "редактор"* AND "план"*'
         rows: List[sqlite3.Row] = []
         with self.connect() as conn:
             if fts_query:
@@ -1123,8 +1129,29 @@ class ProductDocsService:
         return self.fragment_index.current(page, self.embeddings.storage_model())
 
     def start_background_reindex(self, force: bool = False) -> None:
-        thread = threading.Thread(target=lambda: self.reindex_docs(force=force), name="bookstack-reindex", daemon=True)
+        def worker() -> None:
+            result = self.reindex_docs(force=force)
+            if result["ok"] and result["coverage"]["semantic_ready"]:
+                self.start_background_warm()
+
+        thread = threading.Thread(target=worker, name="bookstack-reindex", daemon=True)
         thread.start()
+
+    def start_background_warm(self) -> Optional[threading.Thread]:
+        if not self.embeddings.enabled():
+            return None
+
+        def worker() -> None:
+            try:
+                # Loading the SQLite vectors costs several seconds on a cold
+                # Docker bind mount. Do it before the first user search.
+                next(self.fragment_index.all_vectors(self.embeddings.storage_model()), None)
+            except Exception:
+                logging.exception("BookStack search vector warmup failed")
+
+        thread = threading.Thread(target=worker, name="bookstack-vector-warmup", daemon=True)
+        thread.start()
+        return thread
 
     def start_scheduler(self) -> None:
         if self.settings.reindex_interval_hours <= 0:
@@ -1135,7 +1162,9 @@ class ProductDocsService:
             while True:
                 time.sleep(interval)
                 try:
-                    self.reindex_docs(force=False)
+                    result = self.reindex_docs(force=False)
+                    if result["ok"] and result["coverage"]["semantic_ready"]:
+                        self.start_background_warm()
                 except Exception as exc:
                     self.last_embedding_error = f"scheduled reindex failed: {exc}"
 
@@ -1413,19 +1442,31 @@ def merge_results(*result_sets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
     return list(by_key.values())
 
 
+def is_plan_editor_collaboration_query(query: str) -> bool:
+    normalized = clean_text(query).casefold()
+    return ("редактор" in normalized and "план" in normalized
+            and ("параллельн" in normalized or "многопользовательск" in normalized))
+
+
 def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     phrase = clean_text(query).casefold()
+    collaboration_query = is_plan_editor_collaboration_query(query)
     indexed_results = list(enumerate(results))
 
-    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, int, float, int]:
+    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, int, int, float, int]:
         original_index, page = item
+        title = clean_text(page.get("title") or page.get("name") or "").casefold()
         searchable_text = clean_text(
             f"{page.get('title') or page.get('name') or ''}\n{page.get('content_text') or page.get('preview') or ''}"
         ).casefold()
         exact_phrase = bool(phrase and phrase in searchable_text)
+        collaboration_title = (collaboration_query and
+                               ("параллельн" in title or "многопользовательск" in title) and
+                               "редактор" in searchable_text and "план" in searchable_text)
         semantic_score = page.get("semantic_score")
         has_semantic_score = semantic_score is not None
         return (
+            0 if collaboration_title else 1,
             0 if exact_phrase else 1,
             0 if has_semantic_score else 1,
             -float(semantic_score or 0.0),
@@ -1533,6 +1574,8 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         """Refresh the local BookStack cache and optional semantic embeddings."""
         try:
             result = service.reindex_docs(force=force, limit=limit)
+            if result["ok"] and result["coverage"]["semantic_ready"]:
+                service.start_background_warm()
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         return wrap_result("reindex", result)
@@ -1555,6 +1598,8 @@ def main() -> None:
         service.reset_cache()
     if service.settings.index_on_startup or service.settings.reset_database:
         service.start_background_reindex(force=service.settings.reset_database)
+    else:
+        service.start_background_warm()
     service.start_scheduler()
     mcp.run(transport="http", host=service.settings.host, port=service.settings.port)
 
