@@ -10,7 +10,7 @@ import threading
 import time
 from array import array
 from collections import OrderedDict
-from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,8 +42,6 @@ QWEN_REVISION = "c90816d848505624c2434128dfc61132162a0ee9"
 QWEN_INSTRUCTION = "Given a product documentation question, retrieve relevant passages that answer the question"
 QWEN_MIN_SCORE = 0.50
 QUERY_EMBEDDING_CACHE_SIZE = 256
-HYBRID_SEMANTIC_BUDGET_SECONDS = 2.0
-HYBRID_SEMANTIC_BACKGROUND_LIMIT = 2
 
 
 class BookStackApiError(RuntimeError):
@@ -789,7 +787,6 @@ class ProductDocsService:
         self.embeddings.on_usage = lambda usage: self.fragment_index.usage(self.embeddings.storage_model(), usage)
         self.last_embedding_error = ""
         self._index_lock = threading.RLock()
-        self._semantic_background_slots = threading.BoundedSemaphore(HYBRID_SEMANTIC_BACKGROUND_LIMIT)
 
     def reset_cache(self) -> None:
         with self._index_lock:
@@ -820,15 +817,9 @@ class ProductDocsService:
         results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 and mode != "semantic" else []
         text_ms = round((time.perf_counter() - text_started) * 1000, 1)
         semantic_trace: Dict[str, Any] = {}
-        semantic_state = ""
-        if (mode == "hybrid" and self.embeddings.mode() == "remote"
-                and confident_text_match(results, query)):
-            semantic, semantic_trace, semantic_state = self.budgeted_semantic_results(
-                query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters, diagnostics)
-        else:
-            semantic = (self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES),
-                                              effective_filters, semantic_trace, diagnostics)
-                        if mode != "text" else [])
+        semantic = (self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES),
+                                          effective_filters, semantic_trace, diagnostics)
+                    if mode != "text" else [])
         rank_started = time.perf_counter()
         results = rank_search_results(merge_results(results, semantic), query)
         ranking_ms = round((time.perf_counter() - rank_started) * 1000, 1)
@@ -869,9 +860,6 @@ class ProductDocsService:
             elif not coverage["semantic_ready"]:
                 result["semantic_status"] = "incomplete"
                 result["semantic_continuation"] = "index_status; reindex_docs resumes incomplete indexing"
-            elif semantic_state:
-                result["semantic_status"] = semantic_state
-                result["semantic_continuation"] = "repeat the same hybrid query after the remote embedding completes, or use mode=semantic to wait"
         if diagnostics:
             result["diagnostics"] = {
                 "text_ms": text_ms if mode != "semantic" else 0.0,
@@ -886,38 +874,6 @@ class ProductDocsService:
             if semantic_trace.get("embedding_error"):
                 result["diagnostics"]["embedding_error"] = semantic_trace["embedding_error"]
         return result
-
-    def budgeted_semantic_results(self, query: str, limit: int, filters: Dict[str, Any],
-                                  diagnostics: bool) -> Tuple[List[Dict[str, Any]], Dict[str, Any], str]:
-        if not self._semantic_background_slots.acquire(blocking=False):
-            return [], {"query_embedding_cache": "busy"}, "busy"
-
-        def worker() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-            trace: Dict[str, Any] = {}
-            try:
-                return self.semantic_results(query, limit, filters, trace, diagnostics), trace
-            finally:
-                self._semantic_background_slots.release()
-
-        try:
-            pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bookstack-hybrid-semantic")
-        except BaseException:
-            self._semantic_background_slots.release()
-            raise
-        submitted = False
-        try:
-            future = pool.submit(worker)
-            submitted = True
-            try:
-                results, trace = future.result(timeout=HYBRID_SEMANTIC_BUDGET_SECONDS)
-                return results, trace, ""
-            except FutureTimeoutError:
-                return [], {"query_embedding_cache": "pending",
-                            "query_embedding_ms": round(HYBRID_SEMANTIC_BUDGET_SECONDS * 1000, 1)}, "pending"
-        finally:
-            if not submitted:
-                self._semantic_background_slots.release()
-            pool.shutdown(wait=False)
 
     def semantic_results(self, query: str, limit: int, filters: Dict[str, Any],
                          trace: Optional[Dict[str, Any]] = None, diagnostics: bool = False) -> List[Dict[str, Any]]:
@@ -1490,20 +1446,6 @@ def is_plan_editor_collaboration_query(query: str) -> bool:
     normalized = clean_text(query).casefold()
     return ("редактор" in normalized and "план" in normalized
             and ("параллельн" in normalized or "многопользовательск" in normalized))
-
-
-def confident_text_match(results: List[Dict[str, Any]], query: str) -> bool:
-    phrase = clean_text(query).casefold()
-    collaboration_query = is_plan_editor_collaboration_query(query)
-    for page in results[:MAX_SEMANTIC_CANDIDATES]:
-        title = clean_text(page.get("title") or page.get("name") or "").casefold()
-        text = clean_text(page.get("content_text") or page.get("preview") or "").casefold()
-        if phrase and (phrase in title or phrase in text):
-            return True
-        if (collaboration_query and ("параллельн" in title or "многопользовательск" in title)
-                and "редактор" in text and "план" in text):
-            return True
-    return False
 
 
 def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
