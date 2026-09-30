@@ -120,6 +120,10 @@ The service warms this cache in the background at startup and after a completed
 reindex. Searches arriving during that initial load may still wait for the cold
 SQLite read; subsequent searches reuse the loaded vectors. The warmup does not
 change the index or make remote query-embedding requests.
+The pinned tokenizer also loads in a separate startup worker, independently of
+reindexing. Concurrent indexing/search calls share one initialization. A query
+arriving before that worker finishes waits for the same exact tokenizer; token
+limits and complete semantic scoring are unchanged.
 
 `provider_usage` stores successful response counts, returned input tokens and reported
 cost. It is not an account invoice: a timed-out/interrupted request can be billed without

@@ -333,6 +333,7 @@ class EmbeddingClient:
         self.cache_dir = settings.embedding_cache_dir or "/app/model_cache"
         self._local_model: Any = None
         self._tokenizer: Any = None
+        self._tokenizer_lock = threading.Lock()
         self.chunk_tokens = settings.chunk_tokens
         self.chunk_overlap = settings.chunk_overlap
         self.on_usage = None
@@ -377,11 +378,13 @@ class EmbeddingClient:
 
     def tokenizer(self):
         if self._tokenizer is None:
-            from transformers import AutoTokenizer
-            kwargs = {"cache_dir": self.cache_dir, "use_fast": True}
-            if self.is_qwen():
-                kwargs["revision"] = QWEN_REVISION
-            self._tokenizer = AutoTokenizer.from_pretrained(QWEN_TOKENIZER if self.is_qwen() else self.model, **kwargs)
+            with self._tokenizer_lock:
+                if self._tokenizer is None:
+                    from transformers import AutoTokenizer
+                    kwargs = {"cache_dir": self.cache_dir, "use_fast": True}
+                    if self.is_qwen():
+                        kwargs["revision"] = QWEN_REVISION
+                    self._tokenizer = AutoTokenizer.from_pretrained(QWEN_TOKENIZER if self.is_qwen() else self.model, **kwargs)
         return self._tokenizer
 
     def split_page(self, title: str, text: str):
@@ -1161,6 +1164,20 @@ class ProductDocsService:
         thread = threading.Thread(target=worker, name="bookstack-reindex", daemon=True)
         thread.start()
 
+    def start_background_tokenizer_warm(self) -> Optional[threading.Thread]:
+        if not self.embeddings.enabled():
+            return None
+
+        def worker() -> None:
+            try:
+                self.embeddings.tokenizer()
+            except Exception:
+                logging.exception("BookStack search tokenizer warmup failed")
+
+        thread = threading.Thread(target=worker, name="bookstack-tokenizer-warmup", daemon=True)
+        thread.start()
+        return thread
+
     def start_background_warm(self) -> Optional[threading.Thread]:
         if not self.embeddings.enabled():
             return None
@@ -1629,6 +1646,7 @@ def main() -> None:
     mcp, service = create_mcp()
     if service.settings.reset_database:
         service.reset_cache()
+    service.start_background_tokenizer_warm()
     if service.settings.index_on_startup or service.settings.reset_database:
         service.start_background_reindex(force=service.settings.reset_database)
     else:

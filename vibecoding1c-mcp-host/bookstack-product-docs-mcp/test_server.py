@@ -242,6 +242,62 @@ class BookStackClientStructureTests(unittest.TestCase):
 
 
 class EmbeddingClientTests(unittest.TestCase):
+    def test_startup_warms_pinned_tokenizer_once_alongside_foreground_access(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b"),
+                               embedding_api_base="https://example.test/v1", index_on_startup=True)
+            service = server.ProductDocsService(settings)
+            client = service.embeddings
+            entered, waiting, release = threading.Event(), threading.Event(), threading.Event()
+            tokenizer = WordTokenizer()
+
+            class WaitingLock:
+                def __init__(self):
+                    self.lock = threading.Lock()
+
+                def __enter__(self):
+                    if threading.current_thread().name != "bookstack-tokenizer-warmup":
+                        waiting.set()
+                    self.lock.acquire()
+
+                def __exit__(self, *args):
+                    self.lock.release()
+
+            def load(*args, **kwargs):
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release tokenizer loading")
+                return tokenizer
+
+            module = types.ModuleType("transformers")
+            module.AutoTokenizer = types.SimpleNamespace(from_pretrained=mock.Mock(side_effect=load))
+            client._tokenizer_lock = WaitingLock()
+            client._remote_batch = mock.Mock(return_value=[[1.0, 0.0]])
+
+            def serve(**kwargs):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        caller = pool.submit(client.tokenizer)
+                        self.assertTrue(waiting.wait(5))
+                        client._remote_batch.assert_not_called()
+                    finally:
+                        release.set()
+                    self.assertIs(caller.result(timeout=5), tokenizer)
+
+            mcp = mock.Mock()
+            mcp.run.side_effect = serve
+            with mock.patch.dict(sys.modules, {"transformers": module}), \
+                    mock.patch.object(server, "create_mcp", return_value=(mcp, service)), \
+                    mock.patch.object(service, "start_background_reindex") as reindex:
+                server.main()
+                reindex.assert_called_once_with(force=False)
+                self.assertEqual(client.embed_query("права пользователя"), [1.0, 0.0])
+            module.AutoTokenizer.from_pretrained.assert_called_once_with(
+                server.QWEN_TOKENIZER, cache_dir=client.cache_dir, use_fast=True, revision=server.QWEN_REVISION)
+            client._remote_batch.assert_called_once_with([
+                f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя"])
+
     def test_query_cache_is_bounded_profile_specific_and_returns_independent_vectors(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "QUERY_EMBEDDING_CACHE_SIZE", 2):
             client = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "remote-model"))
