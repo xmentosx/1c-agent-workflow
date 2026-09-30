@@ -5,6 +5,7 @@ import tempfile
 import types
 import re
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import unittest
@@ -813,6 +814,45 @@ class ProductDocsServiceTests(unittest.TestCase):
             self.assertFalse(worker.is_alive())
             self.assertEqual(len(service.fragment_index._search_cache[1]), 1)
             self.assertEqual(service.search_docs("Product", None, 5)["results"][0]["id"], 1)
+
+    def test_confident_hybrid_text_returns_while_remote_semantics_finish(self):
+        item = page(1, "Plan editor architecture detail.")
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [item])
+            service.embeddings = FakeEmbeddings()
+            service.embeddings.mode = lambda: "remote"
+            service.index_page(item)
+            service.fragment_index.state(complete_profile=service.embeddings.storage_model(),
+                                         in_progress=False, error="")
+            service._semantic_background_slots = threading.BoundedSemaphore(1)
+            entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+            original = service.semantic_results
+
+            def delayed(*args, **kwargs):
+                entered.set()
+                release.wait(2)
+                try:
+                    return original(*args, **kwargs)
+                finally:
+                    completed.set()
+
+            with mock.patch.object(service, "semantic_results", side_effect=delayed), \
+                 mock.patch.object(server, "HYBRID_SEMANTIC_BUDGET_SECONDS", 0.02):
+                try:
+                    started = time.monotonic()
+                    first = service.search_docs("Plan editor", None, 5, diagnostics=True)
+                    self.assertLess(time.monotonic() - started, 1)
+                    self.assertTrue(entered.wait(1))
+                    self.assertEqual(first["results"][0]["id"], 1)
+                    self.assertEqual(first["semantic_status"], "pending")
+                    self.assertEqual(first["diagnostics"]["query_embedding_cache"], "pending")
+                    self.assertIn("repeat", first["semantic_continuation"])
+                    busy = service.search_docs("Plan editor", None, 5)
+                    self.assertEqual(busy["semantic_status"], "busy")
+                finally:
+                    release.set()
+                    self.assertTrue(completed.wait(2))
+            self.assertEqual(service.search_docs("Plan editor", None, 5, mode="semantic")["results"][0]["id"], 1)
 
     def test_reindex_refreshes_unchanged_pages_when_embedding_profile_changes(self):
         pages = [page(1, "Architecture decision.")]

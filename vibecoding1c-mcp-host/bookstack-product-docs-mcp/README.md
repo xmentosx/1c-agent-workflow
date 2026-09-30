@@ -29,6 +29,14 @@ against current page revisions, so edits and reindexing remain visible. Changing
 model/profile cannot reuse incompatible entries; restarting the process empties the
 cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
 SQLite schema migration and requires no reindexing.
+When remote embeddings are slow and a hybrid query already has a confident local
+match, the search waits up to two seconds for semantic results, then returns the
+local matches with `semantic_status=pending`. At most two such semantic jobs may
+continue in the background. Repeat the same query after completion to use the
+cached vector, or choose `mode="semantic"` to wait for semantic results. Hybrid
+queries without a confident local match still wait for semantic retrieval so
+that related pages are not silently missed. A full background pool reports
+`semantic_status=busy` with the same continuation.
 
 For a slow query, call `search_docs` with `diagnostics=true`. The optional response
 reports server-side milliseconds for local text search, query embedding, vector
