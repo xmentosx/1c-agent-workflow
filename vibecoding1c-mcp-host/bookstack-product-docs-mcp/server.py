@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -18,7 +19,16 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
 
+import snowballstemmer
+import httpx
+
+try:
+    import numpy as np
+except ImportError:  # Source tests can run before the server requirements are installed.
+    np = None
+
 from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
+from query_cache import QueryVectorCache
 
 
 DEFAULT_SEARCH_LIMIT = 5
@@ -36,6 +46,7 @@ QWEN_REVISION = "c90816d848505624c2434128dfc61132162a0ee9"
 QWEN_INSTRUCTION = "Given a product documentation question, retrieve relevant passages that answer the question"
 QWEN_MIN_SCORE = 0.50
 QUERY_EMBEDDING_CACHE_SIZE = 256
+RECIPROCAL_RANK_CONSTANT = 60
 
 
 class BookStackApiError(RuntimeError):
@@ -168,6 +179,9 @@ class Settings:
     embedding_cache_dir: str
     chunk_tokens: int = 1024
     chunk_overlap: int = 64
+    embedding_provider_order: Tuple[str, ...] = ()
+    embedding_query_cache_ttl_seconds: int = 86400
+    query_cache_path: str = ""
 
     @staticmethod
     def from_env() -> "Settings":
@@ -193,6 +207,13 @@ class Settings:
             ).strip(),
             chunk_tokens=int_env("BOOKSTACK_CHUNK_TOKENS", 1024),
             chunk_overlap=int_env("BOOKSTACK_CHUNK_OVERLAP", 64),
+            embedding_provider_order=tuple(dict.fromkeys(
+                item.strip() for item in os.environ.get("BOOKSTACK_EMBEDDING_PROVIDER_ORDER", "").split(",")
+                if item.strip())),
+            embedding_query_cache_ttl_seconds=max(0, min(86400,
+                int_env("BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS", 86400))),
+            query_cache_path=os.environ.get("BOOKSTACK_QUERY_CACHE_PATH",
+                os.environ.get("BOOKSTACK_CACHE_PATH", "/data/bookstack-cache.sqlite") + ".query-vectors.sqlite").strip(),
         )
 
     def validate(self) -> None:
@@ -323,12 +344,19 @@ class EmbeddingClient:
         self.cache_dir = settings.embedding_cache_dir or "/app/model_cache"
         self._local_model: Any = None
         self._tokenizer: Any = None
+        self._tokenizer_lock = threading.Lock()
         self.chunk_tokens = settings.chunk_tokens
         self.chunk_overlap = settings.chunk_overlap
         self.on_usage = None
         self._query_cache = OrderedDict()
         self._query_pending = {}
         self._query_lock = threading.Lock()
+        self._http_client = None
+        self._http_lock = threading.Lock()
+        self.provider_order = settings.embedding_provider_order
+        self.query_cache_ttl_seconds = settings.embedding_query_cache_ttl_seconds
+        self._disk_query_cache = QueryVectorCache(settings.query_cache_path,
+                                                  QUERY_EMBEDDING_CACHE_SIZE, self.query_cache_ttl_seconds)
 
     def mode(self) -> str:
         if not self.model:
@@ -365,35 +393,47 @@ class EmbeddingClient:
 
     def tokenizer(self):
         if self._tokenizer is None:
-            from transformers import AutoTokenizer
-            kwargs = {"cache_dir": self.cache_dir, "use_fast": True}
-            if self.is_qwen():
-                kwargs["revision"] = QWEN_REVISION
-            self._tokenizer = AutoTokenizer.from_pretrained(QWEN_TOKENIZER if self.is_qwen() else self.model, **kwargs)
+            with self._tokenizer_lock:
+                if self._tokenizer is None:
+                    from transformers import AutoTokenizer
+                    kwargs = {"cache_dir": self.cache_dir, "use_fast": True}
+                    if self.is_qwen():
+                        kwargs["revision"] = QWEN_REVISION
+                    self._tokenizer = AutoTokenizer.from_pretrained(QWEN_TOKENIZER if self.is_qwen() else self.model, **kwargs)
         return self._tokenizer
 
     def split_page(self, title: str, text: str):
         return fragments(text, title, self.tokenizer(), self.fragment_limit(), self.chunk_overlap)
 
-    def embed_query(self, text: str) -> List[float]:
+    def embed_query(self, text: str, telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
         prefix = "query: " if self.uses_e5_retrieval_prefixes() else ""
         if self.is_qwen():
             prefix = f"Instruct: {QWEN_INSTRUCTION}\nQuery:"
         input_text = prefix + text
-        key = (self.storage_model(), hash_text(input_text))
+        key = (self.storage_model(), hash_text(self.api_key), hash_text(input_text))
         with self._query_lock:
             if key in self._query_cache:
                 self._query_cache.move_to_end(key)
+                if telemetry is not None:
+                    telemetry["query_embedding_cache"] = "hit"
                 return list(self._query_cache[key])
             pending = self._query_pending.get(key)
             owner = pending is None
             if owner:
                 pending = Future()
                 self._query_pending[key] = pending
+            if telemetry is not None:
+                telemetry["query_embedding_cache"] = "miss" if owner else "shared"
         if not owner:
             return list(pending.result())
         try:
-            vector = array("d", self.embed(input_text))
+            disk_key = hash_text(json.dumps(key))
+            vector = self._disk_query_cache.get(disk_key, 4096 if self.is_qwen() else None)
+            if telemetry is not None:
+                telemetry["query_embedding_disk_cache"] = "hit" if vector is not None else "miss"
+            if vector is None:
+                vector = array("d", self.embed(input_text, cache_remote=True, telemetry=telemetry))
+                self._disk_query_cache.put(disk_key, vector)
             with self._query_lock:
                 if vector:
                     self._query_cache[key] = vector
@@ -412,7 +452,8 @@ class EmbeddingClient:
         prefix = "passage: " if self.uses_e5_retrieval_prefixes() else ""
         return self.embed(prefix + text)
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str, *, cache_remote: bool = False,
+              telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
         if not self.enabled():
             return []
         tokens = len(self.tokenizer().encode(text, add_special_tokens=True))
@@ -420,11 +461,12 @@ class EmbeddingClient:
         if tokens > maximum:
             raise BookStackApiError(f"Embedding input has {tokens} tokens, limit {maximum}; shorten the query or reindex with smaller fragments")
         if self.api_base:
-            return self.embed_remote(text)
+            return self.embed_remote(text, cache_remote=cache_remote, telemetry=telemetry)
         return self.embed_local(text)
 
-    def embed_remote(self, text: str) -> List[float]:
-        return self._remote_batch([text])[0]
+    def embed_remote(self, text: str, *, cache_remote: bool = False,
+                     telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
+        return self._remote_batch([text], cache_remote=cache_remote, telemetry=telemetry)[0]
 
     def embed_passages(self, texts: List[str]) -> List[List[float]]:
         if not self.api_base:
@@ -436,17 +478,46 @@ class EmbeddingClient:
             raise BookStackApiError("Embedding passage exceeds model token limit; lower BOOKSTACK_CHUNK_TOKENS")
         return self._remote_batch(inputs)
 
-    def _remote_batch(self, texts: List[str]) -> List[List[float]]:
-        payload = json.dumps({"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}).encode("utf-8")
+    def _remote_http(self) -> httpx.Client:
+        with self._http_lock:
+            if self._http_client is None:
+                self._http_client = httpx.Client(
+                    timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=True,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=10, keepalive_expiry=60.0),
+                )
+            return self._http_client
+
+    def _remote_batch(self, texts: List[str], *, cache_remote: bool = False,
+                      telemetry: Optional[Dict[str, Any]] = None) -> List[List[float]]:
+        body = {"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}
+        openrouter = parse.urlsplit(self.api_base).hostname == "openrouter.ai"
+        if openrouter:
+            body["provider"] = ({"order": list(self.provider_order), "allow_fallbacks": True}
+                                if self.provider_order else {"sort": "latency"})
         headers = {"Content-Type": "application/json"}
+        if openrouter and cache_remote and self.query_cache_ttl_seconds:
+            headers.update({"X-OpenRouter-Cache": "true",
+                            "X-OpenRouter-Cache-TTL": str(self.query_cache_ttl_seconds)})
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        req = request.Request(f"{self.api_base}/embeddings", headers=headers, data=payload, method="POST")
         try:
-            with request.urlopen(req, timeout=30) as response:
-                result = json.loads(response.read().decode("utf-8"))
+            client = self._remote_http()
+            for attempt in range(2):
+                try:
+                    response = client.post(f"{self.api_base}/embeddings", headers=headers, json=body)
+                    break
+                except (httpx.ConnectError, httpx.ConnectTimeout):
+                    if attempt:
+                        raise
+            response.raise_for_status()
+            result = response.json()
         except Exception as exc:
-            raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {getattr(exc, 'code', 'unavailable')}); retry reindex_docs") from exc
+            status = getattr(getattr(exc, "response", None), "status_code", "unavailable")
+            raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {status}); retry reindex_docs") from exc
+        if telemetry is not None:
+            telemetry["embedding_provider"] = str(result.get("provider") or "")[:80]
+            telemetry["provider_response_cache"] = str(response.headers.get("X-OpenRouter-Cache-Status")
+                                                       or "unreported")[:20]
         if self.on_usage is not None:
             self.on_usage(result.get("usage") or {})
         data = result.get("data", [])
@@ -679,15 +750,14 @@ class DocsCache:
             )
 
     def search(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-        tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
-        fts_query = " AND ".join(f'"{token}"' for token in tokens if token.strip())
+        fts_query = build_local_fts_query(query)
         rows: List[sqlite3.Row] = []
         with self.connect() as conn:
             if fts_query:
                 try:
                     rows = conn.execute(
                         """
-                        SELECT p.*, bm25(pages_fts) AS rank
+                        SELECT p.*, bm25(pages_fts, 4.0, 1.0, 2.0) AS rank
                         FROM pages_fts
                         JOIN pages p ON p.id = pages_fts.rowid
                         WHERE pages_fts MATCH ?
@@ -711,7 +781,10 @@ class DocsCache:
                     (like, like, max(limit, 1)),
                 ).fetchall()
         pages = [self._row_to_page(row) for row in rows]
-        return [page for page in pages if matches_filters(page, filters)]
+        pages = [page for page in pages if matches_filters(page, filters)]
+        for rank, page in enumerate(pages, 1):
+            page["_lexical_rank"] = rank
+        return pages
 
     def all_embeddings(self, model: str) -> List[Tuple[Dict[str, Any], List[float]]]:
         with self.connect() as conn:
@@ -785,6 +858,7 @@ class ProductDocsService:
         limit: int,
         cursor: int = 0,
         mode: str = "hybrid",
+        diagnostics: bool = False,
     ) -> Dict[str, Any]:
         if not query or not query.strip():
             return {"ok": False, "error": "query is required", "results": []}
@@ -795,20 +869,31 @@ class ProductDocsService:
             return {"ok": False, "error": "cursor must be zero or greater", "results": []}
         if mode not in ("hybrid", "text", "semantic"):
             return {"ok": False, "error": "mode must be hybrid, text or semantic", "results": []}
+        started = time.perf_counter()
+        text_started = time.perf_counter()
         cache_pages = self.cache.count_pages()
         results = self.cache.search(query, cache_pages, effective_filters) if cache_pages > 0 and mode != "semantic" else []
-        semantic = self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES), effective_filters) if mode != "text" else []
+        text_ms = round((time.perf_counter() - text_started) * 1000, 1)
+        semantic_trace: Dict[str, Any] = {}
+        semantic = (self.semantic_results(query, min(cache_pages, MAX_SEMANTIC_CANDIDATES),
+                                          effective_filters, semantic_trace, diagnostics)
+                    if mode != "text" else [])
+        rank_started = time.perf_counter()
         results = rank_search_results(merge_results(results, semantic), query)
+        ranking_ms = round((time.perf_counter() - rank_started) * 1000, 1)
         live_used = False
+        live_ms = 0.0
         requested_end = cursor + limit
         if mode != "semantic" and (not results or truthy(str(effective_filters.get("live", "false")))):
             live_used = True
+            live_started = time.perf_counter()
             live_query = build_bookstack_search_query(query, effective_filters)
             live_limit = min(max(requested_end + 1, limit), 100)
             results = rank_search_results(
                 merge_results(results, [normalize_search_item(item) for item in self.client.search(live_query, live_limit)]),
                 query,
             )
+            live_ms = round((time.perf_counter() - live_started) * 1000, 1)
         total_matches = len(results)
         page_results = results[cursor:requested_end]
         next_cursor = cursor + len(page_results) if requested_end < total_matches else None
@@ -827,25 +912,59 @@ class ProductDocsService:
         }
         if mode != "text" and self.embeddings.enabled():
             coverage = self.fragment_index.status(self.embeddings.storage_model())
-            if not coverage["semantic_ready"] or self.last_embedding_error:
-                result["semantic_status"] = "degraded" if self.last_embedding_error else "incomplete"
+            if semantic_trace.get("embedding_error"):
+                result["semantic_status"] = "degraded"
+                result["semantic_continuation"] = "retry the query after the embedding provider recovers; index_status shows corpus readiness"
+            elif not coverage["semantic_ready"]:
+                result["semantic_status"] = "incomplete"
                 result["semantic_continuation"] = "index_status; reindex_docs resumes incomplete indexing"
+        if diagnostics:
+            result["diagnostics"] = {
+                "text_ms": text_ms if mode != "semantic" else 0.0,
+                "query_embedding_ms": semantic_trace.get("query_embedding_ms", 0.0),
+                "vector_scoring_ms": semantic_trace.get("vector_scoring_ms", 0.0),
+                "ranking_ms": ranking_ms,
+                "live_fallback_ms": live_ms,
+                "total_ms": round((time.perf_counter() - started) * 1000, 1),
+                "query_embedding_cache": semantic_trace.get("query_embedding_cache", "not_requested"),
+                "query_embedding_disk_cache": semantic_trace.get("query_embedding_disk_cache", "not_requested"),
+                "embedding_provider": semantic_trace.get("embedding_provider", ""),
+                "provider_response_cache": semantic_trace.get("provider_response_cache", "not_requested"),
+                "scored_fragments": semantic_trace.get("scored_fragments", 0),
+            }
+            if semantic_trace.get("embedding_error"):
+                result["diagnostics"]["embedding_error"] = semantic_trace["embedding_error"]
         return result
 
-    def semantic_results(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def semantic_results(self, query: str, limit: int, filters: Dict[str, Any],
+                         trace: Optional[Dict[str, Any]] = None, diagnostics: bool = False) -> List[Dict[str, Any]]:
         if not self.embeddings.enabled() or self.cache.count_pages() == 0:
             return []
+        trace = trace if trace is not None else {}
+        embedding_started = time.perf_counter()
         try:
-            query_vector = self.embeddings.embed_query(query)
+            if diagnostics and isinstance(self.embeddings, EmbeddingClient):
+                query_vector = self.embeddings.embed_query(query, telemetry=trace)
+            else:
+                query_vector = self.embeddings.embed_query(query)
             self.last_embedding_error = ""
         except Exception as exc:
             self.last_embedding_error = str(exc)
+            trace["embedding_error"] = str(exc)[:180] if isinstance(exc, BookStackApiError) else type(exc).__name__
+            if diagnostics:
+                trace["query_embedding_ms"] = round((time.perf_counter() - embedding_started) * 1000, 1)
             return []
+        if diagnostics:
+            trace["query_embedding_ms"] = round((time.perf_counter() - embedding_started) * 1000, 1)
+        scoring_started = time.perf_counter()
+        candidates = [(page, vector) for page, vector in self.fragment_index.all_vectors(self.embeddings.storage_model())
+                      if matches_filters(page, filters)]
+        scores = cosine_scores(query_vector, [vector for _, vector in candidates])
+        if diagnostics:
+            trace["vector_scoring_ms"] = round((time.perf_counter() - scoring_started) * 1000, 1)
+            trace["scored_fragments"] = len(candidates)
         best = {}
-        for page, vector in self.fragment_index.all_vectors(self.embeddings.storage_model()):
-            if not matches_filters(page, filters):
-                continue
-            score = cosine_similarity(query_vector, vector)
+        for (page, _), score in zip(candidates, scores):
             if score >= self.settings.semantic_min_score:
                 page["semantic_score"] = score
                 page["source"] = "cache-semantic"
@@ -853,6 +972,8 @@ class ProductDocsService:
                     best[page["id"]] = page
         scored = list(best.values())
         scored.sort(key=lambda item: float(item.get("semantic_score", 0)), reverse=True)
+        for rank, page in enumerate(scored[:limit], 1):
+            page["_semantic_rank"] = rank
         return scored[:limit]
 
     def read_page(
@@ -1071,8 +1192,43 @@ class ProductDocsService:
         return self.fragment_index.current(page, self.embeddings.storage_model())
 
     def start_background_reindex(self, force: bool = False) -> None:
-        thread = threading.Thread(target=lambda: self.reindex_docs(force=force), name="bookstack-reindex", daemon=True)
+        def worker() -> None:
+            result = self.reindex_docs(force=force)
+            if result["ok"] and result["coverage"]["semantic_ready"]:
+                self.start_background_warm()
+
+        thread = threading.Thread(target=worker, name="bookstack-reindex", daemon=True)
         thread.start()
+
+    def start_background_tokenizer_warm(self) -> Optional[threading.Thread]:
+        if not self.embeddings.enabled():
+            return None
+
+        def worker() -> None:
+            try:
+                self.embeddings.tokenizer()
+            except Exception:
+                logging.exception("BookStack search tokenizer warmup failed")
+
+        thread = threading.Thread(target=worker, name="bookstack-tokenizer-warmup", daemon=True)
+        thread.start()
+        return thread
+
+    def start_background_warm(self) -> Optional[threading.Thread]:
+        if not self.embeddings.enabled():
+            return None
+
+        def worker() -> None:
+            try:
+                # Loading the SQLite vectors costs several seconds on a cold
+                # Docker bind mount. Do it before the first user search.
+                next(self.fragment_index.all_vectors(self.embeddings.storage_model()), None)
+            except Exception:
+                logging.exception("BookStack search vector warmup failed")
+
+        thread = threading.Thread(target=worker, name="bookstack-vector-warmup", daemon=True)
+        thread.start()
+        return thread
 
     def start_scheduler(self) -> None:
         if self.settings.reindex_interval_hours <= 0:
@@ -1083,7 +1239,9 @@ class ProductDocsService:
             while True:
                 time.sleep(interval)
                 try:
-                    self.reindex_docs(force=False)
+                    result = self.reindex_docs(force=False)
+                    if result["ok"] and result["coverage"]["semantic_ready"]:
+                        self.start_background_warm()
                 except Exception as exc:
                     self.last_embedding_error = f"scheduled reindex failed: {exc}"
 
@@ -1355,32 +1513,73 @@ def merge_results(*result_sets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 current.update({key: value for key, value in item.items() if value})
             if item.get("semantic_score"):
                 current["semantic_score"] = item["semantic_score"]
+                if "_semantic_rank" in item:
+                    current["_semantic_rank"] = item["_semantic_rank"]
                 if "fragment" in item:
                     current["fragment"] = item["fragment"]
                     current["fragment_text"] = item["fragment_text"]
+            if "_lexical_rank" in item:
+                current["_lexical_rank"] = item["_lexical_rank"]
     return list(by_key.values())
+
+
+def build_local_fts_query(query: str) -> str:
+    # Prefixes search the existing unicode61 index: no corpus migration or
+    # replacement of the semantic index is needed. Keep identifiers exact and
+    # avoid broad prefixes for very short Russian stems.
+    stemmer = snowballstemmer.stemmer("russian")
+    terms = []
+    for token in dict.fromkeys(re.findall(r"[\w-]+", query.casefold(), flags=re.UNICODE)):
+        russian = bool(re.fullmatch(r"[а-яё]+", token))
+        stem = stemmer.stemWord(token) if russian else token
+        # Uninflected nouns also need a prefix (редактор -> редакторе).
+        terms.append(f'"{stem}"*' if russian and len(stem) >= 3 else f'"{token}"')
+    return " AND ".join(terms)
 
 
 def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     phrase = clean_text(query).casefold()
     indexed_results = list(enumerate(results))
 
-    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, int, float, int]:
+    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, float, float, int]:
         original_index, page = item
         searchable_text = clean_text(
             f"{page.get('title') or page.get('name') or ''}\n{page.get('content_text') or page.get('preview') or ''}"
         ).casefold()
         exact_phrase = bool(phrase and phrase in searchable_text)
         semantic_score = page.get("semantic_score")
-        has_semantic_score = semantic_score is not None
+        # Both channels contribute their order, so raw BM25 and cosine values
+        # never need incomparable score scales or topic-specific boosts.
+        fused_score = sum(1.0 / (RECIPROCAL_RANK_CONSTANT + page[key])
+                          for key in ("_lexical_rank", "_semantic_rank") if key in page)
         return (
             0 if exact_phrase else 1,
-            0 if has_semantic_score else 1,
+            -fused_score,
             -float(semantic_score or 0.0),
             original_index,
         )
 
     return [page for _, page in sorted(indexed_results, key=rank)]
+
+
+def cosine_scores(left: List[float], rights: List[List[float]]) -> List[float]:
+    if np is None or not rights:
+        return [cosine_similarity(left, right) for right in rights]
+    scores = [0.0] * len(rights)
+    if not left:
+        return scores
+    matching = [index for index, right in enumerate(rights) if len(right) == len(left)]
+    if not matching:
+        return scores
+    query = np.asarray(left, dtype=np.float64)
+    matrix = np.asarray([rights[index] for index in matching], dtype=np.float64)
+    denominators = np.linalg.norm(matrix, axis=1) * np.linalg.norm(query)
+    values = matrix @ query
+    np.divide(values, denominators, out=values, where=denominators != 0)
+    for index, value, denominator in zip(matching, values, denominators):
+        if denominator:
+            scores[index] = float(value)
+    return scores
 
 
 def cosine_similarity(left: List[float], right: List[float]) -> float:
@@ -1412,10 +1611,12 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         limit: int = DEFAULT_SEARCH_LIMIT,
         cursor: int = 0,
         mode: str = "hybrid",
+        diagnostics: bool = False,
     ):
-        """Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode."""
+        """Search product docs: hybrid (default), text (no embeddings), or semantic. Start with 3-5 results; follow next_cursor using the same mode. Set diagnostics=true for stage timings."""
         try:
-            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor, mode=mode)
+            result = service.search_docs(query=query, filters=filters, limit=limit, cursor=cursor,
+                                         mode=mode, diagnostics=diagnostics)
         except Exception as exc:
             result = {"ok": False, "error": str(exc), "results": []}
         return wrap_result("search", result)
@@ -1459,6 +1660,8 @@ def create_mcp() -> Tuple[Any, ProductDocsService]:
         """Refresh the local BookStack cache and optional semantic embeddings."""
         try:
             result = service.reindex_docs(force=force, limit=limit)
+            if result["ok"] and result["coverage"]["semantic_ready"]:
+                service.start_background_warm()
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         return wrap_result("reindex", result)
@@ -1479,8 +1682,11 @@ def main() -> None:
     mcp, service = create_mcp()
     if service.settings.reset_database:
         service.reset_cache()
+    service.start_background_tokenizer_warm()
     if service.settings.index_on_startup or service.settings.reset_database:
         service.start_background_reindex(force=service.settings.reset_database)
+    else:
+        service.start_background_warm()
     service.start_scheduler()
     mcp.run(transport="http", host=service.settings.host, port=service.settings.port)
 

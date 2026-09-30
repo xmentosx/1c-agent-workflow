@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import re
 import sqlite3
+import threading
+import sys
+import tempfile
+import zipfile
 from array import array
 from contextlib import closing
 from pathlib import Path
@@ -117,6 +122,8 @@ class FragmentIndex:
     def __init__(self, cache):
         self.cache = cache
         self._search_cache = (None, None)
+        self._search_lock = threading.Lock()
+        self._disk_search_cache = Path(cache.path + ".search-vectors.zip")
         with cache.connect() as conn:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE name='fragment_profiles'").fetchone()
             if not exists and conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]:
@@ -243,7 +250,7 @@ class FragmentIndex:
         return status
 
     def all_vectors(self, profile):
-        with self.cache.connect() as conn:
+        with self._search_lock, self.cache.connect() as conn:
             # One SQLite snapshot owns both the revision key and its data. Usage
             # writes do not invalidate this read cache; page/profile changes do.
             conn.execute("BEGIN")
@@ -256,16 +263,84 @@ class FragmentIndex:
                 pages = {row["id"]: self.cache._row_to_page(row) for row in conn.execute("""
                     SELECT p.* FROM fragment_pages fp JOIN pages p ON p.id=fp.page_id
                     WHERE fp.profile=? AND fp.page_hash=p.content_hash""", (profile,))}
-                rows = conn.execute("""SELECT f.page_id,f.start,f.end,f.heading,v.vector_json
+                metadata = conn.execute("""SELECT f.page_id,f.start,f.end,f.heading
+                    FROM fragment_pages fp JOIN pages p ON p.id=fp.page_id
+                    JOIN fragments f ON f.page_id=p.id
+                    JOIN fragment_vectors v ON v.profile=fp.profile AND v.input_hash=f.input_hash
+                    WHERE fp.profile=? AND fp.page_hash=p.content_hash ORDER BY p.id,f.ordinal""", (profile,)).fetchall()
+                dimension_row = conn.execute("SELECT dimensions FROM fragment_profiles WHERE profile=?", (profile,)).fetchone()
+                dimensions = dimension_row[0] if dimension_row else 0
+                vectors = self._load_vector_cache(key, dimensions, len(metadata))
+                if vectors is None:
+                    rows = conn.execute("""SELECT f.page_id,f.start,f.end,f.heading,v.vector_json
                     FROM fragment_pages fp JOIN pages p ON p.id=fp.page_id
                     JOIN fragments f ON f.page_id=p.id
                     JOIN fragment_vectors v ON v.profile=fp.profile AND v.input_hash=f.input_hash
                     WHERE fp.profile=? AND fp.page_hash=p.content_hash ORDER BY p.id,f.ordinal""", (profile,))
-                data = [(pages[row["page_id"]], row["start"], row["end"], row["heading"],
-                         array("d", json.loads(row["vector_json"]))) for row in rows]
+                    data = [(pages[row["page_id"]], row["start"], row["end"], row["heading"],
+                             array("d", json.loads(row["vector_json"]))) for row in rows]
+                    self._save_vector_cache(key, dimensions, [row[-1] for row in data])
+                else:
+                    data = [(pages[row["page_id"]], row["start"], row["end"], row["heading"], vector)
+                            for row, vector in zip(metadata, vectors)]
                 self._search_cache = (key, data)
         for stored_page, start, end, heading, vector in data:
             page = dict(stored_page)
             page["fragment"] = {"heading": heading, "start": start, "end": end}
             page["fragment_text"] = page["content_text"][start:end]
             yield page, vector
+
+    def _load_vector_cache(self, key, dimensions, count):
+        if not dimensions or not count or not self._disk_search_cache.exists():
+            return None
+        try:
+            with zipfile.ZipFile(self._disk_search_cache) as archive:
+                header_info = archive.getinfo("metadata.json")
+                vectors_info = archive.getinfo("vectors.f64le")
+                expected = {"version": 1, "key": digest(json.dumps(key)), "dimensions": dimensions, "count": count}
+                if (header_info.compress_type != zipfile.ZIP_STORED or header_info.file_size > 1024
+                        or vectors_info.compress_type != zipfile.ZIP_STORED
+                        or vectors_info.file_size != dimensions * count * 8
+                        or json.loads(archive.read("metadata.json")) != expected):
+                    return None
+                packed = archive.read("vectors.f64le")  # ZIP verifies the complete payload CRC.
+            vectors = []
+            width = dimensions * 8
+            for offset in range(0, len(packed), width):
+                vector = array("d")
+                vector.frombytes(packed[offset:offset + width])
+                if sys.byteorder != "little":
+                    vector.byteswap()
+                checked_vector(vector, dimensions)
+                vectors.append(vector)
+            return vectors
+        except Exception as exc:
+            logging.warning("BookStack search vector cache read failed (%s)", type(exc).__name__)
+            return None
+
+    def _save_vector_cache(self, key, dimensions, vectors):
+        if not dimensions or not vectors:
+            return
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=self._disk_search_cache.parent, prefix=".bookstack-vectors-",
+                                             suffix=".tmp", delete=False) as handle:
+                temporary = Path(handle.name)
+            with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_STORED) as archive:
+                archive.writestr("metadata.json", json.dumps({"version": 1, "key": digest(json.dumps(key)),
+                                                             "dimensions": dimensions, "count": len(vectors)}))
+                with archive.open("vectors.f64le", "w") as output:
+                    for values in vectors:
+                        vector = array("d", checked_vector(values, dimensions))
+                        if sys.byteorder != "little":
+                            vector.byteswap()
+                        output.write(vector.tobytes())
+            os.replace(temporary, self._disk_search_cache)
+        except Exception as exc:
+            logging.warning("BookStack search vector cache write failed (%s)", type(exc).__name__)
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    logging.warning("BookStack search vector cache temporary file cleanup failed")

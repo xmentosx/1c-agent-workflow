@@ -1087,6 +1087,8 @@ function Get-BookStackProductDocsServerDefinition {
             [ordered]@{ name = "BOOKSTACK_SEMANTIC_MIN_SCORE"; from = "BOOKSTACK_SEMANTIC_MIN_SCORE"; required = $false },
             [ordered]@{ name = "BOOKSTACK_CHUNK_TOKENS"; from = "BOOKSTACK_CHUNK_TOKENS"; default = "1024"; required = $false },
             [ordered]@{ name = "BOOKSTACK_CHUNK_OVERLAP"; from = "BOOKSTACK_CHUNK_OVERLAP"; default = "64"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_PROVIDER_ORDER"; from = "BOOKSTACK_EMBEDDING_PROVIDER_ORDER"; required = $false },
+            [ordered]@{ name = "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS"; from = "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS"; default = "86400"; required = $false },
             [ordered]@{ name = "RESET_DATABASE"; from = "BOOKSTACK_RESET_DATABASE"; default = "false"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_BASE"; embedding = "base"; required = $false },
             [ordered]@{ name = "BOOKSTACK_EMBEDDING_API_KEY"; embedding = "key"; required = $false },
@@ -2138,6 +2140,8 @@ function Get-HostLocalValues {
         BOOKSTACK_SEMANTIC_MIN_SCORE = [string](Get-ObjectValue -Object $bookstack -Name "semanticMinScore" -Default "")
         BOOKSTACK_CHUNK_TOKENS = [string](Get-ObjectValue -Object $bookstack -Name "chunkTokens" -Default "1024")
         BOOKSTACK_CHUNK_OVERLAP = [string](Get-ObjectValue -Object $bookstack -Name "chunkOverlap" -Default "64")
+        BOOKSTACK_EMBEDDING_PROVIDER_ORDER = ((As-Array (Get-ObjectValue -Object $bookstack -Name "embeddingProviderOrder" -Default @())) -join ",")
+        BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS = [string](Get-ObjectValue -Object $bookstack -Name "embeddingQueryCacheTtlSeconds" -Default "86400")
         BOOKSTACK_RESET_DATABASE = $bookStackResetDatabase
         MANTIS_BASE_URL = [string](Get-ObjectValue -Object $mantis -Name "baseUrl" -Default "")
         MANTIS_INDEX_ENABLED = (ConvertTo-HostEnvBool -Value (Get-ObjectValue -Object $mantis -Name "indexEnabled" -Default $false) -Default $false)

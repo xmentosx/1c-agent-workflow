@@ -40,6 +40,8 @@
     "semanticMinScore": null,
     "chunkTokens": 1024,
     "chunkOverlap": 64,
+    "embeddingProviderOrder": [],
+    "embeddingQueryCacheTtlSeconds": 86400,
     "timeoutSeconds": 20
   },
   "mantisTicketServer": {

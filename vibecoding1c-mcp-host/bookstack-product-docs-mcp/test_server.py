@@ -6,6 +6,7 @@ import types
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing, contextmanager
 from dataclasses import replace
 import unittest
 from pathlib import Path
@@ -242,12 +243,139 @@ class BookStackClientStructureTests(unittest.TestCase):
 
 
 class EmbeddingClientTests(unittest.TestCase):
+    def test_disk_query_cache_survives_clients_and_scopes_full_input_profile_and_credentials(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                               embedding_api_base="https://example.test/v1", embedding_api_key="secret-marker",
+                               query_cache_path=str(Path(root)/"кеш запросов.sqlite"))
+            def client(options=settings):
+                value = server.EmbeddingClient(options)
+                value.embed = mock.Mock(return_value=[1.0, 0.0])
+                return value
+            first = client()
+            self.assertEqual(first.embed_query("полный вопрос"), [1.0, 0.0])
+            restarted = client()
+            trace = {}
+            self.assertEqual(restarted.embed_query("полный вопрос", trace), [1.0, 0.0])
+            self.assertEqual(trace["query_embedding_disk_cache"], "hit")
+            restarted.embed.assert_not_called()
+            for options, question in ((settings, "полный вопрос!"),
+                                      (replace(settings, embedding_model="other-model"), "полный вопрос"),
+                                      (replace(settings, embedding_api_key="other-secret"), "полный вопрос")):
+                changed = client(options)
+                self.assertEqual(changed.embed_query(question), [1.0, 0.0])
+                changed.embed.assert_called_once()
+            stored = Path(settings.query_cache_path).read_bytes()
+            self.assertNotIn("полный вопрос".encode(), stored)
+            self.assertNotIn(b"secret-marker", stored)
+            failed = client()
+            failed.embed.side_effect = server.BookStackApiError("provider unavailable")
+            with self.assertRaises(server.BookStackApiError):
+                failed.embed_query("новый вопрос")
+            retry = client()
+            self.assertEqual(retry.embed_query("новый вопрос"), [1.0, 0.0])
+            retry.embed.assert_called_once()
+
+    def test_disk_query_cache_enforces_lru_ttl_and_vector_validation(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch("query_cache.time.time", return_value=100) as clock:
+            cache = server.QueryVectorCache(str(Path(root)/"queries.sqlite"), 2, 10)
+            cache.put("first", [1.0, 0.0])
+            clock.return_value = 101
+            cache.put("second", [0.0, 1.0])
+            clock.return_value = 102
+            self.assertEqual(list(cache.get("first", 2)), [1.0, 0.0])
+            clock.return_value = 103
+            cache.put("third", [1.0, 1.0])
+            self.assertIsNone(cache.get("second", 2))
+            self.assertEqual(list(cache.get("third", 2)), [1.0, 1.0])
+            clock.return_value = 111
+            self.assertIsNone(cache.get("first", 2))
+            self.assertEqual(list(cache.get("third", 2)), [1.0, 1.0])
+            self.assertIsNone(cache.get("third", 4096))
+            with closing(server.sqlite3.connect(cache.path)) as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM query_vectors").fetchone()[0], 0)
+
+    def test_unavailable_disk_cache_keeps_complete_provider_vector(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"), query_cache_path=root)
+            client = server.EmbeddingClient(settings)
+            client.embed = mock.Mock(return_value=[1.0, 0.0])
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(client.embed_query("полный вопрос"), [1.0, 0.0])
+            client.embed.assert_called_once()
+            settings = replace(settings, query_cache_path=str(Path(root)/"disabled.sqlite"),
+                               embedding_query_cache_ttl_seconds=0)
+            disabled = server.EmbeddingClient(settings)
+            disabled.embed = mock.Mock(return_value=[1.0, 0.0])
+            self.assertEqual(disabled.embed_query("полный вопрос"), [1.0, 0.0])
+            self.assertFalse(Path(settings.query_cache_path).exists())
+
+    def test_startup_warms_pinned_tokenizer_once_alongside_foreground_access(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b"),
+                               embedding_api_base="https://example.test/v1", index_on_startup=True)
+            service = server.ProductDocsService(settings)
+            client = service.embeddings
+            entered, waiting, release = threading.Event(), threading.Event(), threading.Event()
+            tokenizer = WordTokenizer()
+
+            class WaitingLock:
+                def __init__(self):
+                    self.lock = threading.Lock()
+
+                def __enter__(self):
+                    if threading.current_thread().name != "bookstack-tokenizer-warmup":
+                        waiting.set()
+                    self.lock.acquire()
+
+                def __exit__(self, *args):
+                    self.lock.release()
+
+            def load(*args, **kwargs):
+                entered.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release tokenizer loading")
+                return tokenizer
+
+            module = types.ModuleType("transformers")
+            module.AutoTokenizer = types.SimpleNamespace(from_pretrained=mock.Mock(side_effect=load))
+            client._tokenizer_lock = WaitingLock()
+            client._remote_batch = mock.Mock(return_value=[[1.0, 0.0]])
+
+            def serve(**kwargs):
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    try:
+                        self.assertTrue(entered.wait(5))
+                        caller = pool.submit(client.tokenizer)
+                        self.assertTrue(waiting.wait(5))
+                        client._remote_batch.assert_not_called()
+                    finally:
+                        release.set()
+                    self.assertIs(caller.result(timeout=5), tokenizer)
+
+            mcp = mock.Mock()
+            mcp.run.side_effect = serve
+            with mock.patch.dict(sys.modules, {"transformers": module}), \
+                    mock.patch.object(server, "create_mcp", return_value=(mcp, service)), \
+                    mock.patch.object(service, "start_background_reindex") as reindex:
+                server.main()
+                reindex.assert_called_once_with(force=False)
+                self.assertEqual(client.embed_query("права пользователя"), [1.0, 0.0])
+            module.AutoTokenizer.from_pretrained.assert_called_once_with(
+                server.QWEN_TOKENIZER, cache_dir=client.cache_dir, use_fast=True, revision=server.QWEN_REVISION)
+            client._remote_batch.assert_called_once_with([
+                f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя"], cache_remote=True, telemetry=None)
+
     def test_query_cache_is_bounded_profile_specific_and_returns_independent_vectors(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "QUERY_EMBEDDING_CACHE_SIZE", 2):
             client = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "remote-model"))
             client.embed = mock.Mock(return_value=[1.0, 0.0])
-            client.embed_query("Заказ")[0] = 99
-            self.assertEqual(client.embed_query("Заказ"), [1.0, 0.0])
+            telemetry = {}
+            client.embed_query("Заказ", telemetry=telemetry)[0] = 99
+            self.assertEqual(telemetry["query_embedding_cache"], "miss")
+            telemetry = {}
+            self.assertEqual(client.embed_query("Заказ", telemetry=telemetry), [1.0, 0.0])
+            self.assertEqual(telemetry["query_embedding_cache"], "hit")
             client.embed_query("договор")
             client.embed_query("Заказ")  # Most recently used, survives the next insertion.
             client.embed_query("проект")
@@ -273,7 +401,7 @@ class EmbeddingClientTests(unittest.TestCase):
                         waiting.set()
                         return super().result(timeout=5)
 
-                def embed(text):
+                def embed(text, **kwargs):
                     entered.set()
                     if not release.wait(5):
                         raise TimeoutError("test did not release provider")
@@ -310,7 +438,7 @@ class EmbeddingClientTests(unittest.TestCase):
             )
             client = server.EmbeddingClient(settings)
             inputs = []
-            client.embed = lambda text: inputs.append(text) or [1.0]
+            client.embed = lambda text, **kwargs: inputs.append(text) or [1.0]
 
             client.embed_query("заказ")
             client.embed_passage("Документ заказа")
@@ -323,7 +451,7 @@ class EmbeddingClientTests(unittest.TestCase):
             settings = make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b")
             client = server.EmbeddingClient(settings)
             inputs = []
-            client.embed = lambda text: inputs.append(text) or [1.0]
+            client.embed = lambda text, **kwargs: inputs.append(text) or [1.0]
             client.embed_query("права пользователя")
             client.embed_passage("Полный текст документа")
             self.assertEqual(inputs[0], f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя")
@@ -341,15 +469,134 @@ class EmbeddingClientTests(unittest.TestCase):
             client = server.EmbeddingClient(settings)
             response = mock.MagicMock()
             response.__enter__.return_value = response
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [1, 0]}]}).encode()
             text = "полный текст " * 900
-            with mock.patch.object(server.request, "urlopen", return_value=response) as call:
+            with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
                 self.assertEqual(client.embed_remote(text), [1, 0])
-                self.assertEqual(json.loads(call.call_args.args[0].data)["input"], text)
+                self.assertEqual(call.call_args.kwargs["json"]["input"], text)
                 for vector in ([], [0, 0], [float("nan"), 1], [float("inf")]):
                     response.read.return_value = json.dumps({"data": [{"embedding": vector}]}).encode()
                     with self.assertRaises(ValueError):
                         client.embed_remote("query")
+
+    def test_openrouter_latency_routing_preserves_model_input_and_other_backends(self):
+        model = "qwen/qwen3-embedding-8b"
+        with tempfile.TemporaryDirectory() as root:
+            for base in ("https://openrouter.ai/api/v1", "https://example.test/v1",
+                         "https://openrouter.ai.example.test/v1"):
+                with self.subTest(base=base):
+                    settings = replace(make_settings(Path(root)/"cache.sqlite", model), embedding_api_base=base)
+                    client = server.EmbeddingClient(settings)
+                    response = mock.MagicMock()
+                    response.__enter__.return_value = response
+                    response.json.side_effect = lambda: json.loads(response.read.return_value)
+                    response.read.return_value = json.dumps({"model": model, "data": [
+                        {"index": 0, "embedding": [1.0] + [0.0] * 4095}]}).encode()
+                    text = "Instruct: retrieval\nQuery:права пользователя"
+                    with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
+                        self.assertEqual(len(client.embed_remote(text)), 4096)
+                        body = call.call_args.kwargs["json"]
+                    self.assertEqual(body["model"], model)
+                    self.assertEqual(body["input"], text)
+                    self.assertEqual(body["encoding_format"], "float")
+                    if base == "https://openrouter.ai/api/v1":
+                        self.assertEqual(body["provider"], {"sort": "latency"})
+                    else:
+                        self.assertNotIn("provider", body)
+
+    def test_openrouter_query_response_cache_survives_new_client_without_caching_passages(self):
+        model = "qwen/qwen3-embedding-8b"
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", model),
+                               embedding_api_base="https://openrouter.ai/api/v1")
+            vector = [1.0] + [0.0] * 4095
+            cached = {}
+            def gateway(url, *, json, headers):
+                key = repr(json)
+                enabled = headers.get("X-OpenRouter-Cache") == "true"
+                hit = enabled and key in cached
+                if enabled:
+                    self.assertEqual(headers["X-OpenRouter-Cache-TTL"], "86400")
+                    cached[key] = vector
+                inputs = json["input"] if isinstance(json["input"], list) else [json["input"]]
+                return server.httpx.Response(200, request=server.httpx.Request("POST", url),
+                    headers={"X-OpenRouter-Cache-Status": "HIT" if hit else "MISS"},
+                    json={"model": model, "provider": None if hit else "fixture",
+                          "data": [{"index": i, "embedding": vector} for i, _ in enumerate(inputs)],
+                          "usage": {"prompt_tokens": 0 if hit else 10}})
+            with mock.patch.object(server.httpx.Client, "post", side_effect=gateway) as call:
+                for expected in ("MISS", "HIT"):
+                    client = server.EmbeddingClient(settings)
+                    client._tokenizer = WordTokenizer()
+                    trace = {}
+                    self.assertEqual(client.embed_query("полный вопрос", trace), vector)
+                    self.assertEqual(trace["provider_response_cache"], expected)
+                    self.assertEqual(trace["query_embedding_cache"], "miss")
+                    self.assertEqual(call.call_args.kwargs["json"]["input"],
+                                     f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:полный вопрос")
+                client.embed_passage("полный документ")
+                self.assertNotIn("X-OpenRouter-Cache", call.call_args.kwargs["headers"])
+                client.embed_passages(["первый документ", "второй документ"])
+                self.assertNotIn("X-OpenRouter-Cache", call.call_args.kwargs["headers"])
+
+    def test_provider_order_and_query_cache_settings_are_scoped_to_openrouter(self):
+        with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_PROVIDER_ORDER": " first,second,first, ",
+                                         "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS": "3600"}):
+            settings = server.Settings.from_env()
+            self.assertEqual(settings.embedding_provider_order, ("first", "second"))
+            self.assertEqual(settings.embedding_query_cache_ttl_seconds, 3600)
+        with tempfile.TemporaryDirectory() as root:
+            for base, ttl in (("https://openrouter.ai/api/v1", 3600),
+                              ("https://openrouter.ai/api/v1", 0), ("https://example.test/v1", 3600)):
+                with self.subTest(base=base, ttl=ttl):
+                    settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                                       embedding_api_base=base, embedding_provider_order=("first", "second"),
+                                       embedding_query_cache_ttl_seconds=ttl)
+                    client = server.EmbeddingClient(settings)
+                    client._tokenizer = WordTokenizer()
+                    response = server.httpx.Response(200, request=server.httpx.Request("POST", base),
+                        json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+                    with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
+                        self.assertEqual(client.embed_query("complete query"), [1.0, 0.0])
+                    body, headers = call.call_args.kwargs["json"], call.call_args.kwargs["headers"]
+                    if "openrouter.ai" in base:
+                        self.assertEqual(body["provider"], {"order": ["first", "second"], "allow_fallbacks": True})
+                    else:
+                        self.assertNotIn("provider", body)
+                    self.assertEqual("X-OpenRouter-Cache" in headers, "openrouter.ai" in base and ttl > 0)
+                    original = client.storage_model()
+                    client.provider_order = ("third",)
+                    client.query_cache_ttl_seconds = 0
+                    self.assertEqual(client.storage_model(), original)
+
+    def test_remote_reuses_client_and_retries_only_failed_connections(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                               embedding_api_base="https://example.test/v1")
+            client = server.EmbeddingClient(settings)
+            remote = mock.Mock()
+            response = mock.Mock()
+            response.json.return_value = {"data": [{"index": 0, "embedding": [1, 0]}]}
+            remote.post.side_effect = [server.httpx.ConnectError("TLS interrupted"), response, response]
+            with mock.patch.object(server.httpx, "Client", return_value=remote) as factory:
+                self.assertEqual(client.embed_remote("first complete input"), [1, 0])
+                self.assertEqual(client.embed_remote("second complete input"), [1, 0])
+                factory.assert_called_once()
+                self.assertEqual(remote.post.call_count, 3)
+                self.assertEqual([call.kwargs["json"]["input"] for call in remote.post.call_args_list],
+                                 ["first complete input", "first complete input", "second complete input"])
+                remote.post.reset_mock(side_effect=True)
+                remote.post.side_effect = [server.httpx.ConnectError("secret-marker")] * 2
+                with self.assertRaises(server.BookStackApiError) as failure:
+                    client.embed_remote("third input")
+                self.assertEqual(remote.post.call_count, 2)
+                self.assertNotIn("secret-marker", str(failure.exception))
+                remote.post.reset_mock(side_effect=True)
+                remote.post.side_effect = server.httpx.ReadTimeout("late response")
+                with self.assertRaises(server.BookStackApiError):
+                    client.embed_remote("fourth input")
+                self.assertEqual(remote.post.call_count, 1)
 
     def test_qwen_dimension_and_default_threshold(self):
         with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b", "BOOKSTACK_SEMANTIC_MIN_SCORE": ""}):
@@ -358,16 +605,18 @@ class EmbeddingClientTests(unittest.TestCase):
             client = server.EmbeddingClient(make_settings(Path(root)/"cache.sqlite", "qwen/qwen3-embedding-8b"))
             response = mock.MagicMock()
             response.__enter__.return_value = response
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.read.return_value = json.dumps({"data": [{"embedding": [1, 0]}]}).encode()
-            with mock.patch.object(server.request, "urlopen", return_value=response), self.assertRaises(ValueError):
+            with mock.patch.object(server.httpx.Client, "post", return_value=response), self.assertRaises(ValueError):
                 client.embed_remote("query")
 
     def test_batch_reorders_complete_indices_and_rejects_missing_duplicate_indices(self):
         with tempfile.TemporaryDirectory() as root:
             client = server.EmbeddingClient(replace(make_settings(Path(root)/"cache.sqlite", "remote-model"), embedding_api_base="https://example.test/v1"))
             response = mock.MagicMock()
+            response.json.side_effect = lambda: json.loads(response.read.return_value)
             response.__enter__.return_value = response
-            with mock.patch.object(server.request, "urlopen", return_value=response):
+            with mock.patch.object(server.httpx.Client, "post", return_value=response):
                 response.read.return_value = json.dumps({"data": [{"index": 1, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()
                 self.assertEqual(client._remote_batch(["first", "second"]), [[1, 0], [0, 1]])
                 response.read.return_value = json.dumps({"data": [{"index": 0, "embedding": [0, 1]}, {"index": 0, "embedding": [1, 0]}]}).encode()
@@ -381,6 +630,61 @@ class FragmentIndexTests(unittest.TestCase):
         service.client = FakeClient(pages)
         service.embeddings = FakeEmbeddings()
         return service
+
+    def test_binary_vector_cache_restarts_without_json_reads_and_retains_exact_search(self):
+        items = [page(1, "# Раздел\n\n" + "полный текст документа " * 100), page(2, "другой документ")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, items)
+            service.reindex_docs()
+            profile = service.embeddings.storage_model()
+            original = list(service.fragment_index.all_vectors(profile))
+            first = service.search_docs("документ", None, 5)
+            restarted = self.service(root, items)
+            connection = restarted.cache.connect
+
+            @contextmanager
+            def metadata_only():
+                with connection() as conn:
+                    conn.set_authorizer(lambda action, table, column, *args:
+                        server.sqlite3.SQLITE_DENY if action == server.sqlite3.SQLITE_READ
+                        and table == "fragment_vectors" and column == "vector_json" else server.sqlite3.SQLITE_OK)
+                    yield conn
+
+            with mock.patch.object(restarted.cache, "connect", metadata_only):
+                restored = list(restarted.fragment_index.all_vectors(profile))
+                second = restarted.search_docs("документ", None, 5)
+            self.assertEqual([p for p, _ in original], [p for p, _ in restored])
+            self.assertEqual([v.tobytes() for _, v in original], [v.tobytes() for _, v in restored])
+            self.assertEqual(first["results"], second["results"])
+
+    def test_binary_vector_cache_corruption_and_revision_change_reload_authoritative_sqlite(self):
+        items = [page(1, "# Раздел\n\nпервый документ"), page(2, "второй документ")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, items)
+            service.reindex_docs()
+            profile = service.embeddings.storage_model()
+            original = list(service.fragment_index.all_vectors(profile))
+            path = service.fragment_index._disk_search_cache
+            path.write_bytes(path.read_bytes()[:-16])
+            restarted = self.service(root, items)
+            with self.assertLogs(level="WARNING"):
+                recovered = list(restarted.fragment_index.all_vectors(profile))
+            self.assertEqual([v.tobytes() for _, v in original], [v.tobytes() for _, v in recovered])
+            changed = page(1, "# Новый раздел\n\nизмененный документ " * 100)
+            restarted.index_page(changed)
+            restarted.fragment_index.reconcile({1})
+            after_edit = self.service(root, [changed])
+            result = list(after_edit.fragment_index.all_vectors(profile))
+            self.assertTrue(result)
+            self.assertEqual({p["id"] for p, _ in result}, {1})
+            self.assertTrue(all(p["content_text"] == server.clean_text(changed["markdown"]) for p, _ in result))
+            self.assertNotEqual(len(original), len(result))
+            path.unlink()
+            after_edit.fragment_index._search_cache = (None, None)
+            with mock.patch("fragment_index.os.replace", side_effect=PermissionError), self.assertLogs(level="WARNING"):
+                unavailable = list(after_edit.fragment_index.all_vectors(profile))
+            self.assertEqual([v.tobytes() for _, v in unavailable], [v.tobytes() for _, v in result])
+            self.assertFalse(list(path.parent.glob(".bookstack-vectors-*.tmp")))
 
     def test_structure_preserves_blocks_and_full_unicode_tail(self):
         table = "| поле | значение |\n" + "| срок | месяц |\n" * 5
@@ -527,6 +831,20 @@ class FragmentIndexTests(unittest.TestCase):
             self.assertFalse(service.index_status()["semantic_ready"])
 
 
+class CosineScoreTests(unittest.TestCase):
+    def test_batch_scores_preserve_cosine_including_zero_and_mismatched_vectors(self):
+        query = [0.6, 0.8]
+        vectors = [[0.6, 0.8], [0.8, -0.6], [0.0, 0.0], [0.6], [-0.6, -0.8]]
+        expected = [server.cosine_similarity(query, vector) for vector in vectors]
+        if server.np is not None:
+            with mock.patch.object(server, "cosine_similarity", side_effect=AssertionError("batch path expected")):
+                actual = server.cosine_scores(query, vectors)
+            for score, old_score in zip(actual, expected):
+                self.assertAlmostEqual(score, old_score, places=12)
+        with mock.patch.object(server, "np", None):
+            self.assertEqual(server.cosine_scores(query, vectors), expected)
+
+
 class ProductDocsServiceTests(unittest.TestCase):
     def make_service(self, temp_root, pages):
         service = server.ProductDocsService(make_settings(Path(temp_root) / "cache.sqlite"))
@@ -555,6 +873,50 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertLessEqual(len(result["results"][0]["preview"]), server.SEARCH_PREVIEW_CHARS + 6)
         self.assertLess(len(json.dumps(result, ensure_ascii=False)), 6000)
         self.assertIn("next_cursor=5", server.tool_result_summary("search", result))
+
+    def test_search_diagnostics_report_stages_and_query_cache_only_on_request(self):
+        pages = [page(1, "Architecture decision."), page(2, "Architecture detail.")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, pages)
+            service.embeddings = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "fake-model"))
+            service.embeddings._tokenizer = WordTokenizer()
+            service.embeddings.embed = mock.Mock(return_value=[1.0, 0.0])
+            for item in pages:
+                service.index_page(item)
+            service.embeddings.embed.reset_mock()
+            first = service.search_docs("Architecture", None, 5, diagnostics=True)
+            second = service.search_docs("Architecture", None, 5, diagnostics=True)
+            plain = service.search_docs("Architecture", None, 5)
+            text = service.search_docs("Architecture", None, 5, mode="text", diagnostics=True)
+
+        self.assertEqual(service.embeddings.embed.call_count, 1)
+        self.assertEqual([item["id"] for item in first["results"]], [item["id"] for item in plain["results"]])
+        self.assertNotIn("diagnostics", plain)
+        self.assertEqual(first["diagnostics"]["query_embedding_cache"], "miss")
+        self.assertEqual(second["diagnostics"]["query_embedding_cache"], "hit")
+        self.assertEqual(first["diagnostics"]["scored_fragments"], 2)
+        for field in ("text_ms", "query_embedding_ms", "vector_scoring_ms", "ranking_ms", "total_ms"):
+            self.assertGreaterEqual(first["diagnostics"][field], 0)
+        self.assertEqual(text["diagnostics"]["query_embedding_cache"], "not_requested")
+        self.assertEqual(text["diagnostics"]["vector_scoring_ms"], 0.0)
+
+    def test_embedding_failure_reports_query_degradation_without_marking_index_incomplete(self):
+        with tempfile.TemporaryDirectory() as root:
+            service = self.make_service(root, [page(1, "Architecture decision.")])
+            service.embeddings = server.EmbeddingClient(make_settings(Path(root) / "cache.sqlite", "fake-model"))
+            service.embeddings._tokenizer = WordTokenizer()
+            service.embeddings.embed = mock.Mock(return_value=[1.0, 0.0])
+            service.reindex_docs()
+            service.embeddings.embed = mock.Mock(side_effect=server.BookStackApiError("Embedding request failed (HTTP 429)"))
+            result = service.search_docs("Architecture", None, 5, diagnostics=True)
+            status = service.index_status()
+
+        self.assertEqual(result["semantic_status"], "degraded")
+        self.assertIn("provider recovers", result["semantic_continuation"])
+        self.assertIn("HTTP 429", result["diagnostics"]["embedding_error"])
+        self.assertIn("query_embedding_ms", result["diagnostics"])
+        self.assertEqual([row["id"] for row in result["results"]], [1])
+        self.assertTrue(status["semantic_ready"])
 
     def test_text_search_works_without_embeddings_including_live_fallback_and_pagination(self):
         pages = [page(index, "Точный термин в середине документа.") for index in range(1, 8)]
@@ -715,6 +1077,76 @@ class ProductDocsServiceTests(unittest.TestCase):
 
         self.assertEqual(result["results"][0]["id"], 30)
         self.assertIn("unique-needle", result["results"][0]["preview"])
+
+    def test_plan_editor_inflections_find_the_architecture_page(self):
+        generic = page(1, "Редактор планов поддерживает параллельную работу пользователей.")
+        generic["name"] = "Редактор планов. Возможности"
+        architecture = page(2, "Механизм параллельной работы используется в редакторе планов.")
+        architecture["name"] = "Обзор архитектуры многопользовательской работы"
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [generic, architecture])
+            service.index_page(generic)
+            service.index_page(architecture)
+            for query in ("параллельная работа редактор планов",
+                          "многопользовательская работа редактор планов"):
+                with self.subTest(query=query):
+                    result = service.search_docs(query, None, 5, mode="text")
+                    self.assertIn(2, [p["id"] for p in result["results"][:3]])
+
+    def test_russian_inflections_work_across_topics_and_keep_identifiers_exact(self):
+        cases = [
+            ("Распределение ресурсов", ("распределение ресурсами", "распределения ресурса")),
+            ("Согласование бюджетов", ("согласовании бюджета", "согласование бюджетами")),
+            ("Расчет себестоимости", ("расчетом себестоимость", "расчета себестоимости")),
+            ("Назначение ролей", ("назначения ролями", "назначении роли")),
+            ("Изменение сроков", ("изменения срока", "изменении сроками")),
+        ]
+        pages = [dict(page(i, title), name=title) for i, (title, _) in enumerate(cases, 1)]
+        pages += [page(6, "PM500 упо_РасчетСроковДополнение ОСАГО"),
+                  page(7, "PM5 упо_РасчетСроков ОС")]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            for item in pages:
+                service.index_page(item)
+            for i, (_, queries) in enumerate(cases, 1):
+                for query in queries:
+                    with self.subTest(query=query):
+                        result = service.search_docs(query, None, 5, mode="text")
+                        self.assertEqual([p["id"] for p in result["results"]], [i])
+            for query in ("PM5", "упо_РасчетСроков", "ОС"):
+                with self.subTest(query=query):
+                    self.assertEqual([p["id"] for p in service.cache.search(query, 5, {})], [7])
+
+    def test_hybrid_retains_bm25_evidence_and_semantic_mode_retains_cosine_order(self):
+        pages = [page(1, "Обмен сведениями, включая данные проекта."),
+                 page(2, "Экономическая информация между системами.")]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = RankingEmbeddings()
+            # Both documents pass the semantic threshold; page 2 is the cosine
+            # leader, but only page 1 matches the lexical query in the first run.
+            service.settings = replace(service.settings, semantic_min_score=0.5)
+            for item in pages:
+                service.index_page(item)
+            hybrid = service.search_docs("обмен данными", None, 1)
+            continuation = service.search_docs("обмен данными", None, 1, cursor=hybrid["next_cursor"])
+            semantic = service.search_docs("обмен данными", None, 5, mode="semantic")
+            self.assertEqual([hybrid["results"][0]["id"], continuation["results"][0]["id"]], [1, 2])
+            self.assertEqual([p["id"] for p in semantic["results"]], [2, 1])
+            self.assertFalse(any(k.startswith("_") for k in hybrid["results"][0]))
+
+    def test_background_warm_primes_vectors_before_first_search(self):
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, [page(1, "Product architecture detail.")])
+            service.embeddings = FakeEmbeddings()
+            service.index_page(page(1, "Product architecture detail."))
+            self.assertIsNone(service.fragment_index._search_cache[1])
+            worker = service.start_background_warm()
+            self.assertIsNotNone(worker)
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(len(service.fragment_index._search_cache[1]), 1)
+            self.assertEqual(service.search_docs("Product", None, 5)["results"][0]["id"], 1)
 
     def test_reindex_refreshes_unchanged_pages_when_embedding_profile_changes(self):
         pages = [page(1, "Architecture decision.")]

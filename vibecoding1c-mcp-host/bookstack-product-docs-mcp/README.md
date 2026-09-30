@@ -1,7 +1,8 @@
 # BookStack semantic indexing
 
 BookStack owns its SQLite cache, fragment vectors, inventory reconciliation and recovery.
-Public MCP tools retain their existing arguments; `search_docs` adds optional `mode`.
+Public MCP tools retain their existing arguments; `search_docs` adds optional `mode`
+and `diagnostics` arguments.
 Exact/FTS search remains available
 when semantic indexing is incomplete; `search_docs` discloses that state. `read_page`
 continues returning the document during a provider failure.
@@ -15,15 +16,69 @@ retain the existing BookStack API search fallback when the local search has no m
 or `filters.live=true`; semantic mode never mixes in lexical fallback. Text search is
 independent of semantic-index readiness and provider availability. Keep the same query,
 filters and mode when following `next_cursor`.
+Local FTS uses the standard Snowball Russian stemmer to match inflections through
+prefixes in the existing `unicode61` index. Stems shorter than three letters,
+Latin tokens, numbers and identifiers remain exact. This is suffix stemming, not
+a synonym dictionary or complete linguistic lemmatization. BM25 weights are
+4 for titles, 1 for content and 2 for tags. Hybrid ranking combines the lexical
+and cosine result positions using reciprocal rank fusion (constant 60), retaining
+the existing exact-phrase priority. Semantic mode contributes cosine positions
+without a lexical rank. There are
+no topic-specific query rules, page boosts or corpus schema changes.
 
 The embedding client keeps the last 256 successful query vectors in an in-memory LRU
-cache, keyed by the exact prefixed input hash and embedding profile. Repeated queries,
+cache, keyed by the exact prefixed input hash, embedding profile and credential hash. Repeated queries,
 including pagination and different filters, reuse the vector. Concurrent identical
 queries share one provider request; failures are not cached. Results are recomputed
 against current page revisions, so edits and reindexing remain visible. Changing the
-model/profile cannot reuse incompatible entries; restarting the process empties the
-cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
-SQLite schema migration and requires no reindexing.
+model/profile cannot reuse incompatible entries. Packed Qwen vectors consume up to
+8 MiB plus small cache overhead.
+
+A separate disposable SQLite file (`<BOOKSTACK_CACHE_PATH>.query-vectors.sqlite`)
+retains up to 256 query vectors across restarts, with the same key and a 24-hour TTL.
+It stores float64 vectors and hashes, not query text or credentials. LRU eviction,
+expiry and vector/dimension validation bound reuse. Errors in this optional cache
+fall back to the normal complete embedding request; they never modify the document
+index. `BOOKSTACK_QUERY_CACHE_PATH` can override the path (empty disables disk caching).
+`embeddingQueryCacheTtlSeconds` also controls disk TTL; zero disables both disk and
+OpenRouter response caching. The in-memory LRU remains available. This adds no
+document-index schema migration and requires no reindexing; previous server versions
+ignore the new disposable file during rollback.
+
+Queries sent to the official OpenRouter hostname also enable its response cache
+with a 24-hour TTL. Identical request bodies under the same API key can reuse the
+complete query vector after a process restart. OpenRouter may evict entries before
+expiry; a cache miss makes the normal complete embedding request. Passage/indexing
+requests do not enable this cache. `embeddingQueryCacheTtlSeconds` in the host config
+(`BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS`) sets the TTL; zero disables it.
+This caches vectors, not search results: every search still scores the current index.
+See [OpenRouter response caching](https://openrouter.ai/docs/guides/features/response-caching).
+
+Requests to the official OpenRouter hostname default to `provider.sort=latency`.
+An optional `embeddingProviderOrder` array in the host config
+(`BOOKSTACK_EMBEDDING_PROVIDER_ORDER`, comma-separated) sets provider preference
+while keeping fallback enabled. This selects a serving provider for the same model;
+it does not change the embedding input, profile, dimension, index or result coverage.
+Other embedding API endpoints retain their existing request body. External latency
+and availability can still vary; full hybrid search waits for the query vector.
+Diagnostics include the serving provider and OpenRouter response-cache `HIT`/`MISS`
+when reported; the in-memory cache avoids the HTTP request entirely.
+The embedding client reuses HTTP connections (up to ten idle connections, expiry
+60 seconds), with normal certificate verification and environment proxy settings.
+Connection establishment has a five-second timeout and one retry for connection
+errors/timeouts; read/write retain 30-second timeouts. HTTP status failures and
+read/write failures are not retried. It does not race semantic work against a
+deadline that returns lexical-only results.
+
+For a slow query, call `search_docs` with `diagnostics=true`. The optional response
+reports server-side milliseconds for local text search, query embedding, vector
+scoring, result ranking, live BookStack fallback, and the full search. It also reports
+`hit`, `miss`, or `shared` for the query-vector cache and the number of scored
+fragments. An embedding failure includes a bounded error in diagnostics and marks
+that response `semantic_status=degraded`; index readiness remains a separate state.
+Normal search responses omit diagnostics. Vector scoring uses NumPy when the server
+requirements are installed and retains the same revision-aware fragment cache; no
+index rebuild is required.
 
 ## Configuration
 
@@ -84,6 +139,22 @@ SQLite WAL permits search snapshots alongside atomic index/usage writes. A dispo
 in-process vector cache avoids rereading all vectors for every query; the current
 page revisions/profile invalidate it. SQLite remains authoritative. Backups and transfers
 must use SQLite's backup API, including the WAL state.
+The service warms this cache in the background at startup and after a completed
+reindex. Searches arriving during that initial load may still wait for the cold
+SQLite read; subsequent searches reuse the loaded vectors. The warmup does not
+change the index or make remote query-embedding requests.
+The vector cache also retains one disposable binary snapshot at
+`<BOOKSTACK_CACHE_PATH>.search-vectors.zip` (uncompressed float64, about 46 MiB for
+1486 Qwen fragments). A restart checks its complete page/profile revision key,
+dimensions, record count and CRC before reuse. Current page content and fragment
+metadata always come from the same SQLite snapshot. Stale, corrupt or unavailable
+binary files trigger the normal complete SQLite load. Atomic replacement retains
+one current snapshot; the document database remains authoritative and older server
+versions ignore the file. Values, cosine scoring and ranking are unchanged.
+The pinned tokenizer also loads in a separate startup worker, independently of
+reindexing. Concurrent indexing/search calls share one initialization. A query
+arriving before that worker finishes waits for the same exact tokenizer; token
+limits and complete semantic scoring are unchanged.
 
 `provider_usage` stores successful response counts, returned input tokens and reported
 cost. It is not an account invoice: a timed-out/interrupted request can be billed without
