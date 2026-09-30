@@ -107,7 +107,7 @@ class Runtime:
         def search_tickets(query: str = "", actor: str = "", filters: dict | None = None,
                            mode: str = "all", limit: int = 10, cursor: str = "", semantic: bool = True,
                            sort_by: str = "relevance", similar_to: int = 0) -> dict:
-            """Paged live search (10 default, max 20, 12000 chars). Continue with next_cursor within 15 minutes; use query or similar_to and filter/sort via mantis_metadata."""
+            """Paged index snapshot search (10 default, max 20, 12000 chars), without live Mantis checks. Continue with next_cursor within 15 minutes; use query or similar_to and filter/sort via mantis_metadata."""
             person = actor_name(actor)
             started = time.monotonic()
             result = self.require().search(query, filters, mode, limit, cursor, semantic, sort_by, similar_to)

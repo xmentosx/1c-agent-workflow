@@ -583,6 +583,12 @@ class SearchReader:
     def __exit__(self, *args):
         self.db.close()
 
+    def begin_snapshot(self):
+        """Freeze local SQL reads after external semantic work has finished."""
+        self.db.execute("BEGIN")
+        self.one("SELECT value FROM meta WHERE key='source_revision'")
+        return self.clock()
+
     def all(self, sql, args=()):
         return [dict(row) for row in self.db.execute(sql, args).fetchall()]
 

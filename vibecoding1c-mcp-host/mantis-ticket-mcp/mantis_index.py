@@ -20,7 +20,6 @@ import uuid
 from array import array
 from collections import OrderedDict, deque
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, TimeoutError as FutureTimeoutError, wait
-from dataclasses import replace
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -38,10 +37,6 @@ QUERY_EMBEDDING_TIMEOUT_SECONDS = 40
 QUERY_SEMANTIC_BUDGET_SECONDS = 50
 QUERY_EMBEDDING_WAIT_SECONDS = 65
 SEARCH_CANDIDATE_LIMIT = 10000
-SEARCH_REFRESH_LIMIT = 10
-SEARCH_REFRESH_WORKERS = 4
-SEARCH_REFRESH_BUDGET_SECONDS = 15
-SEARCH_API_TIMEOUT_SECONDS = 3
 SEARCH_CURSOR_TTL_SECONDS = 900
 SEARCH_CURSOR_CAPACITY = 128
 EMBEDDING_DISK_BATCH = 512
@@ -460,7 +455,6 @@ class Index:
             self.paused.set()
         self.worker = None
         self.work_lock = threading.Lock()
-        self.search_refresh_slots = threading.BoundedSemaphore(SEARCH_REFRESH_WORKERS)
         self.search_semantic_slots = threading.BoundedSemaphore(2)
         self.search_cursor_lock = threading.Lock()
         self.search_cursors = OrderedDict()
@@ -1275,7 +1269,11 @@ class Index:
         if similar_to:
             if query.strip():
                 raise ValueError("Use either query or similar_to, not both")
-            source, _, _ = self.refresh(similar_to)
+            source_row = reader.one("SELECT json_extract(data,'$.summary','$.description','$.steps_to_reproduce') AS text "
+                                    "FROM issues WHERE id=?", (similar_to,))
+            if not source_row:
+                raise ValueError("Source issue is not indexed; call read_ticket for its ID, then repeat similar_to")
+            source = dict(zip(("summary", "description", "steps_to_reproduce"), json.loads(source_row["text"])))
             query = (str(source.get("summary") or "")[:240] + "\n" +
                      str(source.get("description") or "")[:900] + "\n" +
                      str(source.get("steps_to_reproduce") or "")[:400]).strip()
@@ -1292,7 +1290,10 @@ class Index:
         if filters.get("custom_fields"):
             if not filters.get("project_id"):
                 raise ValueError("custom_fields requires project_id and project metadata")
-            meta = self.metadata(filters["project_id"])
+            cached_meta = reader.one("SELECT data FROM catalog WHERE key=?", (f"project:{int(filters['project_id'])}",))
+            if not cached_meta:
+                raise ValueError("Project metadata is not cached; call mantis_metadata for this project, then repeat the filter")
+            meta = json.loads(cached_meta["data"])
             definitions = {str(f["field"]["id"]): f for f in meta["custom_fields"]}
             if set(map(str, filters["custom_fields"])) - definitions.keys():
                 raise ValueError("Unknown custom field for this project; call mantis_metadata")
@@ -1323,11 +1324,51 @@ class Index:
             except Exception as exc:
                 raise ValueError("Search cursor expired or invalid; restart without cursor") from exc
         exact = re.fullmatch(r"#?(\d+)", query.strip())
-        if exact:
-            try:
-                self.refresh(int(exact[1]))
-            except ApiError:
-                pass
+        semantic_keys = []
+        query_semantics = "not_requested"
+        query_cache = "not_requested"
+        if semantic:
+            query_semantics = "unavailable"
+            query_cache = "unavailable"
+            if self.vectors and self.embeddings and query.strip():
+                if not self.search_semantic_slots.acquire(blocking=False):
+                    query_semantics = "busy:semantic_search_capacity"
+                else:
+                    def semantic_candidates():
+                        try:
+                            started = time.monotonic()
+                            vector, cache = self.query_vector(query)
+                            embedded = time.monotonic()
+                            keys = self.vectors.query(vector)
+                            queried = time.monotonic()
+                            elapsed = time.monotonic() - started
+                            if elapsed > 10:
+                                logging.getLogger(__name__).warning(
+                                    "Mantis semantic latency: embedding=%.3fs vector_query=%.3fs",
+                                    embedded - started, queried - embedded)
+                            return keys, cache
+                        finally:
+                            self.search_semantic_slots.release()
+                    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mantis-search-semantic")
+                    submitted = False
+                    try:
+                        future = pool.submit(semantic_candidates)
+                        submitted = True
+                        semantic_keys, query_cache = future.result(
+                            timeout=QUERY_SEMANTIC_BUDGET_SECONDS)
+                        query_semantics = "available"
+                    except FutureTimeoutError:
+                        query_semantics = "timeout:interactive_semantic_budget"
+                    except Exception as exc:
+                        query_semantics = str(exc)[:180]
+                    finally:
+                        if not submitted:
+                            self.search_semantic_slots.release()
+                        pool.shutdown(wait=False, cancel_futures=True)
+        checkpoint("semantic_query")
+        # Freeze only the local read phase. Provider calls and HNSW traversal
+        # finish first, so neither can hold SQLite's read lock while waiting.
+        snapshot_at = reader.begin_snapshot()
         ranks = {}
         tokens = re.findall(r"\w+", query, re.UNICODE)
         if tokens:
@@ -1351,57 +1392,16 @@ class Index:
         if exact:
             for row in reader.all("SELECT id FROM fragments WHERE issue_id=?", (int(exact[1]),)):
                 ranks[row["id"]] = 10
+        if semantic_keys:
+            holders = ",".join("?" for _ in semantic_keys)
+            found = {row["vector_id"]: row["id"] for row in reader.all(
+                f"SELECT vector_id,id FROM fragments WHERE vector_id IN ({holders}) "
+                "AND version=vector_version", semantic_keys)}
+            for rank, key in enumerate(semantic_keys):
+                if key in found:
+                    fragment = found[key]
+                    ranks[fragment] = ranks.get(fragment, 0) + 1 / (60 + rank)
         checkpoint("candidate_ranking")
-        query_semantics = "not_requested"
-        query_cache = "not_requested"
-        if semantic:
-            query_semantics = "unavailable"
-            query_cache = "unavailable"
-            if self.vectors and self.embeddings and query.strip():
-                if not self.search_semantic_slots.acquire(blocking=False):
-                    query_semantics = "busy:semantic_search_capacity"
-                else:
-                    def semantic_matches():
-                        try:
-                            started = time.monotonic()
-                            vector, cache = self.query_vector(query)
-                            embedded = time.monotonic()
-                            keys = self.vectors.query(vector)
-                            queried = time.monotonic()
-                            with SearchReader(self.state) as semantic_reader:
-                                holders = ",".join("?" for _ in keys)
-                                found = {row["vector_id"]: row["id"] for row in semantic_reader.all(
-                                    f"SELECT vector_id,id FROM fragments WHERE vector_id IN ({holders}) "
-                                    "AND version=vector_version", keys)} if keys else {}
-                            matches = [(found[key], rank) for rank, key in enumerate(keys) if key in found]
-                            elapsed = time.monotonic() - started
-                            if elapsed > 10:
-                                logging.getLogger(__name__).warning(
-                                    "Mantis semantic latency: embedding=%.3fs vector_query=%.3fs "
-                                    "fragment_lookup=%.3fs",
-                                    embedded - started, queried - embedded, time.monotonic() - queried)
-                            return matches, cache
-                        finally:
-                            self.search_semantic_slots.release()
-                    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mantis-search-semantic")
-                    submitted = False
-                    try:
-                        future = pool.submit(semantic_matches)
-                        submitted = True
-                        matches, query_cache = future.result(
-                            timeout=QUERY_SEMANTIC_BUDGET_SECONDS)
-                        for key, rank in matches:
-                            ranks[key] = ranks.get(key, 0) + 1 / (60 + rank)
-                        query_semantics = "available"
-                    except FutureTimeoutError:
-                        query_semantics = "timeout:interactive_semantic_budget"
-                    except Exception as exc:
-                        query_semantics = str(exc)[:180]
-                    finally:
-                        if not submitted:
-                            self.search_semantic_slots.release()
-                        pool.shutdown(wait=False, cancel_futures=True)
-        checkpoint("semantic_query")
         def matches(issue, names):
             if filters.get("project_id") and object_id(issue["project"]) != int(filters["project_id"]):
                 return False
@@ -1428,15 +1428,8 @@ class Index:
                 if field + "_before" in filters and value > timestamp(filters[field + "_before"]):
                     return False
             return True
-        def source_version(records, tags):
-            # put_issue commits the issue hash and all source fragments in one
-            # transaction; vector-only progress does not change source content.
-            return digest([sorted({(row["issue_id"], row["issue_hash"]) for row in records.values()}),
-                           tags if filters.get("tags") else ""])
         def grouped():
             groups = {}
-            attachment_sources = {}
-            records = {}
             # Read only card/filter fields, once per issue. Joining the entire
             # issue (including every comment) to each fragment multiplies I/O.
             fields = ("summary", "project", "status", "tags", "custom_fields", "created_at", "updated_at",
@@ -1453,10 +1446,9 @@ class Index:
                 keys = [key for key, _ in batch]
                 placeholders = ",".join("?" for _ in keys)
                 rows = {row["id"]: row for row in reader.all(
-                    "SELECT f.id,f.issue_id,i.verified,i.hash AS issue_hash,f.kind,f.note_id,f.file_id,"
-                    "f.source,f.text,f.version FROM fragments f JOIN issues i ON i.id=f.issue_id "
+                    "SELECT f.id,f.issue_id,i.verified,f.kind,f.note_id,f.file_id,"
+                    "f.source,f.text FROM fragments f JOIN issues i ON i.id=f.issue_id "
                     f"WHERE f.id IN ({placeholders})", keys) if row["issue_id"] not in seen}
-                records.update(rows)
                 new_issues = {row["issue_id"] for row in rows.values()} - issue_ids
                 issue_ids.update(new_issues)
                 if new_issues:
@@ -1477,8 +1469,6 @@ class Index:
                     issue = parsed.get(row["issue_id"])
                     if not issue or not matches(issue, names):
                         continue
-                    if row["kind"] == "attachment_content":
-                        attachment_sources[key] = (row["version"], row["source"])
                     entry = groups.setdefault(row["issue_id"], {"id": row["issue_id"], "summary": str(issue.get("summary", ""))[:240],
                         "project": {"id": object_id(issue.get("project")), "name": str((issue.get("project") or {}).get("name", ""))[:120]},
                         "status": issue.get("status"), "created_at": issue.get("created_at"), "updated_at": issue.get("updated_at"),
@@ -1510,88 +1500,15 @@ class Index:
                 ordered = sorted(groups.values(), key=lambda r: (-r["score"], r["id"]))
             else:
                 ordered = sorted(groups.values(), key=lambda r: (timestamp(r.get(sort_by)), r["id"]), reverse=True)
-            return ordered, source_version(records, tags), list(issue_ids), attachment_sources
-        revision = reader.source_revision()
-        initial, initial_version, issue_ids, attachment_sources = grouped()
-        checkpoint("group_candidates")
-        refresh_deadline = time.monotonic() + SEARCH_REFRESH_BUDGET_SECONDS
-        checked = set()
-        page_ids = [issue["id"] for issue in initial[:min(limit, SEARCH_REFRESH_LIMIT)]]
-        if isinstance(self.api, Api) and page_ids:
-            # Four short-lived readers check displayed cards concurrently.
-            # A server-wide semaphore bounds load when searches overlap; an
-            # unavailable slot leaves that card explicitly marked cached.
-            local = threading.local()
-            def probe(issue_id):
-                if not self.search_refresh_slots.acquire(blocking=False):
-                    return False
-                try:
-                    if not hasattr(local, "api"):
-                        local.api = Api(replace(self.api.settings, timeout_seconds=min(
-                            SEARCH_API_TIMEOUT_SECONDS, self.api.settings.timeout_seconds)))
-                        local.context_cache = {}
-                    _, _, stale = self.refresh(issue_id, request_api=local.api,
-                                               context_cache=local.context_cache, physical_cleanup=False)
-                    return not stale
-                except ApiError:
-                    return False
-                finally:
-                    self.search_refresh_slots.release()
-            pool = ThreadPoolExecutor(max_workers=min(SEARCH_REFRESH_WORKERS, len(page_ids)),
-                                      thread_name_prefix="mantis-search-access")
-            try:
-                futures = {pool.submit(probe, issue_id): issue_id for issue_id in page_ids}
-                completed, _ = wait(futures, timeout=SEARCH_REFRESH_BUDGET_SECONDS)
-                for future in completed:
-                    if future.result():
-                        checked.add(futures[future])
-            finally:
-                # Slow Mantis reads may continue to verify/cache their issues,
-                # but cannot hold this response past its interactive budget.
-                pool.shutdown(wait=False, cancel_futures=True)
-        else:
-            for issue_id in page_ids:
-                if time.monotonic() > refresh_deadline:
-                    break
-                try:
-                    _, _, stale = self.refresh(issue_id)
-                    if not stale:
-                        checked.add(issue_id)
-                    else:
-                        break
-                except ApiError:
-                    pass
-        checkpoint("access_probes")
-        final_records = {}
-        for start in range(0, len(issue_ids), 400):
-            batch = issue_ids[start:start + 400]
-            placeholders = ",".join("?" for _ in batch)
-            final_records.update((row["issue_id"], row) for row in reader.all(
-                f"SELECT id AS issue_id,hash AS issue_hash,verified FROM issues WHERE id IN ({placeholders})", batch))
-        final_tags = reader.one("SELECT data FROM catalog WHERE key='tags'") if filters.get("tags") else None
-        if reader.source_revision() != revision and attachment_sources:
-            current_sources = {}
-            keys = list(attachment_sources)
-            for start in range(0, len(keys), 400):
-                batch = keys[start:start + 400]
-                placeholders = ",".join("?" for _ in batch)
-                current_sources.update((row["id"], (row["version"], row["source"]))
-                    for row in reader.all(
-                        f"SELECT id,version,source FROM fragments WHERE id IN ({placeholders})", batch))
-            if current_sources != attachment_sources:
-                return {"ok": False, "status": "results_changed",
-                        "continuation": "Repeat search without cursor; attachment content changed during this page"}
-        if source_version(final_records, final_tags["data"] if final_tags else "[]") != initial_version:
-            # A refresh can invalidate the matching text, not just pagination.
-            return {"ok": False, "status": "results_changed", "continuation": "Repeat search without cursor; matched issues were refreshed"}
-        groups = initial
-        verified = {row["issue_id"]: row["verified"] for row in final_records.values()}
+            return ordered
+        groups = grouped()
         for entry in groups:
-            entry["last_verified"] = verified[entry["id"]]
-            entry["access_check"] = "fresh" if entry["id"] in checked else "cached"
+            entry["access_check"] = "cached"
+        checkpoint("group_candidates")
         snapshot = reader.health()
         corpus_status = "partial" if self.semantic_status == "ready" and snapshot["embedding_backlog"] else self.semantic_status
-        result = {"ok": True, "issues": [], "next_cursor": "", "similar_to": similar_to or None,
+        result = {"ok": True, "issues": [], "next_cursor": "", "read_view": "index_snapshot",
+                "snapshot_at": snapshot_at, "similar_to": similar_to or None,
                 "similarity_mode": ("semantic" if query_semantics == "available" else "lexical_fallback") if similar_to else None,
                  "candidate_limit": SEARCH_CANDIDATE_LIMIT, "candidate_window_limited": len(ranks) >= SEARCH_CANDIDATE_LIMIT,
                 "semantic_query": query_semantics, "semantic_corpus": corpus_status,
@@ -1611,7 +1528,7 @@ class Index:
                 if not result["issues"]:
                     raise ValueError("One result exceeds the compact output budget; narrow the query or read its exact issue ID")
                 break
-        checkpoint("final_validation_and_output")
+        checkpoint("output")
         emitted = len(result["issues"])
         with self.search_cursor_lock:
             if session_id:

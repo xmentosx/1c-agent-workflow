@@ -244,9 +244,48 @@ class IndexTests(unittest.TestCase):
         self.temp.cleanup()
 
     def search(self, query, **kwargs):
-        result = self.index.search(query, semantic=False, **kwargs)
-        if result.get("status") == "results_changed":
-            result = self.index.search(query, semantic=False, **kwargs)
+        return self.index.search(query, semantic=False, **kwargs)
+
+    def search_with_concurrent_index_write(self, query, update, owns_transaction=False, **kwargs):
+        applied = threading.Event()
+        errors = []
+        def write():
+            try:
+                if owns_transaction:
+                    changed = self.state.changed
+                    def mark_applied(*args, **options):
+                        changed(*args, **options)
+                        applied.set()
+                    with patch.object(self.state, "changed", side_effect=mark_applied):
+                        update()
+                else:
+                    with self.state.transaction():
+                        update()
+                        applied.set()
+            except BaseException as exc:
+                errors.append(exc)
+                applied.set()
+        worker = threading.Thread(target=write)
+        original = SearchReader.all
+        launched = False
+        def after_fragments(reader, sql, args=()):
+            nonlocal launched
+            rows = original(reader, sql, args)
+            if not launched and "SELECT f.id,f.issue_id" in sql:
+                launched = True
+                worker.start()
+                self.assertTrue(applied.wait(2), "Concurrent writer must modify its transaction during the page read")
+            return rows
+        try:
+            with patch.object(SearchReader, "all", after_fragments):
+                result = self.index.search(query, semantic=False, **kwargs)
+        finally:
+            if launched:
+                worker.join(3)
+        self.assertTrue(launched)
+        self.assertFalse(worker.is_alive(), "Search must release its SQLite snapshot after returning")
+        if errors:
+            raise errors[0]
         return result
 
     def test_initial_closed_old_creation_and_new_modified(self):
@@ -389,7 +428,7 @@ class IndexTests(unittest.TestCase):
                 self.index.refresh(2)
             with patch.object(self.index, "refresh", wraps=self.index.refresh) as refreshed:
                 changed = self.index.search("решения", filters={"project_id": 1, "status": 90})
-            self.assertGreater(refreshed.call_count, 0, "Cached vectors must not bypass fresh issue access checks")
+            refreshed.assert_not_called()
             self.assertEqual(changed["query_embedding_cache"], "hit")
             self.assertNotIn(2, {r["id"] for r in changed["issues"]})
             self.assertNotIn("Описание решения", " ".join(m["snippet"] for r in changed["issues"] if r["id"] == 1 for m in r["matches"]))
@@ -983,7 +1022,10 @@ class IndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "either query or similar_to"):
             self.search("both", similar_to=1)
         del self.api.items[1]
+        self.assertTrue(self.search("", similar_to=1)["ok"])
         with self.assertRaises(ApiError):
+            self.index.refresh(1)
+        with self.assertRaisesRegex(ValueError, "call read_ticket"):
             self.search("", similar_to=1)
 
     def test_moving_pages_retain_checkpoint_then_converge(self):
@@ -1108,32 +1150,29 @@ class IndexTests(unittest.TestCase):
         second = file_descriptors(self.api.items[2])[92]
         self.state.publish_attachment(1, 91, first["descriptor"], "sha-first",
             {"status": "ready", "segments": [{"location": {"page": 1}, "text": "уникальныйпервый"}]})
-        original = self.index.refresh
-        imported = [False]
-        def concurrent_import(issue_id, *args, **kwargs):
-            if not imported[0]:
-                imported[0] = True
-                self.state.publish_attachment(2, 92, second["descriptor"], "sha-second",
-                    {"status": "ready", "segments": [{"location": {"page": 1}, "text": "другойфайл"}]})
-            return original(issue_id, *args, **kwargs)
-        with patch.object(self.index, "refresh", side_effect=concurrent_import):
-            result = self.index.search("уникальныйпервый", mode="attachment_contents", semantic=False)
+        def concurrent_import():
+            self.state.publish_attachment(2, 92, second["descriptor"], "sha-second",
+                {"status": "ready", "segments": [{"location": {"page": 1}, "text": "другойфайл"}]})
+        result = self.search_with_concurrent_index_write("уникальныйпервый", concurrent_import,
+            owns_transaction=True, mode="attachment_contents")
         self.assertTrue(result["ok"])
         self.assertEqual([issue["id"] for issue in result["issues"]], [1])
+        self.assertTrue(self.search("другойфайл", mode="attachment_contents")["issues"])
 
-    def test_removed_matching_attachment_invalidates_content_page(self):
+    def test_attachment_removal_after_snapshot_affects_the_next_search(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "first.pdf", "size": 12}]
         self.index.refresh(1)
         info = file_descriptors(self.api.items[1])[91]
         self.state.publish_attachment(1, 91, info["descriptor"], "sha-first",
             {"status": "ready", "segments": [{"location": {"page": 1}, "text": "уникальныйпервый"}]})
-        original = self.index.refresh
-        def revoke_during_search(issue_id, *args, **kwargs):
-            self.state.drop_attachment(1, 91)
-            return original(issue_id, *args, **kwargs)
-        with patch.object(self.index, "refresh", side_effect=revoke_during_search):
-            result = self.index.search("уникальныйпервый", mode="attachment_contents", semantic=False)
-        self.assertEqual(result["status"], "results_changed")
+        self.assertTrue(self.search("уникальныйпервый", mode="attachment_contents")["issues"])
+        result = self.search_with_concurrent_index_write("уникальныйпервый",
+            lambda: self.state.drop_attachment(1, 91), owns_transaction=True, mode="attachment_contents")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["issues"][0]["matches"][0]["file_id"], 91)
+        next_result = self.search("уникальныйпервый", mode="attachment_contents")
+        self.assertTrue(next_result["ok"])
+        self.assertFalse(next_result["issues"])
 
     def test_timed_out_parser_is_bounded_and_does_not_publish_text(self):
         self.api.items[1]["attachments"] = [{"id": 91, "filename": "sample.pdf", "size": 20}]
@@ -1207,16 +1246,18 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(len(set(written)), 4, "Do not starve behind the already imported prefix")
         self.assertEqual(self.state.one("SELECT import_verify FROM projects WHERE id=1")["import_verify"], 1)
 
-    def test_unrelated_import_does_not_invalidate_a_completed_search(self):
+    def test_metadata_change_during_search_returns_the_original_snapshot(self):
         self.index.refresh(1)
-        original = self.index.refresh
-        def concurrent_import(issue_id, *args, **kwargs):
-            self.state.put_issue(ticket(99, text="unrelated corpus addition"))
-            return original(issue_id, *args, **kwargs)
-        with patch.object(self.index, "refresh", side_effect=concurrent_import):
-            result = self.index.search("решения", semantic=False)
+        changed = ticket()
+        changed["summary"] = "Changed concurrently"
+        def update():
+            self.state.run("UPDATE issues SET data=?,hash=? WHERE id=1", (json.dumps(changed), digest(changed)))
+            self.state.changed()
+        result = self.search_with_concurrent_index_write("решения", update)
         self.assertTrue(result["ok"])
-        self.assertEqual([issue["id"] for issue in result["issues"]], [1])
+        self.assertEqual(result["read_view"], "index_snapshot")
+        self.assertEqual(result["issues"][0]["summary"], ticket()["summary"])
+        self.assertEqual(self.search("решения")["issues"][0]["summary"], changed["summary"])
 
     def test_compact_search_does_not_load_unmatched_comment_bodies(self):
         self.api.items[1]["summary"] = "needle"
@@ -1233,24 +1274,28 @@ class IndexTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in result["issues"]], [1])
         self.assertLess(loaded[0], 20000, "A compact card must not materialize the issue's unrelated history")
 
-    def test_tag_rename_during_search_invalidates_filter_selection(self):
+    def test_tag_rename_during_search_keeps_snapshot_filter_selection(self):
         self.api.items[1]["tags"] = [{"id": 7}]
         self.index.refresh(1)
         self.state.put_catalog("tags", [{"id": 7, "name": "old"}])
-        original = self.index.refresh
-        def rename(issue_id, *args, **kwargs):
+        def rename():
             self.state.put_catalog("tags", [{"id": 7, "name": "new"}])
-            return original(issue_id, *args, **kwargs)
-        with patch.object(self.index, "refresh", side_effect=rename):
-            result = self.index.search("решения", filters={"tags": ["old"]}, semantic=False)
-        self.assertEqual(result["status"], "results_changed")
+        result = self.search_with_concurrent_index_write("решения", rename, filters={"tags": ["old"]})
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["issues"][0]["id"], 1)
+        self.assertFalse(self.search("решения", filters={"tags": ["old"]})["issues"])
 
-    def test_outage_has_no_ttl_and_partial_page_no_tombstone(self):
+    def test_index_search_has_no_ttl_and_does_not_probe_an_api_outage(self):
         self.index.refresh(1)
         self.api.down = True
         self.state.run("UPDATE issues SET verified=0")
-        self.assertEqual(self.search("решения")["issues"][0]["id"], 1)
-        self.assertEqual(self.index.remote_status, "unavailable")
+        previous_remote_status = self.index.remote_status
+        with patch.object(self.api, "visible_issue", side_effect=AssertionError("Search must not contact Mantis")):
+            result = self.search("решения")
+        self.assertEqual(result["issues"][0]["id"], 1)
+        self.assertEqual(result["issues"][0]["access_check"], "cached")
+        self.assertEqual(result["issues"][0]["last_verified"], 0)
+        self.assertEqual(self.index.remote_status, previous_remote_status)
         self.assertFalse(self.state.all("SELECT * FROM tombstones"))
 
     def test_confirmed_revoke_clears_text_file_and_journal(self):
@@ -1271,15 +1316,15 @@ class IndexTests(unittest.TestCase):
         self.index.refresh(1)
         self.assertEqual(self.state.health()["issues"], 1)
 
-    def test_silent_deleted_file_is_removed_on_refresh(self):
+    def test_silent_deleted_file_is_removed_by_refresh_before_index_search(self):
         self.api.items[1]["attachments"] = [{"id": 9, "filename": "obsolete.txt"}]
         self.index.refresh(1)
         directory = self.root / "files" / "1"
         directory.mkdir(parents=True)
         (directory / "9-obsolete.txt").write_bytes(b"old")
         self.api.items[1]["attachments"] = []
-        result = self.index.search("obsolete", semantic=False)
-        self.assertEqual(result["status"], "results_changed")
+        self.assertTrue(self.search("obsolete")["issues"])
+        self.index.refresh(1)
         self.index.cleanup()
         self.assertFalse((directory / "9-obsolete.txt").exists())
         self.assertFalse(self.search("obsolete")["issues"])
@@ -1783,29 +1828,45 @@ class IndexTests(unittest.TestCase):
         self.assertEqual(result["semantic_query"], "available")
         self.assertEqual(result["query_embedding_cache"], "miss")
 
-    def test_slow_access_probe_does_not_hold_search_response(self):
+    def test_search_modes_use_the_index_without_live_mantis_requests(self):
         from server import Settings
-        self.state.put_issue(ticket(1, text="needle"))
+        for number in (1, 2):
+            value = ticket(number, text="needle")
+            value["custom_fields"] = [{"field": {"id": 7}, "value": "abc"}]
+            self.state.put_issue(value)
+        self.state.put_catalog("project:1", {"custom_fields": [{"field": {"id": 7}}]})
         self.index.api = Api(Settings("https://mantis.test", "fixture", self.root / "files"))
-        release, finished = threading.Event(), threading.Event()
-        def slow_refresh(issue_id, **kwargs):
-            try:
-                release.wait(1)
-                return ticket(issue_id, text="needle"), "", False
-            finally:
-                finished.set()
-        try:
-            with patch.object(self.index, "refresh", side_effect=slow_refresh), \
-                 patch("mantis_index.SEARCH_REFRESH_BUDGET_SECONDS", 0.03):
-                started = time.monotonic()
-                result = self.index.search("needle", semantic=False, limit=1)
-                elapsed = time.monotonic() - started
-            self.assertTrue(result["ok"])
-            self.assertLess(elapsed, 0.5)
-            self.assertEqual(result["issues"][0]["access_check"], "cached")
-        finally:
-            release.set()
-            self.assertTrue(finished.wait(1))
+        with patch.object(self.index.api, "request", side_effect=AssertionError("Search must not contact Mantis")):
+            for query, options in (("needle", {}), ("#1", {}), ("", {"similar_to": 1}),
+                                   ("needle", {"filters": {"project_id": 1, "custom_fields": {"7": "abc"}}})):
+                with self.subTest(query=query, options=options):
+                    result = self.search(query, **options)
+                    self.assertTrue(result["ok"])
+                    self.assertTrue(result["issues"])
+                    self.assertEqual(result["read_view"], "index_snapshot")
+                    self.assertTrue(all(row["access_check"] == "cached" for row in result["issues"]))
+
+    def test_uncached_custom_filter_has_an_explicit_metadata_continuation(self):
+        self.api.definitions = [{"field": {"id": 7}}]
+        self.api.items[1]["custom_fields"] = [{"field": {"id": 7}, "value": "abc"}]
+        self.index.refresh(1)
+        filters = {"project_id": 1, "custom_fields": {"7": "abc"}}
+        with self.assertRaisesRegex(ValueError, "call mantis_metadata"):
+            self.search("решения", filters=filters)
+        self.index.metadata(1)
+        self.assertTrue(self.search("решения", filters=filters)["issues"])
+
+    def test_semantic_provider_work_does_not_hold_the_sqlite_snapshot(self):
+        self.index.refresh(1)
+        self.index.vectors = SimpleNamespace(query=lambda vector: [], purge=lambda: None)
+        self.index.embeddings = SimpleNamespace()
+        def provider_write(query):
+            self.state.audit("fixture", "provider_reservation", "", "succeeded")
+            return [1.0], "miss"
+        with patch.object(self.index, "query_vector", side_effect=provider_write):
+            result = self.index.search("решения", semantic=True)
+        self.assertEqual(result["semantic_query"], "available")
+        self.assertEqual(result["issues"][0]["id"], 1)
 
     def test_search_reads_while_writer_holds_its_python_lock(self):
         from server import Settings
@@ -1853,7 +1914,7 @@ class IndexTests(unittest.TestCase):
         self.assertLessEqual(first_reads, 400, "First page must not load the full lexical window")
         self.assertLessEqual(second_reads, 400, "Second page should retain bounded source reads")
 
-    def test_search_limits_fresh_access_probes_and_reuses_project_context(self):
+    def test_whole_page_makes_no_mantis_requests_and_uses_cached_access_state(self):
         from server import Settings
         real = Api(Settings("https://mantis.test", "fixture", self.root / "files"))
         for issue_id in range(1, 11):
@@ -1861,36 +1922,13 @@ class IndexTests(unittest.TestCase):
             visible = real.filter_visible(real.normalize_lists(copy.deepcopy(self.api.items[issue_id])),
                                           {"config": {}, "level": 70, "user": {"id": 3025}})
             self.state.put_issue(visible)
-        requested = []
-        threads = set()
-        calls_lock = threading.Lock()
-        def respond(client, path, **kwargs):
-            with calls_lock:
-                requested.append((path, client.settings.timeout_seconds))
-            if path.startswith("issues/"):
-                with calls_lock:
-                    threads.add(threading.get_ident())
-                time.sleep(0.02)
-                return {"issues": [copy.deepcopy(self.api.items[int(path.split("/")[1])])]}, "fixture-etag"
-            if path == "users/me":
-                return {"user": {"id": 3025, "name": "service"}}, ""
-            if path == "projects":
-                return {"projects": [{"id": 1, "access_level": {"id": 70}}]}, ""
-            if path.startswith("config?"):
-                return {"configs": []}, ""
-            self.fail("Unexpected Mantis endpoint: " + path)
         self.index.api = real
-        with patch.object(Api, "request", autospec=True, side_effect=respond):
+        with patch.object(Api, "request", autospec=True,
+                          side_effect=AssertionError("Index search must not issue Mantis HTTP requests")) as request:
             result = self.index.search("needle", semantic=False, limit=10)
         self.assertEqual(len(result["issues"]), 10)
-        self.assertEqual(sum(path.startswith("issues/") for path, _ in requested), 10)
-        self.assertGreater(len(threads), 1)
-        self.assertLessEqual(len(threads), 4)
-        self.assertLessEqual(sum(path == "users/me" for path, _ in requested), 4)
-        self.assertLessEqual(sum(path == "projects" for path, _ in requested), 4)
-        self.assertLessEqual(sum(path.startswith("config?") for path, _ in requested), 4)
-        self.assertTrue(all(timeout == 3 for _, timeout in requested))
-        self.assertEqual(sum(card["access_check"] == "fresh" for card in result["issues"]), 10)
+        request.assert_not_called()
+        self.assertEqual(sum(card["access_check"] == "cached" for card in result["issues"]), 10)
 
     def test_custom_field_requirements_and_regex_are_checked_before_post(self):
         self.api.definitions = [{"field": {"id": 5}, "require_report": 1, "access_level_rw": 25,
