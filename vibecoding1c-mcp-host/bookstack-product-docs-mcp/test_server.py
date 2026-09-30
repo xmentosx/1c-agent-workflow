@@ -6,7 +6,7 @@ import types
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing
+from contextlib import closing, contextmanager
 from dataclasses import replace
 import unittest
 from pathlib import Path
@@ -630,6 +630,61 @@ class FragmentIndexTests(unittest.TestCase):
         service.client = FakeClient(pages)
         service.embeddings = FakeEmbeddings()
         return service
+
+    def test_binary_vector_cache_restarts_without_json_reads_and_retains_exact_search(self):
+        items = [page(1, "# Раздел\n\n" + "полный текст документа " * 100), page(2, "другой документ")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, items)
+            service.reindex_docs()
+            profile = service.embeddings.storage_model()
+            original = list(service.fragment_index.all_vectors(profile))
+            first = service.search_docs("документ", None, 5)
+            restarted = self.service(root, items)
+            connection = restarted.cache.connect
+
+            @contextmanager
+            def metadata_only():
+                with connection() as conn:
+                    conn.set_authorizer(lambda action, table, column, *args:
+                        server.sqlite3.SQLITE_DENY if action == server.sqlite3.SQLITE_READ
+                        and table == "fragment_vectors" and column == "vector_json" else server.sqlite3.SQLITE_OK)
+                    yield conn
+
+            with mock.patch.object(restarted.cache, "connect", metadata_only):
+                restored = list(restarted.fragment_index.all_vectors(profile))
+                second = restarted.search_docs("документ", None, 5)
+            self.assertEqual([p for p, _ in original], [p for p, _ in restored])
+            self.assertEqual([v.tobytes() for _, v in original], [v.tobytes() for _, v in restored])
+            self.assertEqual(first["results"], second["results"])
+
+    def test_binary_vector_cache_corruption_and_revision_change_reload_authoritative_sqlite(self):
+        items = [page(1, "# Раздел\n\nпервый документ"), page(2, "второй документ")]
+        with tempfile.TemporaryDirectory() as root:
+            service = self.service(root, items)
+            service.reindex_docs()
+            profile = service.embeddings.storage_model()
+            original = list(service.fragment_index.all_vectors(profile))
+            path = service.fragment_index._disk_search_cache
+            path.write_bytes(path.read_bytes()[:-16])
+            restarted = self.service(root, items)
+            with self.assertLogs(level="WARNING"):
+                recovered = list(restarted.fragment_index.all_vectors(profile))
+            self.assertEqual([v.tobytes() for _, v in original], [v.tobytes() for _, v in recovered])
+            changed = page(1, "# Новый раздел\n\nизмененный документ " * 100)
+            restarted.index_page(changed)
+            restarted.fragment_index.reconcile({1})
+            after_edit = self.service(root, [changed])
+            result = list(after_edit.fragment_index.all_vectors(profile))
+            self.assertTrue(result)
+            self.assertEqual({p["id"] for p, _ in result}, {1})
+            self.assertTrue(all(p["content_text"] == server.clean_text(changed["markdown"]) for p, _ in result))
+            self.assertNotEqual(len(original), len(result))
+            path.unlink()
+            after_edit.fragment_index._search_cache = (None, None)
+            with mock.patch("fragment_index.os.replace", side_effect=PermissionError), self.assertLogs(level="WARNING"):
+                unavailable = list(after_edit.fragment_index.all_vectors(profile))
+            self.assertEqual([v.tobytes() for _, v in unavailable], [v.tobytes() for _, v in result])
+            self.assertFalse(list(path.parent.glob(".bookstack-vectors-*.tmp")))
 
     def test_structure_preserves_blocks_and_full_unicode_tail(self):
         table = "| поле | значение |\n" + "| срок | месяц |\n" * 5

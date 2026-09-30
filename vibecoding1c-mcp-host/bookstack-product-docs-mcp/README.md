@@ -143,6 +143,14 @@ The service warms this cache in the background at startup and after a completed
 reindex. Searches arriving during that initial load may still wait for the cold
 SQLite read; subsequent searches reuse the loaded vectors. The warmup does not
 change the index or make remote query-embedding requests.
+The vector cache also retains one disposable binary snapshot at
+`<BOOKSTACK_CACHE_PATH>.search-vectors.zip` (uncompressed float64, about 46 MiB for
+1486 Qwen fragments). A restart checks its complete page/profile revision key,
+dimensions, record count and CRC before reuse. Current page content and fragment
+metadata always come from the same SQLite snapshot. Stale, corrupt or unavailable
+binary files trigger the normal complete SQLite load. Atomic replacement retains
+one current snapshot; the document database remains authoritative and older server
+versions ignore the file. Values, cosine scoring and ranking are unchanged.
 The pinned tokenizer also loads in a separate startup worker, independently of
 reindexing. Concurrent indexing/search calls share one initialization. A query
 arriving before that worker finishes waits for the same exact tokenizer; token
