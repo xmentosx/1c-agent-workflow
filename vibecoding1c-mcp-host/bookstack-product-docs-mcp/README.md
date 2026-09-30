@@ -16,10 +16,14 @@ retain the existing BookStack API search fallback when the local search has no m
 or `filters.live=true`; semantic mode never mixes in lexical fallback. Text search is
 independent of semantic-index readiness and provider availability. Keep the same query,
 filters and mode when following `next_cursor`.
-For plan-editor collaboration queries, local FTS expands Russian forms of
-`параллельная работа` and `многопользовательская работа` and ranks a matching
-collaboration architecture title ahead of general editor pages. The expansion
-is limited to queries that also mention the plan editor.
+Local FTS uses the standard Snowball Russian stemmer to match inflections through
+prefixes in the existing `unicode61` index. Stems shorter than three letters,
+Latin tokens, numbers and identifiers remain exact. This is suffix stemming, not
+a synonym dictionary or complete linguistic lemmatization. BM25 weights are
+4 for titles, 1 for content and 2 for tags. Hybrid ranking combines the lexical
+and cosine result positions using reciprocal rank fusion (constant 60), retaining
+the existing exact-phrase priority. Semantic mode keeps cosine order. There are
+no topic-specific query rules, page boosts or corpus schema changes.
 
 The embedding client keeps the last 256 successful query vectors in an in-memory LRU
 cache, keyed by the exact prefixed input hash and embedding profile. Repeated queries,

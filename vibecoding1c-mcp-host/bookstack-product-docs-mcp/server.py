@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 from urllib import error, parse, request
 
+import snowballstemmer
+
 try:
     import numpy as np
 except ImportError:  # Source tests can run before the server requirements are installed.
@@ -42,6 +44,7 @@ QWEN_REVISION = "c90816d848505624c2434128dfc61132162a0ee9"
 QWEN_INSTRUCTION = "Given a product documentation question, retrieve relevant passages that answer the question"
 QWEN_MIN_SCORE = 0.50
 QUERY_EMBEDDING_CACHE_SIZE = 256
+RECIPROCAL_RANK_CONSTANT = 60
 
 
 class BookStackApiError(RuntimeError):
@@ -689,20 +692,14 @@ class DocsCache:
             )
 
     def search(self, query: str, limit: int, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-        tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
-        fts_query = " AND ".join(f'"{token}"' for token in tokens if token.strip())
-        if is_plan_editor_collaboration_query(query):
-            # BookStack uses both terms for the same feature, while FTS5 does
-            # not stem Russian inflections. Keep this expansion scoped to the
-            # plan editor so broad collaboration queries retain their meaning.
-            fts_query = '("параллельн"* OR "многопользовательск"*) AND "работ"* AND "редактор"* AND "план"*'
+        fts_query = build_local_fts_query(query)
         rows: List[sqlite3.Row] = []
         with self.connect() as conn:
             if fts_query:
                 try:
                     rows = conn.execute(
                         """
-                        SELECT p.*, bm25(pages_fts) AS rank
+                        SELECT p.*, bm25(pages_fts, 4.0, 1.0, 2.0) AS rank
                         FROM pages_fts
                         JOIN pages p ON p.id = pages_fts.rowid
                         WHERE pages_fts MATCH ?
@@ -726,7 +723,10 @@ class DocsCache:
                     (like, like, max(limit, 1)),
                 ).fetchall()
         pages = [self._row_to_page(row) for row in rows]
-        return [page for page in pages if matches_filters(page, filters)]
+        pages = [page for page in pages if matches_filters(page, filters)]
+        for rank, page in enumerate(pages, 1):
+            page["_lexical_rank"] = rank
+        return pages
 
     def all_embeddings(self, model: str) -> List[Tuple[Dict[str, Any], List[float]]]:
         with self.connect() as conn:
@@ -911,6 +911,8 @@ class ProductDocsService:
                     best[page["id"]] = page
         scored = list(best.values())
         scored.sort(key=lambda item: float(item.get("semantic_score", 0)), reverse=True)
+        for rank, page in enumerate(scored[:limit], 1):
+            page["_semantic_rank"] = rank
         return scored[:limit]
 
     def read_page(
@@ -1436,39 +1438,48 @@ def merge_results(*result_sets: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
                 current.update({key: value for key, value in item.items() if value})
             if item.get("semantic_score"):
                 current["semantic_score"] = item["semantic_score"]
+                if "_semantic_rank" in item:
+                    current["_semantic_rank"] = item["_semantic_rank"]
                 if "fragment" in item:
                     current["fragment"] = item["fragment"]
                     current["fragment_text"] = item["fragment_text"]
+            if "_lexical_rank" in item:
+                current["_lexical_rank"] = item["_lexical_rank"]
     return list(by_key.values())
 
 
-def is_plan_editor_collaboration_query(query: str) -> bool:
-    normalized = clean_text(query).casefold()
-    return ("редактор" in normalized and "план" in normalized
-            and ("параллельн" in normalized or "многопользовательск" in normalized))
+def build_local_fts_query(query: str) -> str:
+    # Prefixes search the existing unicode61 index: no corpus migration or
+    # replacement of the semantic index is needed. Keep identifiers exact and
+    # avoid broad prefixes for very short Russian stems.
+    stemmer = snowballstemmer.stemmer("russian")
+    terms = []
+    for token in dict.fromkeys(re.findall(r"[\w-]+", query.casefold(), flags=re.UNICODE)):
+        russian = bool(re.fullmatch(r"[а-яё]+", token))
+        stem = stemmer.stemWord(token) if russian else token
+        # Uninflected nouns also need a prefix (редактор -> редакторе).
+        terms.append(f'"{stem}"*' if russian and len(stem) >= 3 else f'"{token}"')
+    return " AND ".join(terms)
 
 
 def rank_search_results(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
     phrase = clean_text(query).casefold()
-    collaboration_query = is_plan_editor_collaboration_query(query)
     indexed_results = list(enumerate(results))
 
-    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, int, int, float, int]:
+    def rank(item: Tuple[int, Dict[str, Any]]) -> Tuple[int, float, float, int]:
         original_index, page = item
-        title = clean_text(page.get("title") or page.get("name") or "").casefold()
         searchable_text = clean_text(
             f"{page.get('title') or page.get('name') or ''}\n{page.get('content_text') or page.get('preview') or ''}"
         ).casefold()
         exact_phrase = bool(phrase and phrase in searchable_text)
-        collaboration_title = (collaboration_query and
-                               ("параллельн" in title or "многопользовательск" in title) and
-                               "редактор" in searchable_text and "план" in searchable_text)
         semantic_score = page.get("semantic_score")
-        has_semantic_score = semantic_score is not None
+        # Both channels contribute their order, so raw BM25 and cosine values
+        # never need incomparable score scales or topic-specific boosts.
+        fused_score = sum(1.0 / (RECIPROCAL_RANK_CONSTANT + page[key])
+                          for key in ("_lexical_rank", "_semantic_rank") if key in page)
         return (
-            0 if collaboration_title else 1,
             0 if exact_phrase else 1,
-            0 if has_semantic_score else 1,
+            -fused_score,
             -float(semantic_score or 0.0),
             original_index,
         )

@@ -778,7 +778,7 @@ class ProductDocsServiceTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["id"], 30)
         self.assertIn("unique-needle", result["results"][0]["preview"])
 
-    def test_plan_editor_collaboration_vocabulary_finds_the_architecture_page(self):
+    def test_plan_editor_inflections_find_the_architecture_page(self):
         generic = page(1, "Редактор планов поддерживает параллельную работу пользователей.")
         generic["name"] = "Редактор планов. Возможности"
         architecture = page(2, "Механизм параллельной работы используется в редакторе планов.")
@@ -791,15 +791,49 @@ class ProductDocsServiceTests(unittest.TestCase):
                           "многопользовательская работа редактор планов"):
                 with self.subTest(query=query):
                     result = service.search_docs(query, None, 5, mode="text")
-                    self.assertEqual(result["results"][0]["id"], 2)
-                    self.assertEqual(result["total_matches"], 2)
+                    self.assertIn(2, [p["id"] for p in result["results"][:3]])
 
-        semantic_candidates = [
-            {"id": 1, "title": generic["name"], "content_text": generic["markdown"], "semantic_score": 0.8},
-            {"id": 2, "title": architecture["name"], "content_text": architecture["markdown"], "semantic_score": 0.6},
+    def test_russian_inflections_work_across_topics_and_keep_identifiers_exact(self):
+        cases = [
+            ("Распределение ресурсов", ("распределение ресурсами", "распределения ресурса")),
+            ("Согласование бюджетов", ("согласовании бюджета", "согласование бюджетами")),
+            ("Расчет себестоимости", ("расчетом себестоимость", "расчета себестоимости")),
+            ("Назначение ролей", ("назначения ролями", "назначении роли")),
+            ("Изменение сроков", ("изменения срока", "изменении сроками")),
         ]
-        self.assertEqual(server.rank_search_results(semantic_candidates,
-                         "параллельная работа редактор планов")[0]["id"], 2)
+        pages = [dict(page(i, title), name=title) for i, (title, _) in enumerate(cases, 1)]
+        pages += [page(6, "PM500 упо_РасчетСроковДополнение ОСАГО"),
+                  page(7, "PM5 упо_РасчетСроков ОС")]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            for item in pages:
+                service.index_page(item)
+            for i, (_, queries) in enumerate(cases, 1):
+                for query in queries:
+                    with self.subTest(query=query):
+                        result = service.search_docs(query, None, 5, mode="text")
+                        self.assertEqual([p["id"] for p in result["results"]], [i])
+            for query in ("PM5", "упо_РасчетСроков", "ОС"):
+                with self.subTest(query=query):
+                    self.assertEqual([p["id"] for p in service.cache.search(query, 5, {})], [7])
+
+    def test_hybrid_retains_bm25_evidence_and_semantic_mode_retains_cosine_order(self):
+        pages = [page(1, "Обмен сведениями, включая данные проекта."),
+                 page(2, "Экономическая информация между системами.")]
+        with tempfile.TemporaryDirectory() as temp_root:
+            service = self.make_service(temp_root, pages)
+            service.embeddings = RankingEmbeddings()
+            # Both documents pass the semantic threshold; page 2 is the cosine
+            # leader, but only page 1 matches the lexical query in the first run.
+            service.settings = replace(service.settings, semantic_min_score=0.5)
+            for item in pages:
+                service.index_page(item)
+            hybrid = service.search_docs("обмен данными", None, 1)
+            continuation = service.search_docs("обмен данными", None, 1, cursor=hybrid["next_cursor"])
+            semantic = service.search_docs("обмен данными", None, 5, mode="semantic")
+            self.assertEqual([hybrid["results"][0]["id"], continuation["results"][0]["id"]], [1, 2])
+            self.assertEqual([p["id"] for p in semantic["results"]], [2, 1])
+            self.assertFalse(any(k.startswith("_") for k in hybrid["results"][0]))
 
     def test_background_warm_primes_vectors_before_first_search(self):
         with tempfile.TemporaryDirectory() as temp_root:
