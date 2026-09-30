@@ -6,6 +6,7 @@ import types
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from dataclasses import replace
 import unittest
 from pathlib import Path
@@ -242,6 +243,73 @@ class BookStackClientStructureTests(unittest.TestCase):
 
 
 class EmbeddingClientTests(unittest.TestCase):
+    def test_disk_query_cache_survives_clients_and_scopes_full_input_profile_and_credentials(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                               embedding_api_base="https://example.test/v1", embedding_api_key="secret-marker",
+                               query_cache_path=str(Path(root)/"кеш запросов.sqlite"))
+            def client(options=settings):
+                value = server.EmbeddingClient(options)
+                value.embed = mock.Mock(return_value=[1.0, 0.0])
+                return value
+            first = client()
+            self.assertEqual(first.embed_query("полный вопрос"), [1.0, 0.0])
+            restarted = client()
+            trace = {}
+            self.assertEqual(restarted.embed_query("полный вопрос", trace), [1.0, 0.0])
+            self.assertEqual(trace["query_embedding_disk_cache"], "hit")
+            restarted.embed.assert_not_called()
+            for options, question in ((settings, "полный вопрос!"),
+                                      (replace(settings, embedding_model="other-model"), "полный вопрос"),
+                                      (replace(settings, embedding_api_key="other-secret"), "полный вопрос")):
+                changed = client(options)
+                self.assertEqual(changed.embed_query(question), [1.0, 0.0])
+                changed.embed.assert_called_once()
+            stored = Path(settings.query_cache_path).read_bytes()
+            self.assertNotIn("полный вопрос".encode(), stored)
+            self.assertNotIn(b"secret-marker", stored)
+            failed = client()
+            failed.embed.side_effect = server.BookStackApiError("provider unavailable")
+            with self.assertRaises(server.BookStackApiError):
+                failed.embed_query("новый вопрос")
+            retry = client()
+            self.assertEqual(retry.embed_query("новый вопрос"), [1.0, 0.0])
+            retry.embed.assert_called_once()
+
+    def test_disk_query_cache_enforces_lru_ttl_and_vector_validation(self):
+        with tempfile.TemporaryDirectory() as root, mock.patch("query_cache.time.time", return_value=100) as clock:
+            cache = server.QueryVectorCache(str(Path(root)/"queries.sqlite"), 2, 10)
+            cache.put("first", [1.0, 0.0])
+            clock.return_value = 101
+            cache.put("second", [0.0, 1.0])
+            clock.return_value = 102
+            self.assertEqual(list(cache.get("first", 2)), [1.0, 0.0])
+            clock.return_value = 103
+            cache.put("third", [1.0, 1.0])
+            self.assertIsNone(cache.get("second", 2))
+            self.assertEqual(list(cache.get("third", 2)), [1.0, 1.0])
+            clock.return_value = 111
+            self.assertIsNone(cache.get("first", 2))
+            self.assertEqual(list(cache.get("third", 2)), [1.0, 1.0])
+            self.assertIsNone(cache.get("third", 4096))
+            with closing(server.sqlite3.connect(cache.path)) as conn:
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM query_vectors").fetchone()[0], 0)
+
+    def test_unavailable_disk_cache_keeps_complete_provider_vector(self):
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"), query_cache_path=root)
+            client = server.EmbeddingClient(settings)
+            client.embed = mock.Mock(return_value=[1.0, 0.0])
+            with self.assertLogs(level="WARNING"):
+                self.assertEqual(client.embed_query("полный вопрос"), [1.0, 0.0])
+            client.embed.assert_called_once()
+            settings = replace(settings, query_cache_path=str(Path(root)/"disabled.sqlite"),
+                               embedding_query_cache_ttl_seconds=0)
+            disabled = server.EmbeddingClient(settings)
+            disabled.embed = mock.Mock(return_value=[1.0, 0.0])
+            self.assertEqual(disabled.embed_query("полный вопрос"), [1.0, 0.0])
+            self.assertFalse(Path(settings.query_cache_path).exists())
+
     def test_startup_warms_pinned_tokenizer_once_alongside_foreground_access(self):
         with tempfile.TemporaryDirectory() as root:
             settings = replace(make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b"),
@@ -296,7 +364,7 @@ class EmbeddingClientTests(unittest.TestCase):
             module.AutoTokenizer.from_pretrained.assert_called_once_with(
                 server.QWEN_TOKENIZER, cache_dir=client.cache_dir, use_fast=True, revision=server.QWEN_REVISION)
             client._remote_batch.assert_called_once_with([
-                f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя"])
+                f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя"], cache_remote=True, telemetry=None)
 
     def test_query_cache_is_bounded_profile_specific_and_returns_independent_vectors(self):
         with tempfile.TemporaryDirectory() as root, mock.patch.object(server, "QUERY_EMBEDDING_CACHE_SIZE", 2):
@@ -333,7 +401,7 @@ class EmbeddingClientTests(unittest.TestCase):
                         waiting.set()
                         return super().result(timeout=5)
 
-                def embed(text):
+                def embed(text, **kwargs):
                     entered.set()
                     if not release.wait(5):
                         raise TimeoutError("test did not release provider")
@@ -370,7 +438,7 @@ class EmbeddingClientTests(unittest.TestCase):
             )
             client = server.EmbeddingClient(settings)
             inputs = []
-            client.embed = lambda text: inputs.append(text) or [1.0]
+            client.embed = lambda text, **kwargs: inputs.append(text) or [1.0]
 
             client.embed_query("заказ")
             client.embed_passage("Документ заказа")
@@ -383,7 +451,7 @@ class EmbeddingClientTests(unittest.TestCase):
             settings = make_settings(Path(root) / "cache.sqlite", "qwen/qwen3-embedding-8b")
             client = server.EmbeddingClient(settings)
             inputs = []
-            client.embed = lambda text: inputs.append(text) or [1.0]
+            client.embed = lambda text, **kwargs: inputs.append(text) or [1.0]
             client.embed_query("права пользователя")
             client.embed_passage("Полный текст документа")
             self.assertEqual(inputs[0], f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:права пользователя")
@@ -436,6 +504,71 @@ class EmbeddingClientTests(unittest.TestCase):
                         self.assertEqual(body["provider"], {"sort": "latency"})
                     else:
                         self.assertNotIn("provider", body)
+
+    def test_openrouter_query_response_cache_survives_new_client_without_caching_passages(self):
+        model = "qwen/qwen3-embedding-8b"
+        with tempfile.TemporaryDirectory() as root:
+            settings = replace(make_settings(Path(root)/"cache.sqlite", model),
+                               embedding_api_base="https://openrouter.ai/api/v1")
+            vector = [1.0] + [0.0] * 4095
+            cached = {}
+            def gateway(url, *, json, headers):
+                key = repr(json)
+                enabled = headers.get("X-OpenRouter-Cache") == "true"
+                hit = enabled and key in cached
+                if enabled:
+                    self.assertEqual(headers["X-OpenRouter-Cache-TTL"], "86400")
+                    cached[key] = vector
+                inputs = json["input"] if isinstance(json["input"], list) else [json["input"]]
+                return server.httpx.Response(200, request=server.httpx.Request("POST", url),
+                    headers={"X-OpenRouter-Cache-Status": "HIT" if hit else "MISS"},
+                    json={"model": model, "provider": None if hit else "fixture",
+                          "data": [{"index": i, "embedding": vector} for i, _ in enumerate(inputs)],
+                          "usage": {"prompt_tokens": 0 if hit else 10}})
+            with mock.patch.object(server.httpx.Client, "post", side_effect=gateway) as call:
+                for expected in ("MISS", "HIT"):
+                    client = server.EmbeddingClient(settings)
+                    client._tokenizer = WordTokenizer()
+                    trace = {}
+                    self.assertEqual(client.embed_query("полный вопрос", trace), vector)
+                    self.assertEqual(trace["provider_response_cache"], expected)
+                    self.assertEqual(trace["query_embedding_cache"], "miss")
+                    self.assertEqual(call.call_args.kwargs["json"]["input"],
+                                     f"Instruct: {server.QWEN_INSTRUCTION}\nQuery:полный вопрос")
+                client.embed_passage("полный документ")
+                self.assertNotIn("X-OpenRouter-Cache", call.call_args.kwargs["headers"])
+                client.embed_passages(["первый документ", "второй документ"])
+                self.assertNotIn("X-OpenRouter-Cache", call.call_args.kwargs["headers"])
+
+    def test_provider_order_and_query_cache_settings_are_scoped_to_openrouter(self):
+        with mock.patch.dict(os.environ, {"BOOKSTACK_EMBEDDING_PROVIDER_ORDER": " first,second,first, ",
+                                         "BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS": "3600"}):
+            settings = server.Settings.from_env()
+            self.assertEqual(settings.embedding_provider_order, ("first", "second"))
+            self.assertEqual(settings.embedding_query_cache_ttl_seconds, 3600)
+        with tempfile.TemporaryDirectory() as root:
+            for base, ttl in (("https://openrouter.ai/api/v1", 3600),
+                              ("https://openrouter.ai/api/v1", 0), ("https://example.test/v1", 3600)):
+                with self.subTest(base=base, ttl=ttl):
+                    settings = replace(make_settings(Path(root)/"cache.sqlite", "remote-model"),
+                                       embedding_api_base=base, embedding_provider_order=("first", "second"),
+                                       embedding_query_cache_ttl_seconds=ttl)
+                    client = server.EmbeddingClient(settings)
+                    client._tokenizer = WordTokenizer()
+                    response = server.httpx.Response(200, request=server.httpx.Request("POST", base),
+                        json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+                    with mock.patch.object(server.httpx.Client, "post", return_value=response) as call:
+                        self.assertEqual(client.embed_query("complete query"), [1.0, 0.0])
+                    body, headers = call.call_args.kwargs["json"], call.call_args.kwargs["headers"]
+                    if "openrouter.ai" in base:
+                        self.assertEqual(body["provider"], {"order": ["first", "second"], "allow_fallbacks": True})
+                    else:
+                        self.assertNotIn("provider", body)
+                    self.assertEqual("X-OpenRouter-Cache" in headers, "openrouter.ai" in base and ttl > 0)
+                    original = client.storage_model()
+                    client.provider_order = ("third",)
+                    client.query_cache_ttl_seconds = 0
+                    self.assertEqual(client.storage_model(), original)
 
     def test_remote_reuses_client_and_retries_only_failed_connections(self):
         with tempfile.TemporaryDirectory() as root:

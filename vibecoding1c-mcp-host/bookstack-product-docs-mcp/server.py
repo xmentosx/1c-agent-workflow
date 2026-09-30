@@ -28,6 +28,7 @@ except ImportError:  # Source tests can run before the server requirements are i
     np = None
 
 from fragment_index import CHUNK_VERSION, FragmentIndex, checked_vector, fragments
+from query_cache import QueryVectorCache
 
 
 DEFAULT_SEARCH_LIMIT = 5
@@ -178,6 +179,9 @@ class Settings:
     embedding_cache_dir: str
     chunk_tokens: int = 1024
     chunk_overlap: int = 64
+    embedding_provider_order: Tuple[str, ...] = ()
+    embedding_query_cache_ttl_seconds: int = 86400
+    query_cache_path: str = ""
 
     @staticmethod
     def from_env() -> "Settings":
@@ -203,6 +207,13 @@ class Settings:
             ).strip(),
             chunk_tokens=int_env("BOOKSTACK_CHUNK_TOKENS", 1024),
             chunk_overlap=int_env("BOOKSTACK_CHUNK_OVERLAP", 64),
+            embedding_provider_order=tuple(dict.fromkeys(
+                item.strip() for item in os.environ.get("BOOKSTACK_EMBEDDING_PROVIDER_ORDER", "").split(",")
+                if item.strip())),
+            embedding_query_cache_ttl_seconds=max(0, min(86400,
+                int_env("BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS", 86400))),
+            query_cache_path=os.environ.get("BOOKSTACK_QUERY_CACHE_PATH",
+                os.environ.get("BOOKSTACK_CACHE_PATH", "/data/bookstack-cache.sqlite") + ".query-vectors.sqlite").strip(),
         )
 
     def validate(self) -> None:
@@ -342,6 +353,10 @@ class EmbeddingClient:
         self._query_lock = threading.Lock()
         self._http_client = None
         self._http_lock = threading.Lock()
+        self.provider_order = settings.embedding_provider_order
+        self.query_cache_ttl_seconds = settings.embedding_query_cache_ttl_seconds
+        self._disk_query_cache = QueryVectorCache(settings.query_cache_path,
+                                                  QUERY_EMBEDDING_CACHE_SIZE, self.query_cache_ttl_seconds)
 
     def mode(self) -> str:
         if not self.model:
@@ -395,7 +410,7 @@ class EmbeddingClient:
         if self.is_qwen():
             prefix = f"Instruct: {QWEN_INSTRUCTION}\nQuery:"
         input_text = prefix + text
-        key = (self.storage_model(), hash_text(input_text))
+        key = (self.storage_model(), hash_text(self.api_key), hash_text(input_text))
         with self._query_lock:
             if key in self._query_cache:
                 self._query_cache.move_to_end(key)
@@ -412,7 +427,13 @@ class EmbeddingClient:
         if not owner:
             return list(pending.result())
         try:
-            vector = array("d", self.embed(input_text))
+            disk_key = hash_text(json.dumps(key))
+            vector = self._disk_query_cache.get(disk_key, 4096 if self.is_qwen() else None)
+            if telemetry is not None:
+                telemetry["query_embedding_disk_cache"] = "hit" if vector is not None else "miss"
+            if vector is None:
+                vector = array("d", self.embed(input_text, cache_remote=True, telemetry=telemetry))
+                self._disk_query_cache.put(disk_key, vector)
             with self._query_lock:
                 if vector:
                     self._query_cache[key] = vector
@@ -431,7 +452,8 @@ class EmbeddingClient:
         prefix = "passage: " if self.uses_e5_retrieval_prefixes() else ""
         return self.embed(prefix + text)
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str, *, cache_remote: bool = False,
+              telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
         if not self.enabled():
             return []
         tokens = len(self.tokenizer().encode(text, add_special_tokens=True))
@@ -439,11 +461,12 @@ class EmbeddingClient:
         if tokens > maximum:
             raise BookStackApiError(f"Embedding input has {tokens} tokens, limit {maximum}; shorten the query or reindex with smaller fragments")
         if self.api_base:
-            return self.embed_remote(text)
+            return self.embed_remote(text, cache_remote=cache_remote, telemetry=telemetry)
         return self.embed_local(text)
 
-    def embed_remote(self, text: str) -> List[float]:
-        return self._remote_batch([text])[0]
+    def embed_remote(self, text: str, *, cache_remote: bool = False,
+                     telemetry: Optional[Dict[str, Any]] = None) -> List[float]:
+        return self._remote_batch([text], cache_remote=cache_remote, telemetry=telemetry)[0]
 
     def embed_passages(self, texts: List[str]) -> List[List[float]]:
         if not self.api_base:
@@ -464,11 +487,17 @@ class EmbeddingClient:
                 )
             return self._http_client
 
-    def _remote_batch(self, texts: List[str]) -> List[List[float]]:
+    def _remote_batch(self, texts: List[str], *, cache_remote: bool = False,
+                      telemetry: Optional[Dict[str, Any]] = None) -> List[List[float]]:
         body = {"model": self.model, "input": texts[0] if len(texts) == 1 else texts, "encoding_format": "float"}
-        if parse.urlsplit(self.api_base).hostname == "openrouter.ai":
-            body["provider"] = {"sort": "latency"}
+        openrouter = parse.urlsplit(self.api_base).hostname == "openrouter.ai"
+        if openrouter:
+            body["provider"] = ({"order": list(self.provider_order), "allow_fallbacks": True}
+                                if self.provider_order else {"sort": "latency"})
         headers = {"Content-Type": "application/json"}
+        if openrouter and cache_remote and self.query_cache_ttl_seconds:
+            headers.update({"X-OpenRouter-Cache": "true",
+                            "X-OpenRouter-Cache-TTL": str(self.query_cache_ttl_seconds)})
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
@@ -485,6 +514,10 @@ class EmbeddingClient:
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", "unavailable")
             raise BookStackApiError(f"Embedding request failed ({type(exc).__name__}, HTTP {status}); retry reindex_docs") from exc
+        if telemetry is not None:
+            telemetry["embedding_provider"] = str(result.get("provider") or "")[:80]
+            telemetry["provider_response_cache"] = str(response.headers.get("X-OpenRouter-Cache-Status")
+                                                       or "unreported")[:20]
         if self.on_usage is not None:
             self.on_usage(result.get("usage") or {})
         data = result.get("data", [])
@@ -894,6 +927,9 @@ class ProductDocsService:
                 "live_fallback_ms": live_ms,
                 "total_ms": round((time.perf_counter() - started) * 1000, 1),
                 "query_embedding_cache": semantic_trace.get("query_embedding_cache", "not_requested"),
+                "query_embedding_disk_cache": semantic_trace.get("query_embedding_disk_cache", "not_requested"),
+                "embedding_provider": semantic_trace.get("embedding_provider", ""),
+                "provider_response_cache": semantic_trace.get("provider_response_cache", "not_requested"),
                 "scored_fragments": semantic_trace.get("scored_fragments", 0),
             }
             if semantic_trace.get("embedding_error"):

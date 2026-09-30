@@ -27,19 +27,42 @@ without a lexical rank. There are
 no topic-specific query rules, page boosts or corpus schema changes.
 
 The embedding client keeps the last 256 successful query vectors in an in-memory LRU
-cache, keyed by the exact prefixed input hash and embedding profile. Repeated queries,
+cache, keyed by the exact prefixed input hash, embedding profile and credential hash. Repeated queries,
 including pagination and different filters, reuse the vector. Concurrent identical
 queries share one provider request; failures are not cached. Results are recomputed
 against current page revisions, so edits and reindexing remain visible. Changing the
-model/profile cannot reuse incompatible entries; restarting the process empties the
-cache. Packed Qwen vectors consume up to 8 MiB plus small cache overhead. This adds no
-SQLite schema migration and requires no reindexing.
+model/profile cannot reuse incompatible entries. Packed Qwen vectors consume up to
+8 MiB plus small cache overhead.
 
-Requests to the official OpenRouter hostname set `provider.sort=latency`, retaining
-its default provider fallback. This selects a serving provider for the same model;
+A separate disposable SQLite file (`<BOOKSTACK_CACHE_PATH>.query-vectors.sqlite`)
+retains up to 256 query vectors across restarts, with the same key and a 24-hour TTL.
+It stores float64 vectors and hashes, not query text or credentials. LRU eviction,
+expiry and vector/dimension validation bound reuse. Errors in this optional cache
+fall back to the normal complete embedding request; they never modify the document
+index. `BOOKSTACK_QUERY_CACHE_PATH` can override the path (empty disables disk caching).
+`embeddingQueryCacheTtlSeconds` also controls disk TTL; zero disables both disk and
+OpenRouter response caching. The in-memory LRU remains available. This adds no
+document-index schema migration and requires no reindexing; previous server versions
+ignore the new disposable file during rollback.
+
+Queries sent to the official OpenRouter hostname also enable its response cache
+with a 24-hour TTL. Identical request bodies under the same API key can reuse the
+complete query vector after a process restart. OpenRouter may evict entries before
+expiry; a cache miss makes the normal complete embedding request. Passage/indexing
+requests do not enable this cache. `embeddingQueryCacheTtlSeconds` in the host config
+(`BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS`) sets the TTL; zero disables it.
+This caches vectors, not search results: every search still scores the current index.
+See [OpenRouter response caching](https://openrouter.ai/docs/guides/features/response-caching).
+
+Requests to the official OpenRouter hostname default to `provider.sort=latency`.
+An optional `embeddingProviderOrder` array in the host config
+(`BOOKSTACK_EMBEDDING_PROVIDER_ORDER`, comma-separated) sets provider preference
+while keeping fallback enabled. This selects a serving provider for the same model;
 it does not change the embedding input, profile, dimension, index or result coverage.
 Other embedding API endpoints retain their existing request body. External latency
 and availability can still vary; full hybrid search waits for the query vector.
+Diagnostics include the serving provider and OpenRouter response-cache `HIT`/`MISS`
+when reported; the in-memory cache avoids the HTTP request entirely.
 The embedding client reuses HTTP connections (up to ten idle connections, expiry
 60 seconds), with normal certificate verification and environment proxy settings.
 Connection establishment has a five-second timeout and one retry for connection

@@ -104,7 +104,7 @@
         @{ apiBase = "https://openrouter.ai/api/v1"; apiKey = "fixture-bookstack-key"; model = "qwen/qwen3-embedding-8b" } | ConvertTo-Json | Set-Content -LiteralPath $credentialPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
-            $config = [pscustomobject]@{ stateRoot = $tempRoot; embedding = @{ model = "intfloat/multilingual-e5-base" }; secrets = @{ BOOKSTACK_TOKEN_ID = "fixture-id"; BOOKSTACK_TOKEN_SECRET = "fixture-secret" }; bookStackProductDocsServer = @{ baseUrl = "https://bookstack.test"; embedding = @{ credentialFile = $credentialPath } } }
+            $config = [pscustomobject]@{ stateRoot = $tempRoot; embedding = @{ model = "intfloat/multilingual-e5-base" }; secrets = @{ BOOKSTACK_TOKEN_ID = "fixture-id"; BOOKSTACK_TOKEN_SECRET = "fixture-secret" }; bookStackProductDocsServer = @{ baseUrl = "https://bookstack.test"; embedding = @{ credentialFile = $credentialPath }; embeddingProviderOrder = @("first", "second"); embeddingQueryCacheTtlSeconds = 3600 } }
             foreach ($id in @("bookstack", "docs", "syntax", "templates", "ssl", "mantis", "code", "graph")) {
                 $server = [pscustomobject]@{ id = $id; embedding = $true; env = @(); volumes = @() }
                 $settings = Get-HostEmbeddingSettings -Config $config -Server $server
@@ -121,6 +121,8 @@
             $bookstackEnv = Resolve-ServerEnv -Config $config -Server (Get-BookStackProductDocsServerDefinition)
             $bookstackEnv.BOOKSTACK_EMBEDDING_MODEL | Should -Be "qwen/qwen3-embedding-8b"
             $bookstackEnv.BOOKSTACK_EMBEDDING_API_KEY | Should -Be "fixture-bookstack-key"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_PROVIDER_ORDER | Should -Be "first,second"
+            $bookstackEnv.BOOKSTACK_EMBEDDING_QUERY_CACHE_TTL_SECONDS | Should -Be "3600"
             $bookstackEnv.Contains("BOOKSTACK_SEMANTIC_MIN_SCORE") | Should -BeFalse
             $script:BookStackProbedModel = ""
             function Test-HostEmbeddingEndpointReady {
@@ -1250,7 +1252,7 @@ services:
             $ErrorActionPreference = $previousErrorActionPreference
         }
         $exitCode | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-        ($output -join [Environment]::NewLine) | Should -Match "Ran 43 tests"
+        ($output -join [Environment]::NewLine) | Should -Match "Ran 48 tests"
     }
 
     It "applies the shared codechecker transport retry contract" {
