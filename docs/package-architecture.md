@@ -111,6 +111,18 @@ Record the remaining blocker and compare rollback/removal, an owner-local
 design, and a revised shared design. New evidence or real acceptance progress
 continues the current cycle; a timeout alone is not an architecture failure.
 
+The user approved controlled `client_mcp` metadata maintenance during the
+upstream migration on 2026-10-01. The existing component delivery owner owns
+its immutable CFE and complete corresponding-source ZIP. Its builder exports
+the exact published v0.6.5 baseline, adds one name-bound adopted Language and
+its ChildObjects declaration, and uses the existing per-infobase guard, Gate 6
+and restoration duty in a private service base. Installation remains owned by
+the existing Vanessa service/TestManager path; PM5 keeps VAExtension. No new
+runtime state machine, adapter, admission mode, platform requirement or client
+context is introduced. Publish optional supervisor support before requiring
+owned client assets in a production lock. Live service to TestClient acceptance
+and exact hashes remain required; build checks alone do not qualify delivery.
+
 ### Supported Windows and privilege boundary
 
 Normal installed-workflow operation supports Windows 10, Windows 11, and

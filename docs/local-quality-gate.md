@@ -276,8 +276,21 @@ Release capabilities. Для Vanessa это `extension-smoke` с `config-cadence
 кандидата для ZIP и отдельного `VAExtension` по URL, имени и SHA. Отсутствующий
 CFE извлекается из проверенного опубликованного ZIP, затем оба прямых URL
 проверяются повторно. Конфликтующие refs или байты закрыто блокируют
-публикацию. Внешние npm, PyPI, ROCTUP и `client_mcp` остаются только
-lock-проверяемыми upstream-зависимостями; `PublishDevelop` их не публикует.
+публикацию. Внешние npm, PyPI и ROCTUP остаются только lock-проверяемыми
+upstream-зависимостями; `PublishDevelop` их не публикует. Для `client_mcp`
+прежний внешний pin остаётся допустимым. Owned pin требует одновременно CFE
+и corresponding-source ZIP; missing asset выбирает существующую capability
+`ondemand-mcp`, а exact native build provenance, полный Gate 6 и live Vanessa
+доказываются для тех же байтов. Сначала отдельно публикуется поддержка finalizer
+в authority channel; только следующий candidate вводит owned URLs в lock.
+Если накопленная migration queue уже требует Gate 6, который отвергает прежний
+внешний CFE, support-only candidate готовится от опубликованного baseline в
+отдельном clone/common Git с собственной очередью. Его обычный PublishDevelop
+не включает миграцию и не изменяет исходную очередь. После публикации поддержки
+исходная очередь интегрируется с новым baseline через штатного владельца.
+Локальный `VANESSA_MCP_CLIENT_CFE_PATH` подаёт exact SHA candidate до публикации
+и не подтверждает устанавливаемость URL. Подробности сборки:
+[controlled client_mcp](../third-party/client-mcp/v0.6.5-itl-r1/REBUILD.md).
 
 Develop состоит из двух независимо квалифицируемых journey через публичные
 поверхности workflow:

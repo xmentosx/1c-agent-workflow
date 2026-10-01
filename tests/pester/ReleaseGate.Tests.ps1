@@ -88,7 +88,7 @@ Describe "Release gate scripts" {
         $probeText = Get-Content -LiteralPath (Join-Path $RepoRoot "tools\itl-ondemand-mcp\cmd\itl-ondemand-probe\main.go") -Raw -Encoding UTF8
         $probeText | Should -Match 'gatewayPublicToolCount = 2'
         $probeText | Should -Match 'item.count != gatewayPublicToolCount'
-        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 4'
+        (Get-Content -LiteralPath (Join-Path $RepoRoot "scripts\release-e2e\ondemand-mcp.ps1") -Raw -Encoding UTF8) | Should -Match 'ondemand-mcp" -Version 5'
         $e2eText | Should -Not -Match "load_features:directory"
         $e2eText | Should -Match "clientMcpSafeMode"
         $e2eText | Should -Match "vaExtensionSafeMode"

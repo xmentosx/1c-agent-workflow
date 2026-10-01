@@ -222,9 +222,12 @@ function Get-DeliveryPlanEnvironmentIdentity {
     } else {
         'missing'
     }
+    $clientBuild = [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process')
+    $clientBuildSha256 = if (-not $clientBuild) { 'unset' } elseif (Test-Path -LiteralPath $clientBuild -PathType Leaf) { Get-DeliveryFileSha256 -Path $clientBuild } else { 'missing' }
     return [ordered]@{
-        environmentIdentitySchemaVersion=2; mode=$Mode; standRoot=$standRoot; standFiles=$fileIdentity
+        environmentIdentitySchemaVersion=3; mode=$Mode; standRoot=$standRoot; standFiles=$fileIdentity
         aiRules=$rulesIdentity; vanessaSourceBuildSha256=$sourceBuildSha256
+        clientMcpSourceBuildSha256=$clientBuildSha256
         powershell="$($PSVersionTable.PSEdition)-$($PSVersionTable.PSVersion)"
     }
 }

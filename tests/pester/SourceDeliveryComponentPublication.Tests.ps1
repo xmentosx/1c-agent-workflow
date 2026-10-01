@@ -6,6 +6,7 @@ Describe "Source develop queue and delivery" {
             'Invoke-AiRulesComponentPublicationFinalize',
             'Invoke-VanessaComponentPublicationFinalize',
             'Invoke-OnDemandMcpComponentPublicationFinalize'
+            'Invoke-ClientMcpComponentPublicationFinalize'
         )) { $DeliverySourceText | Should -Match ([regex]::Escape($name)) }
         $aggregate = (Get-DeliveryFunctionDefinitions -Names @('Invoke-ComponentPublicationFinalizer')).Extent.Text
         @([regex]::Matches($aggregate, 'Invoke-(AiRules|Vanessa|OnDemandMcp)ComponentPublicationFinalize')).Count | Should -Be 3
@@ -92,6 +93,17 @@ Describe "Source develop queue and delivery" {
             $onDemandPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('b' * 40)
             @($onDemandPlan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
             @($onDemandPlan.components | Where-Object { $_.name -eq 'itlOndemandMcp' })[0].requiredReleaseCapabilities | Should -Be @('ondemand-mcp')
+
+            $lock.dependencies.vanessaMcp.clientMcp = [ordered]@{
+                version='v0.6.5';downstreamRevision='itl-r1';manifestSha256=('4'*64);upstreamCommit=('5'*40)
+                assetName='client.cfe';releaseTag='client-tag';url='https://github.com/owner/repo/releases/download/client-tag/client.cfe';sha256=('6'*64)
+                correspondingSource=[ordered]@{assetName='client.sources.zip';releaseTag='client-tag';url='https://github.com/owner/repo/releases/download/client-tag/client.sources.zip';sha256=('7'*64)}
+            }
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates/dependency-lock.json'), ($lock | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+            $script:missingAssetPattern = '*client.sources.zip'
+            $clientPlan = Get-OwnedComponentPublicationPlan -CandidateRoot $candidateRoot -CandidateCommit ('c'*40)
+            @($clientPlan.requiredReleaseCapabilities) | Should -Be @('ondemand-mcp')
+            @($clientPlan.components | Where-Object name -EQ clientMcp)[0].status | Should -Be 'missing'
         }
     }
 
@@ -112,6 +124,32 @@ Describe "Source develop queue and delivery" {
         }
     }
 
+    It 'supports a previous external client pin and requires paired source only for an owned client' {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryOwnedAssetNodes', 'Get-DeliveryOwnedAssetContracts')) { Invoke-Expression $definition.Extent.Text }
+            $asset = { param($name) [pscustomobject]@{assetName=$name;releaseTag='tag';url="https://github.com/owner/repo/releases/download/tag/$name";sha256=('a'*64)} }
+            $lock = [pscustomobject]@{dependencies=[pscustomobject]@{
+                vanessaAutomation=& $asset 'vanessa.zip'
+                itlOndemandMcp=& $asset 'facade.exe'
+                vanessaMcp=[pscustomobject]@{vaExtension=& $asset 'paired.cfe';clientMcp=[pscustomobject]@{url='https://github.com/upstream/client/releases/download/v0.6.5/client_mcp.cfe';sha256=('b'*64)}}
+            }}
+            @(Get-DeliveryOwnedAssetContracts $lock 'owner/repo').Count | Should -Be 3
+            $client = & $asset 'client.cfe'
+            $client | Add-Member -NotePropertyName version -NotePropertyValue 'v0.6.5'
+            $client | Add-Member -NotePropertyName downstreamRevision -NotePropertyValue 'itl-r1'
+            $client | Add-Member -NotePropertyName manifestSha256 -NotePropertyValue ('c'*64)
+            $client | Add-Member -NotePropertyName upstreamCommit -NotePropertyValue ('d'*40)
+            $lock.dependencies.vanessaMcp.clientMcp = $client
+            { Get-DeliveryOwnedAssetContracts $lock 'owner/repo' } | Should -Throw '*corresponding-source*'
+            $client | Add-Member -NotePropertyName correspondingSource -NotePropertyValue (& $asset 'client.sources.zip')
+            $contracts = @(Get-DeliveryOwnedAssetContracts $lock 'owner/repo')
+            $contracts.Count | Should -Be 5
+            @($contracts | Where-Object path -LIKE '*clientMcp*' | ForEach-Object releaseCapability) | Should -Be @('ondemand-mcp','ondemand-mcp')
+            $client.correspondingSource.sha256 = ''
+            { Get-DeliveryOwnedAssetContracts $lock 'owner/repo' } | Should -Throw '*invalid URL, tag, name, or SHA256*'
+        }
+    }
+
     It "accepts a previous tag only when both locked Vanessa assets have the same identity" {
         & {
             foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Assert-DeliveryComponentTagLockAgreement')) { Invoke-Expression $definition.Extent.Text }
@@ -128,6 +166,63 @@ Describe "Source develop queue and delivery" {
             $script:tagLock = $different | ConvertTo-Json -Depth 8
             { Assert-DeliveryComponentTagLockAgreement -CandidateRoot $TestDrive -TagCommit ('b' * 40) -CandidateLock $candidate -AssetPaths @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension') } |
                 Should -Throw '*different locked*'
+        }
+    }
+
+    It 'finalizes matched client CFE and source URLs without tag or asset mutation' {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Invoke-ClientMcpComponentPublicationFinalize')) { Invoke-Expression $definition.Extent.Text }
+            $candidateRoot = Join-Path $TestDrive 'client matched candidate'
+            [void][IO.Directory]::CreateDirectory((Join-Path $candidateRoot templates))
+            [IO.File]::WriteAllText((Join-Path $candidateRoot 'templates/dependency-lock.json'), '{"dependencies":{"vanessaMcp":{"clientMcp":{}}}}', [Text.Encoding]::UTF8)
+            $script:clientRemoteCalls = 0
+            $script:clientMissing = $false
+            function Get-DeliveryGitHubRepository { [pscustomobject]@{slug='owner/repo'} }
+            function Get-DeliveryOwnedAssetContracts { @([pscustomobject]@{path='dependencies.vanessaMcp.clientMcp';url='cfe';sha256=('a'*64)},[pscustomobject]@{path='dependencies.vanessaMcp.clientMcp.correspondingSource';url='sources';sha256=('b'*64)}) }
+            function Get-DeliveryRemoteAssetState { param($Url,$ExpectedSha256); $script:clientRemoteCalls++; [pscustomobject]@{status=$(if($script:clientMissing){'missing'}else{'matched'});sha256=$ExpectedSha256} }
+            function Invoke-WorktreeGit { throw 'Matched client must not mutate Git' }
+            function Invoke-DeliveryGitHubCli { throw 'Matched client must not mutate release assets' }
+            function Save-DeliveryComponentPublicationEvidence {param($CandidateCommit,$FileName,$Evidence);$FileName | Should -Be 'client-mcp.json'}
+            $RequireRelease = $false
+            $result = Invoke-ClientMcpComponentPublicationFinalize $candidateRoot ('a'*40)
+            $result.installable | Should -BeTrue
+            $result.mutated | Should -BeFalse
+            $script:clientRemoteCalls | Should -Be 4 -Because 'both direct URLs are checked again after finalization'
+            $script:clientMissing = $true
+            { Invoke-ClientMcpComponentPublicationFinalize $candidateRoot ('a'*40) } | Should -Throw '*Release qualification is mandatory*'
+        }
+    }
+
+    It 'rejects native client build provenance after a runtime-owner input changes' {
+        & {
+            foreach ($definition in Get-DeliveryFunctionDefinitions -Names @('Get-DeliveryExactClientMcpCandidates','Get-ClientMcpBuildInputPaths')) { Invoke-Expression $definition.Extent.Text }
+            $root=Join-Path $TestDrive ('client provenance '+[char]0x044f)
+            $script:Root=$root
+            $output=Join-Path $root 'build/third-party/client-mcp/v0.6.5-itl-r1/candidate'
+            [void][IO.Directory]::CreateDirectory($output)
+            foreach ($relative in @(Get-ClientMcpBuildInputPaths -RepositoryRoot $RepoRoot)) {
+                $destination=Join-Path $root $relative
+                [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+                [IO.File]::Copy((Join-Path $RepoRoot $relative),$destination)
+            }
+            $manifestPath=Join-Path $root 'third-party/client-mcp/v0.6.5-itl-r1/manifest.json'
+            $manifest=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $cfe=Join-Path $output $manifest.artifact.fileName
+            $sources=Join-Path $output $manifest.correspondingSource.fileName
+            [IO.File]::WriteAllBytes($cfe,[byte[]]@(1,2,3))
+            [IO.File]::WriteAllBytes($sources,[byte[]]@(4,5,6))
+            $inputs=[ordered]@{}
+            foreach($relative in @(Get-ClientMcpBuildInputPaths -RepositoryRoot $root)) { $inputs[$relative]=(Get-FileHash -LiteralPath (Join-Path $root $relative)).Hash.ToLowerInvariant() }
+            $lock=[pscustomobject]@{version='v0.6.5';downstreamRevision='itl-r1';upstreamCommit=$manifest.upstream.commit;assetName=$manifest.artifact.fileName;releaseTag=$manifest.artifact.releaseTag;sha256=(Get-FileHash -LiteralPath $cfe).Hash.ToLowerInvariant();manifestSha256=(Get-FileHash -LiteralPath $manifestPath).Hash.ToLowerInvariant();correspondingSource=[pscustomobject]@{assetName=$manifest.correspondingSource.fileName;sha256=(Get-FileHash -LiteralPath $sources).Hash.ToLowerInvariant()}}
+            $proof=[ordered]@{component='clientMcp';status='built';sourceCommit=('a'*40);restored=$true;released=$true;compatibilityVersion=$lock.version;downstreamRevision=$lock.downstreamRevision;manifestSha256=$lock.manifestSha256;upstream=$manifest.upstream;artifactSha256=$lock.sha256;sourceArchiveSha256=$lock.correspondingSource.sha256;platformVersion=$manifest.build.platformVersion;platformSha256=$manifest.build.platformSha256;buildInputs=$inputs;sourceIdentity=[ordered]@{fingerprint='sha256:source'};gate6=[ordered]@{sourceFingerprint='sha256:source';steps=@('modules','applicability','configuration'|ForEach-Object{[ordered]@{step=$_;exitCode=0;dumpResult=0}})}}
+            [IO.File]::WriteAllText((Join-Path $output 'candidate.provenance.json'),($proof|ConvertTo-Json -Depth 8),[Text.Encoding]::UTF8)
+            $saved=[Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH','Process')
+            try {
+                [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH','', 'Process')
+                @(Get-DeliveryExactClientMcpCandidates $root $lock).Count | Should -Be 2
+                [IO.File]::AppendAllText((Join-Path $root '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'),'# changed checker',[Text.Encoding]::UTF8)
+                { Get-DeliveryExactClientMcpCandidates $root $lock } | Should -Throw '*build input differs*'
+            } finally { [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH',$saved,'Process') }
         }
     }
 
@@ -189,7 +284,9 @@ Describe "Source develop queue and delivery" {
                 [pscustomobject]@{ name='itlOndemandMcp'; status='missing'; requiredReleaseCapabilities=@('ondemand-mcp') },
                 [pscustomobject]@{ name='vanessaAutomation'; status='matched'; requiredReleaseCapabilities=@() }
             )
-            $plan = [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@(); components=$components }
+            $ownedAssets = @('dependencies.vanessaAutomation', 'dependencies.vanessaMcp.vaExtension', 'dependencies.itlOndemandMcp' |
+                ForEach-Object { [pscustomobject]@{ path=$_ } })
+            $plan = [pscustomobject]@{ status='planned'; requiredReleaseCapabilities=@(); components=$components; ownedAssets=$ownedAssets }
             { Assert-ComponentPublicationFinalizerPreflight -CandidateRoot $TestDrive -CandidateCommit ('a' * 40) -Plan $plan } |
                 Should -Throw '*capability union*'
             $plan.requiredReleaseCapabilities = @('ondemand-mcp')

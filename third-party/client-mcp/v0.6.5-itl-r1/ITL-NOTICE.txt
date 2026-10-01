@@ -1,0 +1,11 @@
+client_mcp v0.6.5, onec-client-mcp-devkit, controlled ITL metadata revision itl-r1.
+Upstream source: https://github.com/1c-neurofish/onec-client-mcp-devkit
+Exact upstream commit: 3f6a066913057c2d6f2d61c0b429fd0707ab271b.
+The build exports the immutable upstream release CFE to Designer XML using
+the pinned 1C platform. It does not claim to compile the upstream EDT project.
+ITL changes only Configuration.xml ChildObjects and adds an adopted Russian
+Language without a target-base UUID binding. Modules and resources are retained.
+The corresponding-source ZIP contains the complete patched Designer XML source,
+source identity, controlled manifest, repair metadata, rebuild instructions,
+upstream license and the GNU GPL incorporated by that license.
+No runtime artifact patching or installed-copy replacement is used.
