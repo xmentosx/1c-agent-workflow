@@ -62,14 +62,17 @@ def export_and_refresh(config, configuration, config_path, guard_type, canonical
 
 def refresh_linux(config, config_id, force):
     target = config['linuxUser'] + '@' + config['linuxHost']
+    runtime = int(config.get('refreshRuntimeSeconds', 43200))
+    if runtime <= 0:
+        raise ValueError('Refresh runtime must be positive')
     command = ['sudo', 'systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--service-type=exec',
-               '--unit=itl-mcp-refresh-' + config_id, '--property=RuntimeMaxSec=43200', '--property=TimeoutStopSec=120',
+               '--unit=itl-mcp-refresh-' + config_id, '--property=RuntimeMaxSec=' + str(runtime), '--property=TimeoutStopSec=120',
                'python3', '/opt/itl-mcp/host/refresh.py', '--host-config', '/opt/itl-mcp/host.config.json',
                '--job-config', '/opt/itl-mcp/refresh.config.json', '--config-id', config_id]
     if force:
         command.append('--force')
     result = run([config['sshPath'], *ssh_options(config), target, shlex.join(command)],
-                 capture_output=True, timeout=config.get('timeoutSeconds', 46800))
+                 capture_output=True, timeout=max(config.get('timeoutSeconds', 46800), runtime + 120))
     status = json.loads(result.stdout)
     if status.get('state') not in ('succeeded', 'unchanged'):
         raise RuntimeError('Linux refresh did not complete')

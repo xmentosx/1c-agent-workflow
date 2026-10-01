@@ -105,8 +105,12 @@ Windows writes `state/nightly-index-state.json` and UTF-8 logs under
 `logs/nightly`. Linux writes `<dataRoot>/refresh-state/<configId>.json`, report
 logs and full native Code/Graph status snapshots. A successful timestamp is
 recorded only after both native indexing statuses complete. The Linux refresh
-runs in the exact `itl-mcp-refresh-<configId>` systemd unit with a twelve-hour
-runtime limit and survives a control-channel disconnect. The configured refresh
+runs in the exact `itl-mcp-refresh-<configId>` systemd unit and survives a control-channel
+disconnect. Windows `refreshRuntimeSeconds` defaults to twelve hours; the SSH
+wait is at least that runtime plus two minutes. Align it with Linux
+`timeoutSeconds` and a Windows task execution limit covering both configurations
+and their exports. Large initial graphs can require a longer bounded budget.
+The configured refresh
 deadline also bounds source synchronization: a first full ERP export can exceed
 10 GiB and must not inherit a short command timeout intended for small updates.
 Stop the Windows task
@@ -116,3 +120,14 @@ inspect these states and rerun the same task: a fresh
 export and incremental native refresh provide the continuation, without manual
 lock or state edits. Initial full indexing and a reboot/search acceptance remain
 separate from registration of the schedule.
+
+If only the wait must be extended during an initial full index, stop the exact
+refresh monitor unit and relaunch `refresh.py` with `--wait-existing` under the
+same maintenance lease and a longer configured deadline. This checks both
+container owners and the deployed Designer/report fingerprint against the last
+`index-code-and-graph` state. It resumes status polling without report generation,
+source synchronization or container restarts, and records success only after
+both native completion checks pass. Changed deployment or an ineligible state
+refuses continuation without overwriting the prior record; rerun the normal
+refresh in that case. Cancel and restart the Windows task and its exact pending
+Linux unit when their original control-channel/runtime budgets are too short.

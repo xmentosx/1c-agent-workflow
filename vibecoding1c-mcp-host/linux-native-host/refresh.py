@@ -104,7 +104,26 @@ def container_identity(host, name, config_id):
     return item['Id']
 
 
-def refresh(host, job, config_id, force=False):
+def wait_indexes(item, job, status, status_path, data_root):
+    deadline = time.monotonic() + job.get('timeoutSeconds', 43200)
+    clients = {kind: wait_ready(item[kind + 'Url'], deadline) for kind in ('code', 'graph')}
+    while time.monotonic() < deadline:
+        code = clients['code'].call('stats')
+        graph = clients['graph'].call('get_indexing_status')
+        write_status(data_root / 'refresh-state' / (item['configId'] + '-code.json'), code)
+        write_status(data_root / 'refresh-state' / (item['configId'] + '-graph.json'), graph)
+        phases = {'code': code_phase(code), 'graph': graph_phase(graph)}
+        status['phases'] = phases; write_status(status_path, status)
+        if set(phases.values()) == {'completed'}:
+            status.update(state='succeeded', stage='completed', indexedAt=time.time(), completedAt=time.time(),
+                          codeCollections=code['data']['collections'])
+            write_status(status_path, status)
+            return status
+        time.sleep(job.get('pollSeconds', 30))
+    raise RuntimeError('Native indexing exceeded its configured deadline')
+
+
+def refresh(host, job, config_id, force=False, wait_existing=False):
     selected = [item for item in job['configurations'] if item['configId'] == config_id]
     if len(selected) != 1:
         raise ValueError('Unknown or duplicate configuration')
@@ -116,12 +135,28 @@ def refresh(host, job, config_id, force=False):
     export = Path(item['exportPath']).resolve()
     if not export.is_relative_to(export_root) or not export.is_dir():
         raise ValueError('Export path is outside the read-only share')
-    revision = export_revision(export)
+    revision = None if wait_existing else export_revision(export)
     if (not source.is_relative_to(data_root / 'sources') or not metadata.is_relative_to(data_root / 'metadata')
             or not source.is_dir() or not metadata.is_dir()):
         raise ValueError('Deployment directories are outside the dedicated data root')
     status_path = data_root / 'refresh-state' / (config_id + '.json')
     previous = json.loads(status_path.read_text(encoding='utf-8')) if status_path.is_file() else {}
+    if wait_existing:
+        if force or previous.get('state') not in ('running', 'failed') or previous.get('stage') != 'index-code-and-graph':
+            raise ValueError('Existing indexing cannot be continued; rerun the normal refresh')
+        if input_fingerprint(source, metadata / 'Report.txt') != previous.get('inputFingerprint'):
+            raise ValueError('Deployed indexing input changed; rerun the normal refresh')
+        for kind in ('code', 'graph'):
+            container_identity(host, item[kind + 'Container'], config_id)
+        status = dict(previous, state='running', resumedAt=time.time())
+        status.pop('error', None); status.pop('completedAt', None)
+        write_status(status_path, status)
+        try:
+            return wait_indexes(item, job, status, status_path, data_root)
+        except Exception as error:
+            status.update(state='failed', error=str(error), completedAt=time.time())
+            write_status(status_path, status)
+            raise
     status = {'configId': config_id, 'state': 'running', 'stage': 'validate-export', 'startedAt': time.time(),
               'previousIndexedAt': previous.get('indexedAt'), 'exportRevision': revision}
     write_status(status_path, status)
@@ -171,23 +206,8 @@ def refresh(host, job, config_id, force=False):
             finally:
                 command(['docker', 'start', *identities], timeout=120)
         status['stage'] = 'index-code-and-graph'; write_status(status_path, status)
-        deadline = time.monotonic() + job.get('timeoutSeconds', 43200)
-        clients = {kind: wait_ready(item[kind + 'Url'], deadline) for kind in ('code', 'graph')}
         # Native startup refreshes the new source incrementally; no database reset.
-        while time.monotonic() < deadline:
-            code = clients['code'].call('stats')
-            graph = clients['graph'].call('get_indexing_status')
-            write_status(data_root / 'refresh-state' / (config_id + '-code.json'), code)
-            write_status(data_root / 'refresh-state' / (config_id + '-graph.json'), graph)
-            phases = {'code': code_phase(code), 'graph': graph_phase(graph)}
-            status['phases'] = phases; write_status(status_path, status)
-            if set(phases.values()) == {'completed'}:
-                status.update(state='succeeded', stage='completed', indexedAt=time.time(), completedAt=time.time(),
-                              codeCollections=code['data']['collections'])
-                write_status(status_path, status)
-                return status
-            time.sleep(job.get('pollSeconds', 30))
-        raise RuntimeError('Native indexing exceeded its configured deadline')
+        return wait_indexes(item, job, status, status_path, data_root)
     except Exception as error:
         status.update(state='failed', error=str(error), completedAt=time.time())
         write_status(status_path, status)
@@ -200,12 +220,13 @@ def main():
     parser.add_argument('--job-config', required=True)
     parser.add_argument('--config-id', required=True)
     parser.add_argument('--force', action='store_true')
+    parser.add_argument('--wait-existing', action='store_true', help='Continue waiting for verified deployed input without restarting containers')
     args = parser.parse_args()
     host = json.loads(Path(args.host_config).read_text(encoding='utf-8'))
     validate_config(host)
     job = json.loads(Path(args.job_config).read_text(encoding='utf-8'))
     with maintenance_lock(host['lockPath'], blocking=True):
-        result = refresh(host, job, args.config_id, args.force)
+        result = refresh(host, job, args.config_id, args.force, args.wait_existing)
     print(json.dumps(result, ensure_ascii=False))
 
 
