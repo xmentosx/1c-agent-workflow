@@ -39,6 +39,18 @@ authority supervisor must precede an owned production pin. Local build/canary
 proof cannot authorize publication or claim a not-yet-published URL installable.
 Tasks 9.7, 10.2 and 10.4 remain open until their original live journeys pass.
 
+The canonical cbd7d289 build passed all three native checks and exact restoration;
+its independent source-pair reader confirmed all 54 exported files and notices.
+The private package candidate 06572fc6 pins that pair by local file URI. Public
+update-installed-workflow updated both isolated PM5 worktrees, preserving the
+original business target A, pending merge stage, 2 configuration trees, base
+bytes and repair-session budget. The two intended client artifact path/hash
+settings changed; all other environment and client configuration bytes did not.
+The original unfiltered repair attempt 2/5 installed the repaired client in the
+service base after native Gate 6 results 0/0/0. It then stopped on the separate
+VAExtension defect described in va-extension-html-handlers.md; no safe-mode,
+Vanessa TestClient or full-check acceptance is inferred from these partial steps.
+
 The first native build from e246f283 passed all three Gate 6 steps, restored
 its exact DT and released the owned processes. Independent ZIP inspection
 confirmed all 54 source files byte-for-byte, but found Windows Framework

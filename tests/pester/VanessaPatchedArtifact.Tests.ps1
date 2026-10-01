@@ -113,7 +113,7 @@
         $runtimeText = Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/run-vanessa-build-runtime.ps1') -Raw -Encoding UTF8
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/Compile.os'"))
         $runtimeText | Should -Match ([regex]::Escape("'tools/onescript/MakeVASingle.os'"))
-        $buildScriptText | Should -Match 'ValidateSet\("itl-r1", "itl-r4"'
+        $buildScriptText | Should -Match 'ValidateSet\("itl-r1", "itl-r2", "itl-r4"'
         $buildScriptText | Should -Match ([regex]::Escape('$DownstreamRevision = "itl-r8"'))
         $buildScriptText | Should -Match 'run-vanessa-build-runtime.ps1'
         $runtimeText | Should -Match 'Get-VanessaServiceInfoBaseTemplate'
@@ -166,6 +166,75 @@ Describe "Controlled Vanessa Automation patched artifact 1.2.043.42-itl-r1" {
         $buildText | Should -Match 'VANESSA_BUILD_RESUME_NATIVE_OWNERSHIP_UNCONFIRMED'
         $buildText | Should -Match 'Resumed downstream patch'
         $buildText | Should -Match 'Resumed upstream source archive SHA-256'
+    }
+}
+
+Describe "VAExtension HTML forms without orphan handlers" {
+    BeforeAll {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r2'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $fixtureRoot = Join-Path $repoRoot 'tests/fixtures/vanessa-html-forms'
+        $provenance = Get-Content -LiteralPath (Join-Path $fixtureRoot 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    }
+
+    It 'retains the existing fixes under a new immutable paired component revision' {
+        $previous = Get-Content -LiteralPath (Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r1/manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.upstream.commit | Should -Be $previous.upstream.commit
+        $manifest.upstream.sourceArchive.sha256 | Should -Be $previous.upstream.sourceArchive.sha256
+        $manifest.downstreamRevision | Should -Be 'itl-r2'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r2.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r2.cfe'
+        $manifest.pairedExtension.protocol | Should -Be $previous.pairedExtension.protocol
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch') -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+        @($manifest.patch.expectedChangedPaths) | Should -HaveCount 12
+        foreach ($path in $previous.patch.expectedChangedPaths) { $manifest.patch.expectedChangedPaths | Should -Contain $path }
+        foreach ($fix in $previous.patch.retainedDownstreamFixes) { $manifest.patch.retainedDownstreamFixes | Should -Contain $fix }
+        $provenance.upstreamCommit | Should -Be $manifest.upstream.commit
+        foreach ($input in $provenance.inputs) {
+            (Get-FileHash -LiteralPath (Join-Path $fixtureRoot $input.path) -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $input.sha256
+        }
+    }
+
+    It 'repairs the actual upstream missing handler while retaining every working control and module: <form>' -TestCases @(
+        @{ form = 'VAExtension_НажатьГиперссылкуHTMLДокумента' },
+        @{ form = 'VAExtension_НажатьКнопкуHTMLДокумента' }
+    ) {
+        param($form)
+        $root = Join-Path $TestDrive ('Формы с пробелом '+$form)
+        [void][IO.Directory]::CreateDirectory($root)
+        $relative = 'lib/VAExtension/DataProcessors/'+$form+'/Forms/Форма/Ext/Form.xml'
+        $moduleRelative = 'lib/VAExtension/DataProcessors/'+$form+'/Forms/Форма/Ext/Form/Module.bsl'
+        foreach ($path in @($relative,$moduleRelative)) {
+            $destination = Join-Path $root $path
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+            Copy-Item -LiteralPath (Join-Path $fixtureRoot $path) -Destination $destination
+        }
+        $formPath = Join-Path $root $relative
+        $modulePath = Join-Path $root $moduleRelative
+        $moduleHash = (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash
+        $module = [IO.File]::ReadAllText($modulePath,[Text.Encoding]::UTF8)
+        [xml]$before = [IO.File]::ReadAllText($formPath,[Text.Encoding]::UTF8)
+        $orphanButton = $before.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКодСервер"]')
+        $orphanCommand = $before.SelectSingleNode('//*[local-name()="Command" and @name="ВыполнитьКодСервер"]')
+        $orphanButton | Should -Not -BeNullOrEmpty
+        $orphanCommand | Should -Not -BeNullOrEmpty
+        $module | Should -Not -Match '(?im)^\s*(Процедура|Функция)\s+ВыполнитьКодСервер\s*\('
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--check','--whitespace=error-all',('--include='+$relative),(Join-Path $assetRoot 'file-operations.patch')))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('apply','--whitespace=error-all',('--include='+$relative),(Join-Path $assetRoot 'file-operations.patch')))
+        [xml]$after = [IO.File]::ReadAllText($formPath,[Text.Encoding]::UTF8)
+        $after.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКодСервер"]') | Should -BeNullOrEmpty
+        $after.SelectSingleNode('//*[local-name()="Command" and @name="ВыполнитьКодСервер"]') | Should -BeNullOrEmpty
+        [void]$orphanButton.ParentNode.RemoveChild($orphanButton)
+        [void]$orphanCommand.ParentNode.RemoveChild($orphanCommand)
+        $after.OuterXml | Should -BeExactly $before.OuterXml
+        $after.SelectSingleNode('//*[local-name()="Button" and @name="ФормаВыполнитьКод"]/*[local-name()="DefaultButton"]').InnerText | Should -Be 'true'
+        foreach ($action in $after.SelectNodes('//*[local-name()="Commands"]/*[local-name()="Command"]/*[local-name()="Action"]')) {
+            $module | Should -Match ('(?im)^\s*(Процедура|Функция)\s+'+[regex]::Escape($action.InnerText)+'\s*\(')
+        }
+        (Get-FileHash -LiteralPath $modulePath -Algorithm SHA256).Hash | Should -BeExactly $moduleHash
     }
 }
 
