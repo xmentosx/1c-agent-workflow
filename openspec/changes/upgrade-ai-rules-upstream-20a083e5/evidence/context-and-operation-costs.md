@@ -80,10 +80,13 @@ Neither phase launched Enterprise/TestManager/TestClient; export performed
 one guarded Designer dump. Their exact outcome/provenance is in
 [the D4 completion record](d4-live-one-off-and-policy.md).
 
-The original initialization is functionally qualified, but its total elapsed
-time was not persisted. Its native params-to-result file-write window is
-73.87 seconds, which cannot be substituted for end-to-end initialization time.
-Task 10.4 therefore retains this narrow measurement gap; no healthy-init
-benchmark or performance comparison is claimed. This is distinct from a
-functional acceptance failure and from the separately authorized publication
-and real-project rollout.
+The helper's original initialization acceptance omitted elapsed time, but the
+executing subagent's primary command event retained it. On 2026-10-02 the root
+recovered and independently qualified **85.0062262 seconds** for the whole
+successful public `initialize-dev-branch-runtime` continuation, exit 0.
+This closes the remaining measurement gap in 10.4 without a new initialization.
+The interval excludes the prior failed r33 invocation, seed/base-copy setup;
+it is not a cold-bootstrap benchmark or a before/after performance comparison.
+The native params-to-result file-write window of 73.87 seconds remains a
+separate observation. Exact event identity, bounded raw receipt hashes and
+scope are in [the recovered original duration](original-init-duration.md).
