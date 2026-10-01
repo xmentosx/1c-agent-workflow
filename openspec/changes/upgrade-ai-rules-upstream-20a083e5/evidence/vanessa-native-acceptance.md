@@ -189,3 +189,38 @@ unchanged during the run. The GREEN record is
 `build/workflow-commit-owned-green-v2-20261001/result.json`.
 Independent review confirmed the planner and unchanged Apply guard boundaries.
 Source registration and installed continuation remain separate required proof.
+
+## Completed original PM5 continuation
+
+The corrected source commit `224c5fd85e1b451a9df6458f81a99c7a995850e8`
+passed script-owned registration: 760 passed, zero failed/skipped. The local
+canary uses its direct private child
+`aed396b2724c57d0f5151e0d35d6be925ee64735`, with only the three qualified
+artifact pins changed. Those native artifacts retain their historical producer
+identities; this is consumer qualification, not a new native build or release.
+
+The public workflow-only updater completed on the owned main root and its
+working branch. Only the dependency lock and lifecycle implementation changed;
+configuration/test bytes, branch-local environment/MCP configuration, database
+hash/size/mtime, pending business target and repair budget remained unchanged.
+The qualification is
+`build/pm5-r39-completion-workflow-update-20261001/qualification.json`.
+
+One subsequent ordinary unfiltered `check-dev-branch` completed the original
+stopped operation in 52.13 seconds. It reused the actual retained 1/1 result
+and passed event-log verification, with no new native 1C artifacts or runner.
+Pending target/stage/operation are empty; the completed business target remains
+`ae6911539de91b2f60fc6ef420acafdacb995a37`, while branch HEAD is the separate
+workflow descendant `4bf0d223d492392d9303b59df333d821426cab14`.
+The original repair receipt is byte-unchanged: the same session remains passed
+at attempt 4 of 5. No reset, additional repair attempt or new refresh was used.
+
+Actual completion evidence is
+`build/pm5-original-refresh-complete-obligation-kind-20261001.json`, SHA256
+`a1f1cbf8d963db4dbc035ee22be120a490b090b6ba01f54cb4363bf66acd5368`.
+This closes the previously open original-continuation boundary in 9.7.
+D4 one-off/named-policy/export acceptance and publication remain separate.
+
+A read-only `git ls-remote origin refs/heads/master` on 2026-10-01 confirmed
+`69c0863bfe3bd837543267f122e81a28dcfa5488` again. The published-master
+baseline used by the separate migration canaries has not moved.

@@ -650,3 +650,20 @@ Reviewed fixture SHA256:
 This is local prerequisite/copy-boundary proof, not qualification of the real
 controlled fork or native clients. Script-owned registration, live acceptance
 and publication remain separate pending steps.
+
+## Registered original-continuation and content-rollback correction
+
+Commit `224c5fd85e1b451a9df6458f81a99c7a995850e8`, tree
+`37618bfee7e4ba8462cd18b9d833f4327a6a7bef`, passed the registration-owned
+Targeted run with 760 passed, zero failed/skipped in 893.46 seconds. The
+bootstrap/update shard passed 73/73 and lifecycle passed 254/254. The final
+serial compact-runner shard passed 138/138; its elapsed time was gate work,
+not a hung updater. The source checkout was clean after registration.
+
+Frozen evidence is `build/source-registration-qualified-224c5fd8/`.
+The exact delivery-run SHA256 is
+`744cbceb420e740621bcd0ba806cb78718c3f3cf529df0ff80e8a954d7368c45`.
+Earlier failed registrations and their causal diagnoses remain intact in
+[the native continuation record](vanessa-native-acceptance.md).
+Registration appends to the shared local queue; it does not integrate other
+queued changes, publish the fork/components/package, or install real projects.

@@ -59,3 +59,31 @@ files. Membership and manifest checks remain at their original owner. The
 separate development-context forwarding correction is covered by nine
 prefix/context combinations rather than relabelled as native master timing.
 See [the exact before/after and scope](native-help-client-resolution.md).
+
+The final owned PM5 workflow-only update and branch fan-out took 134.46 seconds.
+Its previous observation was 131.39 seconds: approximately +3.07 seconds/2.3%,
+across different package versions, not a controlled performance benchmark.
+Both scopes preserved configuration/tests and database hash/size/mtime; the
+final update requested no native 1C. The subsequent original-operation
+completion took 52.13 seconds, reused retained 1/1 proof and launched no new
+native runner. These results qualify workflow-only update and unchanged-proof
+continuation costs; they do not claim a new end-to-end initialization benchmark.
+Exact receipts and identities are in
+[the completed continuation record](vanessa-native-acceptance.md#completed-original-pm5-continuation).
+
+The recorded unchanged installed update repeat took 2.148 seconds, exit 0
+(`build/im1-after-both-clients-repeat-20260930T210005942.result.json`,
+`elapsedSeconds=2.1480092`). The final D4 ordinary-check public status spans
+25.59 seconds and block-export status spans 51.55 seconds. These are actual
+helper status intervals, excluding acceptance-driver preparation/inspection.
+Neither phase launched Enterprise/TestManager/TestClient; export performed
+one guarded Designer dump. Their exact outcome/provenance is in
+[the D4 completion record](d4-live-one-off-and-policy.md).
+
+The original initialization is functionally qualified, but its total elapsed
+time was not persisted. Its native params-to-result file-write window is
+73.87 seconds, which cannot be substituted for end-to-end initialization time.
+Task 10.4 therefore retains this narrow measurement gap; no healthy-init
+benchmark or performance comparison is claimed. This is distinct from a
+functional acceptance failure and from the separately authorized publication
+and real-project rollout.
