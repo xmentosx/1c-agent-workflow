@@ -5,7 +5,7 @@
     $repoRoot = $context.RepoRoot
 
     function New-WorkflowRollbackFixture {
-        param([string]$Root, [switch]$PendingInterruption)
+        param([string]$Root, [switch]$PendingInterruption, [switch]$MetadataCachedPackage)
         New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c/mcp'), (Join-Path $Root 'src/cf') | Out-Null
         [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'), '{"aiRules":{"tools":["codex"]}}', [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText((Join-Path $Root '.gitignore'), ".dev.env`n.agent-1c/mcp/`n.agent-1c/snapshots/`n.agent-1c/tmp/`n", [Text.UTF8Encoding]::new($false))
@@ -16,6 +16,14 @@
         & git -C $Root init -q -b master
         & git -C $Root config user.name 'Workflow Rollback Test'
         & git -C $Root config user.email 'rollback@example.invalid'
+        if ($MetadataCachedPackage) {
+            # Supported local Git settings make this timestamp-preserving,
+            # same-size copy deterministic without changing ordinary fixtures.
+            & git -C $Root config --local core.trustctime false
+            & git -C $Root config --local core.checkStat minimal
+            $packageTime = [DateTime]::new(2020, 1, 2, 3, 4, 5, [DateTimeKind]::Utc)
+            [IO.File]::SetLastWriteTimeUtc((Join-Path $Root 'AGENT-INSTALL.md'), $packageTime)
+        }
         & git -C $Root add --all
         & git -C $Root commit -qm baseline
         $LASTEXITCODE | Should -Be 0
@@ -27,6 +35,9 @@
                 -SnapshotParent (Join-Path $Root '.agent-1c/snapshots/workflow-update')
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
             [IO.File]::WriteAllText((Join-Path $Root 'AGENT-INSTALL.md'), 'new package', [Text.UTF8Encoding]::new($false))
+            if ($MetadataCachedPackage) {
+                [IO.File]::SetLastWriteTimeUtc((Join-Path $Root 'AGENT-INSTALL.md'), $packageTime)
+            }
             if ($PendingInterruption) {
                 Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase copy-complete
                 Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-running
@@ -36,7 +47,13 @@
             if ($PendingInterruption) {
                 return [pscustomobject]@{ id=(Split-Path -Leaf $snapshot.root).Substring('itl-workflow-update-rollback-'.Length); retained=$snapshot.root }
             }
-            & git -C $Root add -- AGENT-INSTALL.md
+            if ($MetadataCachedPackage) {
+                # Fully read the setup's new bytes once; the rollback owner
+                # must later detect the restored old bytes on its own.
+                & git -C $Root add --renormalize -- AGENT-INSTALL.md
+            } else {
+                & git -C $Root add -- AGENT-INSTALL.md
+            }
             & git -C $Root commit -qm update
             $LASTEXITCODE | Should -Be 0
             Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
@@ -179,6 +196,39 @@ Describe 'Completed workflow rollback through the existing update owner' {
         Get-CurrentCommit | Should -Be $restoredHead
         [Convert]::ToBase64String([IO.File]::ReadAllBytes($excludePath)) | Should -Be ([Convert]::ToBase64String($excludeBefore))
         (Get-WorkflowUpdateRecoveryStatus).retainedCount | Should -Be 2
+    }
+
+    It 'commits restored same-size package bytes when Git stat metadata remains unchanged' {
+        $fixture = New-WorkflowRollbackFixture -Root (Join-Path $TestDrive 'Откат workflow с пробелом и сохранёнными метаданными') -MetadataCachedPackage
+        $package = Join-Path $fixture.root 'AGENT-INSTALL.md'
+        $packageTime = [DateTime]::new(2020, 1, 2, 3, 4, 5, [DateTimeKind]::Utc)
+        (& git -C $fixture.root show ($fixture.beforeHead + ':AGENT-INSTALL.md')) | Should -Be 'old package'
+        (& git -C $fixture.root show 'HEAD:AGENT-INSTALL.md') | Should -Be 'new package'
+        (Get-Item -LiteralPath $package).Length | Should -Be 11
+        [IO.File]::GetLastWriteTimeUtc($package).Ticks | Should -Be $packageTime.Ticks
+        $business = Join-Path $fixture.root 'src/cf/Модуль.bsl'
+        [IO.File]::WriteAllText($business, 'business staged', [Text.UTF8Encoding]::new($false))
+        & git -C $fixture.root add -- 'src/cf/Модуль.bsl'
+        $staged = (& git -C $fixture.root rev-parse ':src/cf/Модуль.bsl').Trim()
+        [IO.File]::WriteAllText($business, 'business unstaged', [Text.UTF8Encoding]::new($false))
+        . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+        Set-RollbackSourceFixture
+
+        Restore-CompletedWorkflowUpdate -SnapshotId $fixture.id
+
+        [IO.File]::ReadAllText($package) | Should -Be 'old package'
+        [IO.File]::GetLastWriteTimeUtc($package).Ticks | Should -Be $packageTime.Ticks
+        (& git -C $fixture.root show 'HEAD:AGENT-INSTALL.md') | Should -Be 'old package'
+        $restoredHead = Get-CurrentCommit
+        $restoredHead | Should -Not -Be $fixture.updateHead
+        (& git -C $fixture.root rev-parse ':AGENT-INSTALL.md').Trim() | Should -Be ((& git -C $fixture.root rev-parse 'HEAD:AGENT-INSTALL.md').Trim())
+        [IO.File]::ReadAllText($business) | Should -Be 'business unstaged'
+        (& git -C $fixture.root rev-parse ':src/cf/Модуль.bsl').Trim() | Should -Be $staged
+        (& git -C $fixture.root show 'HEAD:src/cf/Модуль.bsl') | Should -Be 'business baseline'
+        @(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $restoredHead)) | Should -Be @('AGENT-INSTALL.md')
+        [IO.File]::ReadAllText((Join-Path $fixture.root '.dev.env')) | Should -Be "CAVEMAN=On`n"
+        [IO.File]::ReadAllText((Join-Path $fixture.root '.agent-1c/mcp/client-managed.json')) | Should -Be '{"owners":{"old":"keep"}}'
+        Get-WorkflowUpdatePendingSnapshot | Should -BeNullOrEmpty
     }
 
     It 'preserves a later change to <relative> before any rollback write' -ForEach @(

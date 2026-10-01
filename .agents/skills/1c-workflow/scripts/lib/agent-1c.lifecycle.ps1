@@ -11089,18 +11089,22 @@ function New-WorkflowBranchCommitPlan {
     $runtimeTracked = @(Get-WorkflowTrackedExecutionRuntimePaths)
     $ownedSpecs = @(@($ManagedPathSpecs) + @($runtimeTracked) | Select-Object -Unique)
     $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $ownedSpecs
-    $changed = @(
-        @(Get-GitPathList -Arguments @('diff', '--name-only', '-z', '--')) +
-        @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', '--')) +
+    # A restored package can retain the indexed size and timestamp. Build from
+    # owned content in a fresh index rather than trusting worktree stat diffs.
+    $candidatePaths = @(
+        @(Get-GitPathList -Arguments @('ls-tree', '-r', '--name-only', '-z', $oldHead, '--')) +
+        @(Get-GitPathList -Arguments @('ls-files', '-z')) +
         @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z')) +
         $runtimeTracked |
             Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher } |
             Select-Object -Unique
     )
-    $literalPaths = @($changed | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
-    $copyLiterals = @($changed | Where-Object { -not (Test-WorkflowExecutionRuntimePath -Path $_) } |
+    $literalPaths = @($candidatePaths | ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
+    $indexedChanged = @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z', $oldHead, '--') |
+        Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
+    $copyLiterals = @($candidatePaths | Where-Object { -not (Test-WorkflowExecutionRuntimePath -Path $_) } |
         ForEach-Object { ':(literal)' + ([string]$_).Replace('\', '/') })
-    $indexStateBefore = if ($literalPaths.Count -gt 0) {
+    $candidateIndexStateBefore = if ($literalPaths.Count -gt 0) {
         @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
     } else { @() }
     $tempRoot = Join-Path $script:ProjectRoot '.agent-1c/tmp'
@@ -11120,6 +11124,14 @@ function New-WorkflowBranchCommitPlan {
         }
         $candidateTree = (Get-GitOutput @('write-tree')).Trim()
         $oldTree = (Get-GitOutput @('rev-parse', "$oldHead^{tree}")).Trim()
+        $changed = @(@(Get-GitPathList -Arguments @('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', $oldTree, $candidateTree, '--')) +
+            $indexedChanged | Select-Object -Unique)
+        $changedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach ($path in $changed) { [void]$changedSet.Add([string]$path) }
+        $indexStateBefore = @($candidateIndexStateBefore | Where-Object {
+            $separator = ([string]$_).IndexOf("`t")
+            $separator -ge 0 -and $changedSet.Contains(([string]$_).Substring($separator + 1))
+        })
         $newHead = if ($candidateTree -cne $oldTree) {
             (Get-GitOutput @('commit-tree', $candidateTree, '-p', $oldHead, '-m', $Message)).Trim()
         } else { $oldHead }

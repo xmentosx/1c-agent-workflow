@@ -153,3 +153,39 @@ using the same normal TEMP directory. This corrects test setup rather than
 Vanessa or the installed workflow. The focused record is
 `build/bootstrap-longpath-20261001/result.json`. Source registration and the
 installed original continuation still require their own successful results.
+
+## Workflow rollback content detection
+
+Registration of `30309559` passed 727 cases and failed one existing workflow
+rollback case: the owner reported a restored commit, but HEAD still contained
+the newer package. This was a Git workflow defect, separate from Vanessa.
+The preserved registration is in
+`build/source-registration-failed-30309559-20261001/`.
+
+A separate real-Git regression made the cause deterministic with supported
+repository-local `core.trustctime=false` / `core.checkStat=minimal`: old and new
+package bytes had equal length and the restored timestamp matched the index.
+The existing change selector returned no changed paths despite different actual
+content and HEAD blobs. The causal RED and read-only index observations are in
+`build/workflow-rollback-stat-observer-20261001/run-e290f66a2c5b4beb8130ef4715503985/`;
+observation SHA256 is
+`77e56b7c6618df2b91c6a3f612746bff3d56015d1823f209d86c73375f2dfddf`.
+
+The existing branch commit planner now reads allowed tracked and nonignored
+untracked content into its fresh temporary index. Immutable tree differences
+identify content changes; captured owned staged differences retain the existing
+index reconciliation behavior. The actual index is not used as a stat-based
+content selector. Apply-time HEAD/index/pending-merge guards, literal/NUL path
+handling, business staging and runtime untracking remain with the same owner.
+No additional lifecycle state, native 1C call or blocking policy was added.
+
+The native Windows PowerShell 5.1/Pester 5.8 directly owned batch passed all
+19 rollback and stopped-merge transition cases, with zero failures/skips, in
+112.38 seconds. It includes the original rollback case and the separate cached
+metadata case. An earlier batch preserved 18 passes and a new-test setup
+collision; only the new case's isolated directory name was corrected, retaining
+whitespace, Cyrillic and all metadata/content preconditions. Final inputs were
+unchanged during the run. The GREEN record is
+`build/workflow-commit-owned-green-v2-20261001/result.json`.
+Independent review confirmed the planner and unchanged Apply guard boundaries.
+Source registration and installed continuation remain separate required proof.
