@@ -1,0 +1,27 @@
+{
+  "upstreamCommit": "a0ce2ee9803dd69be52f682e5cf49e0938fd33f1",
+  "license": "BSD-3-Clause",
+  "licensePath": "third-party/vanessa-automation/1.2.043.42-itl-r3/LICENSE.upstream",
+  "inputs": [
+    {
+      "path": "lib/VAExtension/CommonModules/VAExtensionОбщегоНазначенияКлиент/Ext/Module.bsl",
+      "blob": "6ae15757477f4a109da44703a08bb03ff66f8281",
+      "sha256": "1b57038b5782c29afee724d1e02c4ce04b80c292ee74a2a91bab7d2643b4eecd"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_МакетПоВариантуОтчета/Forms/Форма/Ext/Form/Module.bsl",
+      "blob": "319c8d7f6673ca9ed616bbc8d498165e18fdfe2f",
+      "sha256": "c94c8b098a24fd794d1598b3a9cececc75394524dda1b2e2a4edbef0c03bc09b"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_ОткрытьВсеФункции/Forms/Форма/Ext/Form/Module.bsl",
+      "blob": "2e7ce2975063fa207d86da50b49b687cb882b9f1",
+      "sha256": "9fbd023c1150d6e9a5e8eb97a844beedf08c076b3fcfffd5576776017487cf7d"
+    },
+    {
+      "path": "lib/VAExtension/DataProcessors/VAExtension_ОткрытьНастройкаНачальнойСтраницы/Forms/Форма/Ext/Form/Module.bsl",
+      "blob": "9e3168785cff2065408dde46c7981dd84b37de5c",
+      "sha256": "5987f8c92a239e16f6539fe8143b16f2f937f1fe92fc1103625d7821c1f6b5ba"
+    }
+  ]
+}

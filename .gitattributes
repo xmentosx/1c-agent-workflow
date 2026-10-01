@@ -15,3 +15,6 @@ third-party/client-mcp/**/LICENSE.upstream whitespace=cr-at-eol
 tests/fixtures/client-mcp-language/Configuration.xml -text whitespace=cr-at-eol
 # Exact upstream HTML form and module blobs retain their native bytes.
 tests/fixtures/vanessa-html-forms/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
+
+# Exact upstream portability modules retain their native BOM and line endings.
+tests/fixtures/vanessa-extension-portability/lib/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab,cr-at-eol
