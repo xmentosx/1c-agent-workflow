@@ -573,3 +573,112 @@ candidates не обнаружены. Сохранён точный handoff
 merge parents, pending merged stage и application failed/unverified
 состояние сохранены; /itl-check ещё не запускался. Приёмка9.7/10.4
 открыта до стабильного resource состояния и штатного продолжения.
+
+### Post-cleanup continuation and current installed helper
+
+После пользовательской и разрешённой локальной чистки ресурсный stop снят.
+Повторный guarded backup уже был успешен; existing Designer owner выполнил
+standalone unbind собственного D fixture. Original bound DT сохранён с SHA
+`b87da5faf966d932e6f48e05af39704a892ef3f2b3d0d527ee6e3d70deb49516`.
+`build/representative-pm5-standalone-binding-preparation.json` подтверждает
+успех и сохранение защищённых входов. E source, shared stand и original A
+не изменялись.
+
+Штатный public repair/check с существующим session
+`fc750d84db284a789f4f474407094cbb` выполнил partial load пяти
+ParentConfigurations files и Enterprise normalization. Source fingerprint
+`a7ff319d7947131a146c4f417957227932659c4cd61a9ac8c2a3b147a1305f50`
+совпадает с immutable seed. Однако весь check не passed: на следующем
+Vanessa service Gate 6 опубликованный `client_mcp` v0.6.5 с SHA
+`d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f`
+прошёл modules/applicability, но full CheckConfig завершился exit101:
+`Конфигурация.client_mcp.ОсновнойЯзык Неразрешимые ссылки на объекты метаданных (1)`.
+Автоматическое exact-DT восстановление service прошло. Repair budget остаётся
+1/5; fresh verification, canonical export и completion pending A не заявлены.
+Raw public result: `build/pm5-public-repair-check-after-cleanup-20261001.log`.
+
+У исходного helper обнаружен отдельный дефект cursor snapshot: relative
+ExportPath разрешался от caller CWD вместо ProjectRoot. Проверка из C для D
+временно изменила два configVersion в actual D ConfigDumpInfo.xml. Source
+commit `8588aaa755d2f73cf7e7672410264ae4d685c22d` переводит check/export к
+существующему project path owner; regression сохраняет BOM/CRLF и отдельный
+caller cursor. Red 0/2, green 3/3; RegisterChange после диагностированного
+неизменённого deadline retry passed 711/0/0. Exact original cursor восстановлен
+до SHA `5cff28fdbbc4940f81276de5d8fc9d747f70633d570fda4ade270ccd9f2bbe0f`
+существующим snapshot/restoration owner; state/env/MCP сохранены, native1C=0.
+Record: `build/pm5-cursor-baseline-recovery-20261001.json`.
+
+Source commit `b37d4ffbfc2742bcc98d54a4369939bcfb36ea68` устранил
+противоречие mcp reference: read NOT_READY не даёт нового разрешения на load.
+RegisterChange documentation passed 40/0/0. Сам runtime и его полномочия
+не расширены.
+
+После живой ROCTUP приёмки обнаружена provenance-only запись tracked lock:
+при acquisition того же version/name/URL/SHA label менялся с template baseline
+на compatibility-manifest вместе с updatedAt. Dirty guard корректно остановил
+новое обновление; его не ослабляли. Source commit
+`c3de4a7804e77e8a016262d81cdad69a02a2a3bc` сохраняет raw lock при exact pin,
+но оставляет прежнюю запись для реального нового pin. Реальные acquisition,
+corrupt/cold cache, BOM и Unicode paths проверены: red 2 passed/3 failed,
+green 5/0; RegisterChange Targeted passed 22/0/0 за 21.271 s, clean tree.
+Own generated two-field side effect восстановлен из точного raw Git blob и
+проверенного pre-live SHA `c8471d7592097ca1691685784ab9bd747dce6f1d1a15eaf2b06171e9fbe76a2f`.
+Current bytes сохранены; HEAD/index/checkpoint/budget не менялись.
+Record: `build/roctup-provenance-recovery-20261001.json`.
+
+Через `scripts/update-installed-workflow.ps1` принят новый чистый local
+acceptance source `360b806c63274be124be76ba9a9988379dfcef50`: exact registered
+c3 code плюс только два template overrides на уже принятый r39 fork
+`9ec86f75343ba4eded66e2085f097ff4baab7d67`. Это не published dependency pin
+или Release qualification; штатные source defaults ещё r36 до отдельного
+publication шага. Current helper установлен source-side launcher из отдельного
+managed worktree, без ручного копирования installed файлов.
+
+Public update завершён за 156.479 s. Main HEAD теперь
+`9001b04c154fcd19afcec872de799438da3b0510`, D branch HEAD
+`dbee04a36103e070b7426cddf2ed8502ccd112fc` — потомок original f4 merge.
+CF tree, raw cursor, обе infobases, env, branch state, acceptance features,
+repair budget и original target A сохранились. Initial raw oracle отдельно
+зафиксировал изменение `.codex/config.toml`; это оказалось перестановкой
+целых generated managed blocks. Повторная read-only проверка доказала exact
+содержимое каждого блока и outside content под UTF8/CRLF transport; ни field,
+ни binding не изменились. Failed raw oracle не переобозначен.
+Qualified record: `build/pm5-c3-r39-workflow-update-qualified-20261001.json`.
+Обновление не выполняло load/configuration merge/tests и не завершало refresh.
+
+Current installed ROCTUP прошёл initialize/initialized/tools-list (два gateway
+tools), bounded metadata (returned1/count319) и запрос43, limit1/schema.
+Exact owned instance `b36e768a40cc11adfa6f5f3b87d6d623`, catalog SHA
+`c61009dafbd8d781f44482419a72036155acc5a60f5a65c2d10df6e046cb8011`,
+binary 0.4.15 SHA `95968cccdcc38e3327ce7dc2ebe521fc34d55b44459d0a9d301cdec0be114aff`.
+Фактический результат — Ответ=43. Facade EOF/exit0, удалённый owned runtime
+record и закрытый observed port6003 подтверждают штатное завершение; retained
+schema3 evidence содержит passed get_metadata/execute_query. Branch
+state/lock/env/MCP/cursor не изменились.
+`build/data-current-pm5-c3-qualified-20261001.json` и actual RPC SHA
+`3f67842f9ab5bb7d6d142b68755fa364a7086cc5fee11511feed7eb5d5665f7f`
+отдельно указывают provenance и границы этого proof.
+
+Fresh ephemeral unelevated Codex read-only sessions реально прочитали installed
+rules и приняли решения для named DATA при persistent off, required pure BSL
+без vcexecutecode и unknown effects. Только три read commands, ноль MCP calls:
+named request даёт scoped override без persistent write, отсутствие provider
+оставляет unverified; required pure BSL блокирует зависимое proof без alias
+на execute_code; unknown effects не исполняются. Второй свежий trace сохраняет
+off при общем «проверь» и не даёт load из fixture NOT_READY. Последний —
+executed agent decision на явно отмеченном fixture input, не live NOT_READY.
+Records: `build/native-data-policy-c3-20261001.*`,
+`build/native-data-off-not-ready-c3-20261001.*`.
+
+9.7/10.4 и полный 4.4/4.5/4.7 остаются открыты. Diagnostic copies с adopted
+Russian Language прошли тот же full service Gate6, но это ещё не installable
+client_mcp component. Production route ставит client_mcp только в Vanessa
+service/TestManager, VAExtension — в PM5/TestClient; direct diagnostic CFE в
+PM5 выявил отдельную неприменимость handler и восстановлен, поэтому PM5 не
+меняем. Minimal owned-component maintenance/delivery proposal вынесен на
+отдельное решение; runtime cache rewriting, bypass checks и публикации нет.
+External Docs/Templates/Syntax/CodeChecker на 10.0.12.53:18000–18003 остаются
+TCP timeout, latest bounded record
+`build/mcp-reachability-after-user-cleanup-20261001-083358.json`; provider
+handshake/functional acceptance unverified. Positive pure-BSL provider также
+не обнаружен. Эти ограничения не маскируются passed fixture tests.
