@@ -1,7 +1,6 @@
-"""Windows task: guarded Designer export, immutable transfer, Linux refresh."""
+"""Windows task: guarded Designer export and refresh through a read-only share."""
 import argparse
 import base64
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,7 +8,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tarfile
 import time
 
 
@@ -55,23 +53,19 @@ def export_and_refresh(config, configuration, config_path, guard_type, canonical
         run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
              str(Path(config['workflowPath']) / 'vibecoding1c-mcp-host/export-1c-config-dump.ps1'),
              '-ConfigPath', str(config_path), '-ConfigId', config_id], env=env, timeout=28800)
-    if not all((source / name).is_file() for name in ('Configuration.xml', 'ConfigDumpInfo.xml')):
-        raise ValueError('Designer export did not complete')
-    archive_root = root / 'archives'
-    archive_root.mkdir(parents=True, exist_ok=True)
-    archive = archive_root / (config_id + '-' + time.strftime('%Y%m%d-%H%M%S') + '.tar.gz')
-    with tarfile.open(archive, 'w:gz', compresslevel=1) as handle:
-        handle.add(source, arcname='src/cf')
-    with archive.open('rb') as handle:
-        archive_hash = hashlib.file_digest(handle, 'sha256').hexdigest()
-    remote_archive = '/var/lib/itl-mcp/incoming/' + config_id + '-' + archive_hash + '.tar.gz'
+        if not all((source / name).is_file() for name in ('Configuration.xml', 'ConfigDumpInfo.xml')):
+            raise ValueError('Designer export did not complete')
+        # Retain the exact export-base guard through the Linux refresh so a
+        # second authorized Designer export cannot change the shared input.
+        return refresh_linux(config, config_id, force)
+
+
+def refresh_linux(config, config_id, force):
     target = config['linuxUser'] + '@' + config['linuxHost']
-    run([config['scpPath'], '-q', *ssh_options(config), str(archive), target + ':' + remote_archive], timeout=3600)
     command = ['sudo', 'systemd-run', '--quiet', '--wait', '--pipe', '--collect', '--service-type=exec',
                '--unit=itl-mcp-refresh-' + config_id, '--property=RuntimeMaxSec=43200', '--property=TimeoutStopSec=120',
                'python3', '/opt/itl-mcp/host/refresh.py', '--host-config', '/opt/itl-mcp/host.config.json',
-               '--job-config', '/opt/itl-mcp/refresh.config.json', '--config-id', config_id,
-               '--archive', remote_archive, '--sha256', archive_hash]
+               '--job-config', '/opt/itl-mcp/refresh.config.json', '--config-id', config_id]
     if force:
         command.append('--force')
     result = run([config['sshPath'], *ssh_options(config), target, shlex.join(command)],
@@ -79,11 +73,6 @@ def export_and_refresh(config, configuration, config_path, guard_type, canonical
     status = json.loads(result.stdout)
     if status.get('state') not in ('succeeded', 'unchanged'):
         raise RuntimeError('Linux refresh did not complete')
-    # Keep the newest two successful transfer archives for this configuration.
-    for old in sorted(archive_root.glob(config_id + '-*.tar.gz'), key=lambda p: p.stat().st_mtime, reverse=True)[2:]:
-        if old.parent.resolve() != archive_root.resolve():
-            raise ValueError('Archive cleanup escaped the owned directory')
-        old.unlink()
     return status
 
 

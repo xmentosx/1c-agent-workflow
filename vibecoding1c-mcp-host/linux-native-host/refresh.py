@@ -1,11 +1,10 @@
-"""Deploy a completed Designer export and refresh native Code and Graph."""
+"""Refresh native Code and Graph from a read-only Windows export share."""
 import argparse
 import hashlib
 import json
 from pathlib import Path
 import re
 import subprocess
-import tarfile
 import tempfile
 import time
 import urllib.error
@@ -22,31 +21,25 @@ def digest(path):
     return result.hexdigest()
 
 
-def extract_export(archive, destination):
-    with tarfile.open(archive, 'r:gz') as handle:
-        members = handle.getmembers()
-        for item in members:
-            path = Path(item.name)
-            if (path.is_absolute() or '..' in path.parts or item.issym() or item.islnk()
-                    or not (item.isdir() or item.isfile()) or path.parts[:2] != ('src', 'cf')):
-                raise ValueError('Export archive contains an unsafe entry')
-        handle.extractall(destination, members=members, filter='data')
-    root = Path(destination) / 'src' / 'cf'
-    if not all((root / name).is_file() for name in ('Configuration.xml', 'ConfigDumpInfo.xml')):
-        raise ValueError('Export archive is incomplete')
-    if not any(root.rglob('*.bsl')):
-        raise ValueError('Export archive contains no BSL modules')
-    return root
+def export_revision(source):
+    """Designer owns these version records; no second full BSL read is needed."""
+    if not all((source / name).is_file() for name in ('Configuration.xml', 'ConfigDumpInfo.xml')):
+        raise ValueError('Designer export is incomplete')
+    return hashlib.sha256(bytes.fromhex(digest(source / 'ConfigDumpInfo.xml'))
+                          + bytes.fromhex(digest(source / 'Configuration.xml'))).hexdigest()
 
 
 def input_fingerprint(source, report):
-    result = hashlib.sha256()
-    for path in sorted(source.rglob('*')):
-        if path.is_file() and path.name != 'ConfigDumpInfo.xml':
-            result.update(path.relative_to(source).as_posix().encode('utf-8') + b'\0')
-            result.update(bytes.fromhex(digest(path)))
-    result.update(bytes.fromhex(digest(report)))
-    return result.hexdigest()
+    return hashlib.sha256(bytes.fromhex(export_revision(source)) + bytes.fromhex(digest(report))).hexdigest()
+
+
+def run_metadata_generator(arguments, log_path):
+    with log_path.open('w', encoding='utf-8') as log:
+        result = subprocess.run(arguments, stdout=log, stderr=subprocess.STDOUT, timeout=1800)
+    # norkins/metadata and the Windows host owner define 1 as completed with warnings.
+    if result.returncode not in (0, 1):
+        raise subprocess.CalledProcessError(result.returncode, arguments)
+    return result.returncode
 
 
 def code_phase(result):
@@ -111,9 +104,7 @@ def container_identity(host, name, config_id):
     return item['Id']
 
 
-def refresh(host, job, config_id, archive, archive_hash, force=False):
-    if digest(archive) != archive_hash:
-        raise ValueError('Export archive checksum mismatch')
+def refresh(host, job, config_id, force=False):
     selected = [item for item in job['configurations'] if item['configId'] == config_id]
     if len(selected) != 1:
         raise ValueError('Unknown or duplicate configuration')
@@ -121,35 +112,43 @@ def refresh(host, job, config_id, archive, archive_hash, force=False):
     data_root = Path(job['dataRoot']).resolve()
     source = Path(item['sourcePath']).resolve()
     metadata = Path(item['metadataPath']).resolve()
+    export_root = Path(job['exportRoot']).resolve()
+    export = Path(item['exportPath']).resolve()
+    if not export.is_relative_to(export_root) or not export.is_dir():
+        raise ValueError('Export path is outside the read-only share')
+    revision = export_revision(export)
     if (not source.is_relative_to(data_root / 'sources') or not metadata.is_relative_to(data_root / 'metadata')
             or not source.is_dir() or not metadata.is_dir()):
         raise ValueError('Deployment directories are outside the dedicated data root')
     status_path = data_root / 'refresh-state' / (config_id + '.json')
     previous = json.loads(status_path.read_text(encoding='utf-8')) if status_path.is_file() else {}
     status = {'configId': config_id, 'state': 'running', 'stage': 'validate-export', 'startedAt': time.time(),
-              'previousIndexedAt': previous.get('indexedAt'), 'archiveSha256': archive_hash}
+              'previousIndexedAt': previous.get('indexedAt'), 'exportRevision': revision}
     write_status(status_path, status)
     try:
         with tempfile.TemporaryDirectory(prefix=config_id + '-', dir=data_root / 'incoming') as temporary:
             staged = Path(temporary)
-            staged_source = extract_export(archive, staged)
+            staged_source = export
             report_dir = staged / 'metadata'
-            generator_config = {'repoPath': str(staged), 'mainConfigPath': 'src/cf', 'mainConfigRequired': True,
+            diagnostics_dir = data_root / 'refresh-state' / (config_id + '-diagnostics')
+            generator_config = {'project': config_id, 'repoPath': str(export.parent.parent), 'mainConfigPath': 'src/cf', 'mainConfigRequired': True,
                                 'extensionPath': '', 'extensionRequired': False, 'outputPath': str(report_dir),
                                 'reportFileName': 'Report.txt', 'encoding': 'utf-8', 'warningsAsErrors': False,
-                                'buildXmlOverrides': True, 'diagnosticsPath': str(staged / 'diagnostics'),
-                                'logsPath': str(staged / 'logs')}
+                                'buildXmlOverrides': True, 'diagnosticsPath': str(diagnostics_dir),
+                                'logsPath': str(diagnostics_dir / 'logs'), 'generatorSettingsPath': str(staged / 'xml-overrides.json')}
             generator_path = staged / 'generator.json'
             generator_path.write_text(json.dumps(generator_config, ensure_ascii=False), encoding='utf-8')
             status['stage'] = 'generate-report'; write_status(status_path, status)
             generator_log = data_root / 'refresh-state' / (config_id + '-report.log')
-            with generator_log.open('w', encoding='utf-8') as log:
-                subprocess.run(['python3', job['metadataGenerator'], '--config', str(generator_path)],
-                               stdout=log, stderr=subprocess.STDOUT, check=True, timeout=1800)
+            status['reportExitCode'] = run_metadata_generator(
+                ['python3', job['metadataGenerator'], '--config', str(generator_path)], generator_log)
+            status['reportDiagnosticsPath'] = str(diagnostics_dir)
             report = report_dir / 'Report.txt'
             if not report.is_file() or report.stat().st_size < 100:
                 raise ValueError('Metadata report was not created')
             fingerprint = input_fingerprint(staged_source, report)
+            if export_revision(export) != revision:
+                raise ValueError('Designer export changed during report generation')
             status['inputFingerprint'] = fingerprint
             if not force and previous.get('state') in ('succeeded', 'unchanged') and previous.get('inputFingerprint') == fingerprint:
                 status.update(state='unchanged', stage='completed', indexedAt=previous['indexedAt'], completedAt=time.time())
@@ -160,8 +159,14 @@ def refresh(host, job, config_id, archive, archive_hash, force=False):
             status['stage'] = 'deploy-export'; write_status(status_path, status)
             command(['docker', 'stop', '--time', '60', *identities], timeout=150)
             try:
-                command(['rsync', '-a', '--delete', '--delay-updates', '--', str(staged_source) + '/', str(source) + '/'], timeout=900)
-                command(['rsync', '-a', '--delete', '--delay-updates', '--', str(report_dir) + '/', str(metadata) + '/'], timeout=900)
+                sync_log = data_root / 'refresh-state' / (config_id + '-sync.log')
+                with sync_log.open('w', encoding='utf-8') as log:
+                    for origin, destination in ((staged_source, source), (report_dir, metadata)):
+                        subprocess.run(['rsync', '-a', '--stats', '--delete', '--delay-updates', '--',
+                                        str(origin) + '/', str(destination) + '/'],
+                                       stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
+                if export_revision(export) != revision:
+                    raise ValueError('Designer export changed during source synchronization')
             finally:
                 command(['docker', 'start', *identities], timeout=120)
         status['stage'] = 'index-code-and-graph'; write_status(status_path, status)
@@ -193,15 +198,13 @@ def main():
     parser.add_argument('--host-config', required=True)
     parser.add_argument('--job-config', required=True)
     parser.add_argument('--config-id', required=True)
-    parser.add_argument('--archive', required=True)
-    parser.add_argument('--sha256', required=True)
     parser.add_argument('--force', action='store_true')
     args = parser.parse_args()
     host = json.loads(Path(args.host_config).read_text(encoding='utf-8'))
     validate_config(host)
     job = json.loads(Path(args.job_config).read_text(encoding='utf-8'))
     with maintenance_lock(host['lockPath'], blocking=True):
-        result = refresh(host, job, args.config_id, args.archive, args.sha256, args.force)
+        result = refresh(host, job, args.config_id, args.force)
     print(json.dumps(result, ensure_ascii=False))
 
 

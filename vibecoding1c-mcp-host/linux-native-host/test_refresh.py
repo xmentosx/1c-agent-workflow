@@ -1,24 +1,37 @@
-import io
-import tarfile
 import tempfile
+import subprocess
+import sys
 from pathlib import Path
 import unittest
 
-from refresh import code_phase, extract_export, graph_phase
+from refresh import code_phase, export_revision, graph_phase, input_fingerprint, run_metadata_generator
 
 
 class RefreshBoundaryTests(unittest.TestCase):
-    def test_unsafe_archive_is_rejected_before_any_files_are_written(self):
+    def test_metadata_owner_warning_exit_is_accepted_but_error_exit_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
-            archive = Path(directory) / 'dump.tar.gz'
-            with tarfile.open(archive, 'w:gz') as handle:
-                for name in ('src/cf/Configuration.xml', 'src/cf/../../outside'):
-                    item = tarfile.TarInfo(name); item.size = 1
-                    handle.addfile(item, io.BytesIO(b'x'))
-            output = Path(directory) / 'output'; output.mkdir()
-            with self.assertRaisesRegex(ValueError, 'unsafe'):
-                extract_export(archive, output)
-            self.assertEqual(list(output.iterdir()), [])
+            log = Path(directory) / 'report.log'
+            self.assertEqual(run_metadata_generator([sys.executable, '-c', "print('warning'); raise SystemExit(1)"], log), 1)
+            self.assertEqual(log.read_text(encoding='utf-8').strip(), 'warning')
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                run_metadata_generator([sys.executable, '-c', "print('error'); raise SystemExit(2)"], log)
+            self.assertEqual(raised.exception.returncode, 2)
+            self.assertEqual(log.read_text(encoding='utf-8').strip(), 'error')
+
+    def test_designer_revision_detects_changed_source_with_unchanged_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            (source / 'Configuration.xml').write_text('<Configuration/>')
+            (source / 'ConfigDumpInfo.xml').write_text('<ConfigVersion version="first"/>')
+            report = source / 'Report.txt'; report.write_text('same metadata')
+            before = input_fingerprint(source, report)
+            (source / 'ConfigDumpInfo.xml').write_text('<ConfigVersion version="second"/>')
+            self.assertNotEqual(input_fingerprint(source, report), before)
+
+    def test_incomplete_shared_export_is_not_accepted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, 'incomplete'):
+                export_revision(Path(directory))
 
     def test_successful_empty_index_is_not_accepted(self):
         data = {'indexing': {'running': False, 'last_outcome': 'completed'},
