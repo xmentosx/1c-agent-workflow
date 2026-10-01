@@ -96,6 +96,12 @@ checkouts must remain clean and exact. Business staging, a pending merge and its
 original lifecycle record stay with their existing owner; repeat that original
 business command separately after the package update.
 
+For a stopped `fork-dev-branch`, repeat the original fork command from its source
+branch. The fork owner retains its original business anchor and immutable base
+snapshot. It accepts a replacement package only through the exact retained
+completed-update chain and preserves target-branch settings and proven completed
+restoration. Later source business changes do not replace the captured snapshot.
+
 ## Client membership failure
 
 Attach/detach snapshots cover client-surface and MCP ownership receipts plus all

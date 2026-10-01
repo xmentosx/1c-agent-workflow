@@ -4251,6 +4251,13 @@ function New-ItlOpenSpecStatus {
     }
 }
 
+function Get-AiRulesOpenSpecScaffoldPaths {
+    return @(
+        'openspec/README.md', 'openspec/config.yaml', 'openspec/project.md',
+        'openspec/specs/README.md', 'openspec/changes/README.md'
+    )
+}
+
 function Get-AiRules1cOpenSpecStatus {
     param([string]$Client = '')
     $requiredStages = [ordered]@{
@@ -4311,10 +4318,7 @@ function Get-AiRules1cOpenSpecStatus {
         return (New-ItlOpenSpecStatus -Mode unavailable -Reason $_.Exception.Message -Cli $cli)
     }
     if ($store.source -eq 'nearest') {
-        $requiredWorkspace = @(
-            'openspec/README.md', 'openspec/config.yaml', 'openspec/project.md',
-            'openspec/specs/README.md', 'openspec/changes/README.md'
-        )
+        $requiredWorkspace = @(Get-AiRulesOpenSpecScaffoldPaths)
         $missingWorkspace = @($requiredWorkspace | Where-Object {
             -not (Test-Path -LiteralPath (Join-Path $store.rootPath $_) -PathType Leaf)
         })
@@ -5382,9 +5386,28 @@ function Get-WorkflowUpdateTrackedInstalledClientConfigPaths {
 function Get-WorkflowUpdateManagedPathSpecs {
     param(
         [string[]]$AiRulesPathsBefore = @(),
-        [string[]]$ClientSurfacePathsBefore = @()
+        [string[]]$ClientSurfacePathsBefore = @(),
+        [string]$AtCommit = '',
+        [switch]$StaticOnly
     )
 
+    $clientPaths = @()
+    $rulesEntries = @()
+    if ($StaticOnly) {
+        # Used when a retained manifest's ownership claim must be checked
+        # against this package's fixed write-set, without reading that claim.
+    } elseif ($AtCommit) {
+        $manifestText = Get-GitBlobTextAtCommit -Commit $AtCommit -RepoPath '.ai-rules.json'
+        if ($manifestText) { $rulesEntries = @(Get-AiRules1cManifestFileEntries -Manifest ($manifestText | ConvertFrom-Json -ErrorAction Stop)) }
+        $surfaceText = Get-GitBlobTextAtCommit -Commit $AtCommit -RepoPath '.agent-1c/client-surface.json'
+        if ($surfaceText) {
+            $surface = $surfaceText | ConvertFrom-Json -ErrorAction Stop
+            foreach ($client in @($surface.clients.PSObject.Properties)) { $clientPaths += @($client.Value.files.PSObject.Properties.Name) }
+        }
+    } else {
+        $clientPaths = @(Get-WorkflowUpdateClientSurfacePaths)
+        $rulesEntries = @(Get-AiRules1cManifestFileEntries)
+    }
     $paths = [System.Collections.Generic.List[string]]::new()
     foreach ($path in @(
         ".agents/skills/1c-workflow",
@@ -5409,12 +5432,12 @@ function Get-WorkflowUpdateManagedPathSpecs {
         "USER-RULES.md",
         "LLM-RULES.md",
         "memory.md"
-    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @(Get-WorkflowUpdateClientSurfacePaths) + @(Get-WorkflowUpdateTrackedInstalledClientConfigPaths)) {
+    ) + @($AiRulesPathsBefore) + @($ClientSurfacePathsBefore) + @($clientPaths) + @(Get-WorkflowUpdateTrackedInstalledClientConfigPaths)) {
         if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
         $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$path)
         if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
     }
-    foreach ($entry in @(Get-AiRules1cManifestFileEntries)) {
+    foreach ($entry in $rulesEntries) {
         if ([string]::IsNullOrWhiteSpace([string]$entry.target)) { continue }
         $normalized = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$entry.target)
         if (-not $paths.Contains($normalized)) { $paths.Add($normalized) }
@@ -11186,9 +11209,14 @@ function Read-WorkflowBranchCommitPlanReceipt {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
     try { $receipt = Read-Utf8Text -Path $path | ConvertFrom-Json -ErrorAction Stop }
     catch { throw "WORKFLOW_UPDATE_BRANCH_RECEIPT_INVALID: '$path' cannot be read. Preserve the snapshot. $($_.Exception.Message)" }
+    # Retention renames the snapshot directory, never its immutable receipts.
+    $receiptRoot = [string]$Snapshot.root
+    if ((Split-Path -Leaf $receiptRoot) -cmatch '^itl-workflow-update-completed-([a-f0-9]{32})$') {
+        $receiptRoot = Join-Path (Split-Path -Parent $receiptRoot) ('itl-workflow-update-rollback-' + $Matches[1])
+    }
     if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.operation -cne 'update-workflow-branch' -or
         [string]$receipt.projectRoot -cne [string]$script:ProjectRoot -or
-        [string]$receipt.snapshotRoot -cne [string]$Snapshot.root -or
+        [string]$receipt.snapshotRoot -cne $receiptRoot -or
         [string]$receipt.branchRef -cne (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() -or
         [string]$receipt.oldHead -notmatch '^[a-f0-9]{40}$' -or
         [string]$receipt.newHead -notmatch '^[a-f0-9]{40}$' -or
@@ -13477,6 +13505,132 @@ function Set-DevBranchForkEvidenceReferences {
     }
 }
 
+function Assert-DevBranchForkWorkflowTransition {
+    param(
+        [Parameter(Mandatory = $true)][string]$OriginalCommit,
+        [string]$OriginalDependencyLockSha256 = ''
+    )
+
+    $head = Get-CurrentCommit
+    $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $head)
+    $changed = @(
+        @(Get-GitPathList -Arguments @('diff', '--name-only', '-z')) +
+        @(Get-GitPathList -Arguments @('diff', '--cached', '--name-only', '-z')) +
+        @(Get-GitPathList -Arguments @('ls-files', '--others', '--exclude-standard', '-z'))
+    )
+    if (@($changed | Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher }).Count -gt 0) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_DIRTY: preserve staged/unstaged workflow edits and reconcile them before repeating the same fork.'
+    }
+    if ($head -ceq $OriginalCommit) { return }
+    $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+    $saved = @()
+    if (Test-Path -LiteralPath $parent -PathType Container) {
+        $saved = @(foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')) {
+            # An unrelated damaged historical receipt cannot invalidate the
+            # selected chain. Every selected capsule is fully validated below.
+            try { $projection = Read-Utf8Text -Path (Join-Path $directory.FullName 'transaction.json') | ConvertFrom-Json -ErrorAction Stop }
+            catch { continue }
+            [pscustomobject]@{ root=$directory.FullName; receipt=$projection }
+        })
+    }
+    $cursor = $head
+    $expectedLock = Get-WorkflowUpdatePathState -RelativePath '.agent-1c/dependency-lock.json'
+    $branchRef = (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim()
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # Snapshot coverage includes all user OpenSpec documents for rollback;
+    # only the five generated scaffold files can be new workflow claims.
+    $scaffoldPaths = @(Get-AiRulesOpenSpecScaffoldPaths)
+    $nativePaths = @(Get-AiRulesMigrationSnapshotRelativePaths | Where-Object { $_ -cne 'openspec' })
+    $nativeMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $nativePaths
+    while ($cursor -cne $OriginalCommit) {
+        if (-not $seen.Add($cursor)) { throw 'DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID: cyclic workflow history; preserve the original fork snapshot.' }
+        $candidates = @($saved | Where-Object {
+            [string](Get-StateValue -State $_.receipt -Name 'completedHead' -Default '') -ceq $cursor -and
+            [string](Get-StateValue -State $_.receipt -Name 'preUpdateHead' -Default '') -cne $cursor
+        })
+        if ($candidates.Count -ne 1) {
+            throw "DEV_BRANCH_FORK_WORKFLOW_CHAIN_UNPROVEN: expected one completed update ending at '$cursor'; found $($candidates.Count). Preserve the fork snapshot and finish or reconcile its original update-workflow transaction."
+        }
+        $id = (Split-Path -Leaf $candidates[0].root).Substring('itl-workflow-update-completed-'.Length)
+        $completed = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+        $plan = Read-WorkflowBranchCommitPlanReceipt -Snapshot $completed.snapshot
+        if ($null -eq $plan -or [string]$completed.receipt.branchRef -cne $branchRef -or
+            [string]$plan.oldHead -cne [string]$completed.receipt.preUpdateHead -or [string]$plan.newHead -cne $cursor) {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_CHAIN_INVALID: completed transaction and branch commit proof disagree.'
+        }
+        $before = ConvertTo-Agent1cHashtable -Object $completed.receipt.beforePathState
+        $after = ConvertTo-Agent1cHashtable -Object $completed.receipt.pathState
+        $lockPath = '.agent-1c/dependency-lock.json'
+        if (-not $before.Contains($lockPath) -or -not $after.Contains($lockPath) -or
+            [string]$after[$lockPath] -cne $expectedLock -or [string]$before[$lockPath] -notmatch '^file:[a-f0-9]{64}$') {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the completed update does not connect the original and current dependency locks.'
+        }
+        $lockRecord = @($completed.snapshot.records | Where-Object relativePath -CEQ $lockPath)
+        if ($lockRecord.Count -ne 1 -or -not $lockRecord[0].existed -or
+            (Get-GitOutput @('hash-object', ('--path=' + $lockPath), '--', [string]$lockRecord[0].backupPath)).Trim() -cne
+            (Get-GitOutput @('rev-parse', ($plan.oldHead + ':' + $lockPath))).Trim()) {
+            throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the before lock is not the recorded Git parent lock.'
+        }
+        # Each hop uses only its Git-pinned endpoint manifests, never mutable
+        # working files, edited backups or ownership acquired by a later hop.
+        $oldOwned = @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $plan.oldHead)
+        $owned = @($oldOwned) + @(Get-WorkflowUpdateManagedPathSpecs -AtCommit $plan.newHead) + @(Get-AiRulesOpenSpecScaffoldPaths)
+        $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $owned
+        $oldMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $oldOwned
+        $staticMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+        $newClaims = @($plan.managedPaths | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $oldMatcher) } | ForEach-Object { ':(literal)' + $_ })
+        $existingNewClaims = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-tree', '-r', '--name-only', '-z', $plan.oldHead) -LiteralPaths $newClaims)
+        foreach ($path in @($plan.managedPaths)) {
+            $businessSource = Test-OneCSourceRepoPath -RepoPath $path
+            $businessTests = @(@('tests', (Get-VanessaConfiguredFeaturesPath), (Get-YAxUnitTestsPath)) | Where-Object {
+                Test-RepoPathUnderRoot -RepoPath $path -Root $_
+            }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $staticMatcher)
+            $newClaimOnExistingPath = $existingNewClaims -ccontains $path
+            $unknownNewClaim = -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
+                -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $nativeMatcher) -and $path -cnotin $scaffoldPaths
+            if ($businessSource -or $businessTests -or
+                (($newClaimOnExistingPath -or $unknownNewClaim -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)) -and -not (Test-WorkflowExecutionRuntimePath -Path $path))) {
+                throw "DEV_BRANCH_FORK_WORKFLOW_BUSINESS_CHANGE: '$path' is not a proven workflow-owned transition. Preserve the original fork anchor and use the original update-workflow recovery to reconcile this path."
+            }
+        }
+        $expectedLock = [string]$before[$lockPath]
+        $cursor = [string]$plan.oldHead
+    }
+    if ($OriginalDependencyLockSha256 -and $expectedLock -cne ('file:' + $OriginalDependencyLockSha256)) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the first update backup does not match the immutable fork dependency lock.'
+    }
+    if ((Get-GitOutput @('hash-object', '--path=.agent-1c/dependency-lock.json', '--', (Join-Path $script:ProjectRoot '.agent-1c/dependency-lock.json'))).Trim() -cne
+        (Get-GitOutput @('rev-parse', ($head + ':.agent-1c/dependency-lock.json'))).Trim()) {
+        throw 'DEV_BRANCH_FORK_WORKFLOW_LOCK_UNPROVEN: the current lock differs from the completed Git transition.'
+    }
+}
+
+function Get-DevBranchForkResumeState {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][string]$TargetProjectRoot)
+
+    if ((Resolve-Agent1cFullPath -Path ([string]$Snapshot.targetWorktreePath)) -ine (Resolve-Agent1cFullPath -Path $TargetProjectRoot) -or
+        (Get-GitOutputAt -Root $TargetProjectRoot -Arguments @('branch', '--show-current')).Trim() -cne [string]$Snapshot.targetGitBranch) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: the snapshot belongs to another target branch or worktree.'
+    }
+    $path = Join-Path $TargetProjectRoot ".agent-1c/dev-branches/$($Snapshot.targetSafeName).json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $state = Read-DevBranchStateFile -Path $path
+    $expected = @{
+        forkId = [string]$Snapshot.forkId; forkedFromCommit = [string]$Snapshot.sourceCommit
+        forkedFromBranch = [string]$Snapshot.sourceGitBranch; devBranch = [string]$Snapshot.targetGitBranch
+        forkSnapshotArtifactSha256 = [string]$Snapshot.artifactSha256; forkSnapshotArtifactKind = [string]$Snapshot.artifactKind
+    }
+    foreach ($name in $expected.Keys) {
+        if ([string](Get-StateValue -State $state -Name $name -Default '') -cne $expected[$name]) {
+            throw "DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: target state differs at '$name'; preserve the original snapshot."
+        }
+    }
+    if ((Resolve-Agent1cFullPath -Path ([string]$state.worktreePath)) -ine (Resolve-Agent1cFullPath -Path $TargetProjectRoot)) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: target worktree changed.'
+    }
+    return $state
+}
+
 function Install-DevBranchForkDependencyLock {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -13490,7 +13644,15 @@ function Install-DevBranchForkDependencyLock {
     if (Test-Path -LiteralPath $targetDependencyLockPath -PathType Leaf -ErrorAction SilentlyContinue) {
         $targetDependencyLockSha256 = (Get-FileHash -LiteralPath $targetDependencyLockPath -Algorithm SHA256).Hash.ToLowerInvariant()
         if ($targetDependencyLockSha256 -cne [string]$Snapshot.dependencyLockSha256) {
-            throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+            if (-not [string](Get-StateValue -State $Snapshot -Name 'sourceCommit' -Default '')) {
+                throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+            }
+            Invoke-InProjectContext -Root $TargetProjectRoot -ScriptBlock {
+                if ((Get-CurrentCommit) -ceq [string]$Snapshot.sourceCommit) {
+                    throw "DEV_BRANCH_FORK_TARGET_DEPENDENCY_LOCK_MISMATCH expected='$($Snapshot.dependencyLockSha256)' actual='$targetDependencyLockSha256' path='$targetDependencyLockPath'"
+                }
+                Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$Snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$Snapshot.dependencyLockSha256)
+            }
         }
         return $targetDependencyLockPath
     }
@@ -13562,6 +13724,43 @@ function Assert-DevBranchForkInfoBaseIsolated {
     }
 }
 
+function Test-DevBranchForkRestoreCompleted {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [AllowNull()][object]$State, [string]$TargetInfoBasePath)
+
+    if ($null -eq $State -or -not [bool](Get-StateValue -State $State -Name 'launcherRegistered' -Default $false)) { return $false }
+    # The original owner saved launcher-registered only after restore, immutable
+    # history and branch baseline. Validate that whole boundary before reusing it.
+    $history = Join-Path $script:ProjectRoot ".agent-1c/fork-history/$($Snapshot.forkId)"
+    $baselinePath = Join-Path $script:ProjectRoot ".agent-1c/event-log-baselines/$($Snapshot.targetSafeName).json"
+    if ((Resolve-Agent1cFullPath -Path ([string]$State.forkHistoryPath)) -ine (Resolve-Agent1cFullPath -Path $history) -or
+        (Resolve-Agent1cFullPath -Path ([string]$State.eventLogBaselinePath)) -ine (Resolve-Agent1cFullPath -Path $baselinePath)) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: preserve the fork history and restore its original branch baseline before repeating the same fork.'
+    }
+    Assert-DevBranchForkHistoryReady -Snapshot $Snapshot -TargetHistoryRoot $history | Out-Null
+    $original = Read-Utf8Text -Path (Join-Path $history 'event-log-baseline.json') | ConvertFrom-Json -ErrorAction Stop
+    $baseline = Read-Utf8Text -Path $baselinePath | ConvertFrom-Json -ErrorAction Stop
+    $logDirectory = if ([string]$Snapshot.infoBaseKind -eq 'file') { Join-Path (Resolve-InfoBasePath $TargetInfoBasePath) '1Cv8Log' } else { '' }
+    $signatureHash = Get-StringSha256 -Value ((@($original.signatures) -join "`n"))
+    if ([string]$baseline.createdAt -cne [string]$original.createdAt -or [string]$baseline.reader -cne [string]$original.reader -or
+        [int]$baseline.errorCount -ne [int]$original.errorCount -or [int]$baseline.signatureCount -ne [int]$original.signatureCount -or
+        (@($baseline.signatures) -join "`n") -cne (@($original.signatures) -join "`n") -or
+        [string]$baseline.logDirectory -ine $logDirectory -or [string]$baseline.reason -cne 'fork-boundary' -or
+        [string]$State.eventLogBaselineHash -cne $signatureHash -or [string]$State.eventLogBaselineCreatedAt -cne [string]$original.createdAt) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: the original completed restore baseline is missing or changed; preserve the target database and reconcile the retained fork evidence.'
+    }
+    $connect = New-LauncherConnectString -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath $TargetInfoBasePath
+    $sections = @(Get-LauncherSections -Lines @(Read-Utf8Lines -Path ([string]$State.launcherListPath)))
+    $owned = @($sections | Where-Object {
+        $_.values.ContainsKey('ID') -and [string]$_.values['ID'] -ceq [string]$State.launcherInfoBaseId -and
+        $_.values.ContainsKey('Connect') -and [string]$_.values['Connect'] -ceq $connect
+    })
+    if (-not [string]$State.launcherInfoBaseId -or $owned.Count -ne 1 -or
+        ([string]$Snapshot.infoBaseKind -eq 'file' -and -not (Test-Path -LiteralPath (Join-Path (Resolve-InfoBasePath $TargetInfoBasePath) '1Cv8.1CD') -PathType Leaf))) {
+        throw 'DEV_BRANCH_FORK_RESTORE_EVIDENCE_CHANGED: the completed restore no longer identifies its original target database and launcher entry; preserve that database and reconcile its original fork evidence.'
+    }
+    return $true
+}
+
 function Initialize-ForkedDevBranchRuntime {
     param(
         [Parameter(Mandatory = $true)][object]$Snapshot,
@@ -13577,23 +13776,49 @@ function Initialize-ForkedDevBranchRuntime {
         Join-Path (Resolve-ProjectPath (Get-DevBranchInfoBaseRoot)) $safeName
     }
     Assert-DevBranchForkInfoBaseIsolated -SourceState $sourceState -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+    $resumeState = Get-DevBranchForkResumeState -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot
+    if ($null -ne $resumeState -and
+        ((Resolve-Agent1cFullPath -Path ([string]$resumeState.mainWorktreePath)) -ine (Resolve-Agent1cFullPath -Path $MainProjectRoot) -or
+         [string]$resumeState.infoBaseKind -cne [string]$Snapshot.infoBaseKind -or
+         (Get-OneCInfoBaseIdentity -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath ([string]$resumeState.devBranchInfoBasePath)).key -cne
+         (Get-OneCInfoBaseIdentity -InfoBaseKind ([string]$Snapshot.infoBaseKind) -InfoBasePath $targetInfoBasePath).key)) {
+        throw 'DEV_BRANCH_FORK_RESUME_IDENTITY_MISMATCH: the target infobase changed; preserve its snapshot and original branch settings.'
+    }
+    Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$Snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$Snapshot.dependencyLockSha256)
     $executionState = Get-ItlInitializationExecutionState
     $executionState.infoBaseKind = [string]$Snapshot.infoBaseKind
     $executionState.devBranchInfoBasePath = $targetInfoBasePath
     Install-DevBranchForkDependencyLock -Snapshot $Snapshot -TargetProjectRoot $script:ProjectRoot | Out-Null
     $targetHistoryRoot = Join-Path $script:ProjectRoot ".agent-1c\fork-history\$($Snapshot.forkId)"
-    $stateHash = New-ForkedDevBranchState `
-        -SourceState $sourceState `
-        -Snapshot $Snapshot `
-        -TargetInfoBasePath $targetInfoBasePath `
-        -TargetHistoryRoot $targetHistoryRoot `
-        -MainProjectRoot $MainProjectRoot `
-        -TargetState $executionState
+    $restoreCompleted = Test-DevBranchForkRestoreCompleted -Snapshot $Snapshot -State $resumeState -TargetInfoBasePath $targetInfoBasePath
+    if ($null -ne $resumeState) {
+        # The validated same fork already owns this generation and its runtime
+        # proofs. Re-importing the source state would erase completed effects.
+        $stateHash = ConvertTo-Agent1cHashtable -Object $resumeState
+        [void]$stateHash.Remove('statePath')
+        [void]$stateHash.Remove('stateProjectRoot')
+        $executionValues = ConvertTo-Agent1cHashtable -Object $executionState
+        foreach ($key in @($executionValues.Keys | Where-Object { $_ -match '^vanessaServiceInfoBase' })) {
+            $stateHash[$key] = $executionValues[$key]
+        }
+    } else {
+        $stateHash = New-ForkedDevBranchState `
+            -SourceState $sourceState `
+            -Snapshot $Snapshot `
+            -TargetInfoBasePath $targetInfoBasePath `
+            -TargetHistoryRoot $targetHistoryRoot `
+            -MainProjectRoot $MainProjectRoot `
+            -TargetState $executionState
+    }
     $statePath = Save-DevBranchInitializationState -SafeDevBranchName $safeName -State $stateHash -Status "fork-initializing"
 
     try {
         Set-RunStage -Stage "fork.restore.infobase" -Detail "Restoring the forked branch infobase from the immutable source snapshot."
-        $baseRestoreProven = Restore-DevBranchForkInfoBase -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath
+        $baseRestoreProven = if ($restoreCompleted) {
+            # Later target-owned native effects must survive retry. Their base
+            # is no longer the immutable source artifact for freshness reuse.
+            $false
+        } else { Restore-DevBranchForkInfoBase -Snapshot $Snapshot -TargetInfoBasePath $targetInfoBasePath }
         Install-DevBranchForkHistory -Snapshot $Snapshot -TargetHistoryRoot $targetHistoryRoot
 
         $baselineSourcePath = Join-Path $targetHistoryRoot "event-log-baseline.json"
@@ -13741,7 +13966,7 @@ function Fork-DevBranch {
             $currentSourceCommit = Get-CurrentCommit
             $forkedFromCommit = [string](Get-StateValue -State $existingState -Name "forkedFromCommit" -Default "")
             if ($forkedFromCommit -cne $currentSourceCommit) {
-                throw "DEV_BRANCH_FORK_TARGET_ALREADY_READY: target='$targetGitBranch' forkedFromCommit='$forkedFromCommit' currentSourceCommit='$currentSourceCommit'. Choose a new target branch name for the current source state."
+                Assert-DevBranchForkWorkflowTransition -OriginalCommit $forkedFromCommit
             }
             $completedStagingPath = Get-DevBranchForkStagingPath -SafeDevBranchName $targetSafeName
             if (Test-Path -LiteralPath $completedStagingPath -PathType Container -ErrorAction SilentlyContinue) {
@@ -13787,9 +14012,25 @@ function Fork-DevBranch {
         Invoke-Git @("worktree", "add", "-b", $targetGitBranch, $targetWorktreePath, $sourceCommit)
     }
 
-    Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
+    $resumeTarget = if ($branchExists) { Get-DevBranchForkResumeState -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath } else { $null }
+    $preserveTargetEnv = $null -ne $resumeTarget
+    if ($branchExists) {
+        $preserveTargetEnv = Invoke-InProjectContext -Root $targetWorktreePath -ScriptBlock {
+            Assert-DevBranchForkWorkflowTransition -OriginalCommit ([string]$snapshot.sourceCommit) -OriginalDependencyLockSha256 ([string]$snapshot.dependencyLockSha256)
+            ($null -ne $resumeTarget -or (Get-CurrentCommit) -cne [string]$snapshot.sourceCommit)
+        }
+    }
+    if ($preserveTargetEnv) {
+        if (-not (Test-Path -LiteralPath (Join-Path $targetWorktreePath '.dev.env') -PathType Leaf)) {
+            throw 'DEV_BRANCH_FORK_TARGET_DOT_ENV_MISSING: restore the target branch settings through its original workflow-update recovery before repeating this fork.'
+        }
+    } else {
+        Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
+    }
     Copy-CavemanPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
-    Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
+    if (-not $preserveTargetEnv) {
+        Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
+    }
     Invoke-ForkDevBranchRuntimeAfterSnapshot `
         -Snapshot $snapshot `
         -MainProjectRoot $mainProjectRoot `

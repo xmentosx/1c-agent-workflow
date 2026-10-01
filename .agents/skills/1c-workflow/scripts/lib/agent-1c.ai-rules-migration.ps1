@@ -1,4 +1,4 @@
-function Get-AiRulesBaselineTarget {
+﻿function Get-AiRulesBaselineTarget {
     param([string]$TemplateRoot = $script:ProjectRoot)
     $projectTemplatePath = Join-Path $TemplateRoot "templates\project.json"
     $lockTemplatePath = Join-Path $TemplateRoot "templates\dependency-lock.json"
@@ -832,11 +832,8 @@ function Invoke-AiRulesMigrationCandidatePreflight {
     return $checkout
 }
 
-function New-AiRulesMigrationSnapshot {
-    $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\ai-rules-migration-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
-    $payloadRoot = Join-Path $runRoot "payload"
-    New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
-    $relativePaths = @(
+function Get-AiRulesMigrationSnapshotRelativePaths {
+    return @(
         ".agent-1c\project.json",
         ".agent-1c\dependency-lock.json",
         ".agent-1c\client-surface.json",
@@ -871,6 +868,13 @@ function New-AiRulesMigrationSnapshot {
         "opencode.json",
         ".agents"
     )
+}
+
+function New-AiRulesMigrationSnapshot {
+    $runRoot = Join-Path $script:ProjectRoot (".agent-1c\runs\ai-rules-migration-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    $payloadRoot = Join-Path $runRoot "payload"
+    New-Item -ItemType Directory -Force -Path $payloadRoot | Out-Null
+    $relativePaths = @(Get-AiRulesMigrationSnapshotRelativePaths)
     $entries = @()
     foreach ($relativePath in $relativePaths) {
         $source = Join-Path $script:ProjectRoot $relativePath
