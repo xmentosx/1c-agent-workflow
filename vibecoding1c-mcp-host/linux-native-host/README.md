@@ -106,7 +106,10 @@ Windows writes `state/nightly-index-state.json` and UTF-8 logs under
 logs and full native Code/Graph status snapshots. A successful timestamp is
 recorded only after both native indexing statuses complete. The Linux refresh
 runs in the exact `itl-mcp-refresh-<configId>` systemd unit with a twelve-hour
-runtime limit and survives a control-channel disconnect. Stop the Windows task
+runtime limit and survives a control-channel disconnect. The configured refresh
+deadline also bounds source synchronization: a first full ERP export can exceed
+10 GiB and must not inherit a short command timeout intended for small updates.
+Stop the Windows task
 to prevent further configuration work; stop that exact Linux unit to cancel its
 active refresh. Process exit releases the corresponding lease. After a failure,
 inspect these states and rerun the same task: a fresh

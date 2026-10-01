@@ -164,7 +164,8 @@ def refresh(host, job, config_id, force=False):
                     for origin, destination in ((staged_source, source), (report_dir, metadata)):
                         subprocess.run(['rsync', '-a', '--stats', '--delete', '--delay-updates', '--',
                                         str(origin) + '/', str(destination) + '/'],
-                                       stdout=log, stderr=subprocess.STDOUT, check=True, timeout=900)
+                                       stdout=log, stderr=subprocess.STDOUT, check=True,
+                                       timeout=job.get('timeoutSeconds', 43200))
                 if export_revision(export) != revision:
                     raise ValueError('Designer export changed during source synchronization')
             finally:
