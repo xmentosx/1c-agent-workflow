@@ -41,3 +41,54 @@ journal. Disable the timer before leaving containers intentionally stopped.
 `healthy` means container liveness; initial acceptance separately requires MCP
 initialization, tools, full index status and representative searches, including
 after a Windows restart without user login.
+
+## Nightly refresh
+
+`windows_nightly.py` is the Windows scheduled-task entrypoint. The existing
+Windows host export helper remains the Designer owner and inherits the exact
+infobase execution guard. It exports one configuration, creates an immutable
+UTF-8 tar archive, transfers it using a dedicated SSH key and a pinned guest host
+key, and calls `refresh.py` in the VM. Configurations run sequentially; failure
+of one is recorded and does not prevent the next configuration from running.
+Use a password-backed Task Scheduler principal with access to the repository
+share for unattended exports. Enter that password locally during provisioning;
+never put it in JSON, arguments or logs. `IgnoreNew` prevents overlapping task
+instances. Set the same 02:00 schedule as the existing Windows host.
+
+The deployment-only Windows config extends the normal host export config with
+`rootPath`, `workflowPath`, `guardRoot`, `linuxHost`, `linuxUser`, `identityFile`,
+`knownHostsFile`, `hostKeyAlias`, `sshPath`, `scpPath`, and `timeoutSeconds`.
+Each configuration keeps the canonical `sourcePath`, `mainConfigPath`, and
+`dump` settings, including its own platform version and repository address.
+Provision dedicated export infobases first. Use paths on the selected SSD.
+
+Linux `refresh.config.json` contains `dataRoot`, `metadataGenerator`,
+`timeoutSeconds`, `pollSeconds`, and `configurations`. Each configuration has
+`configId`, `sourcePath`, `metadataPath`, `codeContainer`, `graphContainer`,
+`codeUrl`, and `graphUrl`. Sources must be under `<dataRoot>/sources`, metadata
+under `<dataRoot>/metadata`. Create `<dataRoot>/incoming` for the transfer user
+with mode 0700; install `rsync` and the pinned metadata report generator.
+
+`refresh.py` consumes the watchdog's existing maintenance lease. It validates
+the archive checksum and paths and generates the report before stopping either
+MCP. A failed export, checksum or report does not replace the live source. Both
+container identities are checked against the existing allowlist and host/config
+labels. Only the selected Code and Graph services stop briefly while their bind
+directories are synchronized; they restart in a `finally` block. Neo4j and index
+volumes are preserved. Native startup updates changed input incrementally with
+database reset disabled. Identical successful input is skipped. Disabled optional
+Graph lanes are allowed; failed required lanes, empty Code indexes, local
+embedding fallback and an unhealthy remote provider fail acceptance.
+
+Windows writes `state/nightly-index-state.json` and UTF-8 logs under
+`logs/nightly`. Linux writes `<dataRoot>/refresh-state/<configId>.json`, report
+logs and full native Code/Graph status snapshots. A successful timestamp is
+recorded only after both native indexing statuses complete. The Linux refresh
+runs in the exact `itl-mcp-refresh-<configId>` systemd unit with a twelve-hour
+runtime limit and survives a control-channel disconnect. Stop the Windows task
+to prevent further configuration work; stop that exact Linux unit to cancel its
+active refresh. Process exit releases the corresponding lease. After a failure,
+inspect these states and rerun the same task: a fresh
+export and incremental native refresh provide the continuation, without manual
+lock or state edits. Initial full indexing and a reboot/search acceptance remain
+separate from registration of the schedule.

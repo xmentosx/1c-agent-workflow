@@ -21,14 +21,14 @@
         @($errors).Count | Should -Be 0
     }
 
-    It "checks dedicated Linux watchdog ownership and maintenance boundaries" -Tag LinuxHost {
+    It "checks dedicated Linux watchdog and refresh ownership boundaries" -Tag LinuxHost {
         $configPath = Join-Path $TestDrive 'linux-host.json'
         @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
         & {
             . $McpHostPath -Action status -ConfigPath $configPath *> $null
             $python = Resolve-PythonExecutable -Config @{}
-            $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/linux-native-host/test_watchdog.py'
-            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B',$testPath) -TimeoutSec 30 -Description 'Linux watchdog ownership regression'
+            $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/linux-native-host'
+            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B','-m','unittest','discover','-s',$testPath,'-p','test_*.py') -TimeoutSec 30 -Description 'Linux host ownership and refresh regressions'
             $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
         }
     }
