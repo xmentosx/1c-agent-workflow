@@ -39,6 +39,16 @@ authority supervisor must precede an owned production pin. Local build/canary
 proof cannot authorize publication or claim a not-yet-published URL installable.
 Tasks 9.7, 10.2 and 10.4 remain open until their original live journeys pass.
 
+The first native build from e246f283 passed all three Gate 6 steps, restored
+its exact DT and released the owned processes. Independent ZIP inspection
+confirmed all 54 source files byte-for-byte, but found Windows Framework
+backslash entry names instead of the canonical src/ paths. Retain that original
+archive and diagnostic; source packaging now writes explicit slash paths with
+UTF-8 entry names. The regression extracts a Cyrillic/whitespace-path archive
+and compares the reconstructed source fingerprint, including opaque binary
+bytes. Native build input identity prevents relabelling the old proof as proof
+of the changed writer. This does not close service/TestClient acceptance.
+
 Publication ordering diagnosis: the shared queue includes migration and four
 other pending entries. PublishDevelop consumes the whole common-Git queue;
 QueueId cannot select only support. The migration's strict Gate 6 rejects the

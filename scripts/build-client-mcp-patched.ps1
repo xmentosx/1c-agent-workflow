@@ -86,8 +86,7 @@ try {
     Copy-Item -LiteralPath $xmlRoot -Destination (Join-Path $stage 'src') -Recurse
     foreach ($name in @('manifest.json', 'Language.xml', 'LICENSE.upstream', 'LICENSE.GPL3', 'ITL-NOTICE.txt', 'REBUILD.md')) { Copy-Item -LiteralPath (Join-Path $assetRoot $name) -Destination (Join-Path $stage $name) }
     Write-Utf8Text -Path (Join-Path $stage 'SOURCE-IDENTITY.json') -Value ($after | ConvertTo-Json -Depth 5)
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::CreateFromDirectory($stage, $archivePath)
+    New-ClientMcpSourceArchive -SourceDirectory $stage -DestinationPath $archivePath
     $receipt.sourceArchiveSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $receipt.status = 'built'
 } catch { $failure = $_; $receipt.status = 'failed'; $receipt.error = $_.Exception.Message } finally {

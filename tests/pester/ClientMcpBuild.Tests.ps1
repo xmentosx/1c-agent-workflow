@@ -62,6 +62,27 @@ Describe 'Controlled client_mcp metadata build' {
         $manifest.compatibilityVersion | Should -Be 'v0.6.5'
         $manifest.upstream.sha256 | Should -Match '^[a-f0-9]{64}$'
     }
+    It 'writes canonical UTF8 source ZIP paths and reconstructs every original byte' {
+        $source = New-ClientMetadataFixture
+        [void](Add-ClientMcpBorrowedLanguage $source (Join-Path $assetRoot 'Language.xml') $manifest.patch)
+        $identity = Get-ClientMcpBuildSourceIdentity $source
+        $stage = Join-Path $TestDrive ('source archive ' + [char]0x044f)
+        [void][IO.Directory]::CreateDirectory($stage)
+        Copy-Item -LiteralPath $source -Destination (Join-Path $stage 'src') -Recurse
+        $zipPath = Join-Path $TestDrive ('source ' + [char]0x044f + '.zip')
+        New-ClientMcpSourceArchive -SourceDirectory $stage -DestinationPath $zipPath
+        $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+        try {
+            @($archive.Entries | Where-Object { $_.FullName.Contains('\') }).Count | Should -Be 0
+            foreach ($file in $identity.files) {
+                $archive.GetEntry('src/' + $file.path) | Should -Not -BeNullOrEmpty
+            }
+        } finally { $archive.Dispose() }
+        $restored = Join-Path $TestDrive ('restored source ' + [char]0x044f)
+        [IO.Compression.ZipFile]::ExtractToDirectory($zipPath, $restored)
+        (Get-ClientMcpBuildSourceIdentity (Join-Path $restored 'src')).fingerprint | Should -Be $identity.fingerprint
+        { New-ClientMcpSourceArchive -SourceDirectory $stage -DestinationPath $zipPath } | Should -Throw
+    }
     It 'requires the exact CFE identity and existing installation owner proof for live release evidence' {
         $root=Join-Path $TestDrive ('release service '+[char]0x044f)
         $helper=Join-Path $root '.agents/skills/1c-workflow/scripts/agent-1c.ps1'

@@ -60,3 +60,29 @@ function Get-ClientMcpBuildSourceIdentity {
     try { $sha = ([BitConverter]::ToString($hash.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant() } finally { $hash.Dispose() }
     return [pscustomobject]@{ fingerprint = ('sha256:' + $sha); files = $files }
 }
+
+function New-ClientMcpSourceArchive {
+    param([string]$SourceDirectory, [string]$DestinationPath)
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $root = [IO.Path]::GetFullPath($SourceDirectory).TrimEnd('\')
+    $paths = [string[]]@(Get-ChildItem -LiteralPath $root -Recurse -File |
+        ForEach-Object { $_.FullName.Substring($root.Length + 1) })
+    [Array]::Sort($paths, [StringComparer]::Ordinal)
+    $stream = [IO.File]::Open($DestinationPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+        $archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Create, $false, [Text.Encoding]::UTF8)
+        try {
+            foreach ($relative in $paths) {
+                $entry = $archive.CreateEntry($relative.Replace('\', '/'), [IO.Compression.CompressionLevel]::Optimal)
+                $entry.LastWriteTime = [DateTimeOffset]::new(2000, 1, 1, 0, 0, 0, [TimeSpan]::Zero)
+                $entry.ExternalAttributes = 0
+                $inputStream = [IO.File]::OpenRead((Join-Path $root $relative))
+                try {
+                    $outputStream = $entry.Open()
+                    try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+                } finally { $inputStream.Dispose() }
+            }
+        } finally { $archive.Dispose() }
+    } finally { $stream.Dispose() }
+}
