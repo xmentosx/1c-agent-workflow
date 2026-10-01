@@ -3773,7 +3773,17 @@ function Open-HostMcpConnection {
     if ($sessionId) { $headers["mcp-session-id"] = $sessionId }
     $connection = [pscustomobject]@{ url = $Url; headers = $headers; nextId = 2; ownedSessionId = $sessionId }
     try {
-        $connection.url = $response.BaseResponse.ResponseUri.AbsoluteUri
+        $baseResponse = Get-ObjectValue -Object $response -Name "BaseResponse" -Default $null
+        $responseUri = Get-ObjectValue -Object $baseResponse -Name "ResponseUri" -Default $null
+        $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        if ([string]::IsNullOrWhiteSpace($effectiveUrl)) {
+            $request = Get-ObjectValue -Object $baseResponse -Name "RequestMessage" -Default $null
+            $responseUri = Get-ObjectValue -Object $request -Name "RequestUri" -Default $null
+            $effectiveUrl = [string](Get-ObjectValue -Object $responseUri -Name "AbsoluteUri" -Default "")
+        }
+        # Windows PowerShell and pwsh expose different effective-URI properties.
+        # Keep the known initial URL if neither response shape supplies one.
+        if (-not [string]::IsNullOrWhiteSpace($effectiveUrl)) { $connection.url = $effectiveUrl }
         Invoke-WebRequest -UseBasicParsing -Uri $connection.url -Method Post -ContentType "application/json" -Headers $headers -Body '{"jsonrpc":"2.0","method":"notifications/initialized"}' -TimeoutSec $TimeoutSec | Out-Null
         return $connection
     } catch {

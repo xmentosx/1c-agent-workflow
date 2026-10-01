@@ -4440,3 +4440,121 @@ Describe "Standalone host owns and releases MCP sessions" -Tag HostMcpSessions {
         $script:HostMcpFixture.deleted.Count | Should -Be 2
     }
 }
+
+Describe "Standalone host MCP response URI transport" -Tag HostMcpTransport {
+    BeforeAll {
+        $sourcePath = Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 'vibecoding1c-mcp-host/install-vibecoding1c-mcp-host.ps1'
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$null, [ref]$null)
+        $functions = @($ast.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -in @('Get-ObjectValue', 'Open-HostMcpConnection', 'Close-HostMcpConnection') })
+        . ([scriptblock]::Create(($functions.Extent.Text -join "`n")))
+        $realWebRequestCmdlet = Get-Command Invoke-WebRequest -CommandType Cmdlet
+    }
+
+    It "uses the effective URL and closes a real loopback session: <Scenario>, notification failure=<FailNotify>" -TestCases @(
+        @{ Scenario = 'direct'; FailNotify = $false }, @{ Scenario = 'direct'; FailNotify = $true },
+        @{ Scenario = 'redirect'; FailNotify = $false }, @{ Scenario = 'redirect'; FailNotify = $true },
+        @{ Scenario = 'fallback'; FailNotify = $false }, @{ Scenario = 'fallback'; FailNotify = $true }
+    ) {
+        param($Scenario, $FailNotify)
+        # A private TCP listener exercises Invoke-WebRequest on both Windows PowerShell
+        # and pwsh without URL ACLs, external servers, Docker, or production MCP sessions.
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+        $state = [hashtable]::Synchronized(@{ stop = $false; error = ''; requests = [Collections.ArrayList]::new(); active = 1; deleted = 0 })
+        $worker = [powershell]::Create()
+        [void]$worker.AddScript({
+            param($Listener, $State, $FailNotify, $Port)
+            try {
+                while (-not $State.stop) {
+                    if (-not $Listener.Pending()) { Start-Sleep -Milliseconds 5; continue }
+                    $client = $Listener.AcceptTcpClient()
+                    $stream = $client.GetStream()
+                    $stream.ReadTimeout = 5000
+                    $reader = [IO.StreamReader]::new($stream, [Text.Encoding]::ASCII, $false, 4096, $true)
+                    try {
+                        $requestLine = $reader.ReadLine().Split(' ')
+                        $headers = @{}
+                        while ($line = $reader.ReadLine()) {
+                            $split = $line.IndexOf(':')
+                            $headers[$line.Substring(0, $split)] = $line.Substring($split + 1).Trim()
+                        }
+                        if ($headers['Expect'] -eq '100-continue') {
+                            $continue = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 100 Continue`r`n`r`n")
+                            $stream.Write($continue, 0, $continue.Length)
+                            $stream.Flush()
+                        }
+                        $length = [int]$headers['Content-Length']
+                        $buffer = New-Object char[] $length
+                        $offset = 0
+                        while ($offset -lt $length) {
+                            $read = $reader.Read($buffer, $offset, $length - $offset)
+                            if ($read -le 0) { throw 'Incomplete loopback request body.' }
+                            $offset += $read
+                        }
+                        $body = if ($length) { (-join $buffer) | ConvertFrom-Json } else { $null }
+                        [void]$State.requests.Add(@{ method = $requestLine[0]; path = $requestLine[1]; session = [string]$headers['mcp-session-id'] })
+                        $status = '200 OK'; $extra = ''; $json = '{}'
+                        if ($requestLine[1] -eq '/start') {
+                            $status = '307 Temporary Redirect'
+                            $extra = "Location: http://127.0.0.1:$Port/mcp`r`n"
+                        } elseif ($requestLine[0] -eq 'DELETE') {
+                            if ($headers['mcp-session-id'] -ne 'owned-loopback') { throw 'Loopback cleanup attempted a foreign session.' }
+                            $State.active--; $State.deleted++; $State.stop = $true
+                        } elseif ($body.method -eq 'initialize') {
+                            $State.active++
+                            $extra = "mcp-session-id: owned-loopback`r`n"
+                            $json = '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{},"serverInfo":{"name":"loopback","version":"1"}}}'
+                        } elseif ($body.method -eq 'notifications/initialized') {
+                            if ($FailNotify) { $status = '500 FixtureFailure'; $json = '{"error":"fixture initialized failure"}' }
+                            else { $status = '202 Accepted'; $json = '' }
+                        } else { throw 'Unexpected loopback request.' }
+                        $bytes = [Text.Encoding]::UTF8.GetBytes($json)
+                        $head = [Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $status`r`n${extra}Content-Type: application/json; charset=utf-8`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n")
+                        $stream.Write($head, 0, $head.Length)
+                        $stream.Write($bytes, 0, $bytes.Length)
+                        $stream.Flush()
+                    } finally { $reader.Dispose(); $client.Dispose() }
+                }
+            } catch { $State.error = $_.Exception.Message }
+            finally { $Listener.Stop() }
+        }).AddArgument($listener).AddArgument($state).AddArgument($FailNotify).AddArgument($port)
+        $async = $worker.BeginInvoke()
+        $connection = $null
+        try {
+            if ($Scenario -eq 'fallback') {
+                # Retain a real HTTP initialize exchange, then remove optional response
+                # URI metadata to prove the already-known initial URL is preserved.
+                Mock Invoke-WebRequest {
+                    param($Uri, $Method, $Headers, $Body, $TimeoutSec, $ContentType)
+                    $response = & $realWebRequestCmdlet -UseBasicParsing -Uri $Uri -Method $Method -Headers $Headers -Body $Body -TimeoutSec 10 -ContentType $ContentType
+                    [pscustomobject]@{ Headers = $response.Headers; BaseResponse = [pscustomobject]@{} }
+                } -ParameterFilter { $Method -eq 'Post' -and $Body -match '"method":"initialize"' }
+            }
+            $path = if ($Scenario -eq 'redirect') { 'start' } else { 'mcp' }
+            $failure = $null
+            try { $connection = Open-HostMcpConnection -Url "http://127.0.0.1:$port/$path" -TimeoutSec 10 }
+            catch { $failure = $_ }
+            if ($FailNotify) {
+                $failure | Should -Not -BeNullOrEmpty
+                [int]$failure.Exception.Response.StatusCode | Should -Be 500
+            } else {
+                $failure | Should -BeNullOrEmpty
+                $connection.url | Should -BeExactly "http://127.0.0.1:$port/mcp"
+                Close-HostMcpConnection -Connection $connection
+            }
+            $async.AsyncWaitHandle.WaitOne(5000) | Should -BeTrue
+            $worker.EndInvoke($async)
+            $state.error | Should -BeNullOrEmpty
+            $state.deleted | Should -Be 1
+            $state.active | Should -Be 1
+            @($state.requests | Where-Object { $_.method -eq 'DELETE' -and $_.path -eq '/mcp' -and $_.session -eq 'owned-loopback' }).Count | Should -Be 1
+        } finally {
+            Close-HostMcpConnection -Connection $connection
+            $state.stop = $true
+            $listener.Stop()
+            if (-not $async.IsCompleted) { $worker.Stop() }
+            $worker.Dispose()
+        }
+    }
+}
