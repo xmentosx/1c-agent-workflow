@@ -3355,6 +3355,104 @@ try {
         $result.verificationScopeCommitted | Should -BeFalse
     }
 
+    It "restores the project dump cursor before <operation> verification when the caller directory differs" -TestCases @(
+        @{ operation = 'check' },
+        @{ operation = 'export' }
+    ) {
+        param([string]$operation)
+        $targetRoot = Join-Path $TestDrive "Рабочий проект $operation"
+        $callerRoot = Join-Path $TestDrive "Чужой каталог $operation"
+        foreach ($root in @($targetRoot, $callerRoot)) {
+            New-Item -ItemType Directory -Path (Join-Path $root 'src/cf') -Force | Out-Null
+        }
+        $targetCursor = Join-Path $targetRoot 'src/cf/ConfigDumpInfo.xml'
+        $callerCursor = Join-Path $callerRoot 'src/cf/ConfigDumpInfo.xml'
+        $utf8Bom = [Text.UTF8Encoding]::new($true)
+        $originalBytes = [byte[]](@($utf8Bom.GetPreamble()) + @($utf8Bom.GetBytes("<Версия>исходная</Версия>`r`n")))
+        $foreignBytes = [Text.Encoding]::UTF8.GetBytes("<Версия>чужая</Версия>`n")
+        [IO.File]::WriteAllBytes($targetCursor, $originalBytes)
+        [IO.File]::WriteAllBytes($callerCursor, $foreignBytes)
+        $originalBase64 = [Convert]::ToBase64String($originalBytes)
+        $foreignBase64 = [Convert]::ToBase64String($foreignBytes)
+
+        $result = & {
+            . $HelperPath -ProjectRoot $targetRoot -Action help *> $null
+            $state = [pscustomobject]@{ devBranch = 'itldev/branch1'; devBranchName = 'branch1'; safeDevBranchName = 'branch1'; devBranchInfoBasePath = 'C:\base'; infoBaseKind = 'file' }
+            $script:OneCNativeOperationJournal = New-OneCNativeOperationJournal
+            $script:CursorChangedByLoad = $false
+            $script:CursorAtVerification = [Collections.Generic.List[string]]::new()
+            function Read-DevBranchState { $state }
+            function Assert-DevelopmentBranchWorktreeContext {}
+            function Assert-DevBranchExtensionInitialized {}
+            function Assert-SingleManagedExtensionArtifact {}
+            function Sync-DevBranchContextToDotEnv {}
+            function Get-DevBranchKind { 'configuration' }
+            function Get-ExportPath { 'src/cf' }
+            function Repair-OneCSourceLineEndings {}
+            function Get-ConfigRepositoryTransferPlan { [pscustomobject]@{ baseCommit = 'master-commit'; items = @(); unresolvedPaths = @() } }
+            function Get-CurrentCommit { 'base-commit' }
+            function Get-GitCommitOrEmpty { 'master-commit' }
+            function Get-VerificationState {
+                $script:CursorAtVerification.Add([Convert]::ToBase64String([IO.File]::ReadAllBytes($targetCursor)))
+                [pscustomobject]@{ isFreshPassed = $true; effectiveStatus = 'passed'; currentFingerprint = 'v3|fixture'; verifiedFingerprint = 'v3|fixture' }
+            }
+            function Confirm-UnverifiedProceed { $false }
+            function Invoke-DevBranchVanessaRuntimeRelease {}
+            function Assert-VanessaVerificationPreflight {}
+            function Test-ItlFullVerificationProofEligible { $true }
+            function Ensure-DevBranchEventLogBaseline { param($State) $State }
+            function Ensure-DevBranchEventLogPendingCursor { [pscustomobject]@{ path = 'cursor.json'; capturedAt = [datetime]'2026-07-28T00:00:00Z' } }
+            function Write-NativeLoadCursor {
+                # Native loading updates the real ProjectRoot cursor independently
+                # of the caller's working directory and the snapshot resolver.
+                [IO.File]::WriteAllBytes($targetCursor, [Text.Encoding]::UTF8.GetBytes('<Версия>загруженная</Версия>'))
+                $script:CursorChangedByLoad = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetCursor)) -cne $originalBase64
+            }
+            function Update-DevBranchBase { Write-NativeLoadCursor }
+            function Invoke-ItlVerificationCycle { $script:CursorAtVerification.Add([Convert]::ToBase64String([IO.File]::ReadAllBytes($targetCursor))) }
+            function Load-ConfigFromFiles { Write-NativeLoadCursor; [pscustomobject]@{ currentCommit = 'base-commit'; sourceFingerprint = 'config-fingerprint' } }
+            function New-LoadStateUpdates { @{} }
+            function Invoke-DevBranchEnterpriseAutoUpdateIfLoaded {}
+            function Add-VerificationStaleIfNeeded {}
+            function Update-DevBranchState {}
+            function Invoke-DevBranchMcpRestartAfterInfobaseLoad { param($State) $State }
+            function Assert-DevBranchToolArtifactExportGuard {}
+            function Export-DevBranchResultFile { Join-Path $targetRoot 'result.cf' }
+            function Test-GitHasChanges { $false }
+            function Get-VerificationWorkingTreeChangePaths { @() }
+            function Get-VerificationFingerprintScopePaths { @('src/cf') }
+            function New-ResultManifest { Join-Path $targetRoot 'result.cf.manifest.json' }
+
+            $previousNativeDirectory = [Environment]::CurrentDirectory
+            Push-Location -LiteralPath $callerRoot
+            try {
+                [Environment]::CurrentDirectory = $callerRoot
+                if ($operation -eq 'check') { Invoke-DevBranchCheck } else { Export-DevBranchResult 6>$null }
+            } finally {
+                [Environment]::CurrentDirectory = $previousNativeDirectory
+                Pop-Location
+            }
+            [pscustomobject]@{
+                loadChangedCursor = $script:CursorChangedByLoad
+                verificationCursors = @($script:CursorAtVerification)
+                targetBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetCursor))
+                callerBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($callerCursor))
+                journal = $script:OneCNativeOperationJournal
+            }
+        }
+
+        $result.loadChangedCursor | Should -BeTrue
+        $result.verificationCursors.Count | Should -BeGreaterThan 0
+        foreach ($cursor in $result.verificationCursors) { $cursor | Should -BeExactly $originalBase64 }
+        $result.targetBytes | Should -BeExactly $originalBase64
+        $result.callerBytes | Should -BeExactly $foreignBase64
+        $result.journal.restorations.Count | Should -Be 1
+        $duty = $result.journal.restorations[0].payload
+        $duty.destination | Should -BeExactly $targetCursor
+        $duty.status | Should -Be 'restored'
+        Test-Path -LiteralPath $duty.snapshotPath | Should -BeFalse
+    }
+
     It "rejects stale result evidence before loading configuration files" {
         $result = & {
             . $HelperPath -ProjectRoot $RepoRoot -Action help *> $null

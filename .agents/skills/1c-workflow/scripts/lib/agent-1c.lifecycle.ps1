@@ -17906,7 +17906,7 @@ function Invoke-DevBranchCheck {
     Assert-ItlVerificationRepairScope -Trigger $trigger
     $state = Read-DevBranchState -Name $DevBranchName
     $checkExportPath = if ((Get-DevBranchKind -State $state) -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $checkExportPath)
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $checkExportPath)
     $repairAttemptConsumed = $false
     $repairVerificationPassed = $false
     $scenarioLoopDiagnostic = $false
@@ -18082,7 +18082,7 @@ function Export-DevBranchResult {
     $kind = Get-DevBranchKind -State $state
     $loadExportPath = if ($kind -eq "extension") { Assert-ExtensionFilesReady -State $state } else { Get-ExportPath }
     $repositoryTransferPlan = Get-ConfigRepositoryTransferPlan -ExportPath $loadExportPath
-    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Resolve-Agent1cFullPath -Path $loadExportPath)
+    $dumpInfoSnapshot = New-ConfigDumpInfoLoadSnapshot -AbsoluteExportPath (Assert-ExportPathInsideProject -ExportPath $loadExportPath)
     try {
     if ($kind -eq "extension") {
         $extensionName = Require-DevBranchExtensionName -State $state
