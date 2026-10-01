@@ -5,3 +5,9 @@ tests/fixtures/vanessa-nested-selection/*.bsl text eol=lf whitespace=-blank-at-e
 tests/fixtures/vanessa-row-criteria/navigation.bsl text eol=lf whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-client-code/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
 tests/fixtures/vanessa-testclient-ports/*-upstream.bsl -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+# Hash-pinned client_mcp metadata, notices and native baseline are verbatim.
+third-party/client-mcp/** -text
+# Designer XML keeps native BOM/CRLF; CR is the transport line ending.
+third-party/client-mcp/**/Language.xml whitespace=cr-at-eol
+third-party/client-mcp/**/LICENSE.upstream whitespace=cr-at-eol
+tests/fixtures/client-mcp-language/Configuration.xml -text whitespace=cr-at-eol

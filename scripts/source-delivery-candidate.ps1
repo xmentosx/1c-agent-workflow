@@ -125,7 +125,9 @@ function Get-DevelopPublicationEnvironmentIdentity {
 
 function Get-DeliveryComponentFinalizerIdentity {
     $path = if ($script:ComponentFinalizerScript) { $script:ComponentFinalizerScript } else { Join-Path $script:Root "scripts\source-delivery-component.ps1" }
-    return Get-DeliveryFileIdentity -Path $path
+    $identity = Get-DeliveryFileIdentity -Path $path
+    if ($script:ComponentFinalizerScript) { return $identity }
+    return Get-DeliveryCanonicalJsonSha256 -Value ([ordered]@{ component=$identity; statelessBuildContract=(Get-DeliveryFileIdentity -Path (Join-Path $script:Root 'scripts/client-mcp-build.ps1')) })
 }
 
 function Get-DeliveryCompatibilityPromoterIdentity {

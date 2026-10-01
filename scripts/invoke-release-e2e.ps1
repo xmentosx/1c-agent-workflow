@@ -2736,6 +2736,9 @@ try {
                         if (-not [bool]$familyEvidence.vanessaScenarioEvidencePassed) {
                             throw "Vanessa cold-path smoke did not bind passed run_scenario/get_test_results evidence to the expected feature paths and SHA-256 values."
                         }
+                        $canonicalClientLock = (Get-Content -LiteralPath (Join-Path $workflowRoot 'templates/dependency-lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json).dependencies.vanessaMcp.clientMcp
+                        $clientEvidence = Get-ReleaseClientMcpArtifactEvidence -Root $worktreePath -BranchName $devBranchName -Lock $canonicalClientLock
+                        $familyEvidence | Add-Member -NotePropertyName clientMcpArtifact -NotePropertyValue $clientEvidence -Force
                         foreach ($instance in @($familyEvidence.instances)) {
                             if ([string]$instance.vanessaAutomationCompatibilityVersion -cne [string]$canonicalVanessaLock.compatibilityVersion -or
                                 [string]$instance.vanessaAutomationDownstreamRevision -cne [string]$canonicalVanessaLock.downstreamRevision -or

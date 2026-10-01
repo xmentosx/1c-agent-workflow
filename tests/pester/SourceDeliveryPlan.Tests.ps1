@@ -194,7 +194,7 @@ Describe 'Delivery v3 immutable selective plan' {
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=src/cf`nEXTENSION_NAME=FirstExtension`nITL_ACTIVE_CONTEXT_UPDATED_AT=first`nROCTUP_MCP_PORT=6001`n", [Text.UTF8Encoding]::new($false))
         $script:E2EProjectRoot = $stand
         $before = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
-        $before.environmentIdentitySchemaVersion | Should -Be 2
+        $before.environmentIdentitySchemaVersion | Should -Be 3
 
         [IO.File]::WriteAllText($envPath, "PLATFORM_PATH=C:\\1cv8`nEXPORT_PATH=`nEXTENSION_NAME=`nITL_ACTIVE_CONTEXT_UPDATED_AT=second`nROCTUP_MCP_PORT=6002`nFUTURE_HELPER_OUTPUT=changed`n", [Text.UTF8Encoding]::new($false))
         $volatileRewrite = Get-DeliveryPlanEnvironmentIdentity -Mode Develop
@@ -287,6 +287,22 @@ Describe 'Delivery v3 immutable selective plan' {
         $after = Get-DeliveryPlanEnvironmentIdentity -Mode Release
 
         (Get-DeliveryCanonicalJsonSha256 -Value $after) | Should -Be (Get-DeliveryCanonicalJsonSha256 -Value $before)
+    }
+
+    It 'invalidates clientMcp qualification when the configured CFE bytes change' {
+        $file = Join-Path $TestDrive 'client build.cfe'
+        $copy = Join-Path $TestDrive 'same client elsewhere.cfe'
+        [IO.File]::WriteAllBytes($file, [byte[]]@(1,2,3))
+        [IO.File]::Copy($file, $copy)
+        $saved = [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process')
+        try {
+            $env:VANESSA_MCP_CLIENT_CFE_PATH = $file
+            $before = Get-DeliveryPlanEnvironmentIdentity -Mode Release
+            $env:VANESSA_MCP_CLIENT_CFE_PATH = $copy
+            (Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Release)) | Should -Be (Get-DeliveryCanonicalJsonSha256 $before)
+            [IO.File]::WriteAllBytes($copy, [byte[]]@(1,2,4))
+            (Get-DeliveryCanonicalJsonSha256 (Get-DeliveryPlanEnvironmentIdentity -Mode Release)) | Should -Not -Be (Get-DeliveryCanonicalJsonSha256 $before)
+        } finally { [Environment]::SetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', $saved, 'Process') }
     }
 
     It 'resolves the locked controlled fork before accumulated plan runtime fingerprints' {
