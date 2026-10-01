@@ -1,7 +1,81 @@
 # Live MCP qualification boundary
 
-The four configured native providers remain unqualified from this host. The
-earlier real `initialize` calls to Docs, Templates, Syntax and Code Checker each
+The four deployed providers passed functional qualification on 2026-10-01.
+The actual host manifest and container bindings identify direct/native routes
+`http://dev-ermakov.itland.local:22000/mcp` through `:22003/mcp` for Docs,
+Templates, Syntax and Code Checker respectively. Port numbers and legacy
+registry field labels are not transport identity evidence.
+
+The existing host maintenance owner restarted each of these four containers
+once. Container/image identities, mounts, bindings, restart policy and hashed
+environment stayed unchanged. Docs retained 25,536 indexed records with zero
+lost records; Templates retained 2,373 templates and 221 memories, with zero
+pending index work. Other host services were outside this repair; the overall
+watchdog's degraded status is not reclassified as a healthy whole host.
+
+`initialize -> notifications/initialized -> tools/list -> tools/call` then
+passed for eight actual calls. `build/native-mcp-tools-qualified-20261001.json`,
+SHA256 `8118c49d4c2c48e6fdef9044b78ff66e5c7a312d67c66543c2fd39c997fed232`,
+binds each saved request/response and server/tool identity. Calls cover Docs
+`standards` and document content, Templates search and retrieval of actual
+search result 5372, Syntax positive and unchanged invalid input, and Code
+Checker `check_1c_logic` / `review_1c_code` for the same documented numeric BSL
+helper. The syntax negative returned Critical ParseError, and the positive's
+CodeOutOfRegion hint was retained. Semantic provider findings were preserved;
+the incorrect claim about enforced parameter types was explicitly adjudicated,
+not accepted as a property of 1C. Transport success does not prove PM5 logic.
+
+Q9 standards were retrieved from Docs independently of code templates from
+Templates. The standards response contained 3 of 21 parts, generation
+`20260929T003317Z-5167f5f3`: bounded retrieval is qualified, full-document reading
+is not claimed. A future dependent code task must read its relevant standard.
+Templates corpus quality and all template types are not inferred from one
+search/retrieval. Configuration Template objects have separate native and
+aggregate evidence in `reused-stands-and-template-platform.md`.
+
+## Actual client configuration boundary
+
+Read-only `codex mcp list --json` from both PM5 canary roots confirms that the
+global managed `vibecoding1c-mcp global` block still supplies enabled routes
+18000–18003. The project files contain only ROCTUP, Vanessa UI and browser
+exports. The current registry's resolved `url` is 22000–22003; the modern project
+export owner uses that field, not the obsolete `directUrl`/`proxyUrl` labels.
+This is a confirmed difference between a legacy global export and desired
+project exports, not a proven project-renderer regression.
+
+No global profile or canary project configuration was rewritten. Provider HTTP
+qualification alone does not prove native client attachment. A separate
+ephemeral read-only Codex CLI 0.159.0 session used process-only endpoint
+overrides and discovered all four tools, but its attempted calls were blocked
+by the client's approval policy. Original events remain at
+`build/native-provider-client-retry1-20261001/events.jsonl`; this is discovery
+proof and a failed invocation, not successful tool execution. Native invocation
+qualification uses only the four named read-only tools, with per-tool settings
+documented by the [official configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+Persistent exports and real-client reload belong to their owning installation
+scope. Executed general agent evaluations and rendered scenario fixtures remain
+different evidence categories.
+
+A further native session exposed only those four named read-only tools with
+process-local per-tool approvals. Three actual attached-tool calls passed:
+Docs `standards`, Templates `get_template` and Checker `check_1c_logic`.
+The Checker request preserved the original BSL string exactly. The native
+standards response contained 1 of 21 parts with truncation explicitly retained.
+Syntax initialization was refused with HTTP 503 `session_cap_reached`, active
+64/limit 64, before tool attachment; its earlier protocol calls stay passed,
+but this native-session capability is failed/unverified. No session cap,
+workload or server policy was changed to hide the failure.
+
+`build/native-provider-client-qualified-readonly-receipt-20261001.json`, SHA256
+`8037edb41137c5d62d34fa10cf954971ebcd510de48ee5555d51547d17317db3`, binds the
+original native events, arguments, startup error and all three protected global
+and project configuration hashes. HEAD and tracked state also stayed unchanged.
+This is executed native tool integration, not a general executed agent-eval
+suite or acceptance through the unchanged global 18000–18003 routes.
+
+## Earlier unavailable transport and protocol attempts
+
+Before host recovery, the real `initialize` calls to Docs, Templates, Syntax and Code Checker each
 reached the 20-second discovery deadline without a session or tool catalog.
 Their original requests and results remain in the ignored `build/mcp-live-*`
 artifacts. Configuration, a port probe and fixture tests cannot substitute for
@@ -37,16 +111,8 @@ on all four ports within the shared 3000 ms bound. Report:
 No initialize/tools-list call was made while this prerequisite was unavailable.
 Provider functionality remains unverified, rather than a failed provider test.
 
-Q9 standards through Docs and metadata/code templates through Templates remain
-separate pending functional checks. Platform verification of configuration
-Template objects is independent and has its own native Designer evidence in
-`reused-stands-and-template-platform.md`; the unavailable provider does not
-erase that proof or justify changes to its object-verification implementation.
-Actual syntax/logic validator calls and executed agent evaluations also remain
-unverified where their providers are unavailable. No alias, CLI or direct HTTP
-substitution was used to bypass provider policy.
-
-Resume the provider-dependent checks when the configured endpoints become
-reachable from this host, using the existing qualification driver and the exact
-exposed schemas. No server restart, client-profile rewrite, credential copy or
-production project update is authorized by this availability probe.
+These earlier records remain failed/unavailable evidence. Subsequent provider
+qualification above does not rewrite them or establish successful invocation
+through the legacy global 18000–18003 exports. No alias or CLI substitute was
+used for a provider tool. This host repair did not authorize production project
+updates, credential copies or rewriting the ordinary client profile.

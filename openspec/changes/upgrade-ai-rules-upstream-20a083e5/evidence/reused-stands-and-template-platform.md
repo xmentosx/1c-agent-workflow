@@ -116,7 +116,7 @@ the fixture copy into that same project's ignored area retained the Cyrillic
 and whitespace workload and all validation/preservation assertions; no runtime
 guard or product contract was changed.
 
-## Live MCP is a separate unresolved capability
+## Earlier live MCP availability boundary
 
 The operator's existing, enabled endpoint selections were read without changing
 configuration or copying credentials. Unlike the older registry's proxy ports,
@@ -134,3 +134,46 @@ templatesearch is reported as passed. Configured/enabled, initialized, tools
 exposed and actual tool execution remain separate states. This network/provider
 limitation affects the dependent live-MCP acceptance; local Template metadata
 and platform checks above remain valid and independent.
+
+## Current r39 Template acceptance — 2026-10-01
+
+The same disposable base was reused with current registered source `ea910da6`
+and exact fork `9ec86f75343ba4eded66e2085f097ff4baab7d67`. This is a new run,
+not relabelling the earlier ee9d7b8 proof. The original driver created a new
+isolated report and MainSchema Template, repeated descriptor completion, and
+preserved UUID `6652b196-9e0e-4729-9934-687deb9b095d`, authored payload bytes
+and the single parent registration. Six real metadata tooling checks passed.
+Guarded native Designer load, unchanged Gate 6 modules/configuration checks,
+apply and platform dump passed, followed by DT restoration and proof that
+every original source file was preserved. Platform serialization still has a
+different payload hash; byte preservation is claimed for completion, not for
+the platform's serialization.
+
+Record `build/template-platform-647ef3014b994d15b1a048b4363a2365/summary.json`,
+SHA256 `03986926591f273e0e76eb9c194a13f7726b14ce02aaa27454a5ca18deed24b5`,
+contains native logs and the unchanged snapshot identity. Snapshot SHA256 is
+`83c0b13f3785efa5d08ceacde48cc2676adeb0bf04aff6a81494fa956f069e26`.
+
+Independent current-r39 aggregate acceptance passed 11/11 without mocks:
+actual installed Template descriptor and SKD validators, IntegrationService
+structural validation, descriptor-only and payload-only scope, two actual
+`Assert-OneCConfigurationSourceIntegrity` calls, and four original negative
+cases covering registration, name, type and reference integrity. All 16
+protected source/script hashes stayed unchanged. The minimal SKD fixture's
+two warnings for absent dataset/settings variant are retained, with zero
+errors; no check or input was weakened.
+
+Record `build/meta-template-r39-5a6b7eece52647f4a4fe3b4d46b10549/summary.json`,
+SHA256 `fcc7fba7ca29bbf0afa36d210d47c3d8bfb356c3eccc86bd4768b6e8771192f3`,
+preserves commands, validator identities, original negative cases and their
+expected codes. The four installed validator hashes also match the controlled
+fork's current tools. This confirms preservation of our configuration Template
+integrity checks; it introduces no new template-verification workstream or
+automatic generic metadata-validator call for a Template descriptor. The local
+aggregate remains authoritative for owner/reference/registration closure.
+
+IntegrationService evidence is structural, not live message exchange. This
+small native base does not prove representative PM5 refresh/check/export.
+Provider standards/code-template retrieval is now qualified separately in
+`mcp-live-availability.md`; general executed agent evaluations are not inferred
+from a protocol driver or rendered fixtures.
