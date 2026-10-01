@@ -21,6 +21,18 @@
         @($errors).Count | Should -Be 0
     }
 
+    It "checks dedicated Linux watchdog and refresh ownership boundaries" -Tag LinuxHost {
+        $configPath = Join-Path $TestDrive 'linux-host.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content -LiteralPath $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $python = Resolve-PythonExecutable -Config @{}
+            $testPath = Join-Path $RepoRoot 'vibecoding1c-mcp-host/linux-native-host'
+            $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments @('-X','utf8','-B','-m','unittest','discover','-s',$testPath,'-p','test_*.py') -TimeoutSec 30 -Description 'Linux host ownership and refresh regressions'
+            $result.exitCode | Should -Be 0 -Because ($result.lines -join [Environment]::NewLine)
+        }
+    }
+
     It "protects Templates proxy credentials before writing and preserves them on ACL denial: existing=<Existing>, deny=<Deny>" -Tag SecretFileAcl -TestCases @(
         @{ Existing = $false; Deny = $false }, @{ Existing = $true; Deny = $false },
         @{ Existing = $false; Deny = $true }, @{ Existing = $true; Deny = $true }

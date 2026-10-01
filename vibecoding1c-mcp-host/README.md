@@ -4,6 +4,8 @@ This folder is for the dedicated LAN machine that runs shared vibecoding1c MCP s
 It does not require Codex, Kilo, the workflow agent, or a target 1C project.
 
 For the administrator runbook in Russian, see [`RUNBOOK.ru.md`](RUNBOOK.ru.md).
+For native Code/Graph on a dedicated Linux VM with systemd recovery, see
+[the Linux host backend](linux-native-host/README.md).
 For the SPPR Docker reader, Windows collector and project client connection, see [SPPR operations](sppr-mcp/README.md).
 The canonical upstream MCP behavior and environment contract is documented at [OneRPA MCP servers for 1C](https://docs.onerpa.ru/mcp-servery-1c).
 
