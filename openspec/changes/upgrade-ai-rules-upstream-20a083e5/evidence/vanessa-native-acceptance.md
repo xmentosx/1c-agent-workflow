@@ -136,3 +136,20 @@ Frozen RED/GREEN records are
 GREEN receipt SHA256 is
 `6ccc4d6fb5b0bf1e22e853dfaa9b119c02815436e988cba5f674ffc42c9fbf32`.
 The installed original continuation remains separate from this source proof.
+
+The first registration of that consumer fix (`cdff9df6`) failed before queue
+registration. All 254 lifecycle cases passed. The bootstrap/update shard failed
+while cloning the complete source fixture into the normal Windows TEMP path:
+Git returned 128, `Filename too long`, before invoking the updater. The source
+run is preserved in `build/source-registration-failed-cdff9df6-20261001/`; its
+delivery-level zero test totals are not a claim that the shard cases did not run.
+
+The fixture clone now explicitly enables Git's existing `core.longpaths`
+support for that clone and its repository. The TEMP path, complete metadata
+fixture, update operation and assertions are unchanged; no user/global Git
+configuration is modified. The same failed update case then passed 1/1 without
+failures/skips in 35.64 seconds under native Windows PowerShell 5.1/Pester 5.8,
+using the same normal TEMP directory. This corrects test setup rather than
+Vanessa or the installed workflow. The focused record is
+`build/bootstrap-longpath-20261001/result.json`. Source registration and the
+installed original continuation still require their own successful results.

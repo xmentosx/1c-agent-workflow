@@ -870,7 +870,9 @@ Set-Content -LiteralPath (Join-Path $ProjectRoot "installer-ran.txt") -Encoding 
             [System.IO.File]::WriteAllBytes($clientMcpFixture, [byte[]](1, 2, 3, 4, 5))
             [System.IO.File]::WriteAllBytes($yaxunitFixture, [byte[]](11, 12, 13, 14, 15))
             $sourceRoot = Join-Path $tempRoot "workflow-source"
-            & git clone --quiet --shared $RepoRoot $sourceRoot
+            # Keep the complete package fixture at its real Windows TEMP path, including
+            # long 1C metadata paths, independently of the user's global Git settings.
+            & git -c core.longpaths=true clone --quiet --shared --config core.longpaths=true $RepoRoot $sourceRoot
             $LASTEXITCODE | Should -Be 0
             & git -C $sourceRoot checkout --quiet --detach ((& git -C $RepoRoot rev-parse HEAD).Trim())
             $LASTEXITCODE | Should -Be 0
