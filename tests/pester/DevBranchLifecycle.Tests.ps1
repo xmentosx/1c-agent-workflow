@@ -8505,18 +8505,21 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It 'resumes the original refresh on a corrective descendant without changing failed verification (<Operation>, <Checkpoint>)' -TestCases @(
-        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch' },
-        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch' },
-        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite' }
+    It 'resumes the original refresh on a corrective descendant without changing failed verification (<Operation>, <Checkpoint>, <EvidenceKind>)' -Tag 'pending-refresh-evidence-kind' -TestCases @(
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
+        @{ Checkpoint = 'merge'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Checkpoint = 'cursor'; Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
     ) {
-        param($Checkpoint, $Operation)
+        param($Checkpoint, $Operation, $EvidenceKind)
         $fixture = if ($Checkpoint -eq 'merge') {
             New-LifecyclePostMergeCursorFixture -Subject 'fix: warn on unbound form commands in local validation' -ChangedPath foreign
         } else { New-LifecyclePostMergeCursorFixture -AdditionalHead extra }
         try {
             $result = & {
-                param($Fixture, $Checkpoint, $Operation)
+                param($Fixture, $Checkpoint, $Operation, $EvidenceKind)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
@@ -8525,7 +8528,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
                     pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
                     pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
-                    lastVerificationStatus = "failed"; lastVerificationEvidenceKind = "full"
+                    lastVerificationStatus = "failed"; lastVerificationEvidenceKind = $EvidenceKind
                     lastVerifiedCommit = $Fixture.head; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
                     configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
                     enterpriseNormalizationStatus = "passed"
@@ -8567,6 +8570,7 @@ if (`$?) { exit 0 } else { exit 1 }
                     lastVerifiedFingerprint = Get-VerificationFingerprint
                     lastVerifiedLoadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $script:MergeState
                 }
+                $freshBeforeCompletion = (Get-VerificationState -State $script:MergeState).isFreshPassed
                 $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $script:MergeState -RecoveryOperation "check-dev-branch"
                 [pscustomobject]@{
                     failureStatus = $failureStatus
@@ -8576,15 +8580,16 @@ if (`$?) { exit 0 } else { exit 1 }
                     unchangedBeforeProof = $unchangedBeforeProof
                     statusOnlyCompleted = $statusOnlyCompleted
                     statusOnlyUnchanged = $statusOnlyUnchanged
+                    freshBeforeCompletion = $freshBeforeCompletion
                     completed = $completed
                     pendingOperation = $script:MergeState.pendingMergeOperation
-                    refreshCommit = $script:MergeState.lastRefreshMasterCommit
-                    refreshMode = $script:MergeState.lastRefreshMode
-                    recoveryOperation = $script:MergeState.lastRefreshRecoveryOperation
-                    recoveredHead = $script:MergeState.lastRefreshRecoveredHead
+                    refreshCommit = Get-StateValue -State $script:MergeState -Name 'lastRefreshMasterCommit' -Default $null
+                    refreshMode = Get-StateValue -State $script:MergeState -Name 'lastRefreshMode' -Default $null
+                    recoveryOperation = Get-StateValue -State $script:MergeState -Name 'lastRefreshRecoveryOperation' -Default $null
+                    recoveredHead = Get-StateValue -State $script:MergeState -Name 'lastRefreshRecoveredHead' -Default $null
                     currentHead = Get-CurrentCommit
                 }
-            } $fixture $Checkpoint $Operation
+            } $fixture $Checkpoint $Operation $EvidenceKind
 
             $result.failureStatus.status | Should -Be 'failed'
             $result.failureStatus.exitCode | Should -Be 1
@@ -8596,6 +8601,7 @@ if (`$?) { exit 0 } else { exit 1 }
             $result.unchangedBeforeProof | Should -BeTrue
             $result.statusOnlyCompleted | Should -BeFalse
             $result.statusOnlyUnchanged | Should -BeTrue
+            $result.freshBeforeCompletion | Should -BeTrue -Because 'the actual fingerprint/base assessor must accept the current proof before its kind reaches the pending-refresh consumer'
             $result.completed | Should -BeTrue
             $result.pendingOperation | Should -BeNullOrEmpty
             $result.refreshCommit | Should -Be $fixture.targetCommit
@@ -8608,20 +8614,26 @@ if (`$?) { exit 0 } else { exit 1 }
         }
     }
 
-    It "keeps a pending refresh when full verification is stale" {
+    It 'keeps a pending refresh when full verification is stale (<Operation>, <EvidenceKind>)' -Tag 'pending-refresh-evidence-kind' -TestCases @(
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'full' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'full' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'complete/current-obligations' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'complete/current-obligations' }
+    ) {
+        param($Operation, $EvidenceKind)
         $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
         try {
             $result = & {
-                param($Fixture)
+                param($Fixture, $Operation, $EvidenceKind)
                 . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
                 $DevBranchName = "test"
                 $script:MergeState = [pscustomobject]@{
                     safeDevBranchName = "test"; devBranchName = "test"; devBranch = "itldev/test"
-                    pendingMergeOperation = "refresh-dev-branch"; pendingMergeBranch = "itldev/test"
+                    pendingMergeOperation = $Operation; pendingMergeBranch = "itldev/test"
                     pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
                     pendingMergeStage = "merged"; pendingMergePaths = @(); pendingMergeConflictPaths = @()
                     pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = "merge-commit"
-                    lastVerificationStatus = "passed"; lastVerificationEvidenceKind = "full"
+                    lastVerificationStatus = "passed"; lastVerificationEvidenceKind = $EvidenceKind
                     lastVerifiedCommit = $Fixture.cursorCommit; lastVerifiedAt = "2026-09-02T12:10:00+03:00"
                     configLoadStatus = "passed"; lastConfigBaseUpdateAt = "2026-09-02T12:00:00+03:00"
                     enterpriseNormalizationStatus = "passed"
@@ -8633,10 +8645,70 @@ if (`$?) { exit 0 } else { exit 1 }
                     completed = $completed
                     pendingOperation = $script:MergeState.pendingMergeOperation
                 }
-            } $fixture
+            } $fixture $Operation $EvidenceKind
 
             $result.completed | Should -BeFalse
-            $result.pendingOperation | Should -Be "refresh-dev-branch"
+            $result.pendingOperation | Should -Be $Operation
+        } finally {
+            Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'keeps diagnostic partial and unknown evidence from completing a pending refresh despite actual freshness (<Operation>, <EvidenceKind>)' -Tag 'pending-refresh-evidence-kind' -TestCases @(
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'diagnostic' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'diagnostic' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'partial' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'partial' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'partial/skipped' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'partial/skipped' },
+        @{ Operation = 'refresh-dev-branch'; EvidenceKind = 'unknown' },
+        @{ Operation = 'refresh-dev-branch-lite'; EvidenceKind = 'unknown' }
+    ) {
+        param($Operation, $EvidenceKind)
+        $fixture = New-LifecyclePostMergeCursorFixture -AdditionalHead extra
+        try {
+            $result = & {
+                param($Fixture, $Operation, $EvidenceKind)
+                . $HelperPath -ProjectRoot $Fixture.root -Action help *> $null
+                $DevBranchName = 'test'
+                $state = [pscustomobject]@{
+                    safeDevBranchName = 'test'; devBranchName = 'test'; devBranch = 'itldev/test'
+                    pendingMergeOperation = $Operation; pendingMergeBranch = 'itldev/test'
+                    pendingMergeBranchCommit = $Fixture.branchCommit; pendingMergeTargetCommit = $Fixture.targetCommit
+                    pendingMergeStage = 'merged'; pendingMergePaths = @(); pendingMergeConflictPaths = @()
+                    pendingMergeCommit = $Fixture.mergeCommit; pendingMergePostMergeHead = $Fixture.cursorCommit; pendingMergeResult = 'merge-commit'
+                    lastVerificationStatus = 'passed'; lastVerificationEvidenceKind = $EvidenceKind
+                    lastVerifiedCommit = $Fixture.head; lastVerifiedAt = '2026-09-02T12:10:00+03:00'
+                    configLoadStatus = 'passed'; lastConfigBaseUpdateAt = '2026-09-02T12:00:00+03:00'
+                    enterpriseNormalizationStatus = 'passed'; enterpriseNormalizationProofVersion = 1
+                }
+                $state | Add-Member -NotePropertyMembers @{
+                    lastVerifiedFingerprint = Get-VerificationFingerprint
+                    lastVerifiedLoadedBaseIdentity = Get-VerificationLoadedBaseIdentity -State $state
+                }
+                function Update-DevBranchState { throw 'Rejected evidence must not change the original pending refresh' }
+                $before = $state | ConvertTo-Json -Depth 5 -Compress
+                $verification = Get-VerificationState -State $state
+                $transaction = Get-PendingDevBranchMergeTransaction -State $state
+                Assert-DevBranchLifecycleMergeIdentity -State $state -Transaction $transaction -Operation $Operation
+                Assert-DevBranchLifecycleMergeRecordedResult -Transaction $transaction -Operation $Operation
+                $completed = Complete-PendingDevBranchRefreshAfterVerifiedRecovery -State $state -RecoveryOperation 'check-dev-branch'
+                [pscustomobject]@{
+                    fresh = $verification.isFreshPassed; completed = $completed
+                    stateUnchanged = ($before -ceq ($state | ConvertTo-Json -Depth 5 -Compress))
+                    pendingOperation = $state.pendingMergeOperation; pendingTarget = $state.pendingMergeTargetCommit
+                    pendingMergeCommit = $state.pendingMergeCommit; pendingPostMergeHead = $state.pendingMergePostMergeHead
+                    currentHead = Get-CurrentCommit
+                }
+            } $fixture $Operation $EvidenceKind
+            $result.fresh | Should -BeTrue -Because 'the evidence-kind consumer must reject this kind even when the real source/base freshness assessor passes'
+            $result.completed | Should -BeFalse
+            $result.stateUnchanged | Should -BeTrue
+            $result.pendingOperation | Should -Be $Operation
+            $result.pendingTarget | Should -Be $fixture.targetCommit
+            $result.pendingMergeCommit | Should -Be $fixture.mergeCommit
+            $result.pendingPostMergeHead | Should -Be $fixture.cursorCommit
+            $result.currentHead | Should -Be $fixture.head
         } finally {
             Remove-Item -LiteralPath $fixture.root -Recurse -Force -ErrorAction SilentlyContinue
         }

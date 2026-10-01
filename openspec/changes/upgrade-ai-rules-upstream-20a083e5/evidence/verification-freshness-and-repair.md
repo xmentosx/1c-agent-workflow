@@ -108,3 +108,37 @@ even when all due component/suite proof was sufficient. The original mock-based
 fresh-proof tests did not cover that boundary. Correction and a regression that
 uses actual hashed receipts belong to the existing assessment owner and are in
 progress; no completion or block-export pass is claimed yet.
+
+## Actual TOOL_DATA policy decisions
+
+One fresh ephemeral read-only Codex session assessed four supplied cases using
+exact fork `9ec86f75343ba4eded66e2085f097ff4baab7d67` contract excerpts and
+the source `6b525d1e` ROCTUP safety rules. Its actual JSONL contains four events
+and one `agent_message`, with zero command, MCP or other tool items. Exit was
+zero in 53.12 seconds; all nine recorded inputs were preserved.
+
+The actual answer kept a generic correctness request under `TOOL_DATA=off`
+without a named override and did not reuse historical query42 as proof of new
+query57. Required pure BSL without eligible `vcexecutecode` remained blocked;
+ROCTUP `execute_code` was not substituted. Unknown application effects remained
+unverified and unexecuted. A supplied typed NOT_READY fixture remained explicitly
+non-live; the conditional `update-dev-branch-base` continuation required separate
+authorization for that exact target. These are executed agent decisions on
+supplied inputs, not installed discovery, positive DATA or live NOT_READY proof.
+
+Raw records are in
+`build/d4-policy-trace-6b525d1e/runs/273555ea48ab48e1825a97ad46edf68a/`.
+The answer SHA256 is
+`30dad4918f52f5b4007cdb58a413c04fd8dabd6828e34bcd83fbb50eb3d3c178`;
+JSONL SHA256 is
+`95ab11f2778547024e489f87e019e30e75faa608a11960c07860f39dc7af625b`.
+The capture harness retains `unqualified` because this CLI did not emit the
+expected literal `mcp startup: no servers` banner. No startup lines were observed,
+but absolute background-provider absence is not qualified. The independently
+reviewed decision/zero-agent-tool boundary above does not rewrite that failure
+or claim backend readiness. No repeat session was run to obtain a banner.
+
+The historical installed c3 trace also remains intact. Its direct request for a
+specific DATA query under off legitimately created a scoped invocation override;
+it was not evidence that a generic request overrides off. The new generic case
+closes that policy gap without changing the agreed named override behavior.

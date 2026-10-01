@@ -89,3 +89,50 @@ JUnit or live state. Records are
 This causal proof does not finish the pending refresh: the corrected package
 must still continue the original operation through its existing public owner
 and repair session. Tasks 9.7 and 10.4 remain open until that actual completion.
+
+## Original PM5 attempt 4: complete proof, pending refresh
+
+The public main-root workflow update installed private fixture
+`83207e00552cd0b707f97ef5fb20ff592a84a84c`, based on registered source
+`6b525d1eb628701d9ce7017f161819fe11bee99b`. Its independent qualification
+confirmed unchanged configuration/test bytes, infobase hash/size/mtime and
+pending refresh/repair state. Only the two qualified client artifact PATH/SHA
+fields changed in the environment. Update time was 131.39 seconds.
+
+The same repair session then consumed attempt 4 of 5. Native extension checks
+passed, the unchanged PM5 scenario passed 1/1 without failures/errors/skips,
+and the event-log check found no blocking new signatures. Two non-blocking
+warnings remain in the cursor-based observation. The actual verifier returned
+`isFreshPassed=true`; the repair owner wrote `passed`, preserving session and
+budget. The public run took 343.87 seconds including installation and checking.
+
+The enclosing acceptance driver nevertheless failed because original target A
+was still pending at stage `merged`. This was a separate migration defect in
+`Complete-PendingDevBranchRefreshAfterVerifiedRecovery`: it accepted only
+the legacy `full` evidence kind. The canonical verifier now writes
+`complete/current-obligations` after assessing all current obligations; the
+repair owner already accepts both complete kinds. The loaded configuration and
+normalization were passed, and verification followed the configuration update.
+This is not another Vanessa failure or a reason to rerun its successful scenario.
+
+`build/pm5-original-refresh-title-attempt4-20261001.json` preserves the failed
+enclosing result and the actual successful verifier/repair results. They must
+not be relabelled as completion. The lifecycle consumer must accept the same
+complete proof contract while retaining freshness, loaded-base, normalization,
+timestamp and merge/target identity checks; diagnostic, partial or unknown kinds
+remain insufficient. Continuing that original pending operation and D4 export
+acceptance remain required.
+
+The existing real-Git continuation fixture reproduced this specific consumer
+failure: 15/18 passed; the three `complete/current-obligations` cases passed
+actual freshness and then failed the expected completion assertion. Legacy
+full, status-only/stale refusals and diagnostic/partial/unknown refusals stayed
+intact. Two earlier harness limitations are preserved separately and are not
+counted as the causal RED. After the single acceptance-condition correction,
+the same 18 native Windows PowerShell/Pester cases passed without skips in
+86.71 seconds. No state, runner, budget or merge guard was changed.
+Frozen RED/GREEN records are
+`build/pending-refresh-evidence-kind-{red-20261001-attempt3,green-20261001}/`.
+GREEN receipt SHA256 is
+`6ccc4d6fb5b0bf1e22e853dfaa9b119c02815436e988cba5f674ffc42c9fbf32`.
+The installed original continuation remains separate from this source proof.

@@ -11972,7 +11972,7 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
     $evidenceKind = [string](Get-StateValue -State $State -Name "lastVerificationEvidenceKind" -Default "")
     $configLoadStatus = [string](Get-StateValue -State $State -Name "configLoadStatus" -Default "")
     if (-not $verification.isFreshPassed -or
-        $evidenceKind -cne "full" -or
+        $evidenceKind -cnotin @('full', 'complete/current-obligations') -or
         $configLoadStatus -notin @("passed", "fallback-succeeded") -or
         -not (Test-DevBranchEnterpriseNormalizationProved -State $State)) {
         return $false
@@ -12017,7 +12017,7 @@ function Complete-PendingDevBranchRefreshAfterVerifiedRecovery {
     }
     Add-PendingDevBranchMergeClearUpdates -Updates $updates
     Update-DevBranchState -State $State -Updates $updates
-    Write-Host "Completed pending $($transaction.operation) after fresh full verification at descendant HEAD: $head"
+    Write-Host "Completed pending $($transaction.operation) after fresh complete verification at descendant HEAD: $head"
     return $true
 }
 
