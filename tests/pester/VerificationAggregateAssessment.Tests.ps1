@@ -2,6 +2,126 @@
     $helperPath = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
 }
 
+Describe 'Producer feature title identities in native JUnit coverage' {
+    BeforeAll {
+        function Get-NativeFeatureTitleFixtureCoverage {
+            param([string]$Root, [object[]]$Features, [string[]]$SelectedSuiteIds, [string]$JUnitText)
+
+            New-Item -ItemType Directory -Force -Path (Join-Path $Root '.agent-1c'), (Join-Path $Root 'run') | Out-Null
+            [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'), '{}', [Text.UTF8Encoding]::new($false))
+            $assignments = @()
+            foreach ($feature in $Features) {
+                $fullPath = Join-Path $Root $feature.path
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $fullPath) | Out-Null
+                [IO.File]::WriteAllText($fullPath, $feature.text, [Text.UTF8Encoding]::new($false))
+                $assignments += [pscustomobject]@{path=$feature.path;fullPath=$fullPath;suiteId=$feature.suiteId}
+            }
+            $reportPath = Join-Path $Root 'run/junit.xml'
+            [IO.File]::WriteAllText($reportPath, $JUnitText, [Text.UTF8Encoding]::new($false))
+            & {
+                . $helperPath -ProjectRoot $Root -Action help *> $null
+                $catalog = [pscustomobject]@{assignments=$assignments}
+                $junit = Get-VanessaJunitSummary -ReportPaths @($reportPath)
+                [pscustomobject]@{
+                    junit=$junit
+                    definitions=@(Get-VanessaFeatureScenarioDefinitions -FeatureFiles @($assignments.fullPath))
+                    coverage=@(Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds $SelectedSuiteIds -JUnit $junit)
+                }
+            }
+        }
+        $liveFeature = @'
+#language: ru
+
+@itl_migration_acceptance
+Функционал: Прикладная база PM5 после продолжения прерванного refresh
+
+Контекст:
+    Дано Я запускаю сценарий открытия TestClient или подключаю уже существующий
+
+Сценарий: Клиент подключён к исходной конфигурации PM5 и выполняет серверный запрос
+    И я выполняю код встроенного языка на сервере (Расширение)
+        """bsl
+            Если Метаданные.Имя <> "УправлениеПроектамиКОРП" Тогда
+                ВызватьИсключение "Продолжение refresh открыло другую конфигурацию";
+            КонецЕсли;
+            Если Метаданные.Версия <> "5.0.2.119" Тогда
+                ВызватьИсключение "Продолжение refresh изменило исходную версию PM5";
+            КонецЕсли;
+            Запрос = Новый Запрос("ВЫБРАТЬ 42 КАК Ответ");
+            Выборка = Запрос.Выполнить().Выбрать();
+            Если Не Выборка.Следующий() Или Выборка.Ответ <> 42 Тогда
+                ВызватьИсключение "Сервер прикладной базы не выполнил контрольный запрос";
+            КонецЕсли;
+        """
+'@
+        $liveCaseName = 'Клиент подключён к исходной конфигурации PM5 и выполняет серверный запрос'
+        $liveFeatureTitle = 'Прикладная база PM5 после продолжения прерванного refresh'
+        $liveDefinitions = @([pscustomobject]@{path='tests/features/PausedRefreshPM5Identity.feature';suiteId='paused-refresh-pm5-identity';text=$liveFeature})
+    }
+
+    It 'observes the unchanged live PM5 title and scenario under a Unicode path with spaces' -Tag 'native-feature-title' {
+        $actual = Get-NativeFeatureTitleFixtureCoverage -Root (Join-Path $TestDrive 'Исходная ветка PM5 с пробелами') -Features $liveDefinitions -SelectedSuiteIds @('paused-refresh-pm5-identity') -JUnitText @"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites><testsuite name="$liveFeatureTitle" errors="0" skipped="0" tests="1" failures="0" time="25.21"><testcase name="$liveCaseName" classname="$liveFeatureTitle" time="25.21" StartDate="20261001180900" timestamp="2026-10-01T18:09:00" EndDate="20261001180925"/></testsuite></testsuites>
+"@
+        $actual.junit.tests | Should -Be 1
+        $actual.junit.failures | Should -Be 0
+        $actual.junit.errors | Should -Be 0
+        $actual.junit.skipped | Should -Be 0
+        $actual.coverage[0].status | Should -Be 'passed'
+        $actual.coverage[0].expectedCount | Should -Be 1
+        $actual.coverage[0].observedCount | Should -Be 1
+        $actual.definitions[0].sourceLine | Should -Be 9
+        $actual.definitions[0].featureName | Should -BeExactly $liveFeatureTitle
+    }
+
+    It 'rejects a fabricated basename classname when the source has a valid distinct title' -Tag 'native-feature-title' {
+        $actual = Get-NativeFeatureTitleFixtureCoverage -Root (Join-Path $TestDrive 'Подмена имени PM5 с пробелами') -Features $liveDefinitions -SelectedSuiteIds @('paused-refresh-pm5-identity') -JUnitText "<testsuite tests=`"1`" failures=`"0`" errors=`"0`" skipped=`"0`"><testcase classname=`"PausedRefreshPM5Identity`" name=`"$liveCaseName`"/></testsuite>"
+        $actual.coverage[0].status | Should -Be 'partial'
+        $actual.coverage[0].observedCount | Should -Be 0
+        $actual.coverage[0].issue | Should -Match 'missing|unmapped'
+    }
+
+    It 'keeps duplicate titles and scenario names ambiguous across selected and unselected suites' -Tag 'native-feature-title' -TestCases @(@{Selected=@('orders','integration')}, @{Selected=@('orders')}) {
+        param($Selected)
+        $features = @(
+            [pscustomobject]@{path='tests/features/Orders/orders-file.feature';suiteId='orders';text="Функционал: Общее сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n"},
+            [pscustomobject]@{path='tests/features/Integration/integration-file.feature';suiteId='integration';text="Функционал: Общее сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n"}
+        )
+        $actual = Get-NativeFeatureTitleFixtureCoverage -Root (Join-Path $TestDrive ("Одинаковые заголовки 1С " + $Selected.Count)) -Features $features -SelectedSuiteIds $Selected -JUnitText '<testsuite tests="1" failures="0" errors="0" skipped="0"><testcase classname="Общее сохранение данных" name="Результат сохранён"/></testsuite>'
+        foreach ($coverage in $actual.coverage) {
+            $coverage.status | Should -Be 'partial'
+            $coverage.issue | Should -Match 'ambiguous'
+            $coverage.observedCount | Should -Be 0
+        }
+    }
+
+    It 'resolves the producer first directory prefix with the real duplicate feature titles' -Tag 'native-feature-title' {
+        $features = @(
+            [pscustomobject]@{path='tests/features/Заказы с пробелами/deep/orders-file.feature';suiteId='orders';text="Функционал: Общее сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n"},
+            [pscustomobject]@{path='tests/features/Обмен с пробелами/deep/integration-file.feature';suiteId='integration';text="Функционал: Общее сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n"}
+        )
+        $actual = Get-NativeFeatureTitleFixtureCoverage -Root (Join-Path $TestDrive 'Каталоги с пробелами и кириллицей') -Features $features -SelectedSuiteIds @('orders','integration') -JUnitText '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="Заказы с пробелами.Общее сохранение данных" name="Результат сохранён"/><testcase classname="Обмен с пробелами.Общее сохранение данных" name="Результат сохранён"/></testsuite>'
+        foreach ($coverage in $actual.coverage) {
+            $coverage.status | Should -Be 'passed'
+            $coverage.expectedCount | Should -Be 1
+            $coverage.observedCount | Should -Be 1
+        }
+    }
+
+    It 'does not credit duplicated native cases to a missing selected title' -Tag 'native-feature-title' {
+        $features = @(
+            [pscustomobject]@{path='tests/features/orders-file.feature';suiteId='orders';text="Функционал: Заказы PM5`nСценарий: Результат сохранён`nКогда Данные сохранены`n"},
+            [pscustomobject]@{path='tests/features/integration-file.feature';suiteId='integration';text="Функционал: Обмен PM5`nСценарий: Результат сохранён`nКогда Данные сохранены`n"}
+        )
+        $actual = Get-NativeFeatureTitleFixtureCoverage -Root (Join-Path $TestDrive 'Дублированные native результаты 1С') -Features $features -SelectedSuiteIds @('orders','integration') -JUnitText '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="Заказы PM5" name="Результат сохранён"/><testcase classname="Заказы PM5" name="Результат сохранён"/></testsuite>'
+        $actual.junit.tests | Should -Be 2
+        foreach ($coverage in $actual.coverage) { $coverage.status | Should -Be 'partial'; $coverage.issue | Should -Match 'missing or duplicate' }
+        @($actual.coverage | Where-Object id -eq 'orders')[0].observedCount | Should -Be 2
+        @($actual.coverage | Where-Object id -eq 'integration')[0].observedCount | Should -Be 0
+    }
+}
+
 Describe 'Canonical assessment of current component and obligation receipts' {
     It 'does not promote an unobserved selected suite when total JUnit count is satisfied by another suite' -Tag 'suite-observed-coverage' {
         $root = Join-Path $TestDrive 'Неполное покрытие двух групп 1С'
@@ -11,7 +131,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         [IO.File]::WriteAllText((Join-Path $root '.agent-1c/project.json'),'{}',[Text.UTF8Encoding]::new($false))
         $suites = @(); $obligations = @()
         foreach ($id in @('orders','integration')) {
-            [IO.File]::WriteAllText((Join-Path $root "tests/features/$id.feature"),"Функционал: Сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n",[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $root "tests/features/$id.feature"),"Функционал: $id`nСценарий: Результат сохранён`nКогда Данные сохранены`n",[Text.UTF8Encoding]::new($false))
             [IO.File]::WriteAllText((Join-Path $root "src/cf/$id/source.bsl"),'Procedure Current() EndProcedure',[Text.UTF8Encoding]::new($false))
             $suites += @{id=$id;purpose='acceptance';featurePaths=@("tests/features/$id.feature");ownerPaths=@("src/cf/$id/**")}
             $obligations += @{id="$id-result";expectedResult='The selected scenario passes';inputPaths=@("src/cf/$id/**");admissibleProof=@('vanessa-junit');retention='retained';retentionReason='Reusable coverage';cadence='affected';suiteId=$id}
@@ -28,7 +148,8 @@ Describe 'Canonical assessment of current component and obligation receipts' {
             $catalog = Read-VerificationSuiteCatalog -ApplicationFeatureFiles @(Get-VanessaApplicationFeatureFiles -FeaturePath (Get-VanessaFeaturesPath))
             $plan = [pscustomobject]@{catalogAvailable=$true;currentTree=(Get-VerificationSelectionEffectiveTree);catalogFingerprint=$catalog.fingerprint;acceptanceSuiteIds=@($catalog.suiteFingerprints.id);acceptanceSuites=$catalog.suiteFingerprints;selectedSuiteIds=@('orders','integration');mode='full'}
             $report = Join-Path $root 'run/junit.xml'
-            # Native VA classname is feature basename (optionally directory-prefixed).
+            # Both pinned readers replace the feature node basename with its title.
+            # Native JUnit uses that title and the first relative directory, if any.
             # Both tests succeed, but the second selected suite was never observed.
             Write-Utf8TextAtomic -Path $report -Value '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="orders" name="Результат сохранён"/><testcase classname="orders" name="Результат сохранён"/></testsuite>'
             Assert-VanessaScenarioCountJunitEvidence -RunDirectory (Join-Path $root 'run') -ExpectedScenarioCount 2 | Out-Null
@@ -36,7 +157,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
             $missing = Read-VerificationSelectionProof
             $state | Add-Member -NotePropertyMembers @{lastVerificationStatus='passed';lastVerifiedFingerprint=(Get-VerificationFingerprint);lastVerifiedLoadedBaseIdentity=(Get-VerificationLoadedBaseIdentity -State $state)}
             $partial = Get-VerificationState -State $state
-            Write-Utf8TextAtomic -Path $report -Value '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="orders" name="Результат сохранён"/><testcase classname="nested.integration" name="Результат сохранён"/></testsuite>'
+            Write-Utf8TextAtomic -Path $report -Value '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="orders" name="Результат сохранён"/><testcase classname="integration" name="Результат сохранён"/></testsuite>'
             Complete-VerificationSelectionProof -Plan $plan -State $state -RunDirectory (Join-Path $root 'run') -Status passed
             [pscustomobject]@{missing=$missing;partial=$partial;complete=(Read-VerificationSelectionProof)}
         }
@@ -63,16 +184,16 @@ Describe 'Canonical assessment of current component and obligation receipts' {
                 [pscustomobject]@{path='tests/features/Integration/shared.feature';fullPath=(Join-Path $root 'tests/features/Integration/shared.feature');suiteId='integration'},
                 [pscustomobject]@{path='tests/features/outline.feature';fullPath=(Join-Path $root 'tests/features/outline.feature');suiteId='outline'}
             )}
-            $ambiguous = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('orders','integration') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Результат сохранён';className='shared'},[pscustomobject]@{name='Результат сохранён';className='shared'})})
-            $qualified = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('orders','integration') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Результат сохранён';className='Orders.shared'},[pscustomobject]@{name='Результат сохранён';className='Integration.shared'})})
+            $ambiguous = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('orders','integration') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Результат сохранён';className='Сохранение'},[pscustomobject]@{name='Результат сохранён';className='Сохранение'})})
+            $qualified = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('orders','integration') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Результат сохранён';className='Orders.Сохранение'},[pscustomobject]@{name='Результат сохранён';className='Integration.Сохранение'})})
             $report = Join-Path $root 'qualified.xml'
-            Write-Utf8TextAtomic -Path $report -Value '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="Orders.shared" name="Результат сохранён"/><testcase classname="Integration.shared" name="Результат сохранён"/></testsuite>'
+            Write-Utf8TextAtomic -Path $report -Value '<testsuite tests="2" failures="0" errors="0" skipped="0"><testcase classname="Orders.Сохранение" name="Результат сохранён"/><testcase classname="Integration.Сохранение" name="Результат сохранён"/></testsuite>'
             $coverageFailures = @()
             foreach ($coverage in $qualified) {
                 try { Assert-VerificationRetainedSuiteCoverage -Receipt ([pscustomobject]@{id=$coverage.id;coverage=$coverage;artifacts=@([pscustomobject]@{path='qualified.xml'})}) -Catalog $catalog }
                 catch { $coverageFailures += $_.Exception.Message }
             }
-            $outline = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('outline') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Значение <Value> №0';className='outline'},[pscustomobject]@{name='Значение <Value> №1';className='outline'},[pscustomobject]@{name='Значение <Value> №0';className='outline'})})
+            $outline = Get-VerificationSuiteJUnitCoverage -Catalog $catalog -SelectedSuiteIds @('outline') -JUnit ([pscustomobject]@{testCases=@([pscustomobject]@{name='Значение <Value> №0';className='Примеры'},[pscustomobject]@{name='Значение <Value> №1';className='Примеры'},[pscustomobject]@{name='Значение <Value> №0';className='Примеры'})})
             [pscustomobject]@{ambiguous=$ambiguous;qualified=$qualified;coverageFailures=$coverageFailures;outline=$outline}
         }
         foreach ($receipt in $actual.ambiguous) { $receipt.status | Should -Be 'partial'; $receipt.issue | Should -Match 'ambiguous' }
@@ -131,7 +252,7 @@ Describe 'Canonical assessment of current component and obligation receipts' {
         $suites = @()
         if ($Retained) {
             foreach ($entry in @(@{id='orders';cadence='affected';owner='Orders'},@{id='integration';cadence='handoff';owner='Integration'})) {
-                [IO.File]::WriteAllText((Join-Path $root "tests/features/$($entry.id).feature"),"Функционал: Сохранение данных`nСценарий: Результат сохранён`nКогда Данные сохранены`n",[Text.UTF8Encoding]::new($false))
+                [IO.File]::WriteAllText((Join-Path $root "tests/features/$($entry.id).feature"),"Функционал: $($entry.id)`nСценарий: Результат сохранён`nКогда Данные сохранены`n",[Text.UTF8Encoding]::new($false))
                 $suites += @{id=$entry.id;purpose='acceptance';featurePaths=@("tests/features/$($entry.id).feature");ownerPaths=@("src/cf/$($entry.owner)/**")}
                 $obligations += @{id="$($entry.id)-result";expectedResult='The retained scenario passes';inputPaths=@("src/cf/$($entry.owner)/**");admissibleProof=@('vanessa-junit');retention='retained';retentionReason='Preserve reusable coverage';cadence=$entry.cadence;suiteId=$entry.id}
             }

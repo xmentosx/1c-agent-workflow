@@ -1306,24 +1306,22 @@ function Get-VerificationRetainedCheckerIdentity {
 function Get-VerificationSuiteJUnitCoverage {
     param([object]$Catalog, [string[]]$SelectedSuiteIds, [object]$JUnit, [switch]$IgnoreUnselectedCases)
 
-    # Pinned Vanessa emits feature basename as classname, optionally prefixed
-    # by a directory, and zero-based outline row names. Count alone cannot
-    # establish which selected suite actually ran. Keep ambiguity unverified.
+    # Pinned Vanessa replaces the temporary filename with the feature header
+    # and optionally prefixes its first relative directory. Resolve cases
+    # against every declared suite, including unselected suites: a shared
+    # title and scenario cannot establish which source actually ran.
     $featureRoot = Resolve-ProjectPath (Get-VanessaFeaturesPath)
-    $features = @($Catalog.assignments | ForEach-Object {
-        $name = [IO.Path]::GetFileNameWithoutExtension([string]$_.fullPath)
-        $relative = ([string]$_.fullPath).Substring($featureRoot.TrimEnd([char[]]@('\','/')).Length).TrimStart([char[]]@('\','/')).Replace('\','/')
-        [pscustomobject]@{path=[string]$_.path;featureName=$name;qualifiedName=$(if($relative.Contains('/')){$relative.Split('/')[0]+'.'+$name}else{$name})}
-    })
     $bindings = @{}
-    foreach ($assignment in @($Catalog.assignments | Where-Object { $_.suiteId -in $SelectedSuiteIds })) {
-        $feature = @($features | Where-Object path -eq $assignment.path)[0]
+    foreach ($assignment in @($Catalog.assignments)) {
+        $relative = ([string]$assignment.fullPath).Substring($featureRoot.TrimEnd([char[]]@('\','/')).Length).TrimStart([char[]]@('\','/')).Replace('\','/')
         foreach ($scenario in @(Get-VanessaFeatureScenarioDefinitions -FeatureFiles @($assignment.fullPath))) {
+            $featureName = [string]$scenario.featureName
+            $qualifiedName = if ($relative.Contains('/')) { $relative.Split('/')[0] + '.' + $featureName } else { $featureName }
             $names = @(if ($scenario.isOutline) { $scenario.junitNames.ToArray() } else { [string]$scenario.name })
             foreach ($name in $names) {
                 $key = "$($assignment.path)`n$($scenario.sourceLine)`n$name"
                 if (-not $bindings.ContainsKey($key)) {
-                    $bindings[$key] = [pscustomobject]@{suiteId=[string]$assignment.suiteId;path=[string]$assignment.path;line=[int]$scenario.sourceLine;featureName=[string]$feature.featureName;qualifiedName=[string]$feature.qualifiedName;name=[string]$name;expected=0;observed=0;ambiguous=$false}
+                    $bindings[$key] = [pscustomobject]@{suiteId=[string]$assignment.suiteId;path=[string]$assignment.path;line=[int]$scenario.sourceLine;featureName=$featureName;qualifiedName=$qualifiedName;name=[string]$name;expected=0;observed=0;ambiguous=$false}
                 }
                 $bindings[$key].expected++
             }
@@ -1332,19 +1330,14 @@ function Get-VerificationSuiteJUnitCoverage {
     $unmapped = 0
     foreach ($case in @($JUnit.testCases)) {
         $matches = @($bindings.Values | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_.featureName) -and
             [string]$case.name -ceq $_.name -and
-            ([string]$case.className -ceq $_.featureName -or
-                ([string]$case.className).EndsWith(".$($_.featureName)", [StringComparison]::Ordinal))
+            ([string]$case.className -ceq $_.featureName -or [string]$case.className -ceq $_.qualifiedName)
         })
-        # A shared report may contain an explicitly identified other suite.
-        # Resolve its path before counting only the receipt's own scenarios.
-        $qualifiedPaths = @($features | Where-Object { [string]$case.className -ceq $_.qualifiedName } | Select-Object -ExpandProperty path -Unique)
-        if ($qualifiedPaths.Count -eq 1) { $matches = @($matches | Where-Object path -eq $qualifiedPaths[0]) }
-        if ($matches.Count -gt 1) {
-            $qualified = @($matches | Where-Object { [string]$case.className -ceq $_.qualifiedName })
-            if ($qualified.Count -eq 1) { $matches=$qualified }
+        if ($matches.Count -eq 1) {
+            if ($matches[0].suiteId -in $SelectedSuiteIds) { $matches[0].observed++ }
+            elseif (-not $IgnoreUnselectedCases) { $unmapped++ }
         }
-        if ($matches.Count -eq 1) { $matches[0].observed++ }
         elseif ($matches.Count -gt 1) { foreach ($match in $matches) { $match.ambiguous=$true } }
         elseif (-not $IgnoreUnselectedCases) { $unmapped++ }
     }

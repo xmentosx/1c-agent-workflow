@@ -1,5 +1,29 @@
 # Live MCP qualification boundary
 
+Native Codex calls are now observed for all four providers across two retained
+runs. The later Syntax call completed with analyzer `0.2.81`, unchanged input
+and one retained `CodeOutOfRegion` Hint. It followed source activation of the
+registered host session-cleanup fix `0ce18a9a2a844e8fdf6a9fed15f60f096e03f17f`.
+Two normal watchdog cycles showed ten real session-ID termination/DELETE-200
+pairs and no new cap refusals. Foreign activity prevents exclusive attribution
+of every session; no foreign sessions were deleted, containers restarted or
+watchdog cycle manually launched in this observation. Existing unrelated
+`stats/index_status` warnings remain degraded, not a healthy whole-host claim.
+`build/native-provider-client-four-qualified-20261001.json`, SHA256
+`e4173dd179e48466d26161322a385860a67952c9e16b4bb7865cebf2937df082`,
+binds the native calls, original attachment failure and preservation receipts.
+These process-only endpoint overrides do not establish durable project selection.
+
+The public registry refresh updated the local managed cache to published commit
+`6bdf80aa549b7d63ac0763a170dfd810b5df69aa`, with the four native endpoints on
+22000-22003. It did not rewrite the global Codex profile's old 18000-18003 URLs.
+Refresh-on-workflow-update already exists in registered source change
+`30831db5070a59ba86d3b3ad18bfc495b29d155b`, on the separate shared-queue head
+`d26a87b6268a5908200cb491ff6d356c56ebad13`; it must be preserved during
+normal queue integration. It is not duplicated in this migration checkout.
+Without a project MCP selection, updating workflow preserves client connections;
+registry contents and installed client connection settings are distinct evidence.
+
 The four deployed providers passed functional qualification on 2026-10-01.
 The actual host manifest and container bindings identify direct/native routes
 `http://dev-ermakov.itland.local:22000/mcp` through `:22003/mcp` for Docs,

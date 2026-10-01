@@ -493,6 +493,7 @@ function Get-VanessaFeatureScenarioDefinitions {
 
     $scenarios = New-Object System.Collections.Generic.List[object]
     foreach ($featureFile in @($FeatureFiles)) {
+        $featureName = ''
         $featureTags = @()
         $pendingTags = New-Object System.Collections.Generic.List[string]
         $backgroundSteps = New-Object System.Collections.Generic.List[string]
@@ -512,7 +513,8 @@ function Get-VanessaFeatureScenarioDefinitions {
                 continue
             }
 
-            if ($line -match '^\s*(?:Функционал|Feature)\s*:') {
+            if ($line -match '^\s*(?:Функционал|Feature)\s*:\s*(?<featureName>.*)$') {
+                $featureName = ([string]$Matches['featureName']).Trim()
                 $featureTags = @($pendingTags.ToArray())
                 $pendingTags.Clear()
                 continue
@@ -534,6 +536,7 @@ function Get-VanessaFeatureScenarioDefinitions {
                 $current = [pscustomobject][ordered]@{
                     source = $featureFile
                     sourceLine = $lineNumber
+                    featureName = $featureName
                     name = ([string]$scenarioMatch.Groups['name'].Value).Trim()
                     isOutline = ($kind -match '(?i)Структура|шаблон|Outline|Template')
                     tags = @($featureTags + @($pendingTags.ToArray()))
