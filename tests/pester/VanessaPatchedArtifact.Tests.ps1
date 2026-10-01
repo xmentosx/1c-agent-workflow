@@ -414,3 +414,79 @@ Describe 'VAExtension configuration-independent report and system forms' {
         } finally { $process.Dispose() }
     }
 }
+
+Describe 'Reproducible Vanessa cumulative patch and resume format' {
+    BeforeAll {
+        $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
+        . (Join-Path $repoRoot 'scripts/git-path-list.ps1')
+        $previousRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r3'
+        $assetRoot = Join-Path $repoRoot 'third-party/vanessa-automation/1.2.043.42-itl-r4'
+        $fixtureRoot = Join-Path $repoRoot 'tests/fixtures/vanessa-extension-portability'
+        $manifest = Get-Content -LiteralPath (Join-Path $assetRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $patch = [IO.File]::ReadAllText((Join-Path $assetRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/build-vanessa-automation-patched.ps1'),[ref]$null,[ref]$null)
+        $function = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] -and $_.Name -eq 'Get-VanessaResumeDiffArguments' })
+        if ($function.Count -ne 1) { throw 'The existing builder must own its patch comparison recipe.' }
+        . ([scriptblock]::Create($function[0].Extent.Text))
+    }
+
+    It 'retains every previous source hunk with only canonical indexes and ordering changed' {
+        $previous = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $previousPatch = [IO.File]::ReadAllText((Join-Path $previousRoot 'file-operations.patch'),[Text.Encoding]::UTF8)
+        $before = @{}; $after = @{}
+        foreach ($section in @($previousPatch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) { $before[($section -split "`n")[0]] = $section -replace '(?m)^index [^\n]*\n','' }
+        foreach ($section in @($patch -split '(?m)(?=^diff --git )' | Where-Object { $_ })) { $after[($section -split "`n")[0]] = $section -replace '(?m)^index [^\n]*\n','' }
+        @($before.Keys) | Should -HaveCount 16
+        @($after.Keys) | Should -HaveCount 16
+        foreach ($key in $before.Keys) { $after[$key] | Should -BeExactly $before[$key] }
+        $manifest.upstream.commit | Should -Be $previous.upstream.commit
+        $manifest.downstreamRevision | Should -Be 'itl-r4'
+        $manifest.artifact.fileName | Should -Be 'vanessa-automation-single.1.2.043.42-itl-r4.zip'
+        $manifest.pairedExtension.fileName | Should -Be 'VAExtension.1.32-itl-r4.cfe'
+        $manifest.pairedExtension.protocol | Should -Be $previous.pairedExtension.protocol
+        ($manifest.patch.expectedChangedPaths -join "`n") | Should -BeExactly ($previous.patch.expectedChangedPaths -join "`n")
+        ($manifest.patch.retainedDownstreamFixes -join "`n") | Should -BeExactly ($previous.patch.retainedDownstreamFixes -join "`n")
+        (Get-FileHash -LiteralPath (Join-Path $assetRoot 'file-operations.patch') -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $manifest.patch.sha256
+    }
+
+    It 'preserves the original comparison arguments for older immutable recipes' {
+        $legacy = Get-Content -LiteralPath (Join-Path $previousRoot 'manifest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        (@(Get-VanessaResumeDiffArguments -Manifest $legacy) -join ' ') | Should -BeExactly '--binary'
+    }
+
+    It 'refuses an unknown source recipe instead of silently comparing another format' {
+        { Get-VanessaResumeDiffArguments -Manifest ([pscustomobject]@{patch=[pscustomobject]@{gitDiffFormat='unknown'}}) } | Should -Throw '*VANESSA_BUILD_PATCH_DIFF_FORMAT_UNSUPPORTED*'
+    }
+
+    It 'reproduces shortened Git indexes and accepts the same source through full-index resume proof' {
+        $root = Join-Path $TestDrive 'Возобновление сборки с пробелом'
+        [void][IO.Directory]::CreateDirectory($root)
+        $provenance = Get-Content -LiteralPath (Join-Path $fixtureRoot 'provenance.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($input in $provenance.inputs) {
+            $target = Join-Path $root $input.path
+            [void][IO.Directory]::CreateDirectory((Split-Path -Parent $target))
+            [IO.File]::Copy((Join-Path $fixtureRoot $input.path),$target)
+        }
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('init','--quiet'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('config','core.autocrlf','false'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('add','--all'))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('-c','user.name=ITL fixture','-c','user.email=fixture@itl.local','commit','--quiet','-m','Exact upstream inputs'))
+        $includes = @($provenance.inputs | ForEach-Object { '--include='+$_.path })
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--check','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('apply','--whitespace=error-all')+$includes+@((Join-Path $assetRoot 'file-operations.patch'))))
+        $selectedSections = @($patch -split '(?m)(?=^diff --git )' | Where-Object {
+            $header = ($_ -split "`n")[0]
+            @($provenance.inputs | Where-Object { $header -ceq ('diff --git a/'+$_.path+' b/'+$_.path) }).Count -eq 1
+        }) -join ''
+        $legacyDiff = Invoke-RepositoryGit -RepositoryRoot $root -Arguments @('diff','--binary','--abbrev=7','HEAD')
+        $legacyDiff.stdout | Should -Not -BeExactly $selectedSections
+        $diffPath = Join-Path $TestDrive 'canonical-full-index.patch'
+        [void](Invoke-RepositoryGit -RepositoryRoot $root -Arguments (@('diff')+@(Get-VanessaResumeDiffArguments -Manifest $manifest)+@('HEAD',('--output='+$diffPath))))
+        $actual = [IO.File]::ReadAllText($diffPath,[Text.Encoding]::UTF8)
+        $actual | Should -BeExactly $selectedSections
+        foreach ($index in [regex]::Matches($actual,'(?m)^index ([0-9a-f]+)\.\.([0-9a-f]+) ')) {
+            $index.Groups[1].Length | Should -Be 40
+            $index.Groups[2].Length | Should -Be 40
+        }
+    }
+}

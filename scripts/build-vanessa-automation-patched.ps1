@@ -20,6 +20,19 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Get-VanessaResumeDiffArguments {
+    param([Parameter(Mandatory = $true)][object]$Manifest)
+
+    # Existing immutable recipes retain their original Git diff format. New
+    # recipes pin full indexes so repository growth cannot change resume proof.
+    $format = if ($Manifest.patch.PSObject.Properties['gitDiffFormat']) { [string]$Manifest.patch.gitDiffFormat } else { 'legacy' }
+    switch ($format) {
+        'legacy' { return @('--binary') }
+        'full-index' { return @('--binary', '--full-index') }
+        default { throw "VANESSA_BUILD_PATCH_DIFF_FORMAT_UNSUPPORTED: $format. Use the format declared by the exact source-controlled component recipe." }
+    }
+}
+
 function New-DeterministicZip {
     param(
         [Parameter(Mandatory = $true)][string]$SourceDirectory,
@@ -280,9 +293,9 @@ try {
         }
         $resumeDiffPath = Join-Path $workDirectory 'resume-diff.patch'
         try {
-            Invoke-Native -FilePath "git" -Arguments @(
-                "-C", $sourceDirectory, "-c", "core.quotepath=false", "diff", "--binary", "HEAD", "--output=$resumeDiffPath"
-            ) -Description "Compare resumed source with pinned patch"
+            Invoke-Native -FilePath "git" -Arguments (@(
+                "-C", $sourceDirectory, "-c", "core.quotepath=false", "diff"
+            ) + @(Get-VanessaResumeDiffArguments -Manifest $manifest) + @("HEAD", "--output=$resumeDiffPath")) -Description "Compare resumed source with pinned patch"
             Assert-Equal (Get-Sha256 -Path $resumeDiffPath) ([string]$manifest.patch.sha256) "Resumed downstream patch"
         } finally {
             Remove-Item -LiteralPath $resumeDiffPath -Force -ErrorAction SilentlyContinue
