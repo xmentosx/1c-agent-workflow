@@ -82,7 +82,11 @@ Describe "Immutable workflow artifact cache isolation" {
         (Test-Path -LiteralPath $legacyEpf -PathType Leaf) | Should -BeTrue
     }
 
-    It "replaces a corrupt shared ROCTUP artifact from the pinned source" {
+    It "acquires the exact pinned ROCTUP artifact without changing the tracked lock for <cacheState> cache" -TestCases @(
+        @{ cacheState = 'cold' }
+        @{ cacheState = 'corrupt' }
+    ) {
+        param($cacheState)
         $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
         $projectRoot = Join-Path $TestDrive "Repair project $nonAsciiWord with space"
         $cacheRoot = Join-Path $TestDrive "Repair cache $nonAsciiWord with space"
@@ -95,6 +99,10 @@ Describe "Immutable workflow artifact cache isolation" {
         $lock.dependencies.roctupMcpToolkit.sha256 = $expectedSha256
         $lock.dependencies.roctupMcpToolkit.url = ([System.Uri]$sourceEpf).AbsoluteUri
         [System.IO.File]::WriteAllText((Join-Path $projectRoot ".agent-1c\dependency-lock.json"), (($lock | ConvertTo-Json -Depth 20) + [Environment]::NewLine), [System.Text.UTF8Encoding]::new($false))
+        $lockPath = Join-Path $projectRoot '.agent-1c\dependency-lock.json'
+        $lockBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
+        [IO.File]::WriteAllText((Join-Path $projectRoot '.dev.env'), "DEPENDENCY_MODE=fresh`r`n", [System.Text.UTF8Encoding]::new($false))
+        [Environment]::SetEnvironmentVariable('DEPENDENCY_MODE', 'fresh', 'Process')
         [Environment]::SetEnvironmentVariable("ITL_ARTIFACT_CACHE_ROOT", $cacheRoot, "Process")
 
         $result = & {
@@ -102,7 +110,9 @@ Describe "Immutable workflow artifact cache isolation" {
             function Install-RoctupMcpSkillsBestEffort {}
             $corruptPath = Join-Path (Get-RoctupMcpInstallRoot) (Get-RoctupMcpAssetName)
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $corruptPath) | Out-Null
-            [System.IO.File]::WriteAllText($corruptPath, "corrupt cached bytes", [System.Text.UTF8Encoding]::new($false))
+            if ($cacheState -eq 'corrupt') {
+                [System.IO.File]::WriteAllText($corruptPath, "corrupt cached bytes", [System.Text.UTF8Encoding]::new($false))
+            }
             $artifact = Install-RoctupMcpArtifact
             [pscustomobject]@{ artifact = $artifact; corruptPath = $corruptPath }
         }
@@ -110,6 +120,7 @@ Describe "Immutable workflow artifact cache isolation" {
         $result.artifact.path | Should -Be $result.corruptPath
         (Get-FileHash -LiteralPath $result.artifact.path -Algorithm SHA256).Hash.ToLowerInvariant() | Should -Be $expectedSha256
         [System.IO.File]::ReadAllText($result.artifact.path, [System.Text.Encoding]::UTF8) | Should -Be "exact pinned ROCTUP artifact"
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $lockBefore
     }
 
     It "does not reuse stale bindings from another version in the shared cache" {

@@ -150,6 +150,65 @@ Describe "GitHub dependency rate-limit fallback" {
         { Save-RoctupMcpArtifact -AssetInfo $asset } | Should -Throw "*SHA256 mismatch*"
     }
 
+    It "keeps the tracked lock byte-identical when acquiring the same verified ROCTUP pin from <priorSource>" -TestCases @(
+        @{ priorSource = 'template baseline' }
+        @{ priorSource = 'compatibility-manifest' }
+    ) {
+        param($priorSource)
+        $lockPath = Join-Path $script:ProjectRoot '.agent-1c\dependency-lock.json'
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
+        $artifactRoot = Join-Path $TestDrive ('ROCTUP source ' + $nonAsciiWord + ' ' + [guid]::NewGuid().ToString('N'))
+        $installRoot = Join-Path $artifactRoot ('Artifact cache ' + $nonAsciiWord)
+        New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+        $sourcePath = Join-Path $artifactRoot 'MCP_Toolkit.epf'
+        [IO.File]::WriteAllBytes($sourcePath, [Text.Encoding]::UTF8.GetBytes('exact pinned ROCTUP payload'))
+        $sha256 = (Get-FileHash -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+        $manifest = Get-Content -LiteralPath $lockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.dependencies.roctupMcpToolkit = [pscustomobject]@{
+            version='v1.7.1'; assetName='MCP_Toolkit.epf'; url=$sourcePath; sha256=$sha256
+            source=$priorSource; updatedAt='original qualification time'
+        }
+        [IO.File]::WriteAllText($lockPath, (($manifest | ConvertTo-Json -Depth 20) + "`r`n"), [Text.UTF8Encoding]::new($true))
+        $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath))
+        Mock Get-RoctupMcpInstallRoot { $installRoot }
+        try {
+            $asset = [pscustomobject]@{url=$sourcePath; name='MCP_Toolkit.epf'; version='v1.7.1'; expectedSha256=$sha256; source='compatibility-manifest'}
+            $result = Save-RoctupMcpArtifact -AssetInfo $asset
+            $result.sha256 | Should -BeExactly $sha256
+            (Get-FileHash -LiteralPath $result.path).Hash.ToLowerInvariant() | Should -BeExactly $sha256
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($lockPath)) | Should -BeExactly $before
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
+    }
+
+    It "records a materially changed verified ROCTUP artifact pin" {
+        $lockPath = Join-Path $script:ProjectRoot '.agent-1c\dependency-lock.json'
+        $savedLock = [IO.File]::ReadAllBytes($lockPath)
+        $nonAsciiWord = "$([char]0x0422)$([char]0x0435)$([char]0x0441)$([char]0x0442)"
+        $artifactRoot = Join-Path $TestDrive ('ROCTUP new source ' + $nonAsciiWord + ' ' + [guid]::NewGuid().ToString('N'))
+        $installRoot = Join-Path $artifactRoot ('Artifact cache ' + $nonAsciiWord)
+        New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
+        $sourcePath = Join-Path $artifactRoot 'MCP_Toolkit.epf'
+        [IO.File]::WriteAllBytes($sourcePath, [Text.Encoding]::UTF8.GetBytes('new verified ROCTUP payload'))
+        $sha256 = (Get-FileHash -LiteralPath $sourcePath).Hash.ToLowerInvariant()
+        Mock Get-RoctupMcpInstallRoot { $installRoot }
+        try {
+            $asset = [pscustomobject]@{url=$sourcePath; name='MCP_Toolkit.epf'; version='test-new-pin'; expectedSha256=$sha256; source='explicit new pin'}
+            $result = Save-RoctupMcpArtifact -AssetInfo $asset
+            $actual = (Read-DependencyLockManifest).dependencies.roctupMcpToolkit
+            $actual.version | Should -BeExactly 'test-new-pin'
+            $actual.url | Should -BeExactly $sourcePath
+            $actual.sha256 | Should -BeExactly $sha256
+            $actual.source | Should -BeExactly 'explicit new pin'
+            $actual.updatedAt | Should -Not -BeNullOrEmpty
+            (Get-FileHash -LiteralPath $result.path).Hash.ToLowerInvariant() | Should -BeExactly $sha256
+        } finally {
+            [IO.File]::WriteAllBytes($lockPath, $savedLock)
+        }
+    }
+
     It "routes ROCTUP skills through the shared authenticated GitHub API helper" {
         $roctupText = Get-Content -LiteralPath (Join-Path $script:RepoRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.roctup-mcp.ps1") -Raw -Encoding UTF8
         $roctupText | Should -Match 'Invoke-GitHubApiRestMethod -Uri \$uri'

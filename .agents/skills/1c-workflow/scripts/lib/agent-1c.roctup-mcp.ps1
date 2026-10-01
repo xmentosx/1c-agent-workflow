@@ -212,12 +212,25 @@ function Save-RoctupMcpArtifact {
     }
 
     if (-not (Test-DependencyLockRateLimitFallbackSource -Source ([string]$AssetInfo.source))) {
-        Update-DependencyLockEntry -Name "roctupMcpToolkit" -Values @{
+        $pin = @{
             version = [string]$AssetInfo.version
             assetName = [string]$AssetInfo.name
             url = $source
             sha256 = $hash
-            source = [string]$AssetInfo.source
+        }
+        $locked = Get-DependencyLockEntry -Name 'roctupMcpToolkit'
+        $samePin = $true
+        foreach ($key in $pin.Keys) {
+            if ([string](Get-ConfigValueFromObject -Object $locked -Path $key -Default '') -cne $pin[$key]) {
+                $samePin = $false
+                break
+            }
+        }
+        # Acquisition verifies an existing pin; it does not replace its
+        # recorded provenance with the runtime resolver's source label.
+        if (-not $samePin) {
+            $pin.source = [string]$AssetInfo.source
+            Update-DependencyLockEntry -Name 'roctupMcpToolkit' -Values $pin
         }
     }
 
