@@ -7647,6 +7647,7 @@ function Copy-CavemanPolicyReceiptToWorktree {
 }
 
 function Invoke-WorkflowPackageFilePostCopy {
+    Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
     Ensure-OneCSessionLimitDotEnv | Out-Null
     $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
     $clientSurfacePathsBefore = @(Get-WorkflowUpdateClientSurfacePaths)
@@ -7699,12 +7700,65 @@ function Invoke-WorkflowPackageFilePostCopy {
     }
 }
 
+function Assert-WorkflowUpdateDevelopmentBranchRoot {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $root = Get-FullPathNormalized $script:ProjectRoot
+    $recordedRoot = [string](Get-StateValue -State $State -Name 'worktreePath' -Default '')
+    if (-not (Test-DevBranchStateUsesWorktree -State $State) -or -not $recordedRoot -or
+        $root -eq (Get-FullPathNormalized $recordedRoot)) {
+        Assert-CurrentProjectRootMatchesDevBranchState -State $State -Operation 'update-workflow'
+        return
+    }
+
+    # Git can move a legacy worktree without rewriting its ignored runtime state.
+    # Only this package-file owner may use that registration; no state/IB path is
+    # rebound and the ordinary lifecycle guard remains strict.
+    try {
+        $branch = [string](Get-StateValue -State $State -Name 'devBranch' -Default '')
+        if ($branch -notlike 'itldev/*' -or $branch -cne (Get-CurrentBranch)) {
+            throw 'The saved development branch differs from the current Git branch.'
+        }
+        if ([string](Get-StateValue -State $State -Name 'workspaceProvider' -Default 'external') -ne 'external') {
+            throw 'A provider-owned workspace requires its original topology owner.'
+        }
+        $stateRoot = [string](Get-StateValue -State $State -Name 'stateProjectRoot' -Default '')
+        $statePath = [string](Get-StateValue -State $State -Name 'statePath' -Default '')
+        $expectedStatePath = Join-Path $root ('.agent-1c/dev-branches/' + (ConvertTo-SafeName $branch.Substring(7)) + '.json')
+        if (-not $stateRoot -or -not $statePath -or (Get-FullPathNormalized $stateRoot) -ne $root -or
+            (Get-FullPathNormalized $statePath) -ne (Get-FullPathNormalized $expectedStatePath)) {
+            throw 'The development state is not owned by the current worktree.'
+        }
+        $mainRoot = [string](Get-StateValue -State $State -Name 'mainWorktreePath' -Default '')
+        if (-not $mainRoot) { throw 'The development state has no owning main worktree.' }
+        $worktrees = @(Get-GitWorktrees)
+        $current = @($worktrees | Where-Object {
+            [string]$_.branch -ceq $branch -and (Get-FullPathNormalized ([string]$_.path)) -eq $root
+        })
+        $main = @($worktrees | Where-Object {
+            [string]$_.branch -ceq (Get-MasterBranch) -and
+            (Get-FullPathNormalized ([string]$_.path)) -eq (Get-FullPathNormalized $mainRoot)
+        })
+        if ($current.Count -ne 1 -or $main.Count -ne 1) {
+            throw 'Git does not register this branch and its saved main worktree in the current repository.'
+        }
+        $currentCommon = ([string](Get-GitOutputAt -Root $root -Arguments @('rev-parse', '--path-format=absolute', '--git-common-dir'))).Trim()
+        $mainCommon = ([string](Get-GitOutputAt -Root $mainRoot -Arguments @('rev-parse', '--path-format=absolute', '--git-common-dir'))).Trim()
+        if (-not $currentCommon -or -not $mainCommon -or
+            (Get-FullPathNormalized $currentCommon) -ne (Get-FullPathNormalized $mainCommon)) {
+            throw 'The current and saved main worktrees have different common Git directories.'
+        }
+    } catch {
+        throw "WORKFLOW_UPDATE_WORKTREE_IDENTITY_MISMATCH: '$root' cannot use saved worktree '$recordedRoot': $($_.Exception.Message) Preserve state and runtime paths; reconcile the named Git/worktree identity, then repeat update-workflow from the owning master."
+    }
+}
+
 function Invoke-WorkflowDevelopmentBranchUpdate {
     param([Parameter(Mandatory = $true)][object]$Source)
 
     Assert-WorkflowSourceOutsideProject -SourceRoot ([string]$Source.root)
     $registeredState = Read-DevBranchState -Name ''
-    Assert-CurrentProjectRootMatchesDevBranchState -State $registeredState -Operation 'update-workflow'
+    Assert-WorkflowUpdateDevelopmentBranchRoot -State $registeredState
     $pending = Get-WorkflowUpdatePendingSnapshot
     if ($null -ne $pending) {
         if ([string]$pending.receipt.sourceCommit -cne [string]$Source.commit -or
@@ -8728,8 +8782,126 @@ function Copy-KiloProjectConfigToWorktree {
             continue
         }
 
+        if ($fileName -ceq 'kilo.json') {
+            $sourceOwnership = Join-Path $MainProjectRoot '.agent-1c/mcp/client-managed.json'
+            $configState = Get-ItlMcpFileState -Path $sourcePath
+            $ownershipState = Get-ItlMcpFileState -Path $sourceOwnership
+        }
         New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
         Copy-Item -LiteralPath $sourcePath -Destination $targetPath
+        if ($fileName -ceq 'kilo.json') {
+            Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $sourcePath -SourceOwnershipPath $sourceOwnership `
+                -ExpectedConfigState $configState -ExpectedOwnershipState $ownershipState -TargetProjectRoot $WorktreePath | Out-Null
+        }
+    }
+}
+
+function Restore-UnfinishedForkCopiedMcpOwnership {
+    # Compatibility for an old interrupted fork which copied Kilo JSON without
+    # its sidecar. Unproved entries stay unowned for the ordinary collision guard.
+    $branch = (Get-GitOutput @('branch', '--show-current')).Trim()
+    if ($branch -notlike 'itldev/*') { return $false }
+    $root = $script:ProjectRoot
+    $safeName = ConvertTo-SafeName ($branch.Substring('itldev/'.Length))
+    $statePath = Join-Path $root ".agent-1c/dev-branches/$safeName.json"
+    $configRelative = '.kilo/kilo.json'; $ownershipRelative = '.agent-1c/mcp/client-managed.json'
+    $configPath = Join-Path $root $configRelative
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf) -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return $false }
+    try {
+        $state = Read-DevBranchStateFile -Path $statePath
+        if ([string]$state.initializationStatus -notin @('fork-failed','fork-initializing','launcher-registered') -or
+            [string]$state.devBranch -cne $branch -or -not [string]$state.forkId -or
+            (Resolve-Agent1cFullPath $state.worktreePath) -ine (Resolve-Agent1cFullPath $root) -or
+            (Resolve-Agent1cFullPath $state.stateProjectRoot) -ine (Resolve-Agent1cFullPath $root)) { return $false }
+        $entries = Read-ItlClientMcpEntries -Client kilocode
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-ItlManagedMcpState)['owners']
+        $ownedNames = @($owners.Keys | Where-Object { ([string]$_).StartsWith('kilocode/', [StringComparison]::Ordinal) } | ForEach-Object { $owners[$_] })
+        if (@($entries.Keys | Where-Object { $_ -notin $ownedNames }).Count -eq 0) { return $false }
+        $pending = Get-WorkflowUpdatePendingSnapshot
+        if ($null -eq $pending -or [string]$pending.receipt.phase -notin @('copy-complete','post-copy-running','post-copy-failed') -or
+            [string]$pending.receipt.branchRef -cne ('refs/heads/'+$branch) -or
+            [string]$pending.receipt.preUpdateHead -cne [string]$state.forkedFromCommit -or
+            (Get-CurrentCommit) -cne [string]$state.forkedFromCommit) { return $false }
+        $before = ConvertTo-Agent1cHashtable -Object $pending.receipt.beforePathState
+        $configState = Get-ItlMcpFileState -Path $configPath
+        $targetRecords = @($pending.snapshot.records | Where-Object { $_.relativePath -in @($configRelative,$ownershipRelative) })
+        if ($targetRecords.Count -ne 2 -or @($targetRecords | Where-Object relativePath -CEQ $configRelative).Count -ne 1 -or
+            @($targetRecords | Where-Object relativePath -CEQ $ownershipRelative).Count -ne 1 -or
+            [string]$before[$configRelative] -cne $configState) { return $false }
+        foreach ($record in $targetRecords) {
+            $backupState = if ($record.existed) { Get-ItlMcpFileState -Path $record.backupPath } else { 'absent' }
+            if ($backupState -cne [string]$before[$record.relativePath]) { return $false }
+        }
+        Assert-WorkflowUpdateSnapshotCurrentState -Pending $pending
+        $main = Get-MainWorktreePath
+        if ((Resolve-Agent1cFullPath $state.mainWorktreePath) -ine (Resolve-Agent1cFullPath $main) -or
+            (Resolve-Agent1cFullPath $main) -ieq (Resolve-Agent1cFullPath $root) -or
+            (Get-GitOutputAt -Root $main -Arguments @('branch','--show-current')).Trim() -cne (Get-MasterBranch) -or
+            (Get-GitOutputAt -Root $main -Arguments @('rev-parse','--path-format=absolute','--git-common-dir')).Trim() -ine
+            (Get-GitOutput @('rev-parse','--path-format=absolute','--git-common-dir')).Trim()) { return $false }
+        $proofs = @(Invoke-InProjectContext -Root $main -ScriptBlock {
+            $parent = Join-Path $script:ProjectRoot '.agent-1c/snapshots/workflow-update'
+            if (-not (Test-Path -LiteralPath $parent -PathType Container)) { return }
+            foreach ($directory in @(Get-ChildItem -LiteralPath $parent -Directory -Filter 'itl-workflow-update-completed-*')) {
+                try {
+                    $preview = Read-Utf8Text -Path (Join-Path $directory.FullName 'transaction.json') | ConvertFrom-Json -ErrorAction Stop
+                    if ([string]$preview.beforePathState.$configRelative -cne $configState) { continue }
+                    $id = $directory.Name.Substring('itl-workflow-update-completed-'.Length)
+                    $completed = Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+                    $receipt = $completed.receipt
+                    $oldHead = [string]$receipt.preUpdateHead; $newHead = [string]$receipt.completedHead
+                    if ($oldHead -notmatch '^[a-f0-9]{40}$' -or $newHead -notmatch '^[a-f0-9]{40}$' -or
+                        [string]$receipt.branchRef -cne ('refs/heads/'+(Get-MasterBranch))) { continue }
+                    $parents = (Get-GitOutput @('rev-list','--parents','-n','1',$newHead)).Trim() -split ' '
+                    if ($parents.Count -ne 2 -or $parents[1] -cne $oldHead -or
+                        (Get-GitOutput @('merge-base',$newHead,'HEAD')).Trim() -cne $newHead) { continue }
+                    $changes = @(Get-GitPathList -Arguments @('diff','--name-only','--no-renames','-z',$oldHead,$newHead,'--'))
+                    $writeSet = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($completed.snapshot.records | ForEach-Object { $_.relativePath })
+                    $static = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+                    $managed = New-WorkflowUpdatePathMatcher -ManagedPathSpecs (@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $oldHead)+@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $newHead)+@(Get-AiRulesOpenSpecScaffoldPaths))
+                    $native = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-AiRulesMigrationSnapshotRelativePaths | Where-Object { $_ -cne 'openspec' })
+                    $unproved = @($changes | Where-Object {
+                        $path = $_
+                        $businessTests = @(@('tests',(Get-VanessaConfiguredFeaturesPath),(Get-YAxUnitTestsPath)) | Where-Object {
+                            Test-RepoPathUnderRoot -RepoPath $path -Root $_
+                        }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static)
+                        (Test-OneCSourceRepoPath -RepoPath $path) -or $businessTests -or
+                        -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $writeSet) -or
+                        -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $managed) -or
+                        (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static) -and
+                         (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $native) -and $path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)))
+                    })
+                    if ($unproved.Count -gt 0) { continue }
+                    $records = @($completed.snapshot.records | Where-Object { $_.relativePath -in @($configRelative,$ownershipRelative) })
+                    if ($records.Count -ne 2 -or @($records | Where-Object relativePath -CEQ $configRelative).Count -ne 1 -or
+                        @($records | Where-Object relativePath -CEQ $ownershipRelative).Count -ne 1 -or
+                        @($records | Where-Object { -not $_.existed -or $_.wasDirectory }).Count -gt 0) { continue }
+                    [pscustomobject]@{ completed=$completed; config=($records | Where-Object relativePath -CEQ $configRelative).backupPath; ownership=($records | Where-Object relativePath -CEQ $ownershipRelative).backupPath }
+                } catch { Write-Verbose ('Unproved copied MCP ownership capsule: '+$_.Exception.Message) }
+            }
+        })
+        # Several real updates may retain the same copied config. Only the
+        # exact same config AND ownership bytes are interchangeable evidence.
+        $proofGroups = @($proofs | Group-Object {
+            ([string]$_.completed.receipt.beforePathState.$configRelative) + '|' + ([string]$_.completed.receipt.beforePathState.$ownershipRelative)
+        })
+        if ($proofGroups.Count -ne 1) { return $false }
+        $proof = $proofGroups[0].Group[0]
+        $sourceOwners = ConvertTo-Vibecoding1cMcpHashtable -Object ((Read-Utf8Text -Path $proof.ownership | ConvertFrom-Json -ErrorAction Stop).owners)
+        $missing = @($sourceOwners.Keys | Where-Object { ([string]$_).StartsWith('kilocode/',[StringComparison]::Ordinal) } | ForEach-Object {
+            $key = $_; @($sourceOwners[$key] | Where-Object { $entries.Contains($_) -and $_ -notin @($owners[$key]) })
+        })
+        if ($missing.Count -eq 0) { return $false }
+        $fork = Read-DevBranchForkSnapshot -StagingPath (Get-DevBranchForkStagingPath -SafeDevBranchName $safeName)
+        if ([string]$fork.sourceCommit -cne [string]$pending.receipt.preUpdateHead -or [string]$fork.targetSafeName -cne $safeName) { return $false }
+        $resume = Get-DevBranchForkResumeState -Snapshot $fork -TargetProjectRoot $root
+        if ($null -eq $resume) { return $false }
+        $result = Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $proof.config -SourceOwnershipPath $proof.ownership `
+            -ExpectedConfigState $configState -ExpectedOwnershipState ([string]$proof.completed.receipt.beforePathState.$ownershipRelative)
+        return [bool]$result.changed
+    } catch {
+        Write-Verbose ('Copied fork MCP ownership remains unproved: '+$_.Exception.Message)
+        return $false
     }
 }
 

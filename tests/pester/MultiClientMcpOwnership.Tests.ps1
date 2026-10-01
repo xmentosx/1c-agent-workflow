@@ -329,3 +329,126 @@
         $result.ownerBytesUnchanged | Should -BeTrue
     }
 }
+
+Describe 'Copied client MCP ownership proof' {
+    BeforeAll {
+        $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+        $helperPath = Join-Path $repoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1'
+        function New-CopiedMcpFixture {
+            param([string]$Root)
+            $source=Join-Path $Root 'Исходный owner'; $target=Join-Path $Root 'Ветка назначения'
+            New-Item -ItemType Directory -Force -Path (Join-Path $source '.agent-1c'),(Join-Path $target '.kilo'),(Join-Path $target '.agent-1c/mcp') | Out-Null
+            $config='{"mcp":{"itl-roctup-data":{"type":"local","command":["C:\\Tools\\Команда x.exe","--root","D:\\Рабочая папка"],"enabled":false,"headers":{"Authorization":"fixture-policy"}},"user-owned":{"url":"https://user.invalid"}},"permission":{"bash":"ask"}}'
+            $sourceConfig=Join-Path $source 'config.json'; $sourceOwner=Join-Path $source 'owners.json'
+            $targetConfig=Join-Path $target '.kilo/kilo.json'; $targetOwner=Join-Path $target '.agent-1c/mcp/client-managed.json'
+            [IO.File]::WriteAllText($sourceConfig,$config,[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($targetConfig,$config,[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($sourceOwner,'{"schemaVersion":1,"owners":{"kilocode/ondemand-facade":["itl-roctup-data","missing-source-key"],"codex/ondemand-facade":["user-owned"]}}',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($targetOwner,'{"schemaVersion":1,"customNote":"preserve","owners":{"kilocode/branch-runtime":[],"codex/user":["separate-config"]}}',[Text.UTF8Encoding]::new($false))
+            foreach($rootPath in @($source,$target)) { [IO.File]::WriteAllText((Join-Path $rootPath '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}',[Text.UTF8Encoding]::new($false)) }
+            return [pscustomobject]@{root=$target;source=$source;sourceConfig=$sourceConfig;sourceOwner=$sourceOwner;targetConfig=$targetConfig;targetOwner=$targetOwner}
+        }
+    }
+
+    It 'transfers exact copied ownership and preserves policy (explicit target: <ExplicitTarget>)' -ForEach @(@{ExplicitTarget=$false},@{ExplicitTarget=$true}) {
+        $fixture=New-CopiedMcpFixture -Root (Join-Path $TestDrive ('Точный перенос MCP '+$ExplicitTarget))
+        & {
+            $initialRoot=if($ExplicitTarget){$fixture.source}else{$fixture.root}
+            . $helperPath -ProjectRoot $initialRoot -Action help *> $null
+            $copyArguments=@{Client='kilocode';SourceConfigPath=$fixture.sourceConfig;SourceOwnershipPath=$fixture.sourceOwner;ExpectedConfigState=(Get-ItlMcpFileState $fixture.sourceConfig);ExpectedOwnershipState=(Get-ItlMcpFileState $fixture.sourceOwner)}
+            if($ExplicitTarget){$copyArguments.TargetProjectRoot=$fixture.root}
+            $configBefore=Get-ItlMcpFileState $fixture.targetConfig
+            (Copy-ItlClientMcpOwnershipFromProof @copyArguments).changed | Should -BeTrue
+            $script:ProjectRoot | Should -Be $initialRoot
+            (Get-ItlMcpFileState $fixture.targetConfig) | Should -BeExactly $configBefore
+            $state=Read-Utf8Text -Path $fixture.targetOwner | ConvertFrom-Json
+            $state.customNote | Should -Be 'preserve'
+            @($state.owners.'codex/user') | Should -Contain 'separate-config'
+            @($state.owners.'kilocode/ondemand-facade') | Should -Be @('itl-roctup-data')
+            @($state.owners.PSObject.Properties.Name) | Should -Not -Contain 'codex/ondemand-facade'
+            $ownerBefore=Get-ItlMcpFileState $fixture.targetOwner
+            (Copy-ItlClientMcpOwnershipFromProof @copyArguments).changed | Should -BeFalse
+            (Get-ItlMcpFileState $fixture.targetOwner) | Should -BeExactly $ownerBefore
+            Invoke-InProjectContext -Root $fixture.root -ScriptBlock {
+                Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://new.invalid'}) | Out-Null
+                $actual=Read-Utf8Text -Path $fixture.targetConfig | ConvertFrom-Json
+                $actual.mcp.'itl-roctup-data'.url | Should -Be 'https://new.invalid'
+                $actual.mcp.'itl-roctup-data'.enabled | Should -BeFalse
+                $actual.mcp.'itl-roctup-data'.headers.Authorization | Should -Be 'fixture-policy'
+                $actual.permission.bash | Should -Be 'ask'
+                $actual.mcp.'user-owned'.url | Should -Be 'https://user.invalid'
+                { Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='user-owned';url='https://new.invalid'}) } | Should -Throw '*CLIENT_MCP_USER_COLLISION*'
+            }
+        }
+    }
+
+    It 'refuses <Mutation> proof drift without changing target bytes' -ForEach @(@{Mutation='target-config'},@{Mutation='source-config'},@{Mutation='source-ownership'},@{Mutation='config-hash'},@{Mutation='ownership-hash'}) {
+        $fixture=New-CopiedMcpFixture -Root (Join-Path $TestDrive ('Изменённое доказательство '+$Mutation))
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $copyArguments=@{Client='kilocode';SourceConfigPath=$fixture.sourceConfig;SourceOwnershipPath=$fixture.sourceOwner;ExpectedConfigState=(Get-ItlMcpFileState $fixture.sourceConfig);ExpectedOwnershipState=(Get-ItlMcpFileState $fixture.sourceOwner)}
+            switch($Mutation) {
+                'target-config' { [IO.File]::AppendAllText($fixture.targetConfig,"`n",[Text.UTF8Encoding]::new($false)) }
+                'source-config' { [IO.File]::AppendAllText($fixture.sourceConfig,"`n",[Text.UTF8Encoding]::new($false)) }
+                'source-ownership' { [IO.File]::WriteAllText($fixture.sourceOwner,'{"owners":{"kilocode/ondemand-facade":["user-owned"]}}',[Text.UTF8Encoding]::new($false)) }
+                'config-hash' {$copyArguments.ExpectedConfigState='file:'+('0'*64)}
+                'ownership-hash' {$copyArguments.ExpectedOwnershipState='file:'+('0'*64)}
+            }
+            $configBefore=Get-ItlMcpFileState $fixture.targetConfig; $ownerBefore=Get-ItlMcpFileState $fixture.targetOwner
+            { Copy-ItlClientMcpOwnershipFromProof @copyArguments } | Should -Throw '*CLIENT_MCP_COPY_PROOF_CHANGED*'
+            (Get-ItlMcpFileState $fixture.targetConfig) | Should -BeExactly $configBefore
+            (Get-ItlMcpFileState $fixture.targetOwner) | Should -BeExactly $ownerBefore
+        }
+    }
+
+    It 'keeps an <Proof> config unowned and the ordinary collision strict' -ForEach @(@{Proof='absent'},@{Proof='empty'}) {
+        $fixture=New-CopiedMcpFixture -Root (Join-Path $TestDrive ('Без владельца '+$Proof))
+        if($Proof -eq 'absent'){Remove-Item -LiteralPath $fixture.sourceOwner}else{[IO.File]::WriteAllText($fixture.sourceOwner,'{"owners":{}}',[Text.UTF8Encoding]::new($false))}
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $configBefore=Get-ItlMcpFileState $fixture.targetConfig; $ownerBefore=Get-ItlMcpFileState $fixture.targetOwner
+            (Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $fixture.sourceConfig -SourceOwnershipPath $fixture.sourceOwner -ExpectedConfigState (Get-ItlMcpFileState $fixture.sourceConfig) -ExpectedOwnershipState (Get-ItlMcpFileState $fixture.sourceOwner)).changed | Should -BeFalse
+            { Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://new.invalid'}) } | Should -Throw '*CLIENT_MCP_USER_COLLISION*'
+            (Get-ItlMcpFileState $fixture.targetConfig) | Should -BeExactly $configBefore
+            (Get-ItlMcpFileState $fixture.targetOwner) | Should -BeExactly $ownerBefore
+        }
+    }
+
+    It 'preserves a late ownership edit detected before its atomic write' {
+        $fixture=New-CopiedMcpFixture -Root (Join-Path $TestDrive 'Поздняя правка владельца')
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $copyArguments=@{Client='kilocode';SourceConfigPath=$fixture.sourceConfig;SourceOwnershipPath=$fixture.sourceOwner;ExpectedConfigState=(Get-ItlMcpFileState $fixture.sourceConfig);ExpectedOwnershipState=(Get-ItlMcpFileState $fixture.sourceOwner)}
+            $originalReader=${function:Get-ItlMcpFileState}
+            $script:copiedConfigReads=0
+            $lateText='{"schemaVersion":1,"owners":{"kilocode/late-user":["user-owned"]}}'
+            function Get-ItlMcpFileState {
+                param([string]$Path)
+                if($Path -ceq $fixture.targetConfig){
+                    $script:copiedConfigReads++
+                    if($script:copiedConfigReads -eq 2){[IO.File]::WriteAllText($fixture.targetOwner,$lateText,[Text.UTF8Encoding]::new($false))}
+                }
+                & $originalReader -Path $Path
+            }
+            try {
+                { Copy-ItlClientMcpOwnershipFromProof @copyArguments } | Should -Throw '*CLIENT_MCP_FINAL_SET_CHANGED*'
+                (Read-Utf8Text -Path $fixture.targetOwner) | Should -BeExactly $lateText
+                (Get-ItlMcpFileState $fixture.targetConfig) | Should -BeExactly $copyArguments.ExpectedConfigState
+            } finally { Set-Item -Path Function:Get-ItlMcpFileState -Value $originalReader }
+        }
+    }
+
+    It 'preserves <Conflict> without adopting ownership' -ForEach @(@{Conflict='foreign-owner'},@{Conflict='jsonc'}) {
+        $fixture=New-CopiedMcpFixture -Root (Join-Path $TestDrive ('Конфликт '+$Conflict))
+        if($Conflict -eq 'jsonc'){[IO.File]::WriteAllText((Join-Path $fixture.root '.kilo/kilo.jsonc'),'{ /* user comments */ }',[Text.UTF8Encoding]::new($false))}
+        else{[IO.File]::WriteAllText($fixture.targetOwner,'{"schemaVersion":1,"owners":{"kilocode/foreign":["itl-roctup-data"]}}',[Text.UTF8Encoding]::new($false))}
+        & {
+            . $helperPath -ProjectRoot $fixture.root -Action help *> $null
+            $configBefore=Get-ItlMcpFileState $fixture.targetConfig; $ownerBefore=Get-ItlMcpFileState $fixture.targetOwner
+            $failure=if($Conflict -eq 'jsonc'){'*KILO_CONFIG_COLLISION*'}else{'*CLIENT_MCP_OWNER_CONFLICT*'}
+            { Copy-ItlClientMcpOwnershipFromProof -Client kilocode -SourceConfigPath $fixture.sourceConfig -SourceOwnershipPath $fixture.sourceOwner -ExpectedConfigState (Get-ItlMcpFileState $fixture.sourceConfig) -ExpectedOwnershipState (Get-ItlMcpFileState $fixture.sourceOwner) } | Should -Throw $failure
+            (Get-ItlMcpFileState $fixture.targetConfig) | Should -BeExactly $configBefore
+            (Get-ItlMcpFileState $fixture.targetOwner) | Should -BeExactly $ownerBefore
+        }
+    }
+}

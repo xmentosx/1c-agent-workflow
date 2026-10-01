@@ -1,4 +1,200 @@
 ﻿Describe "1C workflow development branch lifecycle checks" {
+    Describe 'Copied MCP provenance in an unfinished fork' -Tag 'ForkMcpProvenance' {
+        BeforeAll {
+            function New-ForkMcpProvenanceFixture {
+                param([string]$Root)
+                $main=Join-Path $Root 'Главная рабочая папка'; $target=Join-Path $Root 'Незавершённая ветка'
+                $utf8=[Text.UTF8Encoding]::new($false)
+                New-Item -ItemType Directory -Force -Path (Join-Path $main '.agent-1c/mcp'),(Join-Path $main '.kilo') | Out-Null
+                [IO.File]::WriteAllText((Join-Path $main '.gitignore'),".kilo/kilo.json`n.kilo/kilo.jsonc`n.agent-1c/mcp/`n.agent-1c/snapshots/`n.agent-1c/fork-staging/`n.agent-1c/dev-branches/`n.agent-1c/tmp/`n",$utf8)
+                [IO.File]::WriteAllText((Join-Path $main '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}',$utf8)
+                [IO.File]::WriteAllText((Join-Path $main 'AGENT-INSTALL.md'),'old package',$utf8)
+                [IO.File]::WriteAllText((Join-Path $main 'business.txt'),'original business',$utf8)
+                & git -C $main init -q -b master; $LASTEXITCODE | Should -Be 0
+                & git -C $main config user.name 'MCP provenance fixture'; $LASTEXITCODE | Should -Be 0
+                & git -C $main config user.email 'mcp@example.invalid'; $LASTEXITCODE | Should -Be 0
+                & git -C $main add --all; $LASTEXITCODE | Should -Be 0
+                & git -C $main commit -qm baseline; $LASTEXITCODE | Should -Be 0
+                $anchor=(& git -C $main rev-parse HEAD).Trim()
+                & git -C $main branch itldev/source; $LASTEXITCODE | Should -Be 0
+                & git -C $main worktree add -q -b itldev/fork $target; $LASTEXITCODE | Should -Be 0
+                New-Item -ItemType Directory -Force -Path (Join-Path $target '.kilo'),(Join-Path $target '.agent-1c/mcp'),(Join-Path $target '.agent-1c/dev-branches') | Out-Null
+                $config='{"mcp":{"itl-roctup-data":{"type":"local","command":["fixture.exe","D:\\База с пробелом"],"enabled":false},"itl-vanessa-ui":{"type":"local","command":["fixture-ui.exe"]}},"permission":{"bash":"ask"}}'
+                foreach($path in @($main,$target)){[IO.File]::WriteAllText((Join-Path $path '.kilo/kilo.json'),$config,$utf8)}
+                [IO.File]::WriteAllText((Join-Path $main '.agent-1c/mcp/client-managed.json'),'{"schemaVersion":1,"owners":{"kilocode/ondemand-facade":["itl-roctup-data","itl-vanessa-ui"]}}',$utf8)
+                [IO.File]::WriteAllText((Join-Path $target '.agent-1c/mcp/client-managed.json'),'{"schemaVersion":1,"owners":{"kilocode/branch-runtime":[],"codex/user":["foreign-client"]}}',$utf8)
+                $staging=Join-Path $main '.agent-1c/fork-staging/fork'
+                New-Item -ItemType Directory -Force -Path $staging | Out-Null
+                $artifact=Join-Path $staging 'snapshot.bin';[IO.File]::WriteAllText($artifact,'small immutable base fixture',$utf8)
+                $artifactSha=(Get-FileHash -LiteralPath $artifact -Algorithm SHA256).Hash.ToLowerInvariant()
+                $forkId=[guid]::NewGuid().ToString('N')
+                $fork=[ordered]@{schemaVersion=1;status='ready';forkId=$forkId;targetSafeName='fork';targetWorktreePath=$target;targetGitBranch='itldev/fork';sourceCommit=$anchor;sourceGitBranch='itldev/source';artifactPath=$artifact;artifactSha256=$artifactSha;artifactKind='file-1cd';infoBaseKind='file'}
+                [IO.File]::WriteAllText((Join-Path $staging 'manifest.json'),($fork|ConvertTo-Json -Depth 5),$utf8)
+                $state=[ordered]@{devBranch='itldev/fork';worktreePath=$target;mainWorktreePath=$main;forkId=$forkId;forkedFromCommit=$anchor;forkedFromBranch='itldev/source';forkSnapshotArtifactSha256=$artifactSha;forkSnapshotArtifactKind='file-1cd';devBranchInfoBasePath=(Join-Path $target '.agent-1c/infobases/dev-branches/fork');infoBaseKind='file';initializationStatus='fork-failed'}
+                [IO.File]::WriteAllText((Join-Path $target '.agent-1c/dev-branches/fork.json'),($state|ConvertTo-Json -Depth 5),$utf8)
+                $completed=& {
+                    $global:LASTEXITCODE=0
+                    . $HelperPath -ProjectRoot $main -Action help *> $null
+                    $LASTEXITCODE | Should -Be 0
+                    $source=[pscustomobject]@{root=$RepoRoot;commit=('a'*40)}
+                    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.kilo/kilo.json','.agent-1c/mcp/client-managed.json') -SnapshotParent (Join-Path $main '.agent-1c/snapshots/workflow-update')
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+                    [IO.File]::WriteAllText((Join-Path $main 'AGENT-INSTALL.md'),'new package',$utf8)
+                    & git -C $main add -- AGENT-INSTALL.md; $LASTEXITCODE | Should -Be 0
+                    & git -C $main commit -qm 'workflow update'; $LASTEXITCODE | Should -Be 0
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
+                    Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+                }
+                $pending=& {
+                    $global:LASTEXITCODE=0
+                    . $HelperPath -ProjectRoot $target -Action help *> $null
+                    $LASTEXITCODE | Should -Be 0
+                    $source=[pscustomobject]@{root=$RepoRoot;commit=('a'*40)}
+                    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.kilo/kilo.json','.agent-1c/mcp/client-managed.json') -SnapshotParent (Join-Path $target '.agent-1c/snapshots/workflow-update')
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+                    [IO.File]::WriteAllText((Join-Path $target 'AGENT-INSTALL.md'),'new package',$utf8)
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-failed
+                    $snapshot.root
+                }
+                [pscustomobject]@{main=$main;target=$target;anchor=$anchor;completed=[string]$completed;pending=[string]$pending;fork=$fork;staging=$staging}
+            }
+            function Add-ForkMcpMainReceipt {
+                param([object]$Fixture,[switch]$DifferentOwnership)
+                & {
+                    $global:LASTEXITCODE=0
+                    . $HelperPath -ProjectRoot $Fixture.main -Action help *> $null
+                    $LASTEXITCODE | Should -Be 0
+                    if($DifferentOwnership){[IO.File]::WriteAllText((Join-Path $Fixture.main '.agent-1c/mcp/client-managed.json'),'{"schemaVersion":1,"owners":{"kilocode/another-owner":["itl-roctup-data","itl-vanessa-ui"]}}',[Text.UTF8Encoding]::new($false))}
+                    $source=[pscustomobject]@{root=$RepoRoot;commit=('a'*40)}
+                    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.kilo/kilo.json','.agent-1c/mcp/client-managed.json') -SnapshotParent (Join-Path $Fixture.main '.agent-1c/snapshots/workflow-update')
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
+                    [IO.File]::WriteAllText((Join-Path $Fixture.main 'AGENT-INSTALL.md'),'another package update',[Text.UTF8Encoding]::new($false))
+                    & git -C $Fixture.main add -- AGENT-INSTALL.md;$LASTEXITCODE|Should -Be 0
+                    & git -C $Fixture.main commit -qm 'second workflow update';$LASTEXITCODE|Should -Be 0
+                    Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
+                    $retained=Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
+                    $id=(Split-Path -Leaf $retained).Substring('itl-workflow-update-completed-'.Length)
+                    (Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id).receipt.completedHead | Should -BeExactly (Get-CurrentCommit)
+                }
+            }
+        }
+
+        It 'carries ownership with a new JSON copy without importing other client owners' {
+            $fixture=New-ForkMcpProvenanceFixture -Root (Join-Path $TestDrive 'Новое копирование с владельцем')
+            $newTarget=Join-Path $TestDrive 'Новая целевая папка'
+            New-Item -ItemType Directory -Force -Path (Join-Path $newTarget '.agent-1c') | Out-Null
+            Copy-Item -LiteralPath (Join-Path $fixture.main '.agent-1c/project.json') -Destination (Join-Path $newTarget '.agent-1c/project.json')
+            & {
+                $global:LASTEXITCODE=0
+                . $HelperPath -ProjectRoot $fixture.main -Action help *> $null
+                $LASTEXITCODE | Should -Be 0
+                Copy-KiloProjectConfigToWorktree -MainProjectRoot $fixture.main -WorktreePath $newTarget
+                $script:ProjectRoot | Should -Be $fixture.main
+                (Get-FileHash -LiteralPath (Join-Path $newTarget '.kilo/kilo.json')).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $fixture.main '.kilo/kilo.json')).Hash
+                $state=Read-Utf8Text -Path (Join-Path $newTarget '.agent-1c/mcp/client-managed.json') | ConvertFrom-Json
+                @($state.owners.'kilocode/ondemand-facade') | Should -Be @('itl-roctup-data','itl-vanessa-ui')
+                [IO.File]::WriteAllText((Join-Path $newTarget '.kilo/kilo.json'),'user replacement',[Text.UTF8Encoding]::new($false))
+                Copy-KiloProjectConfigToWorktree -MainProjectRoot $fixture.main -WorktreePath $newTarget
+                (Read-Utf8Text -Path (Join-Path $newTarget '.kilo/kilo.json')) | Should -BeExactly 'user replacement'
+            }
+        }
+
+        It 'repairs proven legacy fork ownership with <EquivalentReceipts> equivalent receipts and reaches the ordinary endpoint writer' -ForEach @(@{EquivalentReceipts=1},@{EquivalentReceipts=2}) {
+            $fixture=New-ForkMcpProvenanceFixture -Root (Join-Path $TestDrive ('Прерванный fork с доказательством '+$EquivalentReceipts))
+            if($EquivalentReceipts -eq 2){Add-ForkMcpMainReceipt -Fixture $fixture}
+            & {
+                $global:LASTEXITCODE=0
+                . $HelperPath -ProjectRoot $fixture.target -Action help *> $null
+                $LASTEXITCODE | Should -Be 0
+                $configBefore=Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json')
+                $manifestBefore=Get-ItlMcpFileState (Join-Path $fixture.staging 'manifest.json')
+                Restore-UnfinishedForkCopiedMcpOwnership | Should -BeTrue
+                (Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json')) | Should -BeExactly $configBefore
+                (Get-ItlMcpFileState (Join-Path $fixture.staging 'manifest.json')) | Should -BeExactly $manifestBefore
+                (Get-CurrentCommit) | Should -BeExactly $fixture.anchor
+                @((Read-ItlManagedMcpState).owners.'codex/user') | Should -Contain 'foreign-client'
+                Restore-UnfinishedForkCopiedMcpOwnership | Should -BeFalse
+                Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://target.invalid'}) | Out-Null
+                (Read-ItlClientMcpEntries -Client kilocode)['itl-roctup-data'].enabled | Should -BeFalse
+            }
+        }
+
+        It 'keeps the ordinary user collision for <Fault> provenance' -ForEach @(
+            @{Fault='tampered-main-backup'},@{Fault='main-receipt-hash'},@{Fault='main-receipt-context'},@{Fault='ready-branch'},@{Fault='target-config-drift'},@{Fault='target-before-marker'},@{Fault='wrong-fork'},@{Fault='foreign-main'},@{Fault='business-main-commit'},@{Fault='forged-business-capsule'},@{Fault='different-ownership-receipts'}
+        ) {
+            $fixture=New-ForkMcpProvenanceFixture -Root (Join-Path $TestDrive ('Недоказанный перенос '+$Fault))
+            $utf8=[Text.UTF8Encoding]::new($false)
+            $receiptPath=Join-Path $fixture.completed 'transaction.json'
+            $receipt=Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $configRecord=@($receipt.records | Where-Object relativePath -CEQ '.kilo/kilo.json')[0]
+            $statePath=Join-Path $fixture.target '.agent-1c/dev-branches/fork.json'
+            $state=Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+            switch($Fault) {
+                'different-ownership-receipts' {Add-ForkMcpMainReceipt -Fixture $fixture -DifferentOwnership}
+                'tampered-main-backup' {[IO.File]::AppendAllText((Join-Path $fixture.completed $configRecord.backupName),'changed',$utf8)}
+                'main-receipt-hash' {$receipt.beforePathState.'.kilo/kilo.json'='file:'+('0'*64);[IO.File]::WriteAllText($receiptPath,($receipt|ConvertTo-Json -Depth 15),$utf8)}
+                'main-receipt-context' {$receipt.projectRoot=$fixture.target;[IO.File]::WriteAllText($receiptPath,($receipt|ConvertTo-Json -Depth 15),$utf8)}
+                'ready-branch' {$state.initializationStatus='ready';[IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 10),$utf8)}
+                'target-config-drift' {[IO.File]::AppendAllText((Join-Path $fixture.target '.kilo/kilo.json'),"`n",$utf8)}
+                'target-before-marker' {
+                    $p=Get-Content -LiteralPath (Join-Path $fixture.pending 'transaction.json') -Raw -Encoding UTF8|ConvertFrom-Json
+                    $r=@($p.records|Where-Object relativePath -CEQ '.agent-1c/mcp/client-managed.json')[0]
+                    [IO.File]::AppendAllText((Join-Path $fixture.pending $r.backupName),'changed',$utf8)
+                }
+                'wrong-fork' {$state.forkId=[guid]::NewGuid().ToString('N');[IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 10),$utf8)}
+                'foreign-main' {
+                    $foreign=Join-Path $TestDrive 'Чужой Git main'
+                    New-Item -ItemType Directory -Force -Path $foreign|Out-Null
+                    & git -C $foreign init -q -b master;$LASTEXITCODE|Should -Be 0
+                    $state.mainWorktreePath=$foreign;[IO.File]::WriteAllText($statePath,($state|ConvertTo-Json -Depth 10),$utf8)
+                }
+                'business-main-commit' {
+                    [IO.File]::WriteAllText((Join-Path $fixture.main 'business.txt'),'foreign business change',$utf8)
+                    & git -C $fixture.main add -- business.txt;$LASTEXITCODE|Should -Be 0
+                    & git -C $fixture.main commit --amend --no-edit -q;$LASTEXITCODE|Should -Be 0
+                    $receipt.completedHead=(& git -C $fixture.main rev-parse HEAD).Trim()
+                    [IO.File]::WriteAllText($receiptPath,($receipt|ConvertTo-Json -Depth 15),$utf8)
+                }
+                'forged-business-capsule' {
+                    $businessBackup=Join-Path $fixture.completed 'item-999'
+                    [IO.File]::WriteAllText($businessBackup,'original business',$utf8)
+                    $businessPath=Join-Path $fixture.main 'business.txt'
+                    [IO.File]::WriteAllText($businessPath,'foreign business change',$utf8)
+                    $manifestPath=Join-Path $fixture.main '.ai-rules.json'
+                    [IO.File]::WriteAllText($manifestPath,'{"files":{"business.txt":{"source":"forged-rule"}}}',$utf8)
+                    $receipt.records+=@([pscustomobject]@{relativePath='business.txt';existed=$true;wasDirectory=$false;backupName='item-999'},[pscustomobject]@{relativePath='.ai-rules.json';existed=$false;wasDirectory=$false;backupName=''})
+                    $receipt.beforePathState|Add-Member -NotePropertyName 'business.txt' -NotePropertyValue ('file:'+(Get-FileHash -LiteralPath $businessBackup).Hash.ToLowerInvariant())
+                    $receipt.pathState|Add-Member -NotePropertyName 'business.txt' -NotePropertyValue ('file:'+(Get-FileHash -LiteralPath $businessPath).Hash.ToLowerInvariant())
+                    $receipt.beforePathState|Add-Member -NotePropertyName '.ai-rules.json' -NotePropertyValue 'absent'
+                    $receipt.pathState|Add-Member -NotePropertyName '.ai-rules.json' -NotePropertyValue ('file:'+(Get-FileHash -LiteralPath $manifestPath).Hash.ToLowerInvariant())
+                    & git -C $fixture.main add -- business.txt .ai-rules.json;$LASTEXITCODE|Should -Be 0
+                    & git -C $fixture.main commit --amend --no-edit -q;$LASTEXITCODE|Should -Be 0
+                    $receipt.completedHead=(& git -C $fixture.main rev-parse HEAD).Trim()
+                    [IO.File]::WriteAllText($receiptPath,($receipt|ConvertTo-Json -Depth 15),$utf8)
+                    & {
+                        $global:LASTEXITCODE=0
+                        . $HelperPath -ProjectRoot $fixture.main -Action help *> $null
+                        $LASTEXITCODE | Should -Be 0
+                        $id=(Split-Path -Leaf $fixture.completed).Substring('itl-workflow-update-completed-'.Length)
+                        $qualified=Get-WorkflowUpdateCompletedSnapshot -SnapshotId $id
+                        $qualified.receipt.completedHead|Should -BeExactly $receipt.completedHead
+                    }
+                }
+            }
+            & {
+                $global:LASTEXITCODE=0
+                . $HelperPath -ProjectRoot $fixture.target -Action help *> $null
+                $LASTEXITCODE | Should -Be 0
+                $configBefore=Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json')
+                $ownerBefore=Get-ItlMcpFileState (Join-Path $fixture.target '.agent-1c/mcp/client-managed.json')
+                Restore-UnfinishedForkCopiedMcpOwnership | Should -BeFalse
+                {Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://target.invalid'})} | Should -Throw '*CLIENT_MCP_USER_COLLISION*'
+                (Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json')) | Should -BeExactly $configBefore
+                (Get-ItlMcpFileState (Join-Path $fixture.target '.agent-1c/mcp/client-managed.json')) | Should -BeExactly $ownerBefore
+            }
+        }
+    }
+
     Describe 'Fork continuation after a completed workflow update' {
         BeforeAll {
             function New-ForkWorkflowFixture {

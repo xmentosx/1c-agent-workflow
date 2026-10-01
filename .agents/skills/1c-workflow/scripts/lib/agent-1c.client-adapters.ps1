@@ -863,6 +863,88 @@ function Get-ItlMcpFileState {
     return ('file:' + (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant())
 }
 
+function Copy-ItlClientMcpOwnershipFromProof {
+    param(
+        [Parameter(Mandatory = $true)][string]$Client,
+        [Parameter(Mandatory = $true)][string]$SourceConfigPath,
+        [Parameter(Mandatory = $true)][string]$SourceOwnershipPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedConfigState,
+        [Parameter(Mandatory = $true)][string]$ExpectedOwnershipState,
+        [string]$TargetProjectRoot = $script:ProjectRoot
+    )
+
+    if (-not [string]::Equals((Resolve-Agent1cFullPath -Path $TargetProjectRoot), (Resolve-Agent1cFullPath -Path $script:ProjectRoot), [StringComparison]::OrdinalIgnoreCase)) {
+        return (Invoke-InProjectContext -Root $TargetProjectRoot -ScriptBlock {
+            Copy-ItlClientMcpOwnershipFromProof -Client $Client -SourceConfigPath $SourceConfigPath -SourceOwnershipPath $SourceOwnershipPath `
+                -ExpectedConfigState $ExpectedConfigState -ExpectedOwnershipState $ExpectedOwnershipState
+        })
+    }
+    # The lifecycle caller proves the new copy or the retained same-fork capsule
+    # and repository scope. This owner only transfers the proved config's keys;
+    # names, prefixes or similar endpoint settings are never ownership proof.
+    $adapter = Get-ItlClientAdapter -Client $Client
+    Assert-ItlClientConfigWritable -Client $Client
+    if ([string]$adapter.mcpFormat -ne 'json') { throw 'CLIENT_MCP_COPY_PROOF_INVALID: copied ownership requires the existing JSON client format.' }
+    $targetConfig = Join-Path $script:ProjectRoot ([string]$adapter.mcpPath)
+    $targetOwnership = Get-ItlManagedMcpStatePath
+    $targetOwnershipBefore = Get-ItlMcpFileState -Path $targetOwnership
+    if ($ExpectedConfigState -cnotmatch '^file:[a-f0-9]{64}$' -or
+        $ExpectedOwnershipState -cnotmatch '^(absent|file:[a-f0-9]{64})$' -or
+        (Get-ItlMcpFileState -Path $SourceConfigPath) -cne $ExpectedConfigState -or
+        (Get-ItlMcpFileState -Path $targetConfig) -cne $ExpectedConfigState -or
+        (Get-ItlMcpFileState -Path $SourceOwnershipPath) -cne $ExpectedOwnershipState) {
+        throw 'CLIENT_MCP_COPY_PROOF_CHANGED: copied config or source ownership differs from its exact proof; preserve the files and repeat the original owner recovery.'
+    }
+    $imported = [ordered]@{}
+    $changed = $false
+    if ($ExpectedOwnershipState -cne 'absent') {
+        $config = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $SourceConfigPath | ConvertFrom-Json -ErrorAction Stop)
+        $container = Get-ItlClientMcpContainer -Config $config -Path ([string]$adapter.mcpContainer)
+        $sourceState = ConvertTo-Vibecoding1cMcpHashtable -Object (Read-Utf8Text -Path $SourceOwnershipPath | ConvertFrom-Json -ErrorAction Stop)
+        $sourceOwners = ConvertTo-Vibecoding1cMcpHashtable -Object $sourceState['owners']
+        foreach ($key in @($sourceOwners.Keys)) {
+            if (-not ([string]$key).StartsWith("$Client/", [StringComparison]::Ordinal)) { continue }
+            if ([string]$key -ceq "$Client/") { throw 'CLIENT_MCP_OWNER_STATE_INVALID: copied ownership has an empty owner name.' }
+            $names = @($sourceOwners[$key] | ForEach-Object { [string]$_ } | Where-Object { $_ -and $container.Contains($_) } | Select-Object -Unique)
+            if ($names.Count -gt 0) { $imported[[string]$key] = $names }
+        }
+        $state = Read-ItlManagedMcpState
+        $owners = ConvertTo-Vibecoding1cMcpHashtable -Object $state['owners']
+        foreach ($key in @($imported.Keys)) {
+            foreach ($otherKey in @($owners.Keys | Where-Object { $_ -cne $key })) {
+                $separator = ([string]$otherKey).IndexOf('/')
+                if ($separator -le 0) { throw 'CLIENT_MCP_OWNER_STATE_INVALID: current ownership has no client prefix.' }
+                $otherAdapter = Get-ItlClientAdapter -Client ([string]$otherKey).Substring(0, $separator)
+                if ([string]$otherAdapter.mcpPath -ine [string]$adapter.mcpPath -or [string]$otherAdapter.mcpContainer -ine [string]$adapter.mcpContainer) { continue }
+                foreach ($name in @($imported[$key])) {
+                    if ($name -in @($owners[$otherKey]) -and
+                        (-not $imported.Contains([string]$otherKey) -or $name -notin @($imported[$otherKey]))) {
+                        throw "CLIENT_MCP_OWNER_CONFLICT: '$name' already belongs to '$otherKey'; copied proof cannot replace that ownership."
+                    }
+                }
+            }
+            $currentNames = @($owners[$key])
+            $additions = @($imported[$key] | Where-Object { $_ -notin $currentNames })
+            if ($additions.Count -gt 0) {
+                $owners[$key] = @($currentNames | Where-Object { $_ }) + $additions
+                $changed = $true
+            }
+        }
+        if ($changed) { $state['owners'] = $owners }
+    }
+    if ((Get-ItlMcpFileState -Path $SourceConfigPath) -cne $ExpectedConfigState -or
+        (Get-ItlMcpFileState -Path $SourceOwnershipPath) -cne $ExpectedOwnershipState -or
+        (Get-ItlMcpFileState -Path $targetConfig) -cne $ExpectedConfigState -or
+        (Get-ItlMcpFileState -Path $targetOwnership) -cne $targetOwnershipBefore) {
+        throw 'CLIENT_MCP_FINAL_SET_CHANGED: config or ownership changed while verifying the copied proof; no ownership was written.'
+    }
+    if ($changed) { Write-ItlManagedMcpState -State $state }
+    return [pscustomobject]@{
+        changed = $changed; importedOwners = $imported; importedKeys = @($imported.Values | ForEach-Object { $_ } | Select-Object -Unique)
+        configState = $ExpectedConfigState; ownerState = (Get-ItlMcpFileState -Path $targetOwnership)
+    }
+}
+
 function Write-ItlClientMcpEndpoints {
     param(
         [object[]]$Endpoints,
