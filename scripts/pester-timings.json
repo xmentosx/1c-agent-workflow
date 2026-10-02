@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "defaultSeconds": 1.0,
   "files": {
+    "UiTestingPolicyTransition.Tests.ps1": 35.0,
     "AiRulesClients.Tests.ps1": 4.6,
     "AiRulesCompatibilityPromotion.Tests.ps1": 3.0,
     "AiRulesMigration.Tests.ps1": 5.8,

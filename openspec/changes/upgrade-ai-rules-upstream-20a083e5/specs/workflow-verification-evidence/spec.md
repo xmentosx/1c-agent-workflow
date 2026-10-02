@@ -153,3 +153,38 @@ File-only workflow update has no Gate 6 trigger.
 #### Scenario: No suitable platform target or EDT owns deployment
 - **WHEN** no authorized matching dev/test base is available or the project uses the qualified EDT validation/update path
 - **THEN** the former remains explicitly unverified under delivery policy and the latter uses its equivalent evidence without a second deployment owner
+
+### Requirement: EV9 Essential UI needs actual managed-route evidence
+New projects SHALL default UI_TESTING to essential under accepted Q23. Missing or
+empty resolves to essential; invalid retains the upstream manual fallback and
+MUST NOT be reclassified as a stored legacy manual for migration. After an
+authorized change reaches the dev/test infobase, essential SHALL automatically
+check important new or changed user-visible behaviour with actual expected/actual
+UI evidence bound to that artifact and target. auto checks all applicable
+scenarios; manual requires an explicit request; off and a broader no-UI instruction
+remain respected under EV4/EV5. Enabling policy alone MUST NOT authorize deploy,
+infobase loading or the opt-in test-fix loop.
+In managed scope the new fork SHALL use the existing ITL Vanessa UI route with
+its authorization, provider and native-launch ownership contracts. Missing an
+allowed route SHALL leave the dependent evidence unverified with the exact
+prerequisite; an explicit permitted UI request makes that prerequisite blocking
+for that step. Static evidence or a generic saved-suite pass MUST NOT be promoted
+to confirmation of the requested interactive behaviour. ITL_VANESSA_TESTING SHALL
+remain independent: essential neither enables saved suites nor changes that
+setting. Standalone QA support is separate and remains unimplemented/unverified
+until its own qualification. Historical 9ec proof does not qualify this new policy.
+Policy activation SHALL require actual installed-rules support under IM7. A
+source-only receipt/setting test SHALL NOT count as managed UI execution, live
+legacy recovery, or qualification of the new c1 fork identity.
+
+#### Scenario: Essential verifies the important changed behaviour
+- **WHEN** an authorized UI change is present in the current dev/test base and the managed ITL Vanessa UI route is available
+- **THEN** the agent obtains actual expected/actual evidence for that behaviour in the exact target, without silently enabling saved Vanessa or starting a repeated repair loop
+
+#### Scenario: Essential lacks an allowed UI route
+- **WHEN** essential applies but no authorized applicable UI route is available
+- **THEN** the dependent scenario remains unverified with its missing prerequisite, independent work can continue, and static or saved-suite evidence cannot manufacture UI pass
+
+#### Scenario: User retains a disabled or on-request UI policy
+- **WHEN** off, a broader no-UI instruction, or later intentional manual is effective
+- **THEN** essential default cannot bypass that policy, trigger deployment or rewrite the independent saved Vanessa setting

@@ -283,8 +283,8 @@
       "gate": "targeted",
       "budgetSeconds": 900,
       "primaryTest": "tests/pester/BootstrapUpdate.Tests.ps1",
-      "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "scripts/update-installed-workflow.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
-      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/CavemanPolicyTransition.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
+      "paths": ["AGENT-INSTALL.md", "install-agent-1c-workflow.ps1", "scripts/update-installed-workflow.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "templates/AGENTS.append.md", "templates/dev.env.example", "templates/gitignore.append", "templates/project.json", "templates/release-e2e.example.json", "templates/tools.json", "templates/USER-RULES.append.md", ".agents/skills/1c-workflow/kilo-command-templates/*"],
+      "tests": ["tests/pester/BootstrapUpdate.Tests.ps1", "tests/pester/SourceUpgradeHandoff.Tests.ps1", "tests/pester/WorkflowUpdateRollback.Tests.ps1", "tests/pester/CavemanPolicyTransition.Tests.ps1", "tests/pester/UiTestingPolicyTransition.Tests.ps1", "tests/pester/DependencyLocks.Tests.ps1", "tests/pester/GitHubDependencyFallback.Tests.ps1"]
     },
     {
       "id": "lifecycle",

@@ -147,3 +147,75 @@ inputs SHALL retain exact retrieval continuation.
 #### Scenario: The interrupted merge includes a workflow-path conflict
 - **WHEN** update encounters a conflict or later edit in its own workflow paths
 - **THEN** the existing owner preserves before/current/candidate and unrelated merge stages for scoped reconciliation; it cannot clear the merge or include unrelated staging in an update commit
+
+### Requirement: IM7 One-time essential UI transition preserves later choices
+At the future Q23 integration update, the existing update/snapshot owner SHALL
+convert legacy UI_TESTING=manual to essential once per eligible existing managed
+root/worktree. off, auto and essential SHALL remain unchanged. New projects SHALL
+default to essential. Eligibility SHALL follow scope provenance/version, not
+receipt absence alone. The per-root receipt SHALL record the original/resulting
+setting and completion even for a no-op, within the existing snapshot transaction.
+Repeated update and a branch inherited from a migrated baseline MUST preserve a
+later intentional manual. ITL_VANESSA_TESTING and unrelated settings/bytes MUST
+remain intact. Rollback SHALL keep setting/receipt consistent and protect later
+edits through existing expected-post-state recovery. No new coordinator, scan,
+recovery protocol, infobase action or test/UI launch SHALL be introduced by this
+workflow-only migration. Deferred old scopes SHALL transition through their
+ordinary subsequent update. This accepted requirement is not yet qualified by
+historical 9ec evidence and does not change the source-only Stage A support plan.
+
+Eligibility SHALL include the captured pre-update support state and proof that
+actual installed rules support essential. A new executor or workflow pin alone
+MUST NOT enable migration. SkipAiRules leaving unsupported old rules SHALL defer
+Q23 without a completed receipt or setting conversion. Subsequent installation
+of supporting rules at the same workflow pin SHALL permit the first supported
+transition once; an unchanged pin MUST NOT hide the captured false-to-true support
+transition. Dotenv UTF-8 BOM, line endings and bytes outside the changed value
+SHALL survive. The migration occurs at the future update, not an immediate live
+env mutation during source preparation.
+
+Unknown or invalid captured support evidence MUST NOT be treated as proved
+unsupported rules. It SHALL defer the policy without changing the setting or
+writing completion. At the first proved supported activation, missing/empty
+UI_TESTING SHALL materialize essential, matching the new upstream effective
+default; explicit invalid, off and auto values remain preserved.
+
+The existing parent update owner SHALL atomically admit newly required policy
+receipt paths to a legacy snapshot before post-copy. A child whose legacy parent
+did not capture that ownership SHALL stop before policy writes and provide the
+clean exact source-side update-installed-workflow -Recovery update continuation,
+preserving the original target, snapshot and recovery chain. It MUST NOT rewrite
+the snapshot behind the old parent's in-memory state. A newer recovery executor
+SHALL skip Q23 for a recorded old package target that does not own the policy.
+
+#### Scenario: First update of legacy manual and retained modes
+- **WHEN** eligible old roots/worktrees contain manual, off, auto or essential
+- **THEN** only manual becomes essential, each scope receives its transaction-bound completion receipt, and saved Vanessa, unrelated settings, business state and infobases remain unchanged with no UI/test run
+
+#### Scenario: User chooses manual after the migration
+- **WHEN** a completed scope is deliberately set to manual and is updated again or inherited by a new branch
+- **THEN** manual remains manual and migration completion follows the already migrated provenance instead of treating the missing local receipt as an old default
+
+#### Scenario: Deferred root and rollback remain coherent
+- **WHEN** an old root is deferred or a partial/completed transition is resumed or rolled back
+- **THEN** the existing owner preserves its evidence, applies the transition once when eligible, keeps setting/receipt coherent and refuses to overwrite later user settings with a scoped continuation
+
+#### Scenario: Skipped rules become supported at the same workflow pin
+- **WHEN** SkipAiRules retained unsupported old rules and a later ordinary update installs supporting rules at the same workflow pin
+- **THEN** the first update preserves manual and has no completed Q23 receipt, the recorded false-to-true support transition admits the migration once, and a later intentional manual survives another update
+
+#### Scenario: Legacy parent snapshot lacks the new receipt path
+- **WHEN** post-copy would apply Q23 but the legacy parent snapshot did not capture its receipt ownership
+- **THEN** the child stops before policy writes with an agent-usable source-side Recovery update; the new parent admits the paths atomically before the same post-copy, preserving original target/snapshot and rollback rather than adding a recovery protocol
+
+#### Scenario: Unknown prior support preserves a deliberate manual
+- **WHEN** a current-package scope has manual without a UI receipt and its prior manifest backup or captured proof is incomplete or invalid
+- **THEN** it retains manual and no completed receipt is written; missing proof is reported without inferring an older UI policy
+
+#### Scenario: Deferred default receives first supporting rules
+- **WHEN** a scope deferred essential with a missing or empty UI setting and supporting rules are first installed with proved prior unsupported rules
+- **THEN** essential is persisted once, including interruption/resume, and later explicit manual remains unchanged
+
+#### Scenario: New recovery executor continues an old recorded target
+- **WHEN** Recovery update uses a newer executor while the recorded package target does not own Q23
+- **THEN** the owner continues that original target without converting UI_TESTING or completing a Q23 receipt merely because the executor is new

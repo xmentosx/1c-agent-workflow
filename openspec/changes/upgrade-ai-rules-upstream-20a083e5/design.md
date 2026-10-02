@@ -160,6 +160,33 @@ override названного компонента/метода с причин�
 | Optional visual test MCP | UI_TESTING | TOOL_UI_TEST; не является именем всех Vanessa проверок |
 | Query/pure BSL | разрешённый read-only test target | TOOL_DATA, включая квалифицированный ROCTUP |
 
+#### D4.1. Q23: essential UI и отдельная сохранённая Vanessa
+
+Принято 2026-10-02 при следующей интеграции upstream
+`c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb`: новым проектам по умолчанию
+`UI_TESTING=essential`. После разрешённого размещения изменения в dev/test ИБ
+автоматически проверяется важное новое или изменённое поведение, видимое
+пользователю. Требуется реальное UI evidence expected/actual на текущем артефакте;
+статическая проверка, наличие сценария или общий passed saved-suite результат
+не заменяют подтверждения конкретного поведения. Сам режим не разрешает deploy,
+загрузку ИБ или автоматический запуск opt-in test-fix loop.
+
+В managed scope новый fork направляет интерактивную проверку через существующий
+ITL Vanessa UI route, сохраняя target authorization, provider policy, широкий
+no-UI запрет и ownership native launch. Нет разрешённого доступного UI route —
+зависимое доказательство остаётся unverified с точным prerequisite; явный запрос
+такой проверки делает отсутствие prerequisite блокирующим для этого шага.
+Standalone QA интеграция — отдельная возможность, пока не реализованная и не
+квалифицированная. `ITL_VANESSA_TESTING` управляет сохранённой Vanessa независимо:
+`essential` не включает сохранённые suite и не меняет этот switch. Объём `auto`,
+явный запрос для `manual` и запрет `off` сохраняют upstream смысл и приоритет D4.
+Однократный переход существующих scopes определён D11/IM7; файловое обновление
+не является триггером UI запуска.
+
+Готовность policy подтверждается actual installed rules, а не одним новым helper
+или ref: essential должен поддерживаться установленным контрактом. Source-only
+проверка setting/receipt не доказывает managed UI execution или новую fork identity.
+
 Gate 3a допускает bounded read-only запросы и pure BSL с проверенными эффектами,
 достаточными параметрами и целевой test IB. Unknown side effects не исполняются.
 `NOT_READY` не даёт права загрузить конфигурацию: helper recovery используется,
@@ -393,6 +420,43 @@ receipt. Новый проект и новая ветка от уже мигри
 Для старого scope receipt пишется также при no-op off/auto/missing. Старые
 deferred ветки остаются самостоятельными eligible scopes до их перехода.
 
+Q23 добавляет одну миграцию `UI_TESTING` в того же update/snapshot owner:
+при будущем update eligible старого root/worktree `manual` переходит в
+`essential` один раз; `off`, `auto`, существующий `essential` и независимый
+`ITL_VANESSA_TESTING` сохраняются. Per-root receipt фиксирует исходное значение,
+результат и завершение даже для no-op и входит в существующий snapshot вместе
+с изменением setting. Eligibility привязана к происхождению/версии scope,
+а не только отсутствию receipt. Новый проект получает essential default и
+принятую политику; новая ветка от уже мигрированного baseline наследует её,
+сохраняя сознательный `manual`. Повтор update не сбрасывает позднейший `manual`.
+Restore сохраняет согласованность значения и receipt и защищает поздние правки
+штатными expected-post-state проверками. Deferred старый root получает переход
+при своём последующем update; никакой общий registry или второй recovery owner
+не вводится. File-only update не запускает базу, UI, saved Vanessa или другие тесты.
+
+До перехода owner учитывает snapshot pre-update installed-rules support и actual
+support после разрешённой установки правил. `SkipAiRules` со старыми rules без
+essential оставляет Q23 deferred, значение сохранено, completed receipt не создаётся.
+Неизвестный или повреждённый before-proof не означает unsupported: setting и
+незавершённость миграции сохраняются. При первом доказанном supporting переходе
+missing/empty получает записанный essential, соответствующий effective default
+нового upstream; явные invalid/off/auto не переписываются.
+Последующая установка supporting rules при том же workflow pin должна выполнить
+первый supported переход один раз: равенство workflow commit не заменяет это
+доказательство и не считает legacy manual сознательным новым выбором. После
+completion поздний manual защищён прежним receipt. Запись сохраняет UTF-8 BOM,
+line endings и bytes вне изменяемого значения; source task не меняет live env.
+
+Legacy parent snapshot может не владеть добавленным policy receipt. Новый child
+останавливается до policy writes с `UI_TESTING_POLICY_LEGACY_SNAPSHOT` и точным
+source-side продолжением `scripts/update-installed-workflow.ps1 -ProjectRoot
+<exact-root> -Recovery update` из чистого exact нового checkout. Existing новый
+parent атомарно включает добавленные receipt paths в тот же snapshot перед
+post-copy и сохраняет original target/recovery. Child не расширяет snapshot под
+старым parent: его in-memory state может записать старый список обратно. Новый
+recovery executor сам по себе не включает Q23 для recorded old package target,
+который не владел policy. Это тот же update owner, без второго recovery runtime.
+
 Инвентарь областей берётся из явно известных/названных project roots, настроенных
 проектов клиента и зарегистрированных worktrees каждого Git common root; ошибки
 доступа и неготовые ветки сохраняются в результате, не исчезают из подсчёта.
@@ -504,6 +568,33 @@ Q1–Q21 фиксируют продуктовые решения; этот ра
 state — multi-owner client membership, evidence schema, Caveman receipt и pinned
 CLI selection — мигрируются существующими host owners. Plugin — вызывающая
 сторона, без своей очереди/repair. Source/fork ownership остаётся прежним.
+
+**Accepted Q23 checkpoint, 2026-10-02.** Согласовано расширение существующей
+per-root settings migration: legacy `UI_TESTING=manual` → `essential` один раз,
+сохранение off/auto, позднего manual и независимого saved Vanessa switch.
+Владелец receipt, отмены, completion и recovery — прежний update/snapshot owner;
+новый coordinator, persistent framework или отдельная команда не добавляются.
+Затронуты только default/policy нового fork и этот exact setting/receipt известных
+roots/worktrees; бизнес-источники, ИБ, client membership и чужие настройки не
+переходят во владение миграции. Busy/deferred/status и rollback следуют D11/IM2.
+UI execution остаётся у ITL managed Vanessa UI route и только после отдельного
+разрешённого размещения бизнес-изменения; updater не запускает UI/DB/tests.
+Альтернатива сбрасывать manual при каждом update отвергнута: она теряет поздний
+выбор пользователя. Сохранение всех legacy manual оставляет старую default
+политику вопреки Q23. Canary обязан показать first/no-op/repeat/deferred/rollback,
+наследование новой веткой и реальное essential UI evidence, включая unavailable
+route без ложного pass (IM7/EV9, 12.1–12.2). Standalone QA остаётся отдельно и
+не объявляется реализованной. Старые evidence и checkbox сохраняют свой exact
+срез; Q23 и новый c1 fork требуют новой приёмки, исторический 9ec её не доказывает.
+Этот checkpoint не меняет готовый source-only Stage A план и production pins.
+
+Конкретная compatibility граница Q23: parent-owned admission новых receipt paths
+до post-copy, early legacy-child refusal с source-side Recovery update и сохранение
+recorded target; newer executor не применяет Q23 к old target. Acceptance включает
+installed-rules support false→true при неизменном workflow pin, SkipAiRules defer,
+BOM preservation и прежний original-task recovery. Source-only implementation или
+focused proof не закрывают полную c1 integration/UI приёмку либо финальную валидацию
+документов; задачи 12.1–12.2 остаются открыты.
 
 Store write batch D7 и его cross-project runtime authority не включаются в этот
 релиз. В текущем пакете host и managed rules останавливают внешний store до

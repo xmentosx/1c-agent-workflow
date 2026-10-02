@@ -545,7 +545,7 @@
         $envTemplateText | Should -Not -Match '(?m)^CAVEMAN_LEVEL='
         $envTemplateText | Should -Match '(?m)^ITL_ROUTINE_MODE=off\r?$'
         foreach ($marker in @(
-            'VERIFICATION_DEPTH=standard', 'UI_TESTING=manual', 'ORCHESTRATION=standard',
+            'VERIFICATION_DEPTH=standard', 'UI_TESTING=essential', 'ORCHESTRATION=standard',
             'CAVEMAN=auto', 'DEPENDENCY_MODE=fresh', 'VERIFICATION_POLICY=warn',
             '/litemode', '/itl-litemode', '/rulesmodel', 'rtk', 'modelTiersByClient', 'ITL_ROUTINE_MODE=off',
             'AGENT_MODEL=', 'SUPPORT_GUARD=deny', 'agent-browser', 'Windows-MCP'

@@ -74,7 +74,7 @@ Workflow-managed Vanessa Automation, ROCTUP и Vanessa UI MCP binaries хран�
 | `QUICKFIX_MAX_LINES` | Лимит BSL-строк quick-fix | default `40` | user |
 | `DEBUG_FAST_PATH` | Сокращенный цикл отладки | `standard`/`extended`/`off`, default `standard` | user |
 | `VERIFICATION_DEPTH` | Глубина статических проверок `ai_rules_1c` | `full`/`standard`/`lite`, default `standard` | user/`/litemode` |
-| `UI_TESTING` | Проверка веб-интерфейса по правилам `ai_rules_1c` | `auto`/`manual`/`off`, default `manual` | user/`/litemode` |
+| `UI_TESTING` | Интерактивная проверка UI по правилам `ai_rules_1c`; сохранённые Vanessa-тесты управляются отдельно | `essential`/`auto`/`manual`/`off`, default `essential` | user/`/litemode` |
 | `ORCHESTRATION` | Режим оркестрации | `standard`/`economy`, default `standard` | user/`/economymode` |
 | `AGENT_MODEL` | Профиль правил для точной модели головного агента | `opus5`/`sonnet5`/`fable5`/`gpt56`; пусто = `auto`, управление через `/rulesmodel` | bootstrap/user |
 | `SUPPORT_GUARD` | Реакция upstream-инструментов на изменение заблокированного объекта типовой конфигурации на поддержке | `deny`/`warn`/`off`, default `deny` | user/`support-edit` |

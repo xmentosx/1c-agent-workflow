@@ -1884,6 +1884,7 @@ exit 0
                 function Get-ItlActiveClient { "kilocode" }
                 function Sync-ItlClientUserEnvironment { param([string]$Client); $script:postCalls++ }
                 function Invoke-CavemanPolicyTransition { $script:postCalls++ }
+                function Invoke-UiTestingPolicyTransition { }
                 function Get-AiRules1cManifestFileEntries { @() }
                 function Get-GitPathList { @() }
                 function Get-WorkflowUpdateTrackedChangePaths { @() }
@@ -3264,6 +3265,8 @@ Start-Sleep -Seconds 20
                     function Update-AgentGuidanceBridge { }
                     function Update-UserRules { }
                     function Invoke-CavemanPolicyTransition { param([switch]$NewScope); $calls.Add("caveman-policy:$NewScope") | Out-Null }
+                    function Test-AiRulesUiTestingPolicySupport { $true }
+                    function Invoke-UiTestingPolicyTransition { param([switch]$NewScope); $calls.Add("ui-policy:$NewScope") | Out-Null }
                     function Sync-KiloItlCommandSurface { }
                     function Commit-IfChanged { param([string]$Message); return $false }
                     function Get-EnvValue {
@@ -3303,6 +3306,9 @@ Start-Sleep -Seconds 20
             $results["server"] | Should -Contain "source-dump"
             $results["server"] | Should -Contain "server-seed"
             $results["server"] | Should -Not -Contain "seed-dump"
+            foreach ($callsForCase in $results.Values) {
+                $callsForCase | Should -Contain 'ui-policy:True'
+            }
         } finally {
             if (Test-Path -LiteralPath $tempRoot -ErrorAction SilentlyContinue) {
                 Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -6357,17 +6357,20 @@ function Write-WorkflowUpdateFollowUp {
     Add-RunUserReportLine -Lines $reportLines -Label "Коммит master" -Value ([string]$CommitResult.commit)
     Add-RunUserReportLine -Lines $reportLines -Label "Новый коммит создан" -Value $(if ($CommitResult.created) { "да" } else { "нет, workflow уже актуален" })
     Add-RunUserReportLine -Lines $reportLines -Label "Tracked-состояние master" -Value "clean"
-    $masterCavemanReceiptPath = Get-CavemanPolicyReceiptPath
-    if (Test-Path -LiteralPath $masterCavemanReceiptPath -PathType Leaf) {
-        try {
-            $masterCavemanReceipt = Read-Utf8Text -Path $masterCavemanReceiptPath | ConvertFrom-Json -ErrorAction Stop
-            $policyText = if ([string]$masterCavemanReceipt.status -ne 'completed') { 'переход не завершён' } elseif ([bool]$masterCavemanReceipt.converted) { 'On → auto (однократно)' } else { "сохранён $([string]$masterCavemanReceipt.afterValue)" }
-            Add-RunUserReportLine -Lines $reportLines -Label 'Caveman master' -Value $policyText
-        } catch {
-            Add-RunUserReportLine -Lines $reportLines -Label 'Caveman master' -Value "receipt повреждён: $masterCavemanReceiptPath"
+    foreach ($policy in @('caveman', 'ui-testing')) {
+        $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
+        $masterPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor
+        if (Test-Path -LiteralPath $masterPolicyReceiptPath -PathType Leaf) {
+            try {
+                $masterPolicyReceipt = Read-Utf8Text -Path $masterPolicyReceiptPath | ConvertFrom-Json -ErrorAction Stop
+                $policyText = Get-DotEnvPolicyReceiptReportText -Descriptor $policyDescriptor -Receipt $masterPolicyReceipt
+                Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value $policyText
+            } catch {
+                Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value "receipt повреждён: $masterPolicyReceiptPath"
+            }
+        } else {
+            Add-RunUserReportLine -Lines $reportLines -Label "$([string]$policyDescriptor.label) master" -Value "receipt отсутствует: $masterPolicyReceiptPath"
         }
-    } else {
-        Add-RunUserReportLine -Lines $reportLines -Label 'Caveman master' -Value "receipt отсутствует: $masterCavemanReceiptPath"
     }
     $reportLines.Add("")
     $reportLines.Add("## Следующие действия")
@@ -6388,17 +6391,20 @@ function Write-WorkflowUpdateFollowUp {
         foreach ($outcome in @($outcomes | Sort-Object branch)) {
             $reportLines.Add("  - $($outcome.branch): $($outcome.status); $($outcome.root)")
             if ([string]$outcome.status -eq 'completed') {
-                $branchCavemanReceiptPath = Get-CavemanPolicyReceiptPath -Root ([string]$outcome.root)
-                if (Test-Path -LiteralPath $branchCavemanReceiptPath -PathType Leaf) {
-                    try {
-                        $branchCavemanReceipt = Read-Utf8Text -Path $branchCavemanReceiptPath | ConvertFrom-Json -ErrorAction Stop
-                        $branchPolicyText = if ([string]$branchCavemanReceipt.status -ne 'completed') { 'переход не завершён' } elseif ([bool]$branchCavemanReceipt.converted) { 'On → auto (однократно)' } else { "сохранён $([string]$branchCavemanReceipt.afterValue)" }
-                        $reportLines.Add("    Caveman: $branchPolicyText")
-                    } catch {
-                        $reportLines.Add("    Caveman: receipt повреждён: $branchCavemanReceiptPath")
+                foreach ($policy in @('caveman', 'ui-testing')) {
+                    $policyDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
+                    $branchPolicyReceiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $policyDescriptor -Root ([string]$outcome.root)
+                    if (Test-Path -LiteralPath $branchPolicyReceiptPath -PathType Leaf) {
+                        try {
+                            $branchPolicyReceipt = Read-Utf8Text -Path $branchPolicyReceiptPath | ConvertFrom-Json -ErrorAction Stop
+                            $branchPolicyText = Get-DotEnvPolicyReceiptReportText -Descriptor $policyDescriptor -Receipt $branchPolicyReceipt
+                            $reportLines.Add("    $([string]$policyDescriptor.label): $branchPolicyText")
+                        } catch {
+                            $reportLines.Add("    $([string]$policyDescriptor.label): receipt повреждён: $branchPolicyReceiptPath")
+                        }
+                    } else {
+                        $reportLines.Add("    $([string]$policyDescriptor.label): receipt отсутствует: $branchPolicyReceiptPath")
                     }
-                } else {
-                    $reportLines.Add("    Caveman: receipt отсутствует: $branchCavemanReceiptPath")
                 }
             }
             if ([string]$outcome.status -ne 'completed') {
@@ -6596,7 +6602,7 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
         @($AiRulesPathsAfter) +
         $(if ($SourceRoot) { @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot) }) +
         @('.dev.env', '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
-          '.agent-1c/migrations/caveman-auto-v1.json')
+          '.agent-1c/migrations/caveman-auto-v1.json', '.agent-1c/migrations/ui-testing-essential-v1.json')
     ) | ForEach-Object { ConvertTo-WorkflowUpdateRepoPath -Path $_ } | Select-Object -Unique
     return @($paths | Where-Object {
         $path = [string]$_
@@ -7271,6 +7277,100 @@ function Restore-WorkflowUpdateInterruptedPackageCopy {
     Write-Host 'Recovered an interrupted package copy from its exact before snapshot; restarting normal update preflight.'
 }
 
+function Test-WorkflowSourceUiTestingPolicy {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$SourceRoot)
+    if (-not $SourceRoot) { return $false }
+    $path = Join-Path $SourceRoot '.agents/skills/1c-workflow/scripts/lib/agent-1c.lifecycle.ps1'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $false }
+    # Recovery may use a newer executor while the package target stays pinned.
+    # The recorded package owner, not the executor version, enables this policy.
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput((Read-Utf8Text -Path $path), [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count -gt 0) { return $false }
+    return $null -ne $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ieq 'Invoke-UiTestingPolicyTransition'
+    }, $true)
+}
+function Add-WorkflowDotEnvPolicySnapshotPaths {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Pending)
+    $policies = @('caveman')
+    if (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$Pending.receipt.sourceRoot)) { $policies += 'ui-testing' }
+    $missing = @($policies | Where-Object {
+        $relative = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'
+        @($Snapshot.records | Where-Object {
+            $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
+            $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
+        }).Count -eq 0
+    })
+    if ($missing.Count -eq 0) { return }
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending $Pending
+    $receipt = ConvertTo-Agent1cHashtable -Object $Pending.receipt
+    $receipt.beforePathState = ConvertTo-Agent1cHashtable -Object $receipt.beforePathState
+    $receipt.pathState = ConvertTo-Agent1cHashtable -Object $receipt.pathState
+    $records = @($Snapshot.records)
+    $parents = ConvertTo-Agent1cHashtable -Object $Snapshot.parentStates
+    $added = $false
+    foreach ($policy in $policies) {
+        $descriptor = Get-DotEnvPolicyTransitionDescriptor -Policy $policy
+        $relative = '.agent-1c/migrations/' + [string]$descriptor.migrationId + '.json'
+        $covered = @($records | Where-Object {
+            $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)
+            $relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0
+        if ($covered) { continue }
+        $target = Join-Path $script:ProjectRoot $relative
+        Assert-WorkflowManagedTargetPath -Path $target
+        Assert-WorkflowUpdateWriteSetPathNoReparse -RelativePath $relative
+        $before = Get-WorkflowUpdatePathState -RelativePath $relative
+        $existed = Test-Path -LiteralPath $target
+        $backup = ''
+        if ($existed) {
+            if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' is not a policy receipt file; preserve it and resolve its owner before repeating the source-side update."
+            }
+            $policyReceipt = Read-Utf8Text -Path $target | ConvertFrom-Json -ErrorAction Stop
+            if ([string]$policyReceipt.migrationId -cne [string]$descriptor.migrationId -or [string]$policyReceipt.status -notin @('applying','completed')) {
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_INVALID: '$target' does not belong to this policy; preserve it and resolve its owner before repeating the source-side update."
+            }
+            $index = $records.Count
+            do { $backup = Join-Path $Snapshot.root ('item-' + $index); $index++ } while (Test-Path -LiteralPath $backup)
+            Copy-Item -LiteralPath $target -Destination $backup -Force
+            if ((Get-WorkflowUpdatePathState -RelativePath $relative -PhysicalPath $backup) -cne $before) {
+                throw "WORKFLOW_UPDATE_POLICY_RECEIPT_CHANGED: '$target' changed during capture; preserve the update snapshot and repeat the source-side update after resolving the writer."
+            }
+        }
+        if ((Get-WorkflowUpdatePathState -RelativePath $relative) -cne $before) {
+            throw "WORKFLOW_UPDATE_POLICY_RECEIPT_CHANGED: '$target' changed during capture; preserve the update snapshot and repeat the source-side update after resolving the writer."
+        }
+        $parent = Split-Path -Parent $target
+        while ($parent -and (Get-FullPathNormalized $parent) -ne (Get-FullPathNormalized $script:ProjectRoot)) {
+            $parent = Get-FullPathNormalized $parent
+            if (-not $parents.Contains($parent)) { $parents[$parent] = Test-Path -LiteralPath $parent -PathType Container }
+            $parent = Split-Path -Parent $parent
+        }
+        $records += [pscustomobject]@{relativePath=$relative;targetPath=$target;existed=[bool]$existed;wasDirectory=$false;backupPath=$backup}
+        $receipt.beforePathState[$relative] = $before
+        $receipt.pathState[$relative] = $before
+        $added = $true
+    }
+    if (-not $added) { return }
+    # This runs only in the new parent, before spawning post-copy. One atomic
+    # receipt owns records and both state maps; a crash cannot split their scope.
+    Assert-WorkflowUpdateSnapshotCurrentState -Pending ([pscustomobject]@{
+        snapshot = [pscustomobject]@{root=$Snapshot.root;records=$records}; receipt=$receipt; receiptPath=$Pending.receiptPath
+    })
+    $receipt.records = @($records | ForEach-Object {
+        [ordered]@{relativePath=[string]$_.relativePath;existed=[bool]$_.existed;wasDirectory=[bool]$_.wasDirectory;backupName=$(if ($_.backupPath) {Split-Path -Leaf $_.backupPath} else {''})}
+    })
+    $receipt.parentStates = $parents
+    Write-Utf8TextAtomic -Path $Pending.receiptPath -Value (($receipt | ConvertTo-Json -Depth 8) + [Environment]::NewLine)
+    $Snapshot.records = $records
+    $Snapshot.parentStates = $parents
+}
+
 function Complete-WorkflowUpdatePostCopyFromSnapshot {
     param([Parameter(Mandatory = $true)][object]$Snapshot, [Parameter(Mandatory = $true)][object]$Source)
 
@@ -7279,6 +7379,7 @@ function Complete-WorkflowUpdatePostCopyFromSnapshot {
         throw "WORKFLOW_UPDATE_POST_COPY_RECEIPT_MISSING: preserve '$($Snapshot.root)' and repeat the original update after reconciliation."
     }
     if ([string]$pending.receipt.phase -notin @('master-commit-ready', 'master-committed')) {
+        Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $Snapshot -Pending $pending
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $Snapshot -Source $Source -Phase post-copy-running
     }
     try {
@@ -7556,12 +7657,40 @@ function Get-WorkflowUpdateWorktreeInventory {
     return @($inventory)
 }
 
-function Get-CavemanPolicyReceiptPath {
-    param([string]$Root = $script:ProjectRoot)
-    return (Join-Path $Root '.agent-1c\migrations\caveman-auto-v1.json')
+function Get-DotEnvPolicyTransitionDescriptor {
+    param([Parameter(Mandatory = $true)][ValidateSet('caveman', 'ui-testing')][string]$Policy)
+    if ($Policy -eq 'caveman') {
+        return [pscustomobject]@{
+            migrationId = 'caveman-auto-v1'; key = 'CAVEMAN'; fromValue = 'on'; toValue = 'auto'
+            errorPrefix = 'CAVEMAN_POLICY'; newScopeDefault = $false; preserveValueWhitespace = $false; preserveUtf8Bom = $false
+            label = 'Caveman'; reportTransition = 'On → auto (однократно)'
+            notice = 'Caveman project policy migrated once: on -> auto (session level full).'
+        }
+    }
+    return [pscustomobject]@{
+        migrationId = 'ui-testing-essential-v1'; key = 'UI_TESTING'; fromValue = 'manual'; toValue = 'essential'
+        errorPrefix = 'UI_TESTING_POLICY'; newScopeDefault = $true; preserveValueWhitespace = $true; preserveUtf8Bom = $true
+        label = 'UI_TESTING'; reportTransition = 'manual → essential (однократно)'
+        notice = 'UI_TESTING project policy migrated once: manual -> essential.'
+    }
 }
 
-function Get-CavemanPolicyTextHash {
+function Get-DotEnvPolicyReceiptPath {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [string]$Root = $script:ProjectRoot)
+    return (Join-Path $Root ('.agent-1c\migrations\' + [string]$Descriptor.migrationId + '.json'))
+}
+
+function Get-CavemanPolicyReceiptPath {
+    param([string]$Root = $script:ProjectRoot)
+    return (Get-DotEnvPolicyReceiptPath -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) -Root $Root)
+}
+
+function Get-UiTestingPolicyReceiptPath {
+    param([string]$Root = $script:ProjectRoot)
+    return (Get-DotEnvPolicyReceiptPath -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) -Root $Root)
+}
+
+function Get-DotEnvPolicyTextHash {
     param([Parameter(Mandatory = $true)][string]$Text)
     $bytes = (Get-Utf8Encoding).GetBytes($Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -7569,149 +7698,341 @@ function Get-CavemanPolicyTextHash {
     finally { $sha.Dispose() }
 }
 
-function Complete-CavemanPolicyReceipt {
+function Get-CavemanPolicyTextHash {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    return (Get-DotEnvPolicyTextHash -Text $Text)
+}
+
+function Complete-DotEnvPolicyReceipt {
     param([Parameter(Mandatory = $true)][object]$Receipt, [Parameter(Mandatory = $true)][string]$Path)
     $Receipt.status = 'completed'
     $Receipt.completedAt = (Get-Date).ToString('o')
     Write-Utf8TextAtomic -Path $Path -Value (($Receipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
 }
 
-function Get-CavemanPolicyPreviousWorkflowCommit {
+function Complete-CavemanPolicyReceipt {
+    param([Parameter(Mandatory = $true)][object]$Receipt, [Parameter(Mandatory = $true)][string]$Path)
+    Complete-DotEnvPolicyReceipt -Receipt $Receipt -Path $Path
+}
+
+function Get-DotEnvPolicyPreviousWorkflowCommit {
+    param([Parameter(Mandatory = $true)][object]$Descriptor)
+    $errorPrefix = [string]$Descriptor.errorPrefix
     $pending = Get-WorkflowUpdatePendingSnapshot
     if ($null -eq $pending) {
-        throw 'CAVEMAN_POLICY_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; do not migrate .dev.env from a standalone post-copy call.'
+        throw "${errorPrefix}_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; do not migrate .dev.env from a standalone post-copy call."
     }
     $lockRecords = @($pending.snapshot.records | Where-Object {
         (ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)) -ceq '.agent-1c/dependency-lock.json'
     })
     if ($lockRecords.Count -ne 1) {
-        throw 'CAVEMAN_POLICY_PROVENANCE_MISSING: the update snapshot does not contain the previous dependency lock. Preserve the transaction for reconciliation.'
+        throw "${errorPrefix}_PROVENANCE_MISSING: the update snapshot does not contain the previous dependency lock. Preserve the transaction for reconciliation."
     }
     $record = $lockRecords[0]
     if (-not [bool]$record.existed) { return '' }
     if ([bool]$record.wasDirectory -or -not [string]$record.backupPath -or
         -not (Test-Path -LiteralPath ([string]$record.backupPath) -PathType Leaf)) {
-        throw 'CAVEMAN_POLICY_PROVENANCE_MISSING: previous dependency lock backup is unavailable. Preserve the transaction for reconciliation.'
+        throw "${errorPrefix}_PROVENANCE_MISSING: previous dependency lock backup is unavailable. Preserve the transaction for reconciliation."
     }
     try { $beforeLock = Read-Utf8Text -Path ([string]$record.backupPath) | ConvertFrom-Json -ErrorAction Stop }
-    catch { throw "CAVEMAN_POLICY_PROVENANCE_INVALID: previous dependency lock cannot be read. $($_.Exception.Message)" }
+    catch { throw "${errorPrefix}_PROVENANCE_INVALID: previous dependency lock cannot be read. $($_.Exception.Message)" }
     return [string](Get-ConfigValueFromObject -Object $beforeLock -Path 'dependencies.workflowPackage.commit' -Default '')
 }
 
-function Invoke-CavemanPolicyTransition {
+function Get-CavemanPolicyPreviousWorkflowCommit {
+    return (Get-DotEnvPolicyPreviousWorkflowCommit -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman))
+}
+
+function Get-UiTestingPolicyPreviousWorkflowCommit {
+    return (Get-DotEnvPolicyPreviousWorkflowCommit -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing))
+}
+
+function Get-AiRulesUiTestingPolicySupportState {
+    param([AllowNull()][object]$Snapshot = $null, [AllowNull()][object]$BeforePathState = $null)
+
+    # Only local manifest-owned bytes declare this capability. Desired pins,
+    # checkout caches and a newer recovery executor are not installed proof.
+    try {
+        if ($null -ne $Snapshot) {
+            $manifestRecords = @($Snapshot.records | Where-Object {
+                (ConvertTo-WorkflowUpdateRepoPath -Path ([string]$_.relativePath)) -ceq '.ai-rules.json'
+            })
+            if ($manifestRecords.Count -ne 1) { return 'unknown' }
+            $manifestRecord = $manifestRecords[0]
+            $before = ConvertTo-Agent1cHashtable -Object $BeforePathState
+            if (-not $before.Contains('.ai-rules.json')) { return 'unknown' }
+            if (-not [bool]$manifestRecord.existed) {
+                if ([string]$before['.ai-rules.json'] -cne 'absent') { return 'unknown' }
+                return 'unsupported'
+            }
+            if ([bool]$manifestRecord.wasDirectory -or -not [string]$manifestRecord.backupPath -or
+                -not (Test-Path -LiteralPath ([string]$manifestRecord.backupPath) -PathType Leaf)) { return 'unknown' }
+            $actualBefore = 'file:' + (Get-FileHash -LiteralPath ([string]$manifestRecord.backupPath) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualBefore -cne [string]$before['.ai-rules.json']) { return 'unknown' }
+        }
+        $resolveFile = {
+            param([string]$RelativePath)
+            $relative = ConvertTo-WorkflowUpdateRepoPath -Path $RelativePath
+            if ($relative.Split('/') -contains '..') { return '' }
+            $target = Join-Path $script:ProjectRoot $relative
+            Assert-WorkflowManagedTargetPath -Path $target
+            if ($null -eq $Snapshot) { return $target }
+            foreach ($record in @($Snapshot.records)) {
+                $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+                $exact = $relative -ieq $owned
+                if (-not $exact -and (-not [bool]$record.wasDirectory -or
+                    -not $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase))) { continue }
+                if (-not [bool]$record.existed -or -not [string]$record.backupPath) { return '' }
+                if ($exact) { return [string]$record.backupPath }
+                $backupRoot = Get-FullPathNormalized ([string]$record.backupPath)
+                $backup = Get-FullPathNormalized (Join-Path $backupRoot $relative.Substring($owned.Length + 1))
+                if ($backup.StartsWith(($backupRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase)) { return $backup }
+                return ''
+            }
+            return ''
+        }
+        $manifestPath = & $resolveFile '.ai-rules.json'
+        if (-not $manifestPath -or -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            if ($null -eq $Snapshot) { return 'unsupported' }
+            return 'unknown'
+        }
+        $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop
+        if ($null -eq $manifest -or $null -eq $manifest.files -or $manifest.files -isnot [pscustomobject]) { return 'unknown' }
+        $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
+        foreach ($source in @('content/rules/dev-standards-env.md', 'content/commands/uitests.md')) {
+            $sourceEntries = @($entries | Where-Object { $_.source -ceq $source })
+            if ($sourceEntries.Count -eq 0) { return 'unsupported' }
+            $supported = $false
+            $verified = $false
+            foreach ($entry in @($sourceEntries | Where-Object { -not $_.userModified })) {
+                $path = & $resolveFile ([string]$entry.target)
+                if (-not $path -or -not (Test-AiRulesFileMatchesInstalledHash -Path $path -InstalledHash ([string]$entry.installedHash))) { continue }
+                $text = Read-Utf8Text -Path $path
+                $verified = $true
+                $pattern = if ($source -ceq 'content/rules/dev-standards-env.md') {
+                    '(?m)^\|[^\r\n]*`\{UI_TESTING\}`[^\r\n]*`essential`[^\r\n]*\|[ \t]*\r?$'
+                } else { '`UI_TESTING=essential`' }
+                if ($text -match $pattern) { $supported = $true; break }
+            }
+            if (-not $supported) {
+                if ($verified) { return 'unsupported' }
+                return 'unknown'
+            }
+        }
+        return 'supported'
+    } catch {
+        # This optional migration stays pending when its installed provenance
+        # cannot establish support; normal rules ownership retains diagnostics.
+        return 'unknown'
+    }
+}
+
+function Test-AiRulesUiTestingPolicySupport {
+    param([AllowNull()][object]$Snapshot = $null)
+    return (Get-AiRulesUiTestingPolicySupportState -Snapshot $Snapshot) -ceq 'supported'
+}
+
+function Get-DotEnvPolicyAssignmentMatches {
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text, [Parameter(Mandatory = $true)][object]$Descriptor)
+    $pattern = '(?im)^[ \t]*' + [regex]::Escape([string]$Descriptor.key) + '[ \t]*=[ \t]*([^\r\n#]*)(?:[ \t]*#.*)?\r?$'
+    return @([regex]::Matches($Text, $pattern))
+}
+
+function Get-DotEnvPolicyAssignmentValue {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [object]$Assignment = $null)
+    if ($null -eq $Assignment) { return '' }
+    $value = $Assignment.Groups[1].Value.Trim()
+    # Keep Caveman's existing quoted-value behavior; UI settings use the dotenv parser's quotes.
+    if ([bool]$Descriptor.preserveValueWhitespace -and $value.Length -ge 2 -and
+        (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
+        $value = $value.Substring(1, $value.Length - 2).Trim()
+    }
+    return $value
+}
+
+function Get-DotEnvPolicyTransitionText {
     param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory = $true)][object]$Descriptor,
+        [object]$Assignment = $null,
+        [switch]$Utf8Bom
+    )
+    # Read-Utf8Text strips the preamble; the no-BOM atomic writer encodes this target-only prefix.
+    $targetPrefix = if ($Utf8Bom -and [bool]$Descriptor.preserveUtf8Bom) { [string][char]0xFEFF } else { '' }
+    if ($null -ne $Assignment) {
+        $valueGroup = $Assignment.Groups[1]
+        $valueIndex = $valueGroup.Index
+        $valueLength = $valueGroup.Length
+        if ([bool]$Descriptor.preserveValueWhitespace) {
+            $leadingWhitespace = $valueGroup.Value.Length - $valueGroup.Value.TrimStart().Length
+            $valueIndex += $leadingWhitespace
+            $trimmedValue = $valueGroup.Value.Trim()
+            $valueLength = $trimmedValue.Length
+            if ($trimmedValue.Length -ge 2 -and
+                (($trimmedValue.StartsWith('"') -and $trimmedValue.EndsWith('"')) -or ($trimmedValue.StartsWith("'") -and $trimmedValue.EndsWith("'")))) {
+                $innerValue = $trimmedValue.Substring(1, $trimmedValue.Length - 2)
+                $valueIndex += 1 + $innerValue.Length - $innerValue.TrimStart().Length
+                $valueLength = $innerValue.Trim().Length
+            }
+        }
+        return ($targetPrefix + $Text.Substring(0, $valueIndex) + [string]$Descriptor.toValue + $Text.Substring($valueIndex + $valueLength))
+    }
+    $newLine = if ($Text.Contains("`r`n")) { "`r`n" } elseif ($Text.Contains("`n")) { "`n" } else { [Environment]::NewLine }
+    $separator = if (-not $Text -or $Text.EndsWith("`n")) { '' } else { $newLine }
+    return ($targetPrefix + $Text + $separator + [string]$Descriptor.key + '=' + [string]$Descriptor.toValue + $newLine)
+}
+
+function Invoke-DotEnvPolicyTransition {
+    param(
+        [Parameter(Mandatory = $true)][object]$Descriptor,
         [switch]$NewScope,
         [switch]$EvaluatePackageEligibility,
+        [switch]$FirstSupportedRules,
         [string]$PreviousWorkflowCommit = ''
     )
 
-    $receiptPath = Get-CavemanPolicyReceiptPath
+    $receiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor
+    $errorPrefix = [string]$Descriptor.errorPrefix
+    $key = [string]$Descriptor.key
     $envPath = Join-Path $script:ProjectRoot '.dev.env'
     if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) {
-        throw "CAVEMAN_POLICY_ENV_MISSING: $envPath. Restore the project's .dev.env, then repeat update-workflow."
+        throw "${errorPrefix}_ENV_MISSING: $envPath. Restore the project's .dev.env, then repeat update-workflow."
     }
     $envText = Read-Utf8Text -Path $envPath
     $actualHash = (Get-FileHash -LiteralPath $envPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $hasUtf8Bom = $false
+    if ([bool]$Descriptor.preserveUtf8Bom) {
+        [byte[]]$bomPrefix = 0, 0, 0
+        $stream = [System.IO.File]::OpenRead($envPath)
+        try {
+            $hasUtf8Bom = $stream.Read($bomPrefix, 0, 3) -eq 3 -and
+                $bomPrefix[0] -eq 0xEF -and $bomPrefix[1] -eq 0xBB -and $bomPrefix[2] -eq 0xBF
+        } finally { $stream.Dispose() }
+    }
     if (Test-Path -LiteralPath $receiptPath -PathType Leaf) {
         $receipt = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json
-        if ([string]$receipt.migrationId -cne 'caveman-auto-v1') {
-            throw "CAVEMAN_POLICY_RECEIPT_INVALID: $receiptPath"
+        if ([string]$receipt.migrationId -cne [string]$Descriptor.migrationId) {
+            throw "${errorPrefix}_RECEIPT_INVALID: $receiptPath"
         }
         if ([string]$receipt.status -eq 'completed') { return $receipt }
         if ([string]$receipt.status -ne 'applying') {
-            throw "CAVEMAN_POLICY_RECEIPT_INVALID: unexpected status '$($receipt.status)' in $receiptPath"
+            throw "${errorPrefix}_RECEIPT_INVALID: unexpected status '$($receipt.status)' in $receiptPath"
         }
         if ($actualHash -ceq [string]$receipt.afterSha256) {
-            Complete-CavemanPolicyReceipt -Receipt $receipt -Path $receiptPath
+            Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
             return $receipt
         }
         if ($actualHash -cne [string]$receipt.beforeSha256) {
-            throw "CAVEMAN_POLICY_CONFLICT: .dev.env changed while the one-time policy transition was pending. Preserve it and reconcile $receiptPath before repeating update-workflow."
+            throw "${errorPrefix}_CONFLICT: .dev.env changed while the one-time policy transition was pending. Preserve it and reconcile $receiptPath before repeating update-workflow."
         }
         if ([bool]$receipt.converted) {
-            $pendingMatch = [regex]::Match($envText, '(?im)^[ \t]*CAVEMAN[ \t]*=[ \t]*([^\r\n#]*)(?:[ \t]*#.*)?\r?$')
-            if (-not $pendingMatch.Success -or $pendingMatch.Groups[1].Value.Trim() -ine 'on') {
-                throw "CAVEMAN_POLICY_CONFLICT: source setting no longer matches $receiptPath"
+            $pendingMatches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
+            $pendingAssignment = if ($pendingMatches.Count -eq 1) { $pendingMatches[0] } else { $null }
+            $pendingValue = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $pendingAssignment
+            $sourceMatches = $pendingMatches.Count -eq 1 -and $pendingValue -ieq [string]$Descriptor.fromValue
+            $newDefault = [bool]$Descriptor.newScopeDefault -and
+                ([string]$receipt.scopeKind -eq 'new' -or [string]$receipt.eligibility -eq 'first-supported-ai-rules') -and
+                $pendingMatches.Count -le 1 -and -not $pendingValue
+            if (-not $sourceMatches -and -not $newDefault) {
+                throw "${errorPrefix}_CONFLICT: source setting no longer matches $receiptPath"
             }
-            $valueGroup = $pendingMatch.Groups[1]
-            $afterText = $envText.Substring(0, $valueGroup.Index) + 'auto' + $envText.Substring($valueGroup.Index + $valueGroup.Length)
-            if ((Get-CavemanPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
-                throw "CAVEMAN_POLICY_CONFLICT: the pending target bytes no longer match $receiptPath"
+            $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $pendingAssignment -Utf8Bom:$hasUtf8Bom
+            if ((Get-DotEnvPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
+                throw "${errorPrefix}_CONFLICT: the pending target bytes no longer match $receiptPath"
             }
             Write-Utf8TextAtomic -Path $envPath -Value $afterText
         }
-        Complete-CavemanPolicyReceipt -Receipt $receipt -Path $receiptPath
+        Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
         return $receipt
     }
 
-    $matches = @([regex]::Matches($envText, '(?im)^[ \t]*CAVEMAN[ \t]*=[ \t]*([^\r\n#]*)(?:[ \t]*#.*)?\r?$'))
+    $matches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
     if ($matches.Count -gt 1) {
-        throw "CAVEMAN_POLICY_AMBIGUOUS: .dev.env has more than one CAVEMAN assignment; resolve the duplicate before update-workflow."
+        throw "${errorPrefix}_AMBIGUOUS: .dev.env has more than one $key assignment; resolve the duplicate before update-workflow."
     }
-    $beforeValue = if ($matches.Count -eq 1) { $matches[0].Groups[1].Value.Trim() } else { '' }
+    $assignment = if ($matches.Count -eq 1) { $matches[0] } else { $null }
+    $beforeValue = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $assignment
     $targetWorkflowCommit = [string](Get-ConfigValueFromObject -Object (Get-DependencyLockEntry -Name 'workflowPackage') -Path 'commit' -Default '')
-    $eligibility = if ($NewScope) { 'new-scope' } elseif (-not $EvaluatePackageEligibility) { 'direct-legacy-transition' } elseif ($PreviousWorkflowCommit -and $PreviousWorkflowCommit -ceq $targetWorkflowCommit) { 'already-current-package' } elseif ($PreviousWorkflowCommit) { 'older-package' } else { 'legacy-unpinned-package' }
-    $convert = -not $NewScope -and $beforeValue -ieq 'on' -and $eligibility -ne 'already-current-package'
+    $eligibility = if ($NewScope) { 'new-scope' } elseif ($FirstSupportedRules) { 'first-supported-ai-rules' } elseif (-not $EvaluatePackageEligibility) { 'direct-legacy-transition' } elseif ($PreviousWorkflowCommit -and $PreviousWorkflowCommit -ceq $targetWorkflowCommit) { 'already-current-package' } elseif ($PreviousWorkflowCommit) { 'older-package' } else { 'legacy-unpinned-package' }
+    $convert = (-not $NewScope -and $beforeValue -ieq [string]$Descriptor.fromValue -and $eligibility -ne 'already-current-package') -or
+        (($NewScope -or $FirstSupportedRules) -and [bool]$Descriptor.newScopeDefault -and -not $beforeValue)
     $afterText = $envText
     if ($convert) {
-        $match = $matches[0]
-        $valueGroup = $match.Groups[1]
-        $afterText = $envText.Substring(0, $valueGroup.Index) + 'auto' + $envText.Substring($valueGroup.Index + $valueGroup.Length)
+        $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $assignment -Utf8Bom:$hasUtf8Bom
     }
     $receipt = [pscustomobject]@{
         schemaVersion = 1
-        migrationId = 'caveman-auto-v1'
+        migrationId = [string]$Descriptor.migrationId
         status = 'applying'
         scopeKind = $(if ($NewScope) { 'new' } else { 'existing' })
         workflowCommit = $targetWorkflowCommit
         previousWorkflowCommit = $PreviousWorkflowCommit
         eligibility = $eligibility
         beforeValue = $beforeValue
-        afterValue = $(if ($convert) { 'auto' } else { $beforeValue })
+        afterValue = $(if ($convert) { [string]$Descriptor.toValue } else { $beforeValue })
         converted = [bool]$convert
         beforeSha256 = $actualHash
-        afterSha256 = $(if ($convert) { Get-CavemanPolicyTextHash -Text $afterText } else { $actualHash })
+        afterSha256 = $(if ($convert) { Get-DotEnvPolicyTextHash -Text $afterText } else { $actualHash })
         startedAt = (Get-Date).ToString('o')
         completedAt = ''
     }
     Write-Utf8TextAtomic -Path $receiptPath -Value (($receipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
     if ($convert) { Write-Utf8TextAtomic -Path $envPath -Value $afterText }
-    Complete-CavemanPolicyReceipt -Receipt $receipt -Path $receiptPath
-    if ($convert) { Write-Host 'Caveman project policy migrated once: on -> auto (session level full).' }
+    Complete-DotEnvPolicyReceipt -Receipt $receipt -Path $receiptPath
+    if ($convert) {
+        if ($NewScope) { Write-Host "$key new-project default: $([string]$Descriptor.toValue)." }
+        elseif ([bool]$Descriptor.newScopeDefault -and -not $beforeValue) { Write-Host "$key default: $([string]$Descriptor.toValue)." }
+        else { Write-Host ([string]$Descriptor.notice) }
+    }
     return $receipt
 }
 
-function Copy-CavemanPolicyReceiptToWorktree {
-    param([Parameter(Mandatory = $true)][string]$WorktreePath)
-    $source = Get-CavemanPolicyReceiptPath
+function Invoke-CavemanPolicyTransition {
+    param([switch]$NewScope, [switch]$EvaluatePackageEligibility, [string]$PreviousWorkflowCommit = '')
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) `
+        -NewScope:$NewScope -EvaluatePackageEligibility:$EvaluatePackageEligibility -PreviousWorkflowCommit $PreviousWorkflowCommit)
+}
+
+function Invoke-UiTestingPolicyTransition {
+    param([switch]$NewScope, [switch]$EvaluatePackageEligibility, [switch]$FirstSupportedRules, [string]$PreviousWorkflowCommit = '')
+    return (Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) `
+        -NewScope:$NewScope -EvaluatePackageEligibility:$EvaluatePackageEligibility -FirstSupportedRules:$FirstSupportedRules -PreviousWorkflowCommit $PreviousWorkflowCommit)
+}
+
+function Copy-DotEnvPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [Parameter(Mandatory = $true)][string]$WorktreePath)
+    $errorPrefix = [string]$Descriptor.errorPrefix
+    $key = [string]$Descriptor.key
+    $source = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { return }
     $receipt = Read-Utf8Text -Path $source | ConvertFrom-Json
-    if ([string]$receipt.migrationId -cne 'caveman-auto-v1' -or [string]$receipt.status -ne 'completed') {
-        throw "CAVEMAN_POLICY_RECEIPT_INCOMPLETE: finish the source root's workflow update before creating a branch. Receipt: $source"
+    if ([string]$receipt.migrationId -cne [string]$Descriptor.migrationId -or [string]$receipt.status -ne 'completed') {
+        throw "${errorPrefix}_RECEIPT_INCOMPLETE: finish the source root's workflow update before creating a branch. Receipt: $source"
     }
-    $target = Get-CavemanPolicyReceiptPath -Root $WorktreePath
+    $target = Get-DotEnvPolicyReceiptPath -Descriptor $Descriptor -Root $WorktreePath
     if (Test-Path -LiteralPath $target -PathType Leaf) {
         $existing = Read-Utf8Text -Path $target | ConvertFrom-Json
-        if ([string]$existing.migrationId -cne 'caveman-auto-v1' -or [string]$existing.status -ne 'completed') {
-            throw "CAVEMAN_POLICY_RECEIPT_INCOMPLETE: preserve the branch receipt and resume its original transition: $target"
+        if ([string]$existing.migrationId -cne [string]$Descriptor.migrationId -or [string]$existing.status -ne 'completed') {
+            throw "${errorPrefix}_RECEIPT_INCOMPLETE: preserve the branch receipt and resume its original transition: $target"
         }
         return
     }
     $branchEnv = Join-Path $WorktreePath '.dev.env'
     if (-not (Test-Path -LiteralPath $branchEnv -PathType Leaf)) {
-        throw "CAVEMAN_POLICY_ENV_MISSING: branch .dev.env is absent at '$branchEnv'; restore it before creating its policy receipt."
+        throw "${errorPrefix}_ENV_MISSING: branch .dev.env is absent at '$branchEnv'; restore it before creating its policy receipt."
     }
     $envText = Read-Utf8Text -Path $branchEnv
-    $matches = @([regex]::Matches($envText, '(?im)^[ \t]*CAVEMAN[ \t]*=[ \t]*([^\r\n#]*)(?:[ \t]*#.*)?\r?$'))
+    $matches = @(Get-DotEnvPolicyAssignmentMatches -Text $envText -Descriptor $Descriptor)
     if ($matches.Count -gt 1) {
-        throw "CAVEMAN_POLICY_AMBIGUOUS: branch .dev.env has more than one CAVEMAN assignment; resolve the duplicate before creating its policy receipt."
+        throw "${errorPrefix}_AMBIGUOUS: branch .dev.env has more than one $key assignment; resolve the duplicate before creating its policy receipt."
     }
-    $value = if ($matches.Count -eq 1) { $matches[0].Groups[1].Value.Trim() } else { '' }
+    $assignment = if ($matches.Count -eq 1) { $matches[0] } else { $null }
+    $value = Get-DotEnvPolicyAssignmentValue -Descriptor $Descriptor -Assignment $assignment
     $hash = (Get-FileHash -LiteralPath $branchEnv -Algorithm SHA256).Hash.ToLowerInvariant()
     $now = (Get-Date).ToString('o')
     $branchReceipt = [ordered]@{
         schemaVersion = 1
-        migrationId = 'caveman-auto-v1'
+        migrationId = [string]$Descriptor.migrationId
         status = 'completed'
         scopeKind = 'new'
         workflowCommit = [string]$receipt.workflowCommit
@@ -7729,7 +8050,59 @@ function Copy-CavemanPolicyReceiptToWorktree {
     Write-Utf8TextAtomic -Path $target -Value (($branchReceipt | ConvertTo-Json -Depth 6) + [Environment]::NewLine)
 }
 
+function Copy-CavemanPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][string]$WorktreePath)
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy caveman) -WorktreePath $WorktreePath
+}
+
+function Copy-UiTestingPolicyReceiptToWorktree {
+    param([Parameter(Mandatory = $true)][string]$WorktreePath)
+    Copy-DotEnvPolicyReceiptToWorktree -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing) -WorktreePath $WorktreePath
+}
+
+function Get-DotEnvPolicyReceiptReportText {
+    param([Parameter(Mandatory = $true)][object]$Descriptor, [Parameter(Mandatory = $true)][object]$Receipt)
+    if ([string]$Receipt.status -ne 'completed') { return 'переход не завершён' }
+    if ([bool]$Receipt.converted) {
+        if ([bool]$Descriptor.newScopeDefault -and [string]$Receipt.scopeKind -eq 'new') {
+            return "$([string]$Descriptor.toValue) по умолчанию (новый проект)"
+        }
+        if ([bool]$Descriptor.newScopeDefault -and -not [string]$Receipt.beforeValue) {
+            return "$([string]$Descriptor.toValue) по умолчанию"
+        }
+        return [string]$Descriptor.reportTransition
+    }
+    return "сохранён $([string]$Receipt.afterValue)"
+}
+
+function Assert-UiTestingPolicyUpdateSnapshot {
+    param([object]$Pending = (Get-WorkflowUpdatePendingSnapshot))
+    if ($null -eq $pending) {
+        throw 'UI_TESTING_POLICY_SNAPSHOT_MISSING: repeat update-workflow through its transaction owner; UI policy cannot be applied by a standalone post-copy call.'
+    }
+    if (-not (Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$pending.receipt.sourceRoot))) { return }
+    $relative = '.agent-1c/migrations/ui-testing-essential-v1.json'
+    foreach ($record in @($pending.snapshot.records)) {
+        $owned = ConvertTo-WorkflowUpdateRepoPath -Path ([string]$record.relativePath)
+        if ($relative -ceq $owned -or $relative.StartsWith(($owned + '/'), [StringComparison]::OrdinalIgnoreCase)) { return }
+    }
+    # The old parent still holds its original snapshot in memory and can rewrite
+    # transaction.json after a failed child. Extending it here would lose the new
+    # record again. Re-enter the existing source-side owner before pre-copy instead.
+    $snapshotId = (Split-Path -Leaf $pending.snapshot.root).Substring('itl-workflow-update-rollback-'.Length)
+    $sourceRoot = [string]$pending.receipt.sourceRoot
+    $continuation = "From a clean exact new workflow Git checkout, run scripts/update-installed-workflow.ps1 for project '$script:ProjectRoot' with -Recovery update. Its new parent admits the policy receipts to the existing snapshot before it resumes the same post-copy; do not restore or edit a pending receipt manually. SnapshotId: $snapshotId. Original candidate: '$sourceRoot'. The original workflow target, snapshot and recovery are preserved."
+    Set-RunFailureContext -Category runner -RequiredAction $continuation
+    throw "UI_TESTING_POLICY_LEGACY_SNAPSHOT: the old updater did not capture the new UI receipt. No UI policy has been written. $continuation"
+}
+
 function Invoke-WorkflowPackageFilePostCopy {
+    $policyPending = Get-WorkflowUpdatePendingSnapshot
+    Assert-UiTestingPolicyUpdateSnapshot -Pending $policyPending
+    $applyUiTestingPolicy = Test-WorkflowSourceUiTestingPolicy -SourceRoot ([string]$policyPending.receipt.sourceRoot)
+    $beforeUiTestingSupport = if ($applyUiTestingPolicy) {
+        Get-AiRulesUiTestingPolicySupportState -Snapshot $policyPending.snapshot -BeforePathState $policyPending.receipt.beforePathState
+    } else { 'unknown' }
     Restore-UnfinishedForkCopiedMcpOwnership | Out-Null
     Ensure-OneCSessionLimitDotEnv | Out-Null
     $aiRulesPathsBefore = @(Get-AiRules1cManifestFileEntries | ForEach-Object { [string]$_.target })
@@ -7774,7 +8147,17 @@ function Invoke-WorkflowPackageFilePostCopy {
     foreach ($client in @(Get-AgentTargets)) {
         Sync-ItlClientUserEnvironment -Client $client
     }
-    Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit (Get-CavemanPolicyPreviousWorkflowCommit) | Out-Null
+    $previousPolicyWorkflowCommit = Get-CavemanPolicyPreviousWorkflowCommit
+    Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+    if ($applyUiTestingPolicy) {
+        if ($beforeUiTestingSupport -ceq 'unknown') {
+            Write-Host 'UI_TESTING transition remains pending: the original update snapshot cannot prove the previous rules capability. Preserve its manifest and backups for reconciliation; no UI policy has been written.'
+        } elseif (Test-AiRulesUiTestingPolicySupport) {
+            Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -FirstSupportedRules:($beforeUiTestingSupport -ceq 'unsupported') -PreviousWorkflowCommit $previousPolicyWorkflowCommit | Out-Null
+        } else {
+            Write-Host 'UI_TESTING transition remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules; the one-time transition will then resume.'
+        }
+    }
     } | Out-Host
 
     return [pscustomobject]@{
@@ -7947,6 +8330,7 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
 
     $snapshot = $pending.snapshot
     if ([string]$pending.receipt.phase -ne 'branch-commit-ready') {
+        Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-running
         try {
             $fileResult = Invoke-WorkflowPackageFilePostCopy
@@ -8848,6 +9232,7 @@ function Copy-DotEnvToWorktree {
         Copy-Item -LiteralPath $sourceDotEnv -Destination (Join-Path $WorktreePath ".dev.env") -Force
     }
     Copy-CavemanPolicyReceiptToWorktree -WorktreePath $WorktreePath
+    Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $WorktreePath
 }
 
 function Copy-KiloProjectConfigToWorktree {
@@ -10958,6 +11343,19 @@ function Initialize-Project {
     Update-UserRules
     Sync-KiloItlCommandSurface
     Invoke-CavemanPolicyTransition -NewScope | Out-Null
+    if (Test-AiRulesUiTestingPolicySupport) {
+        Invoke-UiTestingPolicyTransition -NewScope | Out-Null
+    } else {
+        $uiTestingDescriptor = Get-DotEnvPolicyTransitionDescriptor -Policy ui-testing
+        $uiTestingAssignments = @(Get-DotEnvPolicyAssignmentMatches -Text (Read-Utf8Text -Path (Join-Path $script:ProjectRoot '.dev.env')) -Descriptor $uiTestingDescriptor)
+        $uiTestingExplicitChoice = $uiTestingAssignments.Count -eq 1 -and
+            (Get-DotEnvPolicyAssignmentValue -Descriptor $uiTestingDescriptor -Assignment $uiTestingAssignments[0]) -in @('manual', 'off', 'auto')
+        if ($uiTestingExplicitChoice) {
+            Invoke-UiTestingPolicyTransition -NewScope | Out-Null
+        } else {
+            Write-Host 'UI_TESTING new-project default remains pending: installed ai_rules_1c does not prove support for essential. Update the rules through normal update-workflow without -SkipAiRules.'
+        }
+    }
     Commit-IfChanged "chore: install 1C agent workflow"
     if ($vibecodingRequested -and -not $vibecodingAlreadyCompleted) {
         Set-RunStage -Stage "init.vibecoding1c-mcp" -Detail "Setting up vibecoding1c MCP"
@@ -14295,6 +14693,7 @@ function Fork-DevBranch {
         Install-DevBranchForkDotEnv -Snapshot $snapshot -TargetProjectRoot $targetWorktreePath | Out-Null
     }
     Copy-CavemanPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
+    Copy-UiTestingPolicyReceiptToWorktree -WorktreePath $targetWorktreePath
     if (-not $preserveTargetEnv) {
         Copy-KiloProjectConfigToWorktree -MainProjectRoot $mainProjectRoot -WorktreePath $targetWorktreePath
     }

@@ -130,18 +130,19 @@ exit 7
         [IO.File]::WriteAllText((Join-Path $project '.agent-1c/project.json'),'{}',[Text.UTF8Encoding]::new($false))
         $result = & {
             . $helperPath -ProjectRoot $project -Action help *> $null
-            foreach ($name in @('Ensure-OneCSessionLimitDotEnv','Ensure-Agent1cLifecycleLocksIgnored','Ensure-GitIgnore',
+            foreach ($name in @('Assert-UiTestingPolicyUpdateSnapshot','Ensure-OneCSessionLimitDotEnv','Ensure-Agent1cLifecycleLocksIgnored','Ensure-GitIgnore',
                 'Ensure-ItlPinnedOpenSpecGitAttributes','Sync-ItlVanessaLibraries','Update-UserRules',
                 'Sync-WorkflowManagedDependencyLockEntries','Install-YAxUnit','Update-RoctupMcp',
                 'Sync-VanessaAutomationDependencyLock','Install-VanessaAutomation','Update-VanessaMcpArtifacts',
                 'Sync-ItlOnDemandMcpDependencyLock','Install-ItlOnDemandMcp','Assert-AiRulesBaselineMigrationResult',
                 'Update-AgentGuidanceBridge','Install-ItlUiTools','Sync-ItlClientSurfaces',
-                'Sync-ItlClientUserEnvironment','Invoke-CavemanPolicyTransition')) {
+                'Sync-ItlClientUserEnvironment','Invoke-CavemanPolicyTransition','Invoke-UiTestingPolicyTransition')) {
                 Set-Item -Path "Function:$name" -Value { }
             }
             function Get-AiRules1cManifestFileEntries { [pscustomobject]@{target='.codex/rules/current.md'} }
             function Get-WorkflowUpdateClientSurfacePaths { '.agents/skills/itl-check/SKILL.md' }
             function Get-AgentTargets { 'codex' }
+            function Get-WorkflowUpdatePendingSnapshot { [pscustomobject]@{receipt=[pscustomobject]@{sourceRoot=''};snapshot=[pscustomobject]@{records=@()}} }
             function Get-CavemanPolicyPreviousWorkflowCommit { 'old-source' }
             function Invoke-AiRulesBaselineMigration { [pscustomobject]@{migrated=$false;suppressRegularUpdate=$false} }
             function Update-AiRules1c { 'Native installer: exact candidate'; 'Native installer: files unchanged' }

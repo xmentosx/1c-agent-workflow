@@ -2,6 +2,8 @@
 
 Настройки проекта находятся в локальном файле `.dev.env`, который Git не отслеживает. Большинство режимов можно переключить slash-командой или обычным запросом агенту. Полный перечень переменных приведен в [справочнике `.dev.env`](DEV-ENV-REFERENCE.ru.md).
 
+`UI_TESTING=essential` автоматически требует проверку основных сценариев изменённых форм, команд, документов и отчётов после загрузки изменения. Косметика и чистый рефакторинг сами по себе её не требуют. В ITL-проекте используется поддержанный управляемый UI-провайдер, включая Vanessa UI MCP; отсутствие провайдера оставляет проверку невыполненной. Сохранённые Vanessa Automation-тесты по-прежнему управляются `ITL_VANESSA_TESTING` и не отключаются значением `UI_TESTING=manual` или `off`. При переходе на эту версию прежний `UI_TESTING=manual` однократно заменяется на `essential` в каждом обновляемом проекте и ветке; `off`/`auto` сохраняются. Последующий сознательный выбор `manual` сохраняется при повторном обновлении.
+
 ## Что использовать обычно
 
 Для большинства задач ничего менять не нужно:
@@ -16,7 +18,7 @@
   └─ непроверенный результат: VERIFICATION_POLICY=warn
 ```
 
-Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=manual`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=auto` (уровень `full` в текущей сессии), `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_YAXUNIT_TESTING=auto`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
+Штатные значения: `VERIFICATION_DEPTH=standard`, `UI_TESTING=essential`, `ORCHESTRATION=standard`, `ITL_ROUTINE_MODE=off`, `CAVEMAN=auto` (уровень `full` в текущей сессии), `AGENT_MODEL=` (`auto`), `SUPPORT_GUARD=deny`, `ITL_YAXUNIT_TESTING=auto`, `ITL_VANESSA_TESTING=auto`, `ITL_CHECK_EVENT_LOG=auto`, `DEPENDENCY_MODE=fresh`, `VERIFICATION_POLICY=warn`.
 
 Меняйте режим только ради понятной цели: уменьшить глубину низкорисковой статической проверки, вручную отключить компонент executable verification, выбрать экономную оркестрацию или запретить непроверенную выгрузку.
 
@@ -37,7 +39,7 @@ ITL не включает и не выключает Browser Automation и не 
 | Назначение | Команда/параметр | Значения | По умолчанию | Область действия |
 |---|---|---|---|---|
 | Глубина статических проверок `ai_rules_1c` | `/litemode`, `VERIFICATION_DEPTH` | `full`, `standard`, `lite` | `standard` | проект |
-| Проверка веб-интерфейса по правилам `ai_rules_1c` | `UI_TESTING` | `auto`, `manual`, `off` | `manual` | проект |
+| Интерактивная проверка UI по правилам `ai_rules_1c` | `UI_TESTING` | `essential`, `auto`, `manual`, `off` | `essential` | проект |
 | ITL YAxUnit | `/itl-litemode`, `ITL_YAXUNIT_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL Vanessa Automation | `/itl-litemode`, `ITL_VANESSA_TESTING` | `auto`, `manual`, `off` | `auto` | проект/worktree |
 | ITL журнал регистрации | `/itl-litemode`, `ITL_CHECK_EVENT_LOG` | `auto`, `manual`, `off` | `auto` | проект/worktree |
@@ -72,7 +74,7 @@ ITL не включает и не выключает Browser Automation и не 
 | `standard` | Все три валидатора, но без открытого цикла повторов: после blocking fix обязателен один подтверждающий прогон. |
 | `lite` / `/litemode on` | `syntaxcheck` остается обязательным для каждого измененного модуля; глубокие валидаторы запускаются для high-risk изменений или по явному запросу. |
 
-При включении `lite` команда также ставит `UI_TESTING=off`. Возврат в `full` восстанавливает `manual`, только если значение все еще `off`; прежнее `auto` автоматически не запоминается. Транзакции, публичные `Экспорт`-контракты, RLS, подписки, регламентные задания и связанные метаданные всегда получают полную цепочку. Impact analysis и XML gates этим режимом не отключаются.
+При включении `lite` команда также ставит `UI_TESTING=off`. Возврат в `full` восстанавливает `essential`, только если значение все еще `off`; прежнее `auto` автоматически не запоминается. Транзакции, публичные `Экспорт`-контракты, RLS, подписки, регламентные задания и связанные метаданные всегда получают полную цепочку. Impact analysis и XML gates этим режимом не отключаются.
 
 ## ITL `/itl-litemode`
 
