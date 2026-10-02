@@ -148,6 +148,69 @@ exit $child.process.ExitCode
         }
     }
 
+    It "preserves exact UTF-8 for the successful over-target gate warning through the delivery child" {
+        $fixtureRoot = Join-Path $TestDrive 'Путь с пробелом ПредупреждениеПроверки'
+        $outputRoot = Join-Path $fixtureRoot 'out'
+        New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+        $summaryPath = Join-Path $outputRoot 'check-summary.json'
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $firstFunction = $ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.FunctionDefinitionAst] } | Select-Object -First 1
+        $warning = @($ast.EndBlock.Statements | Where-Object { $_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if ($budgetStatus -eq "over-target")') })
+        $warning.Count | Should -Be 1
+        $passedMessage = @($ast.EndBlock.Statements | Where-Object { $_.Extent.Text.StartsWith('Write-Host "ITL $Mode gate passed.') })
+        $passedMessage.Count | Should -Be 1
+        $gatePath = Join-Path $fixtureRoot 'actual-check-warning.ps1'
+        # Execute the original startup and successful over-target emitter; no slow gate or elapsed-time substitute.
+        $gate = $ast.Extent.Text.Substring(0, $firstFunction.Extent.StartOffset) + @'
+$modeTargetBudgetSeconds = 300
+$budgetStatus = 'over-target'
+$summaryPath = $OutputDirectory
+'@ + [Environment]::NewLine + $warning[0].Extent.Text + [Environment]::NewLine + $passedMessage[0].Extent.Text
+        [IO.File]::WriteAllText($gatePath, $gate, [Text.UTF8Encoding]::new($true))
+        $quoteDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'ConvertTo-NativeArgument' }, $false)
+        $deliveryAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/source-delivery-process.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions = foreach ($name in @('Test-DeliveryProcessCreationIdentity', 'Get-DeliveryDescendantProcessIdentities', 'Stop-DeliveryProcessTree', 'Start-DeliveryProcess', 'Close-DeliveryProcessJob')) {
+            $definition = $deliveryAst.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text
+        }
+        $probePath = Join-Path $fixtureRoot 'probe.ps1'
+        $probe = @'
+param([string]$GatePath, [string]$FixtureRoot, [string]$SummaryPath)
+$ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+'@ + [Environment]::NewLine + $quoteDefinition.Extent.Text + [Environment]::NewLine + ($definitions -join [Environment]::NewLine) + [Environment]::NewLine + @'
+$outputRoot = Join-Path $FixtureRoot 'out'
+$arguments = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (ConvertTo-NativeArgument $GatePath), '-Mode', 'Targeted', '-OutputDirectory', (ConvertTo-NativeArgument $SummaryPath))
+$child = Start-DeliveryProcess -ArgumentList ($arguments -join ' ') -WorkingDirectory $FixtureRoot -StandardOutputPath (Join-Path $outputRoot 'gate-targeted.stdout.log') -StandardErrorPath (Join-Path $outputRoot 'gate-targeted.stderr.log')
+try {
+    if (-not $child.process.WaitForExit(30000)) { throw 'Warning fixture child exceeded 30 seconds' }
+    $child.process.WaitForExit(); $child.process.Refresh()
+    $exitCode = [int]$child.process.ExitCode
+} finally { Close-DeliveryProcessJob -JobHandle $child.jobHandle -Process $child.process }
+[IO.File]::WriteAllText((Join-Path $outputRoot 'child-receipt.json'), (@{ exitCode = $exitCode; summaryPath = $SummaryPath } | ConvertTo-Json), $utf8)
+exit $exitCode
+'@
+        [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @('-GatePath', $gatePath, '-FixtureRoot', $fixtureRoot, '-SummaryPath', $summaryPath)
+        $run.exitCode | Should -Be 0 -Because $run.combinedText
+        $childReceipt = Get-Content -LiteralPath (Join-Path $outputRoot 'child-receipt.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $childReceipt.exitCode | Should -Be 0
+        $childReceipt.summaryPath | Should -BeExactly $summaryPath
+        $warningUtf8 = [Text.UTF8Encoding]::new($false, $true)
+        $gateText = $warningUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot 'gate-targeted.stdout.log')))
+        $warningUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot 'gate-targeted.stderr.log'))) | Should -BeNullOrEmpty
+        $gateText | Should -Match '(?m)^\p{L}+: ITL Targeted passed but exceeded its target budget of 300 seconds\.'
+        if ($PSUICulture -like 'ru*') { $gateText | Should -Match '(?m)^ПРЕДУПРЕЖДЕНИЕ: ITL Targeted passed' }
+        $unwrappedText = $gateText.Replace("`r", '').Replace("`n", '')
+        $unwrappedText | Should -Match ([regex]::Escape("Inspect slowestStages in $summaryPath."))
+        $unwrappedText | Should -Match ([regex]::Escape("ITL Targeted gate passed. Summary: $summaryPath"))
+    }
+
     It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null

@@ -80,3 +80,11 @@ The exact owner regression, existing Unicode case and inventory case passed
 decode as strict UTF-8, while the deliberate worker/aggregate failure retains
 exit 1. `build/support-transport-proof-20261002/qualification.json` retains the
 source owner's original RED evidence; no broader gate or installed run occurred.
+
+The check entrypoint establishes UTF-8 before its first warning as well. Its
+actual startup and successful over-target emitter passed the delivery-child
+boundary case in 3.335 seconds: exact Russian warning/path, strict UTF-8 and
+exit 0 are preserved. Evidence:
+`build/support-warning-transport-proof-20261002/qualification.json`.
+The previous three cases were not rerun; this emitter proof does not replace
+normal registration or change elapsed-budget rules.
