@@ -235,3 +235,107 @@ Describe 'One-time Caveman policy transition' {
         $result.envText | Should -Be "CAVEMAN=off`n"
     }
 }
+
+Describe 'Caveman dotenv format recovery' {
+    It 'preserves exact fresh <Kind> bytes and a later intentional on' -TestCases @(
+        @{Kind='BOM CRLF'; Bom=$true; NewLine="`r`n"},
+        @{Kind='BOM LF'; Bom=$true; NewLine="`n"},
+        @{Kind='no BOM LF'; Bom=$false; NewLine="`n"}
+    ) {
+        param($Kind, $Bom, $NewLine)
+        $root = Join-Path $TestDrive ('Caveman Кириллица с пробелом ' + $Kind)
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $envPath = Join-Path $root '.dev.env'
+        $before = "# Кириллица с пробелом${NewLine}CAVEMAN=On${NewLine}OTHER=keep${NewLine}"
+        $expected = $before.Replace('CAVEMAN=On', 'CAVEMAN=auto')
+        $encoding = [Text.UTF8Encoding]::new($Bom)
+        [IO.File]::WriteAllText($envPath, $before, $encoding)
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-DependencyLockEntry { param($Name) @{commit=('b' * 40)} }
+            $first = Invoke-CavemanPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit ('a' * 40)
+            $bytes = [IO.File]::ReadAllBytes($envPath)
+            $hash = (Get-FileHash -LiteralPath $envPath).Hash.ToLowerInvariant()
+            $receiptPath = Get-CavemanPolicyReceiptPath
+            $receiptHash = (Get-FileHash -LiteralPath $receiptPath).Hash
+            [IO.File]::WriteAllText($envPath, $before, $encoding)
+            Invoke-CavemanPolicyTransition | Out-Null
+            [pscustomobject]@{first=$first; bytes=$bytes; hash=$hash; later=[IO.File]::ReadAllBytes($envPath); receiptUnchanged=((Get-FileHash -LiteralPath $receiptPath).Hash -ceq $receiptHash)}
+        }
+        [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble() + $encoding.GetBytes($expected))))
+        $result.hash | Should -Be $result.first.afterSha256
+        $result.first.status | Should -Be 'completed'
+        [Convert]::ToBase64String($result.later) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble() + $encoding.GetBytes($before))))
+        $result.receiptUnchanged | Should -BeTrue
+    }
+
+    It 'continues or refuses the authentic <Kind> legacy target without rebinding receipt hashes' -TestCases @(
+        @{Kind='before write'; Policy='caveman'; Refuse=$false},
+        @{Kind='after write'; Policy='caveman'; Refuse=$false},
+        @{Kind='late edit'; Policy='caveman'; Refuse=$true},
+        @{Kind='invalid target hash'; Policy='caveman'; Refuse=$true},
+        @{Kind='non-Caveman target'; Policy='ui-testing'; Refuse=$true}
+    ) {
+        param($Kind, $Policy, $Refuse)
+        $root = Join-Path $TestDrive ('Legacy Caveman Кириллица с пробелом ' + $Kind)
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $envPath = Join-Path $root '.dev.env'
+        $before = "CAVEMAN=On`r`nUI_TESTING=manual`r`nOTHER=Кириллица с пробелом`r`n"
+        [IO.File]::WriteAllText($envPath, $before, [Text.UTF8Encoding]::new($true))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-DependencyLockEntry { param($Name) @{commit=('b' * 40)} }
+            $writer = (Get-Item Function:Write-Utf8TextAtomic).ScriptBlock
+            $complete = (Get-Item Function:Complete-DotEnvPolicyReceipt).ScriptBlock
+            $old = Get-DotEnvPolicyTransitionDescriptor -Policy $Policy
+            $old.preserveUtf8Bom = $false
+            function Write-Utf8TextAtomic {
+                param($Path, $Value)
+                if ($Path -ceq $envPath -and $Kind -ne 'after write') { throw 'owned interruption before dotenv write' }
+                & $writer -Path $Path -Value $Value
+            }
+            function Complete-DotEnvPolicyReceipt { param($Receipt, $Path) throw 'owned interruption after dotenv write' }
+            $interruption = ''
+            try { Invoke-DotEnvPolicyTransition -Descriptor $old | Out-Null } catch { $interruption = $_.Exception.Message }
+            Set-Item Function:Write-Utf8TextAtomic -Value $writer
+            Set-Item Function:Complete-DotEnvPolicyReceipt -Value $complete
+            $receiptPath = Get-DotEnvPolicyReceiptPath -Descriptor $old
+            $pending = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json
+            if ($Kind -eq 'invalid target hash') {
+                $pending.afterSha256 = ('f' * 64)
+                Write-Utf8TextAtomic -Path $receiptPath -Value ($pending | ConvertTo-Json -Depth 6)
+            }
+            if ($Kind -eq 'late edit') {
+                [IO.File]::WriteAllText($envPath, ($before + "LATE=user edit`r`n"), [Text.UTF8Encoding]::new($true))
+            }
+            $beforeResumeBytes = [IO.File]::ReadAllBytes($envPath)
+            $beforeResumeReceiptHash = (Get-FileHash -LiteralPath $receiptPath).Hash
+            $errorText = ''
+            $resumed = $null
+            try { $resumed = Invoke-DotEnvPolicyTransition -Descriptor (Get-DotEnvPolicyTransitionDescriptor -Policy $Policy) } catch { $errorText = $_.Exception.Message }
+            $final = Read-Utf8Text -Path $receiptPath | ConvertFrom-Json
+            $immutableBefore = [ordered]@{}
+            $immutableAfter = [ordered]@{}
+            foreach ($property in $pending.PSObject.Properties) {
+                if ($property.Name -in @('status','completedAt')) { continue }
+                $immutableBefore[$property.Name] = $property.Value
+                $immutableAfter[$property.Name] = $final.($property.Name)
+            }
+            [pscustomobject]@{interruption=$interruption; pending=$pending; final=$final; errorText=$errorText; beforeBytes=$beforeResumeBytes; bytes=[IO.File]::ReadAllBytes($envPath); hash=(Get-FileHash -LiteralPath $envPath).Hash.ToLowerInvariant(); receiptUnchanged=((Get-FileHash -LiteralPath $receiptPath).Hash -ceq $beforeResumeReceiptHash); immutableBefore=($immutableBefore | ConvertTo-Json -Depth 6 -Compress); immutableAfter=($immutableAfter | ConvertTo-Json -Depth 6 -Compress)}
+        }
+        $result.interruption | Should -Match 'owned interruption (before|after) dotenv write'
+        $result.pending.status | Should -Be 'applying'
+        $result.immutableAfter | Should -BeExactly $result.immutableBefore
+        if ($Refuse) {
+            $result.errorText | Should -Match '_POLICY_CONFLICT'
+            [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String($result.beforeBytes))
+            $result.receiptUnchanged | Should -BeTrue
+            $result.final.status | Should -Be 'applying'
+        } else {
+            $result.errorText | Should -Be ''
+            $result.final.status | Should -Be 'completed'
+            $result.hash | Should -Be $result.pending.afterSha256
+            [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($before.Replace('CAVEMAN=On','CAVEMAN=auto'))))
+        }
+    }
+}

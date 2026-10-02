@@ -7662,7 +7662,7 @@ function Get-DotEnvPolicyTransitionDescriptor {
     if ($Policy -eq 'caveman') {
         return [pscustomobject]@{
             migrationId = 'caveman-auto-v1'; key = 'CAVEMAN'; fromValue = 'on'; toValue = 'auto'
-            errorPrefix = 'CAVEMAN_POLICY'; newScopeDefault = $false; preserveValueWhitespace = $false; preserveUtf8Bom = $false
+            errorPrefix = 'CAVEMAN_POLICY'; newScopeDefault = $false; preserveValueWhitespace = $false; preserveUtf8Bom = $true
             label = 'Caveman'; reportTransition = 'On → auto (однократно)'
             notice = 'Caveman project policy migrated once: on -> auto (session level full).'
         }
@@ -7937,6 +7937,15 @@ function Invoke-DotEnvPolicyTransition {
                 throw "${errorPrefix}_CONFLICT: source setting no longer matches $receiptPath"
             }
             $afterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $pendingAssignment -Utf8Bom:$hasUtf8Bom
+            if ([string]$Descriptor.migrationId -ceq 'caveman-auto-v1' -and $hasUtf8Bom -and
+                (Get-DotEnvPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
+                # Old Caveman v1 prepared a no-BOM target. Resume only its exact
+                # immutable hash after the unchanged before/source checks above.
+                $legacyAfterText = Get-DotEnvPolicyTransitionText -Text $envText -Descriptor $Descriptor -Assignment $pendingAssignment -Utf8Bom:$false
+                if ((Get-DotEnvPolicyTextHash -Text $legacyAfterText) -ceq [string]$receipt.afterSha256) {
+                    $afterText = $legacyAfterText
+                }
+            }
             if ((Get-DotEnvPolicyTextHash -Text $afterText) -cne [string]$receipt.afterSha256) {
                 throw "${errorPrefix}_CONFLICT: the pending target bytes no longer match $receiptPath"
             }

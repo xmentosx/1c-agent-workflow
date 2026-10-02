@@ -682,3 +682,69 @@ Describe 'Shared dotenv writer before UI policy transition' {
         $result.stamp | Should -Be $stamp
     }
 }
+
+Describe 'Workflow post-copy policy format chain' {
+    It 'preserves exact <Kind> bytes through session Caveman and UI owners' -TestCases @(
+        @{Kind='BOM CRLF'; Bom=$true; NewLine="`r`n"},
+        @{Kind='BOM LF'; Bom=$true; NewLine="`n"},
+        @{Kind='no BOM LF'; Bom=$false; NewLine="`n"}
+    ) {
+        param($Kind, $Bom, $NewLine)
+        $root = Join-Path $TestDrive ('Полный post-copy Кириллица с пробелом ' + $Kind)
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        $envPath = Join-Path $root '.dev.env'
+        $before = "CAVEMAN=On${NewLine}UI_TESTING=manual${NewLine}ITL_VANESSA_TESTING=off${NewLine}OTHER=Кириллица с пробелом${NewLine}"
+        $encoding = [Text.UTF8Encoding]::new($Bom)
+        [IO.File]::WriteAllText($envPath, $before, $encoding)
+        [IO.File]::WriteAllText((Join-Path $root '.agent-1c/dependency-lock.json'), '{"dependencies":{"workflowPackage":{"commit":"old-source"}}}', [Text.UTF8Encoding]::new($false))
+        Set-TestUiTestingRulesFixture -Root $root -Supported $false
+        $result = & {
+            $names = @('CAVEMAN','UI_TESTING','ITL_VANESSA_TESTING','OTHER','ONEC_MAX_CONCURRENT_SESSIONS')
+            $saved = @{}
+            foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name,'Process') }
+            try {
+                . $helperPath -ProjectRoot $root -Action help *> $null
+                foreach ($name in @('Ensure-Agent1cLifecycleLocksIgnored','Ensure-GitIgnore',
+                    'Ensure-ItlPinnedOpenSpecGitAttributes','Sync-ItlVanessaLibraries','Update-UserRules',
+                    'Sync-WorkflowManagedDependencyLockEntries','Install-YAxUnit','Update-RoctupMcp',
+                    'Sync-VanessaAutomationDependencyLock','Install-VanessaAutomation','Update-VanessaMcpArtifacts',
+                    'Sync-ItlOnDemandMcpDependencyLock','Install-ItlOnDemandMcp','Assert-AiRulesBaselineMigrationResult',
+                    'Update-AgentGuidanceBridge','Install-ItlUiTools','Sync-ItlClientSurfaces',
+                    'Sync-ItlClientUserEnvironment','Sync-KiloItlCommandSurface')) {
+                    Set-Item -Path "Function:$name" -Value { }
+                }
+                function Get-WorkflowUpdateClientSurfacePaths { @() }
+                function Get-AgentTargets { 'codex' }
+                function Get-DependencyLockEntry { param($Name) @{commit='new-source'} }
+                function Get-AiRulesMigrationPlan { [pscustomobject]@{status='current'} }
+                function Invoke-AiRulesBaselineMigration { [pscustomobject]@{migrated=$false;suppressRegularUpdate=$false} }
+                function Update-AiRules1c { Set-TestUiTestingRulesFixture -Root $script:ProjectRoot -Supported $true }
+                $source = [pscustomobject]@{root=$repoRoot;commit=('a' * 40)}
+                $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.dev.env','.ai-rules.json','.codex','.agent-1c/dependency-lock.json') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+                Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-running
+                Add-WorkflowDotEnvPolicySnapshotPaths -Snapshot $snapshot -Pending (Get-WorkflowUpdatePendingSnapshot)
+                $beforeSupport = Get-AiRulesUiTestingPolicySupportState -Snapshot $snapshot -BeforePathState (Get-WorkflowUpdatePendingSnapshot).receipt.beforePathState
+                $postCopy = @(Invoke-WorkflowPackageFilePostCopy)
+                $bytes = [IO.File]::ReadAllBytes($envPath)
+                $hash = (Get-FileHash -LiteralPath $envPath).Hash.ToLowerInvariant()
+                $caveman = Read-Utf8Text -Path (Get-CavemanPolicyReceiptPath) | ConvertFrom-Json
+                $ui = Read-Utf8Text -Path (Get-UiTestingPolicyReceiptPath) | ConvertFrom-Json
+                $savedPaths = @((Get-WorkflowUpdatePendingSnapshot).snapshot.records | ForEach-Object relativePath)
+                [pscustomobject]@{beforeSupport=$beforeSupport; postCopy=$postCopy; bytes=$bytes; hash=$hash; caveman=$caveman; ui=$ui; savedPaths=$savedPaths}
+            } finally {
+                foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name,$saved[$name],'Process') }
+            }
+        }
+        $expected = $before.Replace('CAVEMAN=On','CAVEMAN=auto').Replace('UI_TESTING=manual','UI_TESTING=essential') + "ONEC_MAX_CONCURRENT_SESSIONS=3${NewLine}"
+        [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble() + $encoding.GetBytes($expected))))
+        $result.beforeSupport | Should -Be 'unsupported'
+        $result.postCopy.Count | Should -Be 1
+        $result.caveman.status | Should -Be 'completed'
+        $result.caveman.converted | Should -BeTrue
+        $result.ui.status | Should -Be 'completed'
+        $result.ui.converted | Should -BeTrue
+        $result.hash | Should -Be $result.ui.afterSha256
+        $result.savedPaths | Should -Contain '.agent-1c/migrations/caveman-auto-v1.json'
+        $result.savedPaths | Should -Contain '.agent-1c/migrations/ui-testing-essential-v1.json'
+    }
+}
