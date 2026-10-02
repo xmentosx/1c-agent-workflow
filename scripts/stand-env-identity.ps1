@@ -1,3 +1,18 @@
+function Enter-SourceE2EClientMcpBuildScope {
+    # Derive before a helper rereads its persisted project paths. This transient
+    # source is confined to the actual E2E journey, never the Full Pester host.
+    $name = 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE'
+    $scope = [pscustomobject]@{ previousValue = [Environment]::GetEnvironmentVariable($name, 'Process') }
+    [Environment]::SetEnvironmentVariable($name, [Environment]::GetEnvironmentVariable('VANESSA_MCP_CLIENT_CFE_PATH', 'Process'), 'Process')
+    return $scope
+}
+
+function Exit-SourceE2EClientMcpBuildScope {
+    param([AllowNull()][object]$Scope)
+    if ($null -ne $Scope) {
+        [Environment]::SetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', $Scope.previousValue, 'Process')
+    }
+}
 Set-StrictMode -Version Latest
 
 # Source qualification chooses a client for each actual installed target. The

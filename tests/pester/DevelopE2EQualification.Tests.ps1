@@ -262,6 +262,155 @@ Describe "Develop E2E journey qualification router" {
         $routeValidation | Should -BeGreaterThan $postStageIdentity
     }
 
+    It "scopes the client MCP build source to E2E and restores it after project overwrite and failure" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $names = @('VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            $root = Join-Path $TestDrive 'Нативный источник E2E с пробелом'
+            [void][IO.Directory]::CreateDirectory($root)
+            $candidate = Join-Path $root 'client_mcp.v0.6.5-itl-r1.cfe'
+            [IO.File]::WriteAllBytes($candidate, [Text.Encoding]::UTF8.GetBytes('scoped input bytes'))
+            $hash = (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash
+            [Environment]::SetEnvironmentVariable($names[0], $candidate, 'Process')
+            [Environment]::SetEnvironmentVariable($names[1], 'previous-owner-source', 'Process')
+            $scope = Enter-SourceE2EClientMcpBuildScope
+            try {
+                [Environment]::SetEnvironmentVariable($names[0], 'old-persisted-project-path', 'Process')
+                [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly $candidate
+                throw 'original E2E stage failed'
+            } catch {
+                $_.Exception.Message | Should -BeExactly 'original E2E stage failed'
+            } finally {
+                Exit-SourceE2EClientMcpBuildScope -Scope $scope
+            }
+            [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly 'previous-owner-source'
+            (Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash | Should -BeExactly $hash
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+    }
+
+    It "does not inject an absent client MCP source and confines scope wiring to actual E2E stages" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $names = @('VANESSA_MCP_CLIENT_CFE_PATH', 'ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved = @{}
+        foreach ($name in $names) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
+        try {
+            [Environment]::SetEnvironmentVariable($names[0], $null, 'Process')
+            [Environment]::SetEnvironmentVariable($names[1], 'foreign-inherited-source', 'Process')
+            $scope = Enter-SourceE2EClientMcpBuildScope
+            try { [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeNullOrEmpty }
+            finally { Exit-SourceE2EClientMcpBuildScope -Scope $scope }
+            [Environment]::GetEnvironmentVariable($names[1], 'Process') | Should -BeExactly 'foreign-inherited-source'
+        } finally {
+            foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
+        }
+        foreach ($name in @('invoke-develop-e2e.ps1','invoke-release-e2e.ps1')) {
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot ('scripts/' + $name)),[ref]$tokens,[ref]$errors)
+            @($errors) | Should -BeNullOrEmpty
+            foreach ($commandName in @('Enter-SourceE2EClientMcpBuildScope','Exit-SourceE2EClientMcpBuildScope')) {
+                $calls=@($ast.FindAll({ param($node) $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq $commandName },$true))
+                $calls.Count | Should -Be 1
+                $parent=$calls[0].Parent
+                while($parent -and $parent -isnot [Management.Automation.Language.TryStatementAst]){$parent=$parent.Parent}
+                $parent | Should -Not -BeNullOrEmpty
+                $block=if($commandName -like 'Enter-*'){$parent.Body}else{$parent.Finally}
+                $calls[0].Extent.StartOffset | Should -BeGreaterOrEqual $block.Extent.StartOffset
+                $calls[0].Extent.EndOffset | Should -BeLessOrEqual $block.Extent.EndOffset
+            }
+        }
+        (Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts/check.ps1') -Raw -Encoding UTF8) | Should -Not -Match 'Enter-SourceE2EClientMcpBuildScope'
+    }
+    It "passes the scoped client MCP source to the real Release preflight refresh child before checkpointing" {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        $tokens=$null; $errors=$null
+        $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1'),[ref]$tokens,[ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $call=@($ast.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Sync-E2EWorktreeFromMaster'},$true))[0]
+        $scopeTry=$call.Parent
+        while($scopeTry -and $scopeTry -isnot [Management.Automation.Language.TryStatementAst]){$scopeTry=$scopeTry.Parent}
+        $scopeTry | Should -Not -BeNullOrEmpty
+        $scopeTry.Body.Statements[0].Extent.Text | Should -Match 'Enter-SourceE2EClientMcpBuildScope'
+        $scopeTry.Finally.Extent.Text | Should -Match 'Exit-SourceE2EClientMcpBuildScope'
+        $sync=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Sync-E2EWorktreeFromMaster'},$true)
+        . ([scriptblock]::Create($sync.Extent.Text))
+        $base=Join-Path $TestDrive 'Подготовка Release с пробелом'
+        $worktreePath=Join-Path $base 'Рабочая ветка'
+        [void][IO.Directory]::CreateDirectory((Join-Path $worktreePath '.agent-1c'))
+        & git -C $worktreePath init -b master *> $null
+        & git -C $worktreePath config user.name 'ITL Test'
+        & git -C $worktreePath config user.email 'test@example.invalid'
+        [IO.File]::WriteAllText((Join-Path $worktreePath '.gitignore'), "/.agent-1c/`n/.dev.env`n",[Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $worktreePath 'baseline.txt'),'before',[Text.Encoding]::ASCII)
+        & git -C $worktreePath add .gitignore baseline.txt
+        & git -C $worktreePath commit -m 'test: original branch baseline' *> $null
+        & git -C $worktreePath branch itldev/preflight
+        [IO.File]::WriteAllText((Join-Path $worktreePath 'baseline.txt'),'new master',[Text.Encoding]::ASCII)
+        & git -C $worktreePath add baseline.txt
+        & git -C $worktreePath commit -m 'test: pending preflight master refresh' *> $null
+        & git -C $worktreePath checkout --quiet itldev/preflight *> $null
+        $LASTEXITCODE | Should -Be 0
+        Copy-Item -LiteralPath (Join-Path $RepoRoot 'templates/project.json') -Destination (Join-Path $worktreePath '.agent-1c/project.json')
+        $candidate=Join-Path $base 'client_mcp.v0.6.5-itl-r1.cfe'
+        [IO.File]::WriteAllBytes($candidate,[Text.Encoding]::UTF8.GetBytes('native candidate fixture'))
+        $oldPath=Join-Path $base 'old shared d109/client_mcp.cfe'
+        [IO.File]::WriteAllText((Join-Path $worktreePath '.dev.env'),"VANESSA_MCP_CLIENT_CFE_PATH=$oldPath`r`n",[Text.UTF8Encoding]::new($true))
+        $childPath=Join-Path $base 'Дочерний helper.ps1'
+        $childResultPath=Join-Path $base 'Дочерний результат.json'
+        $childLines=@(
+            'param([string]$HelperPath,[string]$ProjectRoot,[string]$ResultPath)',
+            '$ErrorActionPreference="Stop"',
+            '. $HelperPath -ProjectRoot $ProjectRoot -Action help *> $null',
+            'Save-VanessaAutomationSettingsToDotEnv -EpfPath (Join-Path $ProjectRoot "fixture.epf") -Version "fixture" *> $null',
+            '[IO.File]::WriteAllText($ResultPath, (([ordered]@{ source=[Environment]::GetEnvironmentVariable("ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE","Process"); setting=Get-EnvValue -Name "VANESSA_MCP_CLIENT_CFE_PATH" } | ConvertTo-Json)),[Text.UTF8Encoding]::new($false))'
+        )
+        [IO.File]::WriteAllText($childPath,($childLines -join "`r`n"),[Text.UTF8Encoding]::new($true))
+        function Invoke-E2EHelper {
+            param([string]$Action,[int]$TimeoutSeconds)
+            $Action | Should -BeExactly 'refresh-dev-branch'
+            $TimeoutSeconds | Should -Be 7200
+            & powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $childPath -HelperPath (Join-Path $RepoRoot '.agents/skills/1c-workflow/scripts/agent-1c.ps1') -ProjectRoot $worktreePath -ResultPath $childResultPath *> (Join-Path $base 'preflight-child.log')
+            $LASTEXITCODE | Should -Be 0
+            & git -C $worktreePath merge --ff-only master *> $null
+            $LASTEXITCODE | Should -Be 0
+        }
+        $names=@('VANESSA_MCP_CLIENT_CFE_PATH','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved=@{}
+        foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+        try {
+            [Environment]::SetEnvironmentVariable($names[0],$candidate,'Process')
+            [Environment]::SetEnvironmentVariable($names[1],'previous-owner-source','Process')
+            try {
+                . ([scriptblock]::Create($scopeTry.Body.Statements[0].Extent.Text))
+                (Sync-E2EWorktreeFromMaster) | Should -BeTrue
+            } finally {
+                . ([scriptblock]::Create($scopeTry.Finally.Statements[0].Extent.Text))
+            }
+            $result=Get-Content -LiteralPath $childResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $result.source | Should -BeExactly $candidate
+            $result.setting | Should -BeExactly $oldPath
+            [Environment]::GetEnvironmentVariable($names[1],'Process') | Should -BeExactly 'previous-owner-source'
+        } finally {
+            foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}
+        }
+    }
+
+    It "restores the client MCP source on an actual Release rejection before preflight" {
+        $names=@('VANESSA_MCP_CLIENT_CFE_PATH','ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE')
+        $saved=@{}
+        foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+        try {
+            [Environment]::SetEnvironmentVariable($names[0],(Join-Path $TestDrive 'Новый кандидат с пробелом/client_mcp.cfe'),'Process')
+            [Environment]::SetEnvironmentVariable($names[1],'previous-owner-source','Process')
+            { & (Join-Path $RepoRoot 'scripts/invoke-release-e2e.ps1') -ProjectRoot (Join-Path $TestDrive 'Стенд без настроек') -AiRulesSource $RepoRoot } | Should -Throw '*Dedicated E2E stand config is missing*'
+            [Environment]::GetEnvironmentVariable($names[1],'Process') | Should -BeExactly 'previous-owner-source'
+        } finally {
+            foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}
+        }
+    }
     It "keeps Develop proof identity across helper-owned env changes and invalidates semantic changes" {
         . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
         $tokens = $null; $errors = $null

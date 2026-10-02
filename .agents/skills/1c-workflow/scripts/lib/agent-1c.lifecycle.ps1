@@ -7334,7 +7334,7 @@ function Test-WorkflowSourceLayeredOpenCodeConfig {
 
 function Assert-WorkflowUpdateMcpConfigSnapshot {
     param([AllowNull()][object]$Pending)
-    if ($null -eq $Pending -or 'opencode' -notin @(Get-AgentTargets) -or
+    if ($null -eq $Pending -or 'opencode' -notin @(Get-AgentTargets -AllowUnconfigured) -or
         -not (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) { return }
     $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @($Pending.snapshot.records | ForEach-Object { [string]$_.relativePath })
     $missing = @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | Where-Object {
@@ -7353,7 +7353,7 @@ function Add-WorkflowDotEnvPolicySnapshotPaths {
     $admissions = @($policies | ForEach-Object {
         [pscustomobject]@{ relativePath = '.agent-1c/migrations/' + [string](Get-DotEnvPolicyTransitionDescriptor -Policy $_).migrationId + '.json'; policy = [string]$_ }
     })
-    if ('opencode' -in @(Get-AgentTargets) -and (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) {
+    if ('opencode' -in @(Get-AgentTargets -AllowUnconfigured) -and (Test-WorkflowSourceLayeredOpenCodeConfig -SourceRoot ([string]$Pending.receipt.sourceRoot))) {
         $admissions += @(Get-WorkflowUpdateClientConfigRelativePaths -Client 'opencode' | ForEach-Object {
             [pscustomobject]@{ relativePath = [string]$_; policy = '' }
         })

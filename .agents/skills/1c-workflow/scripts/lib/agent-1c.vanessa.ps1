@@ -7506,6 +7506,34 @@ function Save-VanessaMcpPairedSourceBuildArtifact {
     }
 }
 
+function Save-VanessaMcpClientSourceBuildArtifact {
+    param([object]$Definition, [object]$AssetInfo, [string]$TargetPath)
+
+    if ([string]$Definition.lockKey -cne 'clientMcp') { return $false }
+    $lock = Get-VanessaMcpArtifactLockEntry -Definition $Definition
+    $expected = ([string](Get-ConfigValueFromObject -Object $lock -Path 'sha256' -Default '')).ToLowerInvariant()
+    # Only the active owned client pin can consume the scoped E2E build source.
+    # Another resolver or an old upstream pin retains its own immutable URL.
+    if ([string](Get-ConfigValueFromObject -Object $lock -Path 'source' -Default '') -cne 'workflow-pinned' -or
+        -not [string](Get-ConfigValueFromObject -Object $lock -Path 'downstreamRevision' -Default '') -or
+        [string](Get-ConfigValueFromObject -Object $lock -Path 'manifestSha256' -Default '') -cnotmatch '^[a-f0-9]{64}$' -or
+        $expected -cnotmatch '^[a-f0-9]{64}$' -or
+        [string]$AssetInfo.name -cne [string](Get-ConfigValueFromObject -Object $lock -Path 'assetName' -Default '') -or
+        [string]$AssetInfo.version -cne [string](Get-ConfigValueFromObject -Object $lock -Path 'version' -Default '') -or
+        ([string]$AssetInfo.expectedSha256).ToLowerInvariant() -cne $expected) {
+        return $false
+    }
+    $configured = [Environment]::GetEnvironmentVariable('ITL_VANESSA_MCP_CLIENT_SOURCE_BUILD_CFE', 'Process')
+    if (-not $configured) { return $false }
+    $sourcePath = Resolve-VanessaMcpArtifactPath -Value $configured
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -or
+        (Split-Path -Leaf $sourcePath) -cne [string]$AssetInfo.name) {
+        throw "ITL_CLIENT_MCP_SOURCE_BUILD_INVALID: scoped build must be an existing exact '$([string]$AssetInfo.name)' file."
+    }
+    Write-Host "Vanessa UI MCP artifact source: $sourcePath"
+    [void](Invoke-ItlImmutableFileAcquire -Source $sourcePath -DestinationPath $TargetPath -ExpectedSha256 $expected -Label 'Vanessa UI MCP artifact clientMcp')
+    return $true
+}
 function Save-VanessaMcpArtifact {
     param(
         [object]$Definition,
@@ -7519,7 +7547,10 @@ function Save-VanessaMcpArtifact {
     }
     $targetPath = Get-VanessaMcpManagedArtifactPath -Definition $Definition -Version ([string]$AssetInfo.version) -Sha256 $expected -AssetName ([string]$AssetInfo.name)
 
-    $installedFromSourceBuild = Save-VanessaMcpPairedSourceBuildArtifact -Definition $Definition -AssetInfo $AssetInfo -TargetPath $targetPath
+    $installedFromSourceBuild = Save-VanessaMcpClientSourceBuildArtifact -Definition $Definition -AssetInfo $AssetInfo -TargetPath $targetPath
+    if (-not $installedFromSourceBuild) {
+        $installedFromSourceBuild = Save-VanessaMcpPairedSourceBuildArtifact -Definition $Definition -AssetInfo $AssetInfo -TargetPath $targetPath
+    }
     if (-not $installedFromSourceBuild) {
         Write-Host "Vanessa UI MCP artifact source: $source"
         [void](Invoke-ItlImmutableFileAcquire -Source (ConvertFrom-FileUri -Value $source) -DestinationPath $targetPath -ExpectedSha256 $expected -Label "Vanessa UI MCP artifact $($Definition.lockKey)")

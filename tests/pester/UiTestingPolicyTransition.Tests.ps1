@@ -748,3 +748,26 @@ Describe 'Workflow post-copy policy format chain' {
         $result.savedPaths | Should -Contain '.agent-1c/migrations/ui-testing-essential-v1.json'
     }
 }
+
+Describe 'Client selection during snapshot observation' {
+    It 'allows missing selection only for observation and keeps normal selection strict' {
+        $root=Join-Path $TestDrive 'Snapshot без клиента с пробелом'
+        New-Item -ItemType Directory -Force -Path (Join-Path $root '.agent-1c') | Out-Null
+        $savedTools=[Environment]::GetEnvironmentVariable('AGENT_TOOLS','Process')
+        try {
+            [Environment]::SetEnvironmentVariable('AGENT_TOOLS',$null,'Process')
+            & {
+                . $helperPath -ProjectRoot $root -Action help -AgentTarget '' *> $null
+                $script:Config=$null
+                @(Get-AgentTargets -AllowUnconfigured).Count | Should -Be 0
+                { Get-AgentTargets } | Should -Throw '*No agent client is configured*'
+                [Environment]::SetEnvironmentVariable('AGENT_TOOLS','opencode','Process')
+                @(Get-AgentTargets -AllowUnconfigured) | Should -Be @('opencode')
+                $script:Config=[pscustomobject]@{aiRules=[pscustomobject]@{tools=@()}}
+                @(Get-AgentTargets -AllowUnconfigured).Count | Should -Be 0
+                $script:Config=[pscustomobject]@{aiRules=[pscustomobject]@{tools=@('not-a-client')}}
+                { Get-AgentTargets -AllowUnconfigured } | Should -Throw '*Unsupported agent client*'
+            }
+        } finally { [Environment]::SetEnvironmentVariable('AGENT_TOOLS',$savedTools,'Process') }
+    }
+}

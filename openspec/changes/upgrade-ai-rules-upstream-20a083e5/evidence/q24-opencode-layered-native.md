@@ -121,3 +121,46 @@ focused acceptance passed both that original case and the layered tracked-path
 case, with added preflight refusal/continuation assertions (2/0/0, 4.281 s).
 Tracked read-only root coexistence remains supported. Registration of the
 corrected complete source unit is still required.
+
+## Snapshot observation and owned component contract, 2026-10-03
+
+The next registration of 5a25da13 recorded 561 passed and four failed cases.
+Two original UI snapshot cases were blocked too early by the new OpenCode
+membership observation. The authoritative Get-AgentTargets resolver now has
+AllowUnconfigured for exactly those two read-only callers. Ordinary selection
+still rejects missing/unsupported clients; explicit empty sets and environment
+precedence are unchanged. The unchanged original continuation/refusal cases,
+selection controls and all seven existing OpenCode snapshot cases passed
+native focused acceptance together: 10/0/0 in 28.300 s.
+
+The other two cases exposed an intentional old external-client pin expectation
+and an inherited candidate-CFE path contaminating a cache fixture. The wiring
+test now binds the approved owned artifact pair to its authoritative controlled
+manifest and unchanged immutable upstream baseline/licenses. Actual binary SHA
+qualification remains with the native build/publication owner. The original
+Unicode cache, worktree sharing and corrupted-SHA assertions are retained; the
+fixture captures, clears and restores its inherited override. Both original
+cases passed under the same candidate override: 2/0/0 in 3.534 s. The failed
+registration records remain; complete registration is still pending.
+
+## Exact build acquisition before publication, 2026-10-03
+
+An additional native owner regression reproduced the actual stand topology:
+the new owned client pin and an empty new cache were followed by persisted old
+client paths being reimported during post-copy, then ForceDownload requested an
+unpublished immutable URL (RED 0/1, 2.410 s). The existing artifact owner now
+accepts an exact process-scoped client build only for the active owned pin with
+matching asset, version and SHA, using the same immutable acquisition and cache.
+Actual Develop/Release E2E entrypoints capture the input before project settings
+are reimported and restore the transient source in finally. Release includes its
+early preflight and cleanup; Full/Pester receives no injected build source.
+
+Native focused acceptance passed 9/0/0 in 8.679 s, including the original failure
+topology, no URL request on a match, old/mismatched requests, changed candidate
+and cache bytes, actual preflight child inheritance and early Release rejection
+with environment restoration. Independent scope/ownership review found no
+remaining material findings. Fixture initialization failures are retained with
+their causal corrections. The production lock/URL and native build/publication
+qualification remain authoritative; these cases do not prove remote installability
+or qualify the previous CFE after helper inputs changed. A clean final native
+build, complete registration and paired publication are still required.

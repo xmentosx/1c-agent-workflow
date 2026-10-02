@@ -5464,6 +5464,7 @@ function Initialize-ItlClientModelTiers {
 }
 
 function Get-AgentTargets {
+    param([switch]$AllowUnconfigured)
     # The configured set belongs to the project; -AgentTarget selects the
     # executing client and must not silently replace the desired installation.
     $target = Get-ConfigValue -Path "aiRules.tools" -Default @()
@@ -5480,7 +5481,7 @@ function Get-AgentTargets {
 
     $items = @(ConvertTo-AgentToolList -Value $target)
     if ($items.Count -eq 0) {
-        if ($hasExplicitSet) { return @() }
+        if ($hasExplicitSet -or $AllowUnconfigured) { return @() }
         throw "No agent client is configured. Choose at least one of: $((Get-SupportedAgentTargets) -join ', ')."
     }
     $unsupported = @($items | Where-Object { $_ -notin (Get-SupportedAgentTargets) })

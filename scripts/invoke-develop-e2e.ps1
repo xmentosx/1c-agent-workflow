@@ -391,6 +391,7 @@ function Get-BranchWorktree {
     throw "Fresh journey branch worktree was not registered: itldev/$Name"
 }
 
+$clientMcpBuildScope = $null
 $previousWorkflowSource = $env:ITL_WORKFLOW_SOURCE_PATH
 $previousRulesSource = $env:ITL_AI_RULES_SOURCE_PATH
 $projectCleanAtStart = $false
@@ -401,6 +402,7 @@ $standBranchCleanAtStart = $false
 $standBranchHeadAtStart = ""
 $trackedStateCleanup = [ordered]@{ project = $null; branch = $null }
 try {
+    $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
     $env:ITL_WORKFLOW_SOURCE_PATH = $CandidateRoot
     $env:ITL_AI_RULES_SOURCE_PATH = $AiRulesSource
     Assert-DevelopAiRulesSourceAvailable -StandRoot $ProjectRoot -SourceRoot $AiRulesSource
@@ -546,6 +548,7 @@ try {
         $journeys[$activeJourney].error = $failure
     }
 } finally {
+    Exit-SourceE2EClientMcpBuildScope -Scope $clientMcpBuildScope
     if ($failure -and $projectCleanAtStart) {
         try {
             $trackedStateCleanup.project = Restore-DevelopE2ETrackedState -Root $ProjectRoot -StartHead $projectHeadAtStart -ExpectedBranch "master"

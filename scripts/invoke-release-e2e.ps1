@@ -14,6 +14,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 . (Join-Path $PSScriptRoot "stand-env-identity.ps1")
+$clientMcpBuildScope = $null
+try {
+    $clientMcpBuildScope = Enter-SourceE2EClientMcpBuildScope
 
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $AiRulesSource = [System.IO.Path]::GetFullPath($AiRulesSource)
@@ -3070,3 +3073,6 @@ if ($failure) {
     exit 1
 }
 Write-Host "Release E2E passed. Summary: $OutputPath"
+} finally {
+    Exit-SourceE2EClientMcpBuildScope -Scope $clientMcpBuildScope
+}
