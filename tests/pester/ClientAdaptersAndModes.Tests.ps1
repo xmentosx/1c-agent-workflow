@@ -725,6 +725,107 @@
         [string]$result.cline[$expected.cline] | Should -Match '(?m)^name:\s*itl$'
     }
 
+    It "renders identical owned surface bytes from LF CRLF and mixed template checkouts" {
+        $utf8 = [Text.UTF8Encoding]::new($false)
+        $templateDirectory = '.agents/skills/1c-workflow/kilo-command-templates'
+        $templatePaths = @(
+            foreach ($surface in @('common', 'master', 'dev')) {
+                foreach ($file in Get-ChildItem -LiteralPath (Join-Path $RepoRoot "$templateDirectory/$surface") -File -Filter 'itl*.md.template') {
+                    "$templateDirectory/$surface/$($file.Name)"
+                }
+            }
+            '.agents/skills/1c-workflow/opencode-plugin-templates/itl-workspace.js.template'
+        )
+        $roots = [ordered]@{}
+        $fixtureHashes = [ordered]@{}
+        foreach ($style in @('LF', 'CRLF', 'mixed')) {
+            $roots[$style] = Join-Path $TestDrive "Шаблоны клиента $style"
+            foreach ($relative in $templatePaths) {
+                $lf = [IO.File]::ReadAllText((Join-Path $RepoRoot $relative), $utf8).Replace("`r`n", "`n").Replace("`r", "`n")
+                $text = $lf
+                if ($style -eq 'CRLF') { $text = $lf.Replace("`n", "`r`n") }
+                elseif ($style -eq 'mixed') {
+                    $parts = $lf.Split([char]10)
+                    $mixed = [Text.StringBuilder]::new()
+                    for ($index = 0; $index -lt $parts.Length; $index++) {
+                        [void]$mixed.Append($parts[$index])
+                        if ($index -lt $parts.Length - 1) {
+                            [void]$mixed.Append($(if ($index % 2 -eq 0) { "`n" } else { "`r`n" }))
+                        }
+                    }
+                    $text = $mixed.ToString()
+                }
+                $path = Join-Path $roots[$style] $relative
+                New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
+                [IO.File]::WriteAllText($path, $text, $utf8)
+                $fixtureHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            }
+        }
+
+        $rendered = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            function Get-ItlRoutineMode { return 'on' }
+            function Get-ItlRoutineModel { param([string]$Client) return "provider/$Client" }
+            $clients = @(Get-SupportedAgentTargets)
+            $clients.Count | Should -Be 12
+            $result = [ordered]@{}
+            foreach ($surface in @('master', 'dev')) {
+                function Get-ItlCommandSurface { return $surface }
+                foreach ($client in $clients) {
+                    $variants = [ordered]@{}
+                    foreach ($style in $roots.Keys) {
+                        $variants[$style] = Get-ItlExpectedSurfaceFiles -Client $client -SourceRoot $roots[$style]
+                    }
+                    $result["$surface/$client"] = $variants
+                }
+            }
+            return $result
+        }
+        $rendered.Count | Should -Be 24
+        foreach ($key in $rendered.Keys) {
+            $baseline = $rendered[$key]['LF']
+            $baseline.Count | Should -BeGreaterThan 0
+            foreach ($style in @('CRLF', 'mixed')) {
+                $actual = $rendered[$key][$style]
+                @($actual.Keys) | Should -Be @($baseline.Keys) -Because "$key/$style retains the complete surface"
+                foreach ($relative in $baseline.Keys) {
+                    [Convert]::ToBase64String($utf8.GetBytes([string]$actual[$relative])) |
+                        Should -Be ([Convert]::ToBase64String($utf8.GetBytes([string]$baseline[$relative]))) -Because "$key/$style/$relative"
+                }
+            }
+            foreach ($relative in $baseline.Keys) {
+                [string]$baseline[$relative] | Should -Not -Match "`r" -Because "$key/$relative is generated with LF"
+            }
+        }
+        @($rendered['master/codex']['LF'].Keys) | Should -Contain '.agents/skills/itl/agents/openai.yaml'
+        @($rendered['master/kilocode']['LF'].Keys) | Should -Contain '.kilo/agents/itl-routine.md'
+        @($rendered['dev/opencode']['LF'].Keys) | Should -Contain '.opencode/agent/itl-routine.md'
+        @($rendered['master/opencode']['LF'].Keys) | Should -Contain '.opencode/plugins/itl-workspace.js'
+        foreach ($path in $fixtureHashes.Keys) {
+            (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash | Should -Be $fixtureHashes[$path]
+        }
+
+        # The raw-byte metric must still see added instructions, not discount them.
+        $addition = "`nДополнительная инструкция для проверки размера.`n"
+        $changedTemplate = Join-Path $roots['LF'] "$templateDirectory/common/itl-status.md.template"
+        [IO.File]::AppendAllText($changedTemplate, $addition, $utf8)
+        $changed = & {
+            . $HelperPath -ProjectRoot $TestDrive -Action help *> $null
+            function Get-ItlCommandSurface { return 'master' }
+            Get-ItlExpectedSurfaceFiles -Client codex -SourceRoot $roots['LF']
+        }
+        $baseline = $rendered['master/codex']['LF']
+        $changedPath = '.agents/skills/itl-status/SKILL.md'
+        @($changed.Keys) | Should -Be @($baseline.Keys)
+        foreach ($relative in $baseline.Keys) {
+            if ($relative -eq $changedPath) {
+                [string]$changed[$relative] | Should -Be ([string]$baseline[$relative] + $addition)
+                ($utf8.GetByteCount([string]$changed[$relative]) - $utf8.GetByteCount([string]$baseline[$relative])) |
+                    Should -Be $utf8.GetByteCount($addition)
+            } else { [string]$changed[$relative] | Should -Be ([string]$baseline[$relative]) }
+        }
+    }
+
     It "generates only context-valid explicit Codex routine skills" {
         $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("itl-codex-surface-" + [guid]::NewGuid().ToString("N"))
         try {

@@ -1584,6 +1584,11 @@ function Get-ItlExpectedSurfaceFiles {
         }
         $files[[string]$adapter.workspacePluginPath] = Read-Utf8Text -Path $pluginTemplate
     }
+    # Generated ITL surfaces have one byte representation regardless of template
+    # checkout EOLs or the host newline used by the renderers above.
+    foreach ($relative in @($files.Keys)) {
+        $files[$relative] = ([string]$files[$relative]).Replace("`r`n", "`n").Replace("`r", "`n")
+    }
     return $files
 }
 

@@ -8799,15 +8799,18 @@ function Copy-KiloProjectConfigToWorktree {
 function Restore-UnfinishedForkCopiedMcpOwnership {
     # Compatibility for an old interrupted fork which copied Kilo JSON without
     # its sidecar. Unproved entries stay unowned for the ordinary collision guard.
-    $branch = (Get-GitOutput @('branch', '--show-current')).Trim()
-    if ($branch -notlike 'itldev/*') { return $false }
     $root = $script:ProjectRoot
-    $safeName = ConvertTo-SafeName ($branch.Substring('itldev/'.Length))
-    $statePath = Join-Path $root ".agent-1c/dev-branches/$safeName.json"
     $configRelative = '.kilo/kilo.json'; $ownershipRelative = '.agent-1c/mcp/client-managed.json'
     $configPath = Join-Path $root $configRelative
-    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf) -or -not (Test-Path -LiteralPath $configPath -PathType Leaf)) { return $false }
+    $stateDirectory = Join-Path $root '.agent-1c/dev-branches'
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $stateDirectory -PathType Container)) { return $false }
     try {
+        $branch = (Get-GitOutput @('branch', '--show-current')).Trim()
+        if ($branch -notlike 'itldev/*') { return $false }
+        $safeName = ConvertTo-SafeName ($branch.Substring('itldev/'.Length))
+        $statePath = Join-Path $stateDirectory "$safeName.json"
+        if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $false }
         $state = Read-DevBranchStateFile -Path $statePath
         if ([string]$state.initializationStatus -notin @('fork-failed','fork-initializing','launcher-registered') -or
             [string]$state.devBranch -cne $branch -or -not [string]$state.forkId -or

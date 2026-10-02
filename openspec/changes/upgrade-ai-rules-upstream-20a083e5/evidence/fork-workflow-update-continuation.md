@@ -1,7 +1,8 @@
 # Same-fork continuation after a package update
 
-Status 2026-10-02: source qualification passed; public installed continuation
-is still required before task 9.6 can close.
+Status 2026-10-02: initial source qualification passed; continuation fixes still
+require successful registration and public installed continuation before task
+9.6 can close.
 
 The historical Release fixture already committed facade compatibility 0.4.15
 with dependency lock 0.4.14. Public creation of `rel-e2e-r6` stopped during MCP
@@ -102,9 +103,60 @@ Final directly owned qualification uses native PS 5.1 / Pester 5.8.0:
 
 Runtime and test inputs remained unchanged during their respective batches.
 The moved-root validator text stayed identical through the subsequent disjoint
-caller integration. Current lifecycle SHA256
+caller integration. At this fixture qualification, lifecycle SHA256 was
 `7329a96f41837920e4f9fc1bf3f08a1ca8925b1bce5910aca722218667745d8f`;
 MCP adapter SHA256
 `72d79522803ba44d2f84aa423626b38a5d94598e08618a91cdb7e3c3aa459445`.
 Independent review found no remaining material issue in the completed source
 unit. These are fixtures, not a claim of successful live continuation.
+
+Registration of `683d31fefcf3d29d2b336135d89fe33b33135c63` failed after
+741.726 seconds: 457 passed and two failed in five executed Pester files;
+fail-fast left 41 selected files unexecuted. The failures were the existing
+bootstrap phase-only regression and the unchanged rendered-context budget.
+This head was not installed on the stand or added to its delivery queue.
+Run `20261001-234128-011-targeted-e9c29658acde4d308306613d0b8b9a24.json`,
+SHA256 `efd20edd1cc67b252c6bea6208b7a60e34f22ac1c01f9b6474543123543b2f64`;
+all original raws and the receipt are retained under
+`build/register-stand-continuation-failed-683d31fe`.
+
+The bootstrap fixture intentionally has no Git repository or legacy-fork
+data. Recovery admission must check for its config/state before querying Git;
+the original phase ordering and assertion remain the regression workload.
+
+The budget difference is checkout EOL, not added instructions. Both sources
+have `itl-switch-client.md.template` Git blob
+`27c0c88d62805987ff4c33137bfafbbecc521222`: old working bytes 1184 versus
+clean checkout bytes 1188; both are 1176 as LF. Generated ITL surfaces will
+use canonical LF at their existing renderer owner. The measured value remains
+the real serialized UTF-8 output and the existing ceilings stay unchanged.
+Generic readers, config JSON, upstream assets and 1C transport are outside
+this change.
+
+Both failure owners were fixed and independently reviewed. Final focused
+native PS 5.1 qualification:
+
+- Original bootstrap phase regression plus the unchanged 14 provenance cases:
+  15 passed, 0 failed/skipped, 350 unrelated cases filtered out, 65.422 seconds.
+  Inputs unchanged, no raw failure markers. Receipt
+  `build/copied-mcp-ownership-20261002/admission-run-3b71d3a9a99748fdb94ef81e52fa7330/result.json`,
+  SHA256 `d32db5641f7af8e71b147d606db017aa44a50abc5c9df69ae4704feaf70dfdf0`.
+- Generated-surface EOL regression and the original unchanged byte-budget
+  case: 2 passed, 0 failed, 79 unrelated cases filtered out, 6.900 seconds.
+  All 12 clients on master/dev, LF/CRLF/mixed input, routine/here-string and
+  plugin branches produce identical real UTF-8 bytes. Template input hashes
+  are unchanged; added instruction text still increases actual byte counts.
+  Receipt `build/client-surface-lf-proof-20261002/focused.json`,
+  SHA256 `efc12780e7a2e855020db6543f15ee05af6ec457c48d63d83fd82f81ddad3797`.
+
+Measured master/Codex remains 24 files: old renderer/source 33424 bytes,
+old renderer/clean checkout 33428, new renderer/clean checkout 33204.
+All 72 actual before/after surface rows are retained in
+`build/client-surface-lf-proof-20261002/rendered-actual-bytes.json`,
+SHA256 `359cd197a74f38a5f2bfb93dc04d8e5aea1a22ab2069128f99655e14dc0ba8b4`.
+The output boundary is canonicalized, not the metric or its ceilings.
+Final lifecycle SHA256
+`ab77e02e0df98ee33b86d383ff73ada0de1e5a770e1f4d39984d78d6f23b5a6d`;
+adapter SHA256
+`d03ed763beba6b724776b33fb547de12a6936bf92ecbc6bccf6a73a01a3df5c7`.
+The recorded original checkout remains clean at `dc4c0703`.
