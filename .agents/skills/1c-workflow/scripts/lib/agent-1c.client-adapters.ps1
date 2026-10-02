@@ -530,12 +530,14 @@ function Assert-ItlClientConfigWritable {
         }
     }
 
-    $trackedConfig = $(if ($adapter.trackedMcpConfig -and $Client -ne 'opencode') { [string]$adapter.mcpPath } else { "" })
-    if ($Client -eq 'opencode' -and $Path) {
-        $trackedConfig = Get-ItlOpenCodeConfigRelativePath -Path $Path
-    }
-    if ($trackedConfig -and (Test-ItlGitPathTracked -RelativePath $trackedConfig) -and -not $ExplicitMigration) {
-        throw "TRACKED_CLIENT_CONFIG: '$trackedConfig' is tracked. ITL will not modify it without an explicit client-config migration."
+    $trackedConfigs = if ($Client -eq 'opencode') {
+        $physicalPaths = if ($Path) { @($Path) } else { @(Get-ItlClientMcpWritePaths -Client $Client) }
+        @($physicalPaths | ForEach-Object { Get-ItlOpenCodeConfigRelativePath -Path $_ })
+    } elseif ($adapter.trackedMcpConfig) { @([string]$adapter.mcpPath) } else { @() }
+    foreach ($trackedConfig in $trackedConfigs) {
+        if ($trackedConfig -and (Test-ItlGitPathTracked -RelativePath $trackedConfig) -and -not $ExplicitMigration) {
+            throw "TRACKED_CLIENT_CONFIG: '$trackedConfig' is tracked. ITL will not modify it without an explicit client-config migration."
+        }
     }
 }
 
@@ -1041,7 +1043,7 @@ function Write-ItlClientMcpEndpoints {
     )
 
     if (-not $Client) { $Client = Get-ItlActiveClient }
-    Assert-ItlClientConfigWritable -Client $Client
+    if ($Client -ne 'opencode') { Assert-ItlClientConfigWritable -Client $Client }
     $adapter = Get-ItlClientAdapter -Client $Client
     $path = Join-Path $script:ProjectRoot $adapter.mcpPath
     $normalized = @($Endpoints | ForEach-Object {

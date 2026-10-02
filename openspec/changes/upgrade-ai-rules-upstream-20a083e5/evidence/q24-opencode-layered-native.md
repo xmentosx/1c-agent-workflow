@@ -108,3 +108,16 @@ qualification. Native model/MCP execution, plugin/event behavior for the new
 fork, other native client versions, and a minimum supported version remain
 unverified by this observation. The previous native plugin proof remains
 historical and separate.
+
+## Registration guard regression, 2026-10-03
+
+The first registration of source a82cdf5b stopped at the unchanged
+ClientAdaptersAndModes tracked-root guard assertion. It completed 457 passed
+cases and one failed case; unstarted files do not constitute a passed gate.
+The preflight OpenCode guard now checks the existing candidate write paths
+when no physical path is supplied. The concrete writer checks only actual
+changed paths. The original Kilo/root assertion remains unchanged. Native
+focused acceptance passed both that original case and the layered tracked-path
+case, with added preflight refusal/continuation assertions (2/0/0, 4.281 s).
+Tracked read-only root coexistence remains supported. Registration of the
+corrected complete source unit is still required.

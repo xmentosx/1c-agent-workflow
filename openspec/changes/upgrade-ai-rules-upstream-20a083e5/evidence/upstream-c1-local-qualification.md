@@ -5,7 +5,14 @@
 через merge. Текущий чистый локальный commit —
 `25b603215b3893f94fbd382e9a03fa99db4678e5`, tree
 `3fd218ac6d37bcddac2c8ab51ac5128f76803248`.
-Он не опубликован и не имеет нового release tag в основном fork.
+Он не опубликован. 2026-10-03 штатный fork publisher подготовил локальный
+annotated tag `itl-main-c1fb8e6-r40` и release branch на этом exact commit,
+без push. Revision 40 продолжает установленную числовую миграцию из r36;
+исходная qualification branch r1 сохранена. Все 175 recorded input hashes
+проверены повторно; fail-only reuse probe прошёл. Qualified receipt побайтно
+перенесён в default Full location, прежний failed default сохранён отдельно.
+Source pin теперь pending: совместимость, публикация fork и installability
+остаются у парного `PublishDevelop` и не следуют из создания локального tag.
 
 | Доказательство | Наблюдаемый результат |
 |---|---|

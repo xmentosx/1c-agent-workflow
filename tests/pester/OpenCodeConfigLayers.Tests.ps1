@@ -174,8 +174,10 @@
         & {
             . $helperPath -ProjectRoot $root -Action help *> $null
             $rootBefore = (Get-FileHash -LiteralPath (Join-Path $root 'opencode.json')).Hash
+            { Assert-ItlClientConfigWritable -Client opencode } | Should -Throw '*TRACKED_CLIENT_CONFIG*.opencode/opencode.jsonc*'
             { Write-ItlClientMcpEndpoints -Client opencode -Owner fixture -Endpoints @([pscustomobject]@{name='owned';url='https://itl.invalid'}) } | Should -Throw '*TRACKED_CLIENT_CONFIG*.opencode/opencode.jsonc*'
             & git -C $root rm --cached -- .opencode/opencode.jsonc *> $null
+            { Assert-ItlClientConfigWritable -Client opencode } | Should -Not -Throw
             Write-ItlClientMcpEndpoints -Client opencode -Owner fixture -Endpoints @([pscustomobject]@{name='owned';url='https://itl.invalid'}) | Out-Null
             (Get-FileHash -LiteralPath (Join-Path $root 'opencode.json')).Hash | Should -Be $rootBefore
             (Read-ItlClientMcpEntries -Client opencode).owned.url | Should -Be 'https://itl.invalid'
