@@ -114,3 +114,25 @@ build binds those exact bytes. Neither earlier b663 nor the intermediate
 the existing ondemand-mcp Release capability automatically. Real service/client
 installation and live qualification remain required before component/workflow
 publication; no remote asset or real project was changed by these builds.
+
+## Final runtime producer, 2026-10-03
+
+Snapshot observation and prepublication acquisition repairs changed the helper
+inputs after the preceding build. A new clean native build from
+692d72ac9d20cc6bd24fbbddd49e0555c97edfa6 in the isolated publication checkout
+therefore supersedes its binary qualification. All 43 raw input hashes match
+that clean checkout and the unchanged Git blobs in the implementation checkout.
+Modules, applicability and full configuration checks passed with exit/dump 0;
+the exact DT was restored and all owned processes released.
+
+The final locked CFE SHA256 is
+3f81dd9f90b32254224c984a4bfe20e3f19a2a0f97d6c7589828c4c4286571bb;
+the complete source ZIP remains
+409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc.
+Native provenance SHA256:
+974e42677b6a648c0e94400638aac849783f59babc8ace71d135987a73d1e6f8,
+under publication checkout
+build/third-party/client-mcp/v0.6.5-itl-r1/candidate-runtime-692d72ac/candidate.provenance.json.
+Earlier artifacts and failures remain historical. This build confirms native
+compilation, source and rollback, not remote installability or live Vanessa
+service/client acceptance. Those remain with the paired publication owner.
