@@ -3612,32 +3612,42 @@ function Set-DotEnvValues {
     param([hashtable]$Values)
 
     $path = Join-Path $script:ProjectRoot ".dev.env"
-    $lines = @()
+    $text = ""
+    $hasUtf8Bom = $false
     if (Test-Path -LiteralPath $path) {
-        $lines = @(Read-Utf8Lines -Path $path)
+        $bytes = [System.IO.File]::ReadAllBytes($path)
+        $hasUtf8Bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+        $text = (Get-Utf8Encoding).GetString($bytes)
+        if ($hasUtf8Bom) { $text = $text.Substring(1) }
     }
 
+    # Replace only owned value spans; retain every other character and original line separator.
+    $updated = $text
     $seen = @{}
-    $updated = New-Object System.Collections.ArrayList
-    foreach ($line in $lines) {
-        $replacement = $line
-        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)=') {
-            $name = $matches[1]
-            if ($Values.ContainsKey($name)) {
-                $replacement = "$name=$($Values[$name])"
-                $seen[$name] = $true
-            }
-        }
-        [void]$updated.Add($replacement)
-    }
-
-    foreach ($name in @($Values.Keys | Sort-Object)) {
-        if (-not $seen.ContainsKey($name)) {
-            [void]$updated.Add("$name=$($Values[$name])")
+    $assignments = [regex]::Matches($text, '(?:\A|(?<=[\r\n]))[^\S\r\n]*([A-Za-z_][A-Za-z0-9_]*)=([^\r\n]*)')
+    for ($index = $assignments.Count - 1; $index -ge 0; $index--) {
+        $assignment = $assignments[$index]
+        $name = $assignment.Groups[1].Value
+        if ($Values.ContainsKey($name)) {
+            $value = $assignment.Groups[2]
+            $updated = $updated.Substring(0, $value.Index) + [string]$Values[$name] + $updated.Substring($value.Index + $value.Length)
+            $seen[$name] = $true
         }
     }
 
-    Write-Utf8Text -Path $path -Value ((@($updated) -join [Environment]::NewLine) + [Environment]::NewLine)
+    [string[]]$missingNames = @($Values.Keys | Where-Object { -not $seen.ContainsKey($_) })
+    [Array]::Sort($missingNames, [StringComparer]::Ordinal)
+    if ($missingNames.Count -gt 0) {
+        $newLine = [regex]::Match($text, '\r\n|\n|\r').Value
+        if (-not $newLine) { $newLine = [Environment]::NewLine }
+        if ($updated -and -not $updated.EndsWith("`n") -and -not $updated.EndsWith("`r")) { $updated += $newLine }
+        foreach ($name in $missingNames) { $updated += "$name=$($Values[$name])$newLine" }
+    }
+
+    if ($updated -ceq $text) { return }
+    # The shared atomic writer emits no preamble; a target-only prefix preserves the existing BOM.
+    if ($hasUtf8Bom) { $updated = [string][char]0xFEFF + $updated }
+    Write-Utf8TextAtomic -Path $path -Value $updated
 }
 
 function Get-WorkflowTemplatePath {

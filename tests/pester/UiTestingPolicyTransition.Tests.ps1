@@ -598,3 +598,87 @@ Describe 'Legacy snapshot admission preserves a later writer' {
         $result.recordCount | Should -Be 1
     }
 }
+
+Describe 'Shared dotenv writer before UI policy transition' {
+    It 'preserves exact <Kind> bytes through session limit Vanessa settings and UI migration' -TestCases @(
+        @{Kind='BOM CRLF';Bom=$true;NewLine="`r`n"},
+        @{Kind='BOM LF';Bom=$true;NewLine="`n"},
+        @{Kind='plain CRLF';Bom=$false;NewLine="`r`n"},
+        @{Kind='plain LF';Bom=$false;NewLine="`n"}
+    ) {
+        param($Kind,$Bom,$NewLine)
+        $root=Join-Path $TestDrive ('Настройки Vanessa с пробелом '+$Kind)
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $envPath=Join-Path $root '.dev.env'
+        $lines=@('# Комментарий с пробелом  ',"KEEP_DOTENV_SENTINEL='Кириллица с пробелом'  ",'UI_TESTING=manual','  VANESSA_AUTOMATION_EPF=old.epf','VANESSA_AUTOMATION_VERSION=old','VANESSA_AUTOMATION_DOWNSTREAM_REVISION=old','VANESSA_FEATURES_PATH=tests/features','VANESSA_REPORTS_PATH=build/tests/va','')
+        $before=$lines -join $NewLine
+        $encoding=[Text.UTF8Encoding]::new($Bom)
+        [IO.File]::WriteAllText($envPath,$before,$encoding)
+        $epfPath=Join-Path $root 'Обработка Vanessa с пробелом.epf'
+        $afterSession=$before+'ONEC_MAX_CONCURRENT_SESSIONS=3'+$NewLine
+        $afterVanessa=$afterSession.Replace('old.epf',$epfPath).Replace('VANESSA_AUTOMATION_VERSION=old','VANESSA_AUTOMATION_VERSION=2.0').Replace('VANESSA_AUTOMATION_DOWNSTREAM_REVISION=old','VANESSA_AUTOMATION_DOWNSTREAM_REVISION=r2')
+        $expected=$afterVanessa.Replace('UI_TESTING=manual','UI_TESTING=essential')
+        $result=& {
+            $names=@('KEEP_DOTENV_SENTINEL','UI_TESTING','ONEC_MAX_CONCURRENT_SESSIONS','VANESSA_AUTOMATION_EPF','VANESSA_AUTOMATION_VERSION','VANESSA_AUTOMATION_DOWNSTREAM_REVISION','VANESSA_FEATURES_PATH','VANESSA_REPORTS_PATH')
+            $saved=@{}
+            foreach($name in $names){$saved[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
+            try {
+                . $helperPath -ProjectRoot $root -Action help *> $null
+                function Get-DependencyLockEntry {param($Name) @{commit=('b'*40)}}
+                $added=Ensure-OneCSessionLimitDotEnv
+                $sessionBytes=[IO.File]::ReadAllBytes($envPath)
+                Save-VanessaAutomationSettingsToDotEnv -EpfPath $epfPath -Version '2.0' -DownstreamRevision 'r2' *> $null
+                $vanessaBytes=[IO.File]::ReadAllBytes($envPath)
+                $receipt=Invoke-UiTestingPolicyTransition
+                [pscustomobject]@{added=$added;sessionBytes=$sessionBytes;vanessaBytes=$vanessaBytes;bytes=[IO.File]::ReadAllBytes($envPath);receipt=$receipt;hash=(Get-FileHash -LiteralPath $envPath).Hash.ToLowerInvariant()}
+            } finally {foreach($name in $names){[Environment]::SetEnvironmentVariable($name,$saved[$name],'Process')}}
+        }
+        $result.added | Should -BeTrue
+        [Convert]::ToBase64String($result.sessionBytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble()+$encoding.GetBytes($afterSession))))
+        [Convert]::ToBase64String($result.vanessaBytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble()+$encoding.GetBytes($afterVanessa))))
+        [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble()+$encoding.GetBytes($expected))))
+        $result.receipt.status | Should -Be 'completed'
+        $result.receipt.converted | Should -BeTrue
+        $result.hash | Should -Be $result.receipt.afterSha256
+    }
+
+    It 'changes only requested assignments and appends sorted missing keys without normalizing mixed lines' {
+        $root=Join-Path $TestDrive 'Смешанные строки dotenv с пробелом'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $path=Join-Path $root '.dev.env'
+        $before="# Кириллица с пробелом`r`n  OWNED=old`nKEEP='без изменений'  `rOWNED=duplicate`r`nFINAL=хвост"
+        $expected="# Кириллица с пробелом`r`n  OWNED=new`nKEEP='без изменений'  `rOWNED=new`r`nFINAL=хвост`r`nALPHA=первый`r`nZETA=последний`r`n"
+        [IO.File]::WriteAllText($path,$before,[Text.UTF8Encoding]::new($true))
+        $bytes=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Set-DotEnvValues -Values @{OWNED='new';ZETA='последний';ALPHA='первый'}
+            [IO.File]::ReadAllBytes($path)
+        }
+        $encoding=[Text.UTF8Encoding]::new($true)
+        [Convert]::ToBase64String([byte[]]$bytes) | Should -Be ([Convert]::ToBase64String([byte[]]($encoding.GetPreamble()+$encoding.GetBytes($expected))))
+    }
+
+    It 'does not write a <Kind> dotenv when the supplied values make no change' -TestCases @(
+        @{Kind='BOM CRLF';Bom=$true;NewLine="`r`n"},
+        @{Kind='BOM LF';Bom=$true;NewLine="`n"},
+        @{Kind='plain CRLF';Bom=$false;NewLine="`r`n"},
+        @{Kind='plain LF';Bom=$false;NewLine="`n"}
+    ) {
+        param($Kind,$Bom,$NewLine)
+        $root=Join-Path $TestDrive ('Повтор dotenv с пробелом '+$Kind)
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $path=Join-Path $root '.dev.env'
+        [IO.File]::WriteAllText($path,('# Не менять'+$NewLine+'  OWNED=Кириллица с пробелом'+$NewLine+'KEEP=unchanged'),[Text.UTF8Encoding]::new($Bom))
+        $before=[IO.File]::ReadAllBytes($path)
+        $stamp=[datetime]::new(2001,1,1,0,0,0,[DateTimeKind]::Utc)
+        [IO.File]::SetLastWriteTimeUtc($path,$stamp)
+        $result=& {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            Set-DotEnvValues -Values @{OWNED='Кириллица с пробелом'}
+            Set-DotEnvValues -Values @{}
+            [pscustomobject]@{bytes=[IO.File]::ReadAllBytes($path);stamp=[IO.File]::GetLastWriteTimeUtc($path)}
+        }
+        [Convert]::ToBase64String($result.bytes) | Should -Be ([Convert]::ToBase64String($before))
+        $result.stamp | Should -Be $stamp
+    }
+}
