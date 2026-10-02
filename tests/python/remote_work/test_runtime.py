@@ -1169,9 +1169,38 @@ execution.execute_job(sys.argv[2], 'one', read_json(sys.argv[3]))
             self.assertEqual("process-identity-and-heartbeat-verified", worker["liveness"])
             self.assertEqual("running", worker["status"])
         finally:
-            if worker_process.poll() is None:
-                worker_process.terminate()
-            worker_process.communicate(timeout=10)
+            owned_children = []
+            try:
+                if os.name == "nt":
+                    telemetry = self.spool / "runs/one/resource-telemetry.jsonl"
+                    self.assertTrue(telemetry.is_file(), "the running job must retain owned child telemetry")
+                    complete = [line for line in telemetry.read_text(encoding="utf-8").splitlines(keepends=True)
+                                if line.endswith("\n")]
+                    self.assertTrue(complete, "owned child telemetry must contain a complete record")
+                    owned_children = json.loads(complete[-1])["processes"]
+                    self.assertTrue(owned_children, "the running job must identify its owned children")
+            finally:
+                if worker_process.poll() is None:
+                    worker_process.terminate()
+                worker_process.communicate(timeout=10)
+
+            def same_child_alive(child):
+                if not common.process_is_alive(child["pid"]):
+                    return False
+                try:
+                    return common.process_identity(child["pid"])["creationId"] == child["creationId"]
+                except WorkError:
+                    if not common.process_is_alive(child["pid"]):
+                        return False
+                    raise
+
+            # Windows terminates Job Object children asynchronously after the worker exits.
+            deadline = time.monotonic() + 5
+            while owned_children and time.monotonic() < deadline:
+                owned_children = [child for child in owned_children if same_child_alive(child)]
+                if owned_children:
+                    time.sleep(0.05)
+            self.assertEqual([], owned_children, "owned child generations must exit before fixture cleanup")
 
     @unittest.skipUnless(os.name == "nt", "worker Job Object ownership is Windows-only")
     def test_killed_worker_closes_owned_child_and_next_worker_only_reconciles(self):
