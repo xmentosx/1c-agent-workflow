@@ -5,18 +5,12 @@
         param([string]$Root, [bool]$Supported)
         $files = [ordered]@{}
         foreach ($item in @(
-            @{Target='.codex/rules/dev-standards-env.md'; Source='content/rules/dev-standards-env.md'},
-            @{Target='.agents/skills/uitests/SKILL.md'; Source='content/commands/uitests.md'}
+            @{Target='.codex/rules/dev-standards-env.md'; Source='content/rules/dev-standards-env.md'}
         )) {
             $path = Join-Path $Root $item.Target
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null
-            $text = if ($item.Source -eq 'content/rules/dev-standards-env.md') {
-                if ($Supported) { '| `{UI_TESTING}` | UI-testing mode: `essential` \| `auto` \| `manual` \| `off` | Defaulted | Empty = `essential` |' }
-                else { '| `{UI_TESTING}` | UI-testing mode: `auto` \| `manual` \| `off` | Defaulted | Empty = `manual` |' }
-            } else {
-                if ($Supported) { '- `essential` → `UI_TESTING=essential`: important changed user-visible behaviour.' }
-                else { '- `manual` → `UI_TESTING=manual`: explicit request.' }
-            }
+            $text = if ($Supported) { '| `{UI_TESTING}` | UI-testing mode: `essential` \| `auto` \| `manual` \| `off` | Defaulted | Empty = `essential` |' }
+            else { '| `{UI_TESTING}` | UI-testing mode: `auto` \| `manual` \| `off` | Defaulted | Empty = `manual` |' }
             [IO.File]::WriteAllText($path, ($text + "`n"), [Text.UTF8Encoding]::new($false))
             $files[$item.Target] = @{source=$item.Source; installedHash=(Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant(); userModified=$false}
         }
@@ -200,6 +194,71 @@ Describe 'One-time essential UI policy transition' {
 }
 
 Describe 'Essential policy update integration' {
+    It 'proves current and snapshot policy without a native command and preserves a later manual choice' {
+        $root = Join-Path $TestDrive 'Правило без команды UI с пробелом'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        Set-TestUiTestingRulesFixture -Root $root -Supported $true
+        [IO.File]::WriteAllText((Join-Path $root '.dev.env'), "UI_TESTING=manual`nITL_VANESSA_TESTING=auto`n", [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            function Get-DependencyLockEntry { param($Name) @{ commit = ('b' * 40) } }
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.ai-rules.json','.codex') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source ([pscustomobject]@{root=$repoRoot;commit=('b'*40)}) -Phase post-copy-running
+            $beforePathState = (Get-WorkflowUpdatePendingSnapshot).receipt.beforePathState
+            $current = Get-AiRulesUiTestingPolicySupportState
+            $before = Get-AiRulesUiTestingPolicySupportState -Snapshot $snapshot -BeforePathState $beforePathState
+            $commands = @(Get-AiRules1cManifestFileEntries | Where-Object source -eq 'content/commands/uitests.md').Count
+            $first = Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit ('a' * 40)
+            $receiptHash = (Get-FileHash -LiteralPath (Get-UiTestingPolicyReceiptPath)).Hash
+            $firstText = Read-Utf8Text -Path (Join-Path $root '.dev.env')
+            Write-Utf8TextAtomic -Path (Join-Path $root '.dev.env') -Value ($firstText.Replace('UI_TESTING=essential','UI_TESTING=manual'))
+            Invoke-UiTestingPolicyTransition -EvaluatePackageEligibility -PreviousWorkflowCommit ('b' * 40) | Out-Null
+            [pscustomobject]@{current=$current;before=$before;commands=$commands;first=$first;firstText=$firstText;text=(Read-Utf8Text -Path (Join-Path $root '.dev.env'));sameReceipt=((Get-FileHash -LiteralPath (Get-UiTestingPolicyReceiptPath)).Hash -ceq $receiptHash)}
+        }
+        $result.commands | Should -Be 0
+        $result.current | Should -Be 'supported'
+        $result.before | Should -Be 'supported'
+        $result.first.converted | Should -BeTrue
+        $result.firstText | Should -Be "UI_TESTING=essential`nITL_VANESSA_TESTING=auto`n"
+        $result.text | Should -Be "UI_TESTING=manual`nITL_VANESSA_TESTING=auto`n"
+        $result.sameReceipt | Should -BeTrue
+    }
+    It 'keeps user-modified policy ownership unknown even when the installed hash still matches' {
+        $root = Join-Path $TestDrive 'Изменённое правило UI с пробелом'
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        Set-TestUiTestingRulesFixture -Root $root -Supported $true
+        $manifestPath = Join-Path $root '.ai-rules.json'
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $manifest.files.'.codex/rules/dev-standards-env.md'.userModified = $true
+        [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $entry = @(Get-AiRules1cManifestFileEntries)[0]
+            $hashMatches = Test-AiRulesFileMatchesInstalledHash -Path (Join-Path $root $entry.target) -InstalledHash $entry.installedHash
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.ai-rules.json','.codex') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source ([pscustomobject]@{root=$repoRoot;commit=('b'*40)}) -Phase post-copy-running
+            [pscustomobject]@{hashMatches=$hashMatches;current=(Get-AiRulesUiTestingPolicySupportState);before=(Get-AiRulesUiTestingPolicySupportState -Snapshot $snapshot -BeforePathState (Get-WorkflowUpdatePendingSnapshot).receipt.beforePathState)}
+        }
+        $result.hashMatches | Should -BeTrue
+        $result.current | Should -Be 'unknown'
+        $result.before | Should -Be 'unknown'
+    }
+    It 'does not treat an owned UI command as the policy owner when the environment rule is absent' {
+        $root = Join-Path $TestDrive 'Команда без правила UI с пробелом'
+        $commandPath = Join-Path $root '.agents/skills/uitests/SKILL.md'
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $commandPath) | Out-Null
+        [IO.File]::WriteAllText($commandPath, '`UI_TESTING=essential`', [Text.UTF8Encoding]::new($false))
+        $manifest = @{files=@{'.agents/skills/uitests/SKILL.md'=@{source='content/commands/uitests.md';installedHash=(Get-FileHash -LiteralPath $commandPath).Hash.ToLowerInvariant();userModified=$false}}}
+        [IO.File]::WriteAllText((Join-Path $root '.ai-rules.json'), ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        $result = & {
+            . $helperPath -ProjectRoot $root -Action help *> $null
+            $snapshot = New-WorkflowUpdateRollbackSnapshot -RelativePaths @('.ai-rules.json','.agents/skills/uitests') -SnapshotParent (Join-Path $root '.agent-1c/snapshots/workflow-update')
+            Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source ([pscustomobject]@{root=$repoRoot;commit=('b'*40)}) -Phase post-copy-running
+            [pscustomobject]@{current=(Get-AiRulesUiTestingPolicySupportState);before=(Get-AiRulesUiTestingPolicySupportState -Snapshot $snapshot -BeforePathState (Get-WorkflowUpdatePendingSnapshot).receipt.beforePathState)}
+        }
+        $result.current | Should -Be 'unsupported'
+        $result.before | Should -Be 'unsupported'
+    }
     It 'uses the recorded <Kind> target and defers unsupported rules without losing same-package retry' -TestCases @(
         @{Kind='new'; Expected='essential'}, @{Kind='pinned-old'; Expected='manual'}, @{Kind='skip-then-upgrade'; Expected='essential'}, @{Kind='same-supported'; Expected='manual'}, @{Kind='unknown-before'; Expected='manual'}, @{Kind='incomplete-before'; Expected='manual'}, @{Kind='skip-empty'; Expected='essential'}
     ) {

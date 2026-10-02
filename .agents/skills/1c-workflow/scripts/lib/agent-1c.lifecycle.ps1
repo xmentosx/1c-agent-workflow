@@ -7799,7 +7799,9 @@ function Get-AiRulesUiTestingPolicySupportState {
         $manifest = Read-Utf8Text -Path $manifestPath | ConvertFrom-Json -ErrorAction Stop
         if ($null -eq $manifest -or $null -eq $manifest.files -or $manifest.files -isnot [pscustomobject]) { return 'unknown' }
         $entries = @(Get-AiRules1cManifestFileEntries -Manifest $manifest)
-        foreach ($source in @('content/rules/dev-standards-env.md', 'content/commands/uitests.md')) {
+        # The environment rule owns policy semantics; native command placement
+        # is optional and differs across supported clients.
+        foreach ($source in @('content/rules/dev-standards-env.md')) {
             $sourceEntries = @($entries | Where-Object { $_.source -ceq $source })
             if ($sourceEntries.Count -eq 0) { return 'unsupported' }
             $supported = $false
@@ -7809,9 +7811,7 @@ function Get-AiRulesUiTestingPolicySupportState {
                 if (-not $path -or -not (Test-AiRulesFileMatchesInstalledHash -Path $path -InstalledHash ([string]$entry.installedHash))) { continue }
                 $text = Read-Utf8Text -Path $path
                 $verified = $true
-                $pattern = if ($source -ceq 'content/rules/dev-standards-env.md') {
-                    '(?m)^\|[^\r\n]*`\{UI_TESTING\}`[^\r\n]*`essential`[^\r\n]*\|[ \t]*\r?$'
-                } else { '`UI_TESTING=essential`' }
+                $pattern = '(?m)^\|[^\r\n]*`\{UI_TESTING\}`[^\r\n]*`essential`[^\r\n]*\|[ \t]*\r?$'
                 if ($text -match $pattern) { $supported = $true; break }
             }
             if (-not $supported) {
