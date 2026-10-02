@@ -102,6 +102,36 @@ snapshot. It accepts a replacement package only through the exact retained
 completed-update chain and preserves target-branch settings and proven completed
 restoration. Later source business changes do not replace the captured snapshot.
 
+## User edit during legacy-file retirement
+
+`WORKFLOW_UPDATE_LEGACY_RETIREMENT_CHANGED` means that a file captured as an
+exact known legacy package file acquired user content during the update. Its
+backup is not permission to commit that content. The operation preserves the
+current file and index and refuses before acknowledging its retirement. A user
+version in Git staging also counts, even if the working file is absent.
+
+Use the pending snapshot's existing recovery status to inspect before/current
+bytes. Preserve the user's text outside the owned path with an exact hash.
+Resolve the file conflict by reconstructing the proven legacy writer's output
+(absence), then obtain a fresh status report and acknowledge that reconstructed
+output through the existing reconciliation procedure above. The decision must
+explain the known before bytes, intended retirement and preserved user text;
+never describe the custom text as helper output. Repeat the same update and
+restore the preserved document as user-owned content after successful completion.
+For an indexed user version, preserve its exact mode/blob/stage first. Resolve
+only that named document's inputs to the proven original-before state, repeat
+the same update and restore the user's indexed version afterward. Other staged
+or unmerged entries stay unchanged. If a fresh report has no changed working
+paths, repeat directly; do not manufacture a reconciliation decision. Do not
+edit workflow state or receipts, discard user staging or relabel user output
+to bypass the conflict.
+
+If Ready already recorded absence and the user subsequently recreated the file,
+preserve their text and restore that exact recorded absence before repeating the
+same command. No reconciliation phase is widened. A lost acknowledgement after
+the candidate commit instead uses its existing exact plan and index proof; it
+does not require a legitimately retired file to remain in the old index.
+
 ## Client membership failure
 
 Attach/detach snapshots cover client-surface and MCP ownership receipts plus all

@@ -326,7 +326,7 @@ function Get-GitPathList {
 }
 
 function Get-GitBlobBytesBatch {
-    param([string[]]$ObjectIds)
+    param([string[]]$ObjectIds, [string]$Root = $script:ProjectRoot)
 
     $uniqueObjectIds = @($ObjectIds | Where-Object { $_ } | Sort-Object -Unique)
     $result = @{}
@@ -341,8 +341,8 @@ function Get-GitBlobBytesBatch {
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = "git"
-    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @("-C", $script:ProjectRoot, "cat-file", "--batch")
-    $startInfo.WorkingDirectory = $script:ProjectRoot
+    $startInfo.Arguments = Join-NativeCommandLineArguments -Arguments @("-C", $Root, "cat-file", "--batch")
+    $startInfo.WorkingDirectory = $Root
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardInput = $true
@@ -5446,17 +5446,7 @@ function Get-WorkflowUpdateManagedPathSpecs {
 }
 
 function Get-WorkflowUpdateDeletedLegacyPaths {
-    $deleted = [System.Collections.Generic.List[string]]::new()
-    foreach ($relativePath in @(Get-LegacyWorkflowManagedFileHashes).Keys) {
-        $output = @(& git -C $script:ProjectRoot -c core.quotepath=false diff --name-status -- $relativePath)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Cannot inspect legacy workflow deletion status: $relativePath"
-        }
-        if (@($output | Where-Object { ([string]$_).StartsWith("D`t", [System.StringComparison]::Ordinal) }).Count -gt 0) {
-            $deleted.Add((ConvertTo-WorkflowUpdateRepoPath -Path $relativePath))
-        }
-    }
-    return @($deleted)
+    return @(Get-WorkflowUpdateEligibleLegacyPaths -DeletedOnly)
 }
 
 function New-WorkflowUpdatePathMatcher {
@@ -5516,30 +5506,24 @@ function Refresh-WorkflowUpdateManagedIndexStat {
     $trackedManagedPaths = @(Get-GitPathList -Arguments @("ls-files", "-z") |
         Where-Object { Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $matcher })
     if ($trackedManagedPaths.Count -gt 0) {
-        $pathspecPath = New-TimestampedFilePath -Directory ([System.IO.Path]::GetTempPath()) -Prefix "itl-workflow-index-refresh-" -Extension ".paths"
-        try {
-            [System.IO.File]::WriteAllText(
-                $pathspecPath,
-                (($trackedManagedPaths -join [string][char]0) + [string][char]0),
-                (New-Object System.Text.UTF8Encoding $false)
-            )
-            $treeBefore = (Get-GitOutput @("write-tree")).Trim()
-            Invoke-Git @("add", "--update", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
-            $treeAfter = (Get-GitOutput @("write-tree")).Trim()
-            if ($treeAfter -cne $treeBefore) {
-                Invoke-Git @("reset", "--quiet", "HEAD", "--pathspec-from-file=$pathspecPath", "--pathspec-file-nul")
-                throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
-            }
-        } finally {
-            if (Test-Path -LiteralPath $pathspecPath -PathType Leaf -ErrorAction SilentlyContinue) {
-                Remove-Item -LiteralPath $pathspecPath -Force -ErrorAction SilentlyContinue
-            }
+        $literalPaths = @($trackedManagedPaths | Select-Object -Unique | ForEach-Object { ':(literal)' + $_ })
+        # Only entries already equal to HEAD may be refreshed/restored. Other
+        # business entries may be staged or unmerged; never write-tree/reset them.
+        if (@(Get-WorkflowGitLiteralPathRecords -Arguments @('diff', '--cached', '--name-only', '-z', 'HEAD') -LiteralPaths $literalPaths).Count -gt 0) {
+            throw 'update-workflow cannot refresh changed managed index entries; preserve the index and reconcile the owned paths before repeating the update.'
+        }
+        $before = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
+        Invoke-WorkflowGitLiteralPathMutation -Arguments @('add', '--update') -LiteralPaths $literalPaths
+        $after = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-files', '--stage', '-z') -LiteralPaths $literalPaths)
+        if (-not [string]::Equals(($before -join "`0"), ($after -join "`0"), [StringComparison]::Ordinal)) {
+            Invoke-WorkflowGitLiteralPathMutation -Arguments @('reset', '--quiet', 'HEAD') -LiteralPaths $literalPaths
+            throw "update-workflow detected a real managed-file change after commit; the index was restored and the worktree change was preserved."
         }
     }
 
     $statusOutput = @(Get-WorkflowGitLiteralPathRecords -Arguments @(
         "status", "--porcelain=v1", "-z", "--untracked-files=no"
-    ) -LiteralPaths $pathSpecs)
+    ) -LiteralPaths @($pathSpecs | ForEach-Object { ':(literal)' + $_ }))
     if ($statusOutput.Count -gt 0) {
         throw "update-workflow refreshed only equivalent managed index entries, but a fresh Git process still reports tracked changes."
     }
@@ -5995,6 +5979,100 @@ function Get-LegacyWorkflowManagedFileHashes {
             "099725AFCA5A715D40906325B3CDB12217046FB76D6AA8B1F610357C9E8AE58F",
             "A96050FCDE0A5F97071AF1926752E88D117B5836DBDD537A898718DF43A6D57F"
         )
+    }
+}
+
+function Get-WorkflowUpdateKnownLegacyGitEntries {
+    param([string]$Commit = 'HEAD', [string]$Root = $script:ProjectRoot)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $literals = @($knownFiles.Keys | ForEach-Object { ':(literal)' + $_ })
+    $entries = @(Get-GitPathListAt -Root $Root -Arguments (@('ls-tree', '-z', $Commit, '--') + $literals))
+    foreach ($entry in $entries) {
+        if ($entry -notmatch '^(100644|100755) blob ([a-f0-9]{40,64})\t(.+)$') { continue }
+        $mode = $Matches[1]; $objectId = $Matches[2]; $relative = $Matches[3]
+        if (@($knownFiles.Keys) -cnotcontains $relative) { continue }
+        $blobs = Get-GitBlobBytesBatch -ObjectIds @($objectId) -Root $Root
+        $utf8 = [Text.UTF8Encoding]::new($false, $true)
+        try { $text = $utf8.GetString([byte[]]$blobs[$objectId]).Replace("`r`n", "`n") } catch { continue }
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($candidate in @($text, $text.Replace("`n", "`r`n"))) {
+                $hash = ([BitConverter]::ToString($sha.ComputeHash($utf8.GetBytes($candidate)))).Replace('-', '')
+                if (@($knownFiles[$relative]) -contains $hash) {
+                    [pscustomobject]@{path=$relative;mode=$mode;objectId=$objectId}
+                    break
+                }
+            }
+        } finally { $sha.Dispose() }
+    }
+}
+
+function Get-WorkflowUpdateLegacyRetirementPaths {
+    param([string]$OldCommit, [string]$NewCommit, [string]$Root = $script:ProjectRoot)
+
+    $old = @(Get-WorkflowUpdateKnownLegacyGitEntries -Commit $OldCommit -Root $Root)
+    if ($old.Count -eq 0) { return @() }
+    $remaining = @(Get-GitPathListAt -Root $Root -Arguments (@('ls-tree', '--name-only', '-z', $NewCommit, '--') +
+        @($old | ForEach-Object { ':(literal)' + $_.path })))
+    return @($old | Where-Object { $_.path -cnotin $remaining } | ForEach-Object path)
+}
+
+function Get-WorkflowUpdateEligibleLegacyPaths {
+    param([string]$Root = $script:ProjectRoot, [switch]$DeletedOnly)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $headEntries = $null
+    foreach ($relative in @($knownFiles.Keys)) {
+        $path = Join-Path $Root $relative
+        if (Test-Path -LiteralPath $path) {
+            if (-not $DeletedOnly -and (Test-Path -LiteralPath $path -PathType Leaf) -and
+                @($knownFiles[$relative]) -contains (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash) {
+                $relative
+            }
+            continue
+        }
+        # Older updates could remove a known file without committing retirement.
+        # Only a known parent blob and its unchanged stage-zero entry qualify.
+        if (-not (Test-Path -LiteralPath (Join-Path $Root '.git'))) { continue }
+        if ($null -eq $headEntries) {
+            try { $headEntries = @(Get-WorkflowUpdateKnownLegacyGitEntries -Root $Root) }
+            catch { $headEntries = @() } # A new repository may not have HEAD yet.
+        }
+        $head = @($headEntries | Where-Object { $_.path -ceq $relative })
+        if ($head.Count -ne 1) { continue }
+        $index = @(Get-GitPathListAt -Root $Root -Arguments @('ls-files', '--stage', '-z', '--', (':(literal)' + $relative)))
+        if ($index.Count -eq 1 -and $index[0] -ceq "$($head[0].mode) $($head[0].objectId) 0`t$relative") { $relative }
+    }
+}
+
+function Assert-WorkflowUpdateLegacyRetirementSnapshot {
+    param([Parameter(Mandatory = $true)][object]$Snapshot, [string]$BeforeCommit, [AllowNull()][object]$CapturedPathState = $null, [switch]$RequireOriginalIndex)
+
+    $knownFiles = Get-LegacyWorkflowManagedFileHashes
+    $records = @($Snapshot.records | Where-Object { @($knownFiles.Keys) -ccontains [string]$_.relativePath })
+    if ($records.Count -eq 0) { return }
+    $original = @(Get-WorkflowUpdateKnownLegacyGitEntries -Commit $BeforeCommit)
+    foreach ($record in $records) {
+        $relative = [string]$record.relativePath
+        $entry = @($original | Where-Object path -CEQ $relative)
+        $knownBefore = if ($record.existed -and -not $record.wasDirectory) {
+            @($knownFiles[$relative]) -contains (Get-FileHash -LiteralPath $record.backupPath -Algorithm SHA256).Hash
+        } else { -not $record.existed -and $entry.Count -eq 1 }
+        if (-not $knownBefore) { continue }
+        $indexChanged = $false
+        if ($RequireOriginalIndex) {
+            # This protects a user edit staged during package copying. It is
+            # not required on ready-receipt replay after the commit succeeded.
+            $index = @(Get-GitPathList -Arguments @('ls-files', '--stage', '-z', '--', (':(literal)' + $relative)))
+            $expected = @(if ($entry.Count -eq 1) { "$($entry[0].mode) $($entry[0].objectId) 0`t$relative" })
+            $indexChanged = $index.Count -ne $expected.Count -or ($index -join "`0") -cne ($expected -join "`0")
+        }
+        if ($indexChanged -or (Test-Path -LiteralPath (Join-Path $script:ProjectRoot $relative)) -or
+            ($null -ne $CapturedPathState -and [string]$CapturedPathState[$relative] -cne 'absent')) {
+            $id = (Split-Path -Leaf ([string]$Snapshot.root)).Substring('itl-workflow-update-rollback-'.Length)
+            throw "WORKFLOW_UPDATE_LEGACY_RETIREMENT_CHANGED: '$relative' changed after its known legacy snapshot. Preserve current user bytes and index; inspect this pending snapshot with -Recovery status -SnapshotId $id, reconcile the retired-file output through -Recovery reconcile, then repeat the same update. No user text was adopted into the package commit."
+        }
     }
 }
 
@@ -6513,6 +6591,7 @@ function Get-WorkflowUpdateSnapshotRelativePaths {
     $paths = @(
         @(Get-WorkflowPackageCopyDirectoryPaths) +
         @(Get-WorkflowPackageCopyFilePaths) +
+        @(Get-WorkflowUpdateEligibleLegacyPaths) +
         @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore $AiRulesPathsBefore -ClientSurfacePathsBefore $ClientSurfacePathsBefore) +
         @($AiRulesPathsAfter) +
         $(if ($SourceRoot) { @(Get-WorkflowUpdateExpectedClientWritePaths -SourceRoot $SourceRoot) }) +
@@ -6609,6 +6688,9 @@ function Save-WorkflowUpdateSnapshotReceipt {
     $hasGit = Test-Path -LiteralPath (Join-Path $script:ProjectRoot '.git')
     $preUpdateHead = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['preUpdateHead']) { [string]$prior.preUpdateHead } elseif ($hasGit) { Get-CurrentCommit } else { '' }
     $branchRef = if ($null -ne $prior -and $null -ne $prior.PSObject.Properties['branchRef']) { [string]$prior.branchRef } elseif ($hasGit) { (Get-GitOutput @('symbolic-ref', '--quiet', 'HEAD')).Trim() } else { '' }
+    if ($Phase -in @('branch-commit-ready', 'master-commit-ready')) {
+        Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $Snapshot -BeforeCommit $preUpdateHead -CapturedPathState $pathState
+    }
     if ($Phase -eq 'prepared') {
         foreach ($relative in @($beforeState.Keys)) {
             if ([string]$pathState[$relative] -cne [string]$beforeState[$relative]) {
@@ -7295,6 +7377,7 @@ function Get-WorkflowUpdateRootWriteSetConflicts {
     $managed = @(
         @(Get-WorkflowPackageCopyDirectoryPaths) +
         @(Get-WorkflowPackageCopyFilePaths) +
+        @(Get-WorkflowUpdateEligibleLegacyPaths -Root $Root | Where-Object { Test-Path -LiteralPath (Join-Path $Root $_) -PathType Leaf }) +
         @('.agent-1c/project.json', '.agent-1c/dependency-lock.json',
           '.agent-1c/client-surface.json', '.agent-1c/mcp/client-managed.json',
           '.gitignore', '.ai-rules.json', 'AGENTS.md', 'USER-RULES.md',
@@ -7867,8 +7950,10 @@ function Invoke-WorkflowDevelopmentBranchUpdate {
         Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $Source -Phase post-copy-running
         try {
             $fileResult = Invoke-WorkflowPackageFilePostCopy
+            Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $snapshot -BeforeCommit ([string](Get-WorkflowUpdatePendingSnapshot).receipt.preUpdateHead) -RequireOriginalIndex
             $ownedPaths = @(Get-WorkflowUpdateManagedPathSpecs -AiRulesPathsBefore @($fileResult.aiRulesPathsBefore) `
                 -ClientSurfacePathsBefore @($fileResult.clientSurfacePathsBefore)) +
+                @(Get-WorkflowUpdateDeletedLegacyPaths) +
                 @($snapshot.records | ForEach-Object { [string]$_.relativePath })
             $plan = New-WorkflowBranchCommitPlan -ManagedPathSpecs $ownedPaths
             Save-WorkflowBranchCommitPlanReceipt -Snapshot $snapshot -Plan $plan
@@ -8281,6 +8366,7 @@ function Update-WorkflowPackage {
     Assert-MasterWorktreeContext -Operation "update-workflow post-copy"
     if ([string]$pendingPostCopy.receipt.phase -eq 'post-copy-running') {
         $filePostCopy = Invoke-WorkflowPackageFilePostCopy
+        Assert-WorkflowUpdateLegacyRetirementSnapshot -Snapshot $pendingPostCopy.snapshot -BeforeCommit ([string]$pendingPostCopy.receipt.preUpdateHead) -RequireOriginalIndex
         $aiRulesPathsBefore = @($filePostCopy.aiRulesPathsBefore)
         $clientSurfacePathsBefore = @($filePostCopy.clientSurfacePathsBefore)
         $plannedChangePaths = @(
@@ -8863,6 +8949,7 @@ function Restore-UnfinishedForkCopiedMcpOwnership {
                     $static = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
                     $managed = New-WorkflowUpdatePathMatcher -ManagedPathSpecs (@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $oldHead)+@(Get-WorkflowUpdateManagedPathSpecs -AtCommit $newHead)+@(Get-AiRulesOpenSpecScaffoldPaths))
                     $native = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-AiRulesMigrationSnapshotRelativePaths | Where-Object { $_ -cne 'openspec' })
+                    $legacyRetired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit $oldHead -NewCommit $newHead)
                     $unproved = @($changes | Where-Object {
                         $path = $_
                         $businessTests = @(@('tests',(Get-VanessaConfiguredFeaturesPath),(Get-YAxUnitTestsPath)) | Where-Object {
@@ -8870,9 +8957,10 @@ function Restore-UnfinishedForkCopiedMcpOwnership {
                         }).Count -gt 0 -and -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static)
                         (Test-OneCSourceRepoPath -RepoPath $path) -or $businessTests -or
                         -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $writeSet) -or
-                        -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $managed) -or
-                        (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static) -and
-                         (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $native) -and $path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)))
+                        ($path -cnotin $legacyRetired -and (
+                         -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $managed) -or
+                         (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $static) -and
+                          (-not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $native) -and $path -cnotin @(Get-AiRulesOpenSpecScaffoldPaths)))))
                     })
                     if ($unproved.Count -gt 0) { continue }
                     $records = @($completed.snapshot.records | Where-Object { $_.relativePath -in @($configRelative,$ownershipRelative) })
@@ -11517,6 +11605,7 @@ function Apply-WorkflowBranchCommitPlan {
             throw "WORKFLOW_UPDATE_BRANCH_INDEX_MISMATCH: owned paths remain staged after the workflow parent transition: $($remaining -join ', ')."
         }
     }
+    Refresh-WorkflowUpdateManagedIndexStat -ManagedPathSpecs @($Plan.managedPathSpecs)
     if ($null -ne $pending -and [string]$Plan.newHead -cne [string]$Plan.oldHead) {
         if ($pending.stage -in @('prepared', 'conflicts')) {
             if ($pending.branchCommit -ceq [string]$Plan.oldHead) {
@@ -13753,6 +13842,9 @@ function Assert-DevBranchForkWorkflowTransition {
         $matcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $owned
         $oldMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs $oldOwned
         $staticMatcher = New-WorkflowUpdatePathMatcher -ManagedPathSpecs @(Get-WorkflowUpdateManagedPathSpecs -StaticOnly)
+        # Known legacy documents may only leave this hop. Git-pinned old bytes
+        # prove their owner; a same-named replacement or custom README does not.
+        $legacyRetired = @(Get-WorkflowUpdateLegacyRetirementPaths -OldCommit $plan.oldHead -NewCommit $plan.newHead)
         $newClaims = @($plan.managedPaths | Where-Object { -not (Test-WorkflowUpdatePathAllowed -Path $_ -Matcher $oldMatcher) } | ForEach-Object { ':(literal)' + $_ })
         $existingNewClaims = @(Get-WorkflowGitLiteralPathRecords -Arguments @('ls-tree', '-r', '--name-only', '-z', $plan.oldHead) -LiteralPaths $newClaims)
         foreach ($path in @($plan.managedPaths)) {
@@ -13764,7 +13856,7 @@ function Assert-DevBranchForkWorkflowTransition {
             $unknownNewClaim = -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $oldMatcher) -and
                 -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $nativeMatcher) -and $path -cnotin $scaffoldPaths
             if ($businessSource -or $businessTests -or
-                (($newClaimOnExistingPath -or $unknownNewClaim -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)) -and -not (Test-WorkflowExecutionRuntimePath -Path $path))) {
+                (($newClaimOnExistingPath -or $unknownNewClaim -or -not (Test-WorkflowUpdatePathAllowed -Path $path -Matcher $matcher)) -and -not (Test-WorkflowExecutionRuntimePath -Path $path) -and $path -cnotin $legacyRetired)) {
                 throw "DEV_BRANCH_FORK_WORKFLOW_BUSINESS_CHANGE: '$path' is not a proven workflow-owned transition. Preserve the original fork anchor and use the original update-workflow recovery to reconcile this path."
             }
         }

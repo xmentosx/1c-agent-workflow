@@ -2,7 +2,7 @@
     Describe 'Copied MCP provenance in an unfinished fork' -Tag 'ForkMcpProvenance' {
         BeforeAll {
             function New-ForkMcpProvenanceFixture {
-                param([string]$Root)
+                param([string]$Root, [string]$LegacyDocument = '')
                 $main=Join-Path $Root 'Главная рабочая папка'; $target=Join-Path $Root 'Незавершённая ветка'
                 $utf8=[Text.UTF8Encoding]::new($false)
                 New-Item -ItemType Directory -Force -Path (Join-Path $main '.agent-1c/mcp'),(Join-Path $main '.kilo') | Out-Null
@@ -10,6 +10,7 @@
                 [IO.File]::WriteAllText((Join-Path $main '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}',$utf8)
                 [IO.File]::WriteAllText((Join-Path $main 'AGENT-INSTALL.md'),'old package',$utf8)
                 [IO.File]::WriteAllText((Join-Path $main 'business.txt'),'original business',$utf8)
+                if($LegacyDocument){[IO.File]::WriteAllText((Join-Path $main 'README.md'),$(if($LegacyDocument -eq 'known'){"known legacy`r`n"}else{'custom README'}),$utf8)}
                 & git -C $main init -q -b master; $LASTEXITCODE | Should -Be 0
                 & git -C $main config user.name 'MCP provenance fixture'; $LASTEXITCODE | Should -Be 0
                 & git -C $main config user.email 'mcp@example.invalid'; $LASTEXITCODE | Should -Be 0
@@ -37,10 +38,12 @@
                     . $HelperPath -ProjectRoot $main -Action help *> $null
                     $LASTEXITCODE | Should -Be 0
                     $source=[pscustomobject]@{root=$RepoRoot;commit=('a'*40)}
-                    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths @('AGENT-INSTALL.md','.kilo/kilo.json','.agent-1c/mcp/client-managed.json') -SnapshotParent (Join-Path $main '.agent-1c/snapshots/workflow-update')
+                    $snapshot=New-WorkflowUpdateRollbackSnapshot -RelativePaths (@('AGENT-INSTALL.md','.kilo/kilo.json','.agent-1c/mcp/client-managed.json')+$(if($LegacyDocument){@('README.md')}else{@()})) -SnapshotParent (Join-Path $main '.agent-1c/snapshots/workflow-update')
                     Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase prepared
                     [IO.File]::WriteAllText((Join-Path $main 'AGENT-INSTALL.md'),'new package',$utf8)
-                    & git -C $main add -- AGENT-INSTALL.md; $LASTEXITCODE | Should -Be 0
+                    $commitPaths=@('AGENT-INSTALL.md')
+                    if($LegacyDocument){Remove-Item -LiteralPath (Join-Path $main 'README.md');$commitPaths+=@('README.md')}
+                    & git -C $main add -- $commitPaths; $LASTEXITCODE | Should -Be 0
                     & git -C $main commit -qm 'workflow update'; $LASTEXITCODE | Should -Be 0
                     Save-WorkflowUpdateSnapshotReceipt -Snapshot $snapshot -Source $source -Phase post-copy-complete
                     Retain-WorkflowUpdateRollbackSnapshot -Snapshot $snapshot
@@ -116,6 +119,29 @@
                 Restore-UnfinishedForkCopiedMcpOwnership | Should -BeFalse
                 Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://target.invalid'}) | Out-Null
                 (Read-ItlClientMcpEntries -Client kilocode)['itl-roctup-data'].enabled | Should -BeFalse
+            }
+        }
+
+        It 'recognizes only a known legacy retirement in the main ownership capsule: <LegacyDocument>' -ForEach @(@{LegacyDocument='known'},@{LegacyDocument='custom'}) {
+            $fixture=New-ForkMcpProvenanceFixture -Root (Join-Path $TestDrive ('Старый документ main '+$LegacyDocument)) -LegacyDocument $LegacyDocument
+            & {
+                $global:LASTEXITCODE=0
+                . $HelperPath -ProjectRoot $fixture.target -Action help *> $null
+                $LASTEXITCODE|Should -Be 0
+                $sha=[Security.Cryptography.SHA256]::Create()
+                try{$knownHash=([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes("known legacy`r`n")))).Replace('-','')}finally{$sha.Dispose()}
+                function Get-LegacyWorkflowManagedFileHashes {@{'README.md'=@($knownHash)}}
+                $configBefore=Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json')
+                $ownerBefore=Get-ItlMcpFileState (Join-Path $fixture.target '.agent-1c/mcp/client-managed.json')
+                if($LegacyDocument -eq 'known'){
+                    Restore-UnfinishedForkCopiedMcpOwnership|Should -BeTrue
+                    Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://target.invalid'})|Out-Null
+                }else{
+                    Restore-UnfinishedForkCopiedMcpOwnership|Should -BeFalse
+                    {Write-ItlClientMcpEndpoints -Client kilocode -Owner ondemand-facade -Endpoints @([pscustomobject]@{name='itl-roctup-data';url='https://target.invalid'})}|Should -Throw '*CLIENT_MCP_USER_COLLISION*'
+                    (Get-ItlMcpFileState (Join-Path $fixture.target '.kilo/kilo.json'))|Should -BeExactly $configBefore
+                    (Get-ItlMcpFileState (Join-Path $fixture.target '.agent-1c/mcp/client-managed.json'))|Should -BeExactly $ownerBefore
+                }
             }
         }
 

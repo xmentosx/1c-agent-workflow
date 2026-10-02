@@ -1,8 +1,9 @@
 # Same-fork continuation after a package update
 
-Status 2026-10-02: initial source qualification passed; continuation fixes still
-require successful registration and public installed continuation before task
-9.6 can close.
+Status 2026-10-02: continuation source A5 passed registration and public package
+rollout to all eight stand roots. Task 9.6 remains open: the subsequent same-fork
+continuation stopped at the fixture dirty guard before runtime initialization.
+The remaining package commit/stat defects are being fixed at their owner.
 
 The historical Release fixture already committed facade compatibility 0.4.15
 with dependency lock 0.4.14. Public creation of `rel-e2e-r6` stopped during MCP
@@ -160,3 +161,83 @@ Final lifecycle SHA256
 adapter SHA256
 `d03ed763beba6b724776b33fb547de12a6936bf92ecbc6bccf6a73a01a3df5c7`.
 The recorded original checkout remains clean at `dc4c0703`.
+
+## A5 registration and installed rollout
+
+Source `a5a89eb9baa4355557f61911564976e17bd2b2a8` passed the normal
+RegisterChange Targeted run: 966 passed, 0 failed, 0 skipped, 46 executed
+files with no reuse, 1036.291 seconds. Authoritative run
+`20261002-000300-449-targeted-b633f671a2ee424c971aeb8e2c9098a5.json`,
+SHA256 `bbda77f871cac235e9422ef17420d2a3cafc3bbe6acf0646feff4a63aaeeabc7`.
+Registration stayed local; no publication or production rollout occurred.
+
+The public source-side update completed in 403.984 seconds, exit 0. Main moved
+to `53b9a347270c0ff68257f7b4a8bfca01f878c08f`; all seven registered development
+roots reported completed, including the moved E: worktree and stopped r6 fork.
+The copied rollout receipt is
+`build/workflow-update-finalize-proof-20261002/a5-completed-update-rollout.json`,
+SHA256 `5665f93bf32701082456b596cccbbd0dc8663a516304250654aa304ae895832b`.
+
+An independent AfterUpdate oracle passed for all eight roots: business source,
+tests, index entries and dirty status stayed unchanged. The original fork
+manifest, immutable base artifact, source lock, old Release pointer, fork ID,
+source anchor and protected branch settings were preserved. Receipt
+`build/workflow-update-finalize-proof-20261002/a5-afterupdate-preservation.json`,
+SHA256 `595bb542408623e8bbf16d39cdf4a01a20ae4c4acd6c27c58a460eec274bd63d`.
+
+The public rebuild of the SAME `rel-e2e-r6` then stopped at its unchanged fixture
+dirty guard, exit 1, before starting the fork runtime. This is not successful
+continuation or restore-reuse evidence. Raw log
+`build/workflow-update-finalize-proof-20261002/a5-rebuild-owned-stand-r6.log`,
+SHA256 `975db9cf5b2a5d343d7c9db451b945e09c3e15848af97c31c7f734725ee22864`.
+
+The fixture exposed two package completion defects. Its 102 reported modified
+paths had equal normalized working blobs, index blobs and HEAD blobs: copied
+unchanged files retained stale Git stat entries. Two real deletions, the known
+legacy README and developer guide, were absent from the branch transaction's
+snapshot and commit plan. Their HEAD text reconstructed with CRLF matches the
+existing exact retirement hashes; custom project documentation remains outside
+that ownership. The fix must retain those retirement backups, commit only
+proven owned deletions and refresh equivalent owned stat entries without
+altering business staged or unmerged index records. The original sources stay
+clean at their recorded commits; no installed files or index entries are
+manually repaired and the fixture dirty guard remains strict.
+
+## Finalization fix: focused source proof
+
+The existing update owner now snapshots eligible legacy documents before
+removing them, includes proven retirement in branch commits and validates those
+immutable old/new Git blobs in the retained fork and copied-MCP transition
+chains. A same-named custom, staged or unmerged document cannot establish that
+ownership. A document edited after capture is preserved and refused before
+Ready; its existing recovery route retains user bytes and staging. Ready
+lost-acknowledgement replay still accepts the exact committed candidate.
+
+Equivalent owned index entries are refreshed even for unchanged copied files
+and a no-op branch plan. The refresh compares only the named owned stage records;
+it does not write-tree or reset unrelated business staging or merge conflicts.
+A real late owned change remains preserved and refuses completion. This uses
+the existing snapshot, plan and recovery owner without a new phase or schema.
+
+The first focused run recorded 48 passed, 3 failed, 0 skipped in 193.178 seconds.
+Two failures expected the user-file rollback refusal before the existing
+pending-business-merge refusal; the original merge fixture and owner assertions
+were retained when correcting that expectation. The third failed while preparing
+an unmerged fixture: native PowerShell appended CRLF to its text stdin (180
+expected bytes, 182 actual). Exact UTF-8 NUL-delimited native stdin repairs that
+fixture without changing its three conflict stages.
+
+The minimum ordinary rerun of the two parameterized test bodies passed 9/9 in
+41.649 seconds. Combined proof covers 42 unchanged earlier cases plus those
+nine corrected cases; it is not a single 51/0 run. Both original failure output
+and corrected receipts are retained. Final qualification
+`build/workflow-update-finalize-proof-20261002/qualification.json`, SHA256
+`1b66c6f946a721b1da4c5f26d064e5ccf298b5228328cba7f2fa5ae30319a07d`.
+Runtime SHA256
+`2e5bf9ef3ff7adc941db88258a5591ddec096cc0bac75ee6aca16ffefeac9c61`;
+final rollback test SHA256
+`f4e84ed10cc231d1420221618517ed98c8f1d53cdcba651f5a0b6504ca5daa96`;
+development lifecycle test SHA256
+`d5b1f35e669a3ffa88cdca14a27f62b733f06d2fe1beee2e68858eaf9d1eb26e`.
+AST parsing and diff checks passed. Normal registration and the public SAME
+fork continuation remain required; this local proof does not close task 9.6.
