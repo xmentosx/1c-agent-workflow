@@ -280,6 +280,25 @@ function Get-ShardTrackedFileIdentity {
     return [string]$script:pesterTrackedIdentityCache[$cacheKey]
 }
 
+function Get-ShardRelativeTestPath {
+    param([string]$Path, [string]$Root = $RepositoryRoot)
+    try {
+        if (-not [IO.Path]::IsPathRooted($Path) -or -not [IO.Path]::IsPathRooted($Root)) { return '' }
+        $prefix = [IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        $absolute = [IO.Path]::GetFullPath($Path)
+        if (-not $absolute.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return '' }
+        return $absolute.Substring($prefix.Length).Replace('\', '/')
+    } catch { return '' }
+}
+
+function Test-ShardResultTestPath {
+    param([object]$Result, [string]$TestPath, [string]$SourceRoot = $RepositoryRoot)
+    if (-not $Result -or -not $Result.PSObject.Properties['paths'] -or @($Result.paths).Count -ne 1) { return $false }
+    $expected = Get-ShardRelativeTestPath -Path $TestPath
+    $actual = Get-ShardRelativeTestPath -Path ([string]$Result.paths[0]) -Root $SourceRoot
+    return $expected -and $actual -and [string]::Equals($expected, $actual, [StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-ShardInputDigest {
     param(
         [string[]]$Paths,
@@ -287,7 +306,8 @@ function Get-ShardInputDigest {
         [hashtable]$ExternalIdentityOverrides,
         [switch]$IncludeLegacyGlobalExternalInputs
     )
-    $relativeTests = @($Paths | ForEach-Object { [IO.Path]::GetFullPath($_).Substring($RepositoryRoot.TrimEnd('\').Length).TrimStart('\').Replace('\','/') })
+    $relativeTests = @($Paths | ForEach-Object { Get-ShardRelativeTestPath -Path $_ })
+    if (@($relativeTests | Where-Object { -not $_ }).Count -gt 0) { return '' }
     $nonReusableProperty = $catalog.PSObject.Properties['pesterNonReusableTests']
     # Unknown external runtime identity cannot qualify a reusable shard. For
     # example, the OneScript probe executes installed engine assemblies.
@@ -297,6 +317,9 @@ function Get-ShardInputDigest {
     $patterns = @($contracts | ForEach-Object { @($_.paths) } | ForEach-Object { ([string]$_).Replace('\','/') } | Sort-Object -Unique)
     $inputs = @($relativeTests + $sharedInputs + @($AdditionalInputs) + @($trackedPaths | Where-Object { $path=([string]$_).Replace('\','/'); @($patterns | Where-Object { $path -like $_ }).Count -gt 0 }) | Sort-Object -Unique)
     $lines = New-Object System.Collections.Generic.List[string]
+    # The selected tests are distinct from their shared owner input set.
+    # Deduplicating that set must never make different test files one shard.
+    foreach ($test in @($relativeTests | Sort-Object -Unique)) { $lines.Add("selected-test=$test") }
     $pester = Get-Module -ListAvailable Pester | Sort-Object Version -Descending | Select-Object -First 1
     if (-not $pester) { return "" }
     $lines.Add("powershell=$($PSVersionTable.PSVersion)|pester=$($pester.Version)|workers=$WorkerCount")
@@ -320,7 +343,7 @@ function Get-ShardInputDigest {
 }
 
 function Get-ShardCacheEntryRoot {
-    param([string]$Digest)
+    param([string]$Digest, [string]$TestPath = '')
     if (-not $Digest) { return $null }
     $target = Join-Path $cacheRoot $Digest
     $candidates = @($target)
@@ -335,7 +358,15 @@ function Get-ShardCacheEntryRoot {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([int]$manifest.schemaVersion -eq 1 -and [string]$manifest.digest -eq $Digest -and
                 [string]$manifest.resultSha256 -eq (Get-PesterShardFileSha256 -Path $cachedResult) -and
-                [string]$manifest.junitSha256 -eq (Get-PesterShardFileSha256 -Path $cachedJunit)) { return $entryRoot }
+                [string]$manifest.junitSha256 -eq (Get-PesterShardFileSha256 -Path $cachedJunit)) {
+                if ($TestPath) {
+                    $producerRoot = $manifest.PSObject.Properties['repositoryRoot']
+                    if (-not $producerRoot -or -not [string]$producerRoot.Value) { continue }
+                    $result = Get-Content -LiteralPath $cachedResult -Raw -Encoding UTF8 | ConvertFrom-Json
+                    if (-not (Test-ShardResultTestPath -Result $result -TestPath $TestPath -SourceRoot ([string]$producerRoot.Value))) { continue }
+                }
+                return $entryRoot
+            }
         } catch {}
     }
     return ""
@@ -343,7 +374,7 @@ function Get-ShardCacheEntryRoot {
 
 function Restore-ShardCache {
     param([string]$Digest, [string]$ResultPath, [string]$JunitPath, [int]$Worker, [string]$TestPath)
-    $entryRoot = Get-ShardCacheEntryRoot -Digest $Digest
+    $entryRoot = Get-ShardCacheEntryRoot -Digest $Digest -TestPath $TestPath
     if (-not $entryRoot) { return $null }
     $cachedResult = Join-Path $entryRoot "result.json"; $cachedJunit = Join-Path $entryRoot "pester.xml"
     try {
@@ -365,18 +396,24 @@ function Save-ShardCache {
     if (-not $Digest) { return }
     $result = Get-Content -LiteralPath $ResultPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ([string]$result.status -ne "passed" -or [int]$result.failed -ne 0 -or -not (Test-Path -LiteralPath $JunitPath -PathType Leaf)) { return }
+    if (-not $result.PSObject.Properties['paths'] -or @($result.paths).Count -ne 1) { return }
+    $testPath = [string]$result.paths[0]
+    if (-not (Get-ShardRelativeTestPath -Path $testPath)) { return }
     $target = Join-Path $cacheRoot $Digest
-    if (Get-ShardCacheEntryRoot -Digest $Digest) { return }
+    if (Get-ShardCacheEntryRoot -Digest $Digest -TestPath $testPath) { return }
     if (Test-Path -LiteralPath $target -PathType Container) {
-        if (@(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) { throw "Incomplete Pester shard cache is not empty: $target" }
-        Remove-Item -LiteralPath $target -Force
+        if (@(Get-ChildItem -LiteralPath $target -Force).Count -gt 0) {
+            if (-not (Get-ShardCacheEntryRoot -Digest $Digest)) { throw "Incomplete Pester shard cache is not empty: $target" }
+            # Preserve an integrity-valid entry for another test. The existing
+            # concurrent-writer layout admits our completed candidate below it.
+        } else { Remove-Item -LiteralPath $target -Force }
     }
     $staging = Join-Path $cacheRoot ("." + $Digest + "." + [guid]::NewGuid().ToString("N") + ".tmp")
     New-Item -ItemType Directory -Path $staging | Out-Null
     try {
         Copy-Item -LiteralPath $ResultPath -Destination (Join-Path $staging "result.json")
         Copy-Item -LiteralPath $JunitPath -Destination (Join-Path $staging "pester.xml")
-        $manifest = [ordered]@{ schemaVersion = 1; digest = $Digest; resultSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "result.json")); junitSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "pester.xml")) }
+        $manifest = [ordered]@{ schemaVersion = 1; digest = $Digest; repositoryRoot = $RepositoryRoot; resultSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "result.json")); junitSha256 = (Get-PesterShardFileSha256 -Path (Join-Path $staging "pester.xml")) }
         [IO.File]::WriteAllText((Join-Path $staging "manifest.json"), (($manifest | ConvertTo-Json) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         try { Move-Item -LiteralPath $staging -Destination $target -ErrorAction Stop } catch { if (-not (Test-Path -LiteralPath $target)) { throw } }
     } finally { if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force } }
@@ -467,7 +504,8 @@ foreach ($item in $items) {
             $priorPlan = Get-Content -LiteralPath $planPath -Raw -Encoding UTF8 | ConvertFrom-Json
             $priorResult = Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ([string]$priorPlan.inputDigest -eq $digest -and @($priorPlan.paths).Count -eq 1 -and [string]$priorPlan.paths[0] -eq [string]$item.path -and
-                [string]$priorResult.status -eq "passed" -and [int]$priorResult.failed -eq 0) {
+                [string]$priorResult.status -eq "passed" -and [int]$priorResult.failed -eq 0 -and
+                (Test-ShardResultTestPath -Result $priorResult -TestPath ([string]$item.path))) {
                 $priorResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
                 $priorResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue $digest -Force
                 $priorResult | Add-Member -NotePropertyName worker -NotePropertyValue $index -Force
@@ -582,13 +620,18 @@ function Complete-PesterFileEntry {
     $Entry.process.WaitForExit(); $Entry.process.Refresh()
     if (Test-Path -LiteralPath $Entry.resultPath -PathType Leaf) {
         $workerResult = Get-Content -LiteralPath $Entry.resultPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $plan = Get-Content -LiteralPath $Entry.planPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (@($plan.paths).Count -ne 1 -or -not (Test-ShardResultTestPath -Result $workerResult -TestPath ([string]$plan.paths[0]))) {
+            $script:failures += "worker $($Entry.worker) result does not match its planned test path"
+            return $false
+        }
         $workerResult | Add-Member -NotePropertyName execution -NotePropertyValue "executed" -Force
         $workerResult | Add-Member -NotePropertyName inputDigest -NotePropertyValue ([string]$Entry.digest) -Force
         [IO.File]::WriteAllText($Entry.resultPath, (($workerResult | ConvertTo-Json -Depth 8) + [Environment]::NewLine), [Text.UTF8Encoding]::new($false))
         $script:results += $workerResult
         if ([string]$workerResult.status -eq "passed" -and [int]$Entry.process.ExitCode -eq 0) {
             Save-ShardCache -Digest $Entry.digest -ResultPath $Entry.resultPath -JunitPath $Entry.junitPath
-            if ($Entry.digest -and -not (Get-ShardCacheEntryRoot -Digest ([string]$Entry.digest))) {
+            if ($Entry.digest -and -not (Get-ShardCacheEntryRoot -Digest ([string]$Entry.digest) -TestPath ([string]$plan.paths[0]))) {
                 throw "Passed Pester file cache was not persisted for worker $($Entry.worker)."
             }
             return $true
