@@ -446,6 +446,10 @@ missing/empty получает записанный essential, соответс�
 доказательство и не считает legacy manual сознательным новым выбором. После
 completion поздний manual защищён прежним receipt. Запись сохраняет UTF-8 BOM,
 line endings и bytes вне изменяемого значения; source task не меняет live env.
+Это требует сохранности формата также у существующего generic env writer и
+предшествующего нового Caveman перехода. Уже applying legacy Caveman продолжает
+точный recorded target по before/after SHA; completed receipt не переписывается
+ради возврата прежде утраченного BOM. Схема receipt и recovery owner сохраняются.
 
 Legacy parent snapshot может не владеть добавленным policy receipt. Новый child
 останавливается до policy writes с `UI_TESTING_POLICY_LEGACY_SNAPSHOT` и точным
@@ -595,6 +599,55 @@ installed-rules support false→true при неизменном workflow pin, S
 BOM preservation и прежний original-task recovery. Source-only implementation или
 focused proof не закрывают полную c1 integration/UI приёмку либо финальную валидацию
 документов; задачи 12.1–12.2 остаются открыты.
+
+**Proposed c1 OpenCode checkpoint, 2026-10-02 — not yet accepted.** Пользователь
+согласовал upstream сохранение всех четырёх project configs (opencode.json,
+opencode.jsonc, .opencode/opencode.json, .opencode/opencode.jsonc), без
+удаления/переноса и competing JSON при наличии любого из них. Следующее предложение
+об installed ownership-path migration отдельно ожидает architecture checkpoint;
+оно не разрешает зависимую JSONC runtime реализацию и не закрывает 12.2.
+
+Причина: ITL сейчас читает/пишет fixed root opencode.json, сериализует весь JSON,
+а existing client-managed.json хранит только client/owner names. Эффективный
+объединённый MCP config и физическое право изменения файла должны быть разными
+представлениями. В предложении existing owner state/receipts связывают вклад с canonical
+project-relative filepath и provenance; старый names-only record относится только
+к legacy root opencode.json, не присваивает same-name вклад в другом слое.
+Новые writes в JSONC/nested config не выводят ownership из одного совпадения имени.
+
+Предлагается один stateless config-path/JSONC contract у existing clientcfg owner,
+без нового coordinator, очереди или recovery records. Read учитывает native merge
+project layers; write меняет только доказанные managed fields losslessly, сохраняя
+comments, BOM, line endings и bytes вне этих полей. Наличие нескольких файлов само
+по себе не collision. Для OpenCode v1.18.11 порядок четырёх файлов в root worktree:
+root JSON → root JSONC → nested JSON → nested JSONC; later conflicting fields
+override, non-conflicting fields merge. Это версия [primary config loader](https://github.com/anomalyco/opencode/blob/v1.18.11/packages/opencode/src/config/config.ts),
+[project paths](https://github.com/anomalyco/opencode/blob/v1.18.11/packages/opencode/src/config/paths.ts)
+и [path enumeration](https://github.com/anomalyco/opencode/blob/v1.18.11/packages/core/src/fs-util.ts),
+не новая live qualification либо универсальный порядок всех версий.
+
+Final-set preflight и existing snapshot/restore owner фиксируют состояния всех
+четырёх candidate paths, включая absence, до первого write. Resolved path inventory
+и provenance общие для reader/writer, tracked-config guard, write-set, detach/legacy cleanup,
+doctor и Product Docs status. Snapshot capture не превращает user config в
+commit-owned файл. Foreign same-name contribution сохраняется; реальный конфликт
+идёт через existing collision/reconcile с продолжением исходной операции, без
+blanket JSONC/multiple-config barrier. Право записи не расширяется на global/HOME,
+custom/inline/managed configs, client membership, permissions или business files.
+Внешнее перекрытие project contribution не объявляется effective attachment.
+
+Альтернативы fixed root writer/whole-document serialization и принудительная
+консолидация файлов отвергнуты в предложении: первая теряет comments/реальную
+config selection, вторая меняет штатную layering семантику и user configs.
+Acceptance остаётся proposed в test-plan.md: same-name foreign, nested JSONC,
+absence/path race, last-owner removal, rollback и effective Product Docs.
+Без принятого checkpoint зависимая реализация не начинается; исторические
+checkbox/proofs, source-only Stage A и production pins не меняются.
+
+Source-only e130 registration record сохраняется, но его qualification integrity
+pending: P1 deterministic cache alias подменил два requested test files чужими
+results. Official 1004 и individual raw totals 1028 не являются новой квалификацией;
+Cache owner исправлен отдельным commit `9996b97d402588c6ddc40f96ea274dced8ae728a`: RegisterChange Targeted 88/0/0, 550.943 s, clean tree. Selected test входит в digest самостоятельно, producer path проверяется до reuse. Это новое доказательство cache owner; оно не превращает прежний e130 record в квалификацию Q23.
 
 Store write batch D7 и его cross-project runtime authority не включаются в этот
 релиз. В текущем пакете host и managed rules останавливают внешний store до

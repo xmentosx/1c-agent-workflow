@@ -2,7 +2,7 @@
   "schemaVersion": 3,
   "baselineUpstreamCommit": "410951e74fd3e6b7a763cf49757935b9a34d3f31",
   "baselineReleaseCommit": "451c5a52e5b614c67406445d4af4b636da043aec",
-  "intakeUpstreamCommit": "20a083e5bd9fa41402ad8428b740c4c01f0cc3d6",
+  "intakeUpstreamCommit": "c1fb8e687be5b9d71d5a05c6f5d32cf6a6919dcb",
   "targetPath": "AGENTS.md",
   "maximumTargetCharacters": 24000,
   "additionalTargets": [
@@ -77,9 +77,9 @@
       "requirementId": "ITL-CAVEMAN-001",
       "disposition": "take-upstream",
       "reason": "Previous resolved: Add the reviewed r25 implementation of ITL-CAVEMAN-001. Now take-upstream: adapt-session-style-and-one-time-migration; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "dcaf73b314ec54d21481dedfb09d0e092209f3cdb1c04a66c1f40b5dd3610dbe",
+      "upstreamSha256": "f938e9bd8ab208f178a1f2a8b3531789ff3889d4d5d626d7013be4a66b011cd5",
       "baselineSha256": "8f6abfa7d3996a36dd7fc0244cc63600d3b7e0d82a72b8654d0d65c0bf532238",
-      "resultSha256": "dcaf73b314ec54d21481dedfb09d0e092209f3cdb1c04a66c1f40b5dd3610dbe"
+      "resultSha256": "f938e9bd8ab208f178a1f2a8b3531789ff3889d4d5d626d7013be4a66b011cd5"
     },
     {
       "path": ".gitattributes",
@@ -95,9 +95,9 @@
       "requirementId": "ITL-RELEASE-QUALIFICATION-001",
       "disposition": "take-upstream",
       "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "58d2aa1a966131d1e25dc731c19c8e86b6426f52c95ee4f9b20dd8e4f3c4a202",
+      "upstreamSha256": "c31a1e69e89712dbc219e240e41b6024c48416dd978b8d4135a19743605fe94f",
       "baselineSha256": "8d8e3795e758412f1d51cd614c324aa5c0a34a134acf4053311669b5bdce6371",
-      "resultSha256": "58d2aa1a966131d1e25dc731c19c8e86b6426f52c95ee4f9b20dd8e4f3c4a202"
+      "resultSha256": "c31a1e69e89712dbc219e240e41b6024c48416dd978b8d4135a19743605fe94f"
     },
     {
       "path": ".gitignore",
@@ -107,60 +107,6 @@
       "upstreamSha256": "ef9ecd9545605c682c48aa62c74d1e23059233b9faaa9e725dbdfaa29181b93d",
       "baselineSha256": "e8dd81f23a541d859f0c489209f828629d6cc5c02b7d98f019d559a6e03e0a1d",
       "resultSha256": "385241da95ceb13699ad9314085a8a439c53c074d37871d0e1bf3c88f40840d9"
-    },
-    {
-      "path": "AGENT-INSTALL.md",
-      "requirementId": "ITL-GRILLING-001",
-      "disposition": "resolved",
-      "reason": "Resolve ITL-GRILLING-001 for r29 by documenting the complete required skill family while preserving prior installer behavior. Clarify that standalone channels do not bypass ITL-managed installation ownership and that plugin ensure is read-only.",
-      "upstreamSha256": "365f93e262d3dcf3b7899bf9e1a3ea5e1dfd830b93bf4d71f84b36ec6a2deb44",
-      "baselineSha256": "5bdfdf15269e3faff5c39fadba8e19982360b98456ca76d1689a007b031ab616",
-      "resultSha256": "95c20c2becd3c5863aa70c25182a06f7350e5d23fcc572251b8d6e67f7260ceb"
-    },
-    {
-      "path": "AGENTS.md",
-      "requirementId": "ITL-CODECHECKER-LATENCY-001",
-      "disposition": "resolved",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract.",
-      "upstreamSha256": "f389e4ce0b03b09e9a70992dcf46a1de901744366c78d0a16e70f47a078c07f7",
-      "baselineSha256": "b854207c71b110f344c8025ff6c19288dce08db9ee04d731417032ab9b757872",
-      "resultSha256": "f670aec57c13e295a2c99ee6137e15a8f59fd7b5b7f55cef9a40a9dcd0a3aa06"
-    },
-    {
-      "path": "README.md",
-      "requirementId": "ITL-CODECHECKER-LATENCY-001",
-      "disposition": "resolved",
-      "reason": "Preserve prior release guidance and document the r31 standalone syntax plus logic-only CodeChecker route. Replace upstream main plugin-install guidance with the immutable ITL controlled-fork route and read-only ensure contract.",
-      "upstreamSha256": "9f7ccf8c8313fcf107afc00a409cedd21f9007ba2d691d58e03486cdd7f0d834",
-      "baselineSha256": "75a1e5357fd29d249568de45f3f1857c4e3b6a651f5669baf0146e81a2c811f7",
-      "resultSha256": "c87df0529c38d591b5878eb8c62d3101cc52a2ed52ece1145f57ff1cde8c7f0f"
-    },
-    {
-      "path": "References.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "b1cc30df8a1be470fe8261b6a2ff07f0dfa92b02a95b11c742b13b9e5578926d",
-      "baselineSha256": "b0e64e4125fb0d2c4206a606e0d60ecc7a833ae678888ab5d98d2953ff7666b5",
-      "resultSha256": "b1cc30df8a1be470fe8261b6a2ff07f0dfa92b02a95b11c742b13b9e5578926d"
-    },
-    {
-      "path": "USER-RULES.md",
-      "requirementId": "ITL-LIFECYCLE-DB-001",
-      "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
-      "baselineSha256": "d525a681cc61f62f2f06a1ec88928abc0c68e0cf75b25df7bea670fd7fa24a9e",
-      "resultSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3"
-    },
-    {
-      "path": "WORKFLOWS.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "ffd901deff661526af027af787655601b14f4104f208e4f0c7593db8ce4ec5f6",
-      "baselineSha256": "<absent>",
-      "resultSha256": "ffd901deff661526af027af787655601b14f4104f208e4f0c7593db8ce4ec5f6"
     },
     {
       "path": "adapters/claude-code.yaml",
@@ -239,9 +185,9 @@
       "requirementId": "ITL-GRILLING-001",
       "disposition": "take-upstream",
       "reason": "Previous resolved: Resolve ITL-GRILLING-001 for r30 by publishing thin native command wrappers. Now take-upstream: adapt-client-capabilities-and-shared-ownership; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "1ea30930755165bff71b7762c774732636c79ff863aa4ef12f1918542d12728f",
+      "upstreamSha256": "7d3e8dd11d7b19d6c23cf88aa9ef90f3878cbe3395fa4c3bb288241f744498ca",
       "baselineSha256": "efe129935e9b2f2ca3ad42f99ccb11f54e0731f2574bc4b19cdfaa02013d0bac",
-      "resultSha256": "1ea30930755165bff71b7762c774732636c79ff863aa4ef12f1918542d12728f"
+      "resultSha256": "7d3e8dd11d7b19d6c23cf88aa9ef90f3878cbe3395fa4c3bb288241f744498ca"
     },
     {
       "path": "adapters/other.yaml",
@@ -280,13 +226,31 @@
       "resultSha256": "cc72053f20e02df47ceeac08e919be50070b5ce681382315fa496c86eaf3b963"
     },
     {
+      "path": "AGENT-INSTALL.md",
+      "requirementId": "ITL-GRILLING-001",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-GRILLING-001 for r29 by documenting the complete required skill family while preserving prior installer behavior. Clarify that standalone channels do not bypass ITL-managed installation ownership and that plugin ensure is read-only. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 resolved: document authoritative per-client modelTiersByClient with empty-tier inheritance and legacy sole-client seeding only; reviewer requires both the explicit catalog request and its actual rendered analysis-model gate. Preserve managed lifecycle/delegated MCP entrypoints and explain byte ownership exceptions: Force never takes over untracked or userModified OpenSpec or any existing OpenCode config. Conditional web URL is not a prerequisite for managed Vanessa or physical QA. Final protocol reconciliation resolves commands through the complete canonical adapter copyTo template, retaining nested SKILL.md, include and native-skill skipping; the obsolete Codex user-prompts instruction is removed. Economy announcement now describes the current client map, default inheritance and explicit models command rather than legacy globals or automatic model prompts.",
+      "upstreamSha256": "f4bf5c77573965f27f6d18f432903de32ba324732bf6df3612e42cd9065909f9",
+      "baselineSha256": "5bdfdf15269e3faff5c39fadba8e19982360b98456ca76d1689a007b031ab616",
+      "resultSha256": "aa1b0d924b3b53aefd8d4da55ec325daa9b17fd76ab4fd56891564371d4d34bf"
+    },
+    {
+      "path": "AGENTS.md",
+      "requirementId": "ITL-CODECHECKER-LATENCY-001",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "b6f13999392f42874f6e0105fdbc51109102444c7030cd83662aa850d7812e0c",
+      "baselineSha256": "b854207c71b110f344c8025ff6c19288dce08db9ee04d731417032ab9b757872",
+      "resultSha256": "097cddff9a8d91836d107adad74b970157af228f145a57872baba64974f2ba4a"
+    },
+    {
       "path": "content/agents/analytic.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "7fb72f6966a99af56ef0d51651692835bd15274dbebe3c0a3efbc23cdc7d32f6",
+      "upstreamSha256": "0d042708db03fbc057c30c7d3ba7058e3b8dc79aacfcd313cb26dea2070ace4d",
       "baselineSha256": "08c47cc1d2ffcacc3c1224a661a93284d2dc8171bc6228e6495b48cbd78a658d",
-      "resultSha256": "7fb72f6966a99af56ef0d51651692835bd15274dbebe3c0a3efbc23cdc7d32f6"
+      "resultSha256": "0d042708db03fbc057c30c7d3ba7058e3b8dc79aacfcd313cb26dea2070ace4d"
     },
     {
       "path": "content/agents/arch-reviewer.md",
@@ -302,9 +266,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "512087a1dece4567d5aaadc86ea63b6a2f109a0d9debdc5fb6d5d166defbd389",
+      "upstreamSha256": "361ef8bda0944487ab3434887c7b1e892c3b1a9e6aee43b5e5a298129c02f76b",
       "baselineSha256": "5e4ec49bf3dc2ed3ea1ab1120a3087aa0ccc74512f7052f8361c9119514f87b0",
-      "resultSha256": "512087a1dece4567d5aaadc86ea63b6a2f109a0d9debdc5fb6d5d166defbd389"
+      "resultSha256": "361ef8bda0944487ab3434887c7b1e892c3b1a9e6aee43b5e5a298129c02f76b"
     },
     {
       "path": "content/agents/code-reviewer.md",
@@ -391,10 +355,10 @@
       "path": "content/agents/tester.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings.",
-      "upstreamSha256": "03a7f863a849104ef80b3d9690fd4352c5a6da759b072607fdd774edc97b1289",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "d0a881e04b55b41815604e410a90df07e349f7c22b8f70f444b9ccf55d643ba3",
       "baselineSha256": "27b9c9593c41a763609e94ee22eb0949a60c1d0586bbda7bdc5bb316a2be4b3f",
-      "resultSha256": "5e099b27425222e3a3803ebeb5f4b08709eff2a90d070d81e5e5eb07efd8dfc1"
+      "resultSha256": "1d5973bd276631439be2834a5c095a2b5fe68364b802b9c3c1443feff6d472f8"
     },
     {
       "path": "content/commands/build-release.md",
@@ -418,37 +382,37 @@
       "path": "content/commands/checkmcp.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Previous resolved: Expose check_1c_logic as an optional r31 CodeChecker capability without removing check_1c_code. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md.",
-      "upstreamSha256": "ef748c34fd6e39362c2daab2fc5fccd7a44917ac60af42ec48f40620d50ce582",
+      "reason": "Previous resolved: Expose check_1c_logic as an optional r31 CodeChecker capability without removing check_1c_code. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "d08a007cebe5eb9da42894e1966ca896e9eb39022bb933ecb3af2be1c6120287",
       "baselineSha256": "a65f0eabd50d5ba3a8512c4afd33722980a85ca6545a13c4c0bdaf088bb2790e",
-      "resultSha256": "1cbe43cdf9c8dc07400a44fa0384752fc805c3ef4970323c5e94903fdaf77871"
+      "resultSha256": "753a09080ba8a5e74d56e9a516b6ba1e93a6705f62d64bb96d316c97790b551f"
     },
     {
       "path": "content/commands/checkupdates.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "622f6fb231dbc39cacb786911b017d66f7290dfcab78cbd7c7cf154594b998ff",
+      "upstreamSha256": "784ae6fdb56ed66b42e225ab4e6550bde32ab1ba8ddbf86d5f91a36f0d2dfaf3",
       "baselineSha256": "<absent>",
-      "resultSha256": "622f6fb231dbc39cacb786911b017d66f7290dfcab78cbd7c7cf154594b998ff"
+      "resultSha256": "784ae6fdb56ed66b42e225ab4e6550bde32ab1ba8ddbf86d5f91a36f0d2dfaf3"
     },
     {
       "path": "content/commands/deploy-and-test.md",
       "requirementId": "ITL-VERIFY-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-VERIFY-001.",
-      "upstreamSha256": "6bc0c4ec0cd64135debe18371135d3642ec8615b514467c38cbd9997e2580b29",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-VERIFY-001. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "206b9703072fc83f212876581aef91ae045c1753f97ce052b285496850f4a89a",
       "baselineSha256": "6ca3f73204001c67e6fe071d46d4f0049794255fb74be210f5894e2992670e2f",
-      "resultSha256": "71d733ba1ea96c9b81a6968aeca854975f0d95cdfe183040250b7ad6b4e8710b"
+      "resultSha256": "65544ffd45567d2f6f7adae2177c197aadc5181e7d4c03c25e7c59ec6e742aa7"
     },
     {
       "path": "content/commands/doctor.md",
       "requirementId": "ITL-DOCTOR-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-DOCTOR-001.",
-      "upstreamSha256": "881e4945b1d201f58d0cf52edc2c8195d9d40268d1ba1c7654ab994e96adb8ee",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Carry forward the exact qualified r23 implementation of ITL-DOCTOR-001. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "3605ce510dcf4c0654c09a228c65a5104f80e03ac8991d9b2c447134d37d970c",
       "baselineSha256": "efcaef57a58e503c5479b79b93317f58a1c9b8424bbb461359e77b2a0e24bb5b",
-      "resultSha256": "f398a9297e9c1c9ac8a4be3ad074a2f50469f8b26d033f591f4cf07417c49346"
+      "resultSha256": "2275720e5696afdd69f6cd8b59568101b2db7ea4aadc41cb62912ca170dd3ff8"
     },
     {
       "path": "content/commands/economymode.md",
@@ -527,9 +491,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "45f47fd0762bdf61874fbf5e9948e6afee837f7f6a4b6165efaad024e47c6257",
+      "upstreamSha256": "eb7e3dc50fda463d8079eca632d2bde824b5a7d6ec2ed1d21331d4ed32c3fe53",
       "baselineSha256": "<absent>",
-      "resultSha256": "45f47fd0762bdf61874fbf5e9948e6afee837f7f6a4b6165efaad024e47c6257"
+      "resultSha256": "eb7e3dc50fda463d8079eca632d2bde824b5a7d6ec2ed1d21331d4ed32c3fe53"
     },
     {
       "path": "content/commands/install-edt-mcp.md",
@@ -554,9 +518,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "d026e9ae57291be787ce18cc890695ca269ef7f0e5e62352fbd548f311b8522d",
+      "upstreamSha256": "57ae4c02c6c39a1d985df6620739c50e441aa39e9372273f166e3a5a6289b8d9",
       "baselineSha256": "<absent>",
-      "resultSha256": "d026e9ae57291be787ce18cc890695ca269ef7f0e5e62352fbd548f311b8522d"
+      "resultSha256": "57ae4c02c6c39a1d985df6620739c50e441aa39e9372273f166e3a5a6289b8d9"
     },
     {
       "path": "content/commands/install-rtk.md",
@@ -590,18 +554,18 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "801a7b998ec76e2c3a3aac283dc00e700301961248bfa013b44c761d4ee97f42",
+      "upstreamSha256": "0df479882c0557a1ad210050718afb6e55d6ea63d836227a2b00baa865a2fc55",
       "baselineSha256": "0eee52a786b3154571782b479070ff8e6e6ecc3c750e597b9b875136ad456507",
-      "resultSha256": "801a7b998ec76e2c3a3aac283dc00e700301961248bfa013b44c761d4ee97f42"
+      "resultSha256": "0df479882c0557a1ad210050718afb6e55d6ea63d836227a2b00baa865a2fc55"
     },
     {
       "path": "content/commands/installtools.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "resolved",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "77f6f85aac477113a9083ab18694c6dd9be571f9bead2763e1bfb6ef68a2ffd2",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "7030b93a88413e67ee65bdc4bf8186d7e62969f5444ae2e8a08e001cc691520a",
       "baselineSha256": "<absent>",
-      "resultSha256": "5fa96d3c4e135415c3b31c777119e5bff5cf4c305ebe27ecf5d364daf7eac19c"
+      "resultSha256": "c1f14daa7b2bcd610071e5af40740485aa9c3d4ae6e812d806de4f4c68426971"
     },
     {
       "path": "content/commands/litemode.md",
@@ -671,27 +635,27 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "4bfb94751609b8809b13e9e673b72943473f774a7b94efcf02ac1e043ee3b0e5",
+      "upstreamSha256": "5952e0da728e630a0ad1a485e99afcc47fcc2e155a861434b67bd0afd615da84",
       "baselineSha256": "<absent>",
-      "resultSha256": "4bfb94751609b8809b13e9e673b72943473f774a7b94efcf02ac1e043ee3b0e5"
+      "resultSha256": "5952e0da728e630a0ad1a485e99afcc47fcc2e155a861434b67bd0afd615da84"
     },
     {
       "path": "content/commands/setupmcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "78a8fce52aa4c74b6a48bccab1143a860a3167dc389251bd81daf5cb86ce63c9",
+      "upstreamSha256": "5686d7a1c6051a62abaadc017b7d02f6b5e2cec70db88968a004728e5a1d9b48",
       "baselineSha256": "<absent>",
-      "resultSha256": "78a8fce52aa4c74b6a48bccab1143a860a3167dc389251bd81daf5cb86ce63c9"
+      "resultSha256": "5686d7a1c6051a62abaadc017b7d02f6b5e2cec70db88968a004728e5a1d9b48"
     },
     {
       "path": "content/commands/support.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "281041e1542c0eb11b392a7cf0b53e2e7e15720bd1c38fd894a078c988f227d6",
+      "upstreamSha256": "f16dd0381fe76b8be8e49886bc11916ac77e23dfe917fdf270856338ea988665",
       "baselineSha256": "<absent>",
-      "resultSha256": "281041e1542c0eb11b392a7cf0b53e2e7e15720bd1c38fd894a078c988f227d6"
+      "resultSha256": "f16dd0381fe76b8be8e49886bc11916ac77e23dfe917fdf270856338ea988665"
     },
     {
       "path": "content/commands/supportstatus.md",
@@ -706,37 +670,37 @@
       "path": "content/commands/test-fix-loop.md",
       "requirementId": "ITL-VERIFICATION-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Managed test-fix-loop uses one ITL scenario-loop budget and full assessment; when no retained feature covers the request it may author an ignored transient executable feature, retain its evidence, and record a separate one-off receipt before export readiness.",
-      "upstreamSha256": "6cc34a0a41e038cc0c98f12f607e85938b86ff60b5a6ecd6b2d654e8e6099f93",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Managed test-fix-loop uses one ITL scenario-loop budget and full assessment; when no retained feature covers the request it may author an ignored transient executable feature, retain its evidence, and record a separate one-off receipt before export readiness. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "52c7f2eaf347561cb9b92cb4bcb9e5a67cef3769d766e8dc337d36ff0e19ef48",
       "baselineSha256": "<absent>",
-      "resultSha256": "3a189532c01c4a86e2879557b64d7ae56a83828b9b5c9ef46ffa66daa3426f23"
+      "resultSha256": "ad7448bc65b8d2a414874859c1c4cffc057a4134cf03be87c02ddfd3e7ee9baf"
     },
     {
       "path": "content/commands/uitests.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings.",
-      "upstreamSha256": "77ac0d9c7df89d8a64483ae0b4ff7391c4a83c51c821a202dd3b5a57cddcc096",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "462479edbcc56c187fa7ac60c65ac4fb313205f00ad1b46eb59d563b641de865",
       "baselineSha256": "<absent>",
-      "resultSha256": "86be4ac9a6253b2565badd342fd6512f236cb7b324993994a36855d66615896b"
+      "resultSha256": "67ddcdd132e34daa8fa54871e3d64d4f2c8650fa26f04cc4b15f215a7efeb44e"
     },
     {
       "path": "content/commands/update1cbase.md",
       "requirementId": "ITL-RETRY-001",
       "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-RETRY-001. Now resolved: adapt-itl-ownership-at-every-mutating-entrypoint; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "f385eec06a32a8dfc727a23505aebb01eaf221592f4282a9b6c37c97d6a51596",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-RETRY-001. Now resolved: adapt-itl-ownership-at-every-mutating-entrypoint; candidate bytes and requirement owner reviewed against new upstream and r36. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "7c0501d586250046436d092955f07bc48b8773d57ce1331306ef2dcbc709b4e3",
       "baselineSha256": "ce02ef5c13a39c92f4fc04778d03df1e0f86441a86f2e0d75e293db9982614a5",
-      "resultSha256": "7b010fcfe63253d897fccb6313f31d8bbbdd521bb8a2b14daa196a7a806f5f71"
+      "resultSha256": "ff4804551bb119c53f3b835bb54072346adc8de5f2d792d6594d83f912092d40"
     },
     {
       "path": "content/commands/updatemcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "55442b87c89bdf26f7f535071ee9245ce2c4c5d8803ec1c9b8263cc4df1a7072",
+      "upstreamSha256": "380437c6ca925d070c1c4641834d7747008c415d65444c5274f562c223ae47c1",
       "baselineSha256": "7562d755b6090ed5802aae7b16ae42f12414754e129c3cc909941f23f478749b",
-      "resultSha256": "55442b87c89bdf26f7f535071ee9245ce2c4c5d8803ec1c9b8263cc4df1a7072"
+      "resultSha256": "380437c6ca925d070c1c4641834d7747008c415d65444c5274f562c223ae47c1"
     },
     {
       "path": "content/commands/updaterules.md",
@@ -755,15 +719,6 @@
       "upstreamSha256": "75872a08be7cd42cb38c8972fedb87031911c4fc11312d151be6dafa38fb0e88",
       "baselineSha256": "12bd8a953b1486873d8184df7839453364bd5ef00772986bff9763e6325b0d9c",
       "resultSha256": "75872a08be7cd42cb38c8972fedb87031911c4fc11312d151be6dafa38fb0e88"
-    },
-    {
-      "path": "content/openspec-bundle/README.md",
-      "requirementId": "ITL-OPENSPEC-001",
-      "disposition": "resolved",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
-      "upstreamSha256": "c4428663ea0e7b3d9fd8412d4f12ba66cc35a38e89d06213322434cf0c6f358b",
-      "baselineSha256": "9447ced913bd188be86e92cb2b64dc17dcaae6bdc09215d72464163fe21929ed",
-      "resultSha256": "9c8c5d9f11783985f0e90b04dbed37af4f62868ffac1994d7bed39baaf8f8158"
     },
     {
       "path": "content/openspec-bundle/claude-code/.claude/commands/opsx-apply.md",
@@ -1000,15 +955,6 @@
       "resultSha256": "<absent>"
     },
     {
-      "path": "content/openspec-bundle/codex/.codex/skills/opsx-apply/SKILL.md",
-      "requirementId": "ITL-OPENSPEC-001",
-      "disposition": "take-upstream",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "ec3f15d7699f2a223cc9c8331d334f2ee30948682579ae5854949d1528ff615b",
-      "resultSha256": "<absent>"
-    },
-    {
       "path": "content/openspec-bundle/codex/.codex/skills/opsx-apply/agents/openai.yaml",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
@@ -1018,12 +964,12 @@
       "resultSha256": "<absent>"
     },
     {
-      "path": "content/openspec-bundle/codex/.codex/skills/opsx-archive/SKILL.md",
+      "path": "content/openspec-bundle/codex/.codex/skills/opsx-apply/SKILL.md",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
       "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "3c38bae66906b4a679027ae72d103f55b785e6ad9a8ec91d5948a641c2d3c5e9",
+      "baselineSha256": "ec3f15d7699f2a223cc9c8331d334f2ee30948682579ae5854949d1528ff615b",
       "resultSha256": "<absent>"
     },
     {
@@ -1036,12 +982,12 @@
       "resultSha256": "<absent>"
     },
     {
-      "path": "content/openspec-bundle/codex/.codex/skills/opsx-explore/SKILL.md",
+      "path": "content/openspec-bundle/codex/.codex/skills/opsx-archive/SKILL.md",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
       "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "c6f8c24fea20ff9a74819ba665a18f08951184665c50fb85bba06a6fdd6f0580",
+      "baselineSha256": "3c38bae66906b4a679027ae72d103f55b785e6ad9a8ec91d5948a641c2d3c5e9",
       "resultSha256": "<absent>"
     },
     {
@@ -1054,12 +1000,12 @@
       "resultSha256": "<absent>"
     },
     {
-      "path": "content/openspec-bundle/codex/.codex/skills/opsx-propose/SKILL.md",
+      "path": "content/openspec-bundle/codex/.codex/skills/opsx-explore/SKILL.md",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
       "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "fd4a2c5b8b444c503e8a92d88089fa479742ad2353b516521d654dce407bab3c",
+      "baselineSha256": "c6f8c24fea20ff9a74819ba665a18f08951184665c50fb85bba06a6fdd6f0580",
       "resultSha256": "<absent>"
     },
     {
@@ -1069,6 +1015,15 @@
       "reason": "Previous resolved: Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "9e45c94cce14e0c4f34e8d6875f2a8993b68f3b9122dddf6cf45c87fb14aa376",
+      "resultSha256": "<absent>"
+    },
+    {
+      "path": "content/openspec-bundle/codex/.codex/skills/opsx-propose/SKILL.md",
+      "requirementId": "ITL-OPENSPEC-001",
+      "disposition": "take-upstream",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-OPENSPEC-001. Now take-upstream: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "fd4a2c5b8b444c503e8a92d88089fa479742ad2353b516521d654dce407bab3c",
       "resultSha256": "<absent>"
     },
     {
@@ -1432,6 +1387,15 @@
       "resultSha256": "9e7014deb5866f96da3847055cb316217f6ba66ad3eac2796a33986f40442ccc"
     },
     {
+      "path": "content/openspec-bundle/README.md",
+      "requirementId": "ITL-OPENSPEC-001",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
+      "upstreamSha256": "c4428663ea0e7b3d9fd8412d4f12ba66cc35a38e89d06213322434cf0c6f358b",
+      "baselineSha256": "9447ced913bd188be86e92cb2b64dc17dcaae6bdc09215d72464163fe21929ed",
+      "resultSha256": "9c8c5d9f11783985f0e90b04dbed37af4f62868ffac1994d7bed39baaf8f8158"
+    },
+    {
       "path": "content/openspec-bundle/version.txt",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
@@ -1543,10 +1507,10 @@
       "path": "content/rules/dev-standards-env.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md.",
-      "upstreamSha256": "753e63be78da0e72c40fad12f2788ea09e11664b4072f84a206bc7f501445ad9",
+      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Accepted Q23: empty UI_TESTING defaults to essential; invalid UI_TESTING falls back to manual. Retire the old UI-only invalid-value correction requirement, retaining strict handling for other settings and named one-off/broader no-UI precedence.",
+      "upstreamSha256": "f3cb3c41d1831497405f249a4180802c0e35581ca3e22dcb68d4c20b564dc15b",
       "baselineSha256": "cea7ed0f4d99f6d651fad9e17fbbc094f0de1722169bbaa46e2b189edc06fb63",
-      "resultSha256": "522be38b7b8241ff36d8d3977e56ba0b0fb1ae5a1bc10a320625c304dc4e00ad"
+      "resultSha256": "634ba7b88873d0e39fac20a1138a7a7364122f22d5e68fe513f7e097237c4bdd"
     },
     {
       "path": "content/rules/development-process.md",
@@ -1675,6 +1639,15 @@
       "resultSha256": "68b76a02b7892dcf55bc8d103c972af2f7e6089c2d2900bd6668c913ba5f32e8"
     },
     {
+      "path": "content/rules/mcp-deployment.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "c1 intake: adopt the exact audited upstream path while preserving managed ownership and provider-specific routing in their existing owners.",
+      "upstreamSha256": "0738a9fecbaa6566712362eca357e295b6eafe46209475e120a625cce10cb9b1",
+      "baselineSha256": "<absent>",
+      "resultSha256": "0738a9fecbaa6566712362eca357e295b6eafe46209475e120a625cce10cb9b1"
+    },
+    {
       "path": "content/rules/mcp-first-search.md",
       "requirementId": "ITL-MCP-002",
       "disposition": "resolved",
@@ -1777,10 +1750,10 @@
       "path": "content/rules/orchestrator-economy.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md.",
-      "upstreamSha256": "b7ec8f13fb99bb0987c7bd4ecabc43dae1672c90bce0eb6fce1fe95d39f49c64",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "695e52f49e353c46b5690814df5d396df385819ea77ff2024bb6b0d6e52e48e8",
       "baselineSha256": "22abe2ac82f7d9f1257f0834ac08c2f21f16dcc5e4df021f62648ec3f9f6a7a2",
-      "resultSha256": "a49715991dde3144f5e3dcc6c4e3364b8be1ae8f9a3ddc67f9e7aa90f921ca2a"
+      "resultSha256": "2ce8f9961e41e862c0cd8bea730918bd9a641b2c42a4ec8ae7bd699fe15435a1"
     },
     {
       "path": "content/rules/platform-solutions.md",
@@ -1801,13 +1774,22 @@
       "resultSha256": "8cd7f1e171788484ce1e389b9f8a8802d238b0363a04e7e3e1d2b444d1e0e985"
     },
     {
+      "path": "content/rules/qa-testclient.md",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
+      "disposition": "resolved",
+      "reason": "c1 intake: retain upstream QA recipes; managed entrypoints must route to the existing ITL owner or refuse standalone runtime until its separate integration is qualified.",
+      "upstreamSha256": "26f9f2acb019870ca01830af9747ca0bb36e6012087c4da985adbf8c9139d3a2",
+      "baselineSha256": "<absent>",
+      "resultSha256": "f61504b5841a399ddc51937b5717eba0d970b7d59fcb57350d85b2989fa1b110"
+    },
+    {
       "path": "content/rules/query-design.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "resolved",
-      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity.",
-      "upstreamSha256": "ff55750caa6284b6d261646f8b55385ad5a4436ae82425d7d1cf8894dd5d1066",
+      "reason": "Qualify branch-local ROCTUP only for bounded read-only query evidence; preserve provider and target identity. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "61b55b24176438bafb5cc1d80310826b806d9c0cb67a4ac909e124af85774413",
       "baselineSha256": "d7f821a175fb1be2a6b527a6a91ada44abb71cf2fe1147a6dba52f4cf2f2b277",
-      "resultSha256": "bfd1122d431abe8f870d132d15195cc2b5ab8fc8c9ebc886f1aba4d3a5e4aa77"
+      "resultSha256": "88a82defb3e0ec78851517bad7032d91bdb54a6e9fda6b1a2d618ebd87256a5e"
     },
     {
       "path": "content/rules/registers-design.md",
@@ -1858,19 +1840,19 @@
       "path": "content/rules/subagents.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md.",
-      "upstreamSha256": "3a61f10f1ac87a6afa8810df2a096dec830e97fca9c1a6ec79f0469bfc7195ef",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "14259e04afdcdc5eeeca9e0dcbfc3b9ead008b4a6ae915b23b9f56514119e306",
       "baselineSha256": "72f64a51e8a05bf8f78e3d4d8a5707ab056433ee05473098e254cfeb29229ea2",
-      "resultSha256": "1a2a1b12dde7ca2a02760be6ffd6355d6b41ee0ae8e2b77497d3dc972d817f3c"
+      "resultSha256": "a88487403635a62431a51c965afa25f7b2cd77642c5fcb32127f0e9ec6de5d44"
     },
     {
       "path": "content/rules/support-feedback.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "50d16c52e226a855bb86fda0334dabc015501fd36a2c44da8dd384de33ee88fd",
+      "upstreamSha256": "2516772200cf0bacb3b8dbaa358fd6d1cc4f1f028b16dd2856a193d9fc669ce0",
       "baselineSha256": "<absent>",
-      "resultSha256": "50d16c52e226a855bb86fda0334dabc015501fd36a2c44da8dd384de33ee88fd"
+      "resultSha256": "2516772200cf0bacb3b8dbaa358fd6d1cc4f1f028b16dd2856a193d9fc669ce0"
     },
     {
       "path": "content/rules/systematic-debugging.md",
@@ -1885,19 +1867,19 @@
       "path": "content/rules/tooling-playbooks.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md.",
-      "upstreamSha256": "2165a90d271ebeba2b6d06c9f38e3dc41b4e9f57051de9aea85a9c6a9a8b977a",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. Resolved direct Gate 2 routing: selected roles and command entrypoints now prefer check_1c_logic, keep check_1c_code only as compatibility fallback, and defer gate selection and budget to verification-policy.md. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "0d34572450a04256e6476fff0a3ff3eb93e2afd8e91c8303da47b83648a512cf",
       "baselineSha256": "893bfba406a2d2ff30a19f408ba898e511508a5a6588c51bf97c4a756421fc2b",
-      "resultSha256": "d0bff632b93b9cdbe8345ee6753ec9dbb8c07dcb642d33ecaa2985408db188f0"
+      "resultSha256": "d20b31ef28439a5c404ecf787345836711b5ae7837248fe91a3413b7b67c101b"
     },
     {
       "path": "content/rules/ui-testing-tools.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "03fbed69c0da045b9519322284e835c993a4828c4925d8e8dc508682fef713c7",
+      "disposition": "resolved",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. c1 managed adaptation: existing Vanessa UI owns guard/attachment/cleanup; physical TOOL_QA=required remains distinct and standalone QA lifecycle is deferred in managed projects.",
+      "upstreamSha256": "2acf4b8f73c6426af3ee63d8b1cc072132ed121c2019dd3d4f9d69ba5eb78893",
       "baselineSha256": "aed478ba5c0b5f9dc522588a8c9eff556e509ff51b90b24ae682c6a6696962f6",
-      "resultSha256": "03fbed69c0da045b9519322284e835c993a4828c4925d8e8dc508682fef713c7"
+      "resultSha256": "da272a4f2ed9abe9b56d460236bb5d93e71ca4fe1bf3b25f81f11adb71ac9593"
     },
     {
       "path": "content/rules/verification-ai-evidence.md",
@@ -1921,19 +1903,19 @@
       "path": "content/rules/verification-delivery.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract.",
-      "upstreamSha256": "9a44121c7ac59dfb7310023127d78120144feeaaf943a7d13702b4f674233903",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "9051ba02fe0afcae6c479ada8f2b9a482a09f258dcf4f7e6369a568a94da0f0e",
       "baselineSha256": "899f0dc418cb41d38fe1daed7d94b2c87c228815ea38a9729b402d983386edc2",
-      "resultSha256": "e78213049cf082b815ec39dfb43cb2699fcf886853646f03220d1f1dc5146118"
+      "resultSha256": "8cf9a7a81a35bec92f12f868928226ada10b6b6514309645bcf4e26e0005de1e"
     },
     {
       "path": "content/rules/verification-gates.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract.",
-      "upstreamSha256": "592cd75cb7811fa9c9916ca3af56a5fb6ffe9ab7cdd8d4538146e7624473e657",
+      "reason": "Resolve Gate 3a bounded ROCTUP equivalence and session-only named UI override with persistent off and broad no-UI precedence. Prior qualified behavior: Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "507ce33fa6010ccd326bd723e9a353cc7add8cebc0464b2932129d3d47107dd8",
       "baselineSha256": "d6dc3ac926404a69099719a92e78b80ac8d7a8281b4f5eafc1d25216fd1a8de8",
-      "resultSha256": "0e242d7b4246c55d9f2d57bad07db5727620bd59f3f9f7228c9b0f64bf5a20c4"
+      "resultSha256": "7a073c75615e1e4d9760a97a9011befdcc89965e502ecb127bf8ebbc88d62a70"
     },
     {
       "path": "content/rules/verification-policy.md",
@@ -1963,15 +1945,6 @@
       "resultSha256": "2f2dde59eb87ff03fffb347cb702518e0d606339022df716cad0d575ab3ec347"
     },
     {
-      "path": "content/skills/1c-change-package/SKILL.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "665758f5741ffa56704fa623f533fc41d4dc8ee460e30820323f4610eb42e09a",
-      "baselineSha256": "<absent>",
-      "resultSha256": "665758f5741ffa56704fa623f533fc41d4dc8ee460e30820323f4610eb42e09a"
-    },
-    {
       "path": "content/skills/1c-change-package/references/manual-implementation.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "resolved",
@@ -1988,6 +1961,15 @@
       "upstreamSha256": "09843fe90fa20e3351b9b3bf3e86018e50a16ef30f294c2dc3b83f920cea12ca",
       "baselineSha256": "<absent>",
       "resultSha256": "09843fe90fa20e3351b9b3bf3e86018e50a16ef30f294c2dc3b83f920cea12ca"
+    },
+    {
+      "path": "content/skills/1c-change-package/SKILL.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "665758f5741ffa56704fa623f533fc41d4dc8ee460e30820323f4610eb42e09a",
+      "baselineSha256": "<absent>",
+      "resultSha256": "665758f5741ffa56704fa623f533fc41d4dc8ee460e30820323f4610eb42e09a"
     },
     {
       "path": "content/skills/1c-code-search/SKILL.md",
@@ -2019,11 +2001,11 @@
     {
       "path": "content/skills/1c-live-ib/SKILL.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "0dd6112ff3271aef656668e2af6ff42801f9a985895c965a736323df7b4bafe6",
+      "disposition": "resolved",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline. c1 resolved: managed metadata-first bounded ROCTUP on the exact dev/test infobase; actual-schema validatequery/vcvalidatequery parsing remains independent from execution, with conditional HTTP fallback and explicit mutation boundaries.",
+      "upstreamSha256": "45dc8fbc3466b29a9f57654d530352111176c15f992f4c15e2c3d5286f0ca9f0",
       "baselineSha256": "<absent>",
-      "resultSha256": "0dd6112ff3271aef656668e2af6ff42801f9a985895c965a736323df7b4bafe6"
+      "resultSha256": "67e77a242f6114cb88fd6756ef6e3434a17ecaccbe979b5311e21e1bfa34bda0"
     },
     {
       "path": "content/skills/1c-meta-info/SKILL.md",
@@ -2033,33 +2015,6 @@
       "upstreamSha256": "4e23a21cf1a491f55d3a53e25ee84d3f7d12310b944f43053ac27e3234279f62",
       "baselineSha256": "<absent>",
       "resultSha256": "4e23a21cf1a491f55d3a53e25ee84d3f7d12310b944f43053ac27e3234279f62"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/NOTICE.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "bc5dd5d35328721d133a6f933ab831995e2b0c12dffe4035dfde703695d4a4c3",
-      "baselineSha256": "<absent>",
-      "resultSha256": "bc5dd5d35328721d133a6f933ab831995e2b0c12dffe4035dfde703695d4a4c3"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/SKILL.md",
-      "requirementId": "ITL-METADATA-001",
-      "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-METADATA-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "006c88b20278d9039eb0234d41a074553c0fd9f46554979ccc63173d916af909",
-      "baselineSha256": "f17933598c9a00acf7d25978080240271aed5eede759b33597b41d229fc4c247",
-      "resultSha256": "ac96326e09541a26a11c791ea06761b6498a6ee4a7badbde68976d8b1e742c85"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/docs/CHANGELOG.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "00a9d244dc6833e0cecc5274c9dd24a2b68a1fbed924ec8db8535fea16d075b7",
-      "baselineSha256": "<absent>",
-      "resultSha256": "00a9d244dc6833e0cecc5274c9dd24a2b68a1fbed924ec8db8535fea16d075b7"
     },
     {
       "path": "content/skills/1c-metadata-manage/docs/bsp-manage.md",
@@ -2087,6 +2042,15 @@
       "upstreamSha256": "200f3a2f62569cced7a0f4f593bf4ada7af13fe280f5656cb7b434d6162a9f3e",
       "baselineSha256": "04bc9bda33bf8ac6f363d375512a386087432c4038503f2cde1f59665978cfed",
       "resultSha256": "200f3a2f62569cced7a0f4f593bf4ada7af13fe280f5656cb7b434d6162a9f3e"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/docs/CHANGELOG.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "5b236699fb23d4894e67b4893f8de56b85250ec6ca0c43ef28e8051f575d53e9",
+      "baselineSha256": "<absent>",
+      "resultSha256": "5b236699fb23d4894e67b4893f8de56b85250ec6ca0c43ef28e8051f575d53e9"
     },
     {
       "path": "content/skills/1c-metadata-manage/docs/db-manage.md",
@@ -2264,9 +2228,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "66c95b063d7356e333ebaea4ddbcfc03f61362208202c36bc9de3da93abd229b",
+      "upstreamSha256": "71c622268a7eeafe5a99f3dfb93dc814426fb0e425b1fabf71edf7183e24f32d",
       "baselineSha256": "d41bba1b8fb5c8e6e70444ce073dafce19b634c8ed7dead51fb6458aee69a4e8",
-      "resultSha256": "66c95b063d7356e333ebaea4ddbcfc03f61362208202c36bc9de3da93abd229b"
+      "resultSha256": "71c622268a7eeafe5a99f3dfb93dc814426fb0e425b1fabf71edf7183e24f32d"
     },
     {
       "path": "content/skills/1c-metadata-manage/docs/xdto-manage.md",
@@ -2278,13 +2242,76 @@
       "resultSha256": "667ca2b88365ac55541d0f7695fc46b523693d68d79a88a7cca41d1c65f00aa0"
     },
     {
-      "path": "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1",
+      "path": "content/skills/1c-metadata-manage/NOTICE.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "bc5dd5d35328721d133a6f933ab831995e2b0c12dffe4035dfde703695d4a4c3",
+      "baselineSha256": "<absent>",
+      "resultSha256": "bc5dd5d35328721d133a6f933ab831995e2b0c12dffe4035dfde703695d4a4c3"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/SKILL.md",
+      "requirementId": "ITL-METADATA-001",
+      "disposition": "resolved",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-METADATA-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
+      "upstreamSha256": "006c88b20278d9039eb0234d41a074553c0fd9f46554979ccc63173d916af909",
+      "baselineSha256": "f17933598c9a00acf7d25978080240271aed5eede759b33597b41d229fc4c247",
+      "resultSha256": "ac96326e09541a26a11c791ea06761b6498a6ee4a7badbde68976d8b1e742c85"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/_common/Assert-ItlLifecycleOwnership.ps1",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
+      "disposition": "carry-forward",
+      "reason": "Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "343976e6c59eabd46d025d5056526e3c54b3b684051ca4dfef54c4c38f321022",
+      "resultSha256": "343976e6c59eabd46d025d5056526e3c54b3b684051ca4dfef54c4c38f321022"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/_common/dev_env.py",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "0528029f4ed32d2259a13c7b338e8dae6ca89535100b00720bc1b69106405a6a",
+      "upstreamSha256": "ff4a7e0624d3244563397fd5530c2d06bcaf0d127ef56f8ed13765b1a67c72db",
+      "baselineSha256": "<absent>",
+      "resultSha256": "ff4a7e0624d3244563397fd5530c2d06bcaf0d127ef56f8ed13765b1a67c72db"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/_common/DevEnv.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "279243ed4c692cf221e93b82cfe007903db3968bf0e1f70cc51055bcb32dbe36",
+      "baselineSha256": "00c7d0e928cf0bff277979b4ec04f90662df254c4703a5c35f18d826bf42b34b",
+      "resultSha256": "279243ed4c692cf221e93b82cfe007903db3968bf0e1f70cc51055bcb32dbe36"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/_common/Invoke-1CEdit.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "resolved",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "d9b8254b748f6dca8e18151e08f5c5cb7d62fc083ac7627ee4f0240c9d8cc705",
+      "baselineSha256": "<absent>",
+      "resultSha256": "42acf359961fabbbb9b00ade3deb7309289c9316e3d24338889c7e2584b8fd2f"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/_common/MetadataAddress.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "b50f44935978be09c2e822c782129f8c6e7761984f157a424f0d18ba27bd7698",
+      "baselineSha256": "<absent>",
+      "resultSha256": "b50f44935978be09c2e822c782129f8c6e7761984f157a424f0d18ba27bd7698"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/cf-edit.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "resolved",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline. c1 resolved: adopt the real sibling cf-validator path and propagate its nonzero exit through the editor; the same real failing validation and repaired edit are qualified in metadata-c1-contract-20261002/qualification.json.",
+      "upstreamSha256": "1d032e26f015cd955b67e1cbeca9007daa934fc2a8db79ddd3ec38f940b16023",
       "baselineSha256": "7dce55efefb52f3e35716173d1883e967b47460ddb5f779a28f078f1173efeaf",
-      "resultSha256": "0528029f4ed32d2259a13c7b338e8dae6ca89535100b00720bc1b69106405a6a"
+      "resultSha256": "65799b24299f3dec4751dd2d6a6e869c45a8e12118da3aad0cff1727c46e29b0"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-cf-manage/scripts/dump-validate.ps1",
@@ -2300,9 +2327,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "bcb1aef4300926f2d8f0b98471bc975457138bf2760bae01f3ecd8732d7dec5b",
+      "upstreamSha256": "c53820d955729a47c3de6270f6562bef6067859096e07e7dc71c0111c525614a",
       "baselineSha256": "3926b47dad1e21ef481afc678d41f52ea48bb0a5b21f4424e46ff48cce23309c",
-      "resultSha256": "bcb1aef4300926f2d8f0b98471bc975457138bf2760bae01f3ecd8732d7dec5b"
+      "resultSha256": "c53820d955729a47c3de6270f6562bef6067859096e07e7dc71c0111c525614a"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-db-ops/scripts/db-create.ps1",
@@ -2431,15 +2458,6 @@
       "resultSha256": "7d4f06b30d6bf924e7a2d67c66215290656a742df8621ae029fd1405f2bbd28d"
     },
     {
-      "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/presets/README.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "2bb1e23b4533f4d9851a8de3469dfdf35dc44b7390f5754d2b2fb2b700e35704",
-      "baselineSha256": "c43f12fca2877512bdd5c5e9f25bd4a92d5594392149e72454e8fb4f517f5c16",
-      "resultSha256": "2bb1e23b4533f4d9851a8de3469dfdf35dc44b7390f5754d2b2fb2b700e35704"
-    },
-    {
       "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/presets/erp-standard.json",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
@@ -2449,31 +2467,40 @@
       "resultSha256": "54460e6ead72749c91f271b72b9d13ea3da08578319993f2fe687b784b29ff27"
     },
     {
-      "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1",
+      "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/presets/README.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "2bb1e23b4533f4d9851a8de3469dfdf35dc44b7390f5754d2b2fb2b700e35704",
+      "baselineSha256": "c43f12fca2877512bdd5c5e9f25bd4a92d5594392149e72454e8fb4f517f5c16",
+      "resultSha256": "2bb1e23b4533f4d9851a8de3469dfdf35dc44b7390f5754d2b2fb2b700e35704"
+    },
+    {
+      "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "resolved",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline. c1 resolved: compile the button/command Representation aliases and XML property order accepted by the c1 editor and validator; retain compiler-only fields. Exact original writer failures and unchanged repaired cases passed in metadata-c1-contract-20261002/qualification.json.",
       "upstreamSha256": "8fc4992b05d3bfcb590a77b4a7e8cf7e90d812f29912347a1d4e2969a992a986",
       "baselineSha256": "33ae320f7341f4612c2850bff48255f639cce92254198948d80c340edf741c4f",
-      "resultSha256": "8fc4992b05d3bfcb590a77b4a7e8cf7e90d812f29912347a1d4e2969a992a986"
+      "resultSha256": "79a8f2f130e562d605106b4378cef72a3058ac933f43eb149210f9819b4c40ab"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-form-compile/scripts/form-compile.py",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
+      "disposition": "resolved",
+      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline. c1 resolved: keep PowerShell/Python compiler parity for button/command Representation aliases and canonical XML property order, preserving compiler-only fields; qualified by the same real validator cases.",
       "upstreamSha256": "0f1e05bab5e0e5029867b1daf824c065bbfa366aea30d45ae94d7c9cc3de47c4",
       "baselineSha256": "<absent>",
-      "resultSha256": "0f1e05bab5e0e5029867b1daf824c065bbfa366aea30d45ae94d7c9cc3de47c4"
+      "resultSha256": "017e394395041880f6c8e4dcfe65f08ae3cd2a74cffae3bffdb475eaa54bd59e"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-form-edit/scripts/form-edit.ps1",
       "requirementId": "ITL-MANAGED-FORM-ROW-GUARD-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by preserving explicit false row-change values.",
-      "upstreamSha256": "b751b0459f395c794ea46745bac5acec4132e5b50d7bb8f9474953820fefcb79",
+      "reason": "Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 by preserving explicit false row-change values. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 reconciles the accepted button/command XDTO ordering and distinct Representation enums with preserved descriptor/row-boolean behavior; 36 retained contracts and exact writer cases passed. Native platform form loading remains unverified.",
+      "upstreamSha256": "1a111b972ab9ce7a63f02d25d4609de57b09d4ca106b854a75597741ac6f5d13",
       "baselineSha256": "837aecca93a0c1e5efce3cd3573a6754a85e933baaf365705bcb2358450a82f7",
-      "resultSha256": "ec9bbe7384d94cb0c3ecd0e629847883e9c968f1bbc26318c13439d818b86c15"
+      "resultSha256": "c77d0ab0ef90b1d2cbf560cb3b68a65a3f9394606544b7779b0b78979a9fb1a8"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-form-scaffold/scripts/form-add.ps1",
@@ -2515,10 +2542,10 @@
       "path": "content/skills/1c-metadata-manage/tools/1c-form-validate/scripts/form-validate.ps1",
       "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
       "disposition": "resolved",
-      "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence.",
-      "upstreamSha256": "8f778a6bb172e958829c6e90ac82f9d1c12896b1cefa338eeabb46f10a1e8c40",
+      "reason": "Report unassigned command actions as advisory without dummy handlers; retain structural errors and regression evidence. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 adds blocking invalid button/command Representation while retaining advisory unassigned Action and the qualified descriptor/UUID/boolean contracts; do not invent a dummy handler to pass validation.",
+      "upstreamSha256": "1097c909fe93ce957ebbb6fbe77b86b47218d4a67538e4bdc61674adf1760fae",
       "baselineSha256": "6905e7b9b1d5219b3c173b7f6208369ce940bbd70d7360133729e2bfcbeb270b",
-      "resultSha256": "79a7772c7aa07c105d42728892a96c40953e0a23e23a37b23b9e1fa202549b7f"
+      "resultSha256": "30142a73cd4cb019c4985ba5153383ec270966e9eb4c18739e4c49e8d3d5fbf3"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-help-manage/scripts/add-help.ps1",
@@ -2534,9 +2561,9 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "b37f59107d60071840077cad4e90f952ef486099610be03091a4d0c355474909",
+      "upstreamSha256": "612193261ee580f270469f18defb727a3ce407bde205a616c334e65c7a66ae9c",
       "baselineSha256": "0402b847075f4a058b1736169653ea70a36abd467d2e4eda3fad737db3d8d425",
-      "resultSha256": "b37f59107d60071840077cad4e90f952ef486099610be03091a4d0c355474909"
+      "resultSha256": "612193261ee580f270469f18defb727a3ce407bde205a616c334e65c7a66ae9c"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-meta-compile/scripts/meta-compile.ps1",
@@ -2615,18 +2642,18 @@
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "53953f10ba5986fce57db57ef70cef36eab2b0094158653309085b2e943d69e9",
+      "upstreamSha256": "bc81f7edf0f8a134c716b2b31ba26063c911d6af9084223885f88ca738fd2aaa",
       "baselineSha256": "2492616af2e2fab5fc6d43a34f025d39133ec4a9208e913234cc0b4dbb4628aa",
-      "resultSha256": "53953f10ba5986fce57db57ef70cef36eab2b0094158653309085b2e943d69e9"
+      "resultSha256": "bc81f7edf0f8a134c716b2b31ba26063c911d6af9084223885f88ca738fd2aaa"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-subsystem-manage/scripts/subsystem-edit.ps1",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "3e5d7211bbe10e7aab0fd8e9444ba6baa7c59eaaeb2f384cc1262c3a04a98a30",
+      "upstreamSha256": "618a6dcc914eb2e569779f947abc98bc2e41319f57b779d993b1be4759a5c7c1",
       "baselineSha256": "823f5f7f579c68d136a1b52fc687ef2b84dab348097f365d19c23e5b0b9bfb72",
-      "resultSha256": "3e5d7211bbe10e7aab0fd8e9444ba6baa7c59eaaeb2f384cc1262c3a04a98a30"
+      "resultSha256": "618a6dcc914eb2e569779f947abc98bc2e41319f57b779d993b1be4759a5c7c1"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-template-manage/scripts/add-template.ps1",
@@ -2647,6 +2674,15 @@
       "resultSha256": "7a783226646aba047ffbd29e712a6c1f83364e42b7fbd3b2cb6fd5b9a261caa6"
     },
     {
+      "path": "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web_common.py",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "resolved",
+      "reason": "adapt-itl-ownership-at-every-mutating-entrypoint; exact candidate audited against upstream and r36 baseline. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Adopt c1 publishExtensionsByDefault in shared VRD generation, preserving the existing mutating-entrypoint owner. Offline web regression passed; no publication or live HTTP acceptance is claimed.",
+      "upstreamSha256": "4145a211597804cc79a9b3da7c732bccb5230221bccd553cdf53577131319676",
+      "baselineSha256": "<absent>",
+      "resultSha256": "f8d56dd1a5f4b7de138662e1b99511b3f8503272cdeb8a53c5fdd09b40956668"
+    },
+    {
       "path": "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-info.py",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
@@ -2658,11 +2694,11 @@
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.ps1",
       "requirementId": "ITL-LIFECYCLE-DB-001",
-      "disposition": "carry-forward",
-      "reason": "Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001.",
-      "upstreamSha256": "ec854f6d4572f02aab75c083b0a48bce779bb334e9ec64a26cb5de01669dfa14",
+      "disposition": "resolved",
+      "reason": "Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. Adopt c1 publishExtensionsByDefault for actual extension HTTP services while retaining the ITL mutating-entrypoint lifecycle guard; web publication remains separate from data-query/UI authorization.",
+      "upstreamSha256": "07dbd1cfc48c4ae4b66e3722a2914900801d2898fdb82a739c3590c086fa7542",
       "baselineSha256": "990b6d7d39ab9e1adee5e66922bef5f92fc70169c0f30f05db0f2285f4477485",
-      "resultSha256": "990b6d7d39ab9e1adee5e66922bef5f92fc70169c0f30f05db0f2285f4477485"
+      "resultSha256": "39e0c5fbe3ee9ee0cec1ebb8951770d5584e50eac0ed8405b22c7f6ee8d89a8d"
     },
     {
       "path": "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web-publish.py",
@@ -2710,58 +2746,13 @@
       "resultSha256": "79f566c72efb0b61c4a98ab7520b183fe015c4fd70d4ef0405863a9a5d37ad1d"
     },
     {
-      "path": "content/skills/1c-metadata-manage/tools/1c-web-ops/scripts/web_common.py",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "resolved",
-      "reason": "adapt-itl-ownership-at-every-mutating-entrypoint; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "8442c6882b10618d43f3f899217e45407d498491e14ca1168cc8aebd968032e4",
-      "baselineSha256": "<absent>",
-      "resultSha256": "135f51995d7bd446492d9d40f081d495143d5bebb1a80e45b361492e1abcb747"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/tools/_common/Assert-ItlLifecycleOwnership.ps1",
-      "requirementId": "ITL-LIFECYCLE-DB-001",
-      "disposition": "carry-forward",
-      "reason": "Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "343976e6c59eabd46d025d5056526e3c54b3b684051ca4dfef54c4c38f321022",
-      "resultSha256": "343976e6c59eabd46d025d5056526e3c54b3b684051ca4dfef54c4c38f321022"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/tools/_common/DevEnv.ps1",
+      "path": "content/skills/1c-metadata-manage/tools/1c-xdto-manage/scripts/xdto-edit.ps1",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "279243ed4c692cf221e93b82cfe007903db3968bf0e1f70cc51055bcb32dbe36",
-      "baselineSha256": "00c7d0e928cf0bff277979b4ec04f90662df254c4703a5c35f18d826bf42b34b",
-      "resultSha256": "279243ed4c692cf221e93b82cfe007903db3968bf0e1f70cc51055bcb32dbe36"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/tools/_common/Invoke-1CEdit.ps1",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "resolved",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "d9b8254b748f6dca8e18151e08f5c5cb7d62fc083ac7627ee4f0240c9d8cc705",
-      "baselineSha256": "<absent>",
-      "resultSha256": "42acf359961fabbbb9b00ade3deb7309289c9316e3d24338889c7e2584b8fd2f"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/tools/_common/MetadataAddress.ps1",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "b50f44935978be09c2e822c782129f8c6e7761984f157a424f0d18ba27bd7698",
-      "baselineSha256": "<absent>",
-      "resultSha256": "b50f44935978be09c2e822c782129f8c6e7761984f157a424f0d18ba27bd7698"
-    },
-    {
-      "path": "content/skills/1c-metadata-manage/tools/_common/dev_env.py",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "reconcile-preserved-fixes-with-new-tool-behavior; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "ff4a7e0624d3244563397fd5530c2d06bcaf0d127ef56f8ed13765b1a67c72db",
-      "baselineSha256": "<absent>",
-      "resultSha256": "ff4a7e0624d3244563397fd5530c2d06bcaf0d127ef56f8ed13765b1a67c72db"
+      "reason": "c1 intake: adopt the exact audited upstream path while preserving managed ownership and provider-specific routing in their existing owners.",
+      "upstreamSha256": "c3f9ba518d9f1cab95791ad265bb5458dbfab199d3d5c0bcc3c93d6fce788734",
+      "baselineSha256": "408ffa10150a552e47a93f4a3a1e5641662861cb7558b0aaab0540762e006f60",
+      "resultSha256": "c3f9ba518d9f1cab95791ad265bb5458dbfab199d3d5c0bcc3c93d6fce788734"
     },
     {
       "path": "content/skills/1c-platform-help/SKILL.md",
@@ -2773,13 +2764,22 @@
       "resultSha256": "c0e2a49c4abbe632ae9f98c091726e0902c0441d20273092a4d94675a63d55df"
     },
     {
-      "path": "content/skills/1c-repository-manage/SKILL.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "path": "content/skills/1c-qa-testing/scripts/qa-testclient.ps1",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
       "disposition": "resolved",
-      "reason": "adapt-itl-ownership-at-every-mutating-entrypoint; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "e956023530520ccab2b760cf1de63fd9d1638e43c28ef4e7b4cae6f6beb5cf94",
+      "reason": "c1 intake: retain upstream QA recipes; managed entrypoints must route to the existing ITL owner or refuse standalone runtime until its separate integration is qualified.",
+      "upstreamSha256": "24dff51261f7a22208276ab39bf4a36945509d7b2faae163e1e3c204ae462a04",
       "baselineSha256": "<absent>",
-      "resultSha256": "133e7537fe709e883c33355eea25ccb8cdaf729c558a4ba52087edcefa40d435"
+      "resultSha256": "c131b014c65b3596738e9eda17f8457b4eae48a0885049fe393127b43007035e"
+    },
+    {
+      "path": "content/skills/1c-qa-testing/SKILL.md",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
+      "disposition": "resolved",
+      "reason": "c1 intake: retain upstream QA recipes; managed entrypoints must route to the existing ITL owner or refuse standalone runtime until its separate integration is qualified. Align the QA skill with the canonical named one-off invocation rule: routine off stays disabled, an exact named run overrides only that invocation, and a broader no-UI instruction still forbids it. Managed and physical-provider gates are unchanged.",
+      "upstreamSha256": "d7e3b5051a8f0600bfed6c119e5eab9cebf101f4f3d77c1629d5af73953e5d54",
+      "baselineSha256": "<absent>",
+      "resultSha256": "7daa1abd087263d88182f50c50c766dacbe86dc7f8c72c3a29f306572144c485"
     },
     {
       "path": "content/skills/1c-repository-manage/docs/repo-ops.md",
@@ -2798,6 +2798,15 @@
       "upstreamSha256": "4eed3e941d61fe17abbfc5b743e41aee75b5dcc0fcbe5639a426f1118bcfb975",
       "baselineSha256": "<absent>",
       "resultSha256": "4eed3e941d61fe17abbfc5b743e41aee75b5dcc0fcbe5639a426f1118bcfb975"
+    },
+    {
+      "path": "content/skills/1c-repository-manage/SKILL.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "resolved",
+      "reason": "adapt-itl-ownership-at-every-mutating-entrypoint; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "e956023530520ccab2b760cf1de63fd9d1638e43c28ef4e7b4cae6f6beb5cf94",
+      "baselineSha256": "<absent>",
+      "resultSha256": "133e7537fe709e883c33355eea25ccb8cdaf729c558a4ba52087edcefa40d435"
     },
     {
       "path": "content/skills/1c-repository-manage/tools/1c-repo-ops/scripts/repo-ops.ps1",
@@ -2821,10 +2830,10 @@
       "path": "content/skills/1c-ui-regression/SKILL.md",
       "requirementId": "ITL-VERIFICATION-001",
       "disposition": "resolved",
-      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings.",
-      "upstreamSha256": "c649ff63d3da5a00a50f26547d0e085eee85a497b1a34eb6a0f7157fb460ad79",
+      "reason": "Apply a session-only named UI test override while preserving persistent off, broad no-UI priority, and correction for invalid settings. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "b653f271d6ad626243e9a9086438a119468340790ee55032575ca0c263353b1f",
       "baselineSha256": "<absent>",
-      "resultSha256": "08f5bd424d0c2a4b1eb86a11126d8ace55ef4b4ddd11f65e17788c37ed9a78bf"
+      "resultSha256": "ba3b58d99789a76c55f813c0df209b9a4355ade5c81035dbeea1903d0074b62f"
     },
     {
       "path": "content/skills/1c-validate/SKILL.md",
@@ -2863,6 +2872,15 @@
       "resultSha256": "4b23a04a0dbc0ffd2a48cbf7304fdc12bf4395de32586022c42fee37f0378b9b"
     },
     {
+      "path": "content/skills/domain-modeling/agents/openai.yaml",
+      "requirementId": "ITL-GRILLING-001",
+      "disposition": "carry-forward",
+      "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b",
+      "resultSha256": "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b"
+    },
+    {
       "path": "content/skills/domain-modeling/CONTEXT-FORMAT.md",
       "requirementId": "ITL-GRILLING-001",
       "disposition": "carry-forward",
@@ -2881,13 +2899,13 @@
       "resultSha256": "2c21405a5467e189e342daf2187eff862b403d01e1d2d6124a432299137ba8df"
     },
     {
-      "path": "content/skills/domain-modeling/agents/openai.yaml",
+      "path": "content/skills/grill-me/agents/openai.yaml",
       "requirementId": "ITL-GRILLING-001",
       "disposition": "carry-forward",
       "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b",
-      "resultSha256": "f6bf2aa996c6e6f53fdd0708e18a0d16a56aed8322cca59fedbe3c0d2c75f06b"
+      "baselineSha256": "7256662e901cd45611a192c8fb0a78fe9e398946104497be7a85a024ea018237",
+      "resultSha256": "7256662e901cd45611a192c8fb0a78fe9e398946104497be7a85a024ea018237"
     },
     {
       "path": "content/skills/grill-me/SKILL.md",
@@ -2899,13 +2917,13 @@
       "resultSha256": "3267f3bd91606f98ae65701a736977c1779e735adb27adf82bf35a36905248dc"
     },
     {
-      "path": "content/skills/grill-me/agents/openai.yaml",
+      "path": "content/skills/grill-with-docs/agents/openai.yaml",
       "requirementId": "ITL-GRILLING-001",
       "disposition": "carry-forward",
       "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "7256662e901cd45611a192c8fb0a78fe9e398946104497be7a85a024ea018237",
-      "resultSha256": "7256662e901cd45611a192c8fb0a78fe9e398946104497be7a85a024ea018237"
+      "baselineSha256": "55775cbb110e6aa5787975a5cd915cea9c9b07bbde139d253af32d4c2b2ebe7a",
+      "resultSha256": "55775cbb110e6aa5787975a5cd915cea9c9b07bbde139d253af32d4c2b2ebe7a"
     },
     {
       "path": "content/skills/grill-with-docs/SKILL.md",
@@ -2917,13 +2935,13 @@
       "resultSha256": "f0b5bcf5672f3deeff63fa4a1a74b3cb23790e6dd6eee9e40078fb6b3263f1b4"
     },
     {
-      "path": "content/skills/grill-with-docs/agents/openai.yaml",
+      "path": "content/skills/grilling/agents/openai.yaml",
       "requirementId": "ITL-GRILLING-001",
       "disposition": "carry-forward",
       "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36.",
       "upstreamSha256": "<absent>",
-      "baselineSha256": "55775cbb110e6aa5787975a5cd915cea9c9b07bbde139d253af32d4c2b2ebe7a",
-      "resultSha256": "55775cbb110e6aa5787975a5cd915cea9c9b07bbde139d253af32d4c2b2ebe7a"
+      "baselineSha256": "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b",
+      "resultSha256": "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b"
     },
     {
       "path": "content/skills/grilling/SKILL.md",
@@ -2935,15 +2953,6 @@
       "resultSha256": "1e0c9ff2ac2a49ccab5cb76c044eb7e2792337da59f52d303715ffc375970ce2"
     },
     {
-      "path": "content/skills/grilling/agents/openai.yaml",
-      "requirementId": "ITL-GRILLING-001",
-      "disposition": "carry-forward",
-      "reason": "Previous downstream-only: Add the reviewed r29 implementation of ITL-GRILLING-001. Now carry-forward: preserve-grill-selection-attribution-and-source-boundary; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b",
-      "resultSha256": "1411d7df7d99b7e621a1ff8283c8133cc2464be63d064e52d8ce169c6800ee9b"
-    },
-    {
       "path": "content/skills/handoff/SKILL.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "take-upstream",
@@ -2953,85 +2962,76 @@
       "resultSha256": "0d18a871a3fcac1e7b33cf6963e0f726fe0ecddeee419f9629f7f5658c89a932"
     },
     {
-      "path": "content/skills/mcp-1c-tools/SKILL.md",
-      "requirementId": "ITL-MCP-002",
-      "disposition": "resolved",
-      "reason": "Resolve ITL-MCP-002 for r25 with bounded MCP-first fallback outside the branch delta.",
-      "upstreamSha256": "f54c2adf254746bebae6b398fa6cb00f920c08f6afa6214c2cfb02454758ae2c",
-      "baselineSha256": "3e0b05095c62527410edcebdb9e0244bfa4e2a423c12eb9d01f4c354ed00b9a7",
-      "resultSha256": "1980150bc53428bce09504482b845f2d2ceaf48749453be6ea6f80b4f5f72d71"
-    },
-    {
-      "path": "content/skills/mcp-1c-tools/docs/1C-docs-mcp.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "3b415a3915e78e223b716d36ebf82e44ae8046b1cf29525bc56e0bd3c395cde0",
-      "baselineSha256": "fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf",
-      "resultSha256": "3b415a3915e78e223b716d36ebf82e44ae8046b1cf29525bc56e0bd3c395cde0"
-    },
-    {
       "path": "content/skills/mcp-1c-tools/docs/1c-code-check-mcp.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract.",
-      "upstreamSha256": "c3f3cc16c77ffe235fa14c04a3bf580ba2db607ab7f470a2900b743dcf2daedf",
+      "reason": "Resolve ITL-CODECHECKER-LATENCY-001 for r31 by restoring standalone syntax evidence and routing logic/performance to check_1c_logic with check_1c_code fallback. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "c61e243e9fbee526cc86d190daea5a785862a9702552403d114ff35fedad5e88",
       "baselineSha256": "be875218a7be1f42c1f2798aef112d1a8c1a616a7463a79bfcd57e03811fc16e",
-      "resultSha256": "3c53c49a3a43c053e0954afdde4f508cbf7e2c35176f9d9592e6f83ae58db191"
+      "resultSha256": "6d0a85ecf3cb5f29fbcaa0eafc150ecb25d57fb9463f680635a3981fbfbf923d"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-code-metadata-mcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "e9495c8f7ab402a8bc549cb613e3734ed0096a651ca8bd92c806231185cbbfb5",
+      "upstreamSha256": "3240867f99cc1e0670b35360c193dc15e99866cfbc7f39db316bee5797b00d34",
       "baselineSha256": "16784cdf6c10a66324855d1332962a92341e08b8ea8c017855262c7bbe914e20",
-      "resultSha256": "e9495c8f7ab402a8bc549cb613e3734ed0096a651ca8bd92c806231185cbbfb5"
+      "resultSha256": "3240867f99cc1e0670b35360c193dc15e99866cfbc7f39db316bee5797b00d34"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-data-mcp.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
-      "disposition": "take-upstream",
-      "reason": "Previous resolved: Keep r31 live-infobase escalation distinct from standalone syntax and logic-only static checks. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "9199c551bc7b5293ba5e3d3c713c9735ee667847301838623c115ea44c5022d0",
+      "disposition": "resolved",
+      "reason": "Previous resolved: Keep r31 live-infobase escalation distinct from standalone syntax and logic-only static checks. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. c1 resolved: preserve actual ITL XML validatequery alongside exposed HTTP vcvalidatequery, qualified ROCTUP data route, exact arguments and query error versus empty-result evidence; publication is a separate lifecycle action.",
+      "upstreamSha256": "b03e779623b0ef217ffe52fb606b099a6ab86aa7a7aac270965fea173e29157e",
       "baselineSha256": "163548c71ca8a0fc093b225085cfec440e6c353aac3c395778a32dc88f5d7d6b",
-      "resultSha256": "9199c551bc7b5293ba5e3d3c713c9735ee667847301838623c115ea44c5022d0"
+      "resultSha256": "fb99dd4509bb34dba602927115113ce2b8106a1cd026d84fa442e0b5ec213f49"
+    },
+    {
+      "path": "content/skills/mcp-1c-tools/docs/1C-docs-mcp.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "aff97d4045d7c54c7967ac27c1062a7f205c8ea32179852cf4f02467e160d953",
+      "baselineSha256": "fb830b3eae70c3219b5970657974c50ede3b69270b7b3d8295f3a581419441bf",
+      "resultSha256": "aff97d4045d7c54c7967ac27c1062a7f205c8ea32179852cf4f02467e160d953"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-graph-metadata-mcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "ae6ed31400c788c0df89854e1661086279ca00b61948c8a562776064af567c7b",
+      "upstreamSha256": "accdb158de599f4046ebd8d86da2243a9c5334f7636c527d3bfd278f55a20745",
       "baselineSha256": "b8aa9695fffe3f6fc18b060c291903ea71aade4a8db15d2ea45a39eab00ba479",
-      "resultSha256": "ae6ed31400c788c0df89854e1661086279ca00b61948c8a562776064af567c7b"
+      "resultSha256": "accdb158de599f4046ebd8d86da2243a9c5334f7636c527d3bfd278f55a20745"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-ssl-mcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "c98af96a7b9567c3a7fc261a9dc2389c252b963186ffca5785438e239e296362",
+      "upstreamSha256": "64c18232b4d16042e51ddfdfb9e0a801a132ded8c8076deea6d135f035cfe23b",
       "baselineSha256": "c8a5933e912e988faa7189a013a5229ecff6c7fd17c956547fb2724e10d88e46",
-      "resultSha256": "c98af96a7b9567c3a7fc261a9dc2389c252b963186ffca5785438e239e296362"
+      "resultSha256": "64c18232b4d16042e51ddfdfb9e0a801a132ded8c8076deea6d135f035cfe23b"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-syntax-checker-mcp.md",
       "requirementId": "ITL-CODECHECKER-LATENCY-001",
       "disposition": "take-upstream",
       "reason": "Previous resolved: Keep the r31 standalone syntax budget distinct from logic-only CodeChecker and review budgets. Now take-upstream: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "5e3295b49cfdfbe9990d3ed7811346fc0412b1631c6c164c2e8845edc4a51068",
+      "upstreamSha256": "02c96791833ab86d448722b32bc8218ace3f5d9879b9cd03f5c912f895c99346",
       "baselineSha256": "266850994c6323da09278956e8e1bdd72efe77e1b5c7d3fb80c3082f86a2af7c",
-      "resultSha256": "5e3295b49cfdfbe9990d3ed7811346fc0412b1631c6c164c2e8845edc4a51068"
+      "resultSha256": "02c96791833ab86d448722b32bc8218ace3f5d9879b9cd03f5c912f895c99346"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/1c-templates-mcp.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
       "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "ebb7b4aaa73c5c2cfa9ceab7de0894ac3ab887437dde715a68c69e1eaf28b2b2",
+      "upstreamSha256": "2089f18cb2211779c6b50b5c7bf8012a8c136af249cec9fda5293f7bd21c62ed",
       "baselineSha256": "562b5975cb3354aac218ff210d784d6a2ad138e14b46c81be9b7c1c1efe70609",
-      "resultSha256": "ebb7b4aaa73c5c2cfa9ceab7de0894ac3ab887437dde715a68c69e1eaf28b2b2"
+      "resultSha256": "2089f18cb2211779c6b50b5c7bf8012a8c136af249cec9fda5293f7bd21c62ed"
     },
     {
       "path": "content/skills/mcp-1c-tools/docs/edt-mcp.md",
@@ -3070,13 +3070,13 @@
       "resultSha256": "bd68619c8b8b9a887467304fbc88f24c4bd88ec4370d337bf3139813af2dad10"
     },
     {
-      "path": "content/skills/md-to-docx/SKILL.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "4dbb184f62486438756235c761dceb8bb88a5f707c58e72b9c633849a71a4d4e",
-      "baselineSha256": "3ce3e33988b61cf27fa11827a6d6411e0834e7be25e60d047e6381ff5ae99f6a",
-      "resultSha256": "4dbb184f62486438756235c761dceb8bb88a5f707c58e72b9c633849a71a4d4e"
+      "path": "content/skills/mcp-1c-tools/SKILL.md",
+      "requirementId": "ITL-MCP-002",
+      "disposition": "resolved",
+      "reason": "Resolve ITL-MCP-002 for r25 with bounded MCP-first fallback outside the branch delta. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "038e731779dfbc8c1d516996b445b87c9a18459698b8fc4a76e238864955b224",
+      "baselineSha256": "3e0b05095c62527410edcebdb9e0244bfa4e2a423c12eb9d01f4c354ed00b9a7",
+      "resultSha256": "3062498b03c469eb50fcd79839988c5fdfd7d2f1da804ae906b726a3efc584c5"
     },
     {
       "path": "content/skills/md-to-docx/scripts/md_to_docx.js",
@@ -3088,6 +3088,15 @@
       "resultSha256": "905747b323928fbe71ba9144a9faf1c0f56f8d0f1bcc06684a2a9ed6d0fad453"
     },
     {
+      "path": "content/skills/md-to-docx/SKILL.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "4dbb184f62486438756235c761dceb8bb88a5f707c58e72b9c633849a71a4d4e",
+      "baselineSha256": "3ce3e33988b61cf27fa11827a6d6411e0834e7be25e60d047e6381ff5ae99f6a",
+      "resultSha256": "4dbb184f62486438756235c761dceb8bb88a5f707c58e72b9c633849a71a4d4e"
+    },
+    {
       "path": "content/skills/prompt-enhancer/SKILL.md",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
@@ -3097,15 +3106,6 @@
       "resultSha256": "315ca3292d183235a7a19efbc8d33aeedb8ae3cef87b53ae8f902384851cabfd"
     },
     {
-      "path": "content/skills/transcribe/SKILL.md",
-      "requirementId": "ITL-AI-RULES-MIGRATION-001",
-      "disposition": "take-upstream",
-      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "e67220b1619639d7fbab8156114aca91adf701318e4f6493f3aa7c4615475867",
-      "baselineSha256": "17f55ec19a083ce6311970d63b72f1de08056451e4e81c04d7b4b65ff72b9047",
-      "resultSha256": "e67220b1619639d7fbab8156114aca91adf701318e4f6493f3aa7c4615475867"
-    },
-    {
       "path": "content/skills/transcribe/scripts/transcribe.py",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "take-upstream",
@@ -3113,6 +3113,15 @@
       "upstreamSha256": "cc255acfaaf97439ea6c0627016ad85fec38030323befab66b2084c4e0077dfa",
       "baselineSha256": "a0c15784ce4c2a4e6461834db5a390a5b8d9c8d180229b15a791eacf6a576a71",
       "resultSha256": "cc255acfaaf97439ea6c0627016ad85fec38030323befab66b2084c4e0077dfa"
+    },
+    {
+      "path": "content/skills/transcribe/SKILL.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "e67220b1619639d7fbab8156114aca91adf701318e4f6493f3aa7c4615475867",
+      "baselineSha256": "17f55ec19a083ce6311970d63b72f1de08056451e4e81c04d7b4b65ff72b9047",
+      "resultSha256": "e67220b1619639d7fbab8156114aca91adf701318e4f6493f3aa7c4615475867"
     },
     {
       "path": "content/skills/v8unpack-cf/SKILL.md",
@@ -3126,11 +3135,11 @@
     {
       "path": "docs/DOWNSTREAM-PATCHES.md",
       "requirementId": "ITL-GRILLING-001",
-      "disposition": "carry-forward",
-      "reason": "Previous resolved: Resolve ITL-GRILLING-001 for r29 by recording the grilling skill family while preserving prior patch ownership. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. Now carry-forward: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
+      "disposition": "resolved",
+      "reason": "Previous resolved: Resolve ITL-GRILLING-001 for r29 by recording the grilling skill family while preserving prior patch ownership. r34 preserves this behavior and adds ITL-FORM-COMMAND-ADVISORY-001. r35 adds ITL-AI-REVIEW-EVIDENCE-001 while preserving the existing contract. Now carry-forward: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36. c1 resolved: replace the historical release header and stale current-treatment rows with the exact c1 candidate and preserved 9ec provenance, retaining every existing requirement ID and r36 baseline. Current rows describe shared client ownership, native Codex/OpenSpec phases, byte-preserving overlay repair, model maps, Caveman session semantics, independent saved verification and physical QA, guarded lifecycle/publication, and preserved metadata/Template/UUID behavior. Installer preservation of all four OpenCode files remains under ITL-INSTALL-001; host multi-layer MCP configuration has a separate checkpoint.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "64bd7674e39f530511cca95e3caaa7ff2770bc675399ea1aede7beba3bee5541",
-      "resultSha256": "64bd7674e39f530511cca95e3caaa7ff2770bc675399ea1aede7beba3bee5541"
+      "resultSha256": "8ac4675c185ebc8927347ee1f0a2a86cd730080d253c6dc5323eb63a0ac6bfe9"
     },
     {
       "path": "docs/FORK-POLICY.md",
@@ -3140,15 +3149,6 @@
       "upstreamSha256": "<absent>",
       "baselineSha256": "4e3888ea1212f6ac0f0e6dbea93a905471684cd6e535d17473090c200008d56a",
       "resultSha256": "4e3888ea1212f6ac0f0e6dbea93a905471684cd6e535d17473090c200008d56a"
-    },
-    {
-      "path": "docs/UPSTREAM-UPGRADE.md",
-      "requirementId": "ITL-INFRA-001",
-      "disposition": "carry-forward",
-      "reason": "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc",
-      "resultSha256": "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc"
     },
     {
       "path": "docs/releases/itl-main-410951e7-r21.md",
@@ -3340,13 +3340,22 @@
       "resultSha256": "436627da676d6d6c6e8b449fdbecfb7cf3c0cc7ab847e696a4349de0d5c88f1b"
     },
     {
+      "path": "docs/UPSTREAM-UPGRADE.md",
+      "requirementId": "ITL-INFRA-001",
+      "disposition": "carry-forward",
+      "reason": "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc",
+      "resultSha256": "2ab3e5bb9f9c3dbc7d28b9fa56bfeecb32fd46e5a872890ace1edbbbc12076bc"
+    },
+    {
       "path": "install.ps1",
       "requirementId": "ITL-INSTALL-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-INSTALL-001 for r24 with reviewed managed-file EOL and legacy migration behavior. Preserve the reviewed migration behavior; CL3/IM1 adds a common byte renderer and pure final shared-client preflight before placement, including retained add owners and update before legacy pruning. OS4/OS5/IM1 now installs Codex native phases into the adapter-owned .agents/skills tree, updates the old r33 destination, and removes only unchanged managed .codex aliases; the actual init/update regression retains a user-edited duplicate. Published-r33 acceptance additionally retires unchanged owned .agents/skills/opsx-* bodies and invocation metadata; user-edited aliases and unrelated notes survive exactly. The existing strict UTF-8 installed-hash matcher now recognizes Git-only CRLF/LF changes during alias retirement; semantic edits, explicit user modifications, unknown hashes, invalid UTF-8 and phase containment retain their protection.",
-      "upstreamSha256": "b54d0ad728b64c578e5b988058ffda9a873520df72cf751de4f085ad4febc6bc",
+      "reason": "Resolve ITL-INSTALL-001 for r24 with reviewed managed-file EOL and legacy migration behavior. Preserve the reviewed migration behavior; CL3/IM1 adds a common byte renderer and pure final shared-client preflight before placement, including retained add owners and update before legacy pruning. OS4/OS5/IM1 now installs Codex native phases into the adapter-owned .agents/skills tree, updates the old r33 destination, and removes only unchanged managed .codex aliases; the actual init/update regression retains a user-edited duplicate. Published-r33 acceptance additionally retires unchanged owned .agents/skills/opsx-* bodies and invocation metadata; user-edited aliases and unrelated notes survive exactly. The existing strict UTF-8 installed-hash matcher now recognizes Git-only CRLF/LF changes during alias retirement; semantic edits, explicit user modifications, unknown hashes, invalid UTF-8 and phase containment retain their protection. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 resolved: preserve qualified shared-client final-set, canonical OpenSpec/legacy alias guards, untracked and userModified OpenSpec ownership even Force; adopt byte-exact relinquishment of all four OpenCode JSON/JSONC configs, bounded UTF-8 BSP detection and consistent pycache exclusion. Owned native batch passed; this is not live-client proof. After the 32-pass owner-local batch, only two Write-EconomyModeAnnouncement information strings were aligned with current-client model maps, empty-tier inheritance and explicit /economymode models. Resolver, prompts, routing and control flow are unchanged; the final installer hash is not the exact input of that historical batch and requires parent exact Full qualification.",
+      "upstreamSha256": "6defbb5fc87005d0fc559facc75cdb7774ccde9a93408fdd9eb2da1dab9ca245",
       "baselineSha256": "f4baf633b615d7d535d9bb14b8dc3b8d90f1a8d4d358f8bbc1f3ac27e06037ca",
-      "resultSha256": "f8439a98414dfd95a94e1f09345cb201652fe2ec6e2723572db07af8e81e6300"
+      "resultSha256": "d00d438f23a11955aa8f632fc505823a75c57527c982e60ecdccb8fc6f6d2e6b"
     },
     {
       "path": "memory.md",
@@ -3358,13 +3367,13 @@
       "resultSha256": "4ac1f1904ec7e00bb1a72a833080bda60bf95dc1e098507d0c65bb2927553688"
     },
     {
-      "path": "openspec/README.md",
-      "requirementId": "ITL-INFRA-001",
-      "disposition": "resolved",
-      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36.",
-      "upstreamSha256": "d6265bdbee9b203f4bfd47572ddae4e5920abd0cdc4d73b5db0315ea3a2bcc86",
-      "baselineSha256": "1d7ca5a765d1df69bc1dbd7a530c1da6bbfac236e92d0e32a8e45eedcfbbbea7",
-      "resultSha256": "8287cac465c0320e1764aaf746e400ccc7828c05c72795c60303044aa8b370c0"
+      "path": "openspec/changes/README.md",
+      "requirementId": "ITL-OPENSPEC-001",
+      "disposition": "take-upstream",
+      "reason": "Take upstream OpenSpec component or fixture unchanged; local-home support belongs to this release and external-store writes are deferred.",
+      "upstreamSha256": "2d316979295a0b54f29b9ad9fae26632abd1c003f4c2c930f304ba05e65c6677",
+      "baselineSha256": "ebd6cfd66f6ced521728de8b9657f003703af57e462cfd8d6c69f55a8c16cbce",
+      "resultSha256": "2d316979295a0b54f29b9ad9fae26632abd1c003f4c2c930f304ba05e65c6677"
     },
     {
       "path": "openspec/config.yaml",
@@ -3376,13 +3385,13 @@
       "resultSha256": "bb245107ea8bd65024c45f583f4e6426bed2c85cfa555f9eff537eca7c3bcd25"
     },
     {
-      "path": "openspec/changes/README.md",
-      "requirementId": "ITL-OPENSPEC-001",
-      "disposition": "take-upstream",
-      "reason": "Take upstream OpenSpec component or fixture unchanged; local-home support belongs to this release and external-store writes are deferred.",
-      "upstreamSha256": "2d316979295a0b54f29b9ad9fae26632abd1c003f4c2c930f304ba05e65c6677",
-      "baselineSha256": "ebd6cfd66f6ced521728de8b9657f003703af57e462cfd8d6c69f55a8c16cbce",
-      "resultSha256": "2d316979295a0b54f29b9ad9fae26632abd1c003f4c2c930f304ba05e65c6677"
+      "path": "openspec/README.md",
+      "requirementId": "ITL-INFRA-001",
+      "disposition": "resolved",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-INFRA-001. Now resolved: adapt-bundle-store-and-itl-contracts; candidate bytes and requirement owner reviewed against new upstream and r36. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance.",
+      "upstreamSha256": "a8c3493707ba4f8213956eb315b4ec5a2734367e3ea112728a203d13d9676fa5",
+      "baselineSha256": "1d7ca5a765d1df69bc1dbd7a530c1da6bbfac236e92d0e32a8e45eedcfbbbea7",
+      "resultSha256": "d0a930754b544a851a4c37400a9c6c41b5098238061293ca6dee9906974c593c"
     },
     {
       "path": "openspec/specs/README.md",
@@ -3419,15 +3428,6 @@
       "upstreamSha256": "3ccbe17db5b3f30421c0207be97380ec283a19808913e0e5662f0e53f3984689",
       "baselineSha256": "<absent>",
       "resultSha256": "3ccbe17db5b3f30421c0207be97380ec283a19808913e0e5662f0e53f3984689"
-    },
-    {
-      "path": "plugins/1c-rules/README.md",
-      "requirementId": "ITL-PLUGIN-001",
-      "disposition": "resolved",
-      "reason": "adapt-to-pinned-itl-dispatch; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "75617fb2a6b82d5de6d5a59f8191d15c813f6d0f60ba6cb042e8b6c9524e42a7",
-      "baselineSha256": "<absent>",
-      "resultSha256": "d4b55f5960c6137943e1ab87c132d5d6e649897adc732a5f335e5eea81dc486a"
     },
     {
       "path": "plugins/1c-rules/commands/install.md",
@@ -3484,6 +3484,15 @@
       "resultSha256": "3bc873083acceaa6254afce6598ef4b1f30441a3a204f276a750ed763cb6debf"
     },
     {
+      "path": "plugins/1c-rules/README.md",
+      "requirementId": "ITL-PLUGIN-001",
+      "disposition": "resolved",
+      "reason": "adapt-to-pinned-itl-dispatch; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "75617fb2a6b82d5de6d5a59f8191d15c813f6d0f60ba6cb042e8b6c9524e42a7",
+      "baselineSha256": "<absent>",
+      "resultSha256": "d4b55f5960c6137943e1ab87c132d5d6e649897adc732a5f335e5eea81dc486a"
+    },
+    {
       "path": "plugins/1c-rules/scripts/invoke-install.cmd",
       "requirementId": "ITL-PLUGIN-001",
       "disposition": "take-upstream",
@@ -3529,6 +3538,24 @@
       "resultSha256": "c3c071782805a86ed53581e25bb55b779813a12307e62b2bec3a28394f30cfb9"
     },
     {
+      "path": "README.md",
+      "requirementId": "ITL-CODECHECKER-LATENCY-001",
+      "disposition": "resolved",
+      "reason": "Preserve prior release guidance and document the r31 standalone syntax plus logic-only CodeChecker route. Replace upstream main plugin-install guidance with the immutable ITL controlled-fork route and read-only ensure contract. c1 intake: reconcile this preserved qualified 9ec behavior with the new upstream; previous decision text is retained as historical semantic provenance. c1 resolved: retain immutable controlled-fork and read-only plugin ensure routing; document project-local Codex Agent Skills and all six canonical OpenSpec phases, Caveman auto/session-full behavior, independent per-client model maps and the explicit reviewer gate. Adopt essential UI default with independent saved Vanessa, preserve physical TOOL_QA identity, and describe metadata-first bounded managed ROCTUP without claiming parser or live-client proof from placement. Document the authoritative current context ceilings and measured c1 delta rather than stale 11/124/28 KiB values; no mandatory safety meaning is removed to satisfy a budget.",
+      "upstreamSha256": "775c02c7b5654290fcc187bcf2d5969d5966fd426ece931d4fecc4ad6a9dcdcf",
+      "baselineSha256": "75a1e5357fd29d249568de45f3f1857c4e3b6a651f5669baf0146e81a2c811f7",
+      "resultSha256": "08b27d9e6dc888421e8679ff9f6fd07eb25129d93c4063a7c5fd110ffeef21b9"
+    },
+    {
+      "path": "References.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "b1cc30df8a1be470fe8261b6a2ff07f0dfa92b02a95b11c742b13b9e5578926d",
+      "baselineSha256": "b0e64e4125fb0d2c4206a606e0d60ecc7a833ae678888ab5d98d2953ff7666b5",
+      "resultSha256": "b1cc30df8a1be470fe8261b6a2ff07f0dfa92b02a95b11c742b13b9e5578926d"
+    },
+    {
       "path": "scripts/check.ps1",
       "requirementId": "ITL-INFRA-001",
       "disposition": "resolved",
@@ -3541,10 +3568,10 @@
       "path": "scripts/full-check-contract.ps1",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "downstream-only",
-      "reason": "Preserve reviewed ITL-owned addition; exact candidate audited against upstream and r36 baseline.",
+      "reason": "Preserve reviewed ITL-owned addition; exact candidate audited against upstream and r36 baseline. Bind Full inventory to authoritative tracked Git inputs in the existing roots with strict UTF-8 and NUL path transport. Ignored evals, logs and qualification outputs do not become their own inputs. Preserve required inputs, deterministic ordering, clean-state refusal and the shared publisher reader.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "<absent>",
-      "resultSha256": "7d421a42f208ba27b244072705c8bd16986788397f3ff1b7ab2b85779b391161"
+      "resultSha256": "609a7f4351b6bad6005c6bea649d3e565edd748275f1bfea4057e979c9dd22f6"
     },
     {
       "path": "scripts/new-upstream-upgrade.ps1",
@@ -3592,6 +3619,15 @@
       "resultSha256": "a597c294278f8b9a53f33b6bcb7312c7f8075f7903f8860b3dc365e54fb1afef"
     },
     {
+      "path": "tests/fixtures/triage-contract.json",
+      "requirementId": "ITL-INFRA-001",
+      "disposition": "carry-forward",
+      "reason": "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "3b2b47b0e88352940e62bde4ef261ee533bccf9f67aa5d25b71a6632caf478e0",
+      "resultSha256": "3b2b47b0e88352940e62bde4ef261ee533bccf9f67aa5d25b71a6632caf478e0"
+    },
+    {
       "path": "tests/FormCommandAdvisory.Tests.ps1",
       "requirementId": "ITL-FORM-COMMAND-ADVISORY-001",
       "disposition": "carry-forward",
@@ -3613,10 +3649,10 @@
       "path": "tests/Installer.Tests.ps1",
       "requirementId": "ITL-INFRA-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior. OS4/OS5/IM1 now installs Codex native phases into the adapter-owned .agents/skills tree, updates the old r33 destination, and removes only unchanged managed .codex aliases; the actual init/update regression retains a user-edited duplicate. Published-r33 acceptance additionally retires unchanged owned .agents/skills/opsx-* bodies and invocation metadata; user-edited aliases and unrelated notes survive exactly. The original alias regression now uses a real Git checkout to reproduce CRLF recorded hashes with LF working files, retaining the original cleanup assertions and semantic user edit, foreign-note, unknown-hash and invalid-UTF-8 preservation cases.",
+      "reason": "Resolve ITL-INFRA-001 for r25 with reviewed command naming and Caveman response-style behavior. OS4/OS5/IM1 now installs Codex native phases into the adapter-owned .agents/skills tree, updates the old r33 destination, and removes only unchanged managed .codex aliases; the actual init/update regression retains a user-edited duplicate. Published-r33 acceptance additionally retires unchanged owned .agents/skills/opsx-* bodies and invocation metadata; user-edited aliases and unrelated notes survive exactly. The original alias regression now uses a real Git checkout to reproduce CRLF recorded hashes with LF working files, retaining the original cleanup assertions and semantic user edit, foreign-note, unknown-hash and invalid-UTF-8 preservation cases. c1 adds owned Force preservation cases for untracked/userModified OpenSpec and bounded modern/legacy/expression BSP detection with exact UTF-8 Cyrillic data. Original OpenSpec repair assertion is retained; four additional LF/CRLF/BOM cases prove byte restoration and no-op preservation.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "3b4083848529dec647b518d9425c2d0da7352e095bed94480ed5b77b7cfc77fe",
-      "resultSha256": "553da228f42b319813e5e57f607d940aea2f6eba216c7f117fd7449ce01a2042"
+      "resultSha256": "14301c10f1b6fa843e9e9e7bcf1d2208b5bda3ecee0bda762f8743d5a1b68b5c"
     },
     {
       "path": "tests/ItlLifecycleGuard.Tests.ps1",
@@ -3664,6 +3700,15 @@
       "resultSha256": "895c80ec1fbef0c0cbd3fd2a9351730c8bf8e1cfbc2981ce371b839c28a9d616"
     },
     {
+      "path": "tests/MetadataWriterContracts.Tests.ps1",
+      "requirementId": "ITL-METADATA-VALIDATOR-001",
+      "disposition": "downstream-only",
+      "reason": "c1 owner regressions execute real configuration/form validators and both compilers for exit propagation, accepted Representation values, canonical property order, and blocking invalid values alongside advisory Action. Same original six failures became six passed; 36 retained contracts, editor byte-preservation and offline web proof remain distinct.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "<absent>",
+      "resultSha256": "f9ceaf845b3928cf720e82a76147da8402c586fb392fe941d458997a27da22f0"
+    },
+    {
       "path": "tests/MultiClientOwnership.Tests.ps1",
       "requirementId": "ITL-AI-RULES-MIGRATION-001",
       "disposition": "downstream-only",
@@ -3673,22 +3718,49 @@
       "resultSha256": "036c7985d6fc85b828f4f874318dd2870d2b9783d5a6953cf828fc3f84a735e8"
     },
     {
+      "path": "tests/PlacementFinalSet.Tests.ps1",
+      "requirementId": "ITL-INSTALL-001",
+      "disposition": "downstream-only",
+      "reason": "CL3/IM1: identical shared rule/skill owners, differing contributions with no placement, add against retained owners, user-modified preservation and the full twelve-client delegated plan; original installer continuation succeeds after adapter repair. c1 shared-client preflight and placement exclude __pycache__ and .pyc consistently; excluded bytecode must not create false cross-client collisions. Pure fixture function loading now explicitly requests installer NonInteractive, preserving default profile1 and original collision/path/assertion contracts; user runtime prompt policy is unchanged.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "<absent>",
+      "resultSha256": "ae70362f0414d2fc9ff45dbbbbc54d721e88e4d243da3476133e1f885b9e32da"
+    },
+    {
+      "path": "tests/plugin-event-harness.mjs",
+      "requirementId": "ITL-PLUGIN-001",
+      "disposition": "downstream-only",
+      "reason": "Retain the PL3 actual-child event reproducer: managed protocol failures must reject with numeric exit status and safe diagnostics, Unicode paths round-trip exactly, and unrelated/successful events preserve project bytes. This owner harness is not native host qualification.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "<absent>",
+      "resultSha256": "6bcba8806f9241285f3d7b375bd222aa59aca1658567dda42e372c6bb501ea53"
+    },
+    {
+      "path": "tests/QaManagedRoute.Tests.ps1",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
+      "disposition": "downstream-only",
+      "reason": "c1 QA managed boundary regression: physical QA remains distinct, guarded native invocation, managed route/provider policy and read-only status. Pending final owner input freeze; no qualification is claimed.",
+      "upstreamSha256": "<absent>",
+      "baselineSha256": "<absent>",
+      "resultSha256": "ce05f18630e9d5d077c05913913988008929ce8abc7e632a7650445382c4dc62"
+    },
+    {
       "path": "tests/R8Policy.Tests.ps1",
       "requirementId": "ITL-MANAGED-FORM-ROW-GUARD-001",
       "disposition": "resolved",
-      "reason": "Regress the adopted Gate 3a ROCTUP policy and named one-off UI invocation precedence. Prior qualified behavior: Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 with false, true, and absent-key regressions. Managed test-fix-loop now uses the ITL scenario-loop session, one owned load, bounded attempts, and final full assessment.",
+      "reason": "Regress the adopted Gate 3a ROCTUP policy and named one-off UI invocation precedence. Prior qualified behavior: Resolve ITL-MANAGED-FORM-ROW-GUARD-001 for r28 with false, true, and absent-key regressions. Managed test-fix-loop now uses the ITL scenario-loop session, one owned load, bounded attempts, and final full assessment. Retain the original named-invocation reproducer and assert the QA skill agrees with it, including the broader no-UI prohibition and absence of a contradictory blanket off rule.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "ad62269e07cb5a50f4892119e059f6c670347d6f4168870edb6252cd3573e636",
-      "resultSha256": "49fe1a541e9cc32b0e4fbe2325c27962cc96ae8fdf2113235be5af0a43d95192"
+      "resultSha256": "557b88c988d4c3883536504a2dfe6a219aeb9d95e20485a8d87f8df7f1b27a84"
     },
     {
       "path": "tests/ReleaseTooling.Tests.ps1",
       "requirementId": "ITL-INFRA-001",
       "disposition": "resolved",
-      "reason": "Regress the explicit UTF-8 boundary required by redirected fork qualification.",
+      "reason": "Regress the explicit UTF-8 boundary required by redirected fork qualification. Reproduce ignored-output inventory contamination on the same tracked fixture and retain source-change invalidation, required-input failures, Unicode-and-space paths and shared-reader reuse boundaries.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "065c919a1dc6986e9437525c887f4bae1aeeddadae40bd33f5820de9b26544a2",
-      "resultSha256": "fd0391eb273fbae70bb88249b56378378e85a3646cf5c673bbb235aeda7525f2"
+      "resultSha256": "695aa351a06d894d24517b3d489b226967ee559e21e66169e4928f7f8c92fc09"
     },
     {
       "path": "tests/TestSupport.ps1",
@@ -3736,31 +3808,13 @@
       "resultSha256": "8c941cb5c787ad14b3c1d4c24ba707a3f5429ceb76655676ad66576bc85876f0"
     },
     {
-      "path": "tests/fixtures/triage-contract.json",
-      "requirementId": "ITL-INFRA-001",
-      "disposition": "carry-forward",
-      "reason": "Carry forward the exact qualified r23 implementation of ITL-INFRA-001.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "3b2b47b0e88352940e62bde4ef261ee533bccf9f67aa5d25b71a6632caf478e0",
-      "resultSha256": "3b2b47b0e88352940e62bde4ef261ee533bccf9f67aa5d25b71a6632caf478e0"
-    },
-    {
-      "path": "tests/plugin-event-harness.mjs",
-      "requirementId": "ITL-PLUGIN-001",
-      "disposition": "downstream-only",
-      "reason": "Retain the PL3 actual-child event reproducer: managed protocol failures must reject with numeric exit status and safe diagnostics, Unicode paths round-trip exactly, and unrelated/successful events preserve project bytes. This owner harness is not native host qualification.",
-      "upstreamSha256": "<absent>",
-      "baselineSha256": "<absent>",
-      "resultSha256": "6bcba8806f9241285f3d7b375bd222aa59aca1658567dda42e372c6bb501ea53"
-    },
-    {
       "path": "tools/apply-openspec-downstream-overlay.ps1",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "resolved",
-      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior.",
+      "reason": "Resolve ITL-OPENSPEC-001 for r25 with reviewed command naming and Caveman response-style behavior. c1 checkout exposed a real CRLF repair defect. Preserve original LF/CRLF and UTF-8 BOM on changed overlay files, leave no-op files untouched. Original byte-hash repair case plus four LF/CRLF with/without BOM repairs and no-ops passed without weakening its reproducer.",
       "upstreamSha256": "<absent>",
       "baselineSha256": "f446a9bc13bd04512ccc934d0ca8e810c32ffd8ee1850dbccccb17ff2bbc4dd7",
-      "resultSha256": "babe0d67b08ba04429c13b6dec0c63399fa99669fb1c4bf117fc3f57446975fb"
+      "resultSha256": "80ffb1a6b2002a1765ec478df255a3060c0561fb4b54a55741e7ed689653db0b"
     },
     {
       "path": "tools/refresh-openspec-bundle.ps1",
@@ -3797,24 +3851,6 @@
       "upstreamSha256": "5999f1d2d053e73b161aa88d802980e5c5e167cf1b174db26eac4b867aff31af",
       "baselineSha256": "<absent>",
       "resultSha256": "dd1709dbb7e34cc3c6ce0415a7a6eca1c0c04cfff3f68a9ec453a6337817db09"
-    },
-    {
-      "path": "tools/tests/eval-fixtures/S102/CommonModules/РаботаСЗаказами/Ext/Module.bsl",
-      "requirementId": "ITL-RELEASE-QUALIFICATION-001",
-      "disposition": "take-upstream",
-      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "6cfca4da4f39d61aa218f5678f41e7ebc690a353f8ad95a69de5d3eeed4b2ac7",
-      "baselineSha256": "<absent>",
-      "resultSha256": "6cfca4da4f39d61aa218f5678f41e7ebc690a353f8ad95a69de5d3eeed4b2ac7"
-    },
-    {
-      "path": "tools/tests/eval-fixtures/S147/openspec/changes/import-lines/tasks.md",
-      "requirementId": "ITL-OPENSPEC-001",
-      "disposition": "take-upstream",
-      "reason": "Take upstream OpenSpec component or fixture unchanged; local-home support belongs to this release and external-store writes are deferred.",
-      "upstreamSha256": "ec43cf6d15c94e44b478ae7aa6aad980e693a33c644512d66e34a9787d40cb85",
-      "baselineSha256": "<absent>",
-      "resultSha256": "ec43cf6d15c94e44b478ae7aa6aad980e693a33c644512d66e34a9787d40cb85"
     },
     {
       "path": "tools/tests/eval-fixtures/common/CommonModules/ОбменССайтом/Ext/Module.bsl",
@@ -3880,6 +3916,24 @@
       "resultSha256": "f4627228820cb098c74551b59443666c1da886c283867594c91c76089c3698c6"
     },
     {
+      "path": "tools/tests/eval-fixtures/S102/CommonModules/РаботаСЗаказами/Ext/Module.bsl",
+      "requirementId": "ITL-RELEASE-QUALIFICATION-001",
+      "disposition": "take-upstream",
+      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "6cfca4da4f39d61aa218f5678f41e7ebc690a353f8ad95a69de5d3eeed4b2ac7",
+      "baselineSha256": "<absent>",
+      "resultSha256": "6cfca4da4f39d61aa218f5678f41e7ebc690a353f8ad95a69de5d3eeed4b2ac7"
+    },
+    {
+      "path": "tools/tests/eval-fixtures/S147/openspec/changes/import-lines/tasks.md",
+      "requirementId": "ITL-OPENSPEC-001",
+      "disposition": "take-upstream",
+      "reason": "Take upstream OpenSpec component or fixture unchanged; local-home support belongs to this release and external-store writes are deferred.",
+      "upstreamSha256": "ec43cf6d15c94e44b478ae7aa6aad980e693a33c644512d66e34a9787d40cb85",
+      "baselineSha256": "<absent>",
+      "resultSha256": "ec43cf6d15c94e44b478ae7aa6aad980e693a33c644512d66e34a9787d40cb85"
+    },
+    {
       "path": "tools/tests/eval-fixtures/sets/openspec-import-lines/CommonModules/ИмпортСтрокСервер/Ext/Module.bsl",
       "requirementId": "ITL-OPENSPEC-001",
       "disposition": "take-upstream",
@@ -3914,6 +3968,15 @@
       "upstreamSha256": "fc5d694966f72f1bbb7dc7f9c5baf1f25edd8a8d3c88b2bd038c55963ba9284f",
       "baselineSha256": "<absent>",
       "resultSha256": "fc5d694966f72f1bbb7dc7f9c5baf1f25edd8a8d3c88b2bd038c55963ba9284f"
+    },
+    {
+      "path": "tools/tests/eval-mocks/_world.md",
+      "requirementId": "ITL-RELEASE-QUALIFICATION-001",
+      "disposition": "take-upstream",
+      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "3e2701800a96403c902250a9a799d8b91099a068979236501a02b274e68f0dab",
+      "baselineSha256": "<absent>",
+      "resultSha256": "3e2701800a96403c902250a9a799d8b91099a068979236501a02b274e68f0dab"
     },
     {
       "path": "tools/tests/eval-mocks/1c-code-check-mcp/_server.md",
@@ -4004,15 +4067,6 @@
       "upstreamSha256": "2e9f1612573371ce4903584e7a56b222596a4502de54d647c118ee8dbff5926e",
       "baselineSha256": "<absent>",
       "resultSha256": "2e9f1612573371ce4903584e7a56b222596a4502de54d647c118ee8dbff5926e"
-    },
-    {
-      "path": "tools/tests/eval-mocks/_world.md",
-      "requirementId": "ITL-RELEASE-QUALIFICATION-001",
-      "disposition": "take-upstream",
-      "reason": "preserve-or-adapt-owned-regressions-and-provenance; exact candidate audited against upstream and r36 baseline.",
-      "upstreamSha256": "3e2701800a96403c902250a9a799d8b91099a068979236501a02b274e68f0dab",
-      "baselineSha256": "<absent>",
-      "resultSha256": "3e2701800a96403c902250a9a799d8b91099a068979236501a02b274e68f0dab"
     },
     {
       "path": "tools/tests/eval-mocks/cognee-memory/_server.md",
@@ -4240,6 +4294,15 @@
       "resultSha256": "075330dbcc311cd75744fa7da973da8c5328c2f38228bebfafe7d9f5e0d01b44"
     },
     {
+      "path": "tools/tests/opencode-config-preservation.ps1",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "c1 intake: adopt the exact audited upstream path while preserving managed ownership and provider-specific routing in their existing owners.",
+      "upstreamSha256": "147b78a8b12a39d6b2f7252f2983ca35705863977864ba79bfe1394113b7ab29",
+      "baselineSha256": "<absent>",
+      "resultSha256": "147b78a8b12a39d6b2f7252f2983ca35705863977864ba79bfe1394113b7ab29"
+    },
+    {
       "path": "tools/tests/python-ports-regression.py",
       "requirementId": "ITL-RELEASE-QUALIFICATION-001",
       "disposition": "take-upstream",
@@ -4279,19 +4342,28 @@
       "path": "tools/validate-rules.ps1",
       "requirementId": "ITL-RELEASE-QUALIFICATION-001",
       "disposition": "resolved",
-      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement.",
+      "reason": "Raise the measured full-cycle rule budget for mandatory Gate 3a policy while retaining validator enforcement. c1 measured mandatory provider/schema/UI/saved-Vanessa meaning raises full-cycle 136393 to 138224 bytes and subagent start 29427 to 31370. Keep root 14 KiB and rule 40 KiB; explicitly set hot 136 KiB and start 31 KiB with measured rationale, retaining enforcement and on-demand provider procedures.",
       "upstreamSha256": "e9339971c8edb400b01938aa35368e1698b4a625b916c7788c5c9768e995bd7e",
       "baselineSha256": "e979380b3513f90672ac6f41f057df0d2e9a5bebba96cadd287f9351491a1602",
-      "resultSha256": "3d541bc2d7fbb64ce8f2fc683d0bb99de6887c3bc3efef66962518cc36ae644c"
+      "resultSha256": "19ff6322ce9ff94499d7d5f2b2c7c34d2ec0805c361b7433d4a22ac5a84e0898"
     },
     {
-      "path": "tests/PlacementFinalSet.Tests.ps1",
-      "requirementId": "ITL-INSTALL-001",
-      "disposition": "downstream-only",
-      "reason": "CL3/IM1: identical shared rule/skill owners, differing contributions with no placement, add against retained owners, user-modified preservation and the full twelve-client delegated plan; original installer continuation succeeds after adapter repair.",
-      "upstreamSha256": "<absent>",
+      "path": "USER-RULES.md",
+      "requirementId": "ITL-LIFECYCLE-DB-001",
+      "disposition": "resolved",
+      "reason": "Previous carry-forward: Carry forward the exact qualified r23 implementation of ITL-LIFECYCLE-DB-001. Now resolved: adopt-upstream-with-semantic-routing; candidate bytes and requirement owner reviewed against new upstream and r36.",
+      "upstreamSha256": "0ad234f88d65f2a0fefaf3110768fb85d626699a28f7472ea7ac9f6ee6ec9623",
+      "baselineSha256": "d525a681cc61f62f2f06a1ec88928abc0c68e0cf75b25df7bea670fd7fa24a9e",
+      "resultSha256": "400147ea34a1f1c22a8c42aca9481dfe0d3afecd215f0c3879aa0bf0f041d1f3"
+    },
+    {
+      "path": "WORKFLOWS.md",
+      "requirementId": "ITL-AI-RULES-MIGRATION-001",
+      "disposition": "take-upstream",
+      "reason": "adopt-upstream-with-semantic-routing; exact candidate audited against upstream and r36 baseline.",
+      "upstreamSha256": "5485bd4e465824c1fc724a60308398a7425ae1236b8438fb66300cb2aac061ea",
       "baselineSha256": "<absent>",
-      "resultSha256": "48990644cc1f7aeeef782c315dfd17792a5d71a53303bde84660c381f03229a4"
+      "resultSha256": "5485bd4e465824c1fc724a60308398a7425ae1236b8438fb66300cb2aac061ea"
     }
   ],
   "targetComposition": "append-upstream",
