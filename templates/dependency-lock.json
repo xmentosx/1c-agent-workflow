@@ -118,11 +118,21 @@
     "vanessaMcp": {
       "clientMcp": {
         "version": "v0.6.5",
-        "assetName": "client_mcp.cfe",
-        "url": "https://github.com/1c-neurofish/onec-client-mcp-devkit/releases/download/v0.6.5/client_mcp.cfe",
-        "sha256": "d1093475a15e50a33ad48a64b61d09d1108b5a39328c73e6be17a5c914825e7f",
-        "source": "template baseline",
-        "updatedAt": "2026-05-26T19:34:34Z"
+        "downstreamRevision": "itl-r1",
+        "manifestSha256": "33a6bf635d4690b9556019f8333bf58a70fc6cffa1a4fd9d22c980db7fb1e8bf",
+        "upstreamCommit": "3f6a066913057c2d6f2d61c0b429fd0707ab271b",
+        "assetName": "client_mcp.v0.6.5-itl-r1.cfe",
+        "releaseTag": "client-mcp-v0.6.5-itl-r1",
+        "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.cfe",
+        "sha256": "4deefb92aae3cbb70a28c8bf89a09c682ce7783746ba7df932dddc864ad2a245",
+        "source": "workflow-pinned",
+        "correspondingSource": {
+          "assetName": "client_mcp.v0.6.5-itl-r1.sources.zip",
+          "releaseTag": "client-mcp-v0.6.5-itl-r1",
+          "url": "https://github.com/xmentosx/1c-agent-workflow/releases/download/client-mcp-v0.6.5-itl-r1/client_mcp.v0.6.5-itl-r1.sources.zip",
+          "sha256": "409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc",
+          "source": "workflow-pinned"
+        }
       },
       "vaExtension": {
         "version": "1.2.043.42",

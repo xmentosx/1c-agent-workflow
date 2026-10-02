@@ -90,3 +90,27 @@ Exact-CFE live acceptance remains in task 10.6 under the existing publication
 qualification owner. The completed original repair session is not repeated,
 and process-only environment substitution cannot bypass its installed lock.
 This private build changed no production pin and started no publication.
+
+## Paired publication candidate, 2026-10-03
+
+After publication of prerequisite supervisor f5466e6f, the new source declares
+an owned client CFE and corresponding-source ZIP together. The clean native
+producer is 1e01117b1696b090972e15271bcdbe33ec0f9580, checked out in the
+isolated publication repository. Its 43 producer inputs match the exact source
+and future publication checkout, including both new Q24 libraries. Native
+modules/applicability/configuration Gate 6 returned 0/0/0, the exact DT was
+restored and owned processes released. The CFE SHA256 is
+4deefb92aae3cbb70a28c8bf89a09c682ce7783746ba7df932dddc864ad2a245;
+the unchanged source ZIP SHA256 remains 409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc.
+Receipt SHA256: ff5b252871692000412427d0687b0e016fa44b5f477036ae0e40c7219f77fca6,
+publication checkout build/third-party/client-mcp/v0.6.5-itl-r1/candidate/candidate.provenance.json.
+
+The preceding clean-H build also passed Gate 6, but its raw helper text bytes
+differed from a normal publication Git checkout in six files. Its native receipt
+is retained, without being relabelled as publication proof. Matching the normal
+checkout bytes leaves the Git source and index unchanged; the current native
+build binds those exact bytes. Neither earlier b663 nor the intermediate
+7353 artifact qualifies the current locked CFE. Missing release assets select
+the existing ondemand-mcp Release capability automatically. Real service/client
+installation and live qualification remain required before component/workflow
+publication; no remote asset or real project was changed by these builds.
