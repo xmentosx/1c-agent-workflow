@@ -27,6 +27,7 @@
     "ReleaseGate.Tests.ps1": 181.0,
     "ReleaseReadiness.Tests.ps1": 105.0,
     "SourceDeliveryComponentPublication.Tests.ps1": 201.0,
+    "SourceDeliveryPlan.Tests.ps1": 30.0,
     "SourceDeliveryProcessLifetime.Tests.ps1": 7.0,
     "SourceDeliveryResourceLedger.Tests.ps1": 192.0,
     "SourceDeliveryRunIndex.Tests.ps1": 45.0,

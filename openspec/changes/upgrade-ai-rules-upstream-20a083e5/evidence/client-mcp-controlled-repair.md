@@ -71,3 +71,22 @@ in a separate clone/common Git and qualify it through ordinary delivery first.
 Do not modify shared queued refs, weaken Gate 6, introduce an alternate gate,
 or run a candidate as its own supervisor. Actual baseline and remote movement
 must be reverified when publication is explicitly authorized.
+
+The final private native build on 2026-10-02 used clean producer
+`2c5935844b9e36817e7bfddb54cdb99e6fd753bb`, taking 143.838 seconds. All three
+Gate 6 checks passed, its exact DT was restored and owned processes released.
+Independent qualification matched all 41 current producer input hashes, all
+54 source files and all seven source-archive support files. Receipt in E:
+`build/e2e-client-selection-proof-20261002/native-client-independent-qualification.json`,
+SHA256 `508f4c54a64cff762bb22eca536dbb44a352c52807791fb89f7c6535bfb8213f`.
+
+The new CFE SHA256 is
+`b663de4664d53a1f3abb14cba7b13582e91c4c639fa28e73e07330ae850e5643`;
+the source ZIP remains
+`409253c0bc9abbbabf0797bde3a1316f8a95bfbdfbae0ec0709924eb24f95dcc`.
+The earlier successful PM5 run used a different exact CFE (`0472ce6e...`).
+It cannot qualify the new binary merely because the source ZIP is identical.
+Exact-CFE live acceptance remains in task 10.6 under the existing publication
+qualification owner. The completed original repair session is not repeated,
+and process-only environment substitution cannot bypass its installed lock.
+This private build changed no production pin and started no publication.

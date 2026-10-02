@@ -62,6 +62,92 @@ Describe 'Unicode redirected output' {
         (Get-Content -LiteralPath $resultPath -Raw -Encoding UTF8 | ConvertFrom-Json).status | Should -Be "passed"
     }
 
+    It "preserves exact UTF-8 when the shared gate child reports a real failed Pester shard" {
+        $fixtureRoot = Join-Path $TestDrive 'Путь с пробелом ОшибкаШарда'
+        $testRoot = Join-Path $fixtureRoot 'tests/pester'
+        $outputRoot = Join-Path $fixtureRoot 'out'
+        New-Item -ItemType Directory -Force -Path $testRoot, $outputRoot | Out-Null
+        $marker = 'Намеренная ошибка: Путь с пробелом'
+        $testPath = Join-Path $testRoot 'UnicodeFailure.Tests.ps1'
+        $fixture = @"
+BeforeAll {
+    [Console]::Out.WriteLine('$marker')
+    [Console]::Error.WriteLine('$marker')
+}
+Describe 'real failing shard' {
+    It 'retains the deliberate failure' { throw '$marker' }
+}
+"@
+        [IO.File]::WriteAllText($testPath, $fixture, [Text.UTF8Encoding]::new($true))
+        $catalog = [ordered]@{
+            schemaVersion = 1; pesterNonReusableTests = @('tests/pester/UnicodeFailure.Tests.ps1')
+            contracts = @([ordered]@{ id = 'unicode-failure'; owner = 'fixture'; primaryTest = 'tests/pester/UnicodeFailure.Tests.ps1'; gate = 'targeted'; budgetSeconds = 30; paths = @('fixture/*'); tests = @('tests/pester/UnicodeFailure.Tests.ps1') })
+        }
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot 'tests/quality-contracts.json'), ($catalog | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot 'selection.json'), '{"tests":["tests/pester/UnicodeFailure.Tests.ps1"]}', [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText((Join-Path $fixtureRoot '.gitignore'), "out/`nprobe.ps1`n", [Text.UTF8Encoding]::new($false))
+        & git -C $fixtureRoot init *> $null
+        & git -C $fixtureRoot config user.name 'ITL Test'
+        & git -C $fixtureRoot config user.email 'itl-test@example.invalid'
+        & git -C $fixtureRoot add --all
+        & git -C $fixtureRoot commit -m fixture *> $null
+        $LASTEXITCODE | Should -Be 0
+
+        $tokens = $null; $errors = $null
+        $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot 'scripts/check.ps1'), [ref]$tokens, [ref]$errors)
+        @($errors) | Should -BeNullOrEmpty
+        $definitions = foreach ($name in @('ConvertTo-NativeArgument', 'Start-PowerShellChildProcess', 'Stop-GateChildProcessTree', 'Wait-PowerShellChildProcess')) {
+            $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $name }, $false)
+            $definition | Should -Not -BeNullOrEmpty
+            $definition.Extent.Text
+        }
+        $probePath = Join-Path $fixtureRoot 'probe.ps1'
+        $probe = @'
+param([string]$SourceRoot, [string]$FixtureRoot)
+$ErrorActionPreference = 'Stop'
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8
+'@ + [Environment]::NewLine + ($definitions -join [Environment]::NewLine) + [Environment]::NewLine + @'
+$repoRoot = $FixtureRoot
+$outputRoot = Join-Path $FixtureRoot 'out'
+$modeHardBudgetSeconds = 90
+$overallStopwatch = [Diagnostics.Stopwatch]::StartNew()
+$child = Start-PowerShellChildProcess -ScriptPath (Join-Path $SourceRoot 'scripts/invoke-pester-shards.ps1') -Arguments @('-RepositoryRoot', $FixtureRoot, '-OutputRoot', $outputRoot, '-JunitPath', (Join-Path $outputRoot 'pester.xml'), '-WorkerCount', '1', '-SelectionPath', (Join-Path $FixtureRoot 'selection.json')) -LogName 'pester-selection-shards'
+$failure = ''
+try { Wait-PowerShellChildProcess -Child $child -TimeoutSeconds 90 -NoProgressSeconds 60 }
+catch { $failure = $_.Exception.Message }
+$receipt = [ordered]@{ exitCode = [int]$child.process.ExitCode; failure = $failure }
+[IO.File]::WriteAllText((Join-Path $outputRoot 'child-receipt.json'), ($receipt | ConvertTo-Json), $utf8)
+exit $child.process.ExitCode
+'@
+        [IO.File]::WriteAllText($probePath, $probe, [Text.UTF8Encoding]::new($true))
+        $run = Invoke-TestPowerShellFile -FilePath $probePath -Arguments @('-SourceRoot', $RepoRoot, '-FixtureRoot', $fixtureRoot)
+        $run.exitCode | Should -Be 1 -Because $run.combinedText
+        $childReceipt = Get-Content -LiteralPath (Join-Path $outputRoot 'child-receipt.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $childReceipt.exitCode | Should -Be 1
+        $childReceipt.failure | Should -Match 'pester-selection-shards failed with exit code 1'
+        $summary = Get-Content -LiteralPath (Join-Path $outputRoot 'pester-shards/summary.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $summary.status | Should -Be 'failed'
+        $summary.executedWorkerCount | Should -Be 1
+        $summary.reusedWorkerCount | Should -Be 0
+        $worker = Get-Content -LiteralPath (Join-Path $outputRoot 'pester-shards/worker-1.result.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        $worker.status | Should -Be 'failed'
+        $worker.failed | Should -Be 1
+        @($worker.paths) | Should -Be @($testPath)
+        $strictUtf8 = [Text.UTF8Encoding]::new($false, $true)
+        foreach ($stream in @('stdout', 'stderr')) {
+            $workerText = $strictUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot "pester-shards/worker-1.$stream.log")))
+            $workerText | Should -Match ([regex]::Escape($marker))
+            $gateText = $strictUtf8.GetString([IO.File]::ReadAllBytes((Join-Path $outputRoot "pester-selection-shards.$stream.log")))
+            if ($stream -eq 'stderr') {
+                $gateText | Should -Match 'Pester shards failed:'
+                $gateText | Should -Match 'worker 1 reported failed:'
+                $gateText | Should -Match 'ОшибкаШарда'
+                $gateText | Should -Match 'worker-1\.stderr\.log'
+            }
+        }
+    }
+
     It "keeps the short modes cheap and reserves broad proof for Develop and Release" {
         $path = Join-Path $RepoRoot "scripts\check.ps1"
         $tokens = $null
@@ -215,7 +301,8 @@ Describe 'Unicode redirected output' {
             "tests/pester/AiRulesCompatibilityPromotion.Tests.ps1", "tests/pester/DevelopE2EQualification.Tests.ps1",
             "tests/pester/DevelopStaticQualificationCache.Tests.ps1", "tests/pester/LocalQualityGate.Tests.ps1",
             "tests/pester/ParserDocsBudgets.Tests.ps1", "tests/pester/ReleaseGate.Tests.ps1", "tests/pester/ReleaseReadiness.Tests.ps1",
-            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
+            "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1",
+            "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
             "tests/pester/SourceDeliveryPublish.Tests.ps1", "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
             "tests/pester/SourceDeliveryPublishQualification.Tests.ps1", "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
             "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1",
@@ -224,13 +311,16 @@ Describe 'Unicode redirected output' {
         $selection = Resolve-QualityContractsForPaths -Catalog $catalog -Paths $ePaths
         @($selection.contracts.id | Sort-Object) | Should -Be @("documentation", "source-delivery-entrypoint", "source-delivery-fixtures", "source-delivery-ref-cleanup", "source-quality-gate")
         @($selection.tests) | Should -Be $expectedTests
-        @($selection.tests).Count | Should -Be 17
+        @($selection.tests).Count | Should -Be 18
 
         $observedSeconds = [ordered]@{
             "AiRulesCompatibilityPromotion.Tests.ps1" = 2.387; "DevelopE2EQualification.Tests.ps1" = 32.264
             "DevelopStaticQualificationCache.Tests.ps1" = 16.008; "LocalQualityGate.Tests.ps1" = 232.946
             "ParserDocsBudgets.Tests.ps1" = 12.688; "ReleaseGate.Tests.ps1" = 176.030; "ReleaseReadiness.Tests.ps1" = 104.107
-            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
+            # The client-selection delta makes immutable Plan proof part of the entrypoint owner.
+            # Native PS5 qualification on 2026-10-02 measured its complete 20-case suite at 29.530 seconds.
+            "SourceDeliveryComponentPublication.Tests.ps1" = 200.522; "SourceDeliveryPlan.Tests.ps1" = 29.530
+            "SourceDeliveryProcessLifetime.Tests.ps1" = 6.719
             "SourceDeliveryPublish.Tests.ps1" = 243.396; "SourceDeliveryPublishContinuation.Tests.ps1" = 252.135
             "SourceDeliveryPublishQualification.Tests.ps1" = 459.824; "SourceDeliveryPublishRecovery.Tests.ps1" = 332.610
             "SourceDeliveryPublishReleaseTrain.Tests.ps1" = 345.565; "SourceDeliveryQueue.Tests.ps1" = 351.430
@@ -241,7 +331,8 @@ Describe 'Unicode redirected output' {
             "AiRulesCompatibilityPromotion.Tests.ps1"=3; "DevelopE2EQualification.Tests.ps1"=33
             "DevelopStaticQualificationCache.Tests.ps1"=17; "LocalQualityGate.Tests.ps1"=233
             "ParserDocsBudgets.Tests.ps1"=13; "ReleaseReadiness.Tests.ps1"=105
-            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryProcessLifetime.Tests.ps1"=7
+            "SourceDeliveryComponentPublication.Tests.ps1"=201; "SourceDeliveryPlan.Tests.ps1"=30
+            "SourceDeliveryProcessLifetime.Tests.ps1"=7
             "SourceDeliveryResourceLedger.Tests.ps1"=192; "SourceDeliveryPublishContinuation.Tests.ps1"=253
             "SourceDeliveryPublishQualification.Tests.ps1"=460; "SourceDeliveryPublishRecovery.Tests.ps1"=333
             "SourceDeliveryPublishReleaseTrain.Tests.ps1"=346; "SourceDeliveryQueue.Tests.ps1"=352

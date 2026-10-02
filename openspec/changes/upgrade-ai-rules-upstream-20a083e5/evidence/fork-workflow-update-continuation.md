@@ -426,3 +426,33 @@ The bounded support-stage backport separately qualifies source argument
 transport against its older runtime; E's new installed-client guard proof is
 not asserted for that older runtime. Publication and real-project rollout
 remain tasks 10.6 and 11.1–11.3.
+
+The normal registration of committed E head `2c593584` failed before queue
+registration. The LocalQualityGate worker passed 33 cases and failed its old
+17-file stabilization inventory assertion: the deliberately expanded
+entrypoint owner also requires SourceDeliveryPlan, so the actual set has 18
+files. The source selection is retained. Its exact expected set and timing
+model now include the additional 20-case suite measured at 29.530 seconds;
+the existing contract IDs, changed-path fixture and >200-second four-worker
+budget reserve assertion remain. The sole causal case passed in F without
+rerunning unchanged cases. The original run and raw worker results are retained
+in E's `build/e2e-client-selection-proof-20261002/registration-failed-2c593584-20261002/`;
+authoritative failed run SHA256 is
+`d04b5460c770a907cb6235ee139db6bc0ea2cf34b19d96f1b2ca49180b965c22`.
+Delivery-level zero totals on that early refusal do not erase the actual
+executed worker results, and the failed run is not registration proof.
+
+That real refusal also exposed a source transport defect. The shard worker
+already initialized UTF-8, but its orchestrator did not; hidden native PS5
+formatted the terminating error in CP866. The original stderr is retained.
+The orchestrator now uses the same four startup encoding assignments as its
+worker. A regression invokes the actual check.ps1 Start/Wait child owner and
+an actual deliberately failing Pester worker from a whitespace-and-Cyrillic
+path. RED failed strict decoding only after confirming the original failure
+path and nonzero exit; GREEN passed this case, the previous successful Unicode
+case and the exact inventory case (3/0/0, 11.798 seconds). All four captured
+streams are strict UTF-8, while the deliberate child failure remains exit 1.
+No decoder fallback, gate assertion or process authority changed. Receipt in F:
+`build/transport-error-proof-20261002/qualification.json`, SHA256
+`d0997592d69ab39f4a5de4c660e02d0690deeb8bfd3e65ecc0051d976f3636f8`.
+Normal registration must qualify the resulting clean committed head.
