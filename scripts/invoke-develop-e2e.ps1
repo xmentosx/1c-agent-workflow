@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$AiRulesSource,
     [string]$OutputPath = "",
+    [string]$AgentTarget = "",
     [string]$FreshProjectsRoot = "C:\itlj",
     [ValidateSet("upgrade", "fresh", "all")][string]$Journey = "all"
 )
@@ -11,6 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+. (Join-Path $PSScriptRoot "stand-env-identity.ps1")
 $utf8 = [Text.UTF8Encoding]::new($false)
 [Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
@@ -196,7 +198,8 @@ function Invoke-InstalledAction {
     $runner = Join-Path $Root ".agents\skills\1c-workflow\scripts\run-itl-command.ps1"
     if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "Installed compact runner is missing: $runner" }
     [string[]]$runnerArguments = if ($Action -in @("new-dev-branch", "new-extension-dev-branch", "adopt-dev-worktree", "close-dev-branch")) { @("-Windowed", "--") } else { @("--") }
-    $runnerArguments += @("-Action", $Action)
+    $selectedClient = if ($activeJourney -eq "fresh") { "kilocode" } else { Resolve-SourceE2EAgentTarget -ProjectRoot $Root -AgentTarget $AgentTarget }
+    $runnerArguments += @("-Action", $Action, "-AgentTarget", $selectedClient)
     $runnerArguments += @($AdditionalArguments)
     $result = Invoke-DevelopProcess -Name $Name -WorkingRoot $Root -ScriptPath $runner -Arguments $runnerArguments -TimeoutSeconds $TimeoutSeconds -AllowFailure:$AllowFailure
     $summary = Read-CompactSummary -ProcessResult $result
@@ -476,7 +479,7 @@ try {
         })
         $freshHelper = Join-Path $freshRoot ".agents\skills\1c-workflow\scripts\agent-1c.ps1"
         [void](Invoke-DevelopTimedOperation -Timings $freshTimings -Name "status" -Operation {
-            Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status") -TimeoutSeconds 120)
+            Assert-ProjectStatusOutput -ProcessResult (Invoke-DevelopProcess -Name "fresh-status" -WorkingRoot $freshRoot -ScriptPath $freshHelper -Arguments @("-ProjectRoot", $freshRoot, "-Action", "status", "-AgentTarget", "kilocode") -TimeoutSeconds 120)
         })
         $branchName = "develop-golden"
         $freshBranchRoot = Invoke-DevelopTimedOperation -Timings $freshTimings -Name "create-dev-branch" -Operation {

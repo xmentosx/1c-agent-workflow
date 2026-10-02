@@ -652,6 +652,10 @@ Describe "Release E2E orchestration" {
             }
             Set-Content -LiteralPath (Join-Path $mainRoot ".agent-1c\dependency-lock.json") -Encoding UTF8 -Value ($dependencyLock | ConvertTo-Json -Depth 6)
             Copy-Item -LiteralPath (Join-Path $RepoRoot "templates\project.json") -Destination (Join-Path $mainRoot ".agent-1c\project.json")
+            $fixtureProjectPath = Join-Path $mainRoot ".agent-1c\project.json"
+            $fixtureProject = Get-Content -LiteralPath $fixtureProjectPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            $fixtureProject.aiRules.tools = @("kilocode")
+            [IO.File]::WriteAllText($fixtureProjectPath, ($fixtureProject | ConvertTo-Json -Depth 16), [Text.UTF8Encoding]::new($false))
             Set-Content -LiteralPath (Join-Path $mainRoot "src\cf\Configuration.xml") -Encoding UTF8 -Value @'
 <?xml version="1.0" encoding="UTF-8"?>
 <MetaDataObject>
@@ -699,7 +703,8 @@ Describe "Release E2E orchestration" {
             Set-Content -LiteralPath (Join-Path $worktreeRoot ".agent-1c\dev-branches\workflow-release-e2e.json") -Encoding UTF8 -Value ($state | ConvertTo-Json -Depth 6)
             Set-Content -LiteralPath $helperPath -Encoding UTF8 -Value @'
 [CmdletBinding()]
-param([string]$ProjectRoot, [string]$Action, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [switch]$PreserveReleaseSnapshotApplicationProof, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
+param([string]$ProjectRoot, [string]$Action, [string]$AgentTarget, [string]$DevBranchName, [string]$ExtensionName, [string]$ReleaseAiRulesSource, [string]$VanessaFeaturePath, [string]$VanessaFilterTags, [string]$ReleaseSnapshotPath, [switch]$PreserveReleaseSnapshotApplicationProof, [ValidateSet("Auto", "Partial", "Full")][string]$ConfigLoadMode = "Auto", [string]$InternalOnDemandOperation, [string]$InternalOnDemandFamily)
+if ($Action -and $AgentTarget -cne "kilocode") { throw "The unattended fixture helper must receive its configured Kilo client explicitly." }
 $actionLogPath = Join-Path $ProjectRoot ".agent-1c\release-e2e-actions.log"
 Add-Content -LiteralPath $actionLogPath -Encoding UTF8 -Value $Action
 if ($InternalOnDemandOperation -eq "stop-all") {
@@ -1028,13 +1033,14 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             )) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Split-Path -Parent (Join-Path $workflowFixtureRoot $relative)) -Recurse -Force
             }
-            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
+            foreach ($relative in @("scripts\invoke-release-e2e.ps1", "scripts\stand-env-identity.ps1", "scripts\Build-ItlOnDemandMcp.ps1", "templates\dependency-lock.json")) {
                 Copy-Item -LiteralPath (Join-Path $RepoRoot $relative) -Destination (Join-Path $workflowFixtureRoot $relative) -Force
             }
             & git -C $workflowFixtureRoot add --all
             & git -C $workflowFixtureRoot commit --allow-empty -m "test: use current capability-cache runner" *> $null
             $LASTEXITCODE | Should -Be 0
             (Get-FileHash -LiteralPath (Join-Path $workflowFixtureRoot "scripts\invoke-release-e2e.ps1") -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot "scripts\invoke-release-e2e.ps1") -Algorithm SHA256).Hash
+            (Get-FileHash -LiteralPath (Join-Path $workflowFixtureRoot "scripts\stand-env-identity.ps1") -Algorithm SHA256).Hash | Should -Be (Get-FileHash -LiteralPath (Join-Path $RepoRoot "scripts\stand-env-identity.ps1") -Algorithm SHA256).Hash
             $candidateOnDemandPath = Join-Path $workflowFixtureRoot ".agents\skills\1c-workflow\scripts\lib\agent-1c.ondemand-mcp.ps1"
             Add-Content -LiteralPath $candidateOnDemandPath -Encoding UTF8 -Value "# release candidate managed-package advance"
             & git -C $workflowFixtureRoot add -- ".agents/skills/1c-workflow/scripts/lib/agent-1c.ondemand-mcp.ps1"
@@ -1316,6 +1322,181 @@ if ($releaseCheckCount -gt 3 -and $ConfigLoadMode -ne "Auto") { throw "release E
             $env:ITL_TEST_RELEASE_SEED_PARALLEL = $oldSeedParallelFixture
             $env:ITL_TEST_RELEASE_SERVER_RESET_FIXTURE = $oldServerResetFixture
             Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Unattended E2E source argument boundary' {
+    BeforeAll {
+        . (Join-Path $RepoRoot 'scripts/stand-env-identity.ps1')
+        function Get-E2ETestDefinition {
+            param([string]$Path,[string]$Name)
+            $tokens=$null;$errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $RepoRoot $Path),[ref]$tokens,[ref]$errors)
+            if($errors){throw 'Owner must parse'}
+            $node=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $Name},$false)
+            if(-not $node){throw "Missing owner $Name"};$node.Extent.Text
+        }
+        function New-E2EClientFixture {
+            param([string]$Root,[string[]]$Clients=@('kilocode'))
+            $helper=Join-Path $Root '.agents/skills/1c-workflow/scripts/run-itl-command.ps1'
+            New-Item -ItemType Directory -Force -Path (Split-Path $helper),(Join-Path $Root '.agent-1c')|Out-Null
+            [IO.File]::WriteAllText((Join-Path $Root '.agent-1c/project.json'),(@{aiRules=@{tools=$Clients}}|ConvertTo-Json -Depth 4),[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText((Join-Path $Root '.ai-rules.json'),(@{tools=$Clients}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            $providers=@"
+`$ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false)
+`$forwarded=@(`$args|ForEach-Object{[string]`$_})
+`$AgentTarget='';`$Action='';`$ProjectRoot=(Get-Location).Path
+foreach(`$name in @('AgentTarget','Action','ProjectRoot')){`$i=[Array]::IndexOf(`$forwarded,'-'+`$name);if(`$i -ge 0){Set-Variable -Name `$name -Value `$forwarded[`$i+1]}}
+"@
+            # This legacy support cut has a sole-client selector. This child
+            # records the source argv boundary; it does not emulate the new guard.
+            $result=@'
+if ($AgentTarget -ceq 'source-boundary-reject') { throw 'SOURCE_E2E_TEST_HELPER_REJECTED: source-boundary-reject' }
+@{action=$Action;status='succeeded';agentTarget=$AgentTarget;root=$ProjectRoot;arguments=$forwarded;boundary='source-argument-recorder'}|ConvertTo-Json -Depth 4 -Compress
+'@
+            [IO.File]::WriteAllText($helper,($providers+"`r`n"+$result),[Text.UTF8Encoding]::new($true))
+            return $helper
+        }
+    }
+
+    It 'selects the actual <Runner> root and resumes the same ambiguous operation explicitly' -ForEach @(@{Runner='Develop'},@{Runner='Release'}) {
+        & {
+            $root=Join-Path $TestDrive ("$Runner проект с пробелами")
+            $HelperPath=New-E2EClientFixture $root
+            $outputRoot=Join-Path $root 'logs';New-Item -ItemType Directory $outputRoot|Out-Null
+            $steps=New-Object 'Collections.Generic.List[object]'
+            $AgentTarget='';$activeJourney='upgrade';$script:activeStageDeadlineUtc=$null
+            foreach($name in @('ConvertTo-DevelopProcessArgument','Invoke-DevelopProcess','Invoke-InstalledAction','Read-CompactSummary')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-develop-e2e.ps1' $name)))}
+            foreach($name in @('ConvertTo-NativeArgument','Start-E2EHelperAtRoot','Complete-E2EHelperProcess')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' $name)))}
+            function Invoke-SelectedFixture {
+                if($Runner -eq 'Develop'){
+                    $r=Invoke-InstalledAction -Name 'same-operation' -Root $root -Action status -TimeoutSeconds 30
+                    return Read-CompactSummary $r
+                }
+                $invocation=Start-E2EHelperAtRoot -Root $root -Action status -LogPrefix 'same-operation'
+                $r=Complete-E2EHelperProcess $invocation -TimeoutSeconds 30
+                return Get-Content -Raw -LiteralPath $r.stdoutPath -Encoding UTF8|ConvertFrom-Json
+            }
+            $config=Join-Path $root '.agent-1c/project.json';$manifest=Join-Path $root '.ai-rules.json'
+            $before=(Get-FileHash $config).Hash;$manifestBefore=(Get-FileHash $manifest).Hash
+            $result=Invoke-SelectedFixture
+            $result.agentTarget|Should -BeExactly 'kilocode';$result.root|Should -BeExactly $root
+            $result.boundary|Should -BeExactly 'source-argument-recorder'
+            @($result.arguments|Where-Object{$_ -ceq '-AgentTarget'}).Count|Should -Be 1
+            (Get-FileHash $config).Hash|Should -BeExactly $before
+            (Get-FileHash $manifest).Hash|Should -BeExactly $manifestBefore
+            [IO.File]::WriteAllText($config,'{"aiRules":{"tools":["kilocode","codex"]}}',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($manifest,'{"tools":["kilocode","codex"]}',[Text.UTF8Encoding]::new($false))
+            $ambiguousHash=(Get-FileHash $config).Hash;$ambiguousManifestHash=(Get-FileHash $manifest).Hash
+            {Invoke-SelectedFixture}|Should -Throw '*SOURCE_E2E_AGENT_TARGET_REQUIRED*same*command*-AgentTarget*'
+            $AgentTarget='kilocode';(Invoke-SelectedFixture).agentTarget|Should -BeExactly 'kilocode'
+            (Get-FileHash $config).Hash|Should -BeExactly $ambiguousHash
+            (Get-FileHash $manifest).Hash|Should -BeExactly $ambiguousManifestHash
+            [IO.File]::WriteAllText($config,'{"aiRules":{"tools":["kilocode"]}}',[Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($manifest,'{"tools":["kilocode"]}',[Text.UTF8Encoding]::new($false))
+            $unattachedConfigHash=(Get-FileHash $config).Hash;$unattachedManifestHash=(Get-FileHash $manifest).Hash
+            $AgentTarget='source-boundary-reject'
+            {Invoke-SelectedFixture}|Should -Throw '*failed with exit code*'
+            (Get-Content (Join-Path $outputRoot 'same-operation.stderr.log') -Raw -Encoding UTF8)|Should -Match 'SOURCE_E2E_TEST_HELPER_REJECTED: source-boundary-reject'
+            (Get-FileHash $config).Hash|Should -BeExactly $unattachedConfigHash
+            (Get-FileHash $manifest).Hash|Should -BeExactly $unattachedManifestHash
+            $AgentTarget='kilocode';(Invoke-SelectedFixture).agentTarget|Should -BeExactly 'kilocode'
+            (Get-FileHash $config).Hash|Should -BeExactly $unattachedConfigHash
+            (Get-FileHash $manifest).Hash|Should -BeExactly $unattachedManifestHash
+            # Separate server targets resolve their own config, never the main Kilo root.
+            $root=Join-Path $TestDrive ("$Runner server путь")
+            $HelperPath=New-E2EClientFixture $root @('qwen');$AgentTarget=''
+            (Invoke-SelectedFixture).agentTarget|Should -BeExactly 'qwen'
+        }
+    }
+
+    It 'retains the legacy sole-client selector and its multi-client refusal' {
+        & {
+            $legacyClients=@('kilocode');$AgentTarget='codex'
+            function Get-AgentTargets { @($legacyClients) }
+            function Get-AiRules1cProjectManifest { [pscustomobject]@{tools=$legacyClients} }
+            function Get-AiRules1cManifestToolNames { param($Manifest) @($Manifest.tools) }
+            . ([scriptblock]::Create((Get-E2ETestDefinition '.agents/skills/1c-workflow/scripts/lib/agent-1c.client-adapters.ps1' 'Get-ItlActiveClient')))
+            Get-ItlActiveClient|Should -BeExactly 'kilocode'
+            $legacyClients=@('kilocode','codex')
+            {Get-ItlActiveClient}|Should -Throw '*Exactly one configured ITL client is required*'
+        }
+    }
+
+    It 'keeps the fresh journey on its bootstrap client despite an explicit upgrade client' {
+        & {
+            $root=Join-Path $TestDrive 'fresh путь с пробелами';$null=New-E2EClientFixture $root
+            $outputRoot=Join-Path $root 'logs';New-Item -ItemType Directory $outputRoot|Out-Null
+            $steps=New-Object 'Collections.Generic.List[object]';$activeJourney='fresh';$AgentTarget='codex'
+            foreach($name in @('ConvertTo-DevelopProcessArgument','Invoke-DevelopProcess','Invoke-InstalledAction','Read-CompactSummary')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-develop-e2e.ps1' $name)))}
+            (Read-CompactSummary (Invoke-InstalledAction -Name fresh -Root $root -Action status -TimeoutSeconds 30)).agentTarget|Should -BeExactly 'kilocode'
+        }
+    }
+
+    It 'preserves scalar client identity through the actual immutable capability cache writer' {
+        & {
+            foreach($name in @('ConvertTo-E2EHashtable','Get-E2EGeneratedCommitRecords','Save-E2ECapabilityCache')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' $name)))}
+            $ProjectRoot=Join-Path $TestDrive 'cache scalar путь с пробелами';$null=New-E2EClientFixture $ProjectRoot
+            $clientSelectionIdentity=Get-SourceE2EClientIdentity -ProjectRoot $ProjectRoot -AgentTarget 'kilocode'
+            $capabilityCacheRoot=Join-Path $ProjectRoot 'capability-cache'
+            $checkpoint=[ordered]@{runId='scalar-identity';identity=[ordered]@{clientSelection=$clientSelectionIdentity};snapshots=[ordered]@{};stateFiles=[ordered]@{};stages=[ordered]@{};generatedCommits=@()}
+            $manifestPath=Save-E2ECapabilityCache
+            $saved=Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8|ConvertFrom-Json
+            $saved.identity.clientSelection|Should -BeOfType ([string])
+            $saved.identity.clientSelection|Should -BeExactly $clientSelectionIdentity
+            $copied=ConvertTo-E2EHashtable $saved
+            $copied.identity.clientSelection|Should -BeOfType ([string])
+            $copied.identity.clientSelection|Should -BeExactly $clientSelectionIdentity
+        }
+    }
+    It 'binds stage fingerprints and cache fallback to the client and actual server configuration' {
+        & {
+            $ProjectRoot=Join-Path $TestDrive 'fingerprint путь';$null=New-E2EClientFixture $ProjectRoot
+            $server=Join-Path $TestDrive 'server fingerprint путь';$null=New-E2EClientFixture $server @('qwen')
+            [IO.File]::WriteAllText((Join-Path $ProjectRoot '.agent-1c/release-e2e.json'),(@{serverWorktreePath=$server}|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
+            . ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' 'Get-E2EStageFingerprint')))
+            $script:ReleaseE2EStageDefinitions=@{probe=@{version=1;dependsOn=@()}}
+            function Get-E2EStageInputFiles {param($Name)@()}
+            $runnerSha256='runner';$workflowRoot=$RepoRoot;$aiRulesCommit='fork';$aiRulesTree='tree';$projectConfigSha256='config'
+            $clientSelectionIdentity=Get-SourceE2EClientIdentity $ProjectRoot 'kilocode';$first=Get-E2EStageFingerprint probe
+            $clientSelectionIdentity=Get-SourceE2EClientIdentity $ProjectRoot 'codex';(Get-E2EStageFingerprint probe)|Should -Not -Be $first
+            $clientSelectionIdentity=Get-SourceE2EClientIdentity $ProjectRoot 'kilocode';(Get-E2EStageFingerprint probe)|Should -Be $first
+            [IO.File]::WriteAllText((Join-Path $server '.agent-1c/project.json'),'{"aiRules":{"tools":["kilocode"]}}',[Text.UTF8Encoding]::new($false))
+            $clientSelectionIdentity=Get-SourceE2EClientIdentity $ProjectRoot 'kilocode';(Get-E2EStageFingerprint probe)|Should -Not -Be $first
+        }
+    }
+
+    It 'rejects old or differently selected cache proof even when source inputs are unchanged' {
+        & {
+            foreach($name in @('ConvertTo-E2EHashtable','Find-E2ECompletedCapabilityCache','Restore-E2EInterruptedCapabilityStage')){. ([scriptblock]::Create((Get-E2ETestDefinition 'scripts/invoke-release-e2e.ps1' $name)))}
+            $capabilityCacheRoot=Join-Path $TestDrive 'cache client путь';New-Item -ItemType Directory $capabilityCacheRoot|Out-Null
+            $manifest=Join-Path $capabilityCacheRoot 'manifest.json'
+            $ProjectRoot=$TestDrive;$worktreePath=$TestDrive;$branch='itldev/probe';$aiRulesCommit='fork';$aiRulesTree='fork-tree';$projectConfigSha256='project'
+            $workflowRoot=$RepoRoot;$workflowCommit='current';$workflowTree='current-tree';$serverResetConfigured=$false;$serverResetTestFixture=$false
+            $clientSelectionIdentity='selected-kilo'
+            $cache=@{schemaVersion=1;identity=@{projectRoot=$ProjectRoot;worktreePath=$worktreePath;branch=$branch;initialHead='initial';aiRulesCommit=$aiRulesCommit;aiRulesTree=$aiRulesTree;projectConfigSha256=$projectConfigSha256;workflowCommit='previous';runnerSha256='previous-runner';clientSelection=$clientSelectionIdentity};stages=@{};snapshots=@{};stateFiles=@{}}
+            foreach($stage in @('seed-parallel','config-cadence','config-roundtrip','extension-smoke','ondemand-mcp')){$cache.stages[$stage]=@{status='passed';fingerprint='old';evidencePath=''}}
+            foreach($snapshot in @('baseline','postConfig')){$cache.snapshots[$snapshot]=@{path='snapshot';sha256='snapshot-sha'};$cache.stateFiles[$snapshot]=@{stateCopyPath='state';stateSha256='state-sha';envCopyPath=''}}
+            [IO.File]::WriteAllText($manifest,($cache|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+            $checkpoint=@{identity=@{initialHead='initial'};stages=@{'seed-parallel'=@{status='running'}}}
+            function Get-WorkflowContinuationProof {param($RepositoryRoot,$QualifiedCommit,$CurrentCommit,$CurrentTree)$true}
+            function Get-E2EStageFingerprint {param($Name,$RunnerSha256)'different-current-fingerprint'}
+            function Test-E2EStageInputsUnchanged {param($Name,$QualifiedCommit)$true}
+            function Assert-E2ECheckpointFile {param($Path,$Sha256,$Label)}
+            function Write-E2ECheckpoint {}
+            (Find-E2ECompletedCapabilityCache)|Should -BeExactly $manifest
+            (Restore-E2EInterruptedCapabilityStage 'seed-parallel')|Should -BeTrue
+            $checkpoint.stages['seed-parallel']=@{status='running'}
+            $clientSelectionIdentity='selected-codex'
+            (Find-E2ECompletedCapabilityCache)|Should -BeNullOrEmpty
+            (Restore-E2EInterruptedCapabilityStage 'seed-parallel')|Should -BeFalse
+            $clientSelectionIdentity='selected-kilo';$cache.identity.Remove('clientSelection')
+            [IO.File]::WriteAllText($manifest,($cache|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+            (Find-E2ECompletedCapabilityCache)|Should -BeNullOrEmpty
+            (Restore-E2EInterruptedCapabilityStage 'seed-parallel')|Should -BeFalse
+            $checkpoint.stages['seed-parallel'].status|Should -BeExactly 'running'
         }
     }
 }

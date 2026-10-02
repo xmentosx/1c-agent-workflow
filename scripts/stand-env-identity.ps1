@@ -1,5 +1,49 @@
 Set-StrictMode -Version Latest
 
+# Source qualification chooses a client for each actual installed target. The
+# installed helper remains the sole owner of membership/attachment validation.
+function Get-SourceE2EConfiguredClients {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+    $path = Join-Path $ProjectRoot '.agent-1c/project.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
+    $project = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+    $rules = $project.PSObject.Properties['aiRules']
+    if (-not $rules -or -not $rules.Value) { return @() }
+    $tools = $rules.Value.PSObject.Properties['tools']
+    if (-not $tools) { return @() }
+    return @($tools.Value | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() } | Where-Object { $_ } | Sort-Object -Unique)
+}
+
+function Resolve-SourceE2EAgentTarget {
+    param([Parameter(Mandatory = $true)][string]$ProjectRoot, [string]$AgentTarget = '')
+    if (-not [string]::IsNullOrWhiteSpace($AgentTarget)) { return $AgentTarget }
+    $clients = @(Get-SourceE2EConfiguredClients -ProjectRoot $ProjectRoot)
+    if ($clients.Count -eq 1) { return $clients[0] }
+    $choices = if ($clients.Count) { $clients -join ', ' } else { '<configured-client>' }
+    throw "SOURCE_E2E_AGENT_TARGET_REQUIRED: unattended E2E target '$ProjectRoot' has $($clients.Count) configured clients ($choices). Repeat the same source-delivery.ps1, check.ps1 or invoke-*-e2e.ps1 command with -AgentTarget '<configured-client>' (choose from: $choices). The installed helper validates membership and attachment."
+}
+
+function Get-SourceE2EClientIdentity {
+    param([string]$ProjectRoot = '', [string]$AgentTarget = '')
+    $roots = [ordered]@{}
+    if ($ProjectRoot) {
+        $roots['project'] = [IO.Path]::GetFullPath($ProjectRoot)
+        $standPath = Join-Path $ProjectRoot '.agent-1c/release-e2e.json'
+        if (Test-Path -LiteralPath $standPath -PathType Leaf) {
+            $stand = Get-Content -LiteralPath $standPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($name in @('worktreePath', 'developWorktreePath', 'serverProjectRoot', 'serverWorktreePath')) {
+                $property = $stand.PSObject.Properties[$name]
+                if ($property -and [string]$property.Value) { $roots[$name] = [IO.Path]::GetFullPath([string]$property.Value) }
+            }
+        }
+    }
+    $targets = @(foreach ($name in $roots.Keys) {
+        [ordered]@{ role=$name; root=$roots[$name].ToLowerInvariant(); configuredClients=@(Get-SourceE2EConfiguredClients -ProjectRoot $roots[$name]) }
+    })
+    # ConvertTo-Json decorates strings in Windows PowerShell 5.1; the cache owner needs a scalar, not its Length property.
+    return [string]([ordered]@{ requestedAgentTarget=$AgentTarget; freshAgentTarget='kilocode'; targets=$targets } | ConvertTo-Json -Depth 6 -Compress)
+}
+
 function Get-DeliveryPlanSemanticDotEnvNames {
     return @(
         'PLATFORM_PATH','PLATFORM_ARGS','IBCMD_ARGS','ONEC_MAX_CONCURRENT_SESSIONS',

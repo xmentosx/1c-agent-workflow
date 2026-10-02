@@ -51,6 +51,15 @@ same command and branch name; the config remains on the old branch until the
 fork finishes and validates. A worktree that already ran Release is not a safe
 fixture merely because its Git tree is clean.
 
+For unattended Develop/Release E2E, the source runners explicitly select the sole
+configured client of each actual target root (including a separate server stand).
+With multiple configured clients, repeat the same `source-delivery.ps1`,
+`check.ps1`, or `invoke-*-e2e.ps1` command with `-AgentTarget kilocode` (or the
+intended configured client). Explicit input is forwarded to the installed helper;
+its membership and attachment guard remains authoritative. Fresh bootstrap and
+its subsequent journey consistently use `kilocode`. A changed selection invalidates
+client-bound plan/qualification/cache reuse; no project/client config is rewritten.
+
 ## Each fork/workflow release
 
 First publish and qualify the exact accumulated development candidate:

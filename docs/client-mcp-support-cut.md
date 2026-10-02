@@ -28,3 +28,43 @@ candidate. Reverify the actual published baseline and remote movement when
 publication is authorized. Do not alter the migration checkout's queue or use
 the candidate as its own supervisor. Preparing this cut grants no publication
 authority and is not native or live qualification.
+
+The support cut also carries the bounded source-only unattended E2E client
+selection delta from the migration candidate based on `6d351474`. The source
+stand resolver, delivery/check/runner parameter chain, and existing plan,
+qualification and Release cache identities record the selected client for each
+actual configured target. Fresh bootstrap keeps its existing `kilocode` choice.
+The matching stage catalog, shared stage input owner, tests and two gate
+references travel together. No installed client selector, migration runtime,
+project configuration, dependency/default lock or Vanessa pin is imported.
+
+This baseline's `Get-ItlActiveClient` in `agent-1c.client-adapters.ps1:241-253`
+requires exactly one configured and installed client and returns that client;
+it does not implement the migration candidate's explicit multi-client guard.
+Support native fixtures therefore qualify exact source argument forwarding,
+same-command explicit selection after ambiguity, foreign-root selection,
+sentinel child failure propagation, unchanged project/manifest bytes and
+client-bound cache identities. The original migration fixture's actual new
+client guard proof remains in its owner checkout; these support fixtures do
+not claim legacy installed multi-client acceptance. The old sole-client
+selector and multi-client refusal are tested separately without changing it.
+
+For Stage A through published supervisor `81f0a649`, omit `-AgentTarget` only
+when every actual target has one configured client and that is the intended
+client. The new source runners bind that client explicitly. An explicit option
+against an old supervisor is diagnosed as
+`DELIVERY_E2E_CLIENT_OPTION_UNSUPPORTED`; publish this support through the
+existing channel and then repeat the same explicit command. The shim never
+drops explicit intent or changes supervisor authority to bypass compatibility.
+
+The bounded source addition passed 50/50 native Windows PowerShell 5.1/Pester
+5.8.0 cases in 263.837 seconds with all 18 captured inputs unchanged. Receipt:
+`build/support-e2e-client-selection-20261002/qualification.json`, SHA256
+`7ec4dd472a1746fb2b139b5fee2fb93534d40f0e28ccec84a5da3ca7dcafb3dc`.
+The first 48/1 result and 359 historical compact artifacts are retained. Its
+original positive cache-continuation failure was fixed at the stateless getter:
+PS5's decorated JSON result is cast to an ordinary string before the existing
+cache writer. The actual writer/reader regression and original continuation
+assertions pass; generic converters and strict reuse guards remain unchanged.
+This captured-input proof precedes normal registration of the final clean
+support commit; neither it nor preparation of a Plan authorizes publication.

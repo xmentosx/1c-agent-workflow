@@ -65,6 +65,7 @@
     "failFastOrder": ["upgrade"],
     "fullPaths": [
       "scripts/invoke-develop-e2e.ps1",
+      "scripts/stand-env-identity.ps1",
       "scripts/git-path-list.ps1"
     ],
     "routes": {
@@ -141,7 +142,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryQueue.Tests.ps1",
       "paths": ["scripts/source-delivery.ps1", "scripts/source-delivery-supervisor.ps1"],
-      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryRefCleanup.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryRefCleanup.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1"]
     },
     {
       "id": "source-delivery-plan",
@@ -182,7 +183,8 @@
         "tests/pester/SourceDeliveryPublishReleaseTrain.Tests.ps1",
         "tests/pester/SourceDeliveryPublishQualification.Tests.ps1",
         "tests/pester/SourceDeliveryPublishRecovery.Tests.ps1",
-        "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1"
+        "tests/pester/SourceDeliveryPublishContinuation.Tests.ps1",
+        "tests/pester/SourceDeliveryPlan.Tests.ps1"
       ]
     },
     {
@@ -219,7 +221,7 @@
       "budgetSeconds": 300,
       "primaryTest": "tests/pester/SourceDeliveryProcessLifetime.Tests.ps1",
       "paths": ["scripts/source-delivery-process.ps1"],
-      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1"]
+      "tests": ["tests/pester/SourceDeliveryProcessLifetime.Tests.ps1", "tests/pester/SourceDeliveryRunIndex.Tests.ps1", "tests/pester/SourceDeliveryQueue.Tests.ps1", "tests/pester/SourceDeliveryComponentPublication.Tests.ps1", "tests/pester/SourceDeliveryPlan.Tests.ps1"]
     },
     {
       "id": "source-delivery-queue",
