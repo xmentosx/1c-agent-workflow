@@ -128,6 +128,18 @@ proxies, and publishes only qualified endpoints. If qualification still fails, i
 the affected direct runtime and retries once. Missing direct containers require `setup`; reconcile
 does not infer or create untracked runtimes.
 
+Direct endpoints are compared with an in-container MCP identity through the
+shared read-only `mcp-host/endpoint_identity.py`: server name, structural tool
+catalog and the agreed safe health call. Two foreign public responses plus a
+safe, idle internal health proof permit one restart of that immutable container
+ID per run. The published identity and safe call must pass afterward. Timeouts,
+unknown identity and active indexing retain the container and report diagnostics.
+Both reconcile and watchdog use the existing host maintenance lock. Repeat
+`reconcile -ServerId <id>` after maintenance/indexing or route repair completes.
+The normal path adds bounded local MCP reads only, without embedding requests.
+The dedicated Linux backend shares this probe and retains its existing owner,
+timer and lock; see [`mcp-host/linux/README.md`](../mcp-host/linux/README.md).
+
 The supported watchdog is part of the installer and does not require an administrator-written
 wrapper script. Enable the `watchdog` section in `host.config.json`, then install its managed
 Windows Scheduled Task:

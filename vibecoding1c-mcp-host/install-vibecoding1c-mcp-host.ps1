@@ -3317,7 +3317,18 @@ function Repair-TrackedMcpHostAndPublish {
             }
         }
 
-        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") { continue }
+        if ([string](Get-ObjectValue -Object $server -Name "endpointMode" -Default "") -eq "direct") {
+            $proof = Get-HostDirectEndpointProof -Config $Config -Server $server
+            if ($proof.status -eq "mismatch") {
+                Write-Warning "Direct MCP '$id' serves a foreign endpoint; restarting only its qualified idle container once."
+                Invoke-DockerCommandChecked -Arguments @("restart", "--time", "20", ([string]$proof.container_id)) -TimeoutSec 60 -Description "repair direct MCP identity $containerName"
+                if (-not (Wait-HostTcpPortOpen -Port $hostPort)) { throw "Direct MCP '$id' port did not recover. Repeat reconcile -ServerId $id after restoring Docker availability." }
+                $proof = Get-HostDirectEndpointProof -Config $Config -Server $server
+                if ($proof.status -ne "matched") { throw "Direct MCP '$id' identity did not recover after one restart. Inspect its published route, then repeat reconcile -ServerId $id. No further restart was attempted." }
+            }
+            if ($proof.status -ne "matched") { Write-Warning "Direct MCP '$id' identity is $($proof.status): $($proof.reason). Container retained; repeat reconcile -ServerId $id when indexing/transport is ready." }
+            continue
+        }
 
         $proxyContainerName = [string](Get-ObjectValue -Object $server -Name "proxyContainerName" -Default "$containerName-tools-list-proxy")
         $proxyPort = [int](Get-ObjectValue -Object $server -Name "proxyPort" -Default ($hostPort + [int]$settings.portOffset))
@@ -4453,8 +4464,34 @@ function Get-HostServerFunctionalHealth {
     }
 }
 
+function Get-HostDirectEndpointProof {
+    param([object]$Config, [object]$Server)
+    try {
+        $python = Ensure-PythonRuntime -Config $Config
+        $probe = Join-Path $PSScriptRoot "../mcp-host/endpoint_identity.py"
+        $id = [string](Get-ObjectValue -Object $Server -Name "id" -Default "")
+        $arguments = @("-B", "-X", "utf8", $probe, "--container", ([string]$Server.containerName), "--url", ([string]$Server.url),
+            "--host-port", ([string]$Server.hostPort), "--timeout", "5")
+        $tool = Get-HostServerSafeHealthTool -ServerId $id
+        if ($tool) {
+            $arguments += @("--health-tool", $tool)
+            $healthArguments = Get-HostServerSafeHealthArguments -ServerId $id
+            if ($null -ne $healthArguments) {
+                # Base64 avoids native Windows escaping of serialized Unicode JSON.
+                $encoded = [Convert]::ToBase64String($script:Utf8NoBom.GetBytes(($healthArguments | ConvertTo-Json -Compress)))
+                $arguments += @("--health-arguments-base64", $encoded)
+            }
+        }
+        $result = Invoke-ProcessWithTimeout -FilePath $python -Arguments $arguments -TimeoutSec 80 -Description "read-only direct MCP identity $id"
+        if ($result.exitCode -ne 0) { throw "Endpoint identity probe failed." }
+        return (($result.lines -join "`n") | ConvertFrom-Json)
+    } catch {
+        return [pscustomobject]@{ status = "unverified"; reason = "Direct identity proof unavailable." }
+    }
+}
+
 function Get-HostServerPublishStatus {
-    param([object]$Server)
+    param([object]$Server, [object]$Config)
 
     $proxyUrl = [string](Get-ObjectValue -Object $Server -Name "proxyUrl" -Default "")
     if ($proxyUrl -and [string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -ne "direct") {
@@ -4490,7 +4527,7 @@ function Get-HostServerPublishStatus {
     if (Test-HostTcpPortOpen -Port $hostPort) {
         if ([string](Get-ObjectValue -Object $Server -Name "endpointMode" -Default "") -eq "direct") {
             try {
-                if (@(Get-HostMcpToolsList -Url ([string]$Server.url)).Count -eq 0) { return "unreachable" }
+                if ((Get-HostDirectEndpointProof -Config $Config -Server $Server).status -ne "matched") { return "unreachable" }
             } catch { return "unreachable" }
         }
         return "running"
@@ -4521,7 +4558,7 @@ function Update-HostStateForPublish {
             }
         }
 
-        $publishStatus = Get-HostServerPublishStatus -Server $serverHash
+        $publishStatus = Get-HostServerPublishStatus -Server $serverHash -Config $Config
         $currentStatus = [string](Get-ObjectValue -Object $serverHash -Name "status" -Default "")
         if ($currentStatus -ne $publishStatus) {
             $serverHash["status"] = $publishStatus
@@ -4644,7 +4681,7 @@ function Enable-BookStackDirectEndpoint {
             Write-Host "DRY-RUN: qualify and publish BookStack at $url, then remove $proxyName. The direct container and index are retained."
             return
         }
-        if ((Get-HostServerPublishStatus -Server $native) -ne "running") {
+        if ((Get-HostServerPublishStatus -Server $native -Config $Config) -ne "running") {
             throw "BookStack direct MCP is not ready at $url. Restore its availability and repeat bookstack-direct; the proxy is retained."
         }
         $health = Get-HostServerFunctionalHealth -Server $native
@@ -5440,7 +5477,10 @@ switch ($Action) {
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "reconcile" {
-        Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId
+        $lease = Enter-McpHostMaintenanceLock -Config $config -Operation "reconcile" -WaitSeconds 0
+        if (-not $lease.acquired) { throw "Host maintenance is active. Repeat reconcile after it completes; no runtime was changed." }
+        try { Repair-TrackedMcpHostAndPublish -Config $config -TargetServerId $ServerId }
+        finally { Exit-McpHostMaintenanceLock -Lease $lease }
         Show-HostStatus -Config $config -TargetServerId $ServerId
     }
     "watchdog-install" {

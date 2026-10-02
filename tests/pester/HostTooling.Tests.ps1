@@ -4518,6 +4518,7 @@ services:
             function Get-HostContainerPublishState { return 'running' }
             function Wait-HostTcpPortOpen { return $true }
             function Test-ToolsListProxyReady { return $false }
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
             function Enable-TrackedToolsListProxiesAndPublish { $script:NativeRepairAttempts++; if ($script:NativeRepairAttempts -eq 1) { throw 'fixture proxy failure' } }
             Repair-TrackedMcpHostAndPublish -Config @{ toolsListProxy = @{ enabled = $true; serverIds = @('code') } } -TargetServerId code
             $script:NativeRepairAttempts | Should -Be 2
@@ -4540,11 +4541,11 @@ services:
             $published.url | Should -Be $server.url
             $published.proxyUrl | Should -BeNullOrEmpty
             $published.toolsContractStatus | Should -Be 'native'
-            function Get-HostMcpToolsList { return @() }
+            function Get-HostDirectEndpointProof { return @{ status = 'unverified' } }
             (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
-            function Get-HostMcpToolsList { throw 'invalid MCP' }
+            function Get-HostDirectEndpointProof { throw 'invalid MCP' }
             (Get-HostServerPublishStatus -Server $server) | Should -Be 'unreachable'
-            function Get-HostMcpToolsList { return @(@{ name = 'vector_store_state' }) }
+            function Get-HostDirectEndpointProof { return @{ status = 'matched' } }
             (Get-HostServerPublishStatus -Server $server) | Should -Be 'running'
         }
     }
@@ -4616,6 +4617,72 @@ services:
             { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*would change embedding model*'
             $old.channel = 'stable'
             { Get-BetaCutoverContext -Config @{} -ServerId code -ConfigId pm4 -ReleaseManifest $release } | Should -Throw '*legacy layout*'
+        }
+    }
+}
+
+Describe 'Direct MCP endpoint recovery' -Tag DirectEndpointRecovery {
+    BeforeAll {
+        . (Join-Path $PSScriptRoot 'TestSupport.ps1')
+        $context = Initialize-WorkflowPesterContext
+        $RepoRoot = $context.RepoRoot
+        $McpHostPath = $context.McpHostPath
+    }
+
+    It 'executes the shared real HTTP identity and Linux ownership regressions' {
+        foreach ($test in @('mcp-host/test_endpoint_identity.py', 'mcp-host/linux/test_watchdog.py')) {
+            $output = & python -B -X utf8 (Join-Path $RepoRoot $test) 2>&1
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+        }
+    }
+
+    It 'recovers an open foreign direct endpoint once and preserves the other MCP: <Scenario>' -TestCases @(
+        @{ Scenario = 'repaired' }, @{ Scenario = 'matched' }, @{ Scenario = 'unverified' },
+        @{ Scenario = 'indexing' }, @{ Scenario = 'stuck' }
+    ) {
+        param($Scenario)
+        $configPath = Join-Path $TestDrive 'хост с пробелом.json'
+        @{ schemaVersion = 1; stateRoot = $TestDrive } | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
+        & {
+            . $McpHostPath -Action status -ConfigPath $configPath *> $null
+            $state = @{ servers = @(
+                @{ id = 'bookstack'; endpointMode = 'direct'; hostPort = 18005; containerName = 'itl-bookstack' },
+                @{ id = 'sppr'; endpointMode = 'direct'; hostPort = 18007; containerName = 'itl-sppr' }
+            ) }
+            function Read-HostState { return $state }
+            function Get-HostStatePath { return $configPath }
+            function Invoke-DockerCommand { return 0 }
+            function Get-HostContainerPublishState { return 'running' }
+            function Wait-HostTcpPortOpen { return $true }
+            $script:DirectCommands = @(); $script:DirectProofs = 0; $script:DirectPublishes = 0
+            function Invoke-DockerCommandChecked { param($Arguments) $script:DirectCommands += ,$Arguments }
+            function Get-HostDirectEndpointProof {
+                param($Config, $Server)
+                if ($Server.id -eq 'sppr') { return @{ status = 'matched' } }
+                $script:DirectProofs++
+                $status = $Scenario
+                if ($Scenario -in @('repaired', 'stuck')) {
+                    $status = if ($script:DirectProofs -eq 1 -or $Scenario -eq 'stuck') { 'mismatch' } else { 'matched' }
+                }
+                return @{ status = $status; container_id = ('a' * 64); reason = 'fixture' }
+            }
+            function Publish-Registry { $script:DirectPublishes++ }
+            $config = @{ toolsListProxy = @{ enabled = $true; serverIds = @('bookstack', 'sppr') } }
+            if ($Scenario -eq 'stuck') {
+                { Repair-TrackedMcpHostAndPublish -Config $config } | Should -Throw '*after one restart*'
+                $script:DirectPublishes | Should -Be 0
+            } else {
+                Repair-TrackedMcpHostAndPublish -Config $config
+                $script:DirectPublishes | Should -Be 1
+            }
+            $restarts = @($script:DirectCommands | Where-Object { $_[0] -eq 'restart' })
+            if ($Scenario -in @('repaired', 'stuck')) {
+                $restarts.Count | Should -Be 1
+                ($restarts[0] -join '|') | Should -BeExactly ('restart|--time|20|' + ('a' * 64))
+                $script:DirectProofs | Should -Be 2
+            } else { $restarts.Count | Should -Be 0 }
+            @($restarts | Where-Object { $_ -contains 'itl-sppr' }).Count | Should -Be 0
+            Remove-Variable -Scope Script -Name DirectCommands,DirectProofs,DirectPublishes -ErrorAction SilentlyContinue
         }
     }
 }
