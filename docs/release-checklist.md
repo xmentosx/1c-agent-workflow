@@ -42,6 +42,14 @@ branch name:
   -NewDevBranchName <unused-release-branch-name>
 ```
 
+For unattended recovery, add `-AgentTarget <attached-client>` when the executing
+host client differs from the stand's configured client. For example,
+`-AgentTarget kilocode` selects an already attached Kilo surface. The installed
+helper still validates configured and installed membership; this option does
+not attach clients or change project configuration. Omitting it preserves
+ordinary executing-client detection. Retain the same explicit selection when
+repeating an interrupted recovery.
+
 The wrapper delegates database and branch creation to the installed
 `fork-dev-branch` helper. It verifies the new branch, fixture marker, clean
 worktree and unsafe-action protection, then atomically switches only the ignored

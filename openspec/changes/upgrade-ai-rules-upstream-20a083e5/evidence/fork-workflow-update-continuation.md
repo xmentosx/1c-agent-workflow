@@ -1,9 +1,10 @@
 # Same-fork continuation after a package update
 
-Status 2026-10-02: continuation source A5 passed registration and public package
-rollout to all eight stand roots. Task 9.6 remains open: the subsequent same-fork
-continuation stopped at the fixture dirty guard before runtime initialization.
-The remaining package commit/stat defects are being fixed at their owner.
+Status 2026-10-02: finalization source C passed registration and public package
+rollout to all eight stand roots, with preserved business and fork state and a
+clean fixture. Task 9.6 remains open: SAME fork continuation then refused an
+ambient Codex client that is not attached to this Kilo stand. The source recovery
+wrapper is being adapted to pass the existing explicit client selection.
 
 The historical Release fixture already committed facade compatibility 0.4.15
 with dependency lock 0.4.14. Public creation of `rel-e2e-r6` stopped during MCP
@@ -241,3 +242,60 @@ development lifecycle test SHA256
 `d5b1f35e669a3ffa88cdca14a27f62b733f06d2fe1beee2e68858eaf9d1eb26e`.
 AST parsing and diff checks passed. Normal registration and the public SAME
 fork continuation remain required; this local proof does not close task 9.6.
+
+## C registration, completed rollout and client selection
+
+Finalization source `99f572b1b07c9f3393fedda052803422be08eb10` passed normal
+RegisterChange: 825 passed, 0 failed, 0 skipped, 35 executed workers with no
+reuse, 1047.012 seconds; tracked state stayed clean. Authoritative run
+`20261002-013714-242-targeted-908640df08e8412d878ed690149cd937.json`, SHA256
+`4ed8ac69e8dd71a9c382d4a54692fa2b0cff665e0e768d57bed79d46eb519667`.
+
+The public package update completed in 392.194 seconds, exit 0; main moved to
+`d5153cd0fca9db85b76db2c3aeeb1f682bf0fab3` and all seven registered branches
+completed. Receipt in the retained C checkout:
+`build/workflow-update-finalize-proof-20261002/completed-update-rollout.json`,
+SHA256 `6b15c91679e0d4a273495f23d6ea20f15192272d852235652ebed00ea0427656`.
+AfterUpdate preservation passed for all eight roots, including the original
+snapshot, source lock, Release pointer, target settings, business trees/index
+and fork identity. Its receipt SHA256 is
+`5b42c82426d08801ef6884177e182d4b21dd25ad21e7b53a6cc849bd500ae744`.
+The fixture's full tracked/untracked status is now clean through the ordinary
+update owner; no installed file, index or state was manually repaired.
+
+The subsequent public SAME `rel-e2e-r6` retry passed snapshot/restore admission
+and stopped at branch-local MCP setup with `ITL_CLIENT_NOT_ATTACHED`. Main,
+fixture and target all retain the sole configured `kilocode` client. The new
+installed membership guard correctly detects the executing Codex host and
+refuses its unconfigured namespace. The source recovery wrapper did not expose
+the helper's existing `-AgentTarget` selection. Historical log in C:
+`build/workflow-update-finalize-proof-20261002/c-client-stop-rebuild-owned-stand-r6.log`,
+SHA256 `02670e8a43bda638e1cf14d654a0c0d6ac8c039fc96cc52b2d01734668363d3c`.
+Start/finish receipts preserve this exit-1 run; it is not successful continuation.
+
+The bounded source-only adaptation adds optional `-AgentTarget` passthrough to
+the existing installed fork command. Omitting it keeps ordinary executing-client
+detection; an explicit Kilo target selects the already configured namespace.
+No automatic client fallback, attachment, environment rewrite or membership
+guard change is introduced. The original branch, snapshot and workload remain
+the same. This utility is not a managed installed-package copy, so its corrected
+executor does not require another eight-root workflow update. Installed runtime
+stays the qualified C lifecycle hash above. Successful public continuation and
+the actual restore-reuse/preservation oracles are still required before 9.6 closes.
+
+The source wrapper's focused native PowerShell 5.1 test passed 3/3 in 99.039
+seconds: omitted selection leaves the old argument contract, explicit Kilo is
+forwarded once and accepted by the actual installed selector definition, and
+explicit unattached Codex is refused without switching the Release pointer.
+Project, rules/client config bytes, the old checkpoint, clean fixture and
+Unicode paths are retained. Qualification in the corrected executor checkout:
+`build/stand-client-continuation-proof-20261002/focused-e7cd3a036d004a079fb38d670ac4784a/qualification.json`,
+SHA256 `2464a400c74871070d516e16a889ac1240146070550f84a29e6c183588c254a4`.
+The first 0/3 run is retained: the new fixture's JSON argument-array reader
+preserved an extra array layer under PS5. Only that reader was corrected;
+original owner assertions and success/refusal paths remained unchanged.
+
+A separate read-only audit found the same missing explicit stand-client binding
+in the existing Develop and Release coordinators. Their automated helper routes
+must be corrected and qualified before publication gates. This does not replace
+the required public SAME fork retry or weaken ordinary client-membership guards.
