@@ -772,6 +772,7 @@ exit $exitCode
         $runnerPath = Join-Path $RepoRoot 'scripts/invoke-pester-shards.ps1'
         $tokens = $null; $errors = $null
         $ast = [Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$errors)
+        $pathDefinition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardRelativeTestPath' }, $true)
         $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ShardInputDigest' }, $true)
         $actualCatalog = Get-Content -LiteralPath (Join-Path $RepoRoot 'tests/quality-contracts.json') -Raw -Encoding UTF8 | ConvertFrom-Json
         @($actualCatalog.pesterNonReusableTests) | Should -Contain 'tests/pester/VanessaNestedSelection.Tests.ps1'
@@ -780,6 +781,7 @@ exit $exitCode
             # Contracts and hashing dependencies deliberately absent: the
             # runtime exclusion must apply before any cache key is produced.
             $catalog = [pscustomobject]@{ pesterNonReusableTests = @('tests/pester/VanessaNestedSelection.Tests.ps1') }
+            . ([scriptblock]::Create($pathDefinition.Extent.Text))
             . ([scriptblock]::Create($definition.Extent.Text))
             $path = Join-Path $RepoRoot 'tests/pester/VanessaNestedSelection.Tests.ps1'
             @((Get-ShardInputDigest -Paths @($path)), (Get-ShardInputDigest -Paths @($path) -IncludeLegacyGlobalExternalInputs))
